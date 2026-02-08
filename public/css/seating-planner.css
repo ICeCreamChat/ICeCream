@@ -1,22 +1,40 @@
 /**
  * Smart Seating Planner - 专用样式
- * 继承 ICeCream Pro Max 主题
+ * UI UX Pro Max 设计系统
+ * 
+ * 设计理念: 玻璃拟态 + 霓虹青强调 + 微交互动画
  */
 
 /* ================================
-   主布局
+   CSS Variables (继承 Pro Max)
+   ================================ */
+
+.seating-planner {
+    --sp-accent: var(--accent-color, #00f0ff);
+    --sp-accent-glow: 0 0 20px rgba(0, 240, 255, 0.4);
+    --sp-glass: rgba(15, 23, 42, 0.65);
+    --sp-glass-border: rgba(255, 255, 255, 0.1);
+    --sp-glass-highlight: rgba(255, 255, 255, 0.05);
+    --sp-radius: 20px;
+    --sp-radius-sm: 12px;
+    --sp-transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ================================
+   主布局 - 两栏响应式
    ================================ */
 
 .seating-planner {
     display: grid;
-    grid-template-columns: 320px 1fr;
-    gap: 24px;
+    grid-template-columns: 340px 1fr;
+    gap: 20px;
     height: 100%;
     min-height: 0;
+    padding: 8px;
 }
 
 /* ================================
-   侧边栏
+   侧边栏 - 玻璃容器
    ================================ */
 
 .sp-sidebar {
@@ -24,158 +42,252 @@
     flex-direction: column;
     gap: 16px;
     overflow-y: auto;
-    padding-right: 8px;
+    padding: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 240, 255, 0.3) transparent;
 }
 
 .sp-sidebar::-webkit-scrollbar {
-    width: 4px;
+    width: 5px;
+}
+
+.sp-sidebar::-webkit-scrollbar-track {
+    background: transparent;
 }
 
 .sp-sidebar::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 2px;
+    background: linear-gradient(180deg, var(--sp-accent), transparent);
+    border-radius: 10px;
 }
 
+/* ================================
+   卡片区块 - 玻璃拟态
+   ================================ */
+
 .sp-section {
-    background: var(--glass-panel);
-    border: 1px solid var(--glass-border);
-    border-radius: 16px;
-    padding: 16px;
+    background: var(--sp-glass);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--sp-glass-border);
+    border-top: 1px solid var(--sp-glass-highlight);
+    border-radius: var(--sp-radius);
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+    transition: all var(--sp-transition);
+}
+
+/* 微光效果 */
+.sp-section::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, 
+        transparent, 
+        rgba(0, 240, 255, 0.3), 
+        transparent
+    );
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.sp-section:hover::before {
+    opacity: 1;
 }
 
 .sp-section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
     font-weight: 600;
+    font-size: 0.95rem;
     color: var(--text-primary);
-    font-size: 0.9rem;
+    letter-spacing: 0.02em;
 }
 
 .sp-count {
     font-size: 0.75rem;
-    color: var(--accent-color);
-    background: rgba(0, 240, 255, 0.1);
-    padding: 2px 8px;
-    border-radius: 12px;
+    font-weight: 500;
+    color: var(--sp-accent);
+    background: rgba(0, 240, 255, 0.12);
+    padding: 4px 12px;
+    border-radius: 20px;
+    border: 1px solid rgba(0, 240, 255, 0.2);
 }
 
 /* ================================
-   输入区域
+   输入框 - 深邃风格
    ================================ */
 
 .sp-textarea {
     width: 100%;
-    height: 100px;
-    padding: 12px;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid var(--glass-border);
-    border-radius: 12px;
+    height: 110px;
+    padding: 14px 16px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--sp-glass-border);
+    border-radius: var(--sp-radius-sm);
     color: var(--text-primary);
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.82rem;
+    line-height: 1.6;
     resize: none;
-    margin-bottom: 8px;
+    margin-bottom: 12px;
+    transition: all var(--sp-transition);
 }
 
 .sp-textarea::placeholder {
     color: var(--text-secondary);
-    opacity: 0.7;
+    opacity: 0.6;
 }
 
 .sp-textarea:focus {
     outline: none;
-    border-color: var(--accent-color);
-    box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.1);
+    border-color: var(--sp-accent);
+    box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.1), inset 0 0 20px rgba(0, 240, 255, 0.03);
 }
 
 /* ================================
-   按钮
+   按钮 - 霓虹发光
    ================================ */
 
 .sp-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 10px 16px;
-    border: 1px solid var(--glass-border);
-    border-radius: 10px;
-    font-size: 0.85rem;
-    font-weight: 500;
+    gap: 10px;
+    padding: 12px 20px;
+    border: 1px solid var(--sp-glass-border);
+    border-radius: var(--sp-radius-sm);
+    font-size: 0.88rem;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all var(--sp-transition);
     width: 100%;
+    position: relative;
+    overflow: hidden;
 }
 
 .sp-btn .lucide {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
 }
 
+/* 主按钮 - 渐变发光 */
 .sp-btn-primary {
-    background: var(--accent-color);
-    color: var(--bg-base);
-    border-color: var(--accent-color);
+    background: linear-gradient(135deg, var(--sp-accent), #0066ff);
+    color: #0f172a;
+    border: none;
+    font-weight: 700;
+}
+
+.sp-btn-primary::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+    transition: 0.5s;
+}
+
+.sp-btn-primary:hover:not(:disabled)::before {
+    left: 100%;
 }
 
 .sp-btn-primary:hover:not(:disabled) {
-    box-shadow: var(--accent-glow);
-    transform: translateY(-1px);
+    box-shadow: var(--sp-accent-glow), 0 4px 20px rgba(0, 102, 255, 0.3);
+    transform: translateY(-2px);
 }
 
 .sp-btn-primary:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
     cursor: not-allowed;
+    filter: grayscale(0.5);
 }
 
+/* 次按钮 - 玻璃风格 */
 .sp-btn-secondary {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.06);
     color: var(--text-primary);
 }
 
-.sp-btn-secondary:hover {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: var(--accent-color);
+.sp-btn-secondary:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: var(--sp-accent);
+    color: var(--sp-accent);
 }
 
 /* ================================
-   策略开关
+   策略开关 - 现代切换
    ================================ */
 
 .sp-strategies {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
 }
 
 .sp-checkbox {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 8px;
+    gap: 12px;
+    padding: 12px 16px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid transparent;
+    border-radius: 10px;
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: 0.88rem;
     color: var(--text-secondary);
-    transition: all 0.2s ease;
+    transition: all var(--sp-transition);
 }
 
 .sp-checkbox:hover {
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(0, 0, 0, 0.35);
+    border-color: var(--sp-glass-border);
     color: var(--text-primary);
 }
 
+.sp-checkbox:has(input:checked) {
+    background: rgba(0, 240, 255, 0.08);
+    border-color: rgba(0, 240, 255, 0.25);
+    color: var(--sp-accent);
+}
+
 .sp-checkbox input[type="checkbox"] {
-    accent-color: var(--accent-color);
-    width: 16px;
-    height: 16px;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--sp-glass-border);
+    border-radius: 6px;
+    background: transparent;
+    cursor: pointer;
+    position: relative;
+    transition: all var(--sp-transition);
+}
+
+.sp-checkbox input[type="checkbox"]:checked {
+    background: var(--sp-accent);
+    border-color: var(--sp-accent);
+}
+
+.sp-checkbox input[type="checkbox"]:checked::after {
+    content: '✓';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #0f172a;
+    font-size: 12px;
+    font-weight: bold;
 }
 
 /* ================================
-   教室设置
+   教室设置 - 紧凑输入
    ================================ */
 
 .sp-grid-settings {
@@ -187,19 +299,26 @@
     flex: 1;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     font-size: 0.85rem;
     color: var(--text-secondary);
 }
 
 .sp-grid-settings input {
-    width: 50px;
-    padding: 6px 8px;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px solid var(--glass-border);
-    border-radius: 6px;
+    width: 56px;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--sp-glass-border);
+    border-radius: 8px;
     color: var(--text-primary);
     text-align: center;
+    font-weight: 600;
+    transition: all var(--sp-transition);
+}
+
+.sp-grid-settings input:focus {
+    outline: none;
+    border-color: var(--sp-accent);
 }
 
 /* ================================
@@ -214,49 +333,65 @@
 }
 
 /* ================================
-   教室视图
+   教室视图 - 核心展示
    ================================ */
 
 .sp-classroom {
     flex: 1;
     display: flex;
     flex-direction: column;
-    background: var(--glass-panel);
-    border: 1px solid var(--glass-border);
-    border-radius: 16px;
-    padding: 16px;
-    min-height: 300px;
+    background: var(--sp-glass);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--sp-glass-border);
+    border-radius: var(--sp-radius);
+    padding: 24px;
+    min-height: 320px;
+    position: relative;
 }
 
+/* 讲台 - 3D 效果 */
 .sp-blackboard {
     text-align: center;
-    padding: 8px 24px;
-    margin: 0 auto 16px;
-    background: linear-gradient(135deg, #334155, #1e293b);
+    padding: 10px 32px;
+    margin: 0 auto 20px;
+    background: linear-gradient(135deg, #334155 0%, #1e293b 100%);
     border: 2px solid #475569;
-    border-radius: 8px;
-    color: #94a3b8;
+    border-radius: 10px;
+    color: #cbd5e1;
     font-size: 0.9rem;
-    font-weight: 500;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    box-shadow: 
+        0 4px 12px rgba(0, 0, 0, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
+/* 座位网格 */
 .sp-grid {
     flex: 1;
     display: grid;
-    gap: 8px;
-    padding: 8px;
+    gap: 10px;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: var(--sp-radius-sm);
 }
+
+/* ================================
+   座位单元格
+   ================================ */
 
 .sp-cell {
     aspect-ratio: 1;
-    min-height: 50px;
-    background: rgba(0, 0, 0, 0.3);
-    border: 1px dashed var(--glass-border);
-    border-radius: 10px;
+    min-height: 54px;
+    background: rgba(30, 41, 59, 0.4);
+    border: 1px dashed rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
+    transition: all var(--sp-transition);
+    position: relative;
 }
 
 .sp-cell.sp-aisle {
@@ -265,27 +400,39 @@
 }
 
 .sp-cell.sp-occupied {
-    background: rgba(30, 41, 59, 0.8);
-    border-style: solid;
-    cursor: grab;
+    background: linear-gradient(145deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.8));
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
+/* 性别渐变 */
 .sp-cell.sp-male {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(30, 41, 59, 0.8));
-    border-color: rgba(59, 130, 246, 0.3);
+    background: linear-gradient(145deg, 
+        rgba(59, 130, 246, 0.25) 0%, 
+        rgba(30, 41, 59, 0.85) 100%
+    );
+    border-color: rgba(59, 130, 246, 0.35);
 }
 
 .sp-cell.sp-female {
-    background: linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(30, 41, 59, 0.8));
-    border-color: rgba(236, 72, 153, 0.3);
+    background: linear-gradient(145deg, 
+        rgba(236, 72, 153, 0.25) 0%, 
+        rgba(30, 41, 59, 0.85) 100%
+    );
+    border-color: rgba(236, 72, 153, 0.35);
 }
 
+/* 悬停发光 */
 .sp-cell:hover:not(.sp-aisle) {
-    border-color: var(--accent-color);
-    box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);
+    border-color: var(--sp-accent);
+    box-shadow: 0 0 20px rgba(0, 240, 255, 0.2);
+    transform: scale(1.02);
 }
 
-/* 拖拽相关样式 */
+/* ================================
+   拖拽交互
+   ================================ */
+
 .sp-cell[draggable="true"] {
     cursor: grab;
 }
@@ -296,16 +443,22 @@
 
 .sp-cell.sp-dragging {
     opacity: 0.5;
-    transform: scale(0.95);
-    border-color: var(--accent-color);
-    box-shadow: var(--accent-glow);
+    transform: scale(0.92) rotate(-2deg);
+    border-color: var(--sp-accent);
+    box-shadow: var(--sp-accent-glow);
 }
 
 .sp-cell.sp-drag-over {
-    background: rgba(0, 240, 255, 0.15) !important;
-    border: 2px dashed var(--accent-color) !important;
-    transform: scale(1.02);
-    box-shadow: 0 0 20px rgba(0, 240, 255, 0.3);
+    background: rgba(0, 240, 255, 0.2) !important;
+    border: 2px dashed var(--sp-accent) !important;
+    transform: scale(1.05);
+    box-shadow: 0 0 30px rgba(0, 240, 255, 0.35);
+    animation: pulse 0.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { box-shadow: 0 0 20px rgba(0, 240, 255, 0.3); }
+    50% { box-shadow: 0 0 35px rgba(0, 240, 255, 0.5); }
 }
 
 /* ================================
@@ -314,21 +467,25 @@
 
 .sp-card {
     text-align: center;
-    padding: 4px;
+    padding: 6px;
     position: relative;
 }
 
 .sp-name {
-    font-size: 0.8rem;
-    font-weight: 500;
+    font-size: 0.82rem;
+    font-weight: 600;
     color: var(--text-primary);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .sp-icons {
     position: absolute;
-    top: -8px;
-    right: -8px;
-    font-size: 0.7rem;
+    top: -10px;
+    right: -10px;
+    font-size: 0.75rem;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 2px 5px;
+    border-radius: 8px;
 }
 
 /* ================================
@@ -336,32 +493,39 @@
    ================================ */
 
 .sp-constraints-panel {
-    background: var(--glass-panel);
-    border: 1px solid var(--glass-border);
-    border-radius: 16px;
-    padding: 12px 16px;
-    max-height: 150px;
+    background: var(--sp-glass);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--sp-glass-border);
+    border-radius: var(--sp-radius);
+    padding: 16px 20px;
+    max-height: 160px;
     overflow-y: auto;
 }
 
 .sp-constraints-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
 }
 
 .sp-constraint-item {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 8px;
-    font-size: 0.8rem;
+    gap: 10px;
+    padding: 10px 14px;
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 10px;
+    font-size: 0.82rem;
+    transition: all var(--sp-transition);
+}
+
+.sp-constraint-item:hover {
+    background: rgba(0, 0, 0, 0.35);
 }
 
 .sp-constraint-icon {
-    font-size: 1rem;
+    font-size: 1.1rem;
 }
 
 .sp-constraint-text {
@@ -371,31 +535,41 @@
 
 .sp-constraint-badge {
     font-size: 0.7rem;
-    padding: 2px 6px;
-    border-radius: 4px;
-    background: rgba(255, 255, 255, 0.1);
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
     color: var(--text-secondary);
+    font-weight: 500;
 }
 
 .sp-constraint-item.sp-hard .sp-constraint-badge {
     background: rgba(239, 68, 68, 0.2);
     color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
 .sp-constraint-item.sp-unsatisfied {
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    animation: shake 0.4s ease-in-out;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-3px); }
+    75% { transform: translateX(3px); }
 }
 
 .sp-empty {
     text-align: center;
     color: var(--text-secondary);
-    padding: 12px;
-    font-size: 0.85rem;
+    padding: 16px;
+    font-size: 0.88rem;
+    opacity: 0.7;
 }
 
 /* ================================
-   操作按钮
+   操作按钮组
    ================================ */
 
 .sp-actions {
@@ -412,44 +586,52 @@
    ================================ */
 
 .sp-preview {
-    margin-top: 8px;
-    padding: 12px;
-    background: rgba(0, 240, 255, 0.05);
+    margin-top: 12px;
+    padding: 14px;
+    background: rgba(0, 240, 255, 0.06);
     border: 1px solid rgba(0, 240, 255, 0.2);
-    border-radius: 10px;
+    border-radius: var(--sp-radius-sm);
 }
 
 .sp-preview-header {
-    font-size: 0.8rem;
-    color: var(--accent-color);
-    margin-bottom: 8px;
+    font-size: 0.82rem;
+    color: var(--sp-accent);
+    margin-bottom: 10px;
+    font-weight: 500;
 }
 
 .sp-preview-list {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 8px;
 }
 
 .sp-preview-tag {
-    padding: 4px 8px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 6px;
-    font-size: 0.75rem;
+    padding: 5px 10px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    font-size: 0.78rem;
     color: var(--text-primary);
+    transition: all var(--sp-transition);
+}
+
+.sp-preview-tag:hover {
+    background: rgba(255, 255, 255, 0.12);
 }
 
 .sp-preview-tag.sp-male {
     background: rgba(59, 130, 246, 0.2);
+    border: 1px solid rgba(59, 130, 246, 0.3);
 }
 
 .sp-preview-tag.sp-female {
     background: rgba(236, 72, 153, 0.2);
+    border: 1px solid rgba(236, 72, 153, 0.3);
 }
 
 .sp-preview-more {
-    padding: 4px 8px;
-    font-size: 0.75rem;
+    padding: 5px 10px;
+    font-size: 0.78rem;
     color: var(--text-secondary);
 }
 
@@ -466,28 +648,41 @@
     to { transform: rotate(360deg); }
 }
 
+.hidden {
+    display: none !important;
+}
+
 /* ================================
-   Light Mode
+   浅色模式
    ================================ */
 
+body.light-mode .seating-planner {
+    --sp-glass: rgba(255, 255, 255, 0.75);
+    --sp-glass-border: rgba(0, 0, 0, 0.08);
+    --sp-glass-highlight: rgba(255, 255, 255, 0.9);
+    --sp-accent: #0891b2;
+    --sp-accent-glow: 0 0 20px rgba(8, 145, 178, 0.35);
+}
+
 body.light-mode .sp-textarea {
-    background: rgba(0, 0, 0, 0.05);
+    background: rgba(0, 0, 0, 0.04);
 }
 
 body.light-mode .sp-cell {
-    background: rgba(0, 0, 0, 0.05);
+    background: rgba(0, 0, 0, 0.04);
 }
 
 body.light-mode .sp-cell.sp-occupied {
-    background: rgba(255, 255, 255, 0.8);
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.95), rgba(241, 245, 249, 0.9));
+    border-color: rgba(0, 0, 0, 0.1);
 }
 
 body.light-mode .sp-cell.sp-male {
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(255, 255, 255, 0.8));
+    background: linear-gradient(145deg, rgba(59, 130, 246, 0.15), rgba(255, 255, 255, 0.9));
 }
 
 body.light-mode .sp-cell.sp-female {
-    background: linear-gradient(135deg, rgba(236, 72, 153, 0.15), rgba(255, 255, 255, 0.8));
+    background: linear-gradient(145deg, rgba(236, 72, 153, 0.15), rgba(255, 255, 255, 0.9));
 }
 
 body.light-mode .sp-blackboard {
@@ -495,25 +690,52 @@ body.light-mode .sp-blackboard {
     color: #e2e8f0;
 }
 
+body.light-mode .sp-btn-primary {
+    background: linear-gradient(135deg, #0891b2, #0284c7);
+    color: white;
+}
+
 /* ================================
-   Responsive
+   响应式
    ================================ */
 
-@media (max-width: 768px) {
+@media (max-width: 900px) {
     .seating-planner {
         grid-template-columns: 1fr;
         grid-template-rows: auto 1fr;
     }
 
     .sp-sidebar {
-        max-height: 40vh;
+        max-height: 35vh;
+        flex-direction: row;
+        flex-wrap: wrap;
+        overflow-x: auto;
     }
 
+    .sp-section {
+        min-width: 280px;
+        flex: 1;
+    }
+
+    .sp-grid {
+        gap: 6px;
+    }
+
+    .sp-cell {
+        min-height: 44px;
+    }
+}
+
+@media (max-width: 480px) {
     .sp-actions {
         flex-wrap: wrap;
     }
 
     .sp-actions .sp-btn {
-        min-width: calc(50% - 6px);
+        flex: 1 1 calc(50% - 6px);
+    }
+
+    .sp-classroom {
+        padding: 16px;
     }
 }
