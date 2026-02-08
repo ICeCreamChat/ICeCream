@@ -13,7 +13,8 @@ import { existsSync, mkdirSync } from 'fs';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import dns from 'node:dns';
-import http from 'http';
+// import http from 'http'; // No longer needed
+import fetch from 'node-fetch';
 
 // Force usage of IPv4 for DNS resolution to avoid timeouts on some networks
 try {
@@ -150,36 +151,53 @@ if (isDev) {
 
 // Proxy static video files to Manim service (running on 8001)
 // This is needed because Manim service returns relative URLs like /static/video_xxx.mp4
-app.get('/static/*.mp4', (req, res) => {
-    const manimServiceUrl = process.env.MANIM_SERVICE_URL || 'http://localhost:8001';
+app.get('/static/*.mp4', async (req, res) => {
+    let manimServiceUrl = process.env.MANIM_SERVICE_URL || 'http://localhost:8001';
+    
+    // Ensure URL has protocol
+    if (!manimServiceUrl.startsWith('http://') && !manimServiceUrl.startsWith('https://')) {
+        manimServiceUrl = `http://${manimServiceUrl}`;
+    }
+
+    // Remove trailing slash if present
+    if (manimServiceUrl.endsWith('/')) {
+        manimServiceUrl = manimServiceUrl.slice(0, -1);
+    }
+
     const targetUrl = `${manimServiceUrl}${req.originalUrl}`;
 
-    http.get(targetUrl, (proxyRes) => {
-        if (proxyRes.statusCode !== 200) {
-            return res.status(404).send('Video not found');
+    try {
+        const response = await fetch(targetUrl);
+        
+        if (!response.ok) {
+            return res.status(response.status).send('Video not found');
         }
-        res.writeHead(200, proxyRes.headers);
-        proxyRes.pipe(res);
-    }).on('error', (e) => {
-        console.error('[Video Proxy Error]', e);
+
+        // Forward headers
+        const contentType = response.headers.get('content-type');
+        const contentLength = response.headers.get('content-length');
+        
+        if (contentType) res.setHeader('Content-Type', contentType);
+        if (contentLength) res.setHeader('Content-Length', contentLength);
+
+        // Pipe the response body to the client
+        // fetch response.body is a readable stream
+        if (response.body) {
+            response.body.pipe(res);
+        } else {
+            res.end();
+        }
+    } catch (error) {
+        console.error('[Video Proxy Error]', error);
         res.status(500).send('Proxy error');
-    });
+    }
 });
 
 // Static files
 app.use(express.static(join(__dirname, '../public')));
 
 // File upload configuration
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, join(__dirname, '../uploads'));
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + '-' + file.originalname);
-    }
-});
-const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } }); // 20MB limit
+import { upload } from './middleware/upload.js';
 
 // ================================
 // Intent Router Middleware
@@ -200,7 +218,7 @@ import solverRoutes from './routes/solver.js';
 
 app.use('/api/chat', chatRoutes);
 app.use('/api/manim', manimRoutes);
-app.use('/api/solver', upload.single('image'), solverRoutes);
+app.use('/api/solver', solverRoutes); // Removed upload.single('image') from here
 
 // Health check
 app.get('/api/health', (req, res) => {

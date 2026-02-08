@@ -3,10 +3,11 @@
  */
 
 import express from 'express';
+import { upload } from '../middleware/upload.js';
 const router = express.Router();
 
 // POST /api/solver - 解题
-router.post('/', async (req, res) => {
+router.post('/', upload.single('image'), async (req, res) => {
     try {
         const solverHandler = await import('../../services/solver/solver-handler.js');
         return solverHandler.handleSolve(req, res);

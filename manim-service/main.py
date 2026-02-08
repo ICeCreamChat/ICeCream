@@ -803,7 +803,17 @@ async def process_chat_workflow(prompt: str, websocket: WebSocket):
         # 🔥【关键】注入 Inspector 代码 (侦探升级版) 🔥
         # 这是一个继承自用户 Scene 的子类，专门用于在 tear_down 时窃取对象详细信息
         inspector_class_name = f"Inspector_{request_id}"
-        inspector_code = f"""
+        
+        # 🛡️ 安全检查：确保 scene_name 是合法的 Python 标识符
+        use_inspector = False
+        if scene_name and scene_name.isidentifier():
+            use_inspector = True
+        else:
+            print(f"[{request_id}] ⚠️ 场景类名 '{scene_name}' 不合法，跳过侦探注入模式")
+            scene_name = scene_name or DEFAULT_SCENE_NAME
+
+        if use_inspector:
+            inspector_code = f"""
 import json
 from manim import Mobject, Text, Tex, MathTex, VMobject
 
@@ -855,6 +865,8 @@ class {inspector_class_name}({scene_name}):
         finally:
             super().tear_down()
 """
+        else:
+            inspector_code = ""
 
         for attempt in range(MAX_RETRIES + 1):
             if attempt > 0:
@@ -864,14 +876,17 @@ class {inspector_class_name}({scene_name}):
             with open(local_scene_file, "w", encoding="utf-8") as f:
                 f.write(final_code + "\n" + inspector_code)
             
-            # 运行 Manim (运行的是 Inspector 类，而不是原类)
+            # 运行 Manim 
+            # 如果启用了侦探，运行 Inspector 类；否则运行原始 Scene 类
+            run_class = inspector_class_name if use_inspector else scene_name
+            
             cmd = [
                 sys.executable, "-m", "manim",
                 DEFAULT_QUALITY,
                 "--media_dir", request_dir,
                 "-o", output_filename,
                 local_scene_file,
-                inspector_class_name # <--- 运行侦探
+                run_class
             ]
             
             returncode, stdout, stderr = await asyncio.to_thread(run_manim_safe, cmd)
@@ -1505,40 +1520,97 @@ if __name__ == "__main__":
     
     def free_port(port):
         """
-        Windows-specific: Check if a port is in use and kill the process.
+        Check if a port is in use and kill the process.
+        Supports Windows (netstat/taskkill) and Linux/macOS (lsof/ss/kill).
         """
         import subprocess
-        try:
-            # Check if port is in use
-            result = subprocess.run(
-                ["netstat", "-ano"], 
-                capture_output=True, 
-                text=True, 
-                encoding='utf-8', # Ensure parsing works on non-English systems maybe
-                errors='ignore'
-            )
-            
-            pid = None
-            for line in result.stdout.splitlines():
-                if f":{port}" in line and "LISTENING" in line:
-                    parts = line.strip().split()
-                    if len(parts) >= 5:
-                        pid = parts[-1]
-                        break
-            
-            if pid:
-                print(f"⚠️ 端口 {port} 被占用 (PID: {pid})，正在强制释放...")
-                subprocess.run(
-                    ["taskkill", "/F", "/PID", pid], 
-                    capture_output=True, 
-                    check=False
-                )
-                print(f"✅ 端口 {port} 已释放")
-                time.sleep(1) # Wait for OS to release
-        except Exception as e:
-            print(f"⚠️ 尝试释放端口失败: {e}")
+        import sys
 
-    free_port(8001)
+        print(f"🔍 [System] Checking port {port} availability...")
+
+        try:
+            if sys.platform == "win32":
+                # Windows implementation
+                result = subprocess.run(
+                    ["netstat", "-ano"], 
+                    capture_output=True, 
+                    text=True, 
+                    encoding='utf-8', 
+                    errors='ignore'
+                )
+                
+                pid = None
+                for line in result.stdout.splitlines():
+                    if f":{port}" in line and "LISTENING" in line:
+                        parts = line.strip().split()
+                        if len(parts) >= 5:
+                            pid = parts[-1]
+                            break
+                
+                if pid:
+                    print(f"⚠️ Port {port} is occupied by PID {pid}. Killing...")
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", pid], 
+                        capture_output=True, 
+                        check=False
+                    )
+                    time.sleep(1) # Wait for OS to release
+                    print(f"✅ Port {port} released.")
+                else:
+                    print(f"✅ Port {port} is free.")
+
+            else:
+                # Linux/macOS implementation
+                pid = None
+                
+                # Method 1: lsof
+                try:
+                    # -t: terse (pid only), -i: internet files
+                    result = subprocess.run(
+                        ["lsof", "-t", f"-i:{port}"],
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.stdout.strip():
+                        pid = result.stdout.strip()
+                except FileNotFoundError:
+                    pass # lsof might not be installed
+
+                # Method 2: ss (if lsof failed)
+                if not pid:
+                    try:
+                        # -lptn: listening, processes, tcp, numeric
+                        result = subprocess.run(
+                            ["ss", "-lptn", f"sport = :{port}"],
+                            capture_output=True,
+                            text=True
+                        )
+                        # Output format: Users:(("python",pid=1234,fd=3))
+                        match = re.search(r"pid=(\d+)", result.stdout)
+                        if match:
+                            pid = match.group(1)
+                    except FileNotFoundError:
+                        pass
+                
+                if pid:
+                    print(f"⚠️ Port {port} is occupied by PID {pid}. Killing...")
+                    subprocess.run(
+                        ["kill", "-9", pid],
+                        capture_output=True,
+                        check=False
+                    )
+                    time.sleep(1)
+                    print(f"✅ Port {port} released.")
+                else:
+                    print(f"✅ Port {port} is free.")
+
+        except Exception as e:
+            print(f"⚠️ Failed to free port {port}: {e}")
+
+    try:
+        free_port(8001)
+    except Exception as e:
+        print(f"⚠️ Port release check skipped: {e}")
 
     print("="*60)
     print("✨ ICeCream Manim 服务已启动")
