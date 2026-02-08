@@ -1,0 +1,496 @@
+/**
+ * Smart Seating Planner - 专用样式
+ * 继承 ICeCream Pro Max 主题
+ */
+
+/* ================================
+   主布局
+   ================================ */
+
+.seating-planner {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 24px;
+    height: 100%;
+    min-height: 0;
+}
+
+/* ================================
+   侧边栏
+   ================================ */
+
+.sp-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+    padding-right: 8px;
+}
+
+.sp-sidebar::-webkit-scrollbar {
+    width: 4px;
+}
+
+.sp-sidebar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+}
+
+.sp-section {
+    background: var(--glass-panel);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 16px;
+}
+
+.sp-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.sp-count {
+    font-size: 0.75rem;
+    color: var(--accent-color);
+    background: rgba(0, 240, 255, 0.1);
+    padding: 2px 8px;
+    border-radius: 12px;
+}
+
+/* ================================
+   输入区域
+   ================================ */
+
+.sp-textarea {
+    width: 100%;
+    height: 100px;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    resize: none;
+    margin-bottom: 8px;
+}
+
+.sp-textarea::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.7;
+}
+
+.sp-textarea:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.1);
+}
+
+/* ================================
+   按钮
+   ================================ */
+
+.sp-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    width: 100%;
+}
+
+.sp-btn .lucide {
+    width: 16px;
+    height: 16px;
+}
+
+.sp-btn-primary {
+    background: var(--accent-color);
+    color: var(--bg-base);
+    border-color: var(--accent-color);
+}
+
+.sp-btn-primary:hover:not(:disabled) {
+    box-shadow: var(--accent-glow);
+    transform: translateY(-1px);
+}
+
+.sp-btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.sp-btn-secondary {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+}
+
+.sp-btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: var(--accent-color);
+}
+
+/* ================================
+   策略开关
+   ================================ */
+
+.sp-strategies {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sp-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+}
+
+.sp-checkbox:hover {
+    background: rgba(0, 0, 0, 0.3);
+    color: var(--text-primary);
+}
+
+.sp-checkbox input[type="checkbox"] {
+    accent-color: var(--accent-color);
+    width: 16px;
+    height: 16px;
+}
+
+/* ================================
+   教室设置
+   ================================ */
+
+.sp-grid-settings {
+    display: flex;
+    gap: 16px;
+}
+
+.sp-grid-settings label {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.sp-grid-settings input {
+    width: 50px;
+    padding: 6px 8px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    text-align: center;
+}
+
+/* ================================
+   主区域
+   ================================ */
+
+.sp-main {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: 0;
+}
+
+/* ================================
+   教室视图
+   ================================ */
+
+.sp-classroom {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--glass-panel);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 16px;
+    min-height: 300px;
+}
+
+.sp-blackboard {
+    text-align: center;
+    padding: 8px 24px;
+    margin: 0 auto 16px;
+    background: linear-gradient(135deg, #334155, #1e293b);
+    border: 2px solid #475569;
+    border-radius: 8px;
+    color: #94a3b8;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.sp-grid {
+    flex: 1;
+    display: grid;
+    gap: 8px;
+    padding: 8px;
+}
+
+.sp-cell {
+    aspect-ratio: 1;
+    min-height: 50px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px dashed var(--glass-border);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.sp-cell.sp-aisle {
+    background: transparent;
+    border: none;
+}
+
+.sp-cell.sp-occupied {
+    background: rgba(30, 41, 59, 0.8);
+    border-style: solid;
+    cursor: grab;
+}
+
+.sp-cell.sp-male {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(30, 41, 59, 0.8));
+    border-color: rgba(59, 130, 246, 0.3);
+}
+
+.sp-cell.sp-female {
+    background: linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(30, 41, 59, 0.8));
+    border-color: rgba(236, 72, 153, 0.3);
+}
+
+.sp-cell:hover:not(.sp-aisle) {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);
+}
+
+/* ================================
+   学生卡片
+   ================================ */
+
+.sp-card {
+    text-align: center;
+    padding: 4px;
+    position: relative;
+}
+
+.sp-name {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.sp-icons {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    font-size: 0.7rem;
+}
+
+/* ================================
+   约束面板
+   ================================ */
+
+.sp-constraints-panel {
+    background: var(--glass-panel);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 12px 16px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.sp-constraints-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sp-constraint-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    font-size: 0.8rem;
+}
+
+.sp-constraint-icon {
+    font-size: 1rem;
+}
+
+.sp-constraint-text {
+    flex: 1;
+    color: var(--text-primary);
+}
+
+.sp-constraint-badge {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-secondary);
+}
+
+.sp-constraint-item.sp-hard .sp-constraint-badge {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+}
+
+.sp-constraint-item.sp-unsatisfied {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.sp-empty {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 12px;
+    font-size: 0.85rem;
+}
+
+/* ================================
+   操作按钮
+   ================================ */
+
+.sp-actions {
+    display: flex;
+    gap: 12px;
+}
+
+.sp-actions .sp-btn {
+    flex: 1;
+}
+
+/* ================================
+   预览
+   ================================ */
+
+.sp-preview {
+    margin-top: 8px;
+    padding: 12px;
+    background: rgba(0, 240, 255, 0.05);
+    border: 1px solid rgba(0, 240, 255, 0.2);
+    border-radius: 10px;
+}
+
+.sp-preview-header {
+    font-size: 0.8rem;
+    color: var(--accent-color);
+    margin-bottom: 8px;
+}
+
+.sp-preview-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.sp-preview-tag {
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+}
+
+.sp-preview-tag.sp-male {
+    background: rgba(59, 130, 246, 0.2);
+}
+
+.sp-preview-tag.sp-female {
+    background: rgba(236, 72, 153, 0.2);
+}
+
+.sp-preview-more {
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+/* ================================
+   动画
+   ================================ */
+
+.sp-spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* ================================
+   Light Mode
+   ================================ */
+
+body.light-mode .sp-textarea {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+body.light-mode .sp-cell {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+body.light-mode .sp-cell.sp-occupied {
+    background: rgba(255, 255, 255, 0.8);
+}
+
+body.light-mode .sp-cell.sp-male {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(255, 255, 255, 0.8));
+}
+
+body.light-mode .sp-cell.sp-female {
+    background: linear-gradient(135deg, rgba(236, 72, 153, 0.15), rgba(255, 255, 255, 0.8));
+}
+
+body.light-mode .sp-blackboard {
+    background: linear-gradient(135deg, #475569, #334155);
+    color: #e2e8f0;
+}
+
+/* ================================
+   Responsive
+   ================================ */
+
+@media (max-width: 768px) {
+    .seating-planner {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+    }
+
+    .sp-sidebar {
+        max-height: 40vh;
+    }
+
+    .sp-actions {
+        flex-wrap: wrap;
+    }
+
+    .sp-actions .sp-btn {
+        min-width: calc(50% - 6px);
+    }
+}
