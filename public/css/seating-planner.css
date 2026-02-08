@@ -555,6 +555,78 @@
 }
 
 /* ================================
+   Context Menu
+   ================================ */
+
+.sp-context-menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 160px;
+    padding: 6px;
+    background: var(--sp-bg-card);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--sp-border);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    visibility: hidden;
+    transform: scale(0.95) translateY(-4px);
+    transition: all 0.15s ease;
+}
+
+.sp-context-menu.sp-menu-visible {
+    opacity: 1;
+    visibility: visible;
+    transform: scale(1) translateY(0);
+}
+
+.sp-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 14px;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--sp-text);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.sp-menu-item:hover {
+    background: rgba(0, 240, 255, 0.1);
+    color: var(--sp-accent);
+}
+
+.sp-menu-item .lucide {
+    width: 16px;
+    height: 16px;
+}
+
+.sp-menu-divider {
+    height: 1px;
+    margin: 6px 0;
+    background: var(--sp-border);
+}
+
+/* Aisle Column */
+.sp-seat-aisle {
+    background: transparent !important;
+    border: none !important;
+    cursor: default;
+}
+
+.sp-aisle-mark {
+    display: block;
+    width: 2px;
+    height: 60%;
+    background: linear-gradient(180deg, transparent, rgba(255,255,255,0.2), transparent);
+    border-radius: 2px;
+}
+
+/* ================================
    Light Mode
    ================================ */
 

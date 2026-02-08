@@ -141,6 +141,20 @@ class SeatingPlanner {
                         </div>
                     </section>
                 </main>
+
+                <!-- 右键菜单 -->
+                <div id="sp-context-menu" class="sp-context-menu">
+                    <button class="sp-menu-item" data-action="set-aisle">
+                        <i data-lucide="separator-vertical"></i> 设为过道
+                    </button>
+                    <button class="sp-menu-item" data-action="clear-aisle">
+                        <i data-lucide="square"></i> 取消过道
+                    </button>
+                    <div class="sp-menu-divider"></div>
+                    <button class="sp-menu-item" data-action="clear-seat">
+                        <i data-lucide="user-minus"></i> 清空座位
+                    </button>
+                </div>
             </div>
         `;
 
@@ -181,6 +195,15 @@ class SeatingPlanner {
             this.cols = parseInt(e.target.value) || 8;
             this.renderGrid();
         });
+
+        // 右键菜单
+        document.addEventListener('click', () => this.hideContextMenu());
+        document.getElementById('sp-context-menu')?.querySelectorAll('.sp-menu-item').forEach(item => {
+            item.addEventListener('click', e => {
+                e.stopPropagation();
+                this.handleMenuAction(item.dataset.action);
+            });
+        });
     }
 
     switchTab(tabId) {
@@ -206,6 +229,14 @@ class SeatingPlanner {
                 cell.className = 'sp-seat';
                 cell.dataset.row = r;
                 cell.dataset.col = c;
+
+                // 过道列
+                if (this.aisles.includes(c)) {
+                    cell.classList.add('sp-seat-aisle');
+                    cell.innerHTML = '<span class="sp-aisle-mark"></span>';
+                    grid.appendChild(cell);
+                    continue;
+                }
 
                 const studentId = this.layout[r]?.[c];
                 if (studentId && studentId !== '_aisle_') {
@@ -234,6 +265,9 @@ class SeatingPlanner {
                 cell.addEventListener('dragenter', e => this.handleDragEnter(e, cell));
                 cell.addEventListener('dragleave', e => this.handleDragLeave(e, cell));
                 cell.addEventListener('drop', e => this.handleDrop(e, r, c));
+
+                // 右键菜单
+                cell.addEventListener('contextmenu', e => this.showContextMenu(e, r, c));
 
                 grid.appendChild(cell);
             }
@@ -291,6 +325,56 @@ class SeatingPlanner {
         const s1 = this.students.find(s => s.id === this.layout[r1][c1]);
         const s2 = this.students.find(s => s.id === this.layout[r2][c2]);
         this.showToast(`已交换: ${s2?.name || '空位'} ↔ ${s1?.name || '空位'}`, 'success');
+    }
+
+    // ========== 右键菜单 ==========
+    showContextMenu(e, row, col) {
+        e.preventDefault();
+        this.contextTarget = { row, col };
+        
+        const menu = document.getElementById('sp-context-menu');
+        if (!menu) return;
+
+        // 根据是否是过道显示不同选项
+        const isAisle = this.aisles.includes(col);
+        menu.querySelector('[data-action="set-aisle"]').style.display = isAisle ? 'none' : 'flex';
+        menu.querySelector('[data-action="clear-aisle"]').style.display = isAisle ? 'flex' : 'none';
+
+        // 定位菜单
+        menu.style.left = `${e.clientX}px`;
+        menu.style.top = `${e.clientY}px`;
+        menu.classList.add('sp-menu-visible');
+    }
+
+    hideContextMenu() {
+        document.getElementById('sp-context-menu')?.classList.remove('sp-menu-visible');
+    }
+
+    handleMenuAction(action) {
+        if (!this.contextTarget) return;
+        const { row, col } = this.contextTarget;
+
+        switch (action) {
+            case 'set-aisle':
+                if (!this.aisles.includes(col)) {
+                    this.aisles.push(col);
+                    this.showToast(`第 ${col + 1} 列设为过道`, 'success');
+                }
+                break;
+            case 'clear-aisle':
+                this.aisles = this.aisles.filter(a => a !== col);
+                this.showToast(`第 ${col + 1} 列取消过道`, 'success');
+                break;
+            case 'clear-seat':
+                if (this.layout[row]?.[col]) {
+                    this.layout[row][col] = null;
+                    this.showToast('座位已清空', 'success');
+                }
+                break;
+        }
+
+        this.hideContextMenu();
+        this.renderGrid();
     }
 
     // ========== API 调用 ==========
