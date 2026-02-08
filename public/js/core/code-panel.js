@@ -273,11 +273,51 @@ export class CodePanel {
     }
 
     /**
-     * 渲染当前代码
+     * ✨ 新增：在编辑器中高亮显示错误行
+     */
+    highlightError(errorDetails) {
+        if (!this.monacoEditor || !errorDetails) return;
+
+        // 简单的正则匹配 Python 报错行号
+        // 格式通常是: File "...", line 10, in ...
+        const lineMatch = errorDetails.match(/line (\d+)/);
+        if (lineMatch) {
+            const lineNumber = parseInt(lineMatch[1]);
+
+            // 在 Monaco Editor 中设置错误标记
+            const model = this.monacoEditor.getModel();
+            monaco.editor.setModelMarkers(model, "owner", [{
+                startLineNumber: lineNumber,
+                startColumn: 1,
+                endLineNumber: lineNumber,
+                endColumn: 1000,
+                message: errorDetails.split('\n').slice(-2).join('\n'), // 取最后两行报错信息
+                severity: monaco.MarkerSeverity.Error
+            }]);
+
+            // 自动滚动到错误行
+            this.monacoEditor.revealLineInCenter(lineNumber);
+        }
+    }
+
+    /**
+     * ✨ 新增：清除所有错误标记
+     */
+    clearErrors() {
+        if (!this.monacoEditor) return;
+        const model = this.monacoEditor.getModel();
+        monaco.editor.setModelMarkers(model, "owner", []);
+    }
+
+    /**
+     * 渲染当前代码 (已升级：支持错误高亮)
      */
     async renderCode(codeOverride = null, recordHistory = true) {
         const code = codeOverride || (this.monacoEditor ? this.monacoEditor.getValue() : this.currentCode);
         if (!code) return;
+
+        // 1. 清除之前的错误标记
+        this.clearErrors();
 
         const renderBtn = this.elements.renderBtn;
         if (renderBtn) {
@@ -318,7 +358,16 @@ export class CodePanel {
                 // But updateVersionIndicator operates on #manim-history-root which is stable now.
                 this.updateVersionIndicator();
             } else {
-                alert('渲染失败: ' + (data.error || 'Unknown error'));
+                // ❌ 失败时：调用高亮函数
+                console.error('Render Failed:', data.error);
+                // 优先显示详细信息，如果没有则显示 error
+                const errorMsg = data.details || data.error || '未知错误';
+                this.highlightError(errorMsg);
+
+                // 仅在非语法错误时弹窗 (语法错误直接看编辑器红线)
+                if (!errorMsg.includes('line')) {
+                    alert('渲染失败: ' + errorMsg);
+                }
             }
         } catch (err) {
             console.error('Render Error:', err);
@@ -327,7 +376,7 @@ export class CodePanel {
             if (renderBtn) {
                 renderBtn.disabled = false;
                 renderBtn.innerHTML = '<i data-lucide="play" style="width:16px;"></i> 运行';
-                lucide.createIcons();
+                if (window.lucide) lucide.createIcons();
             }
         }
     }
@@ -379,6 +428,12 @@ export class CodePanel {
                 horizontal: 'auto',
                 useShadows: false
             }
+        });
+
+        // ✨ 新增：绑定 Ctrl+S (或 Cmd+S) 触发渲染
+        this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+            console.log('⌨️ Shortcut: Ctrl+S triggered render');
+            this.renderCode();
         });
 
         // Apply pending history or code if available

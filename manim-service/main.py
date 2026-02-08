@@ -53,11 +53,23 @@ def load_cache():
             return {}
     return {}
 
-def save_cache_entry(prompt, video_url):
-    """保存缓存条目，使用MD5作为键"""
+def get_current_code_content():
+    """安全获取当前场景代码的完整内容"""
+    if os.path.exists(SCENE_FILE):
+        try:
+            with open(SCENE_FILE, "r", encoding="utf-8") as f:
+                return f.read()
+        except:
+            return ""
+    return ""
+
+def save_cache_entry(prompt, video_url, current_code=""):
+    """保存缓存条目，使用 Prompt + 当前代码内容的 MD5 作为键"""
     cache = load_cache()
-    # 使用 Prompt 的 MD5 作为键，避免特殊字符问题，确保唯一性
-    key = hashlib.md5(prompt.strip().encode('utf-8')).hexdigest()
+    # 核心修改：Key 包含了 prompt 和 current_code，确保上下文一致才命中
+    content = f"{prompt.strip()}_{current_code.strip()}"
+    key = hashlib.md5(content.encode('utf-8')).hexdigest()
+    
     cache[key] = video_url
     try:
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
@@ -65,10 +77,11 @@ def save_cache_entry(prompt, video_url):
     except Exception as e:
         print(f"⚠️ 缓存保存失败: {e}")
 
-def get_cached_video(prompt):
-    """尝试获取缓存的视频链接"""
+def get_cached_video(prompt, current_code=""):
+    """尝试获取缓存的视频链接，必须匹配当前代码上下文"""
     cache = load_cache()
-    key = hashlib.md5(prompt.strip().encode('utf-8')).hexdigest()
+    content = f"{prompt.strip()}_{current_code.strip()}"
+    key = hashlib.md5(content.encode('utf-8')).hexdigest()
     return cache.get(key)
 
 # ================= 🔍 代码分析器 (静态AST) =================
@@ -250,14 +263,33 @@ class SmartContextManager:
         
         recent = conversation[-3:] if len(conversation) >= 3 else conversation
         
-        objects = []
+        objects_desc = [] # 用来存描述字符串，给 AI 看
+        raw_objects = []  # 用来存原始数据
         styles = []
         intents = []
         
         for entry in recent:
             if entry.get("code_analysis"):
                 objs = entry.get("code_analysis", {}).get("objects", [])
-                objects.extend(objs)
+                
+                # ✨ 新增：处理复杂对象格式
+                for obj in objs:
+                    if isinstance(obj, dict):
+                        # 如果是侦探抓回来的详细数据
+                        desc = f"{obj.get('type', '未知对象')}"
+                        if 'pos' in obj:
+                            desc += f"(位置:{obj['pos']})"
+                        if 'color' in obj:
+                            desc += f"(颜色:{obj['color']})"
+                        if 'content' in obj:
+                            desc += f"(内容:'{obj['content']}')"
+                        objects_desc.append(desc)
+                        raw_objects.append(obj.get('type', 'Unknown')) # 简略版用于前端标签
+                    elif isinstance(obj, str):
+                        # 兼容旧数据的字符串格式
+                        objects_desc.append(obj)
+                        raw_objects.append(obj)
+            
             
             if entry.get("user"):
                 user_text = entry["user"].lower()
@@ -272,19 +304,20 @@ class SmartContextManager:
                 styles.append("使用坐标轴")
         
         # 去重
-        objects = list(set(objects))
+        objects_desc = list(set(objects_desc))
         styles = list(set(styles))
         intents = list(set(intents))
         
         summary = f"最近{len(recent)}次交互中："
-        if objects:
-            summary += f"\n- 已创建对象：{', '.join(objects[:5])}"
+        if objects_desc:
+            # 把详细的描述给 AI
+            summary += f"\n- 屏幕上的对象状态：{'; '.join(objects_desc[:10])}"
         if styles:
             summary += f"\n- 当前风格：{', '.join(styles)}"
         
         return {
             "text": summary,
-            "objects": objects,
+            "objects": list(set(raw_objects)), # 给前端显示的简单标签
             "current_style": styles[0] if styles else "无特定风格"
         }
     
@@ -312,6 +345,36 @@ class SmartContextManager:
             return {"status": "error", "message": str(e)}
 
 context_manager = SmartContextManager()
+
+def validate_code_completeness(code: str):
+    """
+    🛡️ 代码完整性“安检门”
+    检查 AI 是否偷懒使用了省略号或占位符
+    """
+    # AI 偷懒的常见嫌疑特征
+    suspicious_patterns = [
+        r"#\s*\.\.\.",             # 匹配 # ...
+        r"^\s*\.\.\.\s*$",         # 匹配单行的 ...
+        r"#\s*rest of code",       # 匹配 # rest of code
+        r"#\s*code unchanged",     # 匹配 # code unchanged
+        r"#\s*previous code",      # 匹配 # previous code
+        r"class .*\(.*\):\s*pass", # 匹配 class X: pass (虽然可能是合法的，但在Manim里通常意味着偷懒)
+    ]
+    
+    # 1. 检查特征词
+    for pattern in suspicious_patterns:
+        if re.search(pattern, code, re.MULTILINE | re.IGNORECASE):
+            return False, f"检测到省略占位符 (匹配: {pattern})，代码不完整。"
+            
+    # 2. 检查长度 (Manim 代码通常不会只有几行)
+    if len(code.strip().split('\n')) < 5:
+        return False, "代码行数过少，可能不完整。"
+        
+    # 3. 检查关键结构
+    if "class " not in code or "def construct" not in code:
+        return False, "缺失类定义或 construct 方法。"
+        
+    return True, "完整"
 
 def extract_code_from_markdown(text):
     """从文本中提取代码块"""
@@ -341,8 +404,8 @@ def extract_json_from_response(text):
         pass
     return None
 
-def run_manim_safe(cmd):
-    """安全运行Manim命令"""
+def run_manim_safe(cmd, timeout=MANIM_TIMEOUT):
+    """安全运行Manim命令 (带超时和限制)"""
     try:
         result = subprocess.run(
             cmd, 
@@ -350,7 +413,7 @@ def run_manim_safe(cmd):
             text=True, 
             encoding='utf-8',
             errors='ignore',
-            timeout=MANIM_TIMEOUT
+            timeout=timeout
         )
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
@@ -366,11 +429,23 @@ async def find_video_file(search_dir, filename_prefix):
                 return os.path.join(root, file)
     return None
 
+async def find_image_file(search_dir, filename_prefix):
+    """查找图片文件"""
+    for root, dirs, files in os.walk(search_dir):
+        for file in files:
+            if file.endswith(".png") and filename_prefix in file:
+                return os.path.join(root, file)
+    return None
+
 # ================= 🚀 核心工作流逻辑 (完整4步 + WebSocket + 侦探) =================
 async def process_chat_workflow(prompt: str, websocket: WebSocket):
     """处理核心业务逻辑，通过 WebSocket 发送实时进度"""
     request_id = str(uuid.uuid4())[:8]
     output_filename = f"video_{request_id}"
+    
+    # ✨ 新增：在开始任何处理前，先记录当前的“代码快照”
+    # 这是为了确保缓存 Key 对应的是“执行指令前”的状态
+    current_code_snapshot = get_current_code_content()
     
     # 辅助函数：发送进度
     async def send_status(step, message):
@@ -456,6 +531,13 @@ async def process_chat_workflow(prompt: str, websocket: WebSocket):
         draft_code = extract_code_from_markdown(gen_response.choices[0].message.content)
         gen_time = time.time() - start_time
         
+        # 🛡️ 安检 1：检查生成器初稿
+        is_valid, reason = validate_code_completeness(draft_code)
+        if not is_valid:
+            print(f"[{request_id}] ⚠️ 生成器偷懒了: {reason}")
+            # 如果初稿就不完整，我们让分析器知道这一点，迫使它在下一步修复
+            draft_code += f"\n\n# SYSTEM WARNING: The code above is TRUNCATED/INCOMPLETE ({reason}). You MUST fix this in the next step by rewriting the FULL code."
+        
         # =======================================================
         # ⚖️ 第二步：分析器 - 上下文感知质检
         # =======================================================
@@ -507,6 +589,78 @@ async def process_chat_workflow(prompt: str, websocket: WebSocket):
         final_code = extract_code_from_markdown(imp_response.choices[0].message.content)
         imp_time = time.time() - imp_start
         
+        # 🛡️ 安检 2：检查改进器终稿
+        is_valid_final, reason_final = validate_code_completeness(final_code)
+        if not is_valid_final:
+            print(f"[{request_id}] ❌ 改进器依然偷懒: {reason_final}")
+            # 这是一个严重错误，触发紧急修复机制
+            # 我们通过抛出异常或覆盖 final_code 来强制进入 Step 4 的修复流程
+            # 这里我们构造一个假的报错，让下面的 Emergency Fixer 去处理
+            final_code = f"# INCOMPLETE CODE GENERATED\n# Error: {reason_final}\n# Please regenerate the FULL code.\n" + final_code
+        
+        # 🔍 提前分析代码结构 (为了获取类名)
+        code_analysis = analyze_code_structure(final_code)
+        scene_name = code_analysis.get("scene_class") or DEFAULT_SCENE_NAME
+
+        # ================= ⚡ STEP 3.5: 极速静态预览 (Flash Preview) =================
+        # 既然你性子急，我们先花 2 秒生成一张静态图给你看，不用干等视频
+        try:
+            await send_status("preview", "🚀 正在生成静态预览...")
+            
+            # 创建预览专用的临时环境
+            preview_dir = os.path.join(TEMP_DIR, f"preview_{request_id}")
+            os.makedirs(preview_dir, exist_ok=True)
+            preview_file = os.path.join(preview_dir, "preview_scene.py")
+            
+            with open(preview_file, "w", encoding="utf-8") as f:
+                f.write(final_code)
+            
+            # 关键参数解释:
+            # -s: save_last_frame (只渲染最后一帧，不做视频)
+            # -ql: quality_low (480p，速度最快)
+            # --format=png: 输出图片格式
+            cmd_preview = [
+                sys.executable, "-m", "manim",
+                "-ql", "-s", "--format=png",
+                "--media_dir", preview_dir,
+                "-o", "preview_image",
+                preview_file,
+                scene_name
+            ]
+            
+            # 设定 20秒 超时，避免预览卡太久喧宾夺主
+            p_code, _, _ = await asyncio.to_thread(run_manim_safe, cmd_preview, timeout=20)
+            
+            if p_code == 0:
+                # 寻找生成的 png 文件
+                preview_image_path = None
+                for root, _, files in os.walk(preview_dir):
+                    for f in files:
+                        if f.endswith(".png"):
+                            preview_image_path = os.path.join(root, f)
+                            break
+                
+                if preview_image_path:
+                    # 移动到静态资源目录
+                    target_preview = f"preview_{request_id}.png"
+                    shutil.move(preview_image_path, os.path.join(STATIC_DIR, target_preview))
+                    
+                    # ⚡ 立即推送图片给前端
+                    if websocket:
+                        await websocket.send_json({
+                            "type": "preview",
+                            "url": f"/static/{target_preview}",
+                            "message": "静态预览已就绪 (高清视频渲染中...)"
+                        })
+                        print(f"[{request_id}] 🖼️ 预览图已发送")
+        except Exception as e:
+            # 预览失败不要紧，不要打断主流程
+            print(f"[{request_id}] ⚠️ 预览生成跳过: {e}")
+        finally:
+            # 清理预览临时文件
+            try: shutil.rmtree(preview_dir, ignore_errors=True)
+            except: pass
+
         # =======================================================
         # 🎬 第四步：渲染执行 (并发隔离 + 动态侦探)
         # =======================================================
@@ -528,29 +682,56 @@ async def process_chat_workflow(prompt: str, websocket: WebSocket):
         local_scene_file = os.path.join(request_dir, "current_scene.py")
         dump_file = os.path.join(request_dir, "objects_dump.json").replace("\\", "/")
         
-        # 🔥【关键】注入 Inspector 代码 (侦探) 🔥
-        # 这是一个继承自用户 Scene 的子类，专门用于在 tear_down 时窃取对象列表
+        # 🔥【关键】注入 Inspector 代码 (侦探升级版) 🔥
+        # 这是一个继承自用户 Scene 的子类，专门用于在 tear_down 时窃取对象详细信息
         inspector_class_name = f"Inspector_{request_id}"
         inspector_code = f"""
 import json
-from manim import Mobject
+from manim import Mobject, Text, Tex, MathTex, VMobject
+
 class {inspector_class_name}({scene_name}):
     def tear_down(self):
         try:
             detected_objects = []
-            # 1. 扫描属性 (self.xxx)
-            for name, value in self.__dict__.items():
-                if isinstance(value, Mobject):
-                    detected_objects.append(name)
-            # 2. 扫描屏幕上的对象 (self.mobjects)
-            for mobj in self.mobjects:
-                name = mobj.__class__.__name__
-                if name not in detected_objects:
-                    detected_objects.append(name)
             
-            # 将检测到的对象写入临时文件
+            # 扫描屏幕上的对象 (self.mobjects)
+            for mobj in self.mobjects:
+                # 1. 基础信息：类型
+                info = {{
+                    "type": mobj.__class__.__name__,
+                    "id": str(id(mobj))
+                }}
+                
+                # 2. 位置信息 (保留2位小数)
+                try:
+                    center = mobj.get_center()
+                    info["pos"] = [round(x, 2) for x in center.tolist()[:3]]
+                except:
+                    info["pos"] = [0, 0, 0]
+                    
+                # 3. 颜色信息
+                try:
+                    if hasattr(mobj, "get_color"):
+                        c = mobj.get_color()
+                        info["color"] = c.name if hasattr(c, "name") else str(c)
+                    elif hasattr(mobj, "color"):
+                        info["color"] = str(mobj.color)
+                except:
+                    info["color"] = "unknown"
+                
+                # 4. 文本内容 (如果是文字类)
+                if isinstance(mobj, (Text, Tex, MathTex)):
+                    # 尝试各种可能的属性名
+                    for attr in ["original_text", "text", "tex_string"]:
+                        if hasattr(mobj, attr):
+                            info["content"] = getattr(mobj, attr)
+                            break
+                            
+                detected_objects.append(info)
+            
+            # 将检测到的详细对象列表写入临时文件
             with open(r"{dump_file}", "w", encoding="utf-8") as f:
-                json.dump(list(set(detected_objects)), f, ensure_ascii=False)
+                json.dump(detected_objects, f, ensure_ascii=False)
         except Exception as e:
             print(f"Inspector Error: {{e}}")
         finally:
@@ -667,7 +848,7 @@ class {inspector_class_name}({scene_name}):
         
         if video_url:
             # 存入缓存
-            save_cache_entry(prompt, video_url)
+            save_cache_entry(prompt, video_url, current_code_snapshot)
             
             if websocket:
                 await websocket.send_json({
@@ -828,6 +1009,11 @@ async def modify_code_with_ai(code: str, instruction: str, websocket: WebSocket)
         
         modified_code = extract_code_from_markdown(response.choices[0].message.content)
         
+        # 🛡️ 安检
+        is_valid, reason = validate_code_completeness(modified_code)
+        if not is_valid:
+             raise Exception(f"AI 生成了不完整的代码: {reason}")
+             
         print(f"[{request_id}] ✅ AI 修改完成")
         
         await websocket.send_json({
@@ -878,7 +1064,11 @@ async def websocket_endpoint(websocket: WebSocket):
             print(f"{'='*60}")
 
             # 1. 检查缓存
-            cached_video = get_cached_video(prompt)
+            # 0. 获取当前代码上下文 (用于缓存指纹)
+            current_code_snapshot = get_current_code_content()
+
+            # 1. 检查缓存 (传入当前代码)
+            cached_video = get_cached_video(prompt, current_code_snapshot)
             if cached_video:
                 print(f"✨ 命中缓存: {prompt}")
                 await websocket.send_json({
@@ -1093,9 +1283,62 @@ async def http_render_code(request: RenderRequest):
                     "videoBase64": video_base64
                 })
             else:
+                # 尝试查找图片 (如果 Manim 因为是静态场景只生成了图片)
+                image_path = await find_image_file(request_dir, output_filename)
+                
+                if image_path:
+                    print(f"[{request_id}] ⚠️ 未找到视频，但在 {image_path} 找到了图片。正在转换为 1s 视频...")
+                    target_name = f"{output_filename}.mp4"
+                    target_path = os.path.join(STATIC_DIR, target_name)
+                    
+                    # 使用 ffmpeg 将图片转为 1s 视频
+                    ffmpeg_cmd = [
+                        "ffmpeg", "-y",
+                        "-loop", "1", "-i", image_path,
+                        "-c:v", "libx264", "-t", "1", "-pix_fmt", "yuv420p",
+                        target_path
+                    ]
+                    
+                    bg_proc = await asyncio.create_subprocess_exec(
+                        *ffmpeg_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    _, _ = await bg_proc.communicate()
+                    
+                    if bg_proc.returncode == 0 and os.path.exists(target_path):
+                        video_url = f"/static/{target_name}"
+                        
+                        import base64
+                        with open(target_path, "rb") as vf:
+                            video_base64 = base64.b64encode(vf.read()).decode('utf-8')
+                            
+                        print(f"[{request_id}] ✅ 图片转视频成功!")
+                        
+                        # 清理临时目录
+                        try:
+                            shutil.rmtree(request_dir, ignore_errors=True)
+                        except:
+                            pass
+                        
+                        return JSONResponse({
+                            "success": True,
+                            "videoUrl": video_url,
+                            "videoBase64": video_base64,
+                            "warning": "这是一个静态场景"
+                        })
+                
+                # Debug logging if still failing
+                print(f"[{request_id}] ❌ 渲染完成但未找到视频或图片文件")
+                print(f"[{request_id}] Stdout: {stdout[-200:]}")
+                print(f"[{request_id}] Stderr: {stderr[-200:]}")
+                print(f"[{request_id}] Files in {request_dir}:")
+                for root, dirs, files in os.walk(request_dir):
+                    print(f"  {root}: {files}")
+                
                 return JSONResponse({
                     "success": False,
-                    "error": "渲染完成但未找到视频文件"
+                    "error": "渲染完成但未找到任何输出文件"
                 }, status_code=500)
         else:
             error_details = stderr[-500:] if stderr else "未知错误"
