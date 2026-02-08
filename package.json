@@ -6,7 +6,8 @@
     "scripts": {
         "start": "node gateway/server.js",
         "dev": "node --watch gateway/server.js",
-        "manim": "cd manim-service && python main.py"
+        "manim": "cd manim-service && python main.py",
+        "dev:all": "concurrently \"npm start\" \"cd manim-service && python main.py\""
     },
     "keywords": [
         "ai",
@@ -34,5 +35,8 @@
         "node-fetch": "^3.3.2",
         "sharp": "^0.33.2",
         "three": "^0.160.0"
+    },
+    "devDependencies": {
+        "concurrently": "^9.2.1"
     }
 }

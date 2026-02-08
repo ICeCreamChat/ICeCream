@@ -17,6 +17,7 @@
     <link rel="stylesheet" href="css/main.css">
     <link rel="stylesheet" href="css/smart-board.css">
     <link rel="stylesheet" href="css/mobile.css">
+    <link rel="stylesheet" href="css/tools.css">
 
     <!-- Google Fonts -->
     <!-- Google Fonts (Pro Max Design System) -->
@@ -179,6 +180,9 @@
                     </div>
 
                     <div class="header-right">
+                        <button class="icon-btn apps-btn" id="apps-btn" title="课堂工具箱">
+                            <i data-lucide="layout-grid"></i>
+                        </button>
                         <button class="icon-btn" id="theme-toggle" title="切换主题">
                             <i data-lucide="sun" class="icon-light"></i>
                             <i data-lucide="moon" class="icon-dark"></i>
@@ -495,6 +499,8 @@
     <script src="js/cropper_handler.js"></script>
     <script src="js/context_panel.js"></script>
     <script type="module" src="js/particle_engine.js"></script>
+    <!-- Tools Module -->
+    <script type="module" src="js/tools/app-launcher.js"></script>
     <!-- Main App -->
     <script type="module" src="js/app.js"></script>
 </body>

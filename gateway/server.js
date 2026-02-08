@@ -215,10 +215,12 @@ app.post('/api/message', upload.single('image'), intentRouter);
 import chatRoutes from './routes/chat.js';
 import manimRoutes from './routes/manim.js';
 import solverRoutes from './routes/solver.js';
+import toolsRoutes from './routes/tools.js';
 
 app.use('/api/chat', chatRoutes);
 app.use('/api/manim', manimRoutes);
-app.use('/api/solver', solverRoutes); // Removed upload.single('image') from here
+app.use('/api/solver', solverRoutes);
+app.use('/api/tools', toolsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

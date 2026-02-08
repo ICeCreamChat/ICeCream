@@ -14,6 +14,7 @@ import { sessionManager } from './core/session-manager.js';
 import { imageUploader } from './core/image-uploader.js';
 import { CodePanel } from './core/code-panel.js';
 import { showToast, devLog, dataURLtoBlob } from './utils/helpers.js';
+import appLauncher from './tools/app-launcher.js';
 
 
 
@@ -81,6 +82,7 @@ class ICeCreamApp {
         this.elements.moreBtn = document.getElementById('more-btn');
         this.elements.dropdownMenu = document.getElementById('dropdownMenu');
         this.elements.btnClear = document.getElementById('btn-clear');
+        this.elements.appsBtn = document.getElementById('apps-btn');
     }
 
     /**
@@ -209,6 +211,11 @@ class ICeCreamApp {
         // 点击外部关闭下拉菜单
         document.addEventListener('click', () => {
             this.elements.dropdownMenu?.classList.remove('show');
+        });
+
+        // 课堂工具箱按钮
+        this.elements.appsBtn?.addEventListener('click', () => {
+            appLauncher.open();
         });
     }
 
@@ -362,5 +369,6 @@ window.ICeCream = {
     modeSwitcher,
     messageHandler,
     sessionManager,
-    showToast
+    showToast,
+    appLauncher
 };
