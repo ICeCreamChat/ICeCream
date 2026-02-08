@@ -18,6 +18,7 @@ class SeatingPlanner {
         };
         this.unsatisfied = [];
         this.container = null;
+        this.dragSource = null; // 拖拽源位置
     }
 
     /**
@@ -227,6 +228,11 @@ class SeatingPlanner {
                             cell.innerHTML = this.renderStudentCard(student);
                             cell.classList.add('sp-occupied');
                             
+                            // 启用拖拽
+                            cell.setAttribute('draggable', 'true');
+                            cell.addEventListener('dragstart', (e) => this.handleDragStart(e, r, c));
+                            cell.addEventListener('dragend', (e) => this.handleDragEnd(e));
+                            
                             // 性别颜色
                             if (student.gender === 'M') cell.classList.add('sp-male');
                             if (student.gender === 'F') cell.classList.add('sp-female');
@@ -239,6 +245,14 @@ class SeatingPlanner {
                             }
                         }
                     }
+                }
+
+                // 所有非过道单元格都可以接受放置
+                if (!this.aisles.includes(c)) {
+                    cell.addEventListener('dragover', (e) => this.handleDragOver(e));
+                    cell.addEventListener('dragenter', (e) => this.handleDragEnter(e, cell));
+                    cell.addEventListener('dragleave', (e) => this.handleDragLeave(e, cell));
+                    cell.addEventListener('drop', (e) => this.handleDrop(e, r, c));
                 }
 
                 grid.appendChild(cell);
@@ -279,6 +293,112 @@ class SeatingPlanner {
         }
         
         return icons.join('');
+    }
+
+    // ================================
+    // 拖拽事件处理
+    // ================================
+
+    /**
+     * 拖拽开始
+     */
+    handleDragStart(e, row, col) {
+        this.dragSource = { row, col };
+        e.target.classList.add('sp-dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', JSON.stringify({ row, col }));
+        
+        // 延迟添加拖拽中样式，避免立即影响拖拽图像
+        setTimeout(() => {
+            e.target.style.opacity = '0.5';
+        }, 0);
+    }
+
+    /**
+     * 拖拽结束
+     */
+    handleDragEnd(e) {
+        e.target.classList.remove('sp-dragging');
+        e.target.style.opacity = '1';
+        this.dragSource = null;
+        
+        // 清除所有高亮
+        document.querySelectorAll('.sp-cell.sp-drag-over').forEach(cell => {
+            cell.classList.remove('sp-drag-over');
+        });
+    }
+
+    /**
+     * 拖拽经过
+     */
+    handleDragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    }
+
+    /**
+     * 拖拽进入
+     */
+    handleDragEnter(e, cell) {
+        e.preventDefault();
+        if (!cell.classList.contains('sp-dragging')) {
+            cell.classList.add('sp-drag-over');
+        }
+    }
+
+    /**
+     * 拖拽离开
+     */
+    handleDragLeave(e, cell) {
+        cell.classList.remove('sp-drag-over');
+    }
+
+    /**
+     * 放置
+     */
+    handleDrop(e, targetRow, targetCol) {
+        e.preventDefault();
+        
+        const cell = e.currentTarget;
+        cell.classList.remove('sp-drag-over');
+        
+        if (!this.dragSource) return;
+        
+        const { row: sourceRow, col: sourceCol } = this.dragSource;
+        
+        // 不能放到过道
+        if (this.aisles.includes(targetCol)) return;
+        
+        // 同一位置不交换
+        if (sourceRow === targetRow && sourceCol === targetCol) return;
+        
+        // 执行交换
+        this.swapSeats(sourceRow, sourceCol, targetRow, targetCol);
+    }
+
+    /**
+     * 交换座位
+     */
+    swapSeats(r1, c1, r2, c2) {
+        // 确保 layout 数组存在
+        if (!this.layout[r1]) this.layout[r1] = [];
+        if (!this.layout[r2]) this.layout[r2] = [];
+        
+        // 交换
+        const temp = this.layout[r1][c1];
+        this.layout[r1][c1] = this.layout[r2][c2];
+        this.layout[r2][c2] = temp;
+        
+        // 重新渲染
+        this.renderGrid();
+        
+        // 获取学生名
+        const student1 = this.students.find(s => s.id === this.layout[r1][c1]);
+        const student2 = this.students.find(s => s.id === this.layout[r2][c2]);
+        const name1 = student1?.name || '空位';
+        const name2 = student2?.name || '空位';
+        
+        this.showToast(`已交换: ${name2} ↔ ${name1}`, 'success');
     }
 
     /**
