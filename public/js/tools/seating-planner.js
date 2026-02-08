@@ -41,6 +41,11 @@ class SeatingPlanner {
                         <span class="sp-badge" id="sp-student-count">0 人</span>
                     </div>
                     <div class="sp-toolbar-right">
+                        <div class="sp-legend">
+                            <span class="sp-legend-item"><span class="sp-dot sp-dot-male"></span>男</span>
+                            <span class="sp-legend-item"><span class="sp-dot sp-dot-female"></span>女</span>
+                        </div>
+                        <div class="sp-toolbar-divider"></div>
                         <button id="sp-export-png" class="sp-icon-btn" disabled title="导出图片">
                             <i data-lucide="image"></i>
                         </button>
@@ -133,14 +138,6 @@ class SeatingPlanner {
                         <div class="sp-classroom">
                             <div class="sp-podium">📚 讲台</div>
                             <div id="sp-grid" class="sp-grid"></div>
-                        </div>
-                        <!-- 图例 -->
-                        <div class="sp-legend">
-                            <span class="sp-legend-item"><span class="sp-dot sp-dot-male"></span> 男生</span>
-                            <span class="sp-legend-item"><span class="sp-dot sp-dot-female"></span> 女生</span>
-                            <span class="sp-legend-item">👓 前排</span>
-                            <span class="sp-legend-item">🚫 避嫌</span>
-                            <span class="sp-legend-item">❤️ 心愿</span>
                         </div>
                     </section>
                 </main>
