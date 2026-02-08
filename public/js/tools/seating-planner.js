@@ -1,6 +1,6 @@
 /**
  * Smart Seating Planner - 智能座位编排系统
- * 前端模块
+ * 完全重构版 - Premium SaaS Dashboard Style
  */
 
 class SeatingPlanner {
@@ -10,7 +10,7 @@ class SeatingPlanner {
         this.layout = [];
         this.rows = 6;
         this.cols = 8;
-        this.aisles = [4]; // 默认中间过道
+        this.aisles = [];
         this.strategy = {
             genderBalance: true,
             gradeBalance: true,
@@ -18,12 +18,9 @@ class SeatingPlanner {
         };
         this.unsatisfied = [];
         this.container = null;
-        this.dragSource = null; // 拖拽源位置
+        this.dragSource = null;
     }
 
-    /**
-     * 初始化模块
-     */
     init(container) {
         this.container = container;
         this.render();
@@ -31,177 +28,174 @@ class SeatingPlanner {
         console.log('[SeatingPlanner] Initialized');
     }
 
-    /**
-     * 渲染主界面
-     */
     render() {
         this.container.innerHTML = `
-            <div class="seating-planner">
-                <div class="sp-sidebar">
-                    <!-- 学生名单 -->
-                    <div class="sp-section">
-                        <div class="sp-section-header">
-                            <span>📝 学生名单</span>
-                            <span class="sp-count" id="sp-student-count">0 人</span>
-                        </div>
-                        <textarea id="sp-students-input" class="sp-textarea" 
-                            placeholder="粘贴学生名单 (支持 Excel)
-格式: 姓名 [性别] [成绩]
-例如:
-张三	男	85
-李四	女	92"></textarea>
-                        <button id="sp-parse-students" class="sp-btn sp-btn-secondary">
-                            <i data-lucide="upload"></i> 导入名单
-                        </button>
-                        <div id="sp-students-preview" class="sp-preview hidden"></div>
+            <div class="sp-app">
+                <!-- 顶部工具栏 -->
+                <header class="sp-toolbar">
+                    <div class="sp-toolbar-left">
+                        <h1 class="sp-title">
+                            <span class="sp-title-icon">🪑</span>
+                            智能座位安排
+                        </h1>
+                        <span class="sp-badge" id="sp-student-count">0 人</span>
                     </div>
-
-                    <!-- 约束描述 -->
-                    <div class="sp-section">
-                        <div class="sp-section-header">
-                            <span>📣 约束描述</span>
-                        </div>
-                        <textarea id="sp-constraints-input" class="sp-textarea" 
-                            placeholder="用自然语言描述要求，例如:
-张三视力不好要坐前排
-李四和王五老说话别放一起
-赵六想跟钱七坐"></textarea>
-                        <button id="sp-parse-constraints" class="sp-btn sp-btn-secondary">
-                            <i data-lucide="search"></i> 解析约束
+                    <div class="sp-toolbar-right">
+                        <button id="sp-export-png" class="sp-icon-btn" disabled title="导出图片">
+                            <i data-lucide="image"></i>
+                        </button>
+                        <button id="sp-export-excel" class="sp-icon-btn" disabled title="导出Excel">
+                            <i data-lucide="table"></i>
                         </button>
                     </div>
+                </header>
 
-                    <!-- 策略开关 -->
-                    <div class="sp-section">
-                        <div class="sp-section-header">
-                            <span>⚙️ 排座策略</span>
+                <!-- 主体区域 -->
+                <main class="sp-body">
+                    <!-- 左侧控制面板 -->
+                    <aside class="sp-controls">
+                        <!-- Tab 切换 -->
+                        <div class="sp-tabs">
+                            <button class="sp-tab active" data-tab="students">名单</button>
+                            <button class="sp-tab" data-tab="constraints">约束</button>
+                            <button class="sp-tab" data-tab="settings">设置</button>
                         </div>
-                        <div class="sp-strategies">
-                            <label class="sp-checkbox">
-                                <input type="checkbox" id="sp-gender" checked>
-                                <span>👫 男女搭配</span>
-                            </label>
-                            <label class="sp-checkbox">
-                                <input type="checkbox" id="sp-grade" checked>
-                                <span>📊 强弱互补</span>
-                            </label>
-                            <label class="sp-checkbox">
-                                <input type="checkbox" id="sp-height">
-                                <span>📏 身高排序</span>
-                            </label>
-                        </div>
-                    </div>
 
-                    <!-- 教室设置 -->
-                    <div class="sp-section">
-                        <div class="sp-section-header">
-                            <span>🏫 教室设置</span>
-                        </div>
-                        <div class="sp-grid-settings">
-                            <label>
-                                行数: <input type="number" id="sp-rows" value="6" min="1" max="10">
-                            </label>
-                            <label>
-                                列数: <input type="number" id="sp-cols" value="8" min="1" max="12">
-                            </label>
-                        </div>
-                    </div>
-                </div>
+                        <!-- Tab 内容 -->
+                        <div class="sp-tab-content">
+                            <!-- 名单 Tab -->
+                            <div class="sp-panel" id="tab-students">
+                                <textarea id="sp-students-input" class="sp-input" 
+                                    placeholder="粘贴学生名单，每行一人&#10;&#10;支持格式:&#10;张三&#10;李四 男 85&#10;王五,女,92"></textarea>
+                                <button id="sp-parse-students" class="sp-btn sp-btn-block">
+                                    <i data-lucide="upload"></i> 导入名单
+                                </button>
+                                <div id="sp-students-preview" class="sp-preview"></div>
+                            </div>
 
-                <div class="sp-main">
-                    <!-- 教室视图 -->
-                    <div class="sp-classroom">
-                        <div class="sp-blackboard">讲 台</div>
-                        <div id="sp-grid" class="sp-grid"></div>
-                    </div>
+                            <!-- 约束 Tab -->
+                            <div class="sp-panel hidden" id="tab-constraints">
+                                <textarea id="sp-constraints-input" class="sp-input"
+                                    placeholder="用自然语言描述座位要求&#10;&#10;例如:&#10;张三视力不好要坐前排&#10;李四和王五不能坐一起"></textarea>
+                                <button id="sp-parse-constraints" class="sp-btn sp-btn-block">
+                                    <i data-lucide="wand-2"></i> AI 解析
+                                </button>
+                                <div id="sp-constraints-list" class="sp-list"></div>
+                            </div>
 
-                    <!-- 约束状态 -->
-                    <div class="sp-constraints-panel">
-                        <div class="sp-section-header">
-                            <span>📊 约束状态</span>
+                            <!-- 设置 Tab -->
+                            <div class="sp-panel hidden" id="tab-settings">
+                                <div class="sp-field">
+                                    <label>教室布局</label>
+                                    <div class="sp-field-row">
+                                        <div class="sp-field-item">
+                                            <span>行</span>
+                                            <input type="number" id="sp-rows" value="6" min="1" max="12">
+                                        </div>
+                                        <span class="sp-field-x">×</span>
+                                        <div class="sp-field-item">
+                                            <span>列</span>
+                                            <input type="number" id="sp-cols" value="8" min="1" max="12">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="sp-field">
+                                    <label>排座策略</label>
+                                    <div class="sp-switches">
+                                        <label class="sp-switch">
+                                            <input type="checkbox" id="sp-gender" checked>
+                                            <span class="sp-switch-slider"></span>
+                                            <span class="sp-switch-label">👫 男女搭配</span>
+                                        </label>
+                                        <label class="sp-switch">
+                                            <input type="checkbox" id="sp-grade" checked>
+                                            <span class="sp-switch-slider"></span>
+                                            <span class="sp-switch-label">📊 强弱互补</span>
+                                        </label>
+                                        <label class="sp-switch">
+                                            <input type="checkbox" id="sp-height">
+                                            <span class="sp-switch-slider"></span>
+                                            <span class="sp-switch-label">📏 身高排序</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div id="sp-constraints-list" class="sp-constraints-list">
-                            <div class="sp-empty">暂无约束</div>
-                        </div>
-                    </div>
 
-                    <!-- 操作按钮 -->
-                    <div class="sp-actions">
-                        <button id="sp-generate" class="sp-btn sp-btn-primary" disabled>
+                        <!-- 生成按钮 -->
+                        <button id="sp-generate" class="sp-btn sp-btn-primary sp-btn-block" disabled>
                             <i data-lucide="sparkles"></i> 生成座位表
                         </button>
-                        <button id="sp-export-png" class="sp-btn sp-btn-secondary" disabled>
-                            <i data-lucide="image"></i> 导出图片
-                        </button>
-                        <button id="sp-export-excel" class="sp-btn sp-btn-secondary" disabled>
-                            <i data-lucide="table"></i> 导出Excel
-                        </button>
-                    </div>
-                </div>
+                    </aside>
+
+                    <!-- 右侧教室视图 -->
+                    <section class="sp-classroom-wrapper">
+                        <div class="sp-classroom">
+                            <div class="sp-podium">📚 讲台</div>
+                            <div id="sp-grid" class="sp-grid"></div>
+                        </div>
+                        <!-- 图例 -->
+                        <div class="sp-legend">
+                            <span class="sp-legend-item"><span class="sp-dot sp-dot-male"></span> 男生</span>
+                            <span class="sp-legend-item"><span class="sp-dot sp-dot-female"></span> 女生</span>
+                            <span class="sp-legend-item">👓 前排</span>
+                            <span class="sp-legend-item">🚫 避嫌</span>
+                            <span class="sp-legend-item">❤️ 心愿</span>
+                        </div>
+                    </section>
+                </main>
             </div>
         `;
 
-        // 刷新 Lucide 图标
         if (window.lucide) window.lucide.createIcons();
-
-        // 渲染空网格
         this.renderGrid();
     }
 
-    /**
-     * 绑定事件
-     */
     bindEvents() {
+        // Tab 切换
+        this.container.querySelectorAll('.sp-tab').forEach(tab => {
+            tab.addEventListener('click', () => this.switchTab(tab.dataset.tab));
+        });
+
         // 导入名单
-        document.getElementById('sp-parse-students')?.addEventListener('click', () => {
-            this.parseStudents();
-        });
-
+        document.getElementById('sp-parse-students')?.addEventListener('click', () => this.parseStudents());
+        
         // 解析约束
-        document.getElementById('sp-parse-constraints')?.addEventListener('click', () => {
-            this.parseConstraints();
-        });
-
+        document.getElementById('sp-parse-constraints')?.addEventListener('click', () => this.parseConstraints());
+        
         // 生成座位表
-        document.getElementById('sp-generate')?.addEventListener('click', () => {
-            this.generateSeating();
-        });
-
-        // 导出 PNG
-        document.getElementById('sp-export-png')?.addEventListener('click', () => {
-            this.exportPNG();
-        });
-
-        // 导出 Excel
-        document.getElementById('sp-export-excel')?.addEventListener('click', () => {
-            this.exportExcel();
-        });
+        document.getElementById('sp-generate')?.addEventListener('click', () => this.generateSeating());
+        
+        // 导出
+        document.getElementById('sp-export-png')?.addEventListener('click', () => this.exportPNG());
+        document.getElementById('sp-export-excel')?.addEventListener('click', () => this.exportExcel());
 
         // 策略开关
-        document.getElementById('sp-gender')?.addEventListener('change', (e) => {
-            this.strategy.genderBalance = e.target.checked;
-        });
-        document.getElementById('sp-grade')?.addEventListener('change', (e) => {
-            this.strategy.gradeBalance = e.target.checked;
-        });
-        document.getElementById('sp-height')?.addEventListener('change', (e) => {
-            this.strategy.heightOrder = e.target.checked;
-        });
+        document.getElementById('sp-gender')?.addEventListener('change', e => this.strategy.genderBalance = e.target.checked);
+        document.getElementById('sp-grade')?.addEventListener('change', e => this.strategy.gradeBalance = e.target.checked);
+        document.getElementById('sp-height')?.addEventListener('change', e => this.strategy.heightOrder = e.target.checked);
 
         // 教室设置
-        document.getElementById('sp-rows')?.addEventListener('change', (e) => {
+        document.getElementById('sp-rows')?.addEventListener('change', e => {
             this.rows = parseInt(e.target.value) || 6;
             this.renderGrid();
         });
-        document.getElementById('sp-cols')?.addEventListener('change', (e) => {
+        document.getElementById('sp-cols')?.addEventListener('change', e => {
             this.cols = parseInt(e.target.value) || 8;
             this.renderGrid();
         });
     }
 
-    /**
-     * 渲染座位网格
-     */
+    switchTab(tabId) {
+        // 更新 Tab 按钮
+        this.container.querySelectorAll('.sp-tab').forEach(t => t.classList.remove('active'));
+        this.container.querySelector(`[data-tab="${tabId}"]`)?.classList.add('active');
+        
+        // 更新内容
+        this.container.querySelectorAll('.sp-panel').forEach(p => p.classList.add('hidden'));
+        document.getElementById(`tab-${tabId}`)?.classList.remove('hidden');
+    }
+
     renderGrid() {
         const grid = document.getElementById('sp-grid');
         if (!grid) return;
@@ -212,501 +206,232 @@ class SeatingPlanner {
         for (let r = 0; r < this.rows; r++) {
             for (let c = 0; c < this.cols; c++) {
                 const cell = document.createElement('div');
-                cell.className = 'sp-cell';
+                cell.className = 'sp-seat';
                 cell.dataset.row = r;
                 cell.dataset.col = c;
 
-                // 过道
-                if (this.aisles.includes(c)) {
-                    cell.classList.add('sp-aisle');
-                } else {
-                    // 查找此位置的学生
-                    const studentId = this.layout[r]?.[c];
-                    if (studentId && studentId !== '_aisle_') {
-                        const student = this.students.find(s => s.id === studentId);
-                        if (student) {
-                            cell.innerHTML = this.renderStudentCard(student);
-                            cell.classList.add('sp-occupied');
-                            
-                            // 启用拖拽
-                            cell.setAttribute('draggable', 'true');
-                            cell.addEventListener('dragstart', (e) => this.handleDragStart(e, r, c));
-                            cell.addEventListener('dragend', (e) => this.handleDragEnd(e));
-                            
-                            // 性别颜色
-                            if (student.gender === 'M') cell.classList.add('sp-male');
-                            if (student.gender === 'F') cell.classList.add('sp-female');
-                            
-                            // 约束状态图标
-                            const icons = this.getConstraintIcons(student.id);
-                            if (icons) {
-                                cell.querySelector('.sp-card')?.insertAdjacentHTML('beforeend', 
-                                    `<div class="sp-icons">${icons}</div>`);
-                            }
+                const studentId = this.layout[r]?.[c];
+                if (studentId && studentId !== '_aisle_') {
+                    const student = this.students.find(s => s.id === studentId);
+                    if (student) {
+                        cell.innerHTML = `<span class="sp-seat-name">${student.name}</span>`;
+                        cell.classList.add('sp-seat-filled');
+                        if (student.gender === 'M') cell.classList.add('sp-seat-male');
+                        if (student.gender === 'F') cell.classList.add('sp-seat-female');
+
+                        // 拖拽
+                        cell.setAttribute('draggable', 'true');
+                        cell.addEventListener('dragstart', e => this.handleDragStart(e, r, c));
+                        cell.addEventListener('dragend', e => this.handleDragEnd(e));
+
+                        // 约束图标
+                        const icons = this.getConstraintIcons(student.id);
+                        if (icons) {
+                            cell.insertAdjacentHTML('beforeend', `<span class="sp-seat-icons">${icons}</span>`);
                         }
                     }
                 }
 
-                // 所有非过道单元格都可以接受放置
-                if (!this.aisles.includes(c)) {
-                    cell.addEventListener('dragover', (e) => this.handleDragOver(e));
-                    cell.addEventListener('dragenter', (e) => this.handleDragEnter(e, cell));
-                    cell.addEventListener('dragleave', (e) => this.handleDragLeave(e, cell));
-                    cell.addEventListener('drop', (e) => this.handleDrop(e, r, c));
-                }
+                // Drop 目标
+                cell.addEventListener('dragover', e => this.handleDragOver(e));
+                cell.addEventListener('dragenter', e => this.handleDragEnter(e, cell));
+                cell.addEventListener('dragleave', e => this.handleDragLeave(e, cell));
+                cell.addEventListener('drop', e => this.handleDrop(e, r, c));
 
                 grid.appendChild(cell);
             }
         }
     }
 
-    /**
-     * 渲染学生卡片
-     */
-    renderStudentCard(student) {
-        return `
-            <div class="sp-card" data-id="${student.id}">
-                <span class="sp-name">${student.name}</span>
-            </div>
-        `;
-    }
-
-    /**
-     * 获取学生约束图标
-     */
     getConstraintIcons(studentId) {
         const icons = [];
-        
         for (const c of this.constraints) {
             if (c.target === studentId || c.related === studentId) {
-                // 检查是否满足
                 const unsatisfied = this.unsatisfied.find(u => u.target === studentId);
-                
-                if (c.type === 'front_row') {
-                    icons.push(unsatisfied ? '👓⚠️' : '👓');
-                } else if (c.type === 'avoid') {
-                    icons.push(unsatisfied ? '🚫⚠️' : '🚫');
-                } else if (c.type === 'prefer' || c.type === 'pair') {
-                    icons.push(unsatisfied ? '💔' : '❤️');
-                }
+                if (c.type === 'front_row') icons.push(unsatisfied ? '👓⚠️' : '👓');
+                else if (c.type === 'avoid') icons.push(unsatisfied ? '🚫⚠️' : '🚫');
+                else if (c.type === 'prefer' || c.type === 'pair') icons.push(unsatisfied ? '💔' : '❤️');
             }
         }
-        
         return icons.join('');
     }
 
-    // ================================
-    // 拖拽事件处理
-    // ================================
-
-    /**
-     * 拖拽开始
-     */
+    // ========== 拖拽 ==========
     handleDragStart(e, row, col) {
         this.dragSource = { row, col };
         e.target.classList.add('sp-dragging');
         e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', JSON.stringify({ row, col }));
-        
-        // 延迟添加拖拽中样式，避免立即影响拖拽图像
-        setTimeout(() => {
-            e.target.style.opacity = '0.5';
-        }, 0);
+        setTimeout(() => e.target.style.opacity = '0.4', 0);
     }
 
-    /**
-     * 拖拽结束
-     */
     handleDragEnd(e) {
         e.target.classList.remove('sp-dragging');
         e.target.style.opacity = '1';
         this.dragSource = null;
-        
-        // 清除所有高亮
-        document.querySelectorAll('.sp-cell.sp-drag-over').forEach(cell => {
-            cell.classList.remove('sp-drag-over');
-        });
+        document.querySelectorAll('.sp-seat.sp-drag-over').forEach(c => c.classList.remove('sp-drag-over'));
     }
 
-    /**
-     * 拖拽经过
-     */
-    handleDragOver(e) {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-    }
+    handleDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
+    handleDragEnter(e, cell) { e.preventDefault(); if (!cell.classList.contains('sp-dragging')) cell.classList.add('sp-drag-over'); }
+    handleDragLeave(e, cell) { cell.classList.remove('sp-drag-over'); }
 
-    /**
-     * 拖拽进入
-     */
-    handleDragEnter(e, cell) {
-        e.preventDefault();
-        if (!cell.classList.contains('sp-dragging')) {
-            cell.classList.add('sp-drag-over');
-        }
-    }
-
-    /**
-     * 拖拽离开
-     */
-    handleDragLeave(e, cell) {
-        cell.classList.remove('sp-drag-over');
-    }
-
-    /**
-     * 放置
-     */
     handleDrop(e, targetRow, targetCol) {
         e.preventDefault();
-        
-        const cell = e.currentTarget;
-        cell.classList.remove('sp-drag-over');
-        
+        e.currentTarget.classList.remove('sp-drag-over');
         if (!this.dragSource) return;
-        
-        const { row: sourceRow, col: sourceCol } = this.dragSource;
-        
-        // 不能放到过道
-        if (this.aisles.includes(targetCol)) return;
-        
-        // 同一位置不交换
-        if (sourceRow === targetRow && sourceCol === targetCol) return;
-        
-        // 执行交换
-        this.swapSeats(sourceRow, sourceCol, targetRow, targetCol);
+        const { row: sr, col: sc } = this.dragSource;
+        if (sr === targetRow && sc === targetCol) return;
+        this.swapSeats(sr, sc, targetRow, targetCol);
     }
 
-    /**
-     * 交换座位
-     */
     swapSeats(r1, c1, r2, c2) {
-        // 确保 layout 数组存在
         if (!this.layout[r1]) this.layout[r1] = [];
         if (!this.layout[r2]) this.layout[r2] = [];
-        
-        // 交换
         const temp = this.layout[r1][c1];
         this.layout[r1][c1] = this.layout[r2][c2];
         this.layout[r2][c2] = temp;
-        
-        // 重新渲染
         this.renderGrid();
-        
-        // 获取学生名
-        const student1 = this.students.find(s => s.id === this.layout[r1][c1]);
-        const student2 = this.students.find(s => s.id === this.layout[r2][c2]);
-        const name1 = student1?.name || '空位';
-        const name2 = student2?.name || '空位';
-        
-        this.showToast(`已交换: ${name2} ↔ ${name1}`, 'success');
+        const s1 = this.students.find(s => s.id === this.layout[r1][c1]);
+        const s2 = this.students.find(s => s.id === this.layout[r2][c2]);
+        this.showToast(`已交换: ${s2?.name || '空位'} ↔ ${s1?.name || '空位'}`, 'success');
     }
 
-    /**
-     * 解析学生名单
-     */
+    // ========== API 调用 ==========
     async parseStudents() {
-        const input = document.getElementById('sp-students-input');
-        const text = input?.value?.trim();
-        
-        if (!text) {
-            this.showToast('请输入学生名单', 'warning');
-            return;
-        }
+        const text = document.getElementById('sp-students-input')?.value?.trim();
+        if (!text) return this.showToast('请输入学生名单', 'warning');
 
         try {
-            const response = await fetch('/api/tools/seating/parse-students', {
+            const res = await fetch('/api/tools/seating/parse-students', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ text })
             });
-
-            const result = await response.json();
-            
-            if (!result.success) {
-                throw new Error(result.error);
-            }
+            const result = await res.json();
+            if (!result.success) throw new Error(result.error);
 
             this.students = result.data.students;
-            this.updateStudentCount();
-            this.showStudentsPreview(result.data);
-            
-            // 启用生成按钮
+            document.getElementById('sp-student-count').textContent = `${result.data.count} 人`;
             document.getElementById('sp-generate').disabled = false;
             
-            this.showToast(`成功导入 ${result.data.count} 名学生`, 'success');
-
-        } catch (error) {
-            console.error('[SeatingPlanner] Parse students error:', error);
-            this.showToast(error.message, 'error');
+            // 预览
+            const preview = document.getElementById('sp-students-preview');
+            preview.innerHTML = result.data.students.slice(0, 8).map(s => 
+                `<span class="sp-tag ${s.gender === 'M' ? 'sp-tag-male' : s.gender === 'F' ? 'sp-tag-female' : ''}">${s.name}</span>`
+            ).join('') + (result.data.count > 8 ? `<span class="sp-tag">+${result.data.count - 8}</span>` : '');
+            
+            this.showToast(`导入 ${result.data.count} 名学生`, 'success');
+        } catch (err) {
+            this.showToast(err.message, 'error');
         }
     }
 
-    /**
-     * 显示学生预览
-     */
-    showStudentsPreview(data) {
-        const preview = document.getElementById('sp-students-preview');
-        if (!preview) return;
-
-        preview.classList.remove('hidden');
-        preview.innerHTML = `
-            <div class="sp-preview-header">
-                识别到 ${data.count} 人
-                ${data.hasGender ? '✓性别' : ''}
-                ${data.hasGrade ? '✓成绩' : ''}
-            </div>
-            <div class="sp-preview-list">
-                ${data.students.slice(0, 5).map(s => 
-                    `<span class="sp-preview-tag ${s.gender === 'M' ? 'sp-male' : s.gender === 'F' ? 'sp-female' : ''}">
-                        ${s.name}
-                    </span>`
-                ).join('')}
-                ${data.count > 5 ? `<span class="sp-preview-more">+${data.count - 5}</span>` : ''}
-            </div>
-        `;
-    }
-
-    /**
-     * 更新学生数量显示
-     */
-    updateStudentCount() {
-        const countEl = document.getElementById('sp-student-count');
-        if (countEl) {
-            countEl.textContent = `${this.students.length} 人`;
-        }
-    }
-
-    /**
-     * 解析约束条件
-     */
     async parseConstraints() {
-        const input = document.getElementById('sp-constraints-input');
-        const text = input?.value?.trim();
-        
-        if (!text) {
-            this.showToast('请输入约束描述', 'warning');
-            return;
-        }
+        const text = document.getElementById('sp-constraints-input')?.value?.trim();
+        if (!text) return this.showToast('请输入约束描述', 'warning');
 
         try {
-            const response = await fetch('/api/tools/seating/parse', {
+            const res = await fetch('/api/tools/seating/parse', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                    text,
-                    students: this.students 
-                })
+                body: JSON.stringify({ text, students: this.students })
             });
-
-            const result = await response.json();
-            
-            if (!result.success) {
-                throw new Error(result.error);
-            }
+            const result = await res.json();
+            if (!result.success) throw new Error(result.error);
 
             this.constraints = result.data.constraints;
-            this.renderConstraintsList();
+            const list = document.getElementById('sp-constraints-list');
+            list.innerHTML = this.constraints.map(c => {
+                const icon = { front_row: '👓', avoid: '🚫', prefer: '💛', pair: '❤️' }[c.type] || '📌';
+                return `<div class="sp-list-item">
+                    <span class="sp-list-icon">${icon}</span>
+                    <span class="sp-list-text">${c.target}${c.related ? ` ⇄ ${c.related}` : ''}: ${c.reason}</span>
+                </div>`;
+            }).join('') || '<div class="sp-empty">暂无约束</div>';
             
-            this.showToast(`识别到 ${this.constraints.length} 条约束`, 'success');
-
-        } catch (error) {
-            console.error('[SeatingPlanner] Parse constraints error:', error);
-            this.showToast(error.message, 'error');
+            this.showToast(`识别 ${this.constraints.length} 条约束`, 'success');
+        } catch (err) {
+            this.showToast(err.message, 'error');
         }
     }
 
-    /**
-     * 渲染约束列表
-     */
-    renderConstraintsList() {
-        const list = document.getElementById('sp-constraints-list');
-        if (!list) return;
-
-        if (this.constraints.length === 0) {
-            list.innerHTML = '<div class="sp-empty">暂无约束</div>';
-            return;
-        }
-
-        list.innerHTML = this.constraints.map(c => {
-            const typeIcons = {
-                front_row: '👓',
-                back_row: '🔙',
-                avoid: '🚫',
-                prefer: '💛',
-                pair: '❤️'
-            };
-            const icon = typeIcons[c.type] || '📌';
-            const isHard = c.priority === 'hard';
-            
-            return `
-                <div class="sp-constraint-item ${isHard ? 'sp-hard' : 'sp-soft'}">
-                    <span class="sp-constraint-icon">${icon}</span>
-                    <span class="sp-constraint-text">
-                        ${c.target} ${c.related ? `⇄ ${c.related}` : ''}: ${c.reason}
-                    </span>
-                    <span class="sp-constraint-badge">${isHard ? '必须' : '尽量'}</span>
-                </div>
-            `;
-        }).join('');
-    }
-
-    /**
-     * 生成座位表
-     */
     async generateSeating() {
-        if (this.students.length === 0) {
-            this.showToast('请先导入学生名单', 'warning');
-            return;
-        }
+        if (!this.students.length) return this.showToast('请先导入名单', 'warning');
 
-        const generateBtn = document.getElementById('sp-generate');
-        generateBtn.disabled = true;
-        generateBtn.innerHTML = '<i data-lucide="loader-2" class="sp-spin"></i> 生成中...';
+        const btn = document.getElementById('sp-generate');
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="sp-spin"></i> 生成中...';
         if (window.lucide) window.lucide.createIcons();
 
         try {
-            const response = await fetch('/api/tools/seating/plan', {
+            const res = await fetch('/api/tools/seating/plan', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    students: this.students,
-                    constraints: this.constraints,
-                    strategy: this.strategy,
-                    rows: this.rows,
-                    cols: this.cols,
-                    aisles: this.aisles
+                    students: this.students, constraints: this.constraints,
+                    strategy: this.strategy, rows: this.rows, cols: this.cols, aisles: this.aisles
                 })
             });
-
-            const result = await response.json();
-            
-            if (!result.success) {
-                throw new Error(result.error);
-            }
+            const result = await res.json();
+            if (!result.success) throw new Error(result.error);
 
             this.layout = result.data.layout;
             this.unsatisfied = result.data.unsatisfied || [];
-            
             this.renderGrid();
-            this.renderUnsatisfiedList();
             
-            // 启用导出按钮
             document.getElementById('sp-export-png').disabled = false;
             document.getElementById('sp-export-excel').disabled = false;
-            
-            this.showToast('座位表生成成功！', 'success');
-
-        } catch (error) {
-            console.error('[SeatingPlanner] Generate error:', error);
-            this.showToast(error.message, 'error');
+            this.showToast('座位表生成成功!', 'success');
+        } catch (err) {
+            this.showToast(err.message, 'error');
         } finally {
-            generateBtn.disabled = false;
-            generateBtn.innerHTML = '<i data-lucide="sparkles"></i> 生成座位表';
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="sparkles"></i> 生成座位表';
             if (window.lucide) window.lucide.createIcons();
         }
     }
 
-    /**
-     * 渲染未满足约束
-     */
-    renderUnsatisfiedList() {
-        if (this.unsatisfied.length === 0) return;
-
-        const list = document.getElementById('sp-constraints-list');
-        if (!list) return;
-
-        const unsatisfiedHtml = this.unsatisfied.map(u => `
-            <div class="sp-constraint-item sp-unsatisfied">
-                <span class="sp-constraint-icon">⚠️</span>
-                <span class="sp-constraint-text">${u.target}: ${u.reason}</span>
-            </div>
-        `).join('');
-
-        list.insertAdjacentHTML('beforeend', unsatisfiedHtml);
-    }
-
-    /**
-     * 导出 PNG
-     */
     async exportPNG() {
         try {
-            // 动态加载 html2canvas
             if (!window.html2canvas) {
-                const script = document.createElement('script');
-                script.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
-                document.head.appendChild(script);
-                await new Promise(resolve => script.onload = resolve);
+                const s = document.createElement('script');
+                s.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+                document.head.appendChild(s);
+                await new Promise(r => s.onload = r);
             }
-
-            const grid = document.querySelector('.sp-classroom');
-            const canvas = await window.html2canvas(grid, {
-                backgroundColor: '#0f172a',
-                scale: 2
-            });
-
+            const canvas = await window.html2canvas(document.querySelector('.sp-classroom'), { backgroundColor: '#0f172a', scale: 2 });
             const link = document.createElement('a');
             link.download = `座位表_${new Date().toISOString().split('T')[0]}.png`;
             link.href = canvas.toDataURL();
             link.click();
-
             this.showToast('图片已下载', 'success');
-
-        } catch (error) {
-            console.error('[SeatingPlanner] Export PNG error:', error);
-            this.showToast('导出失败: ' + error.message, 'error');
+        } catch (err) {
+            this.showToast('导出失败', 'error');
         }
     }
 
-    /**
-     * 导出 Excel (CSV)
-     */
     exportExcel() {
-        try {
-            let csv = '\uFEFF'; // BOM for UTF-8
-            
-            for (let r = 0; r < this.rows; r++) {
-                const row = [];
-                for (let c = 0; c < this.cols; c++) {
-                    if (this.aisles.includes(c)) {
-                        row.push('');
-                    } else {
-                        const studentId = this.layout[r]?.[c];
-                        const student = this.students.find(s => s.id === studentId);
-                        row.push(student?.name || '');
-                    }
-                }
-                csv += row.join(',') + '\n';
+        let csv = '\uFEFF';
+        for (let r = 0; r < this.rows; r++) {
+            const row = [];
+            for (let c = 0; c < this.cols; c++) {
+                const id = this.layout[r]?.[c];
+                row.push(this.students.find(s => s.id === id)?.name || '');
             }
-
-            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-            const link = document.createElement('a');
-            link.download = `座位表_${new Date().toISOString().split('T')[0]}.csv`;
-            link.href = URL.createObjectURL(blob);
-            link.click();
-
-            this.showToast('Excel 已下载', 'success');
-
-        } catch (error) {
-            console.error('[SeatingPlanner] Export Excel error:', error);
-            this.showToast('导出失败: ' + error.message, 'error');
+            csv += row.join(',') + '\n';
         }
+        const link = document.createElement('a');
+        link.download = `座位表_${new Date().toISOString().split('T')[0]}.csv`;
+        link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+        link.click();
+        this.showToast('Excel 已下载', 'success');
     }
 
-    /**
-     * 显示 Toast
-     */
-    showToast(message, type = 'info') {
-        if (window.ICeCream?.showToast) {
-            window.ICeCream.showToast(message, type);
-        } else {
-            console.log(`[Toast/${type}] ${message}`);
-        }
+    showToast(msg, type = 'info') {
+        window.ICeCream?.showToast ? window.ICeCream.showToast(msg, type) : console.log(`[${type}] ${msg}`);
     }
 }
 
-// 导出
 const seatingPlanner = new SeatingPlanner();
-export function init(container) {
-    seatingPlanner.init(container);
-}
+export function init(container) { seatingPlanner.init(container); }
 export default seatingPlanner;
