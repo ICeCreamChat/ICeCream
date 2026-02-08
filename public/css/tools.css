@@ -1,6 +1,9 @@
 /**
  * Classroom Tools - CSS Styles
- * 课堂工具箱专用样式 (玻璃拟态设计)
+ * 课堂工具箱专用样式
+ * 
+ * 与 ICeCream Pro Max 主题一致
+ * 支持深色/浅色模式
  */
 
 /* ================================
@@ -11,8 +14,8 @@
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     z-index: 9999;
     opacity: 0;
     visibility: hidden;
@@ -28,19 +31,30 @@
     position: fixed;
     top: 50%;
     left: 50%;
-    transform: translate(-50%, -50%) scale(0.9);
-    width: min(90vw, 480px);
-    background: var(--bg-glass, rgba(30, 41, 59, 0.85));
-    border: 1px solid var(--border-glass, rgba(255, 255, 255, 0.1));
+    transform: translate(-50%, -50%) scale(0.95);
+    width: min(90vw, 520px);
+    background: var(--glass-panel);
+    border: 1px solid var(--glass-border);
+    border-top: 1px solid var(--glass-highlight);
     border-radius: 24px;
     padding: 32px;
-    box-shadow: 
-        0 24px 48px rgba(0, 0, 0, 0.4),
-        0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+    box-shadow: var(--shadow-depth), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
     z-index: 10000;
     opacity: 0;
     visibility: hidden;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 噪点纹理叠加 */
+.app-launcher-modal::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 24px;
+    background-image: var(--glass-noise);
+    pointer-events: none;
 }
 
 .app-launcher-overlay.active .app-launcher-modal {
@@ -55,9 +69,10 @@
 }
 
 .app-launcher-title {
+    font-family: var(--font-heading);
     font-size: 1.5rem;
     font-weight: 600;
-    color: var(--text-primary, #f1f5f9);
+    color: var(--text-primary);
     margin: 0 0 8px 0;
     display: flex;
     align-items: center;
@@ -65,9 +80,16 @@
     gap: 10px;
 }
 
+.app-launcher-title .lucide {
+    width: 28px;
+    height: 28px;
+    color: var(--accent-color);
+    filter: drop-shadow(var(--accent-glow));
+}
+
 .app-launcher-subtitle {
     font-size: 0.875rem;
-    color: var(--text-muted, #94a3b8);
+    color: var(--text-secondary);
     margin: 0;
 }
 
@@ -83,9 +105,9 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 24px 16px;
-    background: var(--bg-card, rgba(51, 65, 85, 0.5));
-    border: 1px solid var(--border-glass, rgba(255, 255, 255, 0.08));
+    padding: 28px 20px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%);
+    border: 1px solid var(--glass-border);
     border-radius: 16px;
     cursor: pointer;
     transition: all 0.2s ease;
@@ -93,19 +115,20 @@
     overflow: hidden;
 }
 
+/* 霓虹辉光悬停效果 */
 .app-card::before {
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(135deg, rgba(56, 189, 248, 0.1), transparent);
+    background: linear-gradient(135deg, rgba(0, 240, 255, 0.1) 0%, rgba(0, 97, 255, 0.05) 100%);
     opacity: 0;
     transition: opacity 0.3s ease;
 }
 
 .app-card:hover {
     transform: translateY(-4px);
-    border-color: rgba(56, 189, 248, 0.4);
-    box-shadow: 0 8px 24px rgba(56, 189, 248, 0.15);
+    border-color: rgba(0, 240, 255, 0.4);
+    box-shadow: 0 8px 30px rgba(0, 240, 255, 0.15), var(--accent-glow);
 }
 
 .app-card:hover::before {
@@ -120,20 +143,27 @@
     font-size: 2.5rem;
     margin-bottom: 12px;
     filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
+    position: relative;
+    z-index: 1;
 }
 
 .app-card-title {
+    font-family: var(--font-heading);
     font-size: 1rem;
-    font-weight: 500;
-    color: var(--text-primary, #f1f5f9);
+    font-weight: 600;
+    color: var(--text-primary);
     margin: 0 0 4px 0;
+    position: relative;
+    z-index: 1;
 }
 
 .app-card-desc {
     font-size: 0.75rem;
-    color: var(--text-muted, #94a3b8);
+    color: var(--text-secondary);
     text-align: center;
     margin: 0;
+    position: relative;
+    z-index: 1;
 }
 
 /* Close button */
@@ -141,22 +171,29 @@
     position: absolute;
     top: 16px;
     right: 16px;
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(255, 255, 255, 0.1);
-    border: none;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--glass-border);
     border-radius: 50%;
-    color: var(--text-muted, #94a3b8);
+    color: var(--text-secondary);
     cursor: pointer;
     transition: all 0.2s ease;
+    z-index: 1;
 }
 
 .app-launcher-close:hover {
-    background: rgba(255, 255, 255, 0.2);
-    color: var(--text-primary, #f1f5f9);
+    background: rgba(255, 255, 255, 0.15);
+    color: var(--text-primary);
+    border-color: var(--accent-color);
+}
+
+.app-launcher-close .lucide {
+    width: 18px;
+    height: 18px;
 }
 
 /* ================================
@@ -166,7 +203,7 @@
 .tool-container {
     position: fixed;
     inset: 0;
-    background: var(--bg-primary, #0f172a);
+    background: var(--bg-base);
     z-index: 9998;
     opacity: 0;
     visibility: hidden;
@@ -183,35 +220,53 @@
     align-items: center;
     justify-content: space-between;
     padding: 16px 24px;
-    border-bottom: 1px solid var(--border-glass, rgba(255, 255, 255, 0.1));
-    background: var(--bg-glass, rgba(30, 41, 59, 0.8));
+    border-bottom: 1px solid var(--glass-border);
+    background: var(--glass-panel);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
 }
 
 .tool-title {
     display: flex;
     align-items: center;
     gap: 12px;
+    font-family: var(--font-heading);
     font-size: 1.25rem;
     font-weight: 600;
-    color: var(--text-primary, #f1f5f9);
+    color: var(--text-primary);
+}
+
+.tool-title .lucide {
+    width: 24px;
+    height: 24px;
+    color: var(--accent-color);
+    filter: drop-shadow(var(--accent-glow));
 }
 
 .tool-back-btn {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 16px;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    color: var(--text-primary, #f1f5f9);
+    padding: 10px 18px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    color: var(--text-primary);
     font-size: 0.875rem;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
 }
 
 .tool-back-btn:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: linear-gradient(135deg, rgba(0, 240, 255, 0.12) 0%, rgba(0, 97, 255, 0.08) 100%);
+    border-color: rgba(0, 240, 255, 0.3);
+    color: var(--accent-color);
+}
+
+.tool-back-btn .lucide {
+    width: 18px;
+    height: 18px;
 }
 
 .tool-body {
@@ -220,77 +275,112 @@
     padding: 24px;
 }
 
+.tool-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.tool-body::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
 /* ================================
-   Light Theme Overrides
+   Light Mode Overrides
    ================================ */
 
-[data-theme="light"] .app-launcher-modal {
-    background: rgba(255, 255, 255, 0.95);
-    border-color: rgba(0, 0, 0, 0.1);
+body.light-mode .app-launcher-overlay {
+    background: rgba(0, 0, 0, 0.3);
 }
 
-[data-theme="light"] .app-launcher-title {
-    color: #1e293b;
+body.light-mode .app-launcher-modal {
+    background: var(--glass-panel);
+    border-color: var(--glass-border);
 }
 
-[data-theme="light"] .app-launcher-subtitle {
-    color: #64748b;
+body.light-mode .app-card {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.7) 100%);
+    border-color: var(--glass-border);
 }
 
-[data-theme="light"] .app-card {
-    background: rgba(241, 245, 249, 0.8);
-    border-color: rgba(0, 0, 0, 0.08);
+body.light-mode .app-card:hover {
+    border-color: var(--accent-color);
+    box-shadow: 0 8px 30px rgba(14, 165, 233, 0.2), var(--accent-glow);
 }
 
-[data-theme="light"] .app-card-title {
-    color: #1e293b;
+body.light-mode .app-card::before {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.1) 0%, rgba(14, 165, 233, 0.05) 100%);
 }
 
-[data-theme="light"] .app-card-desc {
-    color: #64748b;
+body.light-mode .app-launcher-close {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: var(--glass-border);
 }
 
-[data-theme="light"] .tool-container {
-    background: #f8fafc;
+body.light-mode .app-launcher-close:hover {
+    background: rgba(0, 0, 0, 0.1);
 }
 
-[data-theme="light"] .tool-header {
-    background: rgba(255, 255, 255, 0.9);
-    border-color: rgba(0, 0, 0, 0.1);
+body.light-mode .tool-back-btn {
+    background: linear-gradient(135deg, rgba(0, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0.02) 100%);
 }
 
-[data-theme="light"] .tool-title {
-    color: #1e293b;
+body.light-mode .tool-back-btn:hover {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.12) 0%, rgba(14, 165, 233, 0.08) 100%);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+body.light-mode .tool-body::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.1);
 }
 
 /* ================================
-   Header Apps Button
+   Header Apps Button (与 icon-btn 一致)
    ================================ */
 
 .apps-btn {
     position: relative;
 }
 
+.apps-btn .lucide {
+    transition: all 0.2s ease;
+}
+
+.apps-btn:hover .lucide {
+    color: var(--accent-color);
+    filter: drop-shadow(var(--accent-glow));
+}
+
+/* 新功能提示点 */
 .apps-btn::after {
     content: '';
     position: absolute;
-    top: 4px;
-    right: 4px;
+    top: 6px;
+    right: 6px;
     width: 8px;
     height: 8px;
-    background: #38bdf8;
+    background: var(--accent-color);
     border-radius: 50%;
+    box-shadow: var(--accent-glow);
     opacity: 0;
-    animation: pulse 2s infinite;
+    animation: pulseGlow 2s infinite;
 }
 
 .apps-btn.has-new::after {
     opacity: 1;
 }
 
-@keyframes pulse {
-    0%, 100% { transform: scale(1); opacity: 1; }
-    50% { transform: scale(1.2); opacity: 0.7; }
+@keyframes pulseGlow {
+    0%, 100% { 
+        transform: scale(1); 
+        opacity: 1;
+        box-shadow: var(--accent-glow);
+    }
+    50% { 
+        transform: scale(1.3); 
+        opacity: 0.7;
+        box-shadow: 0 0 15px rgba(0, 240, 255, 0.8);
+    }
 }
 
 /* ================================
@@ -314,5 +404,29 @@
 
     .app-card-icon {
         font-size: 2rem;
+    }
+
+    .app-launcher-title {
+        font-size: 1.25rem;
+    }
+}
+
+/* ================================
+   Animations
+   ================================ */
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideUp {
+    from { 
+        opacity: 0;
+        transform: translate(-50%, -45%) scale(0.95);
+    }
+    to { 
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
     }
 }

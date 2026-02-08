@@ -60,7 +60,8 @@ class AppLauncher {
                 </button>
                 <div class="app-launcher-header">
                     <h2 class="app-launcher-title">
-                        <span>🧊</span> 课堂工具箱
+                        <i data-lucide="layout-grid"></i>
+                        <span>课堂工具箱</span>
                     </h2>
                     <p class="app-launcher-subtitle">选择一个工具开始使用</p>
                 </div>
