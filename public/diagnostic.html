@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>历史折叠功能诊断工具</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', sans-serif;
+            padding: 20px;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+        .diagnostic-panel {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .status {
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin: 8px 0;
+            font-family: 'Consolas', monospace;
+            font-size: 14px;
+        }
+        .status.success { background: #10b981; color: white; }
+        .status.error { background: #ef4444; color: white; }
+        .status.warning { background: #f59e0b; color: white; }
+        button {
+            padding: 10px 20px;
+            background: #0ea5e9;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #0284c7;
+        }
+        pre {
+            background: #0f172a;
+            padding: 12px;
+            border-radius: 4px;
+            overflow-x: auto;
+            border: 1px solid #334155;
+        }
+        h2 {
+            color: #00f0ff;
+            border-bottom: 2px solid #00f0ff;
+            padding-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 修改历史折叠功能诊断</h1>
+    
+    <div class="diagnostic-panel">
+        <h2>1. 检查 DOM 元素</h2>
+        <div id="dom-check"></div>
+        <button onclick="checkDOM()">检查 DOM</button>
+    </div>
+
+    <div class="diagnostic-panel">
+        <h2>2. 检查 CSS 规则</h2>
+        <div id="css-check"></div>
+        <button onclick="checkCSS()">检查 CSS</button>
+    </div>
+
+    <div class="diagnostic-panel">
+        <h2>3. 检查事件监听器</h2>
+        <div id="event-check"></div>
+        <button onclick="checkEvents()">检查事件</button>
+    </div>
+
+    <div class="diagnostic-panel">
+        <h2>4. 手动测试折叠</h2>
+        <button onclick="toggleManually()">手动切换折叠状态</button>
+        <button onclick="inspectElement()">在控制台显示元素</button>
+    </div>
+
+    <div class="diagnostic-panel">
+        <h2>5. 浏览器缓存检查</h2>
+        <div id="cache-check"></div>
+        <button onclick="checkCache()">检查缓存</button>
+        <button onclick="forceReload()">强制刷新页面</button>
+    </div>
+
+    <script>
+        function checkDOM() {
+            const output = document.getElementById('dom-check');
+            const container = window.parent.document.getElementById('manim-history-root');
+            
+            if (!container) {
+                output.innerHTML = '<div class="status error">❌ 找不到 #manim-history-root 元素！</div>';
+                return;
+            }
+            
+            output.innerHTML = `
+                <div class="status success">✅ 找到容器元素</div>
+                <div class="status">${container.className ? '当前类名: ' + container.className : '⚠️ 没有类名'}</div>
+                <div class="status">是否有 expanded 类: ${container.classList.contains('expanded') ? '✅ 是' : '❌ 否'}</div>
+                <pre>${container.outerHTML.substring(0, 200)}...</pre>
+            `;
+        }
+
+        function checkCSS() {
+            const output = document.getElementById('css-check');
+            const container = window.parent.document.getElementById('manim-history-root');
+            
+            if (!container) {
+                output.innerHTML = '<div class="status error">❌ 找不到元素</div>';
+                return;
+            }
+            
+            const computed = window.parent.getComputedStyle(container);
+            const height = computed.height;
+            const maxHeight = computed.maxHeight;
+            const overflow = computed.overflow;
+            
+            output.innerHTML = `
+                <div class="status">实际 height: ${height}</div>
+                <div class="status">实际 max-height: ${maxHeight}</div>
+                <div class="status">overflow: ${overflow}</div>
+                <div class="status ${height === '36px' && !container.classList.contains('expanded') ? 'success' : 'warning'}">
+                    ${height === '36px' ? '✅ 折叠状态正确' : '⚠️ 高度可能不正确'}
+                </div>
+            `;
+        }
+
+        function checkEvents() {
+            const output = document.getElementById('event-check');
+            const container = window.parent.document.getElementById('manim-history-root');
+            
+            if (!container) {
+                output.innerHTML = '<div class="status error">❌ 找不到元素</div>';
+                return;
+            }
+            
+            const header = container.querySelector('.history-list-header');
+            
+            if (!header) {
+                output.innerHTML = '<div class="status error">❌ 找不到 header 元素</div>';
+                return;
+            }
+            
+            // Try to trigger manually
+            let eventTriggered = false;
+            const testHandler = () => { eventTriggered = true; };
+            header.addEventListener('click', testHandler, { once: true });
+            header.click();
+            
+            output.innerHTML = `
+                <div class="status ${eventTriggered ? 'success' : 'error'}">
+                    ${eventTriggered ? '✅ 事件监听器已绑定' : '❌ 事件监听器未绑定'}
+                </div>
+                <div class="status">Header cursor: ${window.parent.getComputedStyle(header).cursor}</div>
+            `;
+        }
+
+        function toggleManually() {
+            const container = window.parent.document.getElementById('manim-history-root');
+            if (container) {
+                container.classList.toggle('expanded');
+                console.log('Toggled! Current classes:', container.className);
+                alert('已切换！当前类名: ' + container.className);
+            }
+        }
+
+        function inspectElement() {
+            const container = window.parent.document.getElementById('manim-history-root');
+            console.log('=== Manim History Root ===');
+            console.log('Element:', container);
+            console.log('Classes:', container?.className);
+            console.log('Computed styles:', window.parent.getComputedStyle(container));
+        }
+
+        function checkCache() {
+            const output = document.getElementById('cache-check');
+            const cssLinks = window.parent.document.querySelectorAll('link[rel="stylesheet"]');
+            
+            let cacheInfo = '';
+            cssLinks.forEach(link => {
+                if (link.href.includes('main.css')) {
+                    cacheInfo += `<div class="status">main.css URL: ${link.href}</div>`;
+                    cacheInfo += `<div class="status warning">⚠️ 建议使用 Ctrl+Shift+R 强制刷新</div>`;
+                }
+            });
+            
+            output.innerHTML = cacheInfo || '<div class="status">未找到 main.css</div>';
+        }
+
+        function forceReload() {
+            window.parent.location.reload(true);
+        }
+    </script>
+</body>
+</html>

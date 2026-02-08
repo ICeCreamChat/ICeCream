@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#020617">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <title>ICeCream - 统一智能平台</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <meta name="description" content="ICeCream 统一智能平台 - AI 聊天、数学动画可视化、智能解题">
+
+    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/smart-board.css">
+    <link rel="stylesheet" href="css/mobile.css">
+
+    <!-- Google Fonts -->
+    <!-- Google Fonts (Pro Max Design System) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+
+    <!-- KaTeX -->
+    <!-- KaTeX CSS handled by dynamic loader below -->
+
+    <script src="js/libs/lucide.min.js"></script>
+    <script>if (window.lucide) { window.lucide.createIcons(); }</script>
+
+    <!-- Libraries -->
+    <!-- Libraries with Fallback -->
+    <script defer src="js/libs/marked.min.js"></script>
+
+    <!-- KaTeX with multiple CDNs for stability -->
+    <script>
+        // [Fix] Define monacoReady ONCE in global scope BEFORE any module loads
+        let _resolveMonacoReady;
+        window.monacoReady = new Promise(resolve => { _resolveMonacoReady = resolve; });
+
+        function loadScript(src, fallbackSrcs) {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = src;
+                script.crossOrigin = "anonymous";
+                script.onload = resolve;
+                script.onerror = () => {
+                    if (fallbackSrcs.length > 0) {
+                        console.warn(`Failed to load ${src}, trying fallback...`);
+                        loadScript(fallbackSrcs.shift(), fallbackSrcs).then(resolve).catch(reject);
+                    } else {
+                        reject(new Error(`All sources failed for ${src}`));
+                    }
+                };
+                document.head.appendChild(script);
+            });
+        }
+
+        // Load KaTeX CSS
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = 'https://unpkg.com/katex@0.16.9/dist/katex.min.css';
+        link.onerror = () => {
+            link.href = 'https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.9/katex.min.css';
+        };
+        document.head.appendChild(link);
+
+        // Load KaTeX JS sequentially
+        (function () {
+            const katexSrcs = [
+                'https://unpkg.com/katex@0.16.9/dist/katex.min.js',
+                'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js',
+                'https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.9/katex.min.js'
+            ];
+            const autoRenderSrcs = [
+                'https://unpkg.com/katex@0.16.9/dist/contrib/auto-render.min.js',
+                'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js',
+                'https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js'
+            ];
+
+            loadScript(katexSrcs.shift(), katexSrcs)
+                .then(() => loadScript(autoRenderSrcs.shift(), autoRenderSrcs))
+                .then(() => {
+                    console.log('KaTeX Loaded Successfully');
+                    // [Fix] Load Monaco ONLY after KaTeX to avoid AMD conflict
+                    return loadScript('js/libs/monaco/vs/loader.js', []);
+                })
+                .then(() => {
+                    console.log('Monaco Loader Initialized');
+                    // Configure Monaco
+                    require.config({ paths: { 'vs': 'js/libs/monaco/vs' } });
+                    require(['vs/editor/editor.main'], function () {
+                        console.log('Monaco initialized via deferred promise');
+                        if (_resolveMonacoReady) _resolveMonacoReady(window.monaco);
+                    });
+                })
+                .catch(err => console.error('Resource Load Failed:', err));
+            // Remove DOMContentLoaded wrapper to start asap
+            // window.addEventListener('DOMContentLoaded', ...) replaced by immediate execution
+        })(); // Execute immediately
+    </script>
+
+    <!-- Three.js for particle effects (local) -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "./js/libs/three.module.js"
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <!-- 背景动画容器 -->
+    <div id="math-canvas-container"></div>
+
+    <div class="glass-wrapper">
+        <!-- 移动端菜单按钮 -->
+        <button id="mobile-menu-btn" class="icon-btn" aria-label="打开菜单">
+            <i data-lucide="menu"></i>
+        </button>
+
+        <div class="app-layout">
+            <!-- 侧边栏遮罩 (Moved to top for Z-Index Stacking) -->
+            <div id="sidebar-overlay" class="overlay"></div>
+
+            <!-- 侧边栏 -->
+            <aside class="sidebar" id="sidebar">
+                <div class="sidebar-header">
+                    <div class="brand">
+                        <i data-lucide="snowflake" class="brand-icon"></i>
+                        <span class="brand-text">ICeCream</span>
+                    </div>
+                    <button id="new-chat-btn" class="new-chat-btn">
+                        <i data-lucide="plus"></i> 新建对话
+                    </button>
+                </div>
+
+                <div class="history-list" id="history-list">
+                    <!-- 历史记录将动态生成 -->
+                </div>
+
+                <div class="sidebar-footer">
+                    <div class="model-badge">ICeCream v1.0</div>
+                </div>
+            </aside>
+
+            <!-- 主区域 -->
+            <main class="main-content">
+                <!-- 顶部栏 -->
+                <header class="header-bar">
+                    <div class="header-left">
+                        <span class="status-dot"></span>
+                        <span class="header-title">ICeCream</span>
+                    </div>
+
+                    <!-- Mode Switcher -->
+                    <div class="mode-switcher" id="mode-switcher">
+                        <button class="mode-tab active" data-mode="auto" title="自动识别意图">
+                            <i data-lucide="sparkles"></i>
+                            <span>自动</span>
+                        </button>
+                        <button class="mode-tab" data-mode="chat" title="普通对话">
+                            <i data-lucide="message-circle"></i>
+                            <span>聊天</span>
+                        </button>
+                        <button class="mode-tab" data-mode="manim" title="生成动画">
+                            <i data-lucide="clapperboard"></i>
+                            <span>动画</span>
+                        </button>
+                        <button class="mode-tab" data-mode="solver" title="智能解题">
+                            <i data-lucide="calculator"></i>
+                            <span>解题</span>
+                        </button>
+                    </div>
+
+                    <div class="header-right">
+                        <button class="icon-btn" id="theme-toggle" title="切换主题">
+                            <i data-lucide="sun" class="icon-light"></i>
+                            <i data-lucide="moon" class="icon-dark"></i>
+                        </button>
+                    </div>
+                </header>
+
+                <!-- 消息列表 -->
+                <div class="messages" id="messages">
+                    <!-- 欢迎消息 -->
+                    <div class="welcome-screen" id="welcome-screen">
+                        <div class="welcome-icon">
+                            <i data-lucide="snowflake"></i>
+                        </div>
+                        <h1 class="welcome-title">欢迎使用 ICeCream</h1>
+                        <p class="welcome-subtitle">统一智能平台 - 聊天 · 动画 · 解题</p>
+
+                        <div class="welcome-features">
+                            <div class="feature-card" data-mode="chat">
+                                <i data-lucide="message-circle"></i>
+                                <h3>智能对话</h3>
+                                <p>基于 DeepSeek 的 AI 聊天助手</p>
+                            </div>
+                            <div class="feature-card" data-mode="manim">
+                                <i data-lucide="clapperboard"></i>
+                                <h3>数学动画</h3>
+                                <p>自然语言描述，生成 Manim 动画</p>
+                            </div>
+                            <div class="feature-card" data-mode="solver">
+                                <i data-lucide="calculator"></i>
+                                <h3>智能解题</h3>
+                                <p>上传题目图片，AI 自动解答</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 意图确认弹窗 -->
+                <div class="intent-confirm hidden" id="intent-confirm">
+                    <div class="intent-header">
+                        <i data-lucide="help-circle"></i>
+                        <span>我不太确定您想做什么，请选择：</span>
+                    </div>
+                    <div class="intent-options">
+                        <button class="intent-option" data-intent="chat">
+                            <i data-lucide="message-circle"></i>
+                            <span>💬 聊一聊</span>
+                        </button>
+                        <button class="intent-option" data-intent="manim">
+                            <i data-lucide="clapperboard"></i>
+                            <span>🎬 生成动画</span>
+                        </button>
+                        <button class="intent-option" data-intent="solver">
+                            <i data-lucide="calculator"></i>
+                            <span>📐 解这道题</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 加载状态 -->
+                <div class="loading hidden" id="loading">
+                    <div class="loading-spinner"></div>
+                    <span id="loading-text">AI 正在思考中...</span>
+                </div>
+
+                <!-- 输入区域 -->
+                <div class="input-area">
+                    <div class="input-container">
+                        <button id="upload-btn" class="icon-btn upload-btn" title="上传图片" aria-label="上传图片"><i
+                                data-lucide="paperclip"></i></button>
+
+                        <div class="input-wrapper">
+                            <input id="chat-input" type="text" placeholder="输入消息，或上传图片..." autocomplete="off"
+                                aria-label="输入框" />
+                            <div id="ghost-input"></div>
+                        </div>
+
+                        <button id="send-btn" class="icon-btn send-btn" title="发送" aria-label="发送消息"><i
+                                data-lucide="send"></i></button>
+                    </div>
+
+                    <div class="toolbar">
+                        <button class="icon-btn more-btn" id="more-btn" aria-label="更多选项"><i
+                                data-lucide="settings"></i></button>
+                        <div class="dropdown-content" id="dropdownMenu">
+                            <div class="dropdown-item" id="btn-tts">
+                                <span id="tts-label" style="display: flex; align-items: center; gap: 8px;">
+                                    <i data-lucide="volume-x" style="width: 16px;"></i> 朗读: 关
+                                </span>
+                            </div>
+
+                            <div class="dropdown-item" id="btn-clear"
+                                style="color:#ff5252; display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="trash-2" style="width: 16px;"></i> 清空对话
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+            <!-- 侧边栏遮罩 moved to top -->
+        </div>
+    </div>
+
+    <!-- 悬浮题目看板 (Context Panel - Ported from MathSolver) -->
+    <div id="context-panel" class="context-panel hidden">
+        <div class="context-header" id="context-header">
+            <div class="context-title">
+                <i data-lucide="clipboard-list"></i> <span>题目看板</span>
+            </div>
+            <div class="context-controls">
+                <button id="context-lock-btn" class="context-toggle-btn" title="锁定/解锁看板内容">
+                    <i data-lucide="unlock"></i>
+                </button>
+                <button id="context-toggle-btn" class="context-toggle-btn" title="收起/展开">
+                    <i data-lucide="chevron-left"></i>
+                </button>
+            </div>
+        </div>
+        <div class="context-body">
+            <div class="context-image-container">
+                <img id="context-image" src="" alt="题目图片" onclick="openImageLightbox(this.src)">
+            </div>
+            <div class="context-text-container" id="context-text">
+                <!-- 题目文字 -->
+            </div>
+        </div>
+
+        <!-- Resize Handles -->
+        <div class="resizer resizer-r"></div>
+        <div class="resizer resizer-b"></div>
+        <div class="resizer resizer-rb"></div>
+        <div class="resizer resizer-l"></div>
+        <div class="resizer resizer-lb"></div>
+        <div class="resizer resizer-t"></div>
+        <div class="resizer resizer-tr"></div>
+        <div class="resizer resizer-tl"></div>
+    </div>
+
+    <!-- 移动端 FAB -->
+    <!-- 移动端 FAB -->
+    <button id="mobile-context-fab" class="mobile-context-fab">
+        <i data-lucide="clipboard-list"></i>
+    </button>
+
+    <!-- 移动端 Modal -->
+    <div id="mobile-context-modal" class="mobile-context-modal">
+        <div class="mobile-modal-overlay"></div>
+        <div class="mobile-modal-content">
+            <div class="mobile-modal-header">
+                <h3>当前题目</h3>
+                <div class="mobile-modal-header">
+                    <h3>当前题目</h3>
+                    <button id="mobile-modal-close"><i data-lucide="x"></i></button>
+                </div>
+            </div>
+            <div class="mobile-modal-body">
+                <img id="mobile-context-image" src="" alt="题目" onclick="openImageLightbox(this.src)">
+                <div id="mobile-context-text"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 裁剪模态框 (Ported from MathSolver) -->
+    <div class="crop-modal" id="crop-modal">
+        <div class="crop-header">
+            <span class="crop-title">裁剪图片</span>
+            <div class="crop-header">
+                <span class="crop-title">裁剪图片</span>
+                <button class="icon-btn" id="btn-crop-cancel"><i data-lucide="x"></i></button>
+            </div>
+        </div>
+        <div class="crop-container">
+            <img id="crop-image" src="">
+        </div>
+        <div class="crop-footer">
+            <button class="btn btn-secondary" id="btn-crop-reset">重置</button>
+            <button class="btn btn-primary" id="btn-crop-confirm">确认裁剪</button>
+        </div>
+    </div>
+
+    <!-- 图片预览模态框 -->
+    <div class="image-preview-modal hidden" id="image-preview-modal">
+        <div class="preview-content">
+            <img id="preview-image" src="" alt="预览">
+            <div class="preview-actions">
+                <button class="btn btn-secondary" id="preview-cancel">取消</button>
+                <button class="btn btn-primary" id="preview-confirm">发送图片</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 容器 -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- 隐藏的文件输入 -->
+    <input type="file" id="file-input" accept="image/*" style="display: none;">
+
+    <!-- Scripts -->
+    <script>
+        // Icons already initialized in <head>, this is a fallback for dynamic content
+        if (window.lucide) { window.lucide.createIcons(); }
+    </script>
+    <!-- Monaco Editor -->
+    <link rel="stylesheet" data-name="vs/editor/editor.main" href="js/libs/monaco/vs/editor/editor.main.css">
+
+    <!-- Code Panel Overlay -->
+    <div id="code-panel-overlay" class="code-panel-overlay"></div>
+
+    <!-- Code Editor Panel (Manim Pro Max) -->
+    <div id="code-panel" class="code-panel">
+        <div class="panel-header">
+            <div class="panel-title">
+                📝 Manim Studio
+            </div>
+            <div class="panel-controls">
+                <!-- Desktop Controls -->
+                <button id="code-render-btn" class="panel-btn panel-btn-primary">
+                    <i data-lucide="play" style="width:16px;"></i> 运行
+                </button>
+                <button id="code-close-btn" class="panel-btn panel-btn-close">
+                    <i data-lucide="x" style="width:20px;"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Mobile Tab Bar (Hidden on Desktop) -->
+        <div class="mobile-panel-tabs">
+            <button class="mobile-panel-tab active" data-tab="preview">
+                <i data-lucide="video"></i> <span>预览</span>
+            </button>
+            <button class="mobile-panel-tab" data-tab="code">
+                <i data-lucide="code-2"></i> <span>代码</span>
+            </button>
+        </div>
+
+        <div class="panel-body">
+            <!-- Mobile Preview Tab (Video + History + AI Input) -->
+            <div class="mobile-preview-tab" id="mobile-preview-tab">
+                <div id="video-preview-container" class="panel-preview">
+                    <!-- Video Wrapper (Target for renderCode) -->
+                    <div id="video-inner-container">
+                        <!-- Video inserted by JS -->
+                        <div class="video-preview-placeholder"
+                            style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--manim-text-muted);">
+                            <i data-lucide="clapperboard"
+                                style="width:48px; height:48px; opacity:0.5; margin-bottom:12px;"></i>
+                            <p>视频预览区</p>
+                        </div>
+                    </div>
+                </div>
+                <!-- History (Inside Preview Tab on Mobile) - Takes 50% of screen -->
+                <div id="manim-history-root" class="history-list-container"></div>
+                <!-- AI Footer (Inside Preview Tab on Mobile) -->
+                <div class="panel-footer mobile-preview-footer">
+                    <div class="ai-input-wrapper">
+                        <input type="text" id="ai-instruction-input" class="ai-instruction-input"
+                            placeholder="✨ AI 助手: 把圆改成红色，或者让它旋转..." autocomplete="off">
+                    </div>
+                    <button id="ai-modify-btn" class="panel-btn panel-btn-primary">
+                        <i data-lucide="sparkles" style="width:16px;"></i> 生成
+                    </button>
+                </div>
+            </div>
+
+            <!-- Mobile Code Tab (Editor Only) -->
+            <div class="mobile-code-tab" id="mobile-code-tab">
+                <div class="panel-editor">
+                    <div class="editor-toolbar">
+                        <div class="editor-tab">MainScene.py</div>
+                    </div>
+                    <div id="monaco-container"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Desktop Footer (Only shown on desktop) -->
+        <div class="panel-footer desktop-footer">
+            <div class="ai-input-wrapper">
+                <input type="text" id="ai-instruction-input-desktop" class="ai-instruction-input"
+                    placeholder="✨ AI 助手: 把圆改成红色，或者让它旋转..." autocomplete="off">
+            </div>
+            <button id="ai-modify-btn-desktop" class="panel-btn panel-btn-primary">
+                <i data-lucide="sparkles" style="width:16px;"></i> 生成
+            </button>
+        </div>
+
+        <!-- Mobile/Legacy References (Hidden) -->
+        <div class="mobile-tabs" style="display:none;">
+            <button class="mobile-tab-btn" data-tab="video"></button>
+            <button class="mobile-tab-btn" data-tab="code"></button>
+        </div>
+        <div class="mobile-code-view" style="display:none;"></div>
+    </div>
+
+    <!-- Monaco Editor Loader handled in head script -->
+    <!-- Removed static script tags to prevent race conditions -->
+
+    <!-- Cropper.js for image cropping -->
+    <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.1/dist/cropper.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.1/dist/cropper.min.css">
+
+    <!-- Core Modules (Dependency Order - same as MathSolver) -->
+    <script src="js/constants.js"></script>
+    <script src="js/state_manager.js"></script>
+    <script src="js/math_renderer.js"></script>
+    <script src="js/api_client.js"></script>
+    <script src="js/content_detector.js"></script>
+    <script src="js/smart_renderer.js"></script>
+    <script src="js/ui_manager.js"></script>
+    <script src="js/theme_manager.js"></script>
+    <script src="js/cursor_effects.js"></script>
+    <script src="js/tts_handler.js"></script>
+    <script src="js/chat_system.js"></script>
+    <script src="js/cropper_handler.js"></script>
+    <script src="js/context_panel.js"></script>
+    <script type="module" src="js/particle_engine.js"></script>
+    <!-- Main App -->
+    <script type="module" src="js/app.js"></script>
+</body>
+
+</html>

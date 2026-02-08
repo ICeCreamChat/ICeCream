@@ -1,0 +1,38 @@
+{
+    "name": "icecream",
+    "version": "1.0.0",
+    "description": "🍦 ICeCream - 统一智能平台，整合 AI 聊天、数学动画可视化与智能解题",
+    "main": "gateway/server.js",
+    "scripts": {
+        "start": "node gateway/server.js",
+        "dev": "node --watch gateway/server.js",
+        "manim": "cd manim-service && python main.py"
+    },
+    "keywords": [
+        "ai",
+        "chat",
+        "manim",
+        "math",
+        "solver",
+        "deepseek",
+        "visualization"
+    ],
+    "author": "ICeCreamChat",
+    "license": "MIT",
+    "type": "module",
+    "dependencies": {
+        "adm-zip": "^0.5.16",
+        "cors": "^2.8.5",
+        "cropperjs": "^1.6.2",
+        "dotenv": "^16.3.1",
+        "express": "^4.18.2",
+        "https-proxy-agent": "^7.0.6",
+        "lucide": "^0.563.0",
+        "marked": "^17.0.1",
+        "monaco-editor": "^0.45.0",
+        "multer": "^1.4.5-lts.1",
+        "node-fetch": "^3.3.2",
+        "sharp": "^0.33.2",
+        "three": "^0.160.0"
+    }
+}

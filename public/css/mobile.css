@@ -1,0 +1,1555 @@
+/**
+ * ICeCream - Mobile Responsive Styles
+ * Desktop-Unified Design System
+ * Copyright (c) 2026 ICeCreamChat
+ */
+
+/* ==========================================================================
+   Hide Mobile-Specific Elements (Desktop Consistency)
+   ========================================================================== */
+
+/* These elements are hidden on ALL screen sizes for desktop consistency */
+.mobile-context-fab,
+.mobile-context-modal {
+    display: none !important;
+}
+
+/* ==========================================================================
+   Desktop Isolation: Hide Mobile-Only Manim Studio Elements (min-width: 768px)
+   ========================================================================== */
+
+
+/* ==========================================================================
+   Small Screen Adaptations (≤767px)
+   Minimal adjustments to maintain desktop layout on smaller screens
+   ========================================================================== */
+@media (max-width: 767px) {
+
+    /* Glass wrapper - Full viewport on mobile */
+    .glass-wrapper {
+        padding: 0;
+        height: 100vh;
+        width: 100vw;
+        border-radius: 0;
+    }
+
+    /* Mobile Menu Button - Floating Glass Button */
+    #mobile-menu-btn {
+        display: flex !important;
+        position: fixed;
+        left: 16px;
+        top: 14px;
+        z-index: 2000;
+        width: 44px;
+        height: 44px;
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 12px;
+        color: var(--text-primary);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        justify-content: center;
+        align-items: center;
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    }
+
+    #mobile-menu-btn:active {
+        transform: scale(0.95);
+        background: rgba(255, 255, 255, 0.2);
+    }
+
+    #mobile-menu-btn .lucide {
+        width: 24px;
+        height: 24px;
+    }
+
+    /* App layout - Full screen context */
+    .app-layout {
+        width: 100%;
+        height: 100%;
+        max-width: none;
+        border-radius: 0;
+        flex-direction: column;
+        background: transparent;
+        /* Background handled by body/wrapper */
+        border: none;
+        box-shadow: none;
+        overflow: hidden;
+        backdrop-filter: none !important;
+        /* Prevent creating containing block */
+        transform: none !important;
+    }
+
+    /* ==========================================================================
+       Sidebar - Mobile Slide-in Drawer (Premium)
+       ========================================================================== */
+    .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 280px;
+        /* Standard width */
+        height: 100%;
+        background: rgba(10, 15, 30, 0.85);
+        /* Deep glass */
+        border-right: 1px solid rgba(255, 255, 255, 0.1);
+        display: flex;
+        flex-direction: column;
+        transform: translateX(-100%);
+        /* Hidden by default */
+        transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        z-index: 3000 !important;
+        /* Above menu button & overlay */
+        backdrop-filter: blur(25px) saturate(180%);
+        -webkit-backdrop-filter: blur(25px) saturate(180%);
+        box-shadow: 10px 0 40px rgba(0, 0, 0, 0.3);
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
+    }
+
+    /* Sidebar Overlay */
+    #sidebar-overlay {
+        display: block !important;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        /* No blur effect - keep background sharp */
+        z-index: 2000;
+        opacity: 0;
+        visibility: hidden;
+        transition: all 0.4s ease;
+    }
+
+    #sidebar-overlay.active {
+        opacity: 1;
+        visibility: visible;
+    }
+
+    /* Sidebar header */
+    .sidebar-header {
+        padding: 16px;
+        border-bottom: 1px solid var(--glass-border);
+    }
+
+    .brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+
+    .brand-icon {
+        width: 24px;
+        height: 24px;
+        color: var(--accent-color);
+        filter: drop-shadow(var(--accent-glow));
+    }
+
+    .brand-text {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    /* New chat button - desktop style */
+    .new-chat-btn {
+        width: 100%;
+        padding: 10px 12px;
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 10px;
+        color: var(--text-primary);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        font-weight: 500;
+        font-size: 13px;
+        transition: all 0.2s ease;
+    }
+
+    .new-chat-btn:hover {
+        background: linear-gradient(135deg, rgba(0, 240, 255, 0.12) 0%, rgba(0, 97, 255, 0.08) 100%);
+        border-color: rgba(0, 240, 255, 0.3);
+        color: var(--accent-color);
+    }
+
+    /* History list */
+    .history-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 8px;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+    }
+
+    .history-list::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .history-list::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 2px;
+    }
+
+    .history-item {
+        position: relative;
+        min-height: 40px;
+        padding: 10px 12px;
+        margin-bottom: 2px;
+        border-radius: 10px;
+        font-size: 13px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        transition: all 0.15s ease;
+    }
+
+    .history-item:hover {
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text-primary);
+    }
+
+    .history-item.active {
+        background: linear-gradient(135deg, rgba(0, 240, 255, 0.08) 0%, rgba(0, 97, 255, 0.04) 100%);
+        color: var(--accent-color);
+        font-weight: 500;
+    }
+
+    .history-item.active::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 3px;
+        height: 50%;
+        background: var(--accent-color);
+        border-radius: 0 3px 3px 0;
+    }
+
+    /* Delete button */
+    .delete-chat {
+        opacity: 0.6;
+        color: #ff5252;
+        padding: 6px;
+        border-radius: 6px;
+    }
+
+    .delete-chat:hover {
+        opacity: 1;
+        background: rgba(255, 82, 82, 0.15);
+    }
+
+    /* Sidebar footer */
+    .sidebar-footer {
+        padding: 12px;
+        border-top: 1px solid var(--glass-border);
+        text-align: center;
+    }
+
+    .model-badge {
+        font-size: 11px;
+        color: var(--text-secondary);
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ==========================================================================
+       Header Bar - Desktop Style
+       ========================================================================== */
+    .header-bar {
+        padding: 0 16px 0 66px !important;
+        /* Left padding for menu button - !important to override main.css */
+        height: 60px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        backdrop-filter: var(--glass-blur);
+        -webkit-backdrop-filter: var(--glass-blur);
+        flex-shrink: 0;
+        gap: var(--space-sm);
+        position: relative;
+        /* For absolute centering of switcher */
+    }
+
+    .header-left,
+    .header-right {
+        display: flex;
+        align-items: center;
+        gap: var(--space-xs);
+        flex-shrink: 0;
+    }
+
+    /* Status dot - same as desktop */
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        background: var(--accent-color);
+        border-radius: 50%;
+        box-shadow: var(--accent-glow);
+    }
+
+    /* Show title, but hide on very small screens to prioritize mode switcher */
+    .header-title {
+        display: none;
+        /* Hidden by default on mobile to save space for Mode Switcher */
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--accent-color);
+        /* Match Desktop Blue */
+        letter-spacing: -0.5px;
+    }
+
+    @media (min-width: 400px) {
+        .header-title {
+            display: block;
+        }
+    }
+
+    /* ==========================================================================
+       Mode Switcher - Matched to Desktop
+       ========================================================================== */
+    .mode-switcher {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px;
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid var(--glass-border);
+        border-radius: 12px;
+        /* Centered in header */
+        margin: 0 auto;
+        overflow-x: auto;
+        white-space: nowrap;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+    }
+
+    .mode-switcher::-webkit-scrollbar {
+        display: none;
+    }
+
+    body.light-mode .mode-switcher {
+        background: rgba(0, 0, 0, 0.05);
+        border-color: rgba(0, 0, 0, 0.08);
+    }
+
+    .mode-tab {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 14px;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .mode-tab .lucide {
+        width: 16px;
+        height: 16px;
+    }
+
+    .mode-tab span {
+        display: inline-block !important;
+        white-space: nowrap;
+    }
+
+    /* Responsive: Hide text on narrow screens */
+    @media (max-width: 380px) {
+        .mode-tab span {
+            display: none !important;
+        }
+
+        .mode-tab {
+            padding: 8px 10px;
+            /* Adjust padding for icon-only */
+        }
+    }
+
+    .mode-tab:hover:not(.active) {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text-primary);
+    }
+
+    .mode-tab.active {
+        background: var(--accent-color);
+        color: var(--bg-base);
+        box-shadow: var(--accent-glow);
+    }
+
+    .mode-tab.active .lucide {
+        stroke: var(--bg-base);
+    }
+
+    body.light-mode .mode-tab.active {
+        color: #ffffff;
+    }
+
+    /* Obsolete classes cleanup */
+    .header-title,
+    .header-center,
+    .logo-icon,
+    .status-dot {
+        display: none !important;
+    }
+
+    /* ==========================================================================
+       Main Content Area
+       ========================================================================== */
+    .main-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    /* ==========================================================================
+       Messages Area - Desktop Style
+       ========================================================================== */
+    .messages {
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 20px 6%;
+        /* Desktop-style percentage padding */
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        scroll-behavior: smooth;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+    }
+
+    body.light-mode .messages {
+        scrollbar-color: rgba(0, 0, 0, 0.1) transparent;
+    }
+
+    .messages::-webkit-scrollbar {
+        width: 5px;
+    }
+
+    .messages::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 2px;
+    }
+
+    body.light-mode .messages::-webkit-scrollbar-thumb {
+        background: rgba(0, 0, 0, 0.1);
+    }
+
+    /* ==========================================================================
+       Message Bubbles - Desktop Style
+       ========================================================================== */
+    .message {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        max-width: 80%;
+        /* Desktop-style width constraint */
+        margin-bottom: 12px;
+        animation: messageAppear 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    @keyframes messageAppear {
+        from {
+            opacity: 0;
+            transform: translateY(8px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .message.bot {
+        margin-right: auto;
+        justify-content: flex-start;
+    }
+
+    .message.user {
+        margin-left: auto;
+        flex-direction: row-reverse;
+        justify-content: flex-end;
+    }
+
+    /* Avatar - Desktop style */
+    .message-avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        overflow: hidden;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+        border: 2px solid transparent;
+        transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        animation: breath 4s ease-in-out infinite;
+    }
+
+    @keyframes breath {
+
+        0%,
+        100% {
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        50% {
+            box-shadow: 0 4px 20px rgba(0, 240, 255, 0.4);
+        }
+    }
+
+    .message-avatar:hover {
+        transform: scale(1.3);
+        border-color: var(--accent-color);
+    }
+
+    .message-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .message.bot .message-avatar {
+        background: linear-gradient(135deg, rgba(0, 240, 255, 0.2) 0%, rgba(0, 97, 255, 0.15) 100%);
+        color: var(--accent-color);
+    }
+
+    .message.user .message-avatar {
+        background: linear-gradient(135deg, var(--accent-color) 0%, #0061ff 100%);
+        color: white;
+    }
+
+    /* Message Content - Desktop bubble styling */
+    .message-content {
+        padding: 12px 16px;
+        border-radius: 16px;
+        font-size: 14px;
+        line-height: 1.6;
+        max-width: 100%;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+
+    .message.bot .message-content {
+        background: var(--bot-bubble);
+        color: var(--text-primary);
+        border: 1px solid var(--glass-border);
+        border-bottom-left-radius: 4px;
+    }
+
+    .message.user .message-content {
+        background: linear-gradient(135deg, var(--accent-color) 0%, #0061ff 100%);
+        color: white;
+        border-bottom-right-radius: 4px;
+        box-shadow: 0 4px 12px rgba(0, 97, 255, 0.3);
+    }
+
+    /* ==========================================================================
+       Welcome Screen - Desktop Style
+       ========================================================================== */
+    .welcome-screen {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 32px 20px;
+        animation: fadeIn 0.5s ease;
+    }
+
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+        }
+
+        to {
+            opacity: 1;
+        }
+    }
+
+    .welcome-icon {
+        width: 64px;
+        height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        background: linear-gradient(135deg, rgba(0, 240, 255, 0.1) 0%, rgba(0, 97, 255, 0.05) 100%);
+        margin-bottom: 20px;
+    }
+
+    .welcome-icon .lucide {
+        width: 32px;
+        height: 32px;
+        color: var(--accent-color);
+        filter: drop-shadow(var(--accent-glow));
+    }
+
+    .welcome-title {
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0 0 8px 0;
+    }
+
+    .welcome-subtitle {
+        font-size: 14px;
+        color: var(--text-secondary);
+        margin: 0 0 24px 0;
+    }
+
+    /* Feature cards - horizontal scroll on small screens */
+    .welcome-features {
+        display: flex;
+        gap: 12px;
+        width: 100%;
+        max-width: 100%;
+        overflow-x: auto;
+        padding: 4px;
+        scroll-snap-type: x mandatory;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .welcome-features::-webkit-scrollbar {
+        height: 4px;
+    }
+
+    .welcome-features::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 2px;
+    }
+
+    .feature-card {
+        flex: 0 0 auto;
+        width: 160px;
+        padding: 16px 14px;
+        background: var(--glass-panel);
+        border: 1px solid var(--glass-border);
+        border-radius: 14px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        scroll-snap-align: start;
+    }
+
+    .feature-card:hover {
+        border-color: var(--accent-color);
+        transform: translateY(-2px);
+    }
+
+    .feature-card .lucide {
+        width: 28px;
+        height: 28px;
+        color: var(--accent-color);
+        margin-bottom: 10px;
+    }
+
+    .feature-card h3 {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0 0 6px 0;
+        color: var(--text-primary);
+    }
+
+    .feature-card p {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin: 0;
+        line-height: 1.4;
+    }
+
+    /* ==========================================================================
+       Input Area - Desktop Style (Toolbar Integrated)
+       ========================================================================== */
+    .input-area {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        /* No gap - toolbar integrated */
+        padding: 12px 16px;
+        padding-bottom: calc(12px + env(safe-area-inset-bottom, 0));
+        border-top: 1px solid var(--glass-border);
+        background: var(--glass-panel);
+        backdrop-filter: var(--glass-blur);
+        -webkit-backdrop-filter: var(--glass-blur);
+        flex-shrink: 0;
+    }
+
+    .input-container {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        min-height: 44px;
+        padding: 6px 8px 6px 12px;
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid var(--glass-border);
+        border-radius: 22px;
+        transition: all var(--transition-normal) cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    body.light-mode .input-container {
+        background: rgba(255, 255, 255, 0.5);
+    }
+
+    .input-container:focus-within {
+        border-color: var(--accent-color);
+        background: rgba(0, 0, 0, 0.3);
+        box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.1), inset 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    body.light-mode .input-container:focus-within {
+        background: rgba(255, 255, 255, 0.8);
+        box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.1), inset 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+
+    .input-wrapper {
+        flex: 1;
+        position: relative;
+        display: flex;
+        align-items: center;
+        min-width: 0;
+    }
+
+    #chat-input {
+        width: 100%;
+        padding: 8px 4px;
+        border: none;
+        background: transparent;
+        color: var(--text-primary);
+        font-size: 15px;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        outline: none;
+        min-width: 0;
+    }
+
+    #chat-input::placeholder {
+        color: var(--text-secondary);
+        opacity: 0.6;
+    }
+
+    #ghost-input {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 1;
+        pointer-events: none;
+        font-size: 15px;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        color: var(--text-secondary);
+        opacity: 0.4;
+        white-space: pre;
+    }
+
+    /* ==========================================================================
+       Icon Buttons - Desktop Style
+       ========================================================================== */
+    .icon-btn {
+        width: 36px;
+        height: 36px;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        color: var(--text-secondary);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all var(--transition-fast) ease;
+        flex-shrink: 0;
+    }
+
+    .icon-btn:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--accent-color);
+    }
+
+    body.light-mode .icon-btn:hover {
+        background: rgba(0, 0, 0, 0.05);
+    }
+
+    /* Send button */
+    #send-btn {
+        color: var(--text-secondary);
+        transition: all 0.2s ease;
+    }
+
+    #send-btn:hover {
+        color: var(--accent-color);
+        background: rgba(0, 0, 0, 0.05);
+        box-shadow: none;
+    }
+
+    body.light-mode #send-btn:hover {
+        background: rgba(0, 0, 0, 0.05);
+    }
+
+    /* Upload button */
+    .upload-btn {
+        color: var(--text-secondary);
+    }
+
+    /* Toolbar - Settings button visible outside input container (matches desktop) */
+    .toolbar {
+        position: relative;
+        display: flex;
+        align-items: center;
+        margin-left: 8px;
+    }
+
+    .toolbar .more-btn {
+        width: 40px;
+        height: 40px;
+        color: var(--text-secondary);
+    }
+
+    .dropdown-content {
+        display: none;
+        position: absolute;
+        bottom: 46px;
+        /* Closer to the button */
+        right: 0;
+        /* Align with right edge of container */
+        background: var(--sidebar-glass);
+        border: 1px solid var(--glass-border);
+        border-radius: 12px;
+        padding: 8px;
+        min-width: 140px;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        z-index: 100;
+    }
+
+    .dropdown-content.show {
+        display: block;
+    }
+
+    .dropdown-item {
+        padding: 10px;
+        cursor: pointer;
+        font-size: 13px;
+        border-radius: 6px;
+        color: var(--text-primary);
+    }
+
+    .dropdown-item:hover {
+        background: rgba(255, 255, 255, 0.1);
+    }
+
+    /* ==========================================================================
+       Loading State
+       ========================================================================== */
+    .loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 16px;
+        color: var(--text-secondary);
+        font-size: 14px;
+    }
+
+    .loading-spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid var(--glass-border);
+        border-top-color: var(--accent-color);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    /* ==========================================================================
+       Intent Confirm Modal
+       ========================================================================== */
+    .intent-confirm {
+        background: var(--glass-panel);
+        border: 1px solid var(--glass-border);
+        border-radius: 16px;
+        padding: 16px;
+        margin: 0 16px;
+        backdrop-filter: var(--glass-blur);
+        -webkit-backdrop-filter: var(--glass-blur);
+    }
+
+    .intent-options {
+        display: flex;
+        flex-direction: row;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .intent-option {
+        flex: 1;
+        min-width: 100px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 12px;
+        gap: 8px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid var(--glass-border);
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .intent-option:hover {
+        border-color: var(--accent-color);
+        background: rgba(0, 240, 255, 0.08);
+    }
+
+    .intent-option .lucide {
+        width: 20px;
+        height: 20px;
+        color: var(--accent-color);
+    }
+
+    /* ==========================================================================
+       Image Preview Modal
+       ========================================================================== */
+    .image-preview-modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.9);
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+    }
+
+    .preview-content {
+        max-width: 100%;
+        background: transparent;
+    }
+
+    .preview-content img {
+        max-width: 100%;
+        max-height: 60vh;
+        border-radius: 16px;
+        margin: 0 auto;
+        display: block;
+    }
+
+    .preview-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+        margin-top: 20px;
+    }
+
+    .preview-actions button {
+        min-width: 120px;
+        height: 44px;
+        border-radius: 12px;
+        font-size: 15px;
+        font-weight: 500;
+    }
+
+    /* ==========================================================================
+       Code Panel - Mobile Tab-Based Layout
+       ========================================================================== */
+    .code-panel,
+    #code-panel {
+        position: fixed !important;
+        top: 0 !important;
+        right: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        height: 100% !important;
+        background: var(--sidebar-glass) !important;
+        backdrop-filter: blur(24px) !important;
+        -webkit-backdrop-filter: blur(24px) !important;
+        border-left: 1px solid var(--glass-border) !important;
+        transform: translateX(100%) !important;
+        /* CRITICAL: Hide by default, override main.css */
+        transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        z-index: 600 !important;
+        /* CRITICAL: Must be above overlay (z-index 199) */
+        display: flex !important;
+        flex-direction: column !important;
+        box-shadow: none !important;
+        /* Remove the 718px spread shadow */
+        backdrop-filter: blur(8px) !important;
+        /* Reduce blur for clearer visibility */
+        -webkit-backdrop-filter: blur(8px) !important;
+    }
+
+    .code-panel.open,
+    #code-panel.open {
+        transform: translateX(0) !important;
+        /* Show when .open class is added */
+    }
+
+    /* Overlay should be BELOW the panel, not above it */
+    .code-panel-overlay,
+    .code-panel-overlay.active {
+        z-index: 199 !important;
+        /* Below panel (z-index 600) */
+        backdrop-filter: none !important;
+        /* Remove blur effect from overlay */
+        -webkit-backdrop-filter: none !important;
+    }
+
+    .code-panel .panel-header {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--glass-border);
+        flex-shrink: 0;
+    }
+
+    /* Mobile Close Button - Match Desktop Style */
+    .code-panel .panel-header .code-action-btn.close-btn,
+    .code-panel .panel-header .close-btn,
+    .code-panel .panel-header button[class*="close"] {
+        width: 36px !important;
+        height: 36px !important;
+        padding: 0 !important;
+        border-radius: 10px !important;
+        background: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid var(--glass-border) !important;
+        color: var(--text-secondary) !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        font-size: 16px !important;
+        transition: all 0.2s ease !important;
+    }
+
+    .code-panel .panel-header .code-action-btn.close-btn:hover,
+    .code-panel .panel-header .close-btn:hover,
+    .code-panel .panel-header button[class*="close"]:hover {
+        background: rgba(255, 82, 82, 0.15) !important;
+        border-color: rgba(255, 82, 82, 0.4) !important;
+        color: #ff5252 !important;
+        transform: rotate(90deg) !important;
+    }
+
+    /* ========== Mobile Tab Bar ========== */
+    .code-panel .mobile-panel-tabs {
+        display: flex;
+        gap: 6px;
+        padding: 8px 12px;
+        background: rgba(0, 0, 0, 0.25);
+        border-bottom: 1px solid var(--glass-border);
+        flex-shrink: 0;
+    }
+
+    .code-panel .mobile-panel-tab {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 12px 16px;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .code-panel .mobile-panel-tab:active {
+        transform: scale(0.97);
+    }
+
+    .code-panel .mobile-panel-tab.active {
+        background: var(--accent-color);
+        color: var(--bg-base);
+        border-color: var(--accent-color);
+        box-shadow: var(--accent-glow);
+    }
+
+    .code-panel .mobile-panel-tab .lucide {
+        width: 18px;
+        height: 18px;
+    }
+
+    body.light-mode .code-panel .mobile-panel-tab.active {
+        color: #ffffff;
+    }
+
+    /* ========== Panel Body - MUST override main.css flex-direction: row ========== */
+    .code-panel .panel-body,
+    #code-panel .panel-body {
+        flex: 1 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        /* CRITICAL: Override main.css row layout */
+        overflow: hidden !important;
+        position: relative !important;
+        min-height: 0 !important;
+        width: 100% !important;
+    }
+
+    /* ========== Preview Tab (Video 50% + History 50% + Footer) ========== */
+    .code-panel .mobile-preview-tab,
+    #code-panel .mobile-preview-tab {
+        display: flex !important;
+        flex-direction: column !important;
+        height: 100% !important;
+        width: 100% !important;
+        /* CRITICAL: Prevent shrinking to 70px */
+        overflow: hidden !important;
+    }
+
+    /* CRITICAL: Hide preview tab when code tab is active */
+    .code-panel .mobile-preview-tab.hidden,
+    #code-panel .mobile-preview-tab.hidden,
+    #mobile-preview-tab.hidden {
+        display: none !important;
+        visibility: hidden !important;
+    }
+
+    /* Video Preview - MUST be exactly 50% height (use !important to override main.css) */
+    .code-panel .mobile-preview-tab .panel-preview,
+    .code-panel .mobile-preview-tab #video-preview-container {
+        flex: 0 0 50% !important;
+        height: 50% !important;
+        max-height: 50% !important;
+        min-height: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        border-bottom: none !important;
+        overflow: hidden !important;
+    }
+
+    .code-panel .mobile-preview-tab #video-inner-container {
+        flex: 1 !important;
+        min-height: 0 !important;
+        max-height: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: #000 !important;
+        border-radius: 0 !important;
+        overflow: hidden !important;
+    }
+
+    .code-panel .mobile-preview-tab #video-inner-container video {
+        width: 100% !important;
+        height: 100% !important;
+        max-height: 100% !important;
+        object-fit: contain !important;
+    }
+
+    /* History - MUST be exactly 50% height (use !important to override main.css) */
+    .code-panel .mobile-preview-tab #manim-history-root,
+    .code-panel .mobile-preview-tab #manim-history-root.history-list-container {
+        flex: 0 0 50% !important;
+        height: 50% !important;
+        max-height: 50% !important;
+        min-height: 0 !important;
+        overflow-y: auto !important;
+        border-top: 1px solid var(--glass-border) !important;
+        background: rgba(0, 0, 0, 0.15) !important;
+        padding: 8px !important;
+    }
+
+    /* CRITICAL: Force history content always visible on MOBILE ONLY (override main.css :not(.expanded) rules) */
+    /* This block is already inside @media (max-width: 767px) so it only affects mobile */
+    .code-panel .mobile-preview-tab #manim-history-root .history-list,
+    .code-panel .mobile-preview-tab #manim-history-root .history-empty {
+        display: block !important;
+        max-height: none !important;
+    }
+
+    .code-panel .mobile-preview-tab #manim-history-root .history-list-header {
+        display: none !important;
+        /* Hide toggle header on mobile - not needed */
+    }
+
+    /* ========== MOBILE HISTORY BAR - MATCHING DESKTOP DESIGN ========== */
+
+    /* History List Container - Same as desktop */
+    .code-panel .mobile-preview-tab #manim-history-root .history-list {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        padding: 8px !important;
+    }
+
+    /* History Item - Desktop-style horizontal row */
+    .code-panel .mobile-preview-tab .history-item,
+    #code-panel .mobile-preview-tab .history-item {
+        display: flex !important;
+        align-items: center !important;
+        gap: 10px !important;
+        padding: 10px 12px !important;
+        min-height: 44px !important;
+        background: rgba(55, 65, 81, 0.5) !important;
+        /* Dark slate like desktop */
+        border-radius: 8px !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        transition: background-color 0.2s ease !important;
+        cursor: pointer !important;
+        font-family: var(--manim-font-body, 'Inter', sans-serif) !important;
+        /* Enforce font */
+    }
+
+    /* History Item Hover - Simple highlight like desktop */
+    .code-panel .mobile-preview-tab .history-item:hover,
+    #code-panel .mobile-preview-tab .history-item:hover {
+        background: rgba(55, 65, 81, 0.7) !important;
+    }
+
+    /* History Item Active/Current - Desktop style (Cyan) */
+    .code-panel .mobile-preview-tab .history-item.active,
+    .code-panel .mobile-preview-tab .history-item.current,
+    #code-panel .mobile-preview-tab .history-item.active,
+    #code-panel .mobile-preview-tab .history-item.current {
+        background: rgba(0, 240, 255, 0.1) !important;
+        /* Cyan tint matching desktop */
+        border-color: rgba(0, 240, 255, 0.3) !important;
+        box-shadow: 0 0 15px rgba(0, 240, 255, 0.06) !important;
+    }
+
+    /* Version Badge - Desktop cyan style (NOT teal/blue gradient) */
+    .code-panel .mobile-preview-tab .history-item .history-version,
+    #code-panel .mobile-preview-tab .history-item .history-version {
+        flex-shrink: 0 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        min-width: 28px !important;
+        height: 20px !important;
+        padding: 0 6px !important;
+        font-size: 10px !important;
+        font-weight: 600 !important;
+        font-family: var(--manim-font-code, 'Fira Code', monospace) !important;
+        /* Enforce font */
+        color: #00F0FF !important;
+        /* Cyan like desktop */
+        background: rgba(0, 240, 255, 0.12) !important;
+        /* Subtle cyan bg */
+        border-radius: 4px !important;
+    }
+
+    /* History Title - Desktop typography */
+    .code-panel .mobile-preview-tab .history-item .history-title,
+    #code-panel .mobile-preview-tab .history-item .history-title {
+        flex: 1 !important;
+        min-width: 0 !important;
+        font-size: 13px !important;
+        font-weight: 400 !important;
+        font-family: var(--manim-font-body, 'Inter', sans-serif) !important;
+        /* Enforce font */
+        color: rgba(255, 255, 255, 0.9) !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+
+    /* Current Badge - Desktop style (subtle, not bright green) */
+    .code-panel .mobile-preview-tab .history-item .current-badge,
+    #code-panel .mobile-preview-tab .history-item .current-badge {
+        padding: 4px 8px !important;
+        font-size: 10px !important;
+        font-weight: 500 !important;
+        color: rgba(255, 255, 255, 0.7) !important;
+        background: rgba(255, 255, 255, 0.05) !important;
+        /* Subtle bg */
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 4px !important;
+        cursor: pointer !important;
+        transition: all 0.2s ease !important;
+    }
+
+    .code-panel .mobile-preview-tab .history-item .current-badge:hover,
+    #code-panel .mobile-preview-tab .history-item .current-badge:hover {
+        background: rgba(0, 240, 255, 0.15) !important;
+        border-color: rgba(0, 240, 255, 0.3) !important;
+        color: #00F0FF !important;
+    }
+
+    /* Rollback Button - Desktop style */
+    .code-panel .mobile-preview-tab .history-item .rollback-btn,
+    .code-panel .mobile-preview-tab .history-item .history-action,
+    #code-panel .mobile-preview-tab .history-item .rollback-btn,
+    #code-panel .mobile-preview-tab .history-item .history-action {
+        flex-shrink: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 4px !important;
+        padding: 6px 10px !important;
+        font-size: 11px !important;
+        font-weight: 500 !important;
+        color: rgba(255, 255, 255, 0.7) !important;
+        background: rgba(255, 255, 255, 0.08) !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        border-radius: 6px !important;
+        cursor: pointer !important;
+        transition: all 0.15s ease !important;
+    }
+
+    .code-panel .mobile-preview-tab .history-item .rollback-btn:hover,
+    .code-panel .mobile-preview-tab .history-item .history-action:hover,
+    #code-panel .mobile-preview-tab .history-item .rollback-btn:hover,
+    #code-panel .mobile-preview-tab .history-item .history-action:hover {
+        background: rgba(255, 255, 255, 0.15) !important;
+        color: white !important;
+    }
+
+    /* Light Mode Overrides - Ensure Readability */
+    body.light-mode .code-panel .mobile-preview-tab .history-item,
+    body.light-mode #code-panel .mobile-preview-tab .history-item {
+        background: rgba(255, 255, 255, 0.8) !important;
+        border-color: rgba(0, 0, 0, 0.08) !important;
+    }
+
+    body.light-mode .code-panel .mobile-preview-tab .history-item .history-title,
+    body.light-mode #code-panel .mobile-preview-tab .history-item .history-title {
+        color: #1e293b !important;
+        /* Dark text */
+    }
+
+    body.light-mode .code-panel .mobile-preview-tab .history-item.active,
+    body.light-mode #code-panel .mobile-preview-tab .history-item.active {
+        background: rgba(0, 240, 255, 0.1) !important;
+        border-color: rgba(0, 240, 255, 0.4) !important;
+    }
+
+    body.light-mode .code-panel .mobile-preview-tab .history-item .history-version,
+    body.light-mode #code-panel .mobile-preview-tab .history-item .history-version {
+        color: #0061ff !important;
+        /* Blue text for contrast on light */
+        background: rgba(0, 97, 255, 0.1) !important;
+    }
+
+    body.light-mode .code-panel .mobile-preview-tab .history-item .current-badge,
+    body.light-mode #code-panel .mobile-preview-tab .history-item .current-badge {
+        color: #64748b !important;
+        background: rgba(0, 0, 0, 0.05) !important;
+        border-color: rgba(0, 0, 0, 0.1) !important;
+    }
+
+    body.light-mode .code-panel .mobile-preview-tab .history-item:hover,
+    body.light-mode #code-panel .mobile-preview-tab .history-item:hover {
+        background: rgba(229, 231, 235, 0.9) !important;
+    }
+
+    body.light-mode .code-panel .mobile-preview-tab .history-item.active,
+    body.light-mode .code-panel .mobile-preview-tab .history-item.current,
+    body.light-mode #code-panel .mobile-preview-tab .history-item.active,
+    body.light-mode #code-panel .mobile-preview-tab .history-item.current {
+        background: rgba(20, 184, 166, 0.1) !important;
+        border-color: rgba(20, 184, 166, 0.2) !important;
+    }
+
+    body.light-mode .code-panel .mobile-preview-tab .history-item .history-title,
+    body.light-mode #code-panel .mobile-preview-tab .history-item .history-title {
+        color: rgba(0, 0, 0, 0.85) !important;
+    }
+
+    body.light-mode .code-panel .mobile-preview-tab .history-item .rollback-btn,
+    body.light-mode #code-panel .mobile-preview-tab .history-item .rollback-btn {
+        color: rgba(0, 0, 0, 0.6) !important;
+        background: rgba(0, 0, 0, 0.05) !important;
+        border-color: rgba(0, 0, 0, 0.1) !important;
+    }
+
+    /* ========== END DESKTOP-MATCHING HISTORY BAR ========== */
+
+    /* AI Footer - Fixed height at bottom */
+    .code-panel .mobile-preview-tab .mobile-preview-footer {
+        flex: 0 0 auto;
+        display: flex;
+        gap: 8px;
+        padding: 10px 12px;
+        padding-bottom: calc(10px + env(safe-area-inset-bottom, 0));
+        border-top: 1px solid var(--glass-border);
+        background: var(--sidebar-glass);
+    }
+
+    /* ========== Code Tab (Editor Only) ========== */
+    .code-panel .mobile-code-tab {
+        display: none;
+        flex-direction: column;
+        height: 100%;
+        overflow: hidden;
+    }
+
+    .code-panel .mobile-code-tab.active {
+        display: flex !important;
+    }
+
+    .code-panel .mobile-code-tab .panel-editor,
+    #code-panel .mobile-code-tab .panel-editor {
+        flex: 1 !important;
+        min-height: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        width: 100% !important;
+        /* CRITICAL: Override main.css 50% width */
+        border-right: none !important;
+        /* Remove desktop border */
+    }
+
+    .code-panel .mobile-code-tab .editor-toolbar {
+        display: flex;
+        flex-shrink: 0;
+        padding: 8px 12px;
+        background: rgba(0, 0, 0, 0.3);
+        border-bottom: 1px solid var(--glass-border);
+    }
+
+    .code-panel .mobile-code-tab #monaco-container {
+        flex: 1;
+        min-height: 0;
+    }
+
+    /* Hide mobile footers inside code tab (no longer used) */
+    .code-panel .mobile-code-tab .panel-footer.mobile-footer {
+        display: none !important;
+    }
+
+    /* ========== Desktop Footer Hidden on Mobile ========== */
+    .code-panel .desktop-footer {
+        display: none !important;
+    }
+
+    /* ==========================================================================
+       Toast Notifications
+       ========================================================================== */
+    .toast-container {
+        position: fixed;
+        bottom: calc(80px + env(safe-area-inset-bottom, 0));
+        right: 20px;
+        z-index: 1100;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-width: 320px;
+    }
+
+    .toast {
+        padding: 12px 16px;
+        background: var(--glass-panel);
+        border: 1px solid var(--glass-border);
+        border-radius: 12px;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        font-size: 14px;
+    }
+}
+
+/* ==========================================================================
+   Tablet Styles (768px - 1023px)
+   ========================================================================== */
+@media (min-width: 768px) and (max-width: 1023px) {
+
+    /* Sidebar with full width */
+    .sidebar {
+        width: 260px;
+    }
+
+    /* Mode switcher with text labels */
+    .mode-tab {
+        padding: 8px 14px;
+        gap: 6px;
+    }
+
+    .mode-tab span {
+        display: inline;
+        font-size: 13px;
+    }
+
+    /* Wider messages area */
+    .messages {
+        padding: var(--space-lg) 6%;
+    }
+
+    .message {
+        max-width: 75%;
+    }
+
+    /* Input area */
+    .input-area {
+        padding: var(--space-md) var(--space-lg);
+    }
+
+
+}
+
+/* ==========================================================================
+   Accessibility
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* High contrast focus states */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+/* ==========================================================================
+   Large Desktop (1024px+) - Standard Desktop Styles
+   ========================================================================== */
+@media (min-width: 1024px) {
+    .messages {
+        padding: var(--space-xl) 10%;
+    }
+
+    .message {
+        max-width: 70%;
+    }
+
+
+}
+
+/* ==========================================================================
+   Extra Large (1440px+)
+   ========================================================================== */
+@media (min-width: 1440px) {
+    .messages {
+        padding: var(--space-xl) 12%;
+    }
+
+    .message {
+        max-width: 65%;
+    }
+}

@@ -1,0 +1,471 @@
+/**
+ * ICeCream - Smart Question Board Styles
+ * Copyright (c) 2026 ICeCreamChat
+ * Licensed under the MIT License.
+ *
+ * Adaptive layout styles for different content types.
+ */
+
+/* ==========================================================================
+   Design System Variables
+   ========================================================================== */
+:root {
+    /* Card Layout */
+    --smart-card-padding: 1.5rem;
+    --smart-card-radius: 16px;
+    --smart-card-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+    --smart-card-hover-transform: translateY(-4px);
+    --smart-grid-gap: 1.5rem;
+
+    /* Content Type Colors */
+    --smart-type-text: #6366f1;
+    --smart-type-table: #22c55e;
+    --smart-type-image: #f59e0b;
+    --smart-type-formula: #3b82f6;
+    --smart-type-mixed: #ec4899;
+
+    /* Table Styles */
+    --smart-table-header-bg: rgba(59, 130, 246, 0.15);
+    --smart-table-alt-row: rgba(0, 0, 0, 0.03);
+    --smart-table-border: rgba(0, 0, 0, 0.08);
+
+    /* Formula Styles */
+    --smart-formula-bg: rgba(59, 130, 246, 0.08);
+    --smart-formula-border: rgba(59, 130, 246, 0.2);
+
+    /* Animation */
+    --smart-transition: 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Dark Mode Overrides */
+body:not(.light-mode) {
+    --smart-table-header-bg: rgba(59, 130, 246, 0.2);
+    --smart-table-alt-row: rgba(255, 255, 255, 0.03);
+    --smart-table-border: rgba(255, 255, 255, 0.1);
+    --smart-formula-bg: rgba(59, 130, 246, 0.15);
+    --smart-formula-border: rgba(59, 130, 246, 0.3);
+}
+
+/* ==========================================================================
+   Smart Layout Base
+   ========================================================================== */
+.smart-layout {
+    position: relative;
+    width: 100%;
+}
+
+.smart-content-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+/* ==========================================================================
+   Content Type Indicator
+   ========================================================================== */
+.smart-type-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    margin-bottom: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 20px;
+    background: var(--smart-type-text);
+    color: white;
+    width: fit-content;
+    transition: all var(--smart-transition);
+}
+
+.smart-type-indicator i {
+    width: 14px;
+    height: 14px;
+}
+
+/* Type-specific colors */
+.smart-layout-table .smart-type-indicator {
+    background: var(--smart-type-table);
+}
+
+.smart-layout-image .smart-type-indicator {
+    background: var(--smart-type-image);
+}
+
+.smart-layout-formula .smart-type-indicator {
+    background: var(--smart-type-formula);
+}
+
+.smart-layout-mixed .smart-type-indicator {
+    background: var(--smart-type-mixed);
+}
+
+/* ==========================================================================
+   Text Section (Base)
+   ========================================================================== */
+.smart-text-section {
+    font-size: 0.95rem;
+    line-height: 1.8;
+    color: var(--text-primary, #1f2937);
+}
+
+.smart-text-section p {
+    margin-bottom: 1em;
+}
+
+.smart-text-section h1,
+.smart-text-section h2,
+.smart-text-section h3 {
+    margin-top: 1.5em;
+    margin-bottom: 0.75em;
+    font-weight: 600;
+}
+
+.smart-text-section ul,
+.smart-text-section ol {
+    padding-left: 1.5em;
+    margin-bottom: 1em;
+}
+
+.smart-text-section li {
+    margin-bottom: 0.5em;
+}
+
+/* ==========================================================================
+   Table Layout
+   ========================================================================== */
+.smart-table-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.smart-table-wrapper {
+    position: relative;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-radius: 12px;
+    background: var(--bg-base, #fff);
+    border: 1px solid var(--smart-table-border);
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+}
+
+.smart-table-wrapper::-webkit-scrollbar {
+    height: 6px;
+}
+
+.smart-table-wrapper::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+}
+
+.smart-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+    white-space: nowrap;
+}
+
+.smart-table th,
+.smart-table td {
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--smart-table-border);
+}
+
+.smart-table thead th {
+    background: var(--smart-table-header-bg);
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.smart-table-row-alt {
+    background: var(--smart-table-alt-row);
+}
+
+.smart-table tbody tr:hover {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+/* Table Scroll Hint */
+.smart-table-scroll-hint {
+    display: none;
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 12px;
+    font-size: 0.7rem;
+    color: var(--text-secondary, #6b7280);
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 20px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.smart-table-wrapper:hover .smart-table-scroll-hint {
+    opacity: 1;
+}
+
+/* Show scroll hint when table overflows */
+.smart-table-wrapper:has(table[data-overflow="true"]) .smart-table-scroll-hint {
+    display: block;
+}
+
+/* ==========================================================================
+   Image Layout
+   ========================================================================== */
+.smart-image-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.smart-image-wrapper {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin: 1rem 0;
+}
+
+.smart-image {
+    max-width: 100%;
+    height: auto;
+    border-radius: 12px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: #fff;
+    cursor: zoom-in;
+    transition: transform var(--smart-transition), box-shadow var(--smart-transition);
+}
+
+.smart-image:hover {
+    transform: scale(1.02);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.smart-image-caption {
+    font-size: 0.8rem;
+    color: var(--text-secondary, #6b7280);
+    text-align: center;
+    font-style: italic;
+}
+
+.smart-image-zoom-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.2s;
+}
+
+.smart-image-zoom-btn i {
+    width: 16px;
+    height: 16px;
+}
+
+.smart-image-wrapper:hover .smart-image-zoom-btn {
+    opacity: 1;
+}
+
+.smart-image-zoom-btn:hover {
+    transform: scale(1.1);
+    background: rgba(0, 0, 0, 0.8);
+}
+
+/* ==========================================================================
+   Formula Layout
+   ========================================================================== */
+.smart-formula-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.smart-formula-block {
+    position: relative;
+    padding: 1rem 1.5rem;
+    margin: 0.75rem 0;
+    background: var(--smart-formula-bg);
+    border: 1px solid var(--smart-formula-border);
+    border-radius: 12px;
+    overflow-x: auto;
+}
+
+.smart-formula-block .katex-display {
+    margin: 0;
+    padding: 0;
+}
+
+.smart-formula-copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 6px;
+    background: rgba(59, 130, 246, 0.2);
+    color: var(--smart-type-formula);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.2s;
+}
+
+.smart-formula-copy-btn i {
+    width: 14px;
+    height: 14px;
+}
+
+.smart-formula-block:hover .smart-formula-copy-btn {
+    opacity: 1;
+}
+
+.smart-formula-copy-btn:hover {
+    transform: scale(1.1);
+    background: rgba(59, 130, 246, 0.3);
+}
+
+/* ==========================================================================
+   Mixed Content Layout
+   ========================================================================== */
+.smart-mixed-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.smart-mixed-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+/* ==========================================================================
+   Card Size Hints (for Bento Grid integration)
+   ========================================================================== */
+[data-card-size="1x1"] {
+    /* Standard size - default dimensions */
+    min-width: 200px;
+}
+
+[data-card-size="2x1"] {
+    /* Wide card - good for tables */
+    min-width: 400px;
+}
+
+[data-card-size="1x2"] {
+    /* Tall card - good for images */
+    min-height: 300px;
+}
+
+[data-card-size="2x2"] {
+    /* Large card - for complex content */
+    min-width: 400px;
+    min-height: 300px;
+}
+
+/* ==========================================================================
+   Preview Modes
+   ========================================================================== */
+.smart-layout.preview-summary .smart-content-wrapper {
+    max-height: 100px;
+    overflow: hidden;
+    position: relative;
+}
+
+.smart-layout.preview-summary .smart-content-wrapper::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40px;
+    background: linear-gradient(transparent, var(--bg-base, #fff));
+    pointer-events: none;
+}
+
+.smart-layout.preview-standard .smart-content-wrapper {
+    max-height: 300px;
+    overflow: hidden;
+}
+
+/* Action Bar removed */
+
+/* ==========================================================================
+   Responsive
+   ========================================================================== */
+@media (max-width: 768px) {
+    .smart-type-indicator {
+        font-size: 0.7rem;
+        padding: 3px 10px;
+    }
+
+    .smart-table th,
+    .smart-table td {
+        padding: 8px 12px;
+        font-size: 0.8rem;
+    }
+
+    .smart-formula-block {
+        padding: 0.75rem 1rem;
+    }
+
+    [data-card-size="2x1"],
+    [data-card-size="2x2"] {
+        min-width: auto;
+    }
+}
+
+/* Action Bar removed */
+
+/* ==========================================================================
+   Loading Skeleton
+   ========================================================================== */
+.smart-skeleton {
+    background: linear-gradient(90deg,
+            var(--smart-table-alt-row) 25%,
+            rgba(0, 0, 0, 0.08) 50%,
+            var(--smart-table-alt-row) 75%);
+    background-size: 200% 100%;
+    animation: smart-skeleton-shimmer 1.5s infinite;
+    border-radius: 8px;
+}
+
+.smart-skeleton-text {
+    height: 1em;
+    margin-bottom: 0.5em;
+}
+
+.smart-skeleton-image {
+    height: 150px;
+    margin: 1rem 0;
+}
+
+@keyframes smart-skeleton-shimmer {
+    0% {
+        background-position: 200% 0;
+    }
+
+    100% {
+        background-position: -200% 0;
+    }
+}
