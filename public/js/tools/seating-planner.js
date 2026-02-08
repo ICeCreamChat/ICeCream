@@ -234,6 +234,7 @@ class SeatingPlanner {
                 if (this.aisles.includes(c)) {
                     cell.classList.add('sp-seat-aisle');
                     cell.innerHTML = '<span class="sp-aisle-mark"></span>';
+                    cell.addEventListener('contextmenu', e => this.showContextMenu(e, r, c));
                     grid.appendChild(cell);
                     continue;
                 }
