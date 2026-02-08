@@ -132,8 +132,8 @@ const ContextPanel = {
             });
         }
 
-        // Single click on mini panel to expand (mobile-friendly)
-        panel.addEventListener('click', (e) => {
+        // Double click on mini panel to expand (prevent accidental clicks)
+        panel.addEventListener('dblclick', (e) => {
             if (panel.classList.contains('mini')) {
                 // Only expand if clicking the panel itself (not buttons)
                 if (!e.target.closest('button')) {

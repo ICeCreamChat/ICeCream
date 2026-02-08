@@ -310,33 +310,57 @@ export class CodePanel {
     }
 
     /**
-     * 渲染当前代码 (已升级：支持错误高亮)
+     * 渲染当前代码 (已升级：Ctrl+E 极速响应 + 自动取消旧请求)
      */
     async renderCode(codeOverride = null, recordHistory = true) {
         const code = codeOverride || (this.monacoEditor ? this.monacoEditor.getValue() : this.currentCode);
         if (!code) return;
 
-        // 1. 清除之前的错误标记
-        this.clearErrors();
+        // 🛑 1. 前端打断：如果有正在进行的请求，直接取消它
+        // 这会触发 fetch 的 AbortError，从而跳过后续处理
+        if (this.renderAbortController) {
+            console.log('🛑 Aborting previous render request...');
+            this.renderAbortController.abort();
+            this.renderAbortController = null;
+        }
+
+        // 2. 创建新的中断控制器
+        this.renderAbortController = new AbortController();
+        const signal = this.renderAbortController.signal;
+
+        // 清除之前的错误高亮（之前加的功能）
+        if (this.clearErrors) this.clearErrors();
 
         const renderBtn = this.elements.renderBtn;
         if (renderBtn) {
-            renderBtn.disabled = true;
+            // 注意：不要禁用按钮，允许用户狂按 Ctrl+E 重试
             renderBtn.innerHTML = '<div class="loading-spinner" style="width:16px;height:16px;"></div> 渲染中...';
         }
 
         try {
+            // 获取唯一 ID (与 session-manager.js 保持一致)
+            const clientId = localStorage.getItem('icecream_client_id') ||
+                'temp_' + Math.random().toString(36).substr(2);
+
             const response = await fetch('/api/manim/render', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ code })
+                body: JSON.stringify({
+                    code,
+                    client_id: clientId // 👈 关键：带上身份证
+                }),
+                signal: signal // 👈 绑定信号，关键！
             });
+
             const data = await response.json();
 
+            // 请求完成，清理 controller
+            this.renderAbortController = null;
+
             if (data.success && data.videoUrl) {
-                // Update Video
+                // ... (成功逻辑保持不变) ...
                 const newUrl = data.videoUrl;
-                this.latestVideoUrl = newUrl; // Track for sync on close
+                this.latestVideoUrl = newUrl;
 
                 this.elements.videoPreview.innerHTML = `
                     <video controls autoplay loop playsinline style="width:100%; height:100%; object-fit:contain;">
@@ -344,36 +368,37 @@ export class CodePanel {
                     </video>
                 `;
 
-                // 📜 [MathSpace] If there's a pending history description (from AI modify), add to history now
                 if (this.pendingHistoryDescription) {
                     this.addHistoryEntry(this.pendingHistoryDescription, code);
                     this.pendingHistoryDescription = null;
                 } else if (recordHistory) {
-                    // Manual run without AI
                     this.addHistoryEntry('手动运行', code);
                 }
+                if (this.updateVersionIndicator) this.updateVersionIndicator();
 
-                // Re-render list (because innerHTML wiped it, wait, now it doesn't!)
-                // [FIX] Since we removed history-root overwriting, we don't strictly need to rerender list unless logic changed.
-                // But updateVersionIndicator operates on #manim-history-root which is stable now.
-                this.updateVersionIndicator();
             } else {
-                // ❌ 失败时：调用高亮函数
+                // 失败逻辑
                 console.error('Render Failed:', data.error);
-                // 优先显示详细信息，如果没有则显示 error
                 const errorMsg = data.details || data.error || '未知错误';
-                this.highlightError(errorMsg);
 
-                // 仅在非语法错误时弹窗 (语法错误直接看编辑器红线)
+                // 调用错误高亮（之前加的功能）
+                if (this.highlightError) this.highlightError(errorMsg);
+
                 if (!errorMsg.includes('line')) {
                     alert('渲染失败: ' + errorMsg);
                 }
             }
         } catch (err) {
+            // 🛑 捕获取消异常，不做任何干扰
+            if (err.name === 'AbortError') {
+                console.log('✋ Render request aborted by user (New Ctrl+E pressed)');
+                return; // 直接退出，保持无感
+            }
             console.error('Render Error:', err);
             alert('渲染请求失败');
         } finally {
-            if (renderBtn) {
+            // 只有当这是“当前”请求时，才恢复按钮状态
+            if (!signal.aborted && renderBtn) {
                 renderBtn.disabled = false;
                 renderBtn.innerHTML = '<i data-lucide="play" style="width:16px;"></i> 运行';
                 if (window.lucide) lucide.createIcons();
@@ -430,9 +455,10 @@ export class CodePanel {
             }
         });
 
-        // ✨ 新增：绑定 Ctrl+S (或 Cmd+S) 触发渲染
-        this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-            console.log('⌨️ Shortcut: Ctrl+S triggered render');
+        // ✨ 修改：绑定 Ctrl+E (Cmd+E) 触发渲染
+        // 如果之前写了 KeyS，请改成 KeyE
+        this.monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyE, () => {
+            console.log('⌨️ Shortcut: Ctrl+E triggered render');
             this.renderCode();
         });
 

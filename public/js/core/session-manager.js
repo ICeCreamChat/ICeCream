@@ -10,6 +10,7 @@ import { showToast, showConfirm } from '../utils/helpers.js';
  */
 class SessionManager {
     constructor() {
+        this.sessionId = this.getOrCreateClientId();
         this.messages = [];
         this.currentSessionId = null;
         this.elements = {
@@ -19,6 +20,20 @@ class SessionManager {
         };
         this.onSessionLoad = null;
         this.onSessionClear = null;
+    }
+
+    /**
+     * ✨ 新增：获取或创建唯一客户端 ID
+     * 用于区分多用户并发渲染
+     */
+    getOrCreateClientId() {
+        let id = localStorage.getItem('icecream_client_id');
+        if (!id) {
+            // 生成一个随机 ID (简单版 UUID)
+            id = 'client_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+            localStorage.setItem('icecream_client_id', id);
+        }
+        return id;
     }
 
     /**

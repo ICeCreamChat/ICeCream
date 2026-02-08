@@ -290,9 +290,9 @@ class MessageHandler {
             case 'solver':
                 const solutionText = data.solution || '解题完成';
                 // Construct context data for the panel
-                // Priority: MinerU extracted diagram > original uploaded image
-                // MinerU provides clean, processed diagrams which are better for display
-                let panelImage = data.diagramBase64 || originalImage || null;
+                // Priority: MinerU extracted diagram ONLY.
+                // If MinerU fails (no diagram found), we prefer NO image in the panel over the original clutter.
+                let panelImage = data.diagramBase64 || null;
                 let panelText = data.extractedText || "（题目内容识别中...）";
 
                 // Fallback: Only use original image if OCR seems to have failed AND no diagram

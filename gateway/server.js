@@ -8,6 +8,7 @@ import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import fs from 'fs';
 import { existsSync, mkdirSync } from 'fs';
 import dotenv from 'dotenv';
 import multer from 'multer';
@@ -60,6 +61,45 @@ const validateEnv = () => {
 };
 
 validateEnv();
+
+// ================================
+// 🧹 启动清理 (Startup Cleanup)
+// ================================
+(function cleanupOnStartup() {
+    console.log('[系统] 正在执行启动清理...');
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000; // 保留24小时内的文件
+    const now = Date.now();
+    let deletedCount = 0;
+
+    if (existsSync(uploadsDir)) {
+        try {
+            const files = fs.readdirSync(uploadsDir);
+            files.forEach(file => {
+                if (file === '.gitkeep') return;
+
+                const filePath = join(uploadsDir, file);
+                try {
+                    const stats = fs.statSync(filePath);
+                    // 如果文件超过24小时，删！
+                    if (now - stats.mtimeMs > ONE_DAY_MS) {
+                        fs.unlinkSync(filePath);
+                        deletedCount++;
+                    }
+                } catch (e) {
+                    // 忽略文件锁等错误
+                }
+            });
+        } catch (err) {
+            console.error('[Cleanup] Error reading uploads dir:', err);
+        }
+    }
+
+    if (deletedCount > 0) {
+        console.log(`🧹 [系统] 启动清理完成: 删除了 ${deletedCount} 个过期上传文件`);
+    } else {
+        console.log('✨ [系统] 启动清理完成: 暂无过期文件');
+    }
+})();
 
 const app = express();
 const PORT = process.env.PORT || 3000;

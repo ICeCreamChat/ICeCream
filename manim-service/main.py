@@ -1,32 +1,51 @@
-# main.py
 import os
 import sys
+import subprocess
 import shutil
 import asyncio
 import uuid
-import re
-import subprocess
-import time
 import json
+import logging
+import threading
+import re
 import ast
 import hashlib
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+import time
+
+import contextlib
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel
 from openai import AsyncOpenAI 
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv(dotenv_path="../.env")
 
 # ================= 📦 导入配置和提示词 =================
-from config import (
-    API_KEY, BASE_URL, MODEL_NAME,
-    STATIC_DIR, TEMPLATES_DIR, TEMP_DIR, 
-    SCENE_FILE, HISTORY_FILE, CONVERSATION_FILE,
-    MAX_RETRIES, MAX_HISTORY_ENTRIES,
-    REQUEST_TIMEOUT, MANIM_TIMEOUT,
-    DEFAULT_SCENE_NAME, DEFAULT_QUALITY
-)
+# ================= 📦 导入配置和提示词 =================
+import service_config as config
+
+# Map config variables to globals to avoid changing all usages
+API_KEY = config.API_KEY
+BASE_URL = config.BASE_URL
+MODEL_NAME = config.MODEL_NAME
+STATIC_DIR = config.STATIC_DIR
+TEMPLATES_DIR = config.TEMPLATES_DIR
+TEMP_DIR = config.TEMP_DIR
+SCENE_FILE = config.SCENE_FILE
+HISTORY_FILE = config.HISTORY_FILE
+CONVERSATION_FILE = config.CONVERSATION_FILE
+MAX_RETRIES = config.MAX_RETRIES
+MAX_HISTORY_ENTRIES = config.MAX_HISTORY_ENTRIES
+REQUEST_TIMEOUT = config.REQUEST_TIMEOUT
+MANIM_TIMEOUT = config.MANIM_TIMEOUT
+DEFAULT_SCENE_NAME = config.DEFAULT_SCENE_NAME
+DEFAULT_QUALITY = config.DEFAULT_QUALITY
+
 
 from prompts import (
     PROMPT_GENERATOR,
@@ -147,26 +166,54 @@ def extract_objects_from_code(code: str):
 
 # ================= 🧹 自清洁启动逻辑 (持久化版) =================
 def cleanup_workspace_startup():
-    """系统启动时的清理：只清理临时文件，保留生成的视频"""
+    """系统启动时的清理：一次性移除过期的视频资源"""
     print("-" * 50)
-    print("🧹 [系统] 正在初始化环境 (保留历史视频)...")
+    print("🧹 [系统] 正在执行启动净化...")
     
-    # 1. 清理临时文件夹 (temp_gen)，这是做饭的边角料，可以扔
+    # 1. 临时文件夹 (temp_gen) - 这些是渲染中间产物，直接全删
     if os.path.exists(TEMP_DIR):
         try: 
             shutil.rmtree(TEMP_DIR)
-        except: 
-            pass
+            print("   - 已清空临时渲染目录")
+        except Exception as e: 
+            print(f"   - 临时目录清理失败: {e}")
             
-    # 2. 【关键】绝对不碰 STATIC_DIR 里的 .mp4 文件！
-    # 这样您重启程序后，之前的视频依然存在
+    # 2. 静态资源区 (static) - 清理超过24小时的旧视频
+    if os.path.exists(STATIC_DIR):
+        now = time.time()
+        expiration_seconds = 24 * 3600 # 24小时
+        deleted_count = 0
+        
+        try:
+            for filename in os.listdir(STATIC_DIR):
+                file_path = os.path.join(STATIC_DIR, filename)
+                
+                # 只清理媒体文件，保留 .gitkeep
+                if not (filename.endswith(".mp4") or filename.endswith(".png")):
+                    continue
+                    
+                if os.path.isfile(file_path):
+                    # 检查最后修改时间
+                    if now - os.path.getmtime(file_path) > expiration_seconds:
+                        try:
+                            os.remove(file_path)
+                            deleted_count += 1
+                        except:
+                            pass
+        except Exception as e:
+            print(f"   - 静态扫描出错: {e}")
+        
+        if deleted_count > 0:
+            print(f"   - 已清除 {deleted_count} 个过期视频/图片")
+        else:
+            print("   - 静态区无过期文件")
     
-    # 3. 重建目录结构
+    # 3. 确保目录结构完整
     os.makedirs(STATIC_DIR, exist_ok=True)
     os.makedirs(TEMP_DIR, exist_ok=True)
     os.makedirs(TEMPLATES_DIR, exist_ok=True)
     
-    print("✨ [系统] 状态：就绪。")
+    print("✨ [系统] 净化完成，服务就绪。")
     print("-" * 50)
 
 def hard_reset_system():
@@ -197,15 +244,15 @@ def hard_reset_system():
     os.makedirs(STATIC_DIR, exist_ok=True)
     os.makedirs(TEMP_DIR, exist_ok=True)
 
-@asynccontextmanager
+@contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时只执行轻量清理，保护视频
     cleanup_workspace_startup()
     yield
 
 app = FastAPI(lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
+app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
+templates = Jinja2Templates(directory=config.TEMPLATES_DIR)
 
 client = AsyncOpenAI(
     api_key=API_KEY, 
@@ -404,22 +451,93 @@ def extract_json_from_response(text):
         pass
     return None
 
-def run_manim_safe(cmd, timeout=MANIM_TIMEOUT):
-    """安全运行Manim命令 (带超时和限制)"""
-    try:
-        result = subprocess.run(
-            cmd, 
-            capture_output=True, 
-            text=True, 
-            encoding='utf-8',
-            errors='ignore',
-            timeout=timeout
-        )
-        return result.returncode, result.stdout, result.stderr
-    except subprocess.TimeoutExpired:
-        return -1, "", "渲染超时"
-    except Exception as e:
-        return -1, "", str(e)
+# ================= 🛡️ 并发风暴防御系统 =================
+# ================= 🛡️ 并发风暴防御系统 =================
+class RenderProcessManager:
+    """Manim 渲染进程管理器 (支持多用户隔离)"""
+    def __init__(self):
+        # 字典结构: { "client_123": <subprocess.Popen object>, ... }
+        self._active_processes = {} 
+        self._lock = threading.Lock()
+        
+    def kill_process_for_client(self, client_id):
+        """精准狙击：只杀掉指定用户的旧进程"""
+        with self._lock:
+            if client_id in self._active_processes:
+                proc = self._active_processes[client_id]
+                if proc.poll() is None: # 如果还在跑
+                    try:
+                        print(f"⚡ [多用户] 用户 {client_id} 发起新请求，终止其旧进程 PID: {proc.pid}")
+                        if sys.platform == "win32":
+                            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], 
+                                         capture_output=True)
+                        else:
+                            proc.kill()
+                    except Exception as e:
+                        print(f"⚠️ 终止进程失败: {e}")
+                # 从花名册移除
+                del self._active_processes[client_id]
+
+    def run_command(self, cmd, timeout, client_id):
+        """运行命令，并绑定到指定用户"""
+        # 1. 先清理该用户自己的旧门户
+        self.kill_process_for_client(client_id)
+        
+        # 简单的并发控制 (防止服务器过载)
+        if len(self._active_processes) > 8:
+             return -1, "", "服务器繁忙(Too Many Requests)，请稍后再试"
+
+        proc = None
+        # 2. 启动新进程
+        with self._lock:
+            try:
+                # Windows下需要 creationflags 才能被 taskkill /T 杀干净
+                kwargs = {}
+                if sys.platform == "win32":
+                    kwargs['creationflags'] = subprocess.CREATE_NEW_PROCESS_GROUP
+                else:
+                    kwargs['preexec_fn'] = os.setsid
+                    
+                proc = subprocess.Popen(
+                    cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE, 
+                    text=True, 
+                    encoding='utf-8', 
+                    errors='ignore',
+                    **kwargs
+                )
+                
+                # 登记造册
+                self._active_processes[client_id] = proc
+                
+            except Exception as e:
+                return -1, "", str(e)
+
+        # 3. 等待结果
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            
+            # 运行完后，主动从名单里移除（防止字典无限膨胀）
+            with self._lock:
+                if client_id in self._active_processes and self._active_processes[client_id] == proc:
+                    del self._active_processes[client_id]
+                    
+            return proc.returncode, stdout, stderr
+            
+        except subprocess.TimeoutExpired:
+            self.kill_process_for_client(client_id) # 超时也得杀
+            return -1, "", "渲染超时 (Timeout)"
+        except Exception as e:
+            self.kill_process_for_client(client_id)
+            return -1, "", str(e)
+
+# 全局单例
+render_manager = RenderProcessManager()
+
+def run_manim_safe(cmd, client_id, timeout=MANIM_TIMEOUT):
+    """安全运行Manim命令 (支持多用户隔离)"""
+    return render_manager.run_command(cmd, timeout, client_id)
 
 async def find_video_file(search_dir, filename_prefix):
     """查找视频文件"""
@@ -629,7 +747,7 @@ async def process_chat_workflow(prompt: str, websocket: WebSocket):
             ]
             
             # 设定 20秒 超时，避免预览卡太久喧宾夺主
-            p_code, _, _ = await asyncio.to_thread(run_manim_safe, cmd_preview, timeout=20)
+            p_code, _, _ = await asyncio.to_thread(run_manim_safe, cmd_preview, f"preview_{request_id}", timeout=20)
             
             if p_code == 0:
                 # 寻找生成的 png 文件
@@ -917,7 +1035,8 @@ async def render_code_directly(code: str, websocket: WebSocket):
         ]
         
         await send_status("render", "Manim 正在渲染视频...")
-        returncode, stdout, stderr = await asyncio.to_thread(run_manim_safe, cmd)
+        # WebSocket 直接渲染暂无 client_id，使用 request_id 隔离
+        returncode, stdout, stderr = await asyncio.to_thread(run_manim_safe, cmd, f"ws_{request_id}")
         
         if returncode == 0:
             # Find video file
@@ -1211,6 +1330,7 @@ async def generate_suggestions(request: SuggestionRequest):
 
 class RenderRequest(BaseModel):
     code: str
+    client_id: str = "anonymous" # ✨ 新增：身份标识
 
 @app.post("/render")
 async def http_render_code(request: RenderRequest):
@@ -1251,8 +1371,8 @@ async def http_render_code(request: RenderRequest):
             scene_name
         ]
         
-        print(f"[{request_id}] 🎬 正在渲染...")
-        returncode, stdout, stderr = await asyncio.to_thread(run_manim_safe, cmd)
+        print(f"[{request_id}] 🎬 正在渲染 (Client: {request.client_id})...")
+        returncode, stdout, stderr = await asyncio.to_thread(run_manim_safe, cmd, request.client_id)
         
         if returncode == 0:
             # 查找视频文件

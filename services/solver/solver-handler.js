@@ -17,7 +17,7 @@ import fetch from 'node-fetch';
 // Import ported services
 import { CONFIG, isMockMode } from './config.js';
 import { describeImageWithVision, extractTextWithVisionOCR } from './siliconflow.js';
-import { solveWithDeepSeek } from './deepseek.js';
+import { solveWithDeepSeek, chatWithDeepSeek } from './deepseek.js';
 import { detectAndCropDiagram } from './diagram-detector.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -139,6 +139,9 @@ export async function handleSolve(req, res) {
 /**
  * 处理追问请求
  */
+/**
+ * 处理追问请求
+ */
 export async function handleFollowUp(req, res) {
     try {
         const { message, context } = req.body;
@@ -150,38 +153,21 @@ export async function handleFollowUp(req, res) {
             });
         }
 
+        // 构造 System Prompt，注入上下文
         const systemPrompt = `你是一个数学老师，正在帮助学生解答问题。
 之前的题目上下文：
 ${context || '无'}
 
 请针对学生的追问给出解答。使用 LaTeX 格式书写数学公式。`;
 
-        const { solveWithDeepSeek: solve } = await import('./deepseek.js');
+        // ✨ 重构：直接调用封装好的 chatWithDeepSeek
+        // 参数: (messages, model=null, temperature=0.5)
+        const responseData = await chatWithDeepSeek([
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: message }
+        ], null, 0.5);
 
-        // 使用 DeepSeek 进行追问回答
-        const response = await fetch(`${CONFIG.deepseek.url}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${CONFIG.deepseek.apiKey}`
-            },
-            body: JSON.stringify({
-                model: CONFIG.deepseek.model || 'deepseek-chat',
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: message }
-                ],
-                temperature: 0.5,
-                max_tokens: 2048
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error('API 调用失败');
-        }
-
-        const data = await response.json();
-        const reply = data.choices?.[0]?.message?.content || '';
+        const reply = responseData.choices?.[0]?.message?.content || '';
 
         return res.json({
             success: true,
