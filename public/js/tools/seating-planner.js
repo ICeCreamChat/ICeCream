@@ -10,7 +10,8 @@ class SeatingPlanner {
         this.layout = [];
         this.rows = 6;
         this.cols = 8;
-        this.aisles = [];
+        this.colAisles = [];  // 竖向过道（列）
+        this.rowAisles = [];  // 横向过道（行）
         this.strategy = {
             genderBalance: true,
             gradeBalance: true,
@@ -144,8 +145,11 @@ class SeatingPlanner {
 
                 <!-- 右键菜单 -->
                 <div id="sp-context-menu" class="sp-context-menu">
-                    <button class="sp-menu-item" data-action="set-aisle">
-                        <i data-lucide="separator-vertical"></i> 设为过道
+                    <button class="sp-menu-item" data-action="set-col-aisle">
+                        <i data-lucide="separator-vertical"></i> 设为竖过道（整列）
+                    </button>
+                    <button class="sp-menu-item" data-action="set-row-aisle">
+                        <i data-lucide="separator-horizontal"></i> 设为横过道（整行）
                     </button>
                     <button class="sp-menu-item" data-action="clear-aisle">
                         <i data-lucide="square"></i> 取消过道
@@ -230,10 +234,14 @@ class SeatingPlanner {
                 cell.dataset.row = r;
                 cell.dataset.col = c;
 
-                // 过道列
-                if (this.aisles.includes(c)) {
+                // 检查是否是过道
+                const isColAisle = this.colAisles.includes(c);
+                const isRowAisle = this.rowAisles.includes(r);
+                
+                if (isColAisle || isRowAisle) {
                     cell.classList.add('sp-seat-aisle');
-                    cell.innerHTML = '<span class="sp-aisle-mark"></span>';
+                    cell.classList.add(isRowAisle ? 'sp-aisle-horizontal' : 'sp-aisle-vertical');
+                    cell.innerHTML = `<span class="sp-aisle-mark ${isRowAisle ? 'sp-aisle-h' : 'sp-aisle-v'}"></span>`;
                     cell.addEventListener('contextmenu', e => this.showContextMenu(e, r, c));
                     grid.appendChild(cell);
                     continue;
@@ -337,8 +345,12 @@ class SeatingPlanner {
         if (!menu) return;
 
         // 根据是否是过道显示不同选项
-        const isAisle = this.aisles.includes(col);
-        menu.querySelector('[data-action="set-aisle"]').style.display = isAisle ? 'none' : 'flex';
+        const isColAisle = this.colAisles.includes(col);
+        const isRowAisle = this.rowAisles.includes(row);
+        const isAisle = isColAisle || isRowAisle;
+        
+        menu.querySelector('[data-action="set-col-aisle"]').style.display = isAisle ? 'none' : 'flex';
+        menu.querySelector('[data-action="set-row-aisle"]').style.display = isAisle ? 'none' : 'flex';
         menu.querySelector('[data-action="clear-aisle"]').style.display = isAisle ? 'flex' : 'none';
 
         // 定位菜单
@@ -356,15 +368,22 @@ class SeatingPlanner {
         const { row, col } = this.contextTarget;
 
         switch (action) {
-            case 'set-aisle':
-                if (!this.aisles.includes(col)) {
-                    this.aisles.push(col);
-                    this.showToast(`第 ${col + 1} 列设为过道`, 'success');
+            case 'set-col-aisle':
+                if (!this.colAisles.includes(col)) {
+                    this.colAisles.push(col);
+                    this.showToast(`第 ${col + 1} 列设为竖过道`, 'success');
+                }
+                break;
+            case 'set-row-aisle':
+                if (!this.rowAisles.includes(row)) {
+                    this.rowAisles.push(row);
+                    this.showToast(`第 ${row + 1} 行设为横过道`, 'success');
                 }
                 break;
             case 'clear-aisle':
-                this.aisles = this.aisles.filter(a => a !== col);
-                this.showToast(`第 ${col + 1} 列取消过道`, 'success');
+                this.colAisles = this.colAisles.filter(a => a !== col);
+                this.rowAisles = this.rowAisles.filter(a => a !== row);
+                this.showToast('过道已取消', 'success');
                 break;
             case 'clear-seat':
                 if (this.layout[row]?.[col]) {

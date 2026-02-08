@@ -611,19 +611,33 @@
     background: var(--sp-border);
 }
 
-/* Aisle Column */
+/* Aisle */
 .sp-seat-aisle {
     background: transparent !important;
     border: none !important;
-    cursor: default;
+    cursor: context-menu;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .sp-aisle-mark {
     display: block;
+    border-radius: 2px;
+}
+
+/* 竖过道 */
+.sp-aisle-v {
     width: 2px;
     height: 60%;
-    background: linear-gradient(180deg, transparent, rgba(255,255,255,0.2), transparent);
-    border-radius: 2px;
+    background: linear-gradient(180deg, transparent, rgba(255,255,255,0.25), transparent);
+}
+
+/* 横过道 */
+.sp-aisle-h {
+    width: 60%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
 }
 
 /* ================================
