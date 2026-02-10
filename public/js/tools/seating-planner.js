@@ -258,9 +258,15 @@ class SeatingPlanner {
                                     <i data-lucide="users"></i>
                                     学生名单
                                 </h3>
-                                <button class="sp-section-action" id="sp-clear-students" title="清空">
-                                    <i data-lucide="trash-2"></i>
-                                </button>
+                                <div class="sp-section-actions">
+                                    <input type="file" id="sp-image-input" accept="image/*" style="display:none">
+                                    <button class="sp-section-action" id="sp-upload-image" title="拍照/上传图片">
+                                        <i data-lucide="camera"></i>
+                                    </button>
+                                    <button class="sp-section-action" id="sp-clear-students" title="清空">
+                                        <i data-lucide="trash-2"></i>
+                                    </button>
+                                </div>
                             </div>
                             <div class="sp-dropzone" id="sp-dropzone">
                                 <input type="file" id="sp-file-input" class="sp-file-input" accept=".csv,.xlsx,.xls,.txt">
@@ -640,6 +646,14 @@ class SeatingPlanner {
             fileInput?.click();
         });
 
+        // Image Upload
+        const imgInput = $('sp-image-input');
+        const imgBtn = $('sp-upload-image');
+        imgBtn?.addEventListener('click', () => imgInput?.click());
+        imgInput?.addEventListener('change', e => {
+            if (e.target.files[0]) this.handleImageUpload(e.target.files[0]);
+        });
+
         // File input change handler
         fileInput?.addEventListener('change', e => {
             const file = e.target.files[0];
@@ -1001,6 +1015,67 @@ class SeatingPlanner {
         document.getElementById('sp-students-input').classList.remove('sp-hidden');
         document.getElementById('sp-parse-students').classList.remove('sp-hidden');
         this.parseStudents();
+    }
+
+    async handleImageUpload(file) {
+        // Limit size (10MB)
+        if (file.size > 10 * 1024 * 1024) {
+            return this.showToast('图片太大了 (限制10MB)', 'warning');
+        }
+
+        const btn = document.getElementById('sp-upload-image');
+        const originalIcon = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="sp-spin"></i>';
+        if (window.lucide) window.lucide.createIcons();
+
+        try {
+            const formData = new FormData();
+            formData.append('image', file);
+
+            const res = await fetch('/api/tools/seating/parse-image', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await res.json();
+            if (!result.success) throw new Error(result.error);
+
+            // Convert result to text format and append
+            // Format: Name Gender Grade
+            const newStudentsText = result.data.students.map(s => {
+                let line = s.name;
+                if (s.gender) line += ` ${s.gender === 'M' ? '男' : '女'}`;
+                if (s.grade !== undefined) line += ` ${s.grade}`;
+                return line;
+            }).join('\n');
+
+            const textarea = document.getElementById('sp-students-input');
+            const dropzone = document.getElementById('sp-dropzone');
+            
+            // Show textarea if hidden
+            dropzone.classList.add('sp-hidden');
+            textarea.classList.remove('sp-hidden');
+            document.getElementById('sp-parse-students').classList.remove('sp-hidden');
+
+            const current = textarea.value.trim();
+            textarea.value = current ? (current + '\n' + newStudentsText) : newStudentsText;
+
+            this.showToast(`成功识别 ${result.data.count} 名学生`, 'success');
+            
+            // Trigger parse to update UI list
+            this.parseStudents();
+
+        } catch (err) {
+            console.error(err);
+            this.showToast(err.message || '识别失败', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalIcon;
+            if (window.lucide) window.lucide.createIcons();
+            // Clear input
+            document.getElementById('sp-image-input').value = '';
+        }
     }
 
     // ========== API Calls ==========

@@ -5,6 +5,13 @@
 
 import express from 'express';
 import fetch from 'node-fetch';
+import multer from 'multer';
+import { recognizeWithPaddle, recognizeWithMinerU, extractStudentsWithAI } from '../services/ocr.js';
+
+const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+});
 
 const router = express.Router();
 
@@ -298,39 +305,119 @@ router.post('/seating/parse-students', async (req, res) => {
             const name = parts[0]?.trim();
             if (!name) continue;
 
-            const student = {
-                id: `s${String(i + 1).padStart(3, '0')}`,
-                name: name
-            };
+            // 尝试后续部分解析属性
+            // 格式可能: "张三 男 90", "张三 90 男", "张三(女)"
+            let gender = undefined;
+            let grade = undefined;
 
-            // 识别性别
-            if (parts.length > 1) {
-                const genderPart = parts[1]?.trim();
-                if (/男|M|male/i.test(genderPart)) student.gender = 'M';
-                else if (/女|F|female/i.test(genderPart)) student.gender = 'F';
+            for (let j = 1; j < parts.length; j++) {
+                const part = parts[j].trim();
+                // 性别
+                if (['男','女','M','F'].includes(part)) {
+                    gender = (part === '男' || part === 'M') ? 'M' : 'F';
+                    continue;
+                }
+                // 成绩 (数字)
+                if (/^\d+$/.test(part)) {
+                    grade = parseInt(part);
+                    continue;
+                }
             }
-
-            // 识别成绩
-            if (parts.length > 2) {
-                const grade = parseFloat(parts[2]);
-                if (!isNaN(grade)) student.grade = grade;
-            }
-
-            students.push(student);
+            
+            // 默认值
+            if (!gender) gender = 'M'; // 默认男 (可后续修改)
+            
+            students.push({
+                id: `s${(students.length + 1).toString().padStart(2, '0')}`,
+                name,
+                gender,
+                grade
+            });
         }
-
+        
         res.json({
             success: true,
             data: {
                 students,
-                count: students.length,
-                hasGender: students.some(s => s.gender),
-                hasGrade: students.some(s => s.grade !== undefined)
+                count: students.length
             }
         });
 
     } catch (error) {
         console.error('[Tools/Seating/ParseStudents] Error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/tools/seating/parse-image
+ * 从图片导入学生名单 (OCR -> AI)
+ */
+router.post('/seating/parse-image', upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: '请上传图片' });
+        }
+
+        const buffer = req.file.buffer;
+        const mimeType = req.file.mimetype;
+        const filename = req.file.originalname;
+
+        console.log(`[Seating/ParseImage] Processing ${filename} (${mimeType}, ${buffer.length} bytes)`);
+
+        let text = '';
+        let source = '';
+
+        // 1. Tier 1: MinerU (Primary)
+        try {
+            console.log('[Seating/ParseImage] Trying MinerU (Primary)...');
+            text = await recognizeWithMinerU(buffer, filename);
+            if (text) source = 'mineru';
+        } catch (err) {
+            console.warn('[Seating/ParseImage] MinerU failed:', err.message);
+        }
+
+        // 2. Tier 2: PaddleOCR (Fallback)
+        if (!text) {
+            try {
+                console.log('[Seating/ParseImage] Trying SiliconFlow PaddleOCR (Fallback)...');
+                text = await recognizeWithPaddle(buffer, mimeType);
+                if (text) source = 'paddle';
+            } catch (err) {
+                console.warn('[Seating/ParseImage] PaddleOCR failed:', err.message);
+            }
+        }
+
+        if (!text) {
+            return res.status(500).json({ success: false, error: 'OCR 识别失败，请尝试其他图片' });
+        }
+
+        console.log(`[Seating/ParseImage] OCR success (${source}), extracting data...`);
+
+        // 3. AI Extraction
+        const students = await extractStudentsWithAI(text);
+        
+        // Add IDs
+        const studentsWithIds = students.map((s, i) => ({
+            id: `s${(i + 1).toString().padStart(2, '0')}`,
+            name: s.name,
+            gender: (s.gender === '男' || s.gender === 'M') ? 'M' : 'F',
+            grade: s.grade
+        }));
+
+        console.log(`[Seating/ParseImage] Extracted ${studentsWithIds.length} students`);
+
+        res.json({
+            success: true,
+            data: {
+                students: studentsWithIds,
+                count: studentsWithIds.length,
+                source
+            }
+        });
+
+    } catch (error) {
+        console.error('[Seating/ParseImage] Error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
