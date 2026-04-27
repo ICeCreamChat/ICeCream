@@ -6,6 +6,20 @@
  * Handles LaTeX rendering (KaTeX) and Markdown table formatting.
  * Vercel Web Expert Optimized
  */
+function sanitizeRenderedHtml(html) {
+    if (window.IceSanitizer?.sanitizeHtml) {
+        return window.IceSanitizer.sanitizeHtml(html);
+    }
+
+    return String(html || '')
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+        .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+        .replace(/<\/?(?:iframe|object|embed|link|meta|form)\b[^>]*>/gi, '')
+        .replace(/\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/\s+style\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/javascript:/gi, 'removed:');
+}
+
 const MathRenderer = {
     /**
      * Protects LaTeX formulas from Markdown parsers by temporarily replacing them with placeholders.
@@ -127,7 +141,7 @@ const MathRenderer = {
         finalHtml = finalHtml.replace(/<table/g, '<div class="table-wrapper"><table')
             .replace(/<\/table>/g, '</table></div>');
 
-        element.innerHTML = finalHtml;
+        element.innerHTML = sanitizeRenderedHtml(finalHtml);
 
         // 1. Render Math
         if (window.renderMathInElement) {

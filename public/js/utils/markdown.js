@@ -1,3 +1,5 @@
+import { sanitizeHtml } from './sanitize.js';
+
 /**
  * ICeCream - Markdown 渲染模块
  * 处理 Markdown 和 LaTeX 数学公式渲染
@@ -63,10 +65,8 @@ export function renderMarkdownWithMath(content) {
         html = html.split(id).join(latex);
     });
 
-    // Step 4: 基础 XSS 防护
-    html = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-    html = html.replace(/on\w+\s*=/gi, 'data-removed=');
-    html = html.replace(/javascript:/gi, 'removed:');
+    // Step 4: XSS 防护
+    html = sanitizeHtml(html);
 
     return html;
 }

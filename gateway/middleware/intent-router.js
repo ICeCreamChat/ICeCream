@@ -6,7 +6,12 @@
 import { classifyIntent } from '../services/intent-classifier.js';
 
 // 置信度阈值
-const CONFIDENCE_THRESHOLD = parseFloat(process.env.INTENT_CONFIDENCE_THRESHOLD) || 0.75;
+const DEFAULT_CONFIDENCE_THRESHOLD = 0.75;
+
+export function getConfidenceThreshold(env = process.env) {
+    const parsed = Number.parseFloat(env.INTENT_CONFIDENCE_THRESHOLD);
+    return Number.isFinite(parsed) ? parsed : DEFAULT_CONFIDENCE_THRESHOLD;
+}
 
 /**
  * 意图路由中间件
@@ -27,7 +32,7 @@ export async function intentRouter(req, res, next) {
         console.log(`[Intent Router] Classification:`, classification);
 
         // 3. 根据置信度决策
-        if (classification.confidence >= CONFIDENCE_THRESHOLD) {
+        if (classification.confidence >= getConfidenceThreshold()) {
             // 高置信度：直接路由
             return routeToService(req, res, classification.intent);
         } else {

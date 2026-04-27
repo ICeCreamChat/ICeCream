@@ -427,6 +427,12 @@ MONITOR_HTML = """
     </div>
     
     <script>
+        function escapeHtml(value) {
+            const div = document.createElement('div');
+            div.textContent = value == null ? '' : String(value);
+            return div.innerHTML;
+        }
+
         async function loadAllData() {
             const cards = document.querySelectorAll('.card');
             cards.forEach(card => card.classList.add('loading'));
@@ -460,14 +466,14 @@ MONITOR_HTML = """
                 
                 document.getElementById('context-info').innerHTML = `
                     <div style="color: #666; font-size: 14px; line-height: 1.5;">
-                        ${statusData.conversation_summary.text.replace(/\\n/g, '<br>')}
+                        ${escapeHtml(statusData.conversation_summary.text).replace(/\\n/g, '<br>')}
                     </div>
                     ${statusData.conversation_summary.objects.length > 0 ? `
                         <div style="margin-top: 12px;">
                             <div style="color: #666; font-size: 12px; margin-bottom: 4px;">已识别对象:</div>
                             <div class="object-list">
                                 ${statusData.conversation_summary.objects.slice(0, 6).map(obj => 
-                                    `<span class="object-tag">${obj}</span>`
+                                    `<span class="object-tag">${escapeHtml(obj)}</span>`
                                 ).join('')}
                                 ${statusData.conversation_summary.objects.length > 6 ? 
                                     `<span class="object-tag">+${statusData.conversation_summary.objects.length - 6}更多</span>` : ''
@@ -481,17 +487,17 @@ MONITOR_HTML = """
                     statusData.recent_conversations.reverse().map(conv => `
                         <div style="margin-bottom: 12px; padding: 12px; background: #f8fafc; border-radius: 8px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                <span style="font-size: 11px; color: #94a3b8;">${conv.timestamp}</span>
+                                <span style="font-size: 11px; color: #94a3b8;">${escapeHtml(conv.timestamp)}</span>
                                 <span class="badge ${conv.success ? 'badge-success' : 'badge-error'}" style="font-size: 10px;">
                                     ${conv.success ? '成功' : '失败'}
                                 </span>
                             </div>
                             <div style="font-size: 13px; color: #334155; margin-bottom: 4px;">
-                                ${conv.user}
+                                ${escapeHtml(conv.user)}
                             </div>
                             ${conv.intent_analysis ? `
                                 <div style="font-size: 11px; color: #64748b;">
-                                    意图: ${conv.intent_analysis.intent || '未知'}
+                                    意图: ${escapeHtml(conv.intent_analysis.intent || '未知')}
                                 </div>
                             ` : ''}
                         </div>

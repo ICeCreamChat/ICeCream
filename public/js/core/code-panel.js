@@ -670,13 +670,31 @@ export class CodePanel {
             const div = document.createElement('div');
             div.className = `history-item ${isCurrent ? 'current' : ''}`;
             div.dataset.index = index;
-            div.innerHTML = `
-                <span class="history-version">v${vNum}</span>
-                <span class="history-desc">${entry.description}</span>
-                ${!isCurrent
-                    ? `<button class="history-revert-btn" data-index="${index}">↩ 回退</button>`
-                    : '<span class="history-current-tag">当前</span>'}
-            `;
+
+            const version = document.createElement('span');
+            version.className = 'history-version';
+            version.textContent = `v${vNum}`;
+
+            const desc = document.createElement('span');
+            desc.className = 'history-desc';
+            desc.textContent = entry.description;
+
+            div.appendChild(version);
+            div.appendChild(desc);
+
+            if (!isCurrent) {
+                const revert = document.createElement('button');
+                revert.className = 'history-revert-btn';
+                revert.dataset.index = index;
+                revert.textContent = '↩ 回退';
+                div.appendChild(revert);
+            } else {
+                const current = document.createElement('span');
+                current.className = 'history-current-tag';
+                current.textContent = '当前';
+                div.appendChild(current);
+            }
+
             listEl.appendChild(div);
         });
 

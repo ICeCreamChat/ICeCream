@@ -6,8 +6,9 @@
     "scripts": {
         "start": "node gateway/server.js",
         "dev": "node --watch gateway/server.js",
-        "manim": "cd manim-service && python main.py",
-        "dev:all": "concurrently \"npm start\" \"cd manim-service && python main.py\""
+        "manim": "node scripts/run-manim.js",
+        "dev:all": "concurrently \"npm start\" \"node scripts/run-manim.js\"",
+        "test": "node --test"
     },
     "keywords": [
         "ai",

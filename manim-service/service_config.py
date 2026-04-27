@@ -62,7 +62,7 @@ if not API_KEY or API_KEY == "your-api-key-here":
     print("  3. 重启服务")
     print("=" * 60)
 else:
-    print(f"[OK] API Key 已配置 (前8位: {API_KEY[:8]}...)")
+    print("[OK] API Key 已配置")
 
 # ================= ⚙️ 系统配置 =================
 MAX_RETRIES = 2

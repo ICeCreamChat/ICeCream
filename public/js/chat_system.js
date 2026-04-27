@@ -148,7 +148,17 @@ const ChatSystem = {
             const item = document.createElement('div');
             item.className = `history-item ${session.id === currentId ? 'active' : ''}`;
             item.onclick = () => this.loadSession(session.id);
-            item.innerHTML = `<span>${session.title}</span><span class="delete-chat" onclick="ChatSystem.deleteSession(event, '${session.id}')"><i data-lucide="x" style="width:16px;"></i></span>`;
+
+            const title = document.createElement('span');
+            title.textContent = session.title;
+
+            const deleteButton = document.createElement('span');
+            deleteButton.className = 'delete-chat';
+            deleteButton.innerHTML = '<i data-lucide="x" style="width:16px;"></i>';
+            deleteButton.addEventListener('click', (event) => this.deleteSession(event, session.id));
+
+            item.appendChild(title);
+            item.appendChild(deleteButton);
             list.appendChild(item);
         });
 

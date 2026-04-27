@@ -11,14 +11,15 @@ import re
 import ast
 import hashlib
 import time
+from typing import Optional
 
 import contextlib
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from openai import AsyncOpenAI 
 from dotenv import load_dotenv
 
@@ -45,6 +46,7 @@ REQUEST_TIMEOUT = config.REQUEST_TIMEOUT
 MANIM_TIMEOUT = config.MANIM_TIMEOUT
 DEFAULT_SCENE_NAME = config.DEFAULT_SCENE_NAME
 DEFAULT_QUALITY = config.DEFAULT_QUALITY
+MANIM_SERVICE_TOKEN = os.environ.get("MANIM_SERVICE_TOKEN", "")
 
 
 from prompts import (
@@ -423,6 +425,53 @@ def validate_code_completeness(code: str):
         
     return True, "完整"
 
+def validate_code_security(code: str):
+    """Reject Python code that attempts system, network, file, or dynamic execution access."""
+    if not isinstance(code, str) or not code.strip():
+        return False, "代码不能为空"
+    if len(code) > 60000:
+        return False, "代码过长，请控制在 60000 字符以内"
+
+    blocked_modules = {
+        "os", "sys", "subprocess", "socket", "pathlib", "shutil", "ctypes",
+        "signal", "multiprocessing", "threading", "asyncio", "requests",
+        "urllib", "http", "ftplib", "paramiko"
+    }
+    blocked_calls = {
+        "open", "exec", "eval", "compile", "__import__", "input",
+        "breakpoint", "globals", "locals", "vars", "dir", "getattr",
+        "setattr", "delattr"
+    }
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as exc:
+        return False, f"Python 语法错误: {exc.msg}"
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif node.module:
+                names = [node.module]
+            for name in names:
+                root = name.split(".", 1)[0]
+                if root in blocked_modules:
+                    return False, f"不允许导入系统或网络模块: {root}"
+
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id in blocked_calls:
+                return False, f"不允许调用高风险函数: {func.id}"
+            if isinstance(func, ast.Attribute) and func.attr.startswith("__"):
+                return False, "不允许调用双下划线属性"
+
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            return False, "不允许访问双下划线属性"
+
+    return True, "安全"
+
 def extract_code_from_markdown(text):
     """从文本中提取代码块"""
     patterns = [
@@ -715,6 +764,16 @@ async def process_chat_workflow(prompt: str, websocket: WebSocket):
             # 我们通过抛出异常或覆盖 final_code 来强制进入 Step 4 的修复流程
             # 这里我们构造一个假的报错，让下面的 Emergency Fixer 去处理
             final_code = f"# INCOMPLETE CODE GENERATED\n# Error: {reason_final}\n# Please regenerate the FULL code.\n" + final_code
+
+        is_secure, security_reason = validate_code_security(final_code)
+        if not is_secure:
+            await send_status("error", f"代码安全检查未通过: {security_reason}")
+            if websocket:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"代码安全检查未通过: {security_reason}"
+                })
+            return
         
         # 🔍 提前分析代码结构 (为了获取类名)
         code_analysis = analyze_code_structure(final_code)
@@ -889,7 +948,7 @@ class {inspector_class_name}({scene_name}):
                 run_class
             ]
             
-            returncode, stdout, stderr = await asyncio.to_thread(run_manim_safe, cmd)
+            returncode, stdout, stderr = await asyncio.to_thread(run_manim_safe, cmd, f"workflow_{request_id}")
             
             if returncode == 0:
                 # 5. 查找视频
@@ -1025,6 +1084,14 @@ async def render_code_directly(code: str, websocket: WebSocket):
     await send_status("render", "正在渲染您的代码...")
     
     try:
+        is_secure, security_reason = validate_code_security(code)
+        if not is_secure:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"代码安全检查未通过: {security_reason}"
+            })
+            return
+
         # 1. Analyze code to find scene class
         code_analysis = analyze_code_structure(code)
         scene_name = code_analysis.get("scene_class") or DEFAULT_SCENE_NAME
@@ -1344,11 +1411,14 @@ async def generate_suggestions(request: SuggestionRequest):
 # ================= 🔌 HTTP REST API for Gateway Integration =================
 
 class RenderRequest(BaseModel):
-    code: str
-    client_id: str = "anonymous" # ✨ 新增：身份标识
+    code: str = Field(min_length=1, max_length=60000)
+    client_id: str = Field(default="gateway", max_length=80) # ✨ 新增：身份标识
 
 @app.post("/render")
-async def http_render_code(request: RenderRequest):
+async def http_render_code(
+    request: RenderRequest,
+    x_manim_service_token: Optional[str] = Header(default=None, alias="X-Manim-Service-Token")
+):
     """HTTP REST 端点：直接渲染 Manim 代码
     
     用于 Gateway 调用，无需 WebSocket 连接。
@@ -1360,7 +1430,20 @@ async def http_render_code(request: RenderRequest):
     print(f"[{request_id}] 📡 收到 HTTP 渲染请求")
     
     try:
+        if MANIM_SERVICE_TOKEN and x_manim_service_token != MANIM_SERVICE_TOKEN:
+            return JSONResponse({
+                "success": False,
+                "error": "Forbidden"
+            }, status_code=403)
+
         code = request.code
+        client_id = re.sub(r"[^\w.-]", "_", request.client_id)[:80] or "gateway"
+        is_secure, security_reason = validate_code_security(code)
+        if not is_secure:
+            return JSONResponse({
+                "success": False,
+                "error": f"代码安全检查未通过: {security_reason}"
+            }, status_code=400)
         
         # 1. 分析代码结构
         code_analysis = analyze_code_structure(code)
@@ -1386,8 +1469,8 @@ async def http_render_code(request: RenderRequest):
             scene_name
         ]
         
-        print(f"[{request_id}] 🎬 正在渲染 (Client: {request.client_id})...")
-        returncode, stdout, stderr = await asyncio.to_thread(run_manim_safe, cmd, request.client_id)
+        print(f"[{request_id}] 🎬 正在渲染 (Client: {client_id})...")
+        returncode, stdout, stderr = await asyncio.to_thread(run_manim_safe, cmd, client_id)
         
         if returncode == 0:
             # 查找视频文件
@@ -1607,16 +1690,20 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"⚠️ Failed to free port {port}: {e}")
 
-    try:
-        free_port(8001)
-    except Exception as e:
-        print(f"⚠️ Port release check skipped: {e}")
+    service_host = os.environ.get("MANIM_SERVICE_HOST", "127.0.0.1")
+    service_port = int(os.environ.get("MANIM_SERVICE_PORT", "8001"))
+
+    if os.environ.get("MANIM_AUTO_FREE_PORT") == "true":
+        try:
+            free_port(service_port)
+        except Exception as e:
+            print(f"⚠️ Port release check skipped: {e}")
 
     print("="*60)
     print("✨ ICeCream Manim 服务已启动")
-    print("🌐 API 地址: http://localhost:8001")
-    print("🔌 WebSocket: ws://localhost:8001/ws/chat")
-    print("📊 智能监控: http://localhost:8001/monitor")
+    print(f"🌐 API 地址: http://{service_host}:{service_port}")
+    print(f"🔌 WebSocket: ws://{service_host}:{service_port}/ws/chat")
+    print(f"📊 智能监控: http://{service_host}:{service_port}/monitor")
     print("="*60)
     
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=False)
+    uvicorn.run("main:app", host=service_host, port=service_port, reload=False)

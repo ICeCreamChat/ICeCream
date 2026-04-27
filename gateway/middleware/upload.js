@@ -2,6 +2,7 @@ import multer from 'multer';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import { imageUploadFilter, sanitizeUploadFilename } from '../security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -19,8 +20,12 @@ const storage = multer.diskStorage({
     },
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + '-' + file.originalname);
+        cb(null, `${uniqueSuffix}-${sanitizeUploadFilename(file.originalname)}`);
     }
 });
 
-export const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } }); // 20MB limit
+export const upload = multer({
+    storage,
+    fileFilter: imageUploadFilter,
+    limits: { fileSize: 20 * 1024 * 1024 }
+});

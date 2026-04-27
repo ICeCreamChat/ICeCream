@@ -4,8 +4,9 @@
  */
 
 import fetch from 'node-fetch';
+import { normalizeClientId, validateManimCode } from '../../gateway/security.js';
 
-const MANIM_SERVICE_URL = `http://localhost:${process.env.MANIM_SERVICE_PORT || 8001}`;
+const MANIM_SERVICE_URL = process.env.MANIM_SERVICE_URL || `http://localhost:${process.env.MANIM_SERVICE_PORT || 8001}`;
 
 const MANIM_SYSTEM_PROMPT = `你是一个 Manim 动画代码生成专家。用户会告诉你想要可视化什么数学概念，你需要生成对应的 Manim 代码。
 
@@ -28,6 +29,21 @@ class MainScene(Scene):
         self.play(Create(axes), Create(graph))
         self.wait()
 \`\`\``;
+
+function getManimHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    if (process.env.MANIM_SERVICE_TOKEN) {
+        headers['X-Manim-Service-Token'] = process.env.MANIM_SERVICE_TOKEN;
+    }
+    return headers;
+}
+
+export function buildRenderPayload(body = {}) {
+    return {
+        code: body.code,
+        client_id: normalizeClientId(body.client_id)
+    };
+}
 
 /**
  * 处理 Manim 动画生成请求
@@ -83,8 +99,12 @@ export async function handleManim(req, res) {
         const generatedContent = codeData.choices?.[0]?.message?.content || '';
 
         // 提取代码块
-        const codeMatch = generatedContent.match(/```python\n([\s\S]*?)```/);
+        const codeMatch = generatedContent.match(/```python\r?\n([\s\S]*?)```/);
         const extractedCode = codeMatch ? codeMatch[1].trim() : generatedContent;
+        const validation = validateManimCode(extractedCode);
+        if (!validation.valid) {
+            throw new Error(validation.reason);
+        }
 
         // 2. 调用 Manim 服务渲染
         console.log('[Manim Client] Calling render service:', MANIM_SERVICE_URL);
@@ -92,8 +112,11 @@ export async function handleManim(req, res) {
 
         const renderResponse = await fetch(`${MANIM_SERVICE_URL}/render`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code: extractedCode })
+            headers: getManimHeaders(),
+            body: JSON.stringify({
+                code: extractedCode,
+                client_id: normalizeClientId(req.body.client_id)
+            })
         });
 
         console.log('[Manim Client] Render response status:', renderResponse.status);
@@ -149,10 +172,19 @@ export async function renderCode(req, res) {
             });
         }
 
+        const validation = validateManimCode(code);
+        if (!validation.valid) {
+            return res.status(400).json({
+                success: false,
+                error: validation.reason
+            });
+        }
+
+        const payload = buildRenderPayload(req.body);
         const response = await fetch(`${MANIM_SERVICE_URL}/render`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code })
+            headers: getManimHeaders(),
+            body: JSON.stringify(payload)
         });
 
         if (!response.ok) {
@@ -185,7 +217,7 @@ export async function getStatus(req, res) {
     try {
         const response = await fetch(`${MANIM_SERVICE_URL}/health`, {
             method: 'GET',
-            timeout: 3000
+            signal: AbortSignal.timeout(3000)
         });
 
         const available = response.ok;

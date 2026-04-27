@@ -40,6 +40,7 @@ class AppLauncher {
         this.modal = null;
         this.toolContainer = null;
         this.currentTool = null;
+        this.currentToolInstance = null;
         this._init();
     }
 
@@ -141,6 +142,9 @@ class AppLauncher {
         }
 
         console.log(`[AppLauncher] Launching tool: ${tool.title}`);
+        if (this.currentToolInstance) {
+            this._closeTool();
+        }
         this.close();
 
         // Show immersive container
@@ -180,8 +184,10 @@ class AppLauncher {
             const module = await import(`./${tool.module}.js`);
             if (module.default && typeof module.default.init === 'function') {
                 module.default.init(document.getElementById('tool-body'));
+                this.currentToolInstance = module.default;
             } else if (typeof module.init === 'function') {
                 module.init(document.getElementById('tool-body'));
+                this.currentToolInstance = module;
             }
             this.currentTool = tool.id;
         } catch (err) {
@@ -197,9 +203,17 @@ class AppLauncher {
     }
 
     _closeTool() {
+        if (this.currentToolInstance && typeof this.currentToolInstance.destroy === 'function') {
+            try {
+                this.currentToolInstance.destroy();
+            } catch (err) {
+                console.warn('[AppLauncher] Tool cleanup failed:', err);
+            }
+        }
         this.toolContainer.classList.remove('active');
         this.toolContainer.innerHTML = '';
         this.currentTool = null;
+        this.currentToolInstance = null;
         document.body.style.overflow = '';
     }
 }
