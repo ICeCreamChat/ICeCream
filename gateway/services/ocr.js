@@ -3,14 +3,13 @@ import fetch from 'node-fetch';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 
 dotenv.config();
 
 const SILICONFLOW_BASE = process.env.SILICONFLOW_API_BASE || 'https://api.siliconflow.cn/v1';
 const SILICONFLOW_KEY = process.env.SILICONFLOW_API_KEY;
-// Use the same VLM model that the Solver uses successfully for vision tasks
-const VLM_MODEL = 'Qwen/Qwen2.5-VL-72B-Instruct';
+// VLM model configurable via .env (default: Qwen2.5-VL-72B)
+const VLM_MODEL = process.env.SILICONFLOW_VLM_MODEL || 'Qwen/Qwen2.5-VL-72B-Instruct';
 
 const MINERU_URL = process.env.MINERU_URL || 'https://mineru.net';
 const MINERU_KEY = process.env.MINERU_API_KEY;
@@ -26,7 +25,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
  * [PRIMARY] Extract students directly from image using VLM in one shot.
  * Sends image to Qwen2.5-VL and asks for structured JSON output.
  * This avoids the lossy OCR→text→AI two-step pipeline.
- * @param {Buffer} imageBuffer * @param {string} mimeType * @returns {Array} Array of student objects {name, gender, grade}
+ * @param {Buffer} imageBuffer * @param {string} mimeType * @returns {Array} Array of student objects {name, gender, height, grade}
  */
 export async function extractStudentsDirectVLM(imageBuffer, mimeType = 'image/jpeg') {
     if (!SILICONFLOW_KEY) throw new Error('Missing SILICONFLOW_API_KEY');
@@ -38,14 +37,15 @@ export async function extractStudentsDirectVLM(imageBuffer, mimeType = 'image/jp
 
 要求：
 1. 提取所有列（图片可能有多列并排的表格）
-2. 每个学生包含：姓名(name)、性别(gender)、成绩(grade)
+2. 每个学生包含：姓名(name)、性别(gender)、身高(height)、成绩(grade)
 3. 性别请输出 "M"（男）或 "F"（女）
-4. 成绩为数字，如果看不清就填 null
-5. 注意区分性别：根据文字"男""女"判断，不要猜测
-6. 不要遗漏任何学生，包括图片边缘的
+4. 身高为数字（厘米），如果身高看不清就填 null
+5. 成绩为数字，如果看不清就填 null
+6. 注意区分性别：根据文字"男""女"判断，不要猜测
+7. 不要遗漏任何学生，包括图片边缘的
 
 直接输出JSON数组，不要任何其他文字或Markdown标记：
-[{"name":"张三","gender":"M","grade":85},{"name":"李四","gender":"F","grade":90}]`;
+[{"name":"张三","gender":"M","height":170,"grade":85},{"name":"李四","gender":"F","height":165,"grade":90}]`;
 
     const payload = {
         model: VLM_MODEL,
@@ -292,8 +292,9 @@ export async function extractStudentsWithAI(text) {
     const prompt = `
 你是一个数据提取助手。请从以下文本中提取学生名单。
 文本可能包含OCR错误、乱码或无关表头。
-请提取：姓名(name)、性别(gender, M/F)、成绩(grade, 数字)。
+请提取：姓名(name)、性别(gender, M/F)、身高(height, 数字, 单位厘米)、成绩(grade, 数字)。
 如果性别不确定，根据中文名字推测（常见男名/女名）。
+如果身高看不清或未知，不填或填 null。
 如果成绩未知，不填。
 忽略非学生信息的文字。
 
@@ -301,7 +302,7 @@ export async function extractStudentsWithAI(text) {
 ${text.substring(0, 5000)}
 
 输出严格的JSON对象，不要Markdown标记：
-{"students": [{"name": "张三", "gender": "M", "grade": 85}, ...]}
+{"students": [{"name": "张三", "gender": "M", "height": 170, "grade": 85}, ...]}
     `;
 
     const response = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {

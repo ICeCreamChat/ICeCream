@@ -8,8 +8,16 @@ import {
 import {
     applySeatingOperations,
     colHasStudents,
+    deleteAisleColumn,
+    deleteAisleRow,
+    deleteLocalAisle,
     evaluateSeatingConstraints,
+    evaluateSeatingQuality,
     getPlacedStudentIds,
+    insertAisleColumn,
+    insertAisleRow,
+    insertLocalAisle,
+    normalizeLocalAisles,
     parseFallbackSeatingOperations,
     rowHasStudents,
 } from './seating-core.js';
@@ -57,9 +65,24 @@ class SeatingPlanner {
         this._chatHistory = [];
         this._chatExpanded = false;
         this._chatPending = null; // pending operation for confirmation
+        this._chatPosition = null;
+        this._chatDragState = null;
+        this._chatIconDragState = null;
+        this._suppressChatToggleClick = false;
+        this._chatPointerMoveHandler = event => this.handleChatDragMove(event);
+        this._chatPointerUpHandler = event => this.stopChatDrag(event);
+        this._chatIconPointerMoveHandler = event => this.handleChatIconDragMove(event);
+        this._chatIconPointerUpHandler = event => this.stopChatIconDrag(event);
+        this._suggestionState = {
+            arrange: { items: [], index: -1, debounce: null, controller: null, lastText: '' },
+        };
+        this._arrangeSuggestionDismissedText = '';
+        this._chatMode = 'auto'; // 'auto' | 'micro' | 'regenerate'
         this._constraintEvaluation = { total: 0, satisfied: 0, unsatisfied: [], hardUnsatisfied: [], softUnsatisfied: [] };
+        this._qualityEvaluation = { feasible: true, hardScore: 0, softScore: 0, percent: 100, label: '优秀', constraints: [], topIssues: [], hardViolationCount: 0, softViolationCount: 0 };
         this.arrangementStats = null;
         this.showSeatDetails = true;
+        this.showScoreAnalysis = false;
     }
 
     // ========== Constants ==========
@@ -70,6 +93,7 @@ class SeatingPlanner {
     static VIRTUAL_GRID_CELL_THRESHOLD = 1200;
     static VIRTUAL_GRID_ROW_HEIGHT = 104;
     static VIRTUAL_GRID_ROW_OVERSCAN = 5;
+    static CHAT_DRAG_THRESHOLD = 6;
 
     // Build student Map from array for O(1) lookups
     _buildStudentMap() {
@@ -180,6 +204,9 @@ class SeatingPlanner {
             document.removeEventListener('click', this._seatDetailsToggleHandler);
             this._seatDetailsToggleHandler = null;
         }
+        this.clearSuggestionState('arrange');
+        this.stopChatDrag();
+        this.stopChatIconDrag();
         // Clean up guide scroll observer
         if (this._guideObserver) {
             this._guideObserver.disconnect();
@@ -224,6 +251,7 @@ class SeatingPlanner {
             }
         }
         layout.template = template;
+        layout.localAisles = normalizeLocalAisles(this.classroomLayout?.localAisles, this.rows, this.cols);
         return layout;
     }
 
@@ -246,6 +274,78 @@ class SeatingPlanner {
         return document.getElementById('sp-arrange-prompt')?.value?.trim() || '';
     }
 
+    applyArrangeExample(text = '') {
+        const prompt = document.getElementById('sp-arrange-prompt');
+        if (!prompt || !text) return;
+        prompt.value = text;
+        prompt.focus();
+        prompt.setSelectionRange?.(prompt.value.length, prompt.value.length);
+        this.hideSuggestions('arrange');
+    }
+
+    pickArrangeCompletion(suggestions = [], currentText = '') {
+        const normalized = currentText
+            ? this.normalizeSuggestionItems(suggestions, currentText)
+            : suggestions
+                .map(item => String(item ?? '').replace(/^试试[:：]\s*/, '').trim())
+                .filter(Boolean);
+        return normalized[0] || '';
+    }
+
+    async completeArrangePrompt() {
+        const prompt = document.getElementById('sp-arrange-prompt');
+        const button = document.getElementById('sp-complete-arrange-prompt');
+        if (!prompt || !button) return;
+
+        const originalHtml = button.innerHTML;
+        button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+        button.innerHTML = '<i data-lucide="loader-2" class="sp-spin"></i><span>补全中</span>';
+        if (window.lucide) window.lucide.createIcons();
+
+        const state = this._suggestionState?.arrange;
+        state?.controller?.abort();
+        const controller = new AbortController();
+        if (state) state.controller = controller;
+
+        try {
+            const payload = this.buildSuggestionPayload('arrange');
+            if (!payload) throw new Error('无法读取排座要求');
+            payload.count = 3;
+
+            const res = await fetch('/api/tools/seating/suggestions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: controller.signal,
+            });
+            if (!res.ok) throw new Error(`Suggestion request failed: ${res.status}`);
+            const result = await res.json();
+            const suggestions = Array.isArray(result?.data?.suggestions)
+                ? result.data.suggestions
+                : [];
+            const completion = this.pickArrangeCompletion(suggestions, payload.text);
+            if (!completion) throw new Error('AI 暂时没有给出可用补全');
+
+            prompt.value = completion;
+            prompt.focus();
+            prompt.setSelectionRange?.(prompt.value.length, prompt.value.length);
+            this._arrangeSuggestionDismissedText = '';
+            this.hideSuggestions('arrange');
+            this.showToast('已补全排座要求', 'success');
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                this.showToast(error.message || '补全要求失败，请稍后再试', 'warning');
+            }
+        } finally {
+            if (state?.controller === controller) state.controller = null;
+            button.disabled = false;
+            button.removeAttribute('aria-busy');
+            button.innerHTML = originalHtml;
+            if (window.lucide) window.lucide.createIcons();
+        }
+    }
+
     getCurrentAssignments() {
         const assignments = [];
         for (let r = 0; r < this.rows; r++) {
@@ -255,6 +355,18 @@ class SeatingPlanner {
             }
         }
         return assignments;
+    }
+
+    getChatLayoutSnapshot() {
+        const blocked = new Set(this.getBlockedLayoutCells().map(cell => `${cell.r},${cell.c}`));
+        return Array.from({ length: this.rows }, (_, r) => (
+            Array.from({ length: this.cols }, (_, c) => {
+                if (this.rowAisles.includes(r) || this.colAisles.includes(c) || blocked.has(`${r},${c}`)) {
+                    return '_aisle_';
+                }
+                return this.layout?.[r]?.[c] || null;
+            })
+        ));
     }
 
     normalizeArrangementForApply(data) {
@@ -300,6 +412,7 @@ class SeatingPlanner {
             },
             template: sourceLayout.template || 'ai',
             groupSize: sourceLayout.groupSize || 1,
+            localAisles: normalizeLocalAisles(sourceLayout.localAisles, rows, cols),
         };
 
         const knownIds = new Set(this.students.map(student => student.id));
@@ -377,6 +490,7 @@ class SeatingPlanner {
         this.rows = arrangement.classroomLayout.rows;
         this.cols = arrangement.classroomLayout.cols;
         this.classroomLayout = structuredClone(arrangement.classroomLayout);
+        this.classroomLayout.localAisles = normalizeLocalAisles(this.classroomLayout.localAisles, this.rows, this.cols);
         this.guardians = [arrangement.guardians.left || null, arrangement.guardians.right || null];
         this.classroomLayout.guardians.left = this.guardians[0];
         this.classroomLayout.guardians.right = this.guardians[1];
@@ -434,8 +548,21 @@ class SeatingPlanner {
         return result.data;
     }
 
-    shouldUseArrangementAssistant(message) {
-        return /(布局|过道|同桌|一组|小组|单人|单座|考试|护法|重新排|重新安排|改成|变成|排成)/.test(message);
+    showChatPendingConfirmation(text) {
+        const confirm = document.getElementById('sp-chat-confirm');
+        const label = document.getElementById('sp-chat-confirm-text');
+        if (label) label.textContent = text || '确认执行此操作？';
+        if (confirm) {
+            confirm.style.display = 'flex';
+            // Scroll chat messages to bottom so confirm bar is visible
+            const msgs = document.getElementById('sp-chat-messages');
+            if (msgs) msgs.scrollTop = msgs.scrollHeight;
+        }
+    }
+
+    async confirmMajorArrangementFromChat(prompt) {
+        if (!prompt) return;
+        await this.arrangeFromChat(prompt);
     }
 
     async arrangeFromChat(prompt) {
@@ -452,6 +579,7 @@ class SeatingPlanner {
             const arrangement = this.applyArrangementResult(data);
             this.appendChatMessage(arrangement.reply, 'ai');
             if (arrangement.warnings.length) this.appendChatMessage(arrangement.warnings.join('；'), 'ai');
+            this.hideSuggestions('arrange');
         } catch (err) {
             const msgs = document.getElementById('sp-chat-messages');
             const typing = msgs?.querySelector('.sp-chat-typing');
@@ -479,6 +607,7 @@ class SeatingPlanner {
         this.rows = layout.rows;
         this.cols = layout.cols;
         this.classroomLayout = structuredClone(layout);
+        this.classroomLayout.localAisles = normalizeLocalAisles(this.classroomLayout.localAisles, this.rows, this.cols);
         this.classroomLayout.guardians.left = this.guardians[0];
         this.classroomLayout.guardians.right = this.guardians[1];
         const aisles = layoutToLegacyAisles(this.classroomLayout);
@@ -560,20 +689,20 @@ class SeatingPlanner {
                     chair.className = `sp-chair sp-chair--${student.gender === 'M' ? 'male' : 'female'}`;
                     seat.appendChild(chair);
 
-                     // === Tooltip ===
+                    // === Tooltip ===
                     const tooltip = document.createElement('div');
                     tooltip.className = 'sp-seat-tooltip';
                     tooltip.textContent = `${student.name} (左右护法)`;
                     seat.appendChild(tooltip);
 
                 } else {
-                     // Invalid ID? Treat as empty
-                     this.guardians[index] = null;
-                     seat.classList.add('sp-seat--empty');
-                     const desk = document.createElement('div');
-                     desk.className = 'sp-desk';
-                     seat.appendChild(desk);
-                     seat.removeAttribute('draggable');
+                    // Invalid ID? Treat as empty
+                    this.guardians[index] = null;
+                    seat.classList.add('sp-seat--empty');
+                    const desk = document.createElement('div');
+                    desk.className = 'sp-desk';
+                    seat.appendChild(desk);
+                    seat.removeAttribute('draggable');
                 }
             } else {
                 seat.classList.add('sp-seat--empty');
@@ -604,7 +733,8 @@ class SeatingPlanner {
 
     handleDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
     handleDragEnter(e, cell) {
-         e.preventDefault();         if (!cell.classList.contains('sp-seat--dragging')) cell.classList.add('sp-seat--drag-over');    }
+        e.preventDefault(); if (!cell.classList.contains('sp-seat--dragging')) cell.classList.add('sp-seat--drag-over');
+    }
 
     handleDragLeave(e, cell) { cell.classList.remove('sp-seat--drag-over'); }
 
@@ -631,9 +761,9 @@ class SeatingPlanner {
         const s1 = this.studentMap.get(val1);
         const s2 = this.studentMap.get(val2);
         if (r1 === -1 || r2 === -1) {
-             this.showToast(`护法位已更新`, 'success');
+            this.showToast(`护法位已更新`, 'success');
         } else {
-             this.showToast(`已交换: ${s2?.name || '空位'} ↔ ${s1?.name || '空位'}`, 'success');
+            this.showToast(`已交换: ${s2?.name || '空位'} ↔ ${s1?.name || '空位'}`, 'success');
         }
     }
 
@@ -704,7 +834,7 @@ class SeatingPlanner {
                             <textarea id="sp-students-input" class="sp-textarea sp-hidden"                                placeholder="粘贴学生名单，每行一人&#10;&#10;支持格式:&#10;张三&#10;李四 男 180 85"></textarea>
                             <button id="sp-parse-students" class="sp-btn sp-btn--block sp-btn--sm sp-hidden">
                                 <i data-lucide="check"></i>
-                                确认导入
+                                编辑名单
                             </button>
                             <div id="sp-students-preview" class="sp-tags"></div>
                         </section>
@@ -713,15 +843,15 @@ class SeatingPlanner {
                         <section class="sp-section">
                             <div class="sp-section-header">
                                 <h3 class="sp-section-title">
-                                    <i data-lucide="link"></i>
-                                    座位约束
+                                    <i data-lucide="message-circle"></i>
+                                    学生需求
                                 </h3>
                             </div>
                             <textarea id="sp-constraints-input" class="sp-textarea"
-                                placeholder="用自然语言描述座位要求&#10;&#10;例如:&#10;张三视力不好要坐前排&#10;李四和王五不能坐一起"></textarea>
+                                placeholder="收集学生想坐哪里，想避开谁，或需要老师照顾的情况&#10;&#10;例如:&#10;张三视力不好想坐前排&#10;李四和王五不想坐一起&#10;赵六想和钱七同桌"></textarea>
                             <button id="sp-parse-constraints" class="sp-btn sp-btn--block sp-btn--sm">
                                 <i data-lucide="sparkles"></i>
-                                AI 解析
+                                提取需求
                             </button>
                             <div id="sp-constraints-list" class="sp-constraints"></div>
                         </section>
@@ -788,16 +918,28 @@ class SeatingPlanner {
                             <div class="sp-section-header">
                                 <h3 class="sp-section-title">
                                     <i data-lucide="sparkles"></i>
-                                    AI 排座需求
+                                    排座要求
                                 </h3>
+                                <button type="button" id="sp-complete-arrange-prompt" class="sp-btn sp-btn--sm sp-arrange-complete">
+                                    <i data-lucide="wand-sparkles"></i>
+                                    <span>补全要求</span>
+                                </button>
                             </div>
-                            <textarea id="sp-arrange-prompt" class="sp-arrange-prompt" rows="4" placeholder="例如：40人，三人一组，中间留过道，讲台旁安排左右护法，调皮的不要相邻"></textarea>
+                            <div class="sp-autocomplete-anchor">
+                                <textarea id="sp-arrange-prompt" class="sp-arrange-prompt" rows="4" placeholder="例如：两人一组，中间留过道，讲台旁安排左右护法，护法位置要一个成绩较差一个成绩较好的" aria-autocomplete="list" aria-expanded="false" aria-controls="sp-arrange-completions"></textarea>
+                                <div id="sp-arrange-completions" class="sp-autocomplete sp-autocomplete--above sp-hidden" role="listbox"></div>
+                            </div>
+                            <div class="sp-prompt-examples" id="sp-arrange-examples" aria-label="排座要求示例">
+                                <button type="button" class="sp-prompt-example" data-arrange-example="两人一组，中间留过道，讲台旁安排左右护法">两人一组</button>
+                                <button type="button" class="sp-prompt-example" data-arrange-example="考试模式单人单座，中间和两侧都留出过道">考试模式</button>
+                                <button type="button" class="sp-prompt-example" data-arrange-example="按身高从前到后安排，视力不好的同学优先坐前排">身高照顾</button>
+                            </div>
                         </section>
 
                         <!-- Generate Button -->
                         <button id="sp-generate" class="sp-btn sp-btn--primary sp-btn--block" disabled>
                             <i data-lucide="sparkles"></i>
-                            AI 生成座位表
+                            生成座位表
                         </button>
                     </aside>
 
@@ -840,6 +982,7 @@ class SeatingPlanner {
                                 </div>
                             </div>
                             <div id="sp-grid" class="sp-grid"></div>
+                            <div id="sp-aisle-gap-layer" class="sp-aisle-gap-layer" aria-hidden="true"></div>
                         </div>
                         <div class="sp-status" id="sp-status">
                             <div class="sp-status-left">
@@ -850,25 +993,36 @@ class SeatingPlanner {
                             </div>
                             <div class="sp-status-right"></div>
                         </div>
+                        <div class="sp-score-analysis sp-hidden" id="sp-score-analysis" aria-live="polite"></div>
 
                         <!-- AI Floating Chat Bar -->
                         <div class="sp-chat" id="sp-chat">
-                            <button class="sp-chat-toggle" id="sp-chat-toggle" title="AI 助手">
+                            <button class="sp-chat-toggle" id="sp-chat-toggle" title="ICeCream 座位助手" aria-label="打开 ICeCream 座位助手">
                                 <i data-lucide="bot"></i>
                             </button>
                             <div class="sp-chat-panel" id="sp-chat-panel">
-                                <div class="sp-chat-header">
+                                <div class="sp-chat-header" id="sp-chat-header" title="拖动浮窗">
                                     <div class="sp-chat-header-left">
-                                        <i data-lucide="bot"></i>
-                                        <span>AI 座位助手</span>
+                                        <span class="sp-chat-drag-icon" aria-hidden="true">
+                                            <i data-lucide="grip-vertical"></i>
+                                        </span>
+                                        <span class="sp-chat-title-icon">
+                                            <i data-lucide="bot"></i>
+                                        </span>
+                                        <span>ICeCream 座位助手</span>
                                     </div>
-                                    <button class="sp-chat-close" id="sp-chat-close">
+                                    <div class="sp-chat-mode" id="sp-chat-mode">
+                                        <button type="button" class="sp-chat-mode-btn is-active" data-chat-mode="auto" title="自动判断大改还是微调">自动</button>
+                                        <button type="button" class="sp-chat-mode-btn" data-chat-mode="micro" title="仅微调，不重新排座">微调</button>
+                                        <button type="button" class="sp-chat-mode-btn" data-chat-mode="regenerate" title="重新生成整张座位表">重排</button>
+                                    </div>
+                                    <button class="sp-chat-close" id="sp-chat-close" aria-label="关闭 ICeCream 座位助手">
                                         <i data-lucide="x"></i>
                                     </button>
                                 </div>
                                 <div class="sp-chat-messages" id="sp-chat-messages">
                                     <div class="sp-chat-msg sp-chat-msg--ai">
-                                        <div class="sp-chat-bubble">你好！我是座位助手，可以帮你微调座位。试试说：<br>• "把张三和李四换一下"<br>• "帮我看看有没有什么问题"<br>• "把成绩差的同学分散开"</div>
+                                        <div class="sp-chat-bubble">你好！我是 ICeCream 座位助手，可以帮你微调座位。试试说：<br>• "帮我检查一下现在的座位"<br>• "把张三和李四换一下"<br>• "把成绩弱的同学分散开"<br>• "重新排成考试模式"</div>
                                     </div>
                                 </div>
                                 <div class="sp-chat-confirm" id="sp-chat-confirm" style="display:none">
@@ -879,8 +1033,10 @@ class SeatingPlanner {
                                     </div>
                                 </div>
                                 <div class="sp-chat-input-row">
-                                    <input type="text" class="sp-chat-input" id="sp-chat-input" placeholder="输入指令，如：把张三往前挪..." />
-                                    <button class="sp-chat-send" id="sp-chat-send">
+                                     <div class="sp-chat-input-wrap">
+                                        <input type="text" class="sp-chat-input" id="sp-chat-input" placeholder="输入指令，如：把张三往前挪..." autocomplete="off" />
+                                    </div>
+                                    <button class="sp-chat-send" id="sp-chat-send" aria-label="发送">
                                         <i data-lucide="send"></i>
                                     </button>
                                 </div>
@@ -908,6 +1064,54 @@ class SeatingPlanner {
                         <i data-lucide="user-minus"></i>
                         清空座位
                     </button>
+                </div>
+
+                <div id="sp-image-review" class="sp-image-review sp-hidden" role="dialog" aria-modal="true" aria-labelledby="sp-image-review-title">
+                    <div class="sp-image-review-panel">
+                        <div class="sp-image-review-header">
+                            <h3 id="sp-image-review-title">识别结果确认</h3>
+                            <button type="button" class="sp-image-review-close" id="sp-image-review-cancel" aria-label="取消">
+                                <i data-lucide="x"></i>
+                            </button>
+                        </div>
+                        <div class="sp-image-review-warnings" id="sp-image-review-warnings"></div>
+                        <div class="sp-roster-toolbar sp-hidden" id="sp-roster-toolbar">
+                            <button type="button" class="sp-btn sp-btn--sm" id="sp-roster-add-row">
+                                <i data-lucide="user-plus"></i>
+                                添加一行
+                            </button>
+                            <button type="button" class="sp-btn sp-btn--sm" id="sp-roster-bulk-toggle">
+                                <i data-lucide="clipboard-paste"></i>
+                                批量粘贴
+                            </button>
+                        </div>
+                        <div class="sp-roster-bulk-panel sp-hidden" id="sp-roster-bulk-panel">
+                            <textarea id="sp-roster-bulk-text" class="sp-roster-bulk-text" rows="4" placeholder="每行一个学生，例如：张三 男 170 85"></textarea>
+                            <div class="sp-roster-bulk-actions">
+                                <button type="button" class="sp-btn sp-btn--sm sp-btn--primary" id="sp-roster-bulk-append">追加到表格</button>
+                            </div>
+                        </div>
+                        <div class="sp-image-review-table-wrap">
+                            <table class="sp-image-review-table">
+                                <thead>
+                                    <tr>
+                                        <th class="sp-image-review-index-head">序号</th>
+                                        <th>姓名</th>
+                                        <th>性别</th>
+                                        <th>身高</th>
+                                        <th>成绩</th>
+                                        <th class="sp-roster-action-head">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="sp-image-review-body"></tbody>
+                            </table>
+                        </div>
+                        <div class="sp-image-review-actions">
+                            <button type="button" class="sp-btn sp-btn--sm" id="sp-image-review-reupload">重新上传</button>
+                            <button type="button" class="sp-btn sp-btn--sm" id="sp-image-review-cancel-secondary">取消</button>
+                            <button type="button" class="sp-btn sp-btn--sm sp-btn--primary" id="sp-image-review-confirm">确认导入</button>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Transition Zone -->
@@ -1018,11 +1222,11 @@ class SeatingPlanner {
                             </div>
                             <div class="sp-guide-step-content">
                                 <span class="sp-guide-step-badge sp-guide-step-badge--2">Step 2</span>
-                                <h3>描述座位约束</h3>
-                                <p>用自然语言告诉 AI 你的排座需求，无需复杂配置。</p>
+                                <h3>收集学生需求</h3>
+                                <p>把学生自己的座位心愿和需要照顾的情况告诉 AI，它会整理成可执行规则。</p>
                                 <ul class="sp-guide-step-features">
                                     <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>「张三视力不好，要坐前排」</li>
-                                    <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>「李四和王五不能坐在一起」</li>
+                                    <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>「李四和王五不想坐在一起」</li>
                                     <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>「小组长均匀分布在各区域」</li>
                                 </ul>
                             </div>
@@ -1084,9 +1288,9 @@ class SeatingPlanner {
                             <div class="sp-guide-step-content">
                                 <span class="sp-guide-step-badge sp-guide-step-badge--4">Step 4</span>
                                 <h3>AI 智能排座</h3>
-                                <p>一键生成座位表，AI 综合所有约束和策略，计算最优排列。</p>
+                                <p>一键生成座位表，AI 综合所有约束和策略，生成较优排列并提供可解释评分。</p>
                                 <ul class="sp-guide-step-features">
-                                    <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg>一键自动生成最优座位方案</li>
+                                    <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg>一键自动生成较优座位方案并展示评分依据</li>
                                     <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><path d="m2 2 20 20"/><path d="M4.929 4.929A9.969 9.969 0 0 0 2 12c0 2.761 1.12 5.263 2.929 7.071"/><path d="M7.05 7.05A6.979 6.979 0 0 0 5 12c0 1.933.784 3.683 2.05 4.95"/></svg>AI 助手对话微调座位</li>
                                 </ul>
                             </div>
@@ -1194,6 +1398,7 @@ class SeatingPlanner {
         this.initBlackboardText();
         this.initPodiumToggle();
         this.bindChatEvents();
+        this.hideSuggestions('arrange');
 
         // Initialize guide scroll animations
         this._initGuideAnimations();
@@ -1256,7 +1461,7 @@ class SeatingPlanner {
                 if (spApp) {
                     spApp.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 } else {
-                     this.container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    this.container.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 }
             });
         }
@@ -1266,18 +1471,18 @@ class SeatingPlanner {
         const toggle = document.getElementById('sp-podium-toggle');
         const podiumRow = document.getElementById('sp-podium-row');
         if (toggle && podiumRow) {
-             toggle.addEventListener('click', (e) => {
-                 e.stopPropagation(); // Prevent bubbling layout jitters
-                 podiumRow.classList.toggle('is-expanded');
-                 // Update tooltip/title based on state
-                 const isExpanded = podiumRow.classList.contains('is-expanded');
-                 if (this.classroomLayout?.guardians) {
-                     this.classroomLayout.guardians.enabled = isExpanded;
-                     this.classroomLayout.guardians.left = isExpanded ? this.guardians[0] : null;
-                     this.classroomLayout.guardians.right = isExpanded ? this.guardians[1] : null;
-                 }
-                 toggle.title = isExpanded ? '收起左右护法' : '启用左右护法';
-                 this.updateStatus();
+            toggle.addEventListener('click', (e) => {
+                e.stopPropagation(); // Prevent bubbling layout jitters
+                podiumRow.classList.toggle('is-expanded');
+                // Update tooltip/title based on state
+                const isExpanded = podiumRow.classList.contains('is-expanded');
+                if (this.classroomLayout?.guardians) {
+                    this.classroomLayout.guardians.enabled = isExpanded;
+                    this.classroomLayout.guardians.left = isExpanded ? this.guardians[0] : null;
+                    this.classroomLayout.guardians.right = isExpanded ? this.guardians[1] : null;
+                }
+                toggle.title = isExpanded ? '收起左右护法' : '启用左右护法';
+                this.updateStatus();
             });
         }
     }
@@ -1492,6 +1697,26 @@ class SeatingPlanner {
         imgInput?.addEventListener('change', e => {
             if (e.target.files[0]) this.handleImageUpload(e.target.files[0]);
         });
+        $('sp-image-review-confirm')?.addEventListener('click', () => this.confirmImageReview());
+        $('sp-image-review-cancel')?.addEventListener('click', () => this.closeImageReview());
+        $('sp-image-review-cancel-secondary')?.addEventListener('click', () => this.closeImageReview());
+        $('sp-image-review-reupload')?.addEventListener('click', () => {
+            this.closeImageReview();
+            if (imgInput) {
+                imgInput.value = '';
+                imgInput.click();
+            }
+        });
+        $('sp-roster-add-row')?.addEventListener('click', () => this.addRosterReviewRow());
+        $('sp-roster-bulk-toggle')?.addEventListener('click', () => this.toggleRosterBulkPanel());
+        $('sp-roster-bulk-append')?.addEventListener('click', () => this.appendRosterBulkText());
+        $('sp-image-review-body')?.addEventListener('click', e => {
+            const button = e.target.closest?.('.sp-roster-delete-row');
+            if (!button) return;
+            button.closest('tr')?.remove();
+            this.renumberReviewRows();
+            this.updateRosterReviewTitle();
+        });
 
         // File input change handler
         fileInput?.addEventListener('change', e => {
@@ -1514,8 +1739,8 @@ class SeatingPlanner {
             if (file) this.handleFileUpload(file);
         });
 
-        // Parse students (manual paste mode)
-        $('sp-parse-students')?.addEventListener('click', () => this.parseStudents());
+        // Edit parsed students in a review-style table
+        $('sp-parse-students')?.addEventListener('click', () => this.openRosterEditor());
         // Clear students
         $('sp-clear-students')?.addEventListener('click', () => {
             this.students = [];
@@ -1530,6 +1755,7 @@ class SeatingPlanner {
             $('sp-students-input').classList.add('sp-hidden');
             $('sp-parse-students').classList.add('sp-hidden');
             this.updateStatus();
+            this.hideSuggestions('arrange');
             if (window.lucide) window.lucide.createIcons();
         });
 
@@ -1538,6 +1764,13 @@ class SeatingPlanner {
 
         if (this._seatDetailsToggleHandler) document.removeEventListener('click', this._seatDetailsToggleHandler);
         this._seatDetailsToggleHandler = e => {
+            const scoreToggle = e.target.closest?.('#sp-toggle-score-analysis');
+            if (scoreToggle) {
+                this.showScoreAnalysis = !this.showScoreAnalysis;
+                this.updateStatus();
+                return;
+            }
+
             const toggle = e.target.closest?.('#sp-toggle-seat-details');
             if (!toggle) return;
             this.showSeatDetails = !this.showSeatDetails;
@@ -1549,13 +1782,21 @@ class SeatingPlanner {
 
         // Generate
         $('sp-generate')?.addEventListener('click', () => this.generateSeating());
-        $('sp-arrange-prompt')?.addEventListener('keydown', e => {
+        const arrangePrompt = $('sp-arrange-prompt');
+        arrangePrompt?.addEventListener('keydown', e => {
+            if (this.handleSuggestionKeyDown(e, 'arrange')) return;
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') this.generateSeating();
+        });
+        arrangePrompt?.addEventListener('focus', () => this.hideSuggestions('arrange'));
+        arrangePrompt?.addEventListener('blur', () => setTimeout(() => this.hideSuggestions('arrange'), 120));
+        $('sp-complete-arrange-prompt')?.addEventListener('click', () => this.completeArrangePrompt());
+        document.querySelectorAll('[data-arrange-example]').forEach(button => {
+            button.addEventListener('click', () => this.applyArrangeExample(button.dataset.arrangeExample));
         });
 
         // Exports
         $('sp-export-png')?.addEventListener('click', () => this.exportPNG());
-        $('sp-export-excel')?.addEventListener('click', () => this.exportCSV());
+        $('sp-export-excel')?.addEventListener('click', () => this.exportXLSX());
 
         // Keyboard shortcuts (Ctrl+Z / Ctrl+Y) — use named handler for cleanup
         if (this._undoRedoHandler) document.removeEventListener('keydown', this._undoRedoHandler);
@@ -1567,12 +1808,19 @@ class SeatingPlanner {
         document.addEventListener('keydown', this._undoRedoHandler);
 
         // Strategy toggles
-        $('sp-gender')?.addEventListener('change', e => this.strategy.genderBalance = e.target.checked);
-        $('sp-height')?.addEventListener('change', e => this.strategy.heightOrder = e.target.checked);
+        $('sp-gender')?.addEventListener('change', e => {
+            this.strategy.genderBalance = e.target.checked;
+            this.scheduleSuggestionRefresh('arrange');
+        });
+        $('sp-height')?.addEventListener('change', e => {
+            this.strategy.heightOrder = e.target.checked;
+            this.scheduleSuggestionRefresh('arrange');
+        });
         // Grade strategy radio group (mutually exclusive)
         document.querySelectorAll('input[name="sp-grade-strategy"]').forEach(radio => {
             radio.addEventListener('change', e => {
                 if (e.target.checked) this.strategy.gradeStrategy = e.target.value;
+                this.scheduleSuggestionRefresh('arrange');
             });
         });
 
@@ -1710,7 +1958,10 @@ class SeatingPlanner {
             };
             scroller.addEventListener('scroll', this._virtualGridScrollHandler);
         }
-        requestAnimationFrame(() => this.syncPodiumSeatWidth());
+        requestAnimationFrame(() => {
+            this.syncPodiumSeatWidth();
+            this.renderAisleGapHandles();
+        });
     }
 
     renderGrid() {
@@ -1867,10 +2118,17 @@ class SeatingPlanner {
         if (window.lucide) window.lucide.createIcons();
 
         // Sync podium seat width with grid seats
-        requestAnimationFrame(() => this.syncPodiumSeatWidth());
+        requestAnimationFrame(() => {
+            this.syncPodiumSeatWidth();
+            this.renderAisleGapHandles();
+        });
         // Add resize listener if not already added
         if (!this._resizeHandler) {
-            this._resizeHandler = () => this.syncPodiumSeatWidth();
+            this._resizeHandler = () => {
+                this.syncPodiumSeatWidth();
+                this.renderAisleGapHandles();
+                this.syncChatPosition();
+            };
             window.addEventListener('resize', this._resizeHandler);
         }
     }
@@ -1958,6 +2216,218 @@ class SeatingPlanner {
         }
     }
 
+    getGridSeatElement(row, col) {
+        return document.querySelector(`.sp-grid .sp-seat[data-row="${row}"][data-col="${col}"]`);
+    }
+
+    getCurrentLocalAisles() {
+        const localAisles = normalizeLocalAisles(this.classroomLayout?.localAisles, this.rows, this.cols);
+        if (this.classroomLayout) this.classroomLayout.localAisles = localAisles;
+        return localAisles;
+    }
+
+    isInteractiveSeatCell(row, col) {
+        return row >= 0
+            && row < this.rows
+            && col >= 0
+            && col < this.cols
+            && !this.rowAisles.includes(row)
+            && !this.colAisles.includes(col)
+            && isLayoutSeat(this.classroomLayout, row, col);
+    }
+
+    shouldShowRowGap(row, col) {
+        return this.isInteractiveSeatCell(row, col) && this.isInteractiveSeatCell(row + 1, col);
+    }
+
+    shouldShowColumnGap(row, col) {
+        return this.isInteractiveSeatCell(row, col) && this.isInteractiveSeatCell(row, col + 1);
+    }
+
+    shouldShowRowAisleBoundary(row) {
+        return Number.isInteger(row)
+            && row > 0
+            && row < this.rows
+            && !this.rowAisles.includes(row - 1)
+            && !this.rowAisles.includes(row);
+    }
+
+    shouldShowColumnAisleBoundary(col) {
+        return Number.isInteger(col)
+            && col > 0
+            && col < this.cols
+            && !this.colAisles.includes(col - 1)
+            && !this.colAisles.includes(col);
+    }
+
+    renderAisleGapHandles() {
+        const layer = document.getElementById('sp-aisle-gap-layer');
+        const grid = document.getElementById('sp-grid');
+        const view = document.querySelector('.sp-classroom-view');
+        if (!layer || !grid || !view) return;
+        layer.replaceChildren();
+        if (!this.rows || !this.cols) return;
+
+        const viewRect = view.getBoundingClientRect();
+        const gridRect = grid.getBoundingClientRect();
+        const toLayerLeft = value => value - viewRect.left + view.scrollLeft;
+        const toLayerTop = value => value - viewRect.top + view.scrollTop;
+        const firstVisibleRow = Number(grid.querySelector('.sp-seat[data-row]')?.dataset.row ?? 0);
+        const lastVisibleRow = Number([...grid.querySelectorAll('.sp-seat[data-row]')].at(-1)?.dataset.row ?? this.rows - 1);
+        for (let row = Math.max(1, firstVisibleRow); row <= Math.min(this.rows - 1, lastVisibleRow + 1); row++) {
+            if (!this.shouldShowRowAisleBoundary(row)) continue;
+            const upper = this.getGridSeatElement(row - 1, 0);
+            const lower = this.getGridSeatElement(row, 0);
+            if (!upper || !lower) continue;
+            const upperRect = upper.getBoundingClientRect();
+            const lowerRect = lower.getBoundingClientRect();
+            const handle = document.createElement('button');
+            handle.type = 'button';
+            handle.className = `sp-aisle-gap sp-aisle-gap--row`;
+            handle.title = '点击插入横过道';
+            handle.setAttribute('aria-label', `在第 ${row} 排和第 ${row + 1} 排之间插入横过道`);
+            handle.dataset.insertRow = String(row);
+            handle.style.left = `${toLayerLeft(gridRect.left)}px`;
+            handle.style.top = `${toLayerTop((upperRect.bottom + lowerRect.top) / 2) - 7}px`;
+            handle.style.width = `${gridRect.width}px`;
+            handle.style.height = '14px';
+            handle.addEventListener('click', event => {
+                event.stopPropagation();
+                this.insertAisleRowAt(row);
+            });
+            layer.appendChild(handle);
+        }
+
+        for (let col = 1; col < this.cols; col++) {
+            if (!this.shouldShowColumnAisleBoundary(col)) continue;
+            const left = this.getGridSeatElement(firstVisibleRow, col - 1);
+            const right = this.getGridSeatElement(firstVisibleRow, col);
+            const bottomCell = this.getGridSeatElement(Math.min(lastVisibleRow, this.rows - 1), col - 1);
+            if (!left || !right || !bottomCell) continue;
+            const leftRect = left.getBoundingClientRect();
+            const rightRect = right.getBoundingClientRect();
+            const bottomRect = bottomCell.getBoundingClientRect();
+            const handle = document.createElement('button');
+            handle.type = 'button';
+            handle.className = `sp-aisle-gap sp-aisle-gap--col`;
+            handle.title = '点击插入竖过道';
+            handle.setAttribute('aria-label', `在第 ${col} 列和第 ${col + 1} 列之间插入竖过道`);
+            handle.dataset.insertCol = String(col);
+            handle.style.left = `${toLayerLeft((leftRect.right + rightRect.left) / 2) - 7}px`;
+            handle.style.top = `${toLayerTop(leftRect.top)}px`;
+            handle.style.width = '14px';
+            handle.style.height = `${Math.max(14, bottomRect.bottom - leftRect.top)}px`;
+            handle.addEventListener('click', event => {
+                event.stopPropagation();
+                this.insertAisleColumnAt(col);
+            });
+            layer.appendChild(handle);
+        }
+    }
+
+    applyAisleEditResult(result, message) {
+        this.layout = result.layout;
+        this.rows = result.rows;
+        this.cols = result.cols;
+        this.classroomLayout = result.classroomLayout;
+        this.classroomLayout.localAisles = normalizeLocalAisles(this.classroomLayout.localAisles, this.rows, this.cols);
+        this.classroomLayout.guardians.left = this.guardians[0] || null;
+        this.classroomLayout.guardians.right = this.guardians[1] || null;
+        this.rowAisles = result.rowAisles;
+        this.colAisles = result.colAisles;
+        this.refreshConstraintStatus();
+        this.saveSnapshot();
+        this.renderGrid();
+        this.renderPodiumSeats();
+        this.updateStatus();
+        if (message) this.showToast(message, 'success');
+    }
+
+    applyLocalAisleEdit(nextClassroomLayout, message) {
+        this.classroomLayout = structuredClone(nextClassroomLayout);
+        this.classroomLayout.localAisles = normalizeLocalAisles(this.classroomLayout.localAisles, this.rows, this.cols);
+        this.classroomLayout.guardians.left = this.guardians[0] || null;
+        this.classroomLayout.guardians.right = this.guardians[1] || null;
+        this.refreshConstraintStatus();
+        this.saveSnapshot();
+        this.renderGrid();
+        this.renderPodiumSeats();
+        this.updateStatus();
+        if (message) this.showToast(message, 'success');
+    }
+
+    insertLocalAisleAt(orientation, row, col) {
+        try {
+            const next = insertLocalAisle({
+                classroomLayout: this.classroomLayout,
+                orientation,
+                row,
+                col,
+            });
+            this.applyLocalAisleEdit(next, '已在两个座位之间插入局部过道');
+        } catch (error) {
+            this.showToast(error.message || '无法插入局部过道', 'warning');
+        }
+    }
+
+    deleteLocalAisleAt(orientation, row, col) {
+        try {
+            const next = deleteLocalAisle({
+                classroomLayout: this.classroomLayout,
+                orientation,
+                row,
+                col,
+            });
+            this.applyLocalAisleEdit(next, '已删除局部过道');
+        } catch (error) {
+            this.showToast(error.message || '无法删除局部过道', 'warning');
+        }
+    }
+
+    insertAisleRowAt(index) {
+        try {
+            this.applyAisleEditResult(
+                insertAisleRow({ layout: this.layout, classroomLayout: this.classroomLayout, index }),
+                `已插入第 ${index} 排和第 ${index + 1} 排之间的横过道`
+            );
+        } catch (error) {
+            this.showToast(error.message || '无法插入横过道', 'warning');
+        }
+    }
+
+    insertAisleColumnAt(index) {
+        try {
+            this.applyAisleEditResult(
+                insertAisleColumn({ layout: this.layout, classroomLayout: this.classroomLayout, index }),
+                `已插入第 ${index} 列和第 ${index + 1} 列之间的竖过道`
+            );
+        } catch (error) {
+            this.showToast(error.message || '无法插入竖过道', 'warning');
+        }
+    }
+
+    deleteAisleRowAt(index) {
+        try {
+            this.applyAisleEditResult(
+                deleteAisleRow({ layout: this.layout, classroomLayout: this.classroomLayout, index }),
+                `已删除第 ${index + 1} 排横过道`
+            );
+        } catch (error) {
+            this.showToast(error.message || '无法删除横过道', 'warning');
+        }
+    }
+
+    deleteAisleColumnAt(index) {
+        try {
+            this.applyAisleEditResult(
+                deleteAisleColumn({ layout: this.layout, classroomLayout: this.classroomLayout, index }),
+                `已删除第 ${index + 1} 列竖过道`
+            );
+        } catch (error) {
+            this.showToast(error.message || '无法删除竖过道', 'warning');
+        }
+    }
+
 
 
     // ========== Context Menu ==========
@@ -1971,10 +2441,12 @@ class SeatingPlanner {
         const isColAisle = this.colAisles.includes(col);
         const isRowAisle = this.rowAisles.includes(row);
         const isAisle = isColAisle || isRowAisle || !isLayoutSeat(this.classroomLayout, row, col);
+        this.contextTarget = { row, col, aisleType: isRowAisle ? 'row' : isColAisle ? 'col' : null };
 
-        menu.querySelector('[data-action="set-col-aisle"]').style.display = isAisle ? 'none' : 'flex';
-        menu.querySelector('[data-action="set-row-aisle"]').style.display = isAisle ? 'none' : 'flex';
-        menu.querySelector('[data-action="clear-aisle"]').style.display = isAisle ? 'flex' : 'none';
+        menu.querySelector('[data-action="set-col-aisle"]').style.display = 'none';
+        menu.querySelector('[data-action="set-row-aisle"]').style.display = 'none';
+        menu.querySelector('[data-action="clear-aisle"]').style.display = (isRowAisle || isColAisle) ? 'flex' : 'none';
+        menu.querySelector('[data-action="clear-seat"]').style.display = isAisle ? 'none' : 'flex';
 
         menu.style.left = `${e.clientX}px`;
         menu.style.top = `${e.clientY}px`;
@@ -1987,7 +2459,7 @@ class SeatingPlanner {
 
     handleMenuAction(action) {
         if (!this.contextTarget) return;
-        const { row, col } = this.contextTarget;
+        const { row, col, aisleType } = this.contextTarget;
         let changed = false;
 
         switch (action) {
@@ -2014,10 +2486,16 @@ class SeatingPlanner {
                 }
                 break;
             case 'clear-aisle':
-                this.colAisles = this.colAisles.filter(a => a !== col);
-                this.rowAisles = this.rowAisles.filter(a => a !== row);
-                changed = true;
-                this.showToast('过道已取消', 'success');
+                if (aisleType === 'row') {
+                    this.deleteAisleRowAt(row);
+                    this.hideContextMenu();
+                    return;
+                }
+                if (aisleType === 'col') {
+                    this.deleteAisleColumnAt(col);
+                    this.hideContextMenu();
+                    return;
+                }
                 break;
             case 'clear-seat':
                 if (this.layout[row]?.[col]) {
@@ -2039,6 +2517,31 @@ class SeatingPlanner {
     }
 
     // ========== File Upload ==========
+    showStudentEditor(text = '') {
+        const textarea = document.getElementById('sp-students-input');
+        const dropzone = document.getElementById('sp-dropzone');
+        const parseBtn = document.getElementById('sp-parse-students');
+        if (textarea) {
+            textarea.value = text;
+            textarea.classList.add('sp-hidden');
+        }
+        dropzone?.classList.add('sp-hidden');
+        parseBtn?.classList.remove('sp-hidden');
+    }
+
+    formatStudentsForEditor(students = []) {
+        return students.map(student => this.formatReviewedStudentLine(student)).filter(Boolean).join('\n');
+    }
+
+    openRosterEditor() {
+        const students = this.students.length ? this.students : [];
+        if (!students.length) {
+            this.showToast('请先导入学生名单', 'warning');
+            return;
+        }
+        this.showRosterReview(students);
+    }
+
     async handleFileUpload(file) {
         try {
             const ext = file.name.toLowerCase().match(/\.[^.]+$/)?.[0] || '';
@@ -2048,10 +2551,7 @@ class SeatingPlanner {
             }
 
             const text = await file.text();
-            document.getElementById('sp-students-input').value = text;
-            document.getElementById('sp-dropzone').classList.add('sp-hidden');
-            document.getElementById('sp-students-input').classList.remove('sp-hidden');
-            document.getElementById('sp-parse-students').classList.remove('sp-hidden');
+            this.showStudentEditor(text);
             this.parseStudents();
         } catch (err) {
             console.error('[SeatingPlanner] File read error:', err);
@@ -2072,19 +2572,7 @@ class SeatingPlanner {
 
         this.students = result.data.students;
         this._buildStudentMap();
-
-        const textarea = document.getElementById('sp-students-input');
-        const dropzone = document.getElementById('sp-dropzone');
-        dropzone.classList.add('sp-hidden');
-        textarea.classList.remove('sp-hidden');
-        document.getElementById('sp-parse-students').classList.remove('sp-hidden');
-        textarea.value = result.data.students.map(s => {
-            const parts = [s.name];
-            if (s.gender) parts.push(s.gender === 'M' ? '男' : '女');
-            if (s.grade != null) parts.push(String(s.grade));
-            if (s.height != null) parts.push(String(s.height));
-            return parts.join('\t');
-        }).join('\n');
+        this.showStudentEditor(this.formatStudentsForEditor(result.data.students));
 
         const badge = document.getElementById('sp-student-count');
         badge.innerHTML = `<i data-lucide="users"></i><span>${result.data.count} 人</span>`;
@@ -2092,6 +2580,7 @@ class SeatingPlanner {
         this.renderStudentPreview(result.data.students, result.data.count);
         if (window.lucide) window.lucide.createIcons();
         this.showToast(`成功导入 ${result.data.count} 名学生`, 'success');
+        this.hideSuggestions('arrange');
     }
 
     /**
@@ -2150,28 +2639,7 @@ class SeatingPlanner {
             const result = await res.json();
             if (!result.success) throw new Error(result.error);
 
-            // Convert result to text format and append
-            // Format: Name Gender Grade
-            const newStudentsText = result.data.students.map(s => {
-                let line = s.name;
-                if (s.gender) line += ` ${s.gender === 'M' ? '男' : '女'}`;
-                if (s.grade !== undefined) line += ` ${s.grade}`;
-                return line;
-            }).join('\n');
-
-            const textarea = document.getElementById('sp-students-input');
-            const dropzone = document.getElementById('sp-dropzone');
-            // Show textarea if hidden
-            dropzone.classList.add('sp-hidden');
-            textarea.classList.remove('sp-hidden');
-            document.getElementById('sp-parse-students').classList.remove('sp-hidden');
-
-            const current = textarea.value.trim();
-            textarea.value = current ? (current + '\n' + newStudentsText) : newStudentsText;
-
-            this.showToast(`成功识别 ${result.data.count} 名学生`, 'success');
-            // Trigger parse to update UI list
-            this.parseStudents();
+            this.showImageReview(result.data);
 
         } catch (err) {
             console.error(err);
@@ -2183,6 +2651,436 @@ class SeatingPlanner {
             // Clear input
             document.getElementById('sp-image-input').value = '';
         }
+    }
+
+    formatReviewedStudentLine(s) {
+        let line = s.name || '';
+        if (s.gender) line += ` ${s.gender === 'M' ? '男' : '女'}`;
+        if (s.height !== undefined && s.height !== null && s.height !== '') line += ` ${s.height}`;
+        if (s.grade !== undefined && s.grade !== null && s.grade !== '') line += ` ${s.grade}`;
+        return line.trim();
+    }
+
+    showImageReview(data = {}) {
+        const students = Array.isArray(data.students) ? data.students : [];
+        this._imageReviewMode = 'image';
+        this._pendingImageReview = students;
+        const modal = document.getElementById('sp-image-review');
+        const title = document.getElementById('sp-image-review-title');
+        const warnings = document.getElementById('sp-image-review-warnings');
+        const confirmButton = document.getElementById('sp-image-review-confirm');
+        const reuploadButton = document.getElementById('sp-image-review-reupload');
+        if (title) title.textContent = students.length ? `识别结果确认（${students.length}人）` : '识别结果确认';
+        if (confirmButton) confirmButton.textContent = '确认导入';
+        reuploadButton?.classList.remove('sp-hidden');
+        this.setRosterEditorControlsVisible(false);
+        warnings.textContent = (data.warnings || []).join('；');
+        warnings.classList.toggle('sp-hidden', !(data.warnings || []).length);
+        this.renderImageReviewRows(students, { roster: false });
+        modal?.classList.remove('sp-hidden');
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    showRosterReview(students = []) {
+        this._imageReviewMode = 'roster';
+        this._pendingImageReview = students;
+        const modal = document.getElementById('sp-image-review');
+        const title = document.getElementById('sp-image-review-title');
+        const warnings = document.getElementById('sp-image-review-warnings');
+        const confirmButton = document.getElementById('sp-image-review-confirm');
+        const reuploadButton = document.getElementById('sp-image-review-reupload');
+        if (title) title.textContent = students.length ? `名单编辑（${students.length}人）` : '名单编辑';
+        if (confirmButton) confirmButton.textContent = '确认更新';
+        reuploadButton?.classList.add('sp-hidden');
+        this.setRosterEditorControlsVisible(true);
+        warnings?.classList.add('sp-hidden');
+        if (warnings) warnings.textContent = '';
+        this.renderImageReviewRows(students, { roster: true });
+        modal?.classList.remove('sp-hidden');
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    closeImageReview() {
+        this._imageReviewMode = null;
+        this._pendingImageReview = null;
+        this.setRosterEditorControlsVisible(false);
+        document.getElementById('sp-image-review')?.classList.add('sp-hidden');
+    }
+
+    setRosterEditorControlsVisible(visible) {
+        const modal = document.getElementById('sp-image-review');
+        const toolbar = document.getElementById('sp-roster-toolbar');
+        const bulkPanel = document.getElementById('sp-roster-bulk-panel');
+        modal?.classList.toggle('sp-image-review--roster', visible);
+        toolbar?.classList.toggle('sp-hidden', !visible);
+        if (!visible) bulkPanel?.classList.add('sp-hidden');
+    }
+
+    createReviewField(field, value, issues = []) {
+        const input = document.createElement(field === 'gender' ? 'select' : 'input');
+        input.className = 'sp-image-review-field';
+        input.dataset.field = field;
+        if (field === 'gender') {
+            [['', ''], ['M', '男'], ['F', '女']].forEach(([optionValue, label]) => {
+                const option = document.createElement('option');
+                option.value = optionValue;
+                option.textContent = label;
+                input.appendChild(option);
+            });
+            input.value = value || '';
+        } else {
+            input.value = value ?? '';
+            if (field === 'height' || field === 'grade') input.type = 'number';
+        }
+        const issueText = issues.join('|');
+        const warningByField = {
+            name: /missing_name|duplicate_name/,
+            height: /missing_height|height_out_of_range/,
+            grade: /grade_out_of_range/,
+        };
+        if (warningByField[field]?.test(issueText)) input.classList.add('sp-image-review-field--warning');
+        return input;
+    }
+
+    createImageReviewRow(student = {}, index = 0, { roster = false } = {}) {
+        const issues = Array.isArray(student.issues) ? student.issues : [];
+        const row = document.createElement('tr');
+        if (student.id) row.dataset.studentId = String(student.id);
+        if (issues.length) row.classList.add('sp-image-review-row--warning');
+        const indexCell = document.createElement('td');
+        indexCell.className = 'sp-image-review-index';
+        indexCell.textContent = String(index + 1);
+        row.appendChild(indexCell);
+        ['name', 'gender', 'height', 'grade'].forEach(field => {
+            const cell = document.createElement('td');
+            cell.appendChild(this.createReviewField(field, student[field], issues));
+            row.appendChild(cell);
+        });
+        const actionCell = document.createElement('td');
+        actionCell.className = 'sp-roster-action';
+        if (roster) {
+            const deleteButton = document.createElement('button');
+            deleteButton.type = 'button';
+            deleteButton.className = 'sp-roster-delete-row';
+            deleteButton.title = '删除此学生';
+            deleteButton.setAttribute('aria-label', '删除此学生');
+            deleteButton.innerHTML = '<i data-lucide="trash-2"></i>';
+            actionCell.appendChild(deleteButton);
+        }
+        row.appendChild(actionCell);
+        return row;
+    }
+
+    renderImageReviewRows(students = [], options = {}) {
+        const body = document.getElementById('sp-image-review-body');
+        if (!body) return;
+        body.replaceChildren();
+        students.forEach((student, index) => {
+            body.appendChild(this.createImageReviewRow(student, index, options));
+        });
+        this.renumberReviewRows();
+    }
+
+    addRosterReviewRow(student = {}) {
+        const body = document.getElementById('sp-image-review-body');
+        if (!body) return;
+        body.appendChild(this.createImageReviewRow(student, body.querySelectorAll('tr').length, { roster: true }));
+        this.renumberReviewRows();
+        this.updateRosterReviewTitle();
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    renumberReviewRows() {
+        [...document.querySelectorAll('#sp-image-review-body tr')].forEach((row, index) => {
+            const indexCell = row.querySelector('.sp-image-review-index');
+            if (indexCell) indexCell.textContent = String(index + 1);
+        });
+    }
+
+    updateRosterReviewTitle() {
+        if (this._imageReviewMode !== 'roster') return;
+        const title = document.getElementById('sp-image-review-title');
+        const count = document.querySelectorAll('#sp-image-review-body tr').length;
+        if (title) title.textContent = count ? `名单编辑（${count}人）` : '名单编辑';
+    }
+
+    toggleRosterBulkPanel() {
+        document.getElementById('sp-roster-bulk-panel')?.classList.toggle('sp-hidden');
+    }
+
+    async appendRosterBulkText() {
+        const textarea = document.getElementById('sp-roster-bulk-text');
+        const button = document.getElementById('sp-roster-bulk-append');
+        const text = textarea?.value?.trim() || '';
+        if (!text) {
+            this.showToast('请先粘贴学生名单', 'warning');
+            return;
+        }
+        if (button) button.disabled = true;
+        try {
+            const res = await fetch('/api/tools/seating/parse-students', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            const result = await res.json();
+            if (!result.success) throw new Error(result.error || '名单解析失败');
+            const students = Array.isArray(result.data?.students) ? result.data.students : [];
+            if (!students.length) {
+                this.showToast('没有解析到可追加的学生', 'warning');
+                return;
+            }
+            students.forEach(student => this.addRosterReviewRow({
+                name: student.name,
+                gender: student.gender,
+                height: student.height,
+                grade: student.grade,
+            }));
+            if (textarea) textarea.value = '';
+            document.getElementById('sp-roster-bulk-panel')?.classList.add('sp-hidden');
+            this.showToast(`已追加 ${students.length} 名学生`, 'success');
+        } catch (err) {
+            console.error('[SeatingPlanner] Bulk roster parse error:', err);
+            this.showToast(err.message || '批量名单解析失败', 'error');
+        } finally {
+            if (button) button.disabled = false;
+        }
+    }
+
+    getImageReviewStudents({ includePartial = false } = {}) {
+        const rows = [...document.querySelectorAll('#sp-image-review-body tr')];
+        return rows.map(row => {
+            const value = field => row.querySelector(`[data-field="${field}"]`)?.value?.trim() || '';
+            const numeric = field => {
+                const raw = value(field);
+                return raw === '' ? undefined : Number(raw);
+            };
+            const student = {
+                id: row.dataset.studentId || '',
+                name: value('name'),
+                gender: value('gender'),
+                height: numeric('height'),
+                grade: numeric('grade'),
+            };
+            student._hasAnyValue = Boolean(student.name || student.gender || student.height !== undefined || student.grade !== undefined);
+            return student;
+        }).filter(student => includePartial ? student._hasAnyValue : student.name);
+    }
+
+    appendReviewedStudentsToInput(students) {
+        const newStudentsText = students.map(s => this.formatReviewedStudentLine(s)).filter(Boolean).join('\n');
+        const textarea = document.getElementById('sp-students-input');
+        const current = textarea?.value?.trim() || '';
+        const nextText = current ? (current + '\n' + newStudentsText) : newStudentsText;
+        this.showStudentEditor(nextText);
+        this.parseStudents();
+    }
+
+    updateReviewedStudentsInInput(students) {
+        const nextText = this.formatStudentsForEditor(students);
+        this.showStudentEditor(nextText);
+        this.parseStudents();
+    }
+
+    nextStudentId(usedIds = new Set()) {
+        let max = 0;
+        for (const id of usedIds) {
+            const match = String(id || '').match(/^s(\d+)$/i);
+            if (match) max = Math.max(max, Number(match[1]));
+        }
+        let next = max + 1;
+        let candidate = `s${String(next).padStart(2, '0')}`;
+        while (usedIds.has(candidate)) {
+            next += 1;
+            candidate = `s${String(next).padStart(2, '0')}`;
+        }
+        return candidate;
+    }
+
+    normalizeRosterReviewStudent(student, id) {
+        const normalizeNumber = value => {
+            if (value === undefined || value === null || value === '') return undefined;
+            const num = Number(value);
+            return Number.isFinite(num) ? num : undefined;
+        };
+        return {
+            id,
+            name: String(student.name || '').trim(),
+            gender: student.gender === 'M' || student.gender === 'F' ? student.gender : '',
+            height: normalizeNumber(student.height),
+            grade: normalizeNumber(student.grade),
+        };
+    }
+
+    buildRosterUpdateFromReview(reviewStudents = []) {
+        const previousIds = new Set(this.students.map(student => student.id));
+        const usedIds = new Set(previousIds);
+        const keptIds = new Set();
+        const addedIds = [];
+        const students = [];
+        for (const item of reviewStudents) {
+            const name = String(item?.name || '').trim();
+            if (!name) continue;
+            let id = String(item.id || '').trim();
+            if (!previousIds.has(id) || keptIds.has(id)) {
+                id = this.nextStudentId(usedIds);
+                addedIds.push(id);
+            }
+            usedIds.add(id);
+            keptIds.add(id);
+            students.push(this.normalizeRosterReviewStudent({ ...item, name }, id));
+        }
+        const nextIds = new Set(students.map(student => student.id));
+        const removedIds = this.students
+            .map(student => student.id)
+            .filter(id => !nextIds.has(id));
+        return { students, removedIds, addedIds };
+    }
+
+    getPlacedRosterStudentIds() {
+        const placed = new Set();
+        for (const row of this.layout || []) {
+            for (const id of row || []) {
+                if (id && id !== '_aisle_') placed.add(id);
+            }
+        }
+        for (const id of this.guardians || []) {
+            if (id) placed.add(id);
+        }
+        return placed;
+    }
+
+    clearRemovedRosterStudentReferences(removedIds = []) {
+        const removed = new Set(removedIds);
+        if (!removed.size) return;
+        for (const row of this.layout || []) {
+            for (let c = 0; c < (row?.length || 0); c++) {
+                if (removed.has(row[c])) row[c] = null;
+            }
+        }
+        this.guardians = (this.guardians || [null, null]).map(id => removed.has(id) ? null : id);
+        if (this.classroomLayout?.guardians) {
+            if (removed.has(this.classroomLayout.guardians.left)) this.classroomLayout.guardians.left = null;
+            if (removed.has(this.classroomLayout.guardians.right)) this.classroomLayout.guardians.right = null;
+        }
+        this.unassigned = (this.unassigned || []).filter(id => !removed.has(id));
+    }
+
+    applyRosterReviewState(update) {
+        this.clearRemovedRosterStudentReferences(update.removedIds);
+        this.students = update.students;
+        this._buildStudentMap();
+
+        const knownIds = new Set(this.students.map(student => student.id));
+        const placedIds = this.getPlacedRosterStudentIds();
+        const nextUnassigned = [];
+        const pushUnassigned = id => {
+            if (knownIds.has(id) && !placedIds.has(id) && !nextUnassigned.includes(id)) nextUnassigned.push(id);
+        };
+        (this.unassigned || []).forEach(pushUnassigned);
+        this.students.forEach(student => pushUnassigned(student.id));
+        this.unassigned = nextUnassigned;
+    }
+
+    syncRosterEditorAfterUpdate() {
+        this.showStudentEditor(this.formatStudentsForEditor(this.students));
+        const badge = document.getElementById('sp-student-count');
+        if (badge) badge.innerHTML = `<i data-lucide="users"></i><span>${this.students.length} 人</span>`;
+        const generateButton = document.getElementById('sp-generate');
+        if (generateButton) generateButton.disabled = this.students.length === 0;
+        this.renderStudentPreview(this.students, this.students.length);
+        this.refreshConstraintStatus();
+        this.saveSnapshot();
+        this.renderGrid();
+        this.renderPodiumSeats();
+        this.updateStatus();
+        this.hideSuggestions('arrange');
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    applyRosterReviewUpdate(reviewStudents = []) {
+        const update = this.buildRosterUpdateFromReview(reviewStudents);
+        this.applyRosterReviewState(update);
+        this.syncRosterEditorAfterUpdate();
+        return update;
+    }
+
+    validateRosterReviewRows() {
+        const rows = [...document.querySelectorAll('#sp-image-review-body tr')];
+        const seenNames = new Map();
+        let invalid = false;
+        let firstMessage = '';
+        rows.forEach(row => {
+            row.classList.remove('sp-image-review-row--warning');
+            row.querySelectorAll('.sp-image-review-field--warning').forEach(field => {
+                field.classList.remove('sp-image-review-field--warning');
+            });
+        });
+        const flag = (row, field, message) => {
+            row.classList.add('sp-image-review-row--warning');
+            row.querySelector(`[data-field="${field}"]`)?.classList.add('sp-image-review-field--warning');
+            invalid = true;
+            if (!firstMessage) firstMessage = message;
+        };
+        rows.forEach(row => {
+            const value = field => row.querySelector(`[data-field="${field}"]`)?.value?.trim() || '';
+            const name = value('name');
+            const gender = value('gender');
+            const heightRaw = value('height');
+            const gradeRaw = value('grade');
+            const hasAny = Boolean(name || gender || heightRaw || gradeRaw);
+            if (!hasAny) return;
+            if (!name) flag(row, 'name', '请补全红色行的姓名，或删除该空行');
+            if (name) {
+                const existingRow = seenNames.get(name);
+                if (existingRow) {
+                    flag(row, 'name', `名单中有重复姓名：${name}`);
+                    flag(existingRow, 'name', `名单中有重复姓名：${name}`);
+                } else {
+                    seenNames.set(name, row);
+                }
+            }
+            const height = heightRaw === '' ? undefined : Number(heightRaw);
+            if (height !== undefined && (!Number.isFinite(height) || height < 80 || height > 240)) {
+                flag(row, 'height', '身高需要在 80-240 厘米之间');
+            }
+            const grade = gradeRaw === '' ? undefined : Number(gradeRaw);
+            if (grade !== undefined && (!Number.isFinite(grade) || grade < 0 || grade > 100)) {
+                flag(row, 'grade', '成绩需要在 0-100 之间');
+            }
+        });
+        return { ok: !invalid, message: firstMessage };
+    }
+
+    confirmImageReview() {
+        if (this._imageReviewMode === 'roster') {
+            this.confirmRosterReview();
+            return;
+        }
+        const students = this.getImageReviewStudents();
+        if (!students.length) {
+            this.showToast('请至少保留一名学生', 'warning');
+            return;
+        }
+        this.appendReviewedStudentsToInput(students);
+        this.closeImageReview();
+        this.showToast(`已导入 ${students.length} 名学生`, 'success');
+    }
+
+    confirmRosterReview() {
+        const validation = this.validateRosterReviewRows();
+        if (!validation.ok) {
+            this.showToast(validation.message || '请先修正红色字段', 'warning');
+            return;
+        }
+        const students = this.getImageReviewStudents({ includePartial: true }).filter(student => student.name);
+        if (!students.length) {
+            this.showToast('请至少保留一名学生', 'warning');
+            return;
+        }
+        this.applyRosterReviewUpdate(students);
+        this.closeImageReview();
+        this.showToast(`已更新 ${students.length} 名学生`, 'success');
     }
 
     // ========== API Calls ==========
@@ -2226,6 +3124,7 @@ class SeatingPlanner {
             this.renderStudentPreview(result.data.students, result.data.count);
 
             this.showToast(`成功导入 ${result.data.count} 名学生`, 'success');
+            this.hideSuggestions('arrange');
         } catch (err) {
             this.showToast(err.message, 'error');
         }
@@ -2233,7 +3132,7 @@ class SeatingPlanner {
 
     async parseConstraints() {
         const text = document.getElementById('sp-constraints-input')?.value?.trim();
-        if (!text) return this.showToast('请输入约束描述', 'warning');
+        if (!text) return this.showToast('请输入学生需求', 'warning');
 
         const btn = document.getElementById('sp-parse-constraints');
         btn.disabled = true;
@@ -2252,7 +3151,7 @@ class SeatingPlanner {
             this.constraints = result.data.constraints;
             const list = document.getElementById('sp-constraints-list');
             if (this.constraints.length === 0) {
-                list.innerHTML = '<div style="text-align:center;color:var(--sp-text-muted);font-size:0.85rem;padding:16px;">未识别到约束条件</div>';
+                list.innerHTML = '<div style="text-align:center;color:var(--sp-text-muted);font-size:0.85rem;padding:16px;">未识别到学生需求</div>';
             } else {
                 list.innerHTML = '';
                 const iconMap = { front_row: 'eye', back_row: 'arrow-down', avoid: 'x-circle', prefer: 'heart', pair: 'link' };
@@ -2283,12 +3182,13 @@ class SeatingPlanner {
             if (window.lucide) window.lucide.createIcons();
             this.refreshConstraintStatus();
             this.updateStatus();
-            this.showToast(`识别到 ${this.constraints.length} 条约束`, 'success');
+            this.showToast(`识别到 ${this.constraints.length} 条学生需求`, 'success');
+            this.hideSuggestions('arrange');
         } catch (err) {
             this.showToast(err.message, 'error');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = '<i data-lucide="sparkles"></i> AI 解析';
+            btn.innerHTML = '<i data-lucide="sparkles"></i> 提取需求';
             if (window.lucide) window.lucide.createIcons();
         }
     }
@@ -2316,7 +3216,7 @@ class SeatingPlanner {
         } finally {
             this._isGenerating = false;
             btn.disabled = false;
-            btn.innerHTML = '<i data-lucide="sparkles"></i> AI 生成座位表';
+            btn.innerHTML = '<i data-lucide="sparkles"></i> 生成座位表';
             if (window.lucide) window.lucide.createIcons();
         }
     }
@@ -2617,8 +3517,8 @@ class SeatingPlanner {
         const occupied = new Set();
 
         const isFree = (r, c) => {
-             if (this.colAisles.includes(c) || this.rowAisles.includes(r) || !isLayoutSeat(this.classroomLayout, r, c)) return false;
-             return !occupied.has(`${r},${c}`);
+            if (this.colAisles.includes(c) || this.rowAisles.includes(r) || !isLayoutSeat(this.classroomLayout, r, c)) return false;
+            return !occupied.has(`${r},${c}`);
         };
 
         const placeSeat = (studentId, r, c) => {
@@ -2767,19 +3667,48 @@ class SeatingPlanner {
     bindChatEvents() {
         const toggle = document.getElementById('sp-chat-toggle');
         const close = document.getElementById('sp-chat-close');
+        const header = document.getElementById('sp-chat-header');
         const send = document.getElementById('sp-chat-send');
         const input = document.getElementById('sp-chat-input');
         const apply = document.getElementById('sp-chat-apply');
         const cancel = document.getElementById('sp-chat-cancel');
 
-        toggle?.addEventListener('click', () => this.toggleChat(true));
+        toggle?.addEventListener('pointerdown', e => this.startChatIconDrag(e));
+        toggle?.addEventListener('click', () => {
+            if (this.suppressChatToggleClick()) return;
+            this.toggleChat(true);
+        });
         close?.addEventListener('click', () => this.toggleChat(false));
+        header?.addEventListener('pointerdown', e => this.startChatDrag(e));
         send?.addEventListener('click', () => this.sendChatMessage());
         input?.addEventListener('keydown', e => {
             if (e.key === 'Enter' && !e.isComposing) this.sendChatMessage();
         });
         apply?.addEventListener('click', () => this.applyChatPending());
         cancel?.addEventListener('click', () => this.cancelChatPending());
+
+        // Mode toggle buttons
+        document.querySelectorAll('.sp-chat-mode-btn').forEach(btn => {
+            btn.addEventListener('click', () => this.setChatMode(btn.dataset.chatMode));
+        });
+    }
+
+    setChatMode(mode) {
+        if (!mode || mode === this._chatMode) return;
+        this._chatMode = mode;
+        document.querySelectorAll('.sp-chat-mode-btn').forEach(btn => {
+            btn.classList.toggle('is-active', btn.dataset.chatMode === mode);
+        });
+        // Update input placeholder to hint at current mode
+        const input = document.getElementById('sp-chat-input');
+        if (input) {
+            const placeholders = {
+                auto: '输入指令，如：把张三往前挪...',
+                micro: '微调模式 — 如：把张三和李四换一下',
+                regenerate: '重排模式 — 如：重新排成考试模式',
+            };
+            input.placeholder = placeholders[mode] || placeholders.auto;
+        }
     }
 
     toggleChat(open) {
@@ -2791,12 +3720,428 @@ class SeatingPlanner {
             chat.classList.add('sp-chat--open');
             panel.style.display = 'flex';
             toggle.style.display = 'none';
+            requestAnimationFrame(() => this.syncChatPosition());
             document.getElementById('sp-chat-input')?.focus();
         } else {
             chat.classList.remove('sp-chat--open');
             panel.style.display = 'none';
             toggle.style.display = 'flex';
+            requestAnimationFrame(() => this.syncChatPosition());
         }
+    }
+
+    getClampedChatPosition(left, top, width, height) {
+        const margin = 12;
+        const maxLeft = Math.max(margin, window.innerWidth - width - margin);
+        const maxTop = Math.max(margin, window.innerHeight - height - margin);
+        return {
+            left: Math.min(Math.max(left, margin), maxLeft),
+            top: Math.min(Math.max(top, margin), maxTop),
+        };
+    }
+
+    setChatPosition(left, top, width, height) {
+        const chat = document.getElementById('sp-chat');
+        if (!chat) return;
+        const rect = chat.getBoundingClientRect();
+        const clamped = this.getClampedChatPosition(
+            left,
+            top,
+            width || rect.width,
+            height || rect.height
+        );
+        this._chatPosition = clamped;
+        chat.classList.add('sp-chat--positioned');
+        chat.style.setProperty('--sp-chat-left', `${Math.round(clamped.left)}px`);
+        chat.style.setProperty('--sp-chat-top', `${Math.round(clamped.top)}px`);
+    }
+
+    syncChatPosition() {
+        if (!this._chatPosition) return;
+        const chat = document.getElementById('sp-chat');
+        if (!chat) return;
+        const rect = chat.getBoundingClientRect();
+        this.setChatPosition(this._chatPosition.left, this._chatPosition.top, rect.width, rect.height);
+    }
+
+    suppressChatToggleClick() {
+        if (!this._suppressChatToggleClick) return false;
+        this._suppressChatToggleClick = false;
+        return true;
+    }
+
+    startChatIconDrag(event) {
+        if (this._chatExpanded) return;
+        if (event.button !== undefined && event.button !== 0) return;
+        const chat = document.getElementById('sp-chat');
+        if (!chat) return;
+        const rect = chat.getBoundingClientRect();
+        this._chatIconDragState = {
+            startX: event.clientX,
+            startY: event.clientY,
+            offsetX: event.clientX - rect.left,
+            offsetY: event.clientY - rect.top,
+            width: rect.width,
+            height: rect.height,
+            moved: false,
+        };
+        window.addEventListener('pointermove', this._chatIconPointerMoveHandler);
+        window.addEventListener('pointerup', this._chatIconPointerUpHandler);
+        window.addEventListener('pointercancel', this._chatIconPointerUpHandler);
+    }
+
+    handleChatIconDragMove(event) {
+        if (!this._chatIconDragState) return;
+        const state = this._chatIconDragState;
+        const distance = Math.hypot(event.clientX - state.startX, event.clientY - state.startY);
+        if (!state.moved && distance < SeatingPlanner.CHAT_DRAG_THRESHOLD) return;
+        state.moved = true;
+        const chat = document.getElementById('sp-chat');
+        chat?.classList.add('sp-chat--dragging');
+        this.setChatPosition(event.clientX - state.offsetX, event.clientY - state.offsetY, state.width, state.height);
+        event.preventDefault();
+    }
+
+    stopChatIconDrag() {
+        if (this._chatIconDragState) {
+            const chat = document.getElementById('sp-chat');
+            chat?.classList.remove('sp-chat--dragging');
+            if (this._chatIconDragState.moved) this._suppressChatToggleClick = true;
+            this._chatIconDragState = null;
+        }
+        window.removeEventListener('pointermove', this._chatIconPointerMoveHandler);
+        window.removeEventListener('pointerup', this._chatIconPointerUpHandler);
+        window.removeEventListener('pointercancel', this._chatIconPointerUpHandler);
+    }
+
+    startChatDrag(event) {
+        if (event.button !== undefined && event.button !== 0) return;
+        if (event.target.closest('button, input')) return;
+
+        const chat = document.getElementById('sp-chat');
+        if (!chat) return;
+        const rect = chat.getBoundingClientRect();
+        this._chatDragState = {
+            offsetX: event.clientX - rect.left,
+            offsetY: event.clientY - rect.top,
+            width: rect.width,
+            height: rect.height,
+        };
+        chat.classList.add('sp-chat--dragging');
+        this.setChatPosition(rect.left, rect.top, rect.width, rect.height);
+        window.addEventListener('pointermove', this._chatPointerMoveHandler);
+        window.addEventListener('pointerup', this._chatPointerUpHandler);
+        window.addEventListener('pointercancel', this._chatPointerUpHandler);
+        event.preventDefault();
+    }
+
+    handleChatDragMove(event) {
+        if (!this._chatDragState) return;
+        const { offsetX, offsetY, width, height } = this._chatDragState;
+        this.setChatPosition(event.clientX - offsetX, event.clientY - offsetY, width, height);
+        event.preventDefault();
+    }
+
+    stopChatDrag() {
+        if (this._chatDragState) {
+            const chat = document.getElementById('sp-chat');
+            chat?.classList.remove('sp-chat--dragging');
+            this._chatDragState = null;
+        }
+        window.removeEventListener('pointermove', this._chatPointerMoveHandler);
+        window.removeEventListener('pointerup', this._chatPointerUpHandler);
+        window.removeEventListener('pointercancel', this._chatPointerUpHandler);
+    }
+
+    getSuggestionConfig(kind) {
+        if (kind !== 'arrange') return null;
+        return { inputId: 'sp-arrange-prompt', listId: 'sp-arrange-completions', target: 'arrange' };
+    }
+
+    getSuggestionElements(kind) {
+        const config = this.getSuggestionConfig(kind);
+        return {
+            config,
+            input: config ? document.getElementById(config.inputId) : null,
+            list: config ? document.getElementById(config.listId) : null
+        };
+    }
+
+    clearSuggestionState(kind) {
+        const state = this._suggestionState?.[kind];
+        if (!state) return;
+        if (state.debounce) clearTimeout(state.debounce);
+        state.controller?.abort();
+        state.debounce = null;
+        state.controller = null;
+        state.items = [];
+        state.index = -1;
+        state.lastText = '';
+        this.hideSuggestions(kind);
+    }
+
+    scheduleSuggestionRefresh(kind, immediate = false, options = {}) {
+        const state = this._suggestionState?.[kind];
+        if (!state) return;
+        if (state.debounce) clearTimeout(state.debounce);
+        const { input } = this.getSuggestionElements(kind);
+        const text = input?.value?.trim() || '';
+        if (kind === 'arrange' && options.source !== 'input') {
+            state.debounce = null;
+            return;
+        }
+        if (!text) {
+            state.controller?.abort();
+            state.debounce = null;
+            state.lastText = '';
+            this.setSuggestionItems(kind, []);
+            return;
+        }
+        if (kind === 'arrange') {
+            if (text !== this._arrangeSuggestionDismissedText) {
+                this._arrangeSuggestionDismissedText = '';
+            } else {
+                state.debounce = null;
+                return;
+            }
+        }
+        state.debounce = setTimeout(() => this.requestSuggestions(kind), immediate ? 0 : 600);
+    }
+
+    buildSuggestionPayload(kind) {
+        const config = this.getSuggestionConfig(kind);
+        if (!config) return null;
+        const input = document.getElementById(config.inputId);
+        return {
+            target: config.target,
+            text: input?.value?.trim() || '',
+            students: this.students.map(student => ({
+                id: student.id,
+                name: student.name,
+                gender: student.gender,
+                grade: student.grade,
+                height: student.height,
+            })),
+            constraints: this.constraints,
+            strategy: this.strategy,
+            layout: this.layout.map(row => row.map(cell => cell || null)),
+            rows: this.rows,
+            cols: this.cols,
+            history: [],
+            count: 5,
+        };
+    }
+
+    async requestSuggestions(kind) {
+        const state = this._suggestionState?.[kind];
+        if (!state || !this.container) return;
+        const payload = this.buildSuggestionPayload(kind);
+        if (!payload) return;
+        if (!payload.text) {
+            this.setSuggestionItems(kind, []);
+            return;
+        }
+        const signature = JSON.stringify({
+            target: payload.target,
+            text: payload.text,
+            studentCount: payload.students.length,
+            constraints: payload.constraints.length,
+            strategy: payload.strategy,
+            placed: getPlacedStudentIds(payload.layout, {
+                rows: this.rows,
+                cols: this.cols,
+                rowAisles: this.rowAisles,
+                colAisles: this.colAisles
+            }).length,
+        });
+        if (signature === state.lastText) {
+            if (state.items.length) this.renderSuggestionList(kind);
+            return;
+        }
+        state.lastText = signature;
+
+        state.controller?.abort();
+        const controller = new AbortController();
+        state.controller = controller;
+
+        try {
+            const res = await fetch('/api/tools/seating/suggestions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: controller.signal,
+            });
+            if (!res.ok) throw new Error(`Suggestion request failed: ${res.status}`);
+            const result = await res.json();
+            const suggestions = Array.isArray(result?.data?.suggestions)
+                ? result.data.suggestions
+                : [];
+            this.setSuggestionItems(kind, suggestions, payload.text);
+        } catch (error) {
+            if (error.name !== 'AbortError') this.setSuggestionItems(kind, []);
+        } finally {
+            if (state.controller === controller) state.controller = null;
+        }
+    }
+
+    normalizeSuggestionItems(items = [], currentText = '') {
+        const current = String(currentText || '').trim();
+        if (!current) return [];
+        const seen = new Set();
+        const normalized = [];
+
+        for (const item of items) {
+            const text = String(item ?? '').replace(/^试试[:：]\s*/, '').trim();
+            if (!text || text === current || !this.isSuggestionRelated(current, text)) continue;
+            const clipped = text.length > 80 ? text.slice(0, 80) : text;
+            if (seen.has(clipped)) continue;
+            seen.add(clipped);
+            normalized.push(clipped);
+            if (normalized.length >= 5) break;
+        }
+
+        return normalized;
+    }
+
+    isSuggestionRelated(currentText, suggestionText) {
+        const compact = value => String(value || '').toLowerCase().replace(/\s+/g, '');
+        const current = compact(currentText);
+        const suggestion = compact(suggestionText);
+        if (!current || !suggestion) return false;
+        if (suggestion.startsWith(current) || suggestion.includes(current)) return true;
+
+        const probe = current.length <= 2 ? current : current.slice(0, Math.min(4, current.length));
+        if (probe && suggestion.includes(probe)) return true;
+
+        const chars = [...new Set([...current].filter(ch => /[a-z0-9\u4e00-\u9fa5]/i.test(ch)))];
+        if (!chars.length) return false;
+        const matched = chars.filter(ch => suggestion.includes(ch)).length;
+        const required = current.length <= 2 ? chars.length : Math.min(3, Math.ceil(chars.length / 2));
+        return matched >= required;
+    }
+
+    setSuggestionItems(kind, items = [], currentText = '') {
+        const state = this._suggestionState?.[kind];
+        if (!state) return;
+        const { input } = this.getSuggestionElements(kind);
+        const sourceText = String(currentText || input?.value || '').trim();
+        if (kind === 'arrange' && sourceText && sourceText === this._arrangeSuggestionDismissedText) {
+            state.items = [];
+            state.index = -1;
+            this.hideSuggestions(kind);
+            return;
+        }
+        state.items = this.normalizeSuggestionItems(items, currentText || input?.value || '');
+        state.index = state.items.length ? 0 : -1;
+        this.renderSuggestionList(kind);
+    }
+
+    renderSuggestionList(kind) {
+        const state = this._suggestionState?.[kind];
+        const { config, input, list } = this.getSuggestionElements(kind);
+        if (!list || !input || !state?.items.length) {
+            this.hideSuggestions(kind);
+            return;
+        }
+
+        list.replaceChildren();
+        state.items.forEach((item, index) => {
+            const option = document.createElement('button');
+            option.type = 'button';
+            option.id = `${config.listId}-option-${index}`;
+            option.className = `sp-autocomplete-option${index === state.index ? ' is-active' : ''}`;
+            option.setAttribute('role', 'option');
+            option.setAttribute('aria-selected', String(index === state.index));
+            option.textContent = item;
+            option.addEventListener('mousedown', event => event.preventDefault());
+            option.addEventListener('click', () => {
+                state.index = index;
+                this.acceptSuggestion(kind);
+            });
+            list.appendChild(option);
+        });
+
+        input.setAttribute('aria-expanded', 'true');
+        this.updateSuggestionActive(kind);
+        list.classList.remove('sp-hidden');
+    }
+
+    hideSuggestions(kind) {
+        const state = this._suggestionState?.[kind];
+        const { input, list } = this.getSuggestionElements(kind);
+        const wasOpen = Boolean(list && !list.classList.contains('sp-hidden'));
+        if (kind === 'arrange' && wasOpen && input?.value?.trim()) {
+            this._arrangeSuggestionDismissedText = input.value.trim();
+        }
+        if (state) state.index = state.items.length ? Math.max(0, state.index) : -1;
+        list?.classList.add('sp-hidden');
+        input?.setAttribute('aria-expanded', 'false');
+        input?.removeAttribute('aria-activedescendant');
+    }
+
+    isSuggestionOpen(kind) {
+        const { list } = this.getSuggestionElements(kind);
+        return Boolean(list && !list.classList.contains('sp-hidden'));
+    }
+
+    updateSuggestionActive(kind) {
+        const state = this._suggestionState?.[kind];
+        const { input, list } = this.getSuggestionElements(kind);
+        if (!state || !input || !list) return;
+        const options = [...list.querySelectorAll('.sp-autocomplete-option')];
+        options.forEach((option, index) => {
+            const active = index === state.index;
+            option.classList.toggle('is-active', active);
+            option.setAttribute('aria-selected', String(active));
+        });
+        const activeOption = options[state.index];
+        if (activeOption) {
+            input.setAttribute('aria-activedescendant', activeOption.id);
+            activeOption.scrollIntoView({ block: 'nearest' });
+        } else {
+            input.removeAttribute('aria-activedescendant');
+        }
+    }
+
+    handleSuggestionKeyDown(event, kind) {
+        const state = this._suggestionState?.[kind];
+        if (!state || event.isComposing || event.ctrlKey || event.metaKey || !state.items.length) return false;
+        const open = this.isSuggestionOpen(kind);
+
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            if (!open) this.renderSuggestionList(kind);
+            const delta = event.key === 'ArrowDown' ? 1 : -1;
+            state.index = (state.index + delta + state.items.length) % state.items.length;
+            this.updateSuggestionActive(kind);
+            return true;
+        }
+
+        if (event.key === 'Escape' && open) {
+            event.preventDefault();
+            this.hideSuggestions(kind);
+            return true;
+        }
+
+        if ((event.key === 'Enter' || event.key === 'Tab') && open) {
+            event.preventDefault();
+            this.acceptSuggestion(kind);
+            return true;
+        }
+
+        return false;
+    }
+
+    acceptSuggestion(kind) {
+        const state = this._suggestionState?.[kind];
+        const { input } = this.getSuggestionElements(kind);
+        if (!state?.items.length || !input) return false;
+        const index = state.index >= 0 ? state.index : 0;
+        input.value = state.items[index];
+        input.focus();
+        input.setSelectionRange?.(input.value.length, input.value.length);
+        this.hideSuggestions(kind);
+        return true;
     }
 
     appendChatMessage(text, role = 'user') {
@@ -2821,32 +4166,15 @@ class SeatingPlanner {
         if (!text) return;
         input.value = '';
 
-        // Show user message
         this.appendChatMessage(text, 'user');
 
-        if (this.shouldUseArrangementAssistant(text)) {
-            await this.arrangeFromChat(text);
+        if (!this.students.length) {
+            this.appendChatMessage('请先导入名单，然后我就可以帮你调整或重新生成座位表。', 'ai');
             return;
         }
 
-        const placedIds = getPlacedStudentIds(this.layout, {
-            rows: this.rows,
-            cols: this.cols,
-            rowAisles: this.rowAisles,
-            colAisles: this.colAisles
-        });
-        if (!this.students.length || placedIds.length === 0) {
-            this.appendChatMessage('请先导入名单并生成座位表，然后我就可以直接帮你调整座位。', 'ai');
-            return;
-        }
-
-        // Build current layout snapshot for AI context
-        const layoutSnapshot = this.layout.map(row => row.map(cell => cell || null));
-
-        // Add to conversation history
+        const layoutSnapshot = this.getChatLayoutSnapshot();
         this._chatHistory.push({ role: 'user', content: text });
-
-        // Show typing indicator
         this.appendChatMessage('<span class="sp-chat-typing">思考中...</span>', 'ai');
 
         try {
@@ -2858,8 +4186,10 @@ class SeatingPlanner {
                     history: this._chatHistory.slice(-10), // last 10 messages
                     layout: layoutSnapshot,
                     students: this.students.map(s => ({ id: s.id, name: s.name, gender: s.gender, grade: s.grade })),
+                    guardians: this.guardians,
                     rows: this.rows,
-                    cols: this.cols
+                    cols: this.cols,
+                    mode: this._chatMode !== 'auto' ? this._chatMode : '',
                 })
             });
             const result = await res.json();
@@ -2874,20 +4204,62 @@ class SeatingPlanner {
                 return;
             }
 
-            const { reply } = result.data;
-            let operations = Array.isArray(result.data.operations) ? result.data.operations : [];
+            const data = result.data || {};
+            const { reply } = data;
+            const intent = data.intent || (data.mutationIntent ? 'direct_edit' : 'explain');
+            let operations = Array.isArray(data.operations) ? data.operations : [];
             this._chatHistory.push({ role: 'assistant', content: reply });
-            this.appendChatMessage(reply, 'ai');
 
+            const buildFallback = () => parseFallbackSeatingOperations({
+                message: text,
+                layout: this.layout,
+                students: this.students,
+                guardians: this.guardians,
+                rows: this.rows,
+                cols: this.cols,
+                rowAisles: this.rowAisles,
+                colAisles: this.colAisles,
+                blockedCells: this.getBlockedLayoutCells(),
+            });
             let fallback = null;
-            if (operations.length === 0 && result.data.mutationIntent) {
-                fallback = parseFallbackSeatingOperations({
-                    message: text,
-                    layout: this.layout,
-                    students: this.students,
-                    rows: this.rows,
-                    cols: this.cols,
-                });
+
+            if (intent === 'regenerate') {
+                if (reply) this.appendChatMessage(reply, 'ai');
+                this._chatPending = {
+                    type: 'arrangement',
+                    prompt: data.arrangementPrompt || text,
+                };
+                this.showChatPendingConfirmation(data.confirmationText || '这会重新生成座位表并可能大幅改变当前安排，确认继续吗？');
+                return;
+            }
+
+            if (intent === 'batch_tune') {
+                if (data.mutationIntent) {
+                    fallback = buildFallback();
+                    if (fallback.operations.length > 0
+                        && fallback.operations.every(op => op?.type === 'set_guardian')) {
+                        operations = fallback.operations;
+                    } else if (operations.length === 0 && fallback.operations.length > 0) {
+                        operations = fallback.operations;
+                    }
+                }
+                if (operations.length > 0) {
+                    this._chatPending = {
+                        type: 'operations',
+                        intent,
+                        operations,
+                        reply: reply || '',
+                    };
+                    this.showChatPendingConfirmation(data.confirmationText || '这会批量调整当前座位，但不改变布局，确认执行吗？');
+                    return;
+                }
+                if (reply) this.appendChatMessage(reply, 'ai');
+                const reason = (data.rejected || []).map(item => item.reason).filter(Boolean).join('；') || '没有可确认执行的批量调整';
+                this.appendChatMessage(`没有可执行调整：${reason}`, 'ai');
+                return;
+            }
+            if (intent === 'direct_edit' && operations.length === 0 && data.mutationIntent) {
+                fallback = buildFallback();
                 if (fallback.operations.length > 0) {
                     operations = fallback.operations;
                     this.appendChatMessage('我已按本地规则识别出可执行调整，正在直接修改座位。', 'ai');
@@ -2895,18 +4267,33 @@ class SeatingPlanner {
             }
 
             if (operations.length > 0) {
-                const outcome = this.executeChatOps(operations);
+                let outcome = this.executeChatOps(operations);
+                if (intent === 'direct_edit' && outcome.applied === 0 && data.mutationIntent) {
+                    fallback = fallback || buildFallback();
+                    if (fallback.operations.length > 0) {
+                        const fallbackOutcome = this.executeChatOps(fallback.operations);
+                        if (fallbackOutcome.applied > 0) {
+                            this.appendChatMessage('目标位置落在不可坐区域，我已改用同一排最近的合法中间座位。', 'ai');
+                            return;
+                        }
+                        outcome = fallbackOutcome;
+                    }
+                }
                 if (outcome.applied > 0) {
+                    if (outcome.rejected === 0 && reply) this.appendChatMessage(reply, 'ai');
                     const failed = outcome.rejected > 0 ? `，${outcome.rejected} 项未执行` : '';
                     this.appendChatMessage(`✅ 已调整 ${outcome.applied} 项${failed}`, 'ai');
                 } else {
-                    this.appendChatMessage('没有可执行调整：目标座位不合法或学生信息不完整。', 'ai');
+                    const reason = outcome.reasons?.join('；') || '目标座位不合法或学生信息不完整';
+                    this.appendChatMessage(`没有可执行调整：${reason}。`, 'ai');
                 }
                 return;
             }
 
-            const rejected = [...(result.data.rejected || []), ...(fallback?.rejected || [])];
-            if (result.data.needsAction || fallback?.mutationIntent || rejected.length) {
+            if (reply) this.appendChatMessage(reply, 'ai');
+
+            const rejected = [...(data.rejected || []), ...(fallback?.rejected || [])];
+            if (intent !== 'clarify' && (data.needsAction || fallback?.mutationIntent || rejected.length)) {
                 const reason = rejected.map(item => item.reason).filter(Boolean).join('；') || '没有可执行调整';
                 this.appendChatMessage(`没有可执行调整：${reason}`, 'ai');
             }
@@ -2921,25 +4308,43 @@ class SeatingPlanner {
         }
     }
 
-    applyChatPending() {
+    async applyChatPending() {
+        if (this._chatPending?.type === 'arrangement') {
+            const { prompt } = this._chatPending;
+            this._chatPending = null;
+            document.getElementById('sp-chat-confirm').style.display = 'none';
+            await this.confirmMajorArrangementFromChat(prompt);
+            return;
+        }
         if (this._chatPending) {
-            const outcome = this.executeChatOps(this._chatPending);
-            if (outcome.applied > 0) this.appendChatMessage('✅ 已执行', 'ai');
+            const operations = Array.isArray(this._chatPending) ? this._chatPending : this._chatPending.operations;
+            const storedReply = this._chatPending.reply || '';
+            const outcome = this.executeChatOps(operations);
+            if (storedReply) this.appendChatMessage(storedReply, 'ai');
+            if (outcome.applied > 0) {
+                const failed = outcome.rejected > 0 ? `，${outcome.rejected} 项未执行` : '';
+                this.appendChatMessage(`✅ 已执行 ${outcome.applied} 项${failed}`, 'ai');
+            } else {
+                const reason = outcome.reasons?.join('；') || '所有操作均未生效';
+                this.appendChatMessage(`没有可执行调整：${reason}`, 'ai');
+            }
             this._chatPending = null;
         }
         document.getElementById('sp-chat-confirm').style.display = 'none';
     }
 
     cancelChatPending() {
+        const wasArrangement = this._chatPending?.type === 'arrangement';
         this._chatPending = null;
         document.getElementById('sp-chat-confirm').style.display = 'none';
-        this.appendChatMessage('❌ 已取消', 'ai');
+        this.appendChatMessage(wasArrangement ? '已取消重新生成座位表。' : '❌ 已取消', 'ai');
     }
 
     executeChatOps(operations) {
         const result = applySeatingOperations({
             layout: this.layout,
             students: this.students,
+            guardians: this.guardians,
             operations,
             rows: this.rows,
             cols: this.cols,
@@ -2950,12 +4355,20 @@ class SeatingPlanner {
 
         if (result.rejected.length) {
             const reasons = result.rejected.map(item => item.reason).join('；');
-            this.appendChatMessage(`有 ${result.rejected.length} 项没有执行：${reasons}`, 'ai');
-            this.showToast(reasons, 'warning');
+            this.appendChatMessage(`⚠️ ${result.rejected.length} 项未执行：${reasons}`, 'ai');
         }
 
         if (result.applied.length) {
             this.layout = result.layout;
+            this.guardians = result.guardians || this.guardians;
+            if (this.classroomLayout?.guardians) {
+                this.classroomLayout.guardians.left = this.guardians[0] || null;
+                this.classroomLayout.guardians.right = this.guardians[1] || null;
+                this.classroomLayout.guardians.enabled = Boolean(this.classroomLayout.guardians.enabled || this.guardians[0] || this.guardians[1]);
+            }
+            if (this.guardians.some(Boolean)) {
+                document.getElementById('sp-podium-row')?.classList.add('is-expanded');
+            }
             this.refreshConstraintStatus();
             this.saveSnapshot();
             this.renderGrid();
@@ -2964,12 +4377,18 @@ class SeatingPlanner {
             this.highlightCells(result.affectedCells);
         }
 
-        return { applied: result.applied.length, rejected: result.rejected.length };
+        return {
+            applied: result.applied.length,
+            rejected: result.rejected.length,
+            reasons: result.rejected.map(item => item.reason).filter(Boolean),
+        };
     }
 
     highlightCells(cells) {
         for (const { r, c } of cells) {
-            const cell = document.querySelector(`.sp-grid .sp-seat[data-row="${r}"][data-col="${c}"]`);
+            const cell = r === -1
+                ? document.getElementById(c === 0 ? 'sp-guardian-left' : 'sp-guardian-right')
+                : document.querySelector(`.sp-grid .sp-seat[data-row="${r}"][data-col="${c}"]`);
             if (cell) {
                 cell.classList.add('sp-seat--highlight');
                 setTimeout(() => cell.classList.remove('sp-seat--highlight'), 2000);
@@ -3070,14 +4489,39 @@ class SeatingPlanner {
             rows: this.rows,
             cols: this.cols,
             rowAisles: this.rowAisles,
+            localAisles: this.classroomLayout?.localAisles,
         });
         this.unsatisfied = this._constraintEvaluation.unsatisfied;
+        this._qualityEvaluation = evaluateSeatingQuality({
+            layout: this.layout,
+            students: this.students,
+            constraints: this.constraints,
+            classroomLayout: this.classroomLayout,
+            guardians: this.guardians,
+            unassigned: this.unassigned,
+            strategy: this.strategy,
+            rows: this.rows,
+            cols: this.cols,
+            rowAisles: this.rowAisles,
+            colAisles: this.colAisles,
+            localAisles: this.classroomLayout?.localAisles,
+        });
         return this._constraintEvaluation;
     }
 
     renderSeatDetailsToggle() {
         const statusRight = document.querySelector('#sp-status .sp-status-right');
         if (!statusRight) return;
+
+        const scoreButton = document.createElement('button');
+        scoreButton.type = 'button';
+        scoreButton.id = 'sp-toggle-score-analysis';
+        scoreButton.className = 'sp-icon-btn sp-seat-details-toggle';
+        scoreButton.title = this.showScoreAnalysis ? '隐藏评分分析' : '显示评分分析';
+        scoreButton.setAttribute('aria-label', scoreButton.title);
+        scoreButton.setAttribute('aria-pressed', String(this.showScoreAnalysis));
+        scoreButton.innerHTML = '<i data-lucide="clipboard-check"></i>';
+        statusRight.appendChild(scoreButton);
 
         const button = document.createElement('button');
         button.type = 'button';
@@ -3090,11 +4534,106 @@ class SeatingPlanner {
         statusRight.appendChild(button);
     }
 
+    scoreStudentName(id) {
+        return this.studentMap.get(id)?.name || id || '未知学生';
+    }
+
+    formatScoreMatchDetail(issue, match) {
+        const names = (match.studentIds || []).map(id => this.scoreStudentName(id)).filter(Boolean);
+        const subject = names.length ? names.join('、') : (match.text || '相关座位');
+        const reason = match.reason || match.actual || issue.message || issue.name;
+        if (match.expected && match.actual && match.expected !== match.actual) {
+            return `${subject}：应${match.expected}，当前${match.actual}`;
+        }
+        return `${subject}：${reason}`;
+    }
+
+    renderScoreAnalysisPanel() {
+        const panel = document.getElementById('sp-score-analysis');
+        if (!panel) return;
+
+        panel.replaceChildren();
+        if (!this.showScoreAnalysis) {
+            panel.classList.add('sp-hidden');
+            return;
+        }
+
+        const quality = this._qualityEvaluation || {};
+        const issues = Array.isArray(quality.constraints)
+            ? quality.constraints.filter(item => item.matches?.length)
+            : [];
+        this._scoreIssueMap = issues;
+        panel.classList.remove('sp-hidden');
+
+        const header = document.createElement('div');
+        header.className = 'sp-score-analysis-header';
+        const title = document.createElement('strong');
+        title.textContent = `评分 ${quality.percent ?? 100} · ${quality.feasible ? '可行' : '需调整'}`;
+        const meta = document.createElement('span');
+        meta.textContent = `硬约束 ${quality.hardViolationCount || 0} 项 · 软约束 ${quality.softViolationCount || 0} 项`;
+        header.append(title, meta);
+        panel.appendChild(header);
+
+        if (!issues.length) {
+            const empty = document.createElement('div');
+            empty.className = 'sp-score-analysis-empty';
+            empty.textContent = '当前座位表没有明显扣分项。';
+            panel.appendChild(empty);
+            return;
+        }
+
+        const list = document.createElement('div');
+        list.className = 'sp-score-analysis-list';
+        issues.forEach((issue, index) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = `sp-score-analysis-item sp-score-analysis-item--${issue.level === 'hard' ? 'hard' : 'soft'}`;
+            item.addEventListener('click', () => this.highlightScoreIssue(index));
+
+            const main = document.createElement('span');
+            main.className = 'sp-score-analysis-main';
+            main.textContent = issue.name;
+            const detail = document.createElement('span');
+            detail.className = 'sp-score-analysis-detail';
+            detail.textContent = issue.message || `${issue.matches.length} 项扣分`;
+            const score = document.createElement('span');
+            score.className = 'sp-score-analysis-score';
+            score.textContent = String(issue.score);
+
+            const matchList = document.createElement('span');
+            matchList.className = 'sp-score-analysis-matches';
+            issue.matches.forEach(match => {
+                const matchLine = document.createElement('span');
+                matchLine.className = 'sp-score-analysis-match';
+                matchLine.textContent = this.formatScoreMatchDetail(issue, match);
+                matchList.appendChild(matchLine);
+            });
+
+            item.append(main, detail, matchList, score);
+            list.appendChild(item);
+        });
+        panel.appendChild(list);
+    }
+
+    highlightScoreIssue(index) {
+        const issue = this._scoreIssueMap?.[index];
+        if (!issue) return;
+        const cells = issue.involvedCells?.length
+            ? issue.involvedCells
+            : (issue.involvedStudentIds || []).map(id => this._findPos(id)).filter(Boolean);
+        if (!cells.length) {
+            this.showToast('这个评分项没有可高亮的网格座位', 'info');
+            return;
+        }
+        this.highlightCells(cells);
+    }
+
     updateStatus() {
         const status = document.getElementById('sp-status');
         if (!status) return;
-        if (!this._constraintEvaluation) this.refreshConstraintStatus();
+        this.refreshConstraintStatus();
         const evaluation = this._constraintEvaluation;
+        const quality = this._qualityEvaluation;
         const capacity = getClassroomCapacity(this.classroomLayout);
         const guardianPlacedCount = this.classroomLayout?.guardians?.enabled
             ? this.guardians.filter(Boolean).length
@@ -3113,15 +4652,28 @@ class SeatingPlanner {
             : [];
         let html = `
             <div class="sp-status-left">
+                <span class="sp-status-item ${quality.feasible ? 'sp-status-item--success' : 'sp-status-item--warning'}">
+                    <i data-lucide="${quality.feasible ? 'badge-check' : 'alert-triangle'}"></i>
+                    评分 ${quality.percent} · ${quality.feasible ? '可行' : '需调整'}
+                </span>
                 <span class="sp-status-item sp-status-item--success">
                     <i data-lucide="check-circle"></i>
-                    满足 ${evaluation.satisfied}/${evaluation.total} 约束
+                    满足 ${evaluation.satisfied}/${evaluation.total} 需求
                 </span>
                 <span class="sp-status-item">
                     <i data-lucide="layout-grid"></i>
                     ${layoutName} · 可用 ${capacity}/${this.students.length || 0} · ${guardianText}
                 </span>
         `;
+
+        if (!quality.feasible && quality.hardViolationCount > 0) {
+            html += `
+                <span class="sp-status-item sp-status-item--warning">
+                    <i data-lucide="shield-alert"></i>
+                    硬约束 ${quality.hardViolationCount} 项
+                </span>
+            `;
+        }
 
         if (appliedStrategies.length) {
             html += `
@@ -3153,27 +4705,200 @@ class SeatingPlanner {
         html += '</div><div class="sp-status-right"></div>';
         status.innerHTML = sanitizeHtml(html);
         this.renderSeatDetailsToggle();
+        this.renderScoreAnalysisPanel();
         if (window.lucide) window.lucide.createIcons();
     }
 
     // ========== Exports ==========
+    suppressHtml2CanvasAmdRegistration() {
+        const amdDefine = window.define;
+        if (typeof amdDefine !== 'function' || !amdDefine.amd) return () => {};
+
+        const previousAmd = amdDefine.amd;
+        try {
+            amdDefine.amd = undefined;
+        } catch (error) {
+            return () => {};
+        }
+
+        return () => {
+            try {
+                amdDefine.amd = previousAmd;
+            } catch (error) {
+                // Monaco owns the AMD loader; failing to restore should not block export retry handling.
+            }
+        };
+    }
+
+    async ensureHtml2Canvas() {
+        if (typeof window.html2canvas === 'function') return window.html2canvas;
+
+        const loadScript = (retry = false) => new Promise((resolve, reject) => {
+            const restoreAmd = this.suppressHtml2CanvasAmdRegistration();
+            let done = false;
+            let timer = null;
+            const finish = callback => {
+                if (done) return;
+                done = true;
+                if (timer) clearTimeout(timer);
+                restoreAmd();
+                callback();
+            };
+            let script = document.querySelector('script[data-html2canvas-loader]');
+            if (retry && script) {
+                script.remove();
+                script = null;
+            }
+            let shouldAppend = false;
+            if (!script) {
+                script = document.createElement('script');
+                script.src = `/js/libs/html2canvas.min.js${retry ? '?html2canvas-retry=1' : ''}`;
+                script.dataset.html2canvasLoader = 'true';
+                script.async = true;
+                shouldAppend = true;
+            }
+            if (typeof window.html2canvas === 'function') {
+                finish(resolve);
+                return;
+            }
+            if (script.dataset.loaded === 'true') {
+                finish(resolve);
+                return;
+            }
+            timer = setTimeout(() => {
+                script.remove();
+                finish(() => reject(new Error('html2canvas load timed out')));
+            }, 5000);
+            script.addEventListener('load', () => {
+                script.dataset.loaded = 'true';
+                finish(resolve);
+            }, { once: true });
+            script.addEventListener('error', () => {
+                script.dataset.failed = 'true';
+                finish(() => reject(new Error('本地图片导出组件加载失败')));
+            }, { once: true });
+            if (shouldAppend) document.head.appendChild(script);
+        });
+
+        let firstError = null;
+        try {
+            await loadScript(false);
+        } catch (error) {
+            firstError = error;
+        }
+        if (typeof window.html2canvas !== 'function') {
+            try {
+                await loadScript(true);
+            } catch (error) {
+                throw firstError || error;
+            }
+        }
+
+        if (typeof window.html2canvas !== 'function') {
+            throw new Error('本地图片导出组件已加载，但没有注册 window.html2canvas，请刷新后重试');
+        }
+        return window.html2canvas;
+    }
+
+    async ensureHtml2CanvasLegacy() {
+        let script = document.querySelector('script[data-html2canvas-loader]');
+        if (!script) {
+            script = document.createElement('script');
+            script.src = '/js/libs/html2canvas.min.js';
+            script.dataset.html2canvasLoader = 'true';
+            script.async = true;
+            document.head.appendChild(script);
+        }
+
+        await new Promise((resolve, reject) => {
+            if (typeof window.html2canvas === 'function' || script.dataset.loaded === 'true') {
+                resolve();
+                return;
+            }
+            script.addEventListener('load', () => {
+                script.dataset.loaded = 'true';
+                resolve();
+            }, { once: true });
+            script.addEventListener('error', () => reject(new Error('本地图片导出组件加载失败')), { once: true });
+        });
+
+        if (typeof window.html2canvas !== 'function') {
+            throw new Error('本地图片导出组件不可用，请刷新后重试');
+        }
+        return window.html2canvas;
+    }
+
+    setExportMode(active) {
+        document.querySelectorAll('.sp-aisle-gap-layer, .sp-chat, .sp-context-menu, .sp-seat-tooltip')
+            .forEach(element => element.classList.toggle('sp-export-hide', Boolean(active)));
+    }
+
     async exportPNG() {
         try {
-            if (!window.html2canvas) {
-                if (!document.querySelector('script[src*="html2canvas"]')) {
-                    const s = document.createElement('script');
-                    s.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
-                    document.head.appendChild(s);
-                    await new Promise((resolve, reject) => { s.onload = resolve; s.onerror = reject; });
-                }
-            }
+            const html2canvas = await this.ensureHtml2Canvas();
+            const target = document.querySelector('.sp-classroom-view');
+            if (!target) throw new Error('没有可导出的座位图');
             const isLightMode = document.body.classList.contains('light-mode');
-            const canvas = await window.html2canvas(document.querySelector('.sp-classroom-view'), {                backgroundColor: isLightMode ? '#f8fafc' : '#0f172a',                scale: 2            });
+            this.setExportMode(true);
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            const canvas = await html2canvas(target, {
+                backgroundColor: isLightMode ? '#f8fafc' : '#0f172a',
+                scale: 2,
+                useCORS: true,
+            });
             const link = document.createElement('a');
             link.download = `座位表_${new Date().toISOString().split('T')[0]}.png`;
             link.href = canvas.toDataURL();
             link.click();
             this.showToast('图片已下载', 'success');
+        } catch (err) {
+            this.showToast('导出失败: ' + err.message, 'error');
+        } finally {
+            this.setExportMode(false);
+        }
+    }
+
+    exportSnapshot() {
+        return {
+            rows: this.rows,
+            cols: this.cols,
+            layout: this.layout.map(row => row.map(value => value || null)),
+            classroomLayout: structuredClone(this.classroomLayout),
+            localAisles: normalizeLocalAisles(this.classroomLayout?.localAisles, this.rows, this.cols),
+            guardians: [...this.guardians],
+            students: this.students.map(student => ({
+                id: student.id,
+                name: student.name,
+                gender: student.gender,
+                grade: student.grade,
+                height: student.height,
+            })),
+        };
+    }
+
+    async exportXLSX() {
+        try {
+            const res = await fetch('/api/tools/seating/export-xlsx', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(this.exportSnapshot()),
+            });
+            if (!res.ok) {
+                const error = await res.json().catch(() => ({}));
+                throw new Error(error.error || '导出服务暂时不可用');
+            }
+            const contentType = res.headers.get('content-type') || '';
+            if (!contentType.includes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')) {
+                throw new Error('导出服务返回格式错误');
+            }
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.download = `座位表_${new Date().toISOString().split('T')[0]}.xlsx`;
+            link.href = url;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+            this.showToast('Excel 已下载', 'success');
         } catch (err) {
             this.showToast('导出失败: ' + err.message, 'error');
         }

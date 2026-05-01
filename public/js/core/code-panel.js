@@ -11,6 +11,7 @@ export class CodePanel {
         this.currentCode = '';
         this.currentVideoId = null; // Track current video
         this.abortController = null; // [Stop Button] Track active request
+        this.suggestionController = null;
         this.elements = {
             panel: document.getElementById('code-panel'),
             overlay: document.getElementById('code-panel-overlay'),
@@ -733,14 +734,16 @@ export class CodePanel {
         this.revertToVersion(index);
     }
 
-    startSuggestionCarousel(code) {
-        // [Manim Port] AI Carousel
+    getLocalSuggestions(code) {
         const suggestions = [];
         if (/Circle/i.test(code)) suggestions.push('把圆改成红色');
         if (/Square/i.test(code)) suggestions.push('让方块旋转起来');
         if (/Text/i.test(code)) suggestions.push('改变文字字体');
         suggestions.push('添加一个淡入动画', '背景改成深蓝色');
+        return suggestions;
+    }
 
+    startSuggestionCarousel(code) {
         // Update BOTH mobile and desktop inputs
         const updatePlaceholder = (placeholder) => {
             if (this.elements.aiInput) {
@@ -751,19 +754,46 @@ export class CodePanel {
             }
         };
 
-        let idx = 0;
-        // Clear prev interval if stored
         if (this.suggestionInterval) clearInterval(this.suggestionInterval);
+        this.suggestionController?.abort();
+        this.suggestionController = new AbortController();
 
-        const cycle = () => {
-            updatePlaceholder(`试试：${suggestions[idx % suggestions.length]}`);
-            idx++;
+        const startCarousel = (suggestions) => {
+            const items = suggestions.map(item => String(item).trim()).filter(Boolean);
+            if (!items.length) return;
+            let idx = 0;
+            const cycle = () => {
+                updatePlaceholder(`试试：${items[idx % items.length]}`);
+                idx++;
+            };
+            cycle();
+            this.suggestionInterval = setInterval(cycle, 3000);
         };
-        cycle();
-        this.suggestionInterval = setInterval(cycle, 3000);
+
+        fetch('/api/manim/suggestions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, count: 5 }),
+            signal: this.suggestionController.signal,
+        })
+            .then(res => res.ok ? res.json() : Promise.reject(new Error('suggestions failed')))
+            .then(result => {
+                const suggestions = Array.isArray(result?.data?.suggestions) ? result.data.suggestions : [];
+                startCarousel(suggestions.length ? suggestions : this.getLocalSuggestions(code));
+            })
+            .catch(error => {
+                if (error.name === 'AbortError') return;
+                startCarousel(this.getLocalSuggestions(code));
+            });
     }
 
     close() {
+        if (this.suggestionInterval) {
+            clearInterval(this.suggestionInterval);
+            this.suggestionInterval = null;
+        }
+        this.suggestionController?.abort();
+        this.suggestionController = null;
         this.elements.panel.classList.remove('open');
         this.elements.overlay.classList.remove('active');
 

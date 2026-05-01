@@ -1,11 +1,7 @@
-/**
- * Manim Routes - 直接访问 Manim 服务的路由
- */
-
 import express from 'express';
+
 const router = express.Router();
 
-// POST /api/manim - 生成动画
 router.post('/', async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');
@@ -16,7 +12,6 @@ router.post('/', async (req, res) => {
     }
 });
 
-// POST /api/manim/render - 渲染代码
 router.post('/render', async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');
@@ -27,7 +22,16 @@ router.post('/render', async (req, res) => {
     }
 });
 
-// GET /api/manim/status - 服务状态
+router.post('/suggestions', async (req, res) => {
+    try {
+        const manimClient = await import('../../services/manim/manim-client.js');
+        return manimClient.getSuggestions(req, res);
+    } catch (error) {
+        console.error('[Manim Route] Suggestions Error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 router.get('/status', async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');

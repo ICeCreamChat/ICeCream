@@ -13,14 +13,30 @@ import {
 } from '../services/seating-arrange.js';
 import {
     buildSeatingChatSnapshot,
+    classifySeatingChatIntent,
     normalizeChatOperations,
     resolveEmptyMutationResponse,
 } from '../services/seating-chat.js';
 import {
+    generateSeatingSuggestions,
+    normalizeSuggestionRequest,
+} from '../services/seating-suggestions.js';
+import {
     buildSeatingPlanResponse,
     normalizePlanRequest,
 } from '../services/seating-layout.js';
-import { parseRosterFile, parseStudentsText } from '../services/seating-roster.js';
+import {
+    buildSeatingExportXlsx,
+    normalizeSeatingExportRequest,
+    SEATING_XLSX_MIME,
+} from '../services/seating-export.js';
+import {
+    buildImageImportReview,
+    mergeStudentDetails,
+    normalizeSeatingStudents,
+    parseRosterFile,
+    parseStudentsText,
+} from '../services/seating-roster.js';
 import { imageUploadFilter, sanitizeUploadFilename } from '../security.js';
 
 const upload = multer({    storage: multer.memoryStorage(),
@@ -78,6 +94,51 @@ router.post('/seating/arrange', async (req, res) => {
         return res.status(502).json({
             success: false,
             error: error.message || 'AI 排座服务暂时不可用',
+        });
+    }
+});
+
+/**
+ * POST /api/tools/seating/suggestions
+ * AI-generated rotating prompt suggestions for seating inputs.
+ */
+router.post('/seating/suggestions', async (req, res) => {
+    try {
+        const request = normalizeSuggestionRequest(req.body);
+        const suggestions = await generateSeatingSuggestions({
+            request,
+            fetchImpl: fetch,
+            env: process.env,
+        });
+        res.json({
+            success: true,
+            data: { suggestions },
+        });
+    } catch (error) {
+        console.error('[Seating/Suggestions] Error:', error.message);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'AI 提示暂时不可用',
+        });
+    }
+});
+
+/**
+ * POST /api/tools/seating/export-xlsx
+ * Generate a styled Excel workbook from the current seating snapshot.
+ */
+router.post('/seating/export-xlsx', (req, res) => {
+    try {
+        const snapshot = normalizeSeatingExportRequest(req.body);
+        const buffer = buildSeatingExportXlsx(snapshot);
+        const filename = encodeURIComponent(`座位表_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        res.setHeader('Content-Type', SEATING_XLSX_MIME);
+        res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filename}`);
+        res.send(buffer);
+    } catch (error) {
+        res.status(400).json({
+            success: false,
+            error: error.message || '座位表导出失败',
         });
     }
 });
@@ -323,6 +384,8 @@ router.post('/seating/parse-image', upload.single('image'), async (req, res) => 
 
         let studentsWithIds = [];
         let source = '';
+        let ocrText = '';
+        let ocrSource = '';
 
         // === Tier 1: VLM Direct Extraction (image → JSON, one step) ===
         try {
@@ -330,48 +393,48 @@ router.post('/seating/parse-image', upload.single('image'), async (req, res) => 
             const students = await extractStudentsDirectVLM(buffer, mimeType);
             if (students && students.length > 0) {
                 source = 'vlm-direct';
-                studentsWithIds = students.map((s, i) => ({
-                    id: `s${(i + 1).toString().padStart(2, '0')}`,
-                    name: s.name,
-                    gender: (s.gender === '男' || s.gender === 'M') ? 'M' : 'F',
-                    grade: s.grade
-                }));
+                studentsWithIds = normalizeSeatingStudents(students);
             }
         } catch (err) {
             console.warn('[Seating/ParseImage] VLM Direct failed:', err.message);
         }
 
-        // === Tier 2: MinerU OCR + DeepSeek AI (slower but more thorough) ===
-        if (studentsWithIds.length === 0) {
-            let text = '';
+        const needsHeightFallback = () => studentsWithIds.some(student => student.height === undefined || student.height === null || student.height === '');
+
+        // === Tier 2: OCR text fallback for missing students or missing height ===
+        if (studentsWithIds.length === 0 || needsHeightFallback()) {
             try {
                 console.log('[Seating/ParseImage] Trying MinerU + DeepSeek (Fallback 1)...');
-                text = await recognizeWithMinerU(buffer, filename);
-                if (text) source = 'mineru';
+                ocrText = await recognizeWithMinerU(buffer, filename);
+                if (ocrText) ocrSource = 'mineru';
             } catch (err) {
                 console.warn('[Seating/ParseImage] MinerU failed:', err.message);
             }
 
             // === Tier 3: VLM OCR + DeepSeek AI ===
-            if (!text) {
+            if (!ocrText) {
                 try {
                     console.log('[Seating/ParseImage] Trying VLM OCR + DeepSeek (Fallback 2)...');
-                    text = await recognizeWithPaddle(buffer, mimeType);
-                    if (text) source = 'vlm-ocr';
+                    ocrText = await recognizeWithPaddle(buffer, mimeType);
+                    if (ocrText) ocrSource = 'vlm-ocr';
                 } catch (err) {
                     console.warn('[Seating/ParseImage] VLM OCR failed:', err.message);
                 }
             }
 
-            if (text) {
-                console.log(`[Seating/ParseImage] OCR success (${source}), extracting with DeepSeek...`);
-                const students = await extractStudentsWithAI(text);
-                studentsWithIds = students.map((s, i) => ({
-                    id: `s${(i + 1).toString().padStart(2, '0')}`,
-                    name: s.name,
-                    gender: (s.gender === '男' || s.gender === 'M') ? 'M' : 'F',
-                    grade: s.grade
-                }));
+            if (ocrText) {
+                const parsed = parseStudentsText(ocrText).students;
+                if (parsed.length) {
+                    studentsWithIds = mergeStudentDetails(studentsWithIds, parsed);
+                    source = source ? `${source}+${ocrSource}` : ocrSource;
+                }
+
+                if (studentsWithIds.length === 0 || needsHeightFallback()) {
+                    console.log(`[Seating/ParseImage] OCR success (${ocrSource}), extracting with DeepSeek...`);
+                    const students = await extractStudentsWithAI(ocrText);
+                    studentsWithIds = mergeStudentDetails(studentsWithIds, students);
+                    source = source ? `${source}+ai` : `${ocrSource}+ai`;
+                }
             }
         }
 
@@ -379,14 +442,17 @@ router.post('/seating/parse-image', upload.single('image'), async (req, res) => 
             return res.status(500).json({ success: false, error: 'OCR 识别失败，请尝试其他图片' });
         }
 
+        const review = buildImageImportReview(studentsWithIds);
         console.log(`[Seating/ParseImage] Extracted ${studentsWithIds.length} students via ${source}`);
 
         res.json({
             success: true,
             data: {
-                students: studentsWithIds,
-                count: studentsWithIds.length,
-                source
+                students: review.students,
+                count: review.count,
+                source,
+                needsReview: review.needsReview,
+                warnings: review.warnings
             }
         });
 
@@ -406,7 +472,7 @@ router.post('/seating/parse-image', upload.single('image'), async (req, res) => 
  */
 router.post('/seating/chat', async (req, res) => {
     try {
-        const { message, history = [], layout, students, rows, cols } = req.body;
+        const { message, history = [], layout, students, rows, cols, guardians = [], mode = '' } = req.body;
         if (!message) {
             return res.status(400).json({ success: false, error: '请提供消息' });
         }
@@ -415,11 +481,41 @@ router.post('/seating/chat', async (req, res) => {
             return res.status(400).json({ success: false, error: '请先生成座位表' });
         }
 
+        const explicitMode = (mode === 'regenerate' || mode === 'micro') ? mode : '';
+        const chatIntent = classifySeatingChatIntent(message, students, explicitMode);
+        if (chatIntent.intent === 'regenerate') {
+            return res.json({
+                success: true,
+                data: {
+                    reply: '这是重新排座或布局规则调整，我会先请你确认。',
+                    operations: [],
+                    rejected: [],
+                    mutationIntent: false,
+                    needsAction: false,
+                    warnings: [],
+                    intent: chatIntent.intent,
+                    requiresConfirmation: chatIntent.requiresConfirmation,
+                    confirmationText: chatIntent.confirmationText,
+                    arrangementPrompt: chatIntent.arrangementPrompt,
+                }
+            });
+        }
+
         const studentList = students.map(s => `${s.name}(id:${s.id}, ${s.gender === 'M' ? '男' : s.gender === 'F' ? '女' : '未知'}, 成绩:${s.grade || '无'})`).join(', ');
-        const seatingSnapshot = buildSeatingChatSnapshot({ layout, students });
+        const seatingSnapshot = buildSeatingChatSnapshot({ layout, students, guardians });
         const seatingLines = seatingSnapshot.occupied.length
-            ? seatingSnapshot.occupied.map(seat => `${seat.name}(id:${seat.id}) 在 row:${seat.row}, col:${seat.col}`).join('\n')
+            ? seatingSnapshot.occupied.map(seat => {
+                const label = seat.role === 'guardian'
+                    ? (seat.side === 'left' ? '左护法' : '右护法')
+                    : '座位';
+                return `${seat.name}(id:${seat.id}) 在 ${label} row:${seat.row}, col:${seat.col}`;
+            }).join('\n')
             : '当前没有已安排学生';
+        const studentById = new Map(students.map(student => [student.id, student]));
+        const guardianLines = [
+            `左护法: ${guardians?.[0] ? `${studentById.get(guardians[0])?.name || guardians[0]}(id:${guardians[0]})` : '空'}`,
+            `右护法: ${guardians?.[1] ? `${studentById.get(guardians[1])?.name || guardians[1]}(id:${guardians[1]})` : '空'}`,
+        ].join('\n');
 
         const systemPrompt = `你是智能座位助手。老师已经生成了一个 ${rows}×${cols} 的座位表，现在需要你帮忙微调。
 
@@ -429,6 +525,9 @@ ${layout.map((row, i) => `第${i}行: ${row.map(c => c || '空').join(' | ')}`).
 【当前学生坐标】
 ${seatingLines}
 
+【当前左右护法】
+${guardianLines}
+
 【学生信息】
 ${studentList}
 
@@ -436,19 +535,31 @@ ${studentList}
 1. 理解老师的自然语言指令
 2. 回复简短友好的中文说明
 3. 如果指令涉及座位调整，返回具体操作
+4. 只能在现有布局内微调，不能改变教室结构、过道、座位容量，不能重新生成整张座位表
+5. 当前已由后端判定为 ${chatIntent.intent}，必须按这个意图处理
 
 【输出格式 (Strict JSON)】
 {
   "reply": "给老师的回复文字",
   "operations": [
     {"type": "swap", "student1Id": "s01", "student2Id": "s02"},
-    {"type": "move", "studentId": "s03", "row": 0, "col": 2}
+    {"type": "move", "studentId": "s03", "row": 0, "col": 2},
+    {"type": "set_guardian", "studentId": "s04", "side": "left"}
   ]
 }
 
 【规则】
 - operations 数组可以为空（如仅分析/回答问题时）
-- 只要老师要求换座、移动、前后左右挪、安排到某排某列，就必须返回 operations，不能只回复文字
+- 你是当前座位表微调助手，只能在现有布局内微调；允许的执行动作只有 swap、move 和 set_guardian
+- 所有 move 必须落在当前 rows/cols/aisles/classroomLayout 已存在的可坐位置内
+- 护法位使用虚拟坐标：左护法 row:-1,col:0，右护法 row:-1,col:1；调整护法必须返回 set_guardian，不要返回 move 到 row:-1
+- set_guardian = 把某个学生安排到左右护法位，side 只能是 "left" 或 "right"；被替换的原护法会回到该学生原座位
+- 选择成绩档位时，"较好/比较好" 优先取上四分位附近而不是最高分，"较差/比较差" 优先取下四分位附近而不是最低分，"一般/中等/普通/平均" 取中位数附近；只有老师明确说最高/最好/最低/最差时才选极端
+- direct_edit：老师要求换座、移动、前后左右挪、安排到某排某列或指定某人做护法时，必须返回 operations，不能只回复文字
+- batch_tune：老师要求不改布局的批量微调，例如分散成绩弱同学、同桌更均衡、爱讲话同学分开、挑两个成绩较好的左右护法时，可以返回多条 swap/move/set_guardian；前端会先确认再执行
+- explain：只做检查、分析或解释，operations 必须返回 []
+- clarify：学生姓名或目标位置不明确，operations 必须返回 []，reply 只追问缺失信息
+- regenerate：大改已经在进入 AI 前拦截；不要自行把改布局、改规则或重排全班拆成大量 move
 - 操作里优先使用学生 id；如果不确定 id，可以用姓名字段 student/student1/student2
 - row/col 必须使用从 0 开始的内部坐标；回复老师时可以说“第1排第3列”
 - swap = 交换两人座位
@@ -500,17 +611,35 @@ ${studentList}
             Array.isArray(parsed.operations) ? parsed.operations : [],
             students
         );
-        const emptyMutation = resolveEmptyMutationResponse({ message, operations, rejected });
+        const executableIntent = chatIntent.intent === 'direct_edit' || chatIntent.intent === 'batch_tune';
+        const filteredOperations = executableIntent ? operations : [];
+        const filteredRejected = executableIntent ? rejected : [];
+        const emptyMutation = chatIntent.intent === 'direct_edit'
+            ? resolveEmptyMutationResponse({ message, operations: filteredOperations, rejected: filteredRejected })
+            : {
+                mutationIntent: chatIntent.mutationIntent,
+                needsAction: chatIntent.intent === 'clarify' || (chatIntent.intent === 'batch_tune' && filteredOperations.length === 0),
+                rejected: filteredRejected,
+                warnings: chatIntent.intent === 'clarify' ? ['请补充学生姓名或目标位置。'] : []
+            };
+
+        if (chatIntent.intent === 'batch_tune' && filteredOperations.length === 0 && emptyMutation.rejected.length === 0) {
+            emptyMutation.rejected.push({ reason: 'AI 没有返回可确认执行的批量微调操作' });
+        }
 
         res.json({
             success: true,
             data: {
                 reply: parsed.reply || '好的',
-                operations,
+                operations: filteredOperations,
                 rejected: emptyMutation.rejected,
                 mutationIntent: emptyMutation.mutationIntent,
                 needsAction: emptyMutation.needsAction,
-                warnings: emptyMutation.warnings
+                warnings: emptyMutation.warnings,
+                intent: chatIntent.intent,
+                requiresConfirmation: chatIntent.requiresConfirmation,
+                confirmationText: chatIntent.confirmationText,
+                arrangementPrompt: chatIntent.arrangementPrompt,
             }
         });
 

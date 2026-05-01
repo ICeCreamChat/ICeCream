@@ -138,6 +138,7 @@ export function createClassroomLayout({
         cols: safeCols,
         cells,
         groups: makeGroups(cells, safeTemplate, resolvedGroupSize),
+        localAisles: { vertical: [], horizontal: [] },
         guardians: {
             enabled: Boolean(guardiansEnabled),
             left: guardians.left ?? null,
@@ -177,6 +178,7 @@ export function applyAiLayoutMatrix({
         cols: safeCols,
         cells,
         groups: makeGroups(cells, 'custom', resolvedGroupSize),
+        localAisles: { vertical: [], horizontal: [] },
         guardians: {
             enabled: Boolean(guardiansEnabled),
             left: guardians.left ?? null,

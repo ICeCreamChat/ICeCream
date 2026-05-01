@@ -13,7 +13,7 @@ export const CONFIG = {
         url: process.env.SILICONFLOW_API_BASE
             ? `${process.env.SILICONFLOW_API_BASE}/chat/completions`
             : 'https://api.siliconflow.cn/v1/chat/completions',
-        model: 'Qwen/Qwen2.5-VL-72B-Instruct'
+        model: process.env.SILICONFLOW_VLM_MODEL || 'Qwen/Qwen2.5-VL-72B-Instruct'
     },
     deepseek: {
         apiKey: process.env.DEEPSEEK_API_KEY,

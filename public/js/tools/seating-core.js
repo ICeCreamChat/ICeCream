@@ -8,6 +8,245 @@ function cloneLayout(layout, rows = layout?.length || 0, cols = 0) {
     });
 }
 
+function clonePlain(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function normalizeLayoutRows(layout = [], rows = layout?.length || 0, cols = layout?.[0]?.length || 0) {
+    return Array.from({ length: rows }, (_, r) => {
+        const row = Array.isArray(layout[r]) ? layout[r] : [];
+        return Array.from({ length: cols }, (_, c) => row[c] ?? null);
+    });
+}
+
+function normalizeCells(classroomLayout = {}, rows, cols) {
+    return Array.from({ length: rows }, (_, r) => {
+        const row = Array.isArray(classroomLayout.cells?.[r]) ? classroomLayout.cells[r] : [];
+        return Array.from({ length: cols }, (_, c) => (
+            row[c] === 'aisle' || row[c] === 'empty' ? 'aisle' : 'seat'
+        ));
+    });
+}
+
+function localAisleBounds(orientation, rows, cols) {
+    return orientation === 'vertical'
+        ? { maxRow: rows - 1, maxCol: cols - 2 }
+        : { maxRow: rows - 2, maxCol: cols - 1 };
+}
+
+function normalizeLocalAisleList(items = [], orientation, rows, cols) {
+    const { maxRow, maxCol } = localAisleBounds(orientation, rows, cols);
+    const seen = new Set();
+    const result = [];
+    for (const item of Array.isArray(items) ? items : []) {
+        const row = Number.parseInt(item?.row, 10);
+        const col = Number.parseInt(item?.col, 10);
+        if (!Number.isInteger(row) || !Number.isInteger(col)) continue;
+        if (row < 0 || col < 0 || row > maxRow || col > maxCol) continue;
+        const key = `${row},${col}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result.push({ row, col });
+    }
+    return result.sort((a, b) => a.row - b.row || a.col - b.col);
+}
+
+export function normalizeLocalAisles(localAisles = {}, rows = 0, cols = 0) {
+    const safeRows = Math.max(0, Number.parseInt(rows, 10) || 0);
+    const safeCols = Math.max(0, Number.parseInt(cols, 10) || 0);
+    return {
+        vertical: normalizeLocalAisleList(localAisles?.vertical, 'vertical', safeRows, safeCols),
+        horizontal: normalizeLocalAisleList(localAisles?.horizontal, 'horizontal', safeRows, safeCols),
+    };
+}
+
+export function hasLocalAisle(localAisles = {}, orientation, row, col) {
+    const list = orientation === 'horizontal' ? localAisles?.horizontal : localAisles?.vertical;
+    return Array.isArray(list) && list.some(item => item.row === row && item.col === col);
+}
+
+function assertLocalAislePosition(orientation, row, col, rows, cols) {
+    if (!['vertical', 'horizontal'].includes(orientation)) {
+        throw new Error('局部过道方向不合法');
+    }
+    const safeRow = Number.parseInt(row, 10);
+    const safeCol = Number.parseInt(col, 10);
+    const { maxRow, maxCol } = localAisleBounds(orientation, rows, cols);
+    if (!Number.isInteger(safeRow) || !Number.isInteger(safeCol)
+        || safeRow < 0 || safeCol < 0 || safeRow > maxRow || safeCol > maxCol) {
+        throw new Error('局部过道只能插入在两个相邻座位之间');
+    }
+    return { row: safeRow, col: safeCol };
+}
+
+function withLocalAisle(classroomLayout = {}, orientation, row, col, present) {
+    const rows = Math.max(0, Number.parseInt(classroomLayout?.rows, 10) || 0);
+    const cols = Math.max(0, Number.parseInt(classroomLayout?.cols, 10) || 0);
+    const position = assertLocalAislePosition(orientation, row, col, rows, cols);
+    const next = clonePlain(classroomLayout || {}) || {};
+    const localAisles = normalizeLocalAisles(next.localAisles, rows, cols);
+    const list = orientation === 'horizontal' ? localAisles.horizontal : localAisles.vertical;
+    const exists = list.some(item => item.row === position.row && item.col === position.col);
+    if (present && !exists) list.push(position);
+    if (!present && exists) {
+        const index = list.findIndex(item => item.row === position.row && item.col === position.col);
+        list.splice(index, 1);
+    }
+    next.localAisles = normalizeLocalAisles(localAisles, rows, cols);
+    return next;
+}
+
+export function insertLocalAisle({ classroomLayout = {}, orientation, row, col }) {
+    return withLocalAisle(classroomLayout, orientation, row, col, true);
+}
+
+export function deleteLocalAisle({ classroomLayout = {}, orientation, row, col }) {
+    return withLocalAisle(classroomLayout, orientation, row, col, false);
+}
+
+function rebuildGroups(cells = [], groupSize = 1) {
+    const safeGroupSize = Math.max(1, Number.parseInt(groupSize, 10) || 1);
+    const groups = cells.map(row => row.map(() => null));
+    let groupId = 1;
+    for (let r = 0; r < cells.length; r++) {
+        let run = [];
+        const flushRun = () => {
+            for (let i = 0; i < run.length; i += safeGroupSize) {
+                for (const c of run.slice(i, i + safeGroupSize)) groups[r][c] = groupId;
+                groupId++;
+            }
+            run = [];
+        };
+        for (let c = 0; c < (cells[r]?.length || 0); c++) {
+            if (cells[r][c] === 'seat') {
+                run.push(c);
+            } else if (run.length) {
+                flushRun();
+            }
+        }
+        if (run.length) flushRun();
+    }
+    return groups;
+}
+
+function legacyAislesFromCells(cells = []) {
+    const rows = cells.length;
+    const cols = cells[0]?.length || 0;
+    const rowAisles = [];
+    const colAisles = [];
+    for (let r = 0; r < rows; r++) {
+        if ((cells[r] || []).every(cell => cell !== 'seat')) rowAisles.push(r);
+    }
+    for (let c = 0; c < cols; c++) {
+        let allBlocked = true;
+        for (let r = 0; r < rows; r++) {
+            if (cells[r]?.[c] === 'seat') {
+                allBlocked = false;
+                break;
+            }
+        }
+        if (allBlocked) colAisles.push(c);
+    }
+    return { rowAisles, colAisles };
+}
+
+function buildAisleEditResult({ layout, classroomLayout, cells }) {
+    const rows = cells.length;
+    const cols = cells[0]?.length || 0;
+    const groupSize = classroomLayout?.groupSize || 1;
+    const nextClassroomLayout = {
+        ...clonePlain(classroomLayout || {}),
+        rows,
+        cols,
+        cells,
+        groups: rebuildGroups(cells, groupSize),
+        localAisles: normalizeLocalAisles(classroomLayout?.localAisles, rows, cols),
+        template: 'custom',
+        groupSize,
+        guardians: {
+            enabled: Boolean(classroomLayout?.guardians?.enabled),
+            left: classroomLayout?.guardians?.left ?? null,
+            right: classroomLayout?.guardians?.right ?? null,
+        },
+    };
+    return {
+        layout,
+        classroomLayout: nextClassroomLayout,
+        rows,
+        cols,
+        ...legacyAislesFromCells(cells),
+    };
+}
+
+function dimensionsForAisleEdit(layout = [], classroomLayout = {}) {
+    const rows = Math.max(Number(classroomLayout?.rows) || 0, layout.length);
+    const cols = Math.max(
+        Number(classroomLayout?.cols) || 0,
+        ...layout.map(row => Array.isArray(row) ? row.length : 0),
+        1
+    );
+    return { rows, cols };
+}
+
+function assertInsertIndex(index, max, label) {
+    if (!Number.isInteger(index) || index < 1 || index > max) {
+        throw new Error(`${label}过道只能插入在两个座位区域之间`);
+    }
+}
+
+function assertDeleteIndex(index, max, label) {
+    if (!Number.isInteger(index) || index < 0 || index >= max) {
+        throw new Error(`${label}过道位置不合法`);
+    }
+}
+
+export function insertAisleRow({ layout = [], classroomLayout = {}, index }) {
+    const { rows, cols } = dimensionsForAisleEdit(layout, classroomLayout);
+    assertInsertIndex(index, rows, '横');
+    const nextLayout = normalizeLayoutRows(layout, rows, cols);
+    nextLayout.splice(index, 0, Array(cols).fill(null));
+    const cells = normalizeCells(classroomLayout, rows, cols);
+    cells.splice(index, 0, Array(cols).fill('aisle'));
+    return buildAisleEditResult({ layout: nextLayout, classroomLayout, cells });
+}
+
+export function insertAisleColumn({ layout = [], classroomLayout = {}, index }) {
+    const { rows, cols } = dimensionsForAisleEdit(layout, classroomLayout);
+    assertInsertIndex(index, cols, '竖');
+    const nextLayout = normalizeLayoutRows(layout, rows, cols).map(row => {
+        const nextRow = [...row];
+        nextRow.splice(index, 0, null);
+        return nextRow;
+    });
+    const cells = normalizeCells(classroomLayout, rows, cols).map(row => {
+        const nextRow = [...row];
+        nextRow.splice(index, 0, 'aisle');
+        return nextRow;
+    });
+    return buildAisleEditResult({ layout: nextLayout, classroomLayout, cells });
+}
+
+export function deleteAisleRow({ layout = [], classroomLayout = {}, index }) {
+    const { rows, cols } = dimensionsForAisleEdit(layout, classroomLayout);
+    assertDeleteIndex(index, rows, '横');
+    const cells = normalizeCells(classroomLayout, rows, cols);
+    if (!cells[index]?.every(cell => cell !== 'seat')) throw new Error('只能删除整行过道');
+    const nextLayout = normalizeLayoutRows(layout, rows, cols);
+    nextLayout.splice(index, 1);
+    cells.splice(index, 1);
+    return buildAisleEditResult({ layout: nextLayout, classroomLayout, cells });
+}
+
+export function deleteAisleColumn({ layout = [], classroomLayout = {}, index }) {
+    const { rows, cols } = dimensionsForAisleEdit(layout, classroomLayout);
+    assertDeleteIndex(index, cols, '竖');
+    const cells = normalizeCells(classroomLayout, rows, cols);
+    if (!cells.every(row => row?.[index] !== 'seat')) throw new Error('只能删除整列过道');
+    const nextLayout = normalizeLayoutRows(layout, rows, cols).map(row => row.filter((_, c) => c !== index));
+    const nextCells = cells.map(row => row.filter((_, c) => c !== index));
+    return buildAisleEditResult({ layout: nextLayout, classroomLayout, cells: nextCells });
+}
+
 function normalizeText(value) {
     return String(value ?? '').trim();
 }
@@ -72,7 +311,7 @@ function cnNumber(value) {
 }
 
 export function detectSeatingMutationIntent(message = '') {
-    return /(换|交换|调换|互换|移到|移动到|挪到|调到|安排到|坐到|往前|往后|往左|往右|向前|向后|向左|向右|前排|后排|分开|靠近|同桌)/.test(message);
+    return /(换|交换|调换|互换|移到|移动到|挪到|调到|安排到|坐到|往前|往后|往左|往右|向前|向后|向左|向右|前排|后排|分开|分散|靠近|同桌|护法)/.test(message);
 }
 
 function resolveOperationStudent(op, students, keys) {
@@ -98,6 +337,198 @@ export function findStudentPosition(layout = [], studentId) {
     return null;
 }
 
+function clearStudentFromLayout(layout = [], studentId) {
+    if (!studentId) return;
+    for (let r = 0; r < layout.length; r++) {
+        for (let c = 0; c < (layout[r]?.length || 0); c++) {
+            if (layout[r][c] === studentId) layout[r][c] = null;
+        }
+    }
+}
+
+function findGuardianPosition(guardians = [], studentId) {
+    const index = guardians.findIndex(id => id === studentId);
+    return index >= 0 ? { r: -1, c: index } : null;
+}
+
+function normalizeGuardianSide(value) {
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (raw === 'left' || raw === '0' || raw === '左' || raw === '左护法') return 0;
+    if (raw === 'right' || raw === '1' || raw === '右' || raw === '右护法') return 1;
+    return -1;
+}
+
+function guardianSideLabel(index) {
+    return index === 0 ? '左护法' : '右护法';
+}
+
+function normalizeStudentGender(value) {
+    const raw = normalizeText(value).toLowerCase();
+    if (raw === 'm' || raw === 'male' || raw === 'boy' || raw === '男' || raw === '男生') return 'M';
+    if (raw === 'f' || raw === 'female' || raw === 'girl' || raw === '女' || raw === '女生') return 'F';
+    return '';
+}
+
+function detectGuardianGradeBucket(text = '') {
+    const value = normalizeText(text);
+    if (/(最高|最好|最优秀|最高分|顶尖|第一名)/.test(value)) return 'highest';
+    if (/(最低|最差|最弱|最低分|倒数第一)/.test(value)) return 'lowest';
+    if (/(一般|中等|普通|平均|中游|中间水平)/.test(value)) return 'average';
+    if (/(比较差|较差|成绩差|分数差|差|弱|低)/.test(value)) return 'poor';
+    if (/(比较好|较好|成绩好|分数好|优秀|好|高|强)/.test(value)) return 'good';
+    return '';
+}
+
+function detectGuardianGender(text = '') {
+    const value = normalizeText(text);
+    if (/男生|男同学|男/.test(value)) return 'M';
+    if (/女生|女同学|女/.test(value)) return 'F';
+    return '';
+}
+
+function guardianCriteriaFromText(text = '') {
+    return {
+        bucket: detectGuardianGradeBucket(text),
+        gender: detectGuardianGender(text),
+    };
+}
+
+function sortedById(students = []) {
+    return [...students].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+}
+
+function sortedByGrade(students = [], direction = 'desc') {
+    return [...students].sort((a, b) => {
+        const gradeDiff = Number(a.grade) - Number(b.grade);
+        if (gradeDiff !== 0) return direction === 'asc' ? gradeDiff : -gradeDiff;
+        return String(a.id).localeCompare(String(b.id));
+    });
+}
+
+function byTargetRank(students = [], targetRatio = 0.5, direction = 'asc') {
+    const ordered = sortedByGrade(students, direction);
+    const target = Math.max(0, Math.min(ordered.length - 1, Math.round((ordered.length - 1) * targetRatio)));
+    return ordered
+        .map((student, index) => ({ student, index, distance: Math.abs(index - target) }))
+        .sort((a, b) => a.distance - b.distance || a.index - b.index || String(a.student.id).localeCompare(String(b.student.id)))
+        .map(item => item.student);
+}
+
+function rankGuardianCandidates(candidates = [], bucket = '') {
+    const graded = candidates.filter(student => Number.isFinite(Number(student?.grade)));
+    const unknown = sortedById(candidates.filter(student => !Number.isFinite(Number(student?.grade))));
+    if (!bucket) return sortedById(candidates);
+    if (bucket === 'highest') return [...sortedByGrade(graded, 'desc'), ...unknown];
+    if (bucket === 'lowest') return [...sortedByGrade(graded, 'asc'), ...unknown];
+    if (bucket === 'good') return [...byTargetRank(graded, 0.25, 'desc'), ...unknown];
+    if (bucket === 'poor') return [...byTargetRank(graded, 0.25, 'asc'), ...unknown];
+    if (bucket === 'average') return [...byTargetRank(graded, 0.5, 'asc'), ...unknown];
+    return sortedById(candidates);
+}
+
+function guardianSlotMatches(message = '') {
+    const quality = '最高|最好|最优秀|最低|最差|最弱|比较好|较好|比较差|较差|一般|中等|普通|平均|优秀|好|高|强|差|弱|低';
+    const gender = '男生|女生|男同学|女同学|男|女';
+    const pattern = new RegExp(`(?:成绩|分数)?\\s*(${quality})\\s*的?\\s*(${gender})`, 'g');
+    return [...normalizeText(message).matchAll(pattern)].map(match => ({
+        bucket: detectGuardianGradeBucket(match[1]),
+        gender: normalizeStudentGender(match[2]),
+    }));
+}
+
+function sideSegments(message = '') {
+    const text = normalizeText(message);
+    const matches = [...text.matchAll(/左护法|左边护法|右护法|右边护法/g)];
+    if (matches.length < 2) return [];
+    return matches.map((match, index) => {
+        const next = matches[index + 1]?.index ?? text.length;
+        return {
+            side: /左/.test(match[0]) ? 'left' : 'right',
+            text: text.slice(match.index, next),
+        };
+    });
+}
+
+function buildGuardianSlotRequests(message = '') {
+    const text = normalizeText(message);
+    const segments = sideSegments(text);
+    if (segments.length) {
+        return segments.map(segment => ({
+            side: segment.side,
+            ...guardianCriteriaFromText(segment.text),
+        }));
+    }
+
+    const mentionsBothGuardians = /左右护法/.test(text);
+    const explicitSide = !mentionsBothGuardians && /(左护法|左边护法)/.test(text)
+        ? 'left'
+        : !mentionsBothGuardians && /(右护法|右边护法)/.test(text)
+            ? 'right'
+            : '';
+    if (explicitSide) {
+        return [{ side: explicitSide, ...guardianCriteriaFromText(text) }];
+    }
+
+    const matched = guardianSlotMatches(text);
+    if (matched.length >= 2) {
+        return matched.slice(0, 2).map((criteria, index) => ({
+            side: index === 0 ? 'left' : 'right',
+            ...criteria,
+        }));
+    }
+
+    const criteria = matched[0] || guardianCriteriaFromText(text);
+    if (criteria.bucket || criteria.gender || /(成绩|分数|优秀|好|高|强|差|弱|低|一般|中等|普通|平均|两个|两名)/.test(text)) {
+        return [
+            { side: 'left', ...criteria },
+            { side: 'right', ...criteria },
+        ];
+    }
+
+    return [];
+}
+
+function chooseGuardianOperationsFromCriteria({ message = '', students = [], guardians = [] }) {
+    const slots = buildGuardianSlotRequests(message);
+    if (!slots.length) return { operations: [], rejected: [] };
+
+    const currentGuardians = new Set((guardians || []).filter(Boolean));
+    const chosen = new Set();
+    const operations = [];
+    const rejected = [];
+
+    for (const slot of slots) {
+        const targetIndex = normalizeGuardianSide(slot.side);
+        if (targetIndex < 0) continue;
+
+        const excluded = new Set(currentGuardians);
+        const candidates = students
+            .filter(student => student?.id && !excluded.has(student.id))
+            .filter(student => !slot.gender || student.gender === slot.gender);
+        const ranked = rankGuardianCandidates(candidates, slot.bucket)
+            .filter(student => !chosen.has(student.id));
+        const picked = ranked[0];
+        if (!picked) {
+            rejected.push({
+                reason: `${guardianSideLabel(targetIndex)}没有找到符合条件的学生`,
+            });
+            continue;
+        }
+        operations.push({
+            type: 'set_guardian',
+            studentId: picked.id,
+            side: targetIndex === 0 ? 'left' : 'right',
+        });
+        chosen.add(picked.id);
+    }
+
+    return { operations, rejected };
+}
+
+function hasGuardianCriteria(message = '') {
+    return /(成绩|分数|最高|最好|最优秀|最低|最差|最弱|比较好|较好|比较差|较差|一般|中等|普通|平均|优秀|好|高|强|差|弱|低|男生|女生|男同学|女同学)/.test(message);
+}
+
 export function getSeatingCapacity({ rows, cols, rowAisles = [], colAisles = [] }) {
     let count = 0;
     for (let r = 0; r < rows; r++) {
@@ -120,7 +551,7 @@ export function getPlacedStudentIds(layout = [], { rows = layout.length, cols, r
     return ids;
 }
 
-export function validateLayoutIntegrity({ layout = [], students = [] }) {
+export function validateLayoutIntegrity({ layout = [], students = [], guardians = [] }) {
     const knownIds = new Set(students.map(s => s.id).filter(Boolean));
     const seen = new Set();
     const duplicates = new Set();
@@ -133,6 +564,12 @@ export function validateLayoutIntegrity({ layout = [], students = [] }) {
             seen.add(value);
             if (!knownIds.has(value)) unknownIds.add(value);
         }
+    }
+    for (const value of guardians || []) {
+        if (!value) continue;
+        if (seen.has(value)) duplicates.add(value);
+        seen.add(value);
+        if (!knownIds.has(value)) unknownIds.add(value);
     }
 
     const missingPlacedIds = [...knownIds].filter(id => !seen.has(id));
@@ -155,6 +592,7 @@ function reject(index, op, reason) {
 export function applySeatingOperations({
     layout = [],
     students = [],
+    guardians = [],
     operations = [],
     rows = layout.length,
     cols = layout[0]?.length || 0,
@@ -163,6 +601,7 @@ export function applySeatingOperations({
     blockedCells = [],
 }) {
     const nextLayout = cloneLayout(layout, rows, cols);
+    const nextGuardians = [guardians?.[0] || null, guardians?.[1] || null];
     const blockedSet = new Set(blockedCells.map(cell => Array.isArray(cell) ? `${cell[0]},${cell[1]}` : `${cell.r},${cell.c}`));
     const applied = [];
     const rejected = [];
@@ -230,15 +669,68 @@ export function applySeatingOperations({
             return;
         }
 
+        if (op.type === 'set_guardian' || op.type === 'guardian') {
+            const id = resolveOperationStudent(op, students, ['studentId', 'student_id', 'id', 'student', 'name']);
+            if (!id) {
+                rejected.push(reject(index, op, '未找到要安排到护法位的学生'));
+                return;
+            }
+            const targetIndex = normalizeGuardianSide(op.side ?? op.slot ?? op.position);
+            if (targetIndex < 0) {
+                rejected.push(reject(index, op, '护法位必须指定为 left 或 right'));
+                return;
+            }
+
+            const target = { r: -1, c: targetIndex };
+            const from = findStudentPosition(nextLayout, id);
+            const fromGuardian = findGuardianPosition(nextGuardians, id);
+
+            // Already at target guardian: report a clear no-op without applying.
+            if (fromGuardian && fromGuardian.c === targetIndex) {
+                const student = students.find(item => item?.id === id);
+                const name = student?.name || id;
+                rejected.push(reject(index, op, `${name}已经是${guardianSideLabel(targetIndex)}`));
+                return;
+            }
+
+            const displaced = nextGuardians[targetIndex] || null;
+            nextGuardians[targetIndex] = id;
+            clearStudentFromLayout(nextLayout, displaced);
+
+            if (fromGuardian) {
+                // Student was a guardian on the other side — swap slots
+                nextGuardians[fromGuardian.c] = displaced;
+                const cells = [fromGuardian, target];
+                applied.push({ index, operation: op, type: 'set_guardian', affectedCells: cells });
+                affectedCells.push(...cells);
+                return;
+            }
+
+            if (from) {
+                // Student was in a seat — displaced guardian goes to student's old seat
+                nextLayout[from.r][from.c] = displaced;
+                const cells = [from, target];
+                applied.push({ index, operation: op, type: 'set_guardian', affectedCells: cells });
+                affectedCells.push(...cells);
+                return;
+            }
+
+            // Student is unplaced — directly assign as guardian
+            applied.push({ index, operation: op, type: 'set_guardian', affectedCells: [target] });
+            affectedCells.push(target);
+            return;
+        }
+
         rejected.push(reject(index, op, `不支持的操作类型: ${op.type || '未知'}`));
     });
 
     return {
         layout: nextLayout,
+        guardians: nextGuardians,
         applied,
         rejected,
         affectedCells,
-        integrity: validateLayoutIntegrity({ layout: nextLayout, students }),
+        integrity: validateLayoutIntegrity({ layout: nextLayout, students, guardians: nextGuardians }),
     };
 }
 
@@ -246,8 +738,12 @@ export function parseFallbackSeatingOperations({
     message = '',
     layout = [],
     students = [],
+    guardians = [],
     rows = layout.length,
     cols = layout[0]?.length || 0,
+    rowAisles = [],
+    colAisles = [],
+    blockedCells = [],
 }) {
     const mutationIntent = detectSeatingMutationIntent(message);
     const operations = [];
@@ -261,6 +757,48 @@ export function parseFallbackSeatingOperations({
             operations: [{ type: 'swap', student1Id: names[0].id, student2Id: names[1].id }],
             rejected,
         };
+    }
+
+    if (/(左右护法|左护法|右护法|护法)/.test(message)) {
+        const criteriaIntent = hasGuardianCriteria(message);
+        if (criteriaIntent) {
+            const guardianChoice = chooseGuardianOperationsFromCriteria({ message, students, guardians });
+            if (guardianChoice.operations.length || guardianChoice.rejected.length) {
+                return {
+                    mutationIntent,
+                    operations: guardianChoice.operations,
+                    rejected: guardianChoice.rejected,
+                };
+            }
+        }
+
+        const mentionsBothGuardians = /左右护法/.test(message);
+        const explicitSide = !mentionsBothGuardians && /(左护法|左边护法)/.test(message)
+            ? 'left'
+            : !mentionsBothGuardians && /(右护法|右边护法)/.test(message)
+                ? 'right'
+                : '';
+        if (names.length) {
+            const guardianOps = explicitSide
+                ? [{ type: 'set_guardian', studentId: names[0].id, side: explicitSide }]
+                : names.slice(0, 2).map((item, index) => ({
+                    type: 'set_guardian',
+                    studentId: item.id,
+                    side: index === 0 ? 'left' : 'right',
+            }));
+            return { mutationIntent, operations: guardianOps, rejected };
+        }
+
+        const guardianChoice = criteriaIntent
+            ? { operations: [], rejected: [] }
+            : chooseGuardianOperationsFromCriteria({ message, students, guardians });
+        if (guardianChoice.operations.length || guardianChoice.rejected.length) {
+            return {
+                mutationIntent,
+                operations: guardianChoice.operations,
+                rejected: guardianChoice.rejected,
+            };
+        }
     }
 
     const student = findMentionedStudent(message, students);
@@ -283,6 +821,32 @@ export function parseFallbackSeatingOperations({
                 rejected,
             };
         }
+    }
+
+    const middleRowMatch = message.match(/第?([0-9一二两三四五六七八九十]+)\s*[排行].*(中间|中部|中央)/);
+    if (middleRowMatch && /(移到|移动到|挪到|调到|安排到|坐到|放到)/.test(message)) {
+        const row = cnNumber(middleRowMatch[1]) - 1;
+        const blockedSet = new Set(blockedCells.map(cell => Array.isArray(cell) ? `${cell[0]},${cell[1]}` : `${cell.r},${cell.c}`));
+        const candidates = [];
+        const center = (cols - 1) / 2;
+        for (let col = 0; col < cols; col++) {
+            if (!isInBounds(row, col, rows, cols)) continue;
+            if (isAisle(row, col, layout, rowAisles, colAisles, blockedSet)) continue;
+            candidates.push({ row, col, distance: Math.abs(col - center) });
+        }
+        candidates.sort((a, b) => a.distance - b.distance || a.col - b.col);
+        if (candidates.length) {
+            return {
+                mutationIntent,
+                operations: [{ type: 'move', studentId: student.id, row, col: candidates[0].col }],
+                rejected,
+            };
+        }
+        return {
+            mutationIntent,
+            operations,
+            rejected: [{ reason: `第${row + 1}排没有可用的中间座位` }],
+        };
     }
 
     const pos = findStudentPosition(layout, student.id);
@@ -323,9 +887,21 @@ function usableRows(rows, rowAisles = []) {
     return result;
 }
 
-function adjacent(pos1, pos2) {
+function localAisleSeparates(pos1, pos2, localAisles = {}) {
     if (!pos1 || !pos2) return false;
-    return Math.abs(pos1.r - pos2.r) + Math.abs(pos1.c - pos2.c) === 1;
+    if (pos1.r === pos2.r && Math.abs(pos1.c - pos2.c) === 1) {
+        return hasLocalAisle(localAisles, 'vertical', pos1.r, Math.min(pos1.c, pos2.c));
+    }
+    if (pos1.c === pos2.c && Math.abs(pos1.r - pos2.r) === 1) {
+        return hasLocalAisle(localAisles, 'horizontal', Math.min(pos1.r, pos2.r), pos1.c);
+    }
+    return false;
+}
+
+function adjacent(pos1, pos2, localAisles = {}) {
+    if (!pos1 || !pos2) return false;
+    return Math.abs(pos1.r - pos2.r) + Math.abs(pos1.c - pos2.c) === 1
+        && !localAisleSeparates(pos1, pos2, localAisles);
 }
 
 function makeUnsatisfied(constraint, reason) {
@@ -343,8 +919,10 @@ export function evaluateSeatingConstraints({
     rows = layout.length,
     cols = layout[0]?.length || 0,
     rowAisles = [],
+    localAisles = {},
 }) {
     const rowsInUse = usableRows(rows, rowAisles);
+    const normalizedLocalAisles = normalizeLocalAisles(localAisles, rows, cols);
     const frontCount = Math.max(1, Math.ceil(rowsInUse.length / 3));
     const frontRows = new Set(rowsInUse.slice(0, frontCount));
     const backRows = new Set(rowsInUse.slice(rowsInUse.length - frontCount));
@@ -365,11 +943,11 @@ export function evaluateSeatingConstraints({
             unsatisfied.push(makeUnsatisfied(constraint, '未坐在前排区域'));
         } else if (constraint.type === 'back_row' && !backRows.has(targetPos.r)) {
             unsatisfied.push(makeUnsatisfied(constraint, '未坐在后排区域'));
-        } else if (constraint.type === 'avoid' && relatedId && adjacent(targetPos, relatedPos)) {
+        } else if (constraint.type === 'avoid' && relatedId && adjacent(targetPos, relatedPos, normalizedLocalAisles)) {
             unsatisfied.push(makeUnsatisfied(constraint, '两人仍然相邻'));
-        } else if (constraint.type === 'pair' && (!relatedId || !adjacent(targetPos, relatedPos))) {
+        } else if (constraint.type === 'pair' && (!relatedId || !adjacent(targetPos, relatedPos, normalizedLocalAisles))) {
             unsatisfied.push(makeUnsatisfied(constraint, '两人没有相邻'));
-        } else if (constraint.type === 'prefer' && (!relatedId || !adjacent(targetPos, relatedPos))) {
+        } else if (constraint.type === 'prefer' && (!relatedId || !adjacent(targetPos, relatedPos, normalizedLocalAisles))) {
             unsatisfied.push(makeUnsatisfied({ ...constraint, priority: constraint.priority || 'soft' }, '偏好未满足'));
         }
     }
@@ -382,6 +960,534 @@ export function evaluateSeatingConstraints({
         unsatisfied,
         hardUnsatisfied,
         softUnsatisfied,
+    };
+}
+
+function qualityRowsAndCols(layout = [], classroomLayout = {}, rows, cols) {
+    const safeRows = Math.max(Number(rows) || 0, Number(classroomLayout?.rows) || 0, layout.length);
+    const safeCols = Math.max(
+        Number(cols) || 0,
+        Number(classroomLayout?.cols) || 0,
+        ...layout.map(row => Array.isArray(row) ? row.length : 0),
+        0
+    );
+    return { rows: safeRows, cols: safeCols };
+}
+
+function qualityStudentLookup(students = []) {
+    const byId = new Map();
+    const byName = new Map();
+    for (const student of students || []) {
+        if (!student?.id) continue;
+        byId.set(student.id, student);
+        const name = normalizeText(student.name);
+        if (name && !byName.has(name)) byName.set(name, student);
+    }
+    return { byId, byName };
+}
+
+function finiteNumber(value) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+}
+
+function uniqueByCell(cells = []) {
+    const seen = new Set();
+    const result = [];
+    for (const cell of cells) {
+        if (!Number.isInteger(cell?.r) || !Number.isInteger(cell?.c)) continue;
+        const key = `${cell.r},${cell.c}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result.push({ r: cell.r, c: cell.c });
+    }
+    return result;
+}
+
+function addQualityConstraint(collection, { id, name, level = 'soft', weight = 1, matches = [], message = '' }) {
+    if (!matches.length) return;
+    const safeWeight = Math.max(1, Math.abs(Number(weight) || 1));
+    const involvedStudentIds = [...new Set(matches.flatMap(match => match.studentIds || []).filter(Boolean))];
+    const involvedCells = uniqueByCell(matches.flatMap(match => match.cells || []));
+    collection.push({
+        id,
+        name,
+        level,
+        weight: safeWeight,
+        matches,
+        score: -safeWeight * matches.length,
+        message,
+        involvedStudentIds,
+        involvedCells,
+    });
+}
+
+function isQualitySeat(classroomLayout, row, col, rowAisles = [], colAisles = []) {
+    if (rowAisles.includes(row) || colAisles.includes(col)) return false;
+    const cell = classroomLayout?.cells?.[row]?.[col];
+    return cell === undefined || cell === 'seat';
+}
+
+function buildQualityPlacement({ layout = [], students = [], classroomLayout = {}, guardians = [], rows, cols, rowAisles = [], colAisles = [] }) {
+    const { rows: safeRows, cols: safeCols } = qualityRowsAndCols(layout, classroomLayout, rows, cols);
+    const { byId } = qualityStudentLookup(students);
+    const byStudentId = new Map();
+    const positionsById = new Map();
+    const unknown = [];
+    const nonSeat = [];
+    const placedIds = new Set();
+
+    const addStudentCell = (id, cell) => {
+        if (!positionsById.has(id)) positionsById.set(id, []);
+        positionsById.get(id).push(cell);
+        placedIds.add(id);
+    };
+
+    for (let r = 0; r < safeRows; r++) {
+        for (let c = 0; c < safeCols; c++) {
+            const value = layout?.[r]?.[c];
+            if (!value || value === AISLE) continue;
+            const cell = { r, c };
+            addStudentCell(value, cell);
+            if (!byId.has(value)) {
+                unknown.push({ studentIds: [value], cells: [cell], text: value, reason: '名单中没有这个学生' });
+            }
+            if (!isQualitySeat(classroomLayout, r, c, rowAisles, colAisles)) {
+                nonSeat.push({ studentIds: [value], cells: [cell], reason: '坐到了过道或非座位格' });
+            }
+            byStudentId.set(value, { ...(byStudentId.get(value) || {}), grid: cell });
+        }
+    }
+
+    const guardianIds = Array.isArray(guardians) && guardians.length
+        ? guardians
+        : [classroomLayout?.guardians?.left, classroomLayout?.guardians?.right];
+    for (const id of guardianIds.filter(Boolean)) {
+        addStudentCell(id, null);
+        if (!byId.has(id)) unknown.push({ studentIds: [id], cells: [], text: id, reason: '护法位引用了名单外学生' });
+        byStudentId.set(id, { ...(byStudentId.get(id) || {}), guardian: true });
+    }
+
+    const duplicates = [];
+    for (const [id, cells] of positionsById.entries()) {
+        if (cells.length > 1) {
+            duplicates.push({
+                studentIds: [id],
+                cells: uniqueByCell(cells.filter(Boolean)),
+                reason: '同一个学生出现了多次',
+            });
+        }
+    }
+
+    const missing = [];
+    for (const student of students || []) {
+        if (!student?.id || placedIds.has(student.id)) continue;
+        missing.push({ studentIds: [student.id], cells: [], reason: '名单学生没有出现在座位表中' });
+    }
+
+    return {
+        rows: safeRows,
+        cols: safeCols,
+        byStudentId,
+        positionsById,
+        unknown,
+        nonSeat,
+        duplicates,
+        missing,
+    };
+}
+
+function constraintExpectedText(constraint = {}) {
+    if (constraint.type === 'front_row') return '坐在前排区域';
+    if (constraint.type === 'back_row') return '坐在后排区域';
+    if (constraint.type === 'avoid') return '两人不要相邻';
+    if (constraint.type === 'pair') return '两人相邻';
+    if (constraint.type === 'prefer') return '尽量相邻';
+    return '满足学生需求';
+}
+
+function constraintMatchForUnsatisfied(unsatisfied, students, layout) {
+    const targetId = resolveStudentId(unsatisfied.target, students) || unsatisfied.target;
+    const relatedId = resolveStudentId(unsatisfied.related, students) || unsatisfied.related;
+    const cells = [findStudentPosition(layout, targetId), findStudentPosition(layout, relatedId)].filter(Boolean);
+    const studentIds = [targetId, relatedId].filter(Boolean);
+    return {
+        studentIds,
+        cells,
+        reason: unsatisfied.reason,
+        type: unsatisfied.type,
+        expected: constraintExpectedText(unsatisfied),
+        actual: unsatisfied.reason,
+    };
+}
+
+function calculateQualitySeatEntries({ layout = [], classroomLayout = {}, rows, cols, rowAisles = [], colAisles = [] }) {
+    const { rows: safeRows, cols: safeCols } = qualityRowsAndCols(layout, classroomLayout, rows, cols);
+    const usableRows = [];
+    for (let r = 0; r < safeRows; r++) {
+        const hasSeat = Array.from({ length: safeCols }, (_, c) => c)
+            .some(c => isQualitySeat(classroomLayout, r, c, rowAisles, colAisles));
+        if (hasSeat) usableRows.push(r);
+    }
+
+    const colBlocks = [];
+    let currentBlock = [];
+    for (let c = 0; c < safeCols; c++) {
+        const columnHasSeat = Array.from({ length: safeRows }, (_, r) => r)
+            .some(r => isQualitySeat(classroomLayout, r, c, rowAisles, colAisles));
+        if (!columnHasSeat || colAisles.includes(c)) {
+            if (currentBlock.length) colBlocks.push(currentBlock);
+            currentBlock = [];
+        } else {
+            currentBlock.push(c);
+        }
+    }
+    if (currentBlock.length) colBlocks.push(currentBlock);
+
+    const rowScoreMap = new Map();
+    const peakRowPos = Math.max(0, usableRows.length * 0.33);
+    const rowSigma = usableRows.length * 0.45 || 1;
+    usableRows.forEach((r, index) => {
+        const dist = index - peakRowPos;
+        rowScoreMap.set(r, Math.exp(-(dist * dist) / (2 * rowSigma * rowSigma)));
+    });
+
+    const usableColumns = [];
+    for (let c = 0; c < safeCols; c++) {
+        if (Array.from({ length: safeRows }, (_, r) => r)
+            .some(r => isQualitySeat(classroomLayout, r, c, rowAisles, colAisles))) {
+            usableColumns.push(c);
+        }
+    }
+    const usableColumnIndex = new Map(usableColumns.map((c, index) => [c, index]));
+    const globalColumnCenter = Math.max(0, (usableColumns.length - 1) / 2);
+    const globalColumnSigma = usableColumns.length * 0.35 || 1;
+    const colScoreMap = new Map();
+    for (const block of colBlocks) {
+        const blockCenter = (block.length - 1) / 2;
+        const colSigma = block.length * 0.45 || 1;
+        block.forEach((c, index) => {
+            const globalDist = (usableColumnIndex.get(c) ?? 0) - globalColumnCenter;
+            const globalScore = Math.exp(-(globalDist * globalDist) / (2 * globalColumnSigma * globalColumnSigma));
+            const blockDist = index - blockCenter;
+            const blockScore = Math.exp(-(blockDist * blockDist) / (2 * colSigma * colSigma));
+            let score = globalScore * (0.75 + 0.25 * blockScore);
+            if (colAisles.includes(c - 1) || colAisles.includes(c + 1)) score *= 0.95;
+            colScoreMap.set(c, score);
+        });
+    }
+
+    const rowAisleAdjacentSet = new Set();
+    for (const row of rowAisles) {
+        if (row - 1 >= 0) rowAisleAdjacentSet.add(row - 1);
+        if (row + 1 < safeRows) rowAisleAdjacentSet.add(row + 1);
+    }
+
+    const entries = [];
+    const scoreByCell = new Map();
+    for (let r = 0; r < safeRows; r++) {
+        for (let c = 0; c < safeCols; c++) {
+            if (!isQualitySeat(classroomLayout, r, c, rowAisles, colAisles)) continue;
+            let raw = (rowScoreMap.get(r) || 0) * (colScoreMap.get(c) || 0);
+            if (rowAisleAdjacentSet.has(r)) raw *= 0.93;
+            const score = Math.round(raw * 100);
+            entries.push({ r, c, score });
+            scoreByCell.set(`${r},${c}`, score);
+        }
+    }
+    entries.sort((a, b) => b.score - a.score || a.r - b.r || a.c - b.c);
+    return { entries, scoreByCell };
+}
+
+function addGenderBalanceIssues(collection, { layout, studentsById, rows, cols, classroomLayout, rowAisles, colAisles, localAisles }) {
+    const matches = [];
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols - 1; c++) {
+            if (!isQualitySeat(classroomLayout, r, c, rowAisles, colAisles)
+                || !isQualitySeat(classroomLayout, r, c + 1, rowAisles, colAisles)) {
+                continue;
+            }
+            if (hasLocalAisle(localAisles, 'vertical', r, c)) continue;
+            const id1 = layout?.[r]?.[c];
+            const id2 = layout?.[r]?.[c + 1];
+            const first = studentsById.get(id1);
+            const second = studentsById.get(id2);
+            if (!first || !second || !['M', 'F'].includes(first.gender) || first.gender !== second.gender) continue;
+            matches.push({ studentIds: [id1, id2], cells: [{ r, c }, { r, c: c + 1 }], reason: '相邻座位性别相同' });
+        }
+    }
+    addQualityConstraint(collection, {
+        id: 'strategy.gender.adjacent',
+        name: '男女搭配相邻均衡',
+        level: 'soft',
+        weight: 2,
+        matches,
+        message: `${matches.length} 处相邻座位性别搭配不够均衡`,
+    });
+}
+
+function addHeightOrderIssues(collection, { placement, studentsById }) {
+    const rowHeights = new Map();
+    for (const [id, placementInfo] of placement.byStudentId.entries()) {
+        const cell = placementInfo.grid;
+        const height = finiteNumber(studentsById.get(id)?.height);
+        if (!cell || height == null) continue;
+        if (!rowHeights.has(cell.r)) rowHeights.set(cell.r, []);
+        rowHeights.get(cell.r).push({ id, cell, height });
+    }
+    const rows = [...rowHeights.keys()].sort((a, b) => a - b);
+    const matches = [];
+    for (let i = 0; i < rows.length - 1; i++) {
+        const front = rowHeights.get(rows[i]);
+        const back = rowHeights.get(rows[i + 1]);
+        const frontAvg = front.reduce((sum, item) => sum + item.height, 0) / front.length;
+        const backAvg = back.reduce((sum, item) => sum + item.height, 0) / back.length;
+        if (frontAvg > backAvg + 3) {
+            matches.push({
+                studentIds: [...front, ...back].map(item => item.id),
+                cells: [...front, ...back].map(item => item.cell),
+                frontRow: rows[i],
+                backRow: rows[i + 1],
+            });
+        }
+    }
+    addQualityConstraint(collection, {
+        id: 'strategy.height.order',
+        name: '身高前后顺序',
+        level: 'soft',
+        weight: 3,
+        matches,
+        message: `${matches.length} 组相邻行身高顺序需要调整`,
+    });
+}
+
+function topGradeStudentIds(students = []) {
+    const ranked = students
+        .filter(student => student?.id && finiteNumber(student.grade) != null)
+        .sort((a, b) => finiteNumber(b.grade) - finiteNumber(a.grade) || String(a.id).localeCompare(String(b.id)));
+    if (!ranked.length) return new Set();
+    const count = Math.max(1, Math.ceil(ranked.length * 0.2));
+    return new Set(ranked.slice(0, count).map(student => student.id));
+}
+
+function addGradePriorityIssues(collection, snapshot, placement) {
+    const topIds = topGradeStudentIds(snapshot.students);
+    if (!topIds.size) return;
+    const { entries, scoreByCell } = calculateQualitySeatEntries(snapshot);
+    const threshold = entries[Math.min(topIds.size - 1, entries.length - 1)]?.score ?? 0;
+    const matches = [];
+    for (const id of topIds) {
+        const cell = placement.byStudentId.get(id)?.grid;
+        if (!cell) continue;
+        const score = scoreByCell.get(`${cell.r},${cell.c}`) ?? 0;
+        if (score < threshold) {
+            matches.push({ studentIds: [id], cells: [cell], seatScore: score, expectedAtLeast: threshold });
+        }
+    }
+    addQualityConstraint(collection, {
+        id: 'strategy.grade.priority',
+        name: '优秀优先座位质量',
+        level: 'soft',
+        weight: 4,
+        matches,
+        message: `${matches.length} 名前 20% 学生未坐到优先座位区`,
+    });
+}
+
+function addGradeBalanceIssues(collection, { placement, studentsById }) {
+    const rowGrades = new Map();
+    for (const [id, placementInfo] of placement.byStudentId.entries()) {
+        const cell = placementInfo.grid;
+        const grade = finiteNumber(studentsById.get(id)?.grade);
+        if (!cell || grade == null) continue;
+        if (!rowGrades.has(cell.r)) rowGrades.set(cell.r, []);
+        rowGrades.get(cell.r).push({ id, cell, grade });
+    }
+    const rows = [...rowGrades.keys()];
+    if (rows.length < 2) return;
+    const averages = rows.map(row => {
+        const grades = rowGrades.get(row);
+        return { row, average: grades.reduce((sum, item) => sum + item.grade, 0) / grades.length, grades };
+    });
+    const min = averages.reduce((best, item) => item.average < best.average ? item : best, averages[0]);
+    const max = averages.reduce((best, item) => item.average > best.average ? item : best, averages[0]);
+    const matches = max.average - min.average > 15
+        ? [{
+            studentIds: [...max.grades, ...min.grades].map(item => item.id),
+            cells: [...max.grades, ...min.grades].map(item => item.cell),
+            rows: [min.row, max.row],
+        }]
+        : [];
+    addQualityConstraint(collection, {
+        id: 'strategy.grade.balance',
+        name: '成绩行间均衡',
+        level: 'soft',
+        weight: 5,
+        matches,
+        message: '行间成绩分布差异较大',
+    });
+}
+
+function qualityPercent({ hardScore, softScore, hardViolationCount }) {
+    const softPenalty = Math.abs(softScore);
+    if (hardScore < 0) {
+        return Math.max(0, Math.min(59, Math.round(59 - Math.max(0, hardViolationCount - 1) * 8 - softPenalty / 5)));
+    }
+    return Math.max(60, Math.min(100, Math.round(100 - softPenalty)));
+}
+
+export function evaluateSeatingQuality({
+    layout = [],
+    students = [],
+    constraints = [],
+    classroomLayout = {},
+    guardians = [],
+    unassigned = [],
+    strategy = {},
+    rows,
+    cols,
+    rowAisles = [],
+    colAisles = [],
+    localAisles = classroomLayout?.localAisles,
+} = {}) {
+    const { rows: safeRows, cols: safeCols } = qualityRowsAndCols(layout, classroomLayout, rows, cols);
+    const cells = normalizeCells(classroomLayout, safeRows, safeCols);
+    const normalizedLocalAisles = normalizeLocalAisles(localAisles || classroomLayout?.localAisles, safeRows, safeCols);
+    const aisleInfo = legacyAislesFromCells(cells);
+    const mergedRowAisles = [...new Set([...(rowAisles || []), ...aisleInfo.rowAisles])];
+    const mergedColAisles = [...new Set([...(colAisles || []), ...aisleInfo.colAisles])];
+    const snapshot = {
+        layout,
+        students,
+        classroomLayout: { ...classroomLayout, rows: safeRows, cols: safeCols, cells, localAisles: normalizedLocalAisles },
+        guardians,
+        rows: safeRows,
+        cols: safeCols,
+        rowAisles: mergedRowAisles,
+        colAisles: mergedColAisles,
+        localAisles: normalizedLocalAisles,
+    };
+    const placement = buildQualityPlacement(snapshot);
+    const { byId: studentsById } = qualityStudentLookup(students);
+    const scoreConstraints = [];
+
+    addQualityConstraint(scoreConstraints, {
+        id: 'layout.duplicates',
+        name: '学生重复安排',
+        level: 'hard',
+        weight: 20,
+        matches: placement.duplicates,
+        message: `${placement.duplicates.length} 名学生重复出现在座位表中`,
+    });
+    addQualityConstraint(scoreConstraints, {
+        id: 'layout.unknownStudents',
+        name: '未知学生',
+        level: 'hard',
+        weight: 20,
+        matches: placement.unknown,
+        message: `${placement.unknown.length} 个座位引用了名单外学生`,
+    });
+    addQualityConstraint(scoreConstraints, {
+        id: 'layout.nonSeatAssignments',
+        name: '学生坐到非座位区域',
+        level: 'hard',
+        weight: 20,
+        matches: placement.nonSeat,
+        message: `${placement.nonSeat.length} 名学生被放在过道或非座位格`,
+    });
+    addQualityConstraint(scoreConstraints, {
+        id: 'layout.missingStudents',
+        name: '学生未安排',
+        level: 'hard',
+        weight: 20,
+        matches: placement.missing.map(match => ({
+            ...match,
+            unassigned: (unassigned || []).includes(match.studentIds[0]),
+        })),
+        message: `${placement.missing.length} 名学生未出现在座位表中`,
+    });
+
+    const studentNeedEvaluation = evaluateSeatingConstraints({
+        layout,
+        students,
+        constraints,
+        rows: safeRows,
+        cols: safeCols,
+        rowAisles: mergedRowAisles,
+        localAisles: normalizedLocalAisles,
+    });
+    addQualityConstraint(scoreConstraints, {
+        id: 'needs.hard',
+        name: '硬性学生需求',
+        level: 'hard',
+        weight: 10,
+        matches: studentNeedEvaluation.hardUnsatisfied.map(item => constraintMatchForUnsatisfied(item, students, layout)),
+        message: `${studentNeedEvaluation.hardUnsatisfied.length} 条硬性学生需求未满足`,
+    });
+    addQualityConstraint(scoreConstraints, {
+        id: 'needs.soft',
+        name: '软性学生需求',
+        level: 'soft',
+        weight: 5,
+        matches: studentNeedEvaluation.softUnsatisfied.map(item => constraintMatchForUnsatisfied(item, students, layout)),
+        message: `${studentNeedEvaluation.softUnsatisfied.length} 条软性学生需求未满足`,
+    });
+
+    if (strategy?.genderBalance) {
+        addGenderBalanceIssues(scoreConstraints, {
+            layout,
+            studentsById,
+            rows: safeRows,
+            cols: safeCols,
+            classroomLayout: snapshot.classroomLayout,
+            rowAisles: mergedRowAisles,
+            colAisles: mergedColAisles,
+            localAisles: normalizedLocalAisles,
+        });
+    }
+    if (strategy?.heightOrder) {
+        addHeightOrderIssues(scoreConstraints, { placement, studentsById });
+    }
+    if (strategy?.gradeStrategy === 'priority') {
+        addGradePriorityIssues(scoreConstraints, snapshot, placement);
+    } else if (strategy?.gradeStrategy === 'balance') {
+        addGradeBalanceIssues(scoreConstraints, { placement, studentsById });
+    }
+
+    const hardScore = scoreConstraints
+        .filter(item => item.level === 'hard')
+        .reduce((sum, item) => sum + item.score, 0);
+    const softScore = scoreConstraints
+        .filter(item => item.level !== 'hard')
+        .reduce((sum, item) => sum + item.score, 0);
+    const hardViolationCount = scoreConstraints
+        .filter(item => item.level === 'hard')
+        .reduce((sum, item) => sum + item.matches.length, 0);
+    const softViolationCount = scoreConstraints
+        .filter(item => item.level !== 'hard')
+        .reduce((sum, item) => sum + item.matches.length, 0);
+    const feasible = hardScore === 0;
+    const percent = qualityPercent({ hardScore, softScore, hardViolationCount });
+    const label = feasible
+        ? percent >= 90 ? '优秀' : percent >= 75 ? '良好' : '可优化'
+        : '需调整';
+    const topIssues = [...scoreConstraints]
+        .sort((a, b) => {
+            if (a.level !== b.level) return a.level === 'hard' ? -1 : 1;
+            return Math.abs(b.score) - Math.abs(a.score);
+        })
+        .slice(0, 3);
+
+    return {
+        feasible,
+        hardScore,
+        softScore,
+        percent,
+        label,
+        constraints: scoreConstraints,
+        topIssues,
+        hardViolationCount,
+        softViolationCount,
     };
 }
 

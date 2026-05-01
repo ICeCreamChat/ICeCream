@@ -6,7 +6,9 @@
 import fetch from 'node-fetch';
 import { normalizeClientId, validateManimCode } from '../../gateway/security.js';
 
-const MANIM_SERVICE_URL = process.env.MANIM_SERVICE_URL || `http://localhost:${process.env.MANIM_SERVICE_PORT || 8001}`;
+export function getManimServiceUrl() {
+    return process.env.MANIM_SERVICE_URL || `http://localhost:${process.env.MANIM_SERVICE_PORT || 8001}`;
+}
 
 const MANIM_SYSTEM_PROMPT = `你是一个 Manim 动画代码生成专家。用户会告诉你想要可视化什么数学概念，你需要生成对应的 Manim 代码。
 
@@ -42,6 +44,14 @@ export function buildRenderPayload(body = {}) {
     return {
         code: body.code,
         client_id: normalizeClientId(body.client_id)
+    };
+}
+
+export function buildSuggestionsPayload(body = {}) {
+    const count = Number(body.count);
+    return {
+        code: String(body.code || ''),
+        count: Number.isInteger(count) ? Math.min(Math.max(count, 1), 8) : 5
     };
 }
 
@@ -107,10 +117,11 @@ export async function handleManim(req, res) {
         }
 
         // 2. 调用 Manim 服务渲染
-        console.log('[Manim Client] Calling render service:', MANIM_SERVICE_URL);
+        const manimServiceUrl = getManimServiceUrl();
+        console.log('[Manim Client] Calling render service:', manimServiceUrl);
         console.log('[Manim Client] Code length:', extractedCode.length);
 
-        const renderResponse = await fetch(`${MANIM_SERVICE_URL}/render`, {
+        const renderResponse = await fetch(`${manimServiceUrl}/render`, {
             method: 'POST',
             headers: getManimHeaders(),
             body: JSON.stringify({
@@ -181,7 +192,7 @@ export async function renderCode(req, res) {
         }
 
         const payload = buildRenderPayload(req.body);
-        const response = await fetch(`${MANIM_SERVICE_URL}/render`, {
+        const response = await fetch(`${getManimServiceUrl()}/render`, {
             method: 'POST',
             headers: getManimHeaders(),
             body: JSON.stringify(payload)
@@ -211,11 +222,58 @@ export async function renderCode(req, res) {
 }
 
 /**
+ * 获取 AI 修改建议
+ */
+export async function getSuggestions(req, res) {
+    try {
+        const payload = buildSuggestionsPayload(req.body);
+        if (!payload.code.trim()) {
+            return res.status(400).json({
+                success: false,
+                error: '代码不能为空'
+            });
+        }
+
+        const response = await fetch(`${getManimServiceUrl()}/api/suggestions`, {
+            method: 'POST',
+            headers: getManimHeaders(),
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(15000)
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || 'Manim 建议生成失败');
+        }
+
+        const data = await response.json();
+        const rawSuggestions = Array.isArray(data.suggestions)
+            ? data.suggestions
+            : Array.isArray(data.data?.suggestions)
+                ? data.data.suggestions
+                : [];
+        const suggestions = rawSuggestions.map(item => String(item).trim()).filter(Boolean);
+
+        return res.json({
+            success: true,
+            data: { suggestions }
+        });
+    } catch (error) {
+        console.error('[Manim Client] Suggestions Error:', error);
+        return res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+}
+
+/**
  * 获取 Manim 服务状态
  */
 export async function getStatus(req, res) {
     try {
-        const response = await fetch(`${MANIM_SERVICE_URL}/health`, {
+        const manimServiceUrl = getManimServiceUrl();
+        const response = await fetch(`${manimServiceUrl}/health`, {
             method: 'GET',
             signal: AbortSignal.timeout(3000)
         });
@@ -226,7 +284,7 @@ export async function getStatus(req, res) {
             success: true,
             data: {
                 available: available,
-                url: MANIM_SERVICE_URL
+                url: manimServiceUrl
             }
         });
 
@@ -241,4 +299,4 @@ export async function getStatus(req, res) {
     }
 }
 
-export default { handleManim, renderCode, getStatus };
+export default { handleManim, renderCode, getSuggestions, getStatus };

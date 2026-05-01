@@ -60,6 +60,32 @@ test('parseStudentsText handles pasted tabular roster data', () => {
   ]);
 });
 
+test('parseStudentsText handles OCR markdown roster tables with sequence columns', () => {
+  const text = `
+| 序号 | 姓名 | 性别 | 身高 | 成绩 |
+| --- | --- | --- | --- | --- |
+| 1 | 米寒琳 | 女 | 111cm | 62 |
+| 2 | 南门橙 | 男 | 177 | 91 |
+`;
+  const result = parseStudentsText(text);
+
+  assert.equal(result.count, 2);
+  assert.deepEqual(result.students, [
+    { id: 's01', name: '米寒琳', gender: 'F', grade: 62, height: 111 },
+    { id: 's02', name: '南门橙', gender: 'M', grade: 91, height: 177 },
+  ]);
+});
+
+test('parseStudentsText handles OCR text rows without treating sequence as names', () => {
+  const result = parseStudentsText('1 米寒琳 女 111 62\n2 南门橙 男 177 91');
+
+  assert.equal(result.count, 2);
+  assert.deepEqual(result.students, [
+    { id: 's01', name: '米寒琳', gender: 'F', grade: 62, height: 111 },
+    { id: 's02', name: '南门橙', gender: 'M', grade: 91, height: 177 },
+  ]);
+});
+
 test('parseRosterFile parses text files through the shared student parser', async () => {
   const result = await parseRosterFile({
     buffer: Buffer.from('张三,男,93,142\n李四,女,88,151', 'utf8'),

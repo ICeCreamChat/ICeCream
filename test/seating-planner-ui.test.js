@@ -2,13 +2,22 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+import seatingPlanner from '../public/js/tools/seating-planner.js';
+
 const sourcePath = new URL('../public/js/tools/seating-planner.js', import.meta.url);
+const stylePath = new URL('../public/css/seating-planner.css', import.meta.url);
 
 test('seating planner exposes AI requirement entry instead of fixed layout controls', async () => {
   const source = await readFile(sourcePath, 'utf8');
 
   assert.match(source, /sp-arrange-prompt/);
   assert.match(source, /\/api\/tools\/seating\/arrange/);
+  assert.match(source, /排座要求/);
+  assert.match(source, /例如：两人一组，中间留过道，讲台旁安排左右护法，护法位置要一个成绩较差一个成绩较好的/);
+  assert.match(source, />\s*生成座位表\s*</);
+  assert.match(source, /btn\.innerHTML = '<i data-lucide="sparkles"><\/i> 生成座位表'/);
+  assert.doesNotMatch(source, /AI 排座需求/);
+  assert.doesNotMatch(source, />\s*AI 生成座位表\s*</);
   assert.doesNotMatch(source, /data-layout-template=/);
   assert.doesNotMatch(source, /id="sp-rows"/);
   assert.doesNotMatch(source, /id="sp-cols"/);
@@ -30,6 +39,19 @@ test('seating planner shows clearer strategy labels and applied strategy status'
   assert.match(source, /身高照顾/);
   assert.match(source, /优秀优先/);
   assert.match(source, /appliedStrategies/);
+});
+
+test('seating planner frames constraints as student seating needs in the UI', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  assert.match(source, /学生需求/);
+  assert.match(source, /收集学生想坐哪里/);
+  assert.match(source, /提取需求/);
+  assert.match(source, /满足 \$\{evaluation\.satisfied\}\/\$\{evaluation\.total\} 需求/);
+  assert.doesNotMatch(source, /AI 提取需求/);
+  assert.doesNotMatch(source, /学生座位需求/);
+  assert.doesNotMatch(source, /座位约束/);
+  assert.doesNotMatch(source, /描述座位约束/);
 });
 
 test('seating planner can show and hide seat grade and height details', async () => {
@@ -67,4 +89,331 @@ test('seating planner does not show arrangement notes as a second success warnin
 
   assert.match(source, /showArrangementWarnings/);
   assert.doesNotMatch(source, /if \(arrangement\.warnings\.length\) this\.showToast\(arrangement\.warnings\.join\('；'\), 'warning'\)/);
+});
+
+test('AI seating assistant is styled as a draggable floating panel with mode toggle', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(source, /id="sp-chat-header"/);
+  assert.match(source, /grip-vertical/);
+  assert.match(source, /ICeCream 座位助手/);
+  assert.match(source, /aria-label="打开 ICeCream 座位助手"/);
+  assert.match(source, /aria-label="关闭 ICeCream 座位助手"/);
+  assert.doesNotMatch(source, />AI 座位助手</);
+  assert.match(source, /startChatDrag/);
+  assert.match(source, /syncChatPosition/);
+  assert.match(styles, /\.sp-chat--positioned/);
+  assert.match(styles, /--sp-chat-left/);
+  assert.match(styles, /cursor: grab/);
+  assert.match(styles, /background: var\(--sp-bg-surface\)/);
+
+  // Mode toggle
+  assert.match(source, /id="sp-chat-mode"/);
+  assert.match(source, /data-chat-mode="auto"/);
+  assert.match(source, /data-chat-mode="micro"/);
+  assert.match(source, /data-chat-mode="regenerate"/);
+  assert.match(source, /setChatMode/);
+  assert.match(styles, /\.sp-chat-mode/);
+  assert.match(styles, /\.sp-chat-mode-btn/);
+});
+
+test('seating planner uses static arrange examples and no chat autocomplete', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(source, /id="sp-arrange-completions"/);
+  assert.match(source, /id="sp-arrange-completions" class="sp-autocomplete sp-autocomplete--above sp-hidden"/);
+  assert.match(source, /sp-arrange-examples/);
+  assert.match(source, /data-arrange-example/);
+  assert.match(source, /applyArrangeExample/);
+  assert.match(source, /id="sp-complete-arrange-prompt"/);
+  assert.match(source, /补全要求/);
+  assert.match(source, /completeArrangePrompt/);
+  assert.match(source, /pickArrangeCompletion/);
+  assert.match(source, /role="listbox"/);
+  assert.match(source, /setAttribute\('role', 'option'\)/);
+  assert.match(source, /aria-controls="sp-arrange-completions"/);
+  assert.match(source, /aria-expanded="false"/);
+  assert.match(source, /\/api\/tools\/seating\/suggestions/);
+  assert.match(source, /handleSuggestionKeyDown\(e, 'arrange'\)/);
+  assert.match(source, /acceptSuggestion\(kind\)/);
+  assert.match(source, /hideSuggestions\(kind\)/);
+  assert.match(source, /renderSuggestionList\(kind\)/);
+  assert.match(source, /clearSuggestionState\('arrange'\)/);
+  assert.match(source, /new AbortController\(\)/);
+  assert.match(source, /setTimeout\(\(\) => this\.requestSuggestions\(kind\), immediate \? 0 : 600\)/);
+  assert.doesNotMatch(source, /id="sp-chat-completions"/);
+  assert.doesNotMatch(source, /aria-controls="sp-chat-completions"/);
+  assert.doesNotMatch(source, /handleSuggestionKeyDown\(e, 'chat'\)/);
+  assert.doesNotMatch(source, /scheduleSuggestionRefresh\('chat'/);
+  assert.doesNotMatch(source, /clearSuggestionState\('chat'\)/);
+  assert.doesNotMatch(source, /kind === 'chat'/);
+  assert.doesNotMatch(source, /target: 'chat'/);
+  assert.doesNotMatch(source, /input\?\.addEventListener\('input', \(\) => this\.scheduleSuggestionRefresh\('chat'\)\)/);
+  assert.doesNotMatch(source, /arrangePrompt\?\.addEventListener\('input', \(\) => this\.scheduleSuggestionRefresh\('arrange'/);
+  assert.doesNotMatch(source, /setInterval\(/);
+  assert.doesNotMatch(source, /sp-suggestion-strip/);
+  assert.match(styles, /\.sp-autocomplete/);
+  assert.match(styles, /\.sp-autocomplete\s*{[^}]*position: absolute/s);
+  assert.match(styles, /\.sp-autocomplete\s*{[^}]*top: calc\(100% \+ 6px\)/s);
+  assert.doesNotMatch(styles, /\.sp-autocomplete\s*{[^}]*margin-top/s);
+  assert.match(styles, /\.sp-autocomplete--above\s*{[^}]*top: auto/s);
+  assert.match(styles, /\.sp-autocomplete--above\s*{[^}]*bottom: calc\(100% \+ 8px\)/s);
+  assert.match(styles, /\.sp-prompt-examples/);
+  assert.match(styles, /\.sp-prompt-example/);
+  assert.doesNotMatch(styles, /\.sp-autocomplete--chat\s*{[^}]*margin:/s);
+  assert.match(styles, /\.sp-autocomplete-option/);
+  assert.match(styles, /\.sp-autocomplete-option\.is-active/);
+});
+
+test('seating planner renders separate confirmation copy for batch tuning and regeneration', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  assert.match(source, /这会批量调整当前座位，但不改变布局，确认执行吗？/);
+  assert.match(source, /这会重新生成座位表并可能大幅改变当前安排，确认继续吗？/);
+  assert.match(source, /intent === 'batch_tune'/);
+  assert.match(source, /intent === 'regenerate'/);
+  assert.match(source, /guardians: this\.guardians/);
+  assert.match(source, /this\.guardians = result\.guardians/);
+  assert.doesNotMatch(source, /shouldUseArrangementAssistant/);
+});
+
+test('seating image import uses a review dialog before committing recognized students', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(source, /id="sp-image-review"/);
+  assert.match(source, /识别结果确认/);
+  assert.match(source, />\s*序号\s*<\/th>/);
+  assert.match(source, /确认导入/);
+  assert.match(source, /重新上传/);
+  assert.match(source, /取消/);
+  assert.match(source, /showImageReview\(result\.data/);
+  assert.match(source, /confirmImageReview\(\)/);
+  assert.match(source, /appendReviewedStudentsToInput/);
+  assert.match(source, /sp-image-review-title/);
+  assert.match(source, /识别结果确认（\$\{students\.length\}人）/);
+  assert.match(source, /indexCell\.className = 'sp-image-review-index'/);
+  assert.match(source, /indexCell\.textContent = String\(index \+ 1\)/);
+  assert.doesNotMatch(source, /data-field="index"/);
+  assert.match(styles, /\.sp-image-review/);
+  assert.match(styles, /\.sp-image-review-index/);
+  assert.match(styles, /\.sp-image-review-row--warning/);
+  assert.match(styles, /\.sp-image-review-field--warning/);
+});
+
+test('student roster update opens the review-style editable table', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  assert.match(source, /showStudentEditor\(text/);
+  assert.match(source, /this\.showStudentEditor\(text\)/);
+  assert.match(source, /this\.showStudentEditor\(this\.formatStudentsForEditor\(result\.data\.students\)\)/);
+  assert.match(source, /this\.showStudentEditor\(nextText\)/);
+  assert.match(source, />\s*编辑名单\s*</);
+  assert.match(source, /addEventListener\('click', \(\) => this\.openRosterEditor\(\)\)/);
+  assert.match(source, /openRosterEditor\(\)/);
+  assert.match(source, /showRosterReview\(students/);
+  assert.match(source, /名单编辑（\$\{students\.length\}人）/);
+  assert.match(source, /confirmRosterReview\(\)/);
+  assert.match(source, /applyRosterReviewUpdate/);
+  assert.match(source, /confirmButton\.textContent = '确认更新'/);
+  assert.match(source, /reuploadButton\?\.classList\.add\('sp-hidden'\)/);
+  assert.doesNotMatch(source, /sp-parse-students'\)\?\.addEventListener\('click', \(\) => this\.parseStudents\(\)\)/);
+});
+
+test('student roster editor supports add, bulk append, and row removal controls', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(source, /id="sp-roster-toolbar"/);
+  assert.match(source, /id="sp-roster-add-row"/);
+  assert.match(source, />\s*添加一行\s*</);
+  assert.match(source, /id="sp-roster-bulk-toggle"/);
+  assert.match(source, />\s*批量粘贴\s*</);
+  assert.match(source, /id="sp-roster-bulk-text"/);
+  assert.match(source, /id="sp-roster-bulk-append"/);
+  assert.match(source, />\s*追加到表格\s*</);
+  assert.match(source, /sp-roster-action-head/);
+  assert.match(source, /sp-roster-delete-row/);
+  assert.match(source, /addRosterReviewRow/);
+  assert.match(source, /appendRosterBulkText/);
+  assert.match(source, /toggleRosterBulkPanel/);
+  assert.match(source, /renumberReviewRows/);
+  assert.match(source, /setRosterEditorControlsVisible\(false\)/);
+  assert.match(source, /setRosterEditorControlsVisible\(true\)/);
+  assert.match(styles, /\.sp-roster-toolbar/);
+  assert.match(styles, /\.sp-roster-bulk-panel/);
+  assert.match(styles, /\.sp-roster-delete-row/);
+});
+
+test('student roster update preserves placed students and clears removed seats only', () => {
+  seatingPlanner.students = [
+    { id: 's01', name: '张三', gender: 'M', height: 170, grade: 80 },
+    { id: 's02', name: '李四', gender: 'F', height: 165, grade: 90 },
+    { id: 's03', name: '王五', gender: 'M', height: 171, grade: 70 },
+  ];
+  seatingPlanner._buildStudentMap();
+  seatingPlanner.layout = [
+    ['s01', 's02'],
+    ['s03', null],
+  ];
+  seatingPlanner.guardians = ['s02', null];
+  seatingPlanner.classroomLayout = {
+    rows: 2,
+    cols: 2,
+    cells: [['seat', 'seat'], ['seat', 'seat']],
+    groups: [[null, null], [null, null]],
+    guardians: { enabled: true, left: 's02', right: null },
+    template: 'custom',
+    groupSize: 1,
+  };
+  seatingPlanner.unassigned = [];
+
+  const update = seatingPlanner.buildRosterUpdateFromReview([
+    { id: 's01', name: '张三', gender: 'M', height: 170, grade: 80 },
+    { id: 's03', name: '王五', gender: 'M', height: 171, grade: 70 },
+    { name: '赵六', gender: 'F', height: 160, grade: 88 },
+  ]);
+
+  assert.deepEqual(update.removedIds, ['s02']);
+  assert.deepEqual(update.addedIds, ['s04']);
+  assert.deepEqual(update.students.map(student => student.id), ['s01', 's03', 's04']);
+
+  seatingPlanner.applyRosterReviewState(update);
+
+  assert.equal(seatingPlanner.layout[0][0], 's01');
+  assert.equal(seatingPlanner.layout[0][1], null);
+  assert.equal(seatingPlanner.layout[1][0], 's03');
+  assert.deepEqual(seatingPlanner.guardians, [null, null]);
+  assert.equal(seatingPlanner.classroomLayout.guardians.left, null);
+  assert.deepEqual(seatingPlanner.unassigned, ['s04']);
+});
+
+test('arrange prompt typography matches student needs input', async () => {
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(styles, /\.sp-arrange-prompt\s*{[^}]*padding: var\(--sp-space-sm\) var\(--sp-space-md\)/s);
+  assert.match(styles, /\.sp-arrange-prompt\s*{[^}]*border-radius: var\(--sp-radius-md\)/s);
+  assert.match(styles, /\.sp-arrange-prompt\s*{[^}]*font-size: 0\.85rem/s);
+  assert.match(styles, /\.sp-arrange-prompt\s*{[^}]*font-family: inherit/s);
+  assert.match(styles, /\.sp-arrange-prompt\s*{[^}]*line-height: 1\.6/s);
+  assert.match(styles, /\.sp-arrange-prompt::placeholder\s*{[^}]*color: var\(--sp-text-muted\)/s);
+  assert.match(styles, /\.sp-arrange-prompt::placeholder\s*{[^}]*opacity: 0\.7/s);
+});
+
+test('autocomplete suggestions follow the active light and dark theme', async () => {
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(styles, /\.sp-autocomplete\s*{[^}]*background: var\(--sp-bg-surface\)/s);
+  assert.match(styles, /\.sp-autocomplete\s*{[^}]*border: 1px solid var\(--sp-border\)/s);
+  assert.match(styles, /body\.light-mode \.sp-autocomplete\s*{/);
+  assert.match(styles, /body\.light-mode \.sp-autocomplete-option\.is-active/);
+});
+
+test('blackboard text uses Times New Roman for Latin characters', async () => {
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(styles, /\.sp-chalk-text\s*{[^}]*font-family: 'Times New Roman'/s);
+  assert.match(styles, /\.sp-blackboard-notes\s*{[^}]*font-family: 'Times New Roman'/s);
+});
+
+test('chat requests delegate intent classification to the backend', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  assert.match(source, /\/api\/tools\/seating\/chat/);
+  assert.match(source, /const intent = data\.intent/);
+  assert.match(source, /intent === 'direct_edit'/);
+  assert.match(source, /intent === 'batch_tune'/);
+  assert.match(source, /intent === 'regenerate'/);
+  assert.doesNotMatch(source, /shouldUseArrangementAssistant/);
+  assert.doesNotMatch(source, /detectSeatingMutationIntent/);
+});
+
+test('major chat arrangement requests require confirmation before regenerating seats', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  assert.match(source, /showChatPendingConfirmation\(data\.confirmationText/);
+  assert.match(source, /confirmMajorArrangementFromChat/);
+  assert.match(source, /这会重新生成座位表并可能大幅改变当前安排，确认继续吗？/);
+  assert.match(source, /this\._chatPending\s*=\s*{\s*type: 'arrangement'/s);
+  assert.doesNotMatch(source, /showChatArrangementConfirmation/);
+});
+
+test('seating planner inserts full row and column aisles from gap handles', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(source, /renderAisleGapHandles/);
+  assert.match(source, /localAisles/);
+  assert.match(source, /shouldShowRowAisleBoundary/);
+  assert.match(source, /shouldShowColumnAisleBoundary/);
+  assert.match(source, /this\.insertAisleRowAt\(row\)/);
+  assert.match(source, /this\.insertAisleColumnAt\(col\)/);
+  assert.doesNotMatch(source, /makeLocalHandle/);
+  assert.doesNotMatch(source, /data-local-aisle-orientation/);
+  assert.match(styles, /\.sp-aisle-gap/);
+});
+
+test('seating planner exports local PNG and styled xlsx', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  assert.match(source, /ensureHtml2Canvas/);
+  assert.match(source, /\/js\/libs\/html2canvas\.min\.js/);
+  assert.match(source, /html2canvas-retry/);
+  assert.match(source, /typeof window\.html2canvas !== 'function'/);
+  assert.match(source, /suppressHtml2CanvasAmdRegistration/);
+  assert.match(source, /amdDefine\.amd = undefined/);
+  assert.match(source, /amdDefine\.amd = previousAmd/);
+  assert.match(source, /sp-export-hide/);
+  assert.match(source, /exportXLSX/);
+  assert.match(source, /\/api\/tools\/seating\/export-xlsx/);
+  assert.match(source, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
+  assert.doesNotMatch(source, /sp-export-excel'\)\?\.addEventListener\('click', \(\) => this\.exportCSV\(\)\)/);
+});
+
+test('seating planner shows score summary and expandable score analysis in the status bar', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(source, /evaluateSeatingQuality/);
+  assert.match(source, /sp-toggle-score-analysis/);
+  assert.match(source, /renderScoreAnalysisPanel/);
+  assert.match(source, /评分 \$\{quality\.percent\} · \$\{quality\.feasible \? '可行' : '需调整'\}/);
+  assert.match(source, /highlightScoreIssue/);
+  assert.match(source, /formatScoreMatchDetail/);
+  assert.match(source, /sp-score-analysis-match/);
+  assert.match(source, /issue\.matches\.forEach/);
+  assert.doesNotMatch(source, /shownMatches/);
+  assert.doesNotMatch(source, /slice\(0, 4\)/);
+  assert.doesNotMatch(source, /还有 \$\{issue\.matches\.length - shownMatches\.length\} 项/);
+  assert.match(source, /sp-score-analysis/);
+  assert.match(styles, /\.sp-score-analysis/);
+  assert.match(styles, /\.sp-score-analysis\s*{[^}]*max-height: min\(36vh, 360px\)/s);
+  assert.match(styles, /\.sp-score-analysis\s*{[^}]*overflow-y: auto/s);
+  assert.match(styles, /\.sp-score-analysis-detail\s*{[^}]*white-space: normal/s);
+  assert.match(styles, /\.sp-score-analysis-match\s*{[^}]*overflow-wrap: anywhere/s);
+  assert.match(styles, /\.sp-score-analysis-item/);
+});
+
+test('collapsed AI seating assistant icon can be dragged without opening the panel', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  assert.match(source, /startChatIconDrag/);
+  assert.match(source, /CHAT_DRAG_THRESHOLD/);
+  assert.match(source, /suppressChatToggleClick/);
+  assert.match(source, /toggle\?\.addEventListener\('pointerdown', e => this\.startChatIconDrag\(e\)\)/);
+});
+
+test('arrange prompt examples replace automatic suggestion opening', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  assert.match(source, /_arrangeSuggestionDismissedText/);
+  assert.match(source, /scheduleSuggestionRefresh\(kind, immediate = false, options = \{\}\)/);
+  assert.match(source, /sp-arrange-examples/);
+  assert.match(source, /applyArrangeExample/);
+  assert.doesNotMatch(source, /source: 'input'/);
+  assert.doesNotMatch(source, /arrangePrompt\?\.addEventListener\('input'/);
+  assert.doesNotMatch(source, /arrangePrompt\?\.addEventListener\('focus', \(\) => this\.scheduleSuggestionRefresh\('arrange', true\)\)/);
+  assert.doesNotMatch(source, /scheduleSuggestionRefresh\('arrange', true\)/);
 });

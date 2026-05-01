@@ -1,28 +1,61 @@
-# plan.md - 座位表工具稳定化计划
+# ICeCream 座位助手大改/小改逻辑重构计划
 
 ## Summary
-- 目标：优先把座位表工具修到老师可实际使用，重点解决“AI 微调对话说了但座位不变”，同时补上最容易踩坑的导入、约束校验、状态一致性和工具生命周期问题。
-- 当前发现：AI 对话依赖 LLM 返回精确姓名和 0 基坐标，失败时静默；前端执行座位操作没有完整校验，可能移动到过道、丢失学生、撤销无效；`.xlsx/.xls` 页面说支持但代码只按文本读取；工具关闭不调用 `destroy()`，重开会残留全局监听器。
-- 实施时先新建根目录 `plan.md` 写入本计划，再按本计划改代码；不要恢复已删除的 `IMPLEMENTATION_PLAN.md`，也不要覆盖用户现有未提交改动。
+把“排座要求”和“ICeCream 座位助手”拆成两个稳定入口：排座要求负责整张座位表生成/重排，座位助手负责当前座位表内的微调。座位助手不再靠前端散落关键词直接拍板，而由后端返回结构化意图，前端按意图展示“直接执行 / 确认批量微调 / 确认重新排座”。
 
 ## Key Changes
-- 修复 AI 微调主链路：在 `gateway/routes/tools.js` 中让 `/api/tools/seating/chat` 返回更稳定的结构化操作，操作优先使用学生 `id`，兼容姓名；`row/col` 统一为内部 0 基坐标，回复文本给老师时使用 1 基表达。
-- 在前端抽出可测试的座位状态核心，例如 `public/js/tools/seating-core.js`：负责学生定位、姓名/id 解析、座位可用性校验、交换/移动、过道拒绝、越界拒绝、重复/丢失学生检测、受影响座位返回。
-- 改造 `seating-planner.js` 的 `executeChatOps()`：执行前保存快照；逐条应用操作；对失败操作显示原因；成功后统一 `renderGrid()`、`renderPodiumSeats()`、`updateStatus()`、高亮变化；撤销/重做对 AI 操作必须有效。
-- 补真实约束校验：生成后和 AI 调整后重新计算硬约束/软约束状态，至少覆盖前排、后排、不能相邻、必须相邻、希望相邻；不要再无条件把 `unsatisfied` 清空。
-- 补实际可用性问题：学生数量超过可用座位时显示未安排人数；设置过道/缩小行列不能静默隐藏已安排学生；关闭工具时调用当前工具的 `destroy()`，避免重复事件监听。
-- 真正支持 Excel 名单导入：新增后端文件解析能力，接受 `.csv/.txt/.xlsx/.xls`，使用 XLSX 解析后复用现有学生文本解析逻辑；前端对 Excel 文件走文件上传接口，普通文本仍可本地读入后调用 `/parse-students`。
-- 保持接口兼容：`/api/tools/seating/parse-students` 继续支持文本；`/api/tools/seating/chat` 仍返回 `{ success, data: { reply, operations } }`，可额外返回 `warnings/rejected` 供前端展示。
+- 增加统一聊天意图：`direct_edit`、`batch_tune`、`regenerate`、`explain`、`clarify`。
+- `/api/tools/seating/chat` 返回新增字段：
+  - `intent`: 上述五类之一。
+  - `requiresConfirmation`: `batch_tune` 和 `regenerate` 为 `true`。
+  - `confirmationText`: 前端确认条文案。
+  - `arrangementPrompt`: 仅 `regenerate` 返回，用于调用现有 `/api/tools/seating/arrange`。
+- 小改规则：
+  - 明确学生 + 换座/移动/前后左右/指定排列，归为 `direct_edit`，有可执行 `operations` 时直接执行。
+  - 不能识别学生或目标位置时归为 `clarify`，只追问，不执行。
+- 批量微调规则：
+  - “分散成绩弱同学”“同桌更均衡”“把爱讲话的分开”等不改布局但影响多人，归为 `batch_tune`。
+  - 后端仍返回 `operations`，前端必须先确认再执行。
+- 大改规则：
+  - 改布局、过道、几人一组、考试模式、护法规则、重新排、整班重排、按身高/成绩全班重新安排，归为 `regenerate`。
+  - 前端显示“会重新生成整张座位表”的确认条，确认后调用现有排座生成流程。
+  - 取消现有前端 `shouldUseArrangementAssistant` 抢先判定，避免前后端规则漂移。
+
+## UI Behavior
+- `排座要求`：
+  - 保留为整张座位表生成入口。
+  - 取消输入聚焦/打字时自动上拉 AI 选择。
+  - 改成静态示例 chips 或一个“补全要求”按钮，点击后才请求建议。
+- `ICeCream 座位助手`：
+  - 去掉聊天输入框的自动上拉 AI 建议。
+  - 初始气泡保留快捷示例：检查座位、换座、分散成绩弱同学、重新排成考试模式。
+  - 发送后按后端 `intent` 渲染：直接执行、确认执行、确认重新生成、追问补充信息。
+- 确认条复用现有 `sp-chat-confirm`，但文案按意图区分：
+  - `batch_tune`: “这会批量调整当前座位，但不改变布局，确认执行吗？”
+  - `regenerate`: “这会重新生成座位表并可能大幅改变当前安排，确认继续吗？”
+
+## Implementation Notes
+- 主要改动集中在 `gateway/services/seating-chat.js`、`gateway/routes/tools.js`、`public/js/tools/seating-planner.js`。
+- 后端先用确定性规则分类，再让 AI 生成回复/operations；确定性规则优先保证“大改不会误执行成一堆 move”。
+- `regenerate` 的 `arrangementPrompt` 使用老师原始消息，并附加当前学生需求/策略仍由现有 arrange 请求携带。
+- `batch_tune` 执行前保存到 `_chatPending`，确认后调用现有 `executeChatOps`。
+- 保留本地 fallback 小改解析，但只用于 `direct_edit`，不用于 `regenerate`。
 
 ## Test Plan
-- 新增纯函数单测：AI 操作按 id/姓名交换成功、移动到空位成功、移动到已占座位按当前规则交换、过道/越界/不存在学生被拒绝、执行后学生不重复不丢失。
-- 新增约束校验单测：前排/后排、avoid、pair、prefer、过道场景、调整后重新计算状态。
-- 新增导入单测：CSV/TXT、制表符粘贴、真实 `.xlsx` 工作表解析，字段包含姓名、性别、成绩、身高。
-- 新增生命周期/回归检查：反复打开关闭座位表不会重复绑定快捷键；AI 微调后撤销能回到调整前状态。
-- 保留并运行现有 `npm test`；当前基线为 9 个测试全部通过。
+- 更新 `seating-chat.test.js`：
+  - 换座/移动识别为 `direct_edit`。
+  - “成绩弱的分散开”识别为 `batch_tune` 且需要确认。
+  - “改成考试模式/重新排/两人一组中间过道”识别为 `regenerate` 且 operations 为空。
+  - 信息不足时返回 `clarify`。
+- 更新 UI 静态测试：
+  - 不再存在聊天输入自动 suggestion 绑定。
+  - 排座要求建议改为按钮或静态 chips。
+  - `sp-chat-confirm` 支持批量微调和重新生成两类确认文案。
+- 回归测试：
+  - 现有直接换座、移动、不可坐区域 fallback、AI 排座生成、排座建议接口不破坏。
+  - `npm test` 全量通过。
 
 ## Assumptions
-- 采用“稳修可用”范围：不做全量重构，不重做 UI，只抽出必要纯函数来保证 AI 微调和导入可测试。
-- Excel 选择真正支持：新增依赖和后端解析，不只改页面文案。
-- AI 仍只负责理解自然语言并产出操作；最终能否修改座位由前端确定性校验和应用逻辑决定。
-- 软约束未满足只提示，不阻止老师手动或 AI 调整；硬约束未满足会在状态区明确警告，但不自动回滚老师确认过的调整。
+- 采用“后端结构化意图为准”的方案，前端只做展示和执行。
+- 聊天里的批量优化先做确认，不做复杂预览差异图。
+- 排座要求的 AI 建议从自动上拉改为主动点击触发，降低打字干扰。
