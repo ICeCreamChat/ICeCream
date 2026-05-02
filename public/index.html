@@ -156,8 +156,11 @@
                 <!-- 顶部栏 -->
                 <header class="header-bar">
                     <div class="header-left">
-                        <span class="status-dot"></span>
-                        <span class="header-title">ICeCream</span>
+                        <div class="ai-status ai-status--offline" id="icecream-ai-status" data-ai-status="offline"
+                            title="AI 状态检测中">
+                            <span class="status-dot" aria-hidden="true"></span>
+                            <span class="header-title" id="icecream-ai-status-label">ICeCream Offline</span>
+                        </div>
                     </div>
 
                     <!-- Mode Switcher -->

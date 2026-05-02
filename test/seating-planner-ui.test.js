@@ -118,15 +118,12 @@ test('AI seating assistant is styled as a draggable floating panel with mode tog
   assert.match(styles, /\.sp-chat-mode-btn/);
 });
 
-test('seating planner uses static arrange examples and no chat autocomplete', async () => {
+test('seating planner uses arrange completion without static prompt chips or chat autocomplete', async () => {
   const source = await readFile(sourcePath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
   assert.match(source, /id="sp-arrange-completions"/);
   assert.match(source, /id="sp-arrange-completions" class="sp-autocomplete sp-autocomplete--above sp-hidden"/);
-  assert.match(source, /sp-arrange-examples/);
-  assert.match(source, /data-arrange-example/);
-  assert.match(source, /applyArrangeExample/);
   assert.match(source, /id="sp-complete-arrange-prompt"/);
   assert.match(source, /补全要求/);
   assert.match(source, /completeArrangePrompt/);
@@ -143,6 +140,9 @@ test('seating planner uses static arrange examples and no chat autocomplete', as
   assert.match(source, /clearSuggestionState\('arrange'\)/);
   assert.match(source, /new AbortController\(\)/);
   assert.match(source, /setTimeout\(\(\) => this\.requestSuggestions\(kind\), immediate \? 0 : 600\)/);
+  assert.doesNotMatch(source, /sp-arrange-examples/);
+  assert.doesNotMatch(source, /data-arrange-example/);
+  assert.doesNotMatch(source, /applyArrangeExample/);
   assert.doesNotMatch(source, /id="sp-chat-completions"/);
   assert.doesNotMatch(source, /aria-controls="sp-chat-completions"/);
   assert.doesNotMatch(source, /handleSuggestionKeyDown\(e, 'chat'\)/);
@@ -160,8 +160,8 @@ test('seating planner uses static arrange examples and no chat autocomplete', as
   assert.doesNotMatch(styles, /\.sp-autocomplete\s*{[^}]*margin-top/s);
   assert.match(styles, /\.sp-autocomplete--above\s*{[^}]*top: auto/s);
   assert.match(styles, /\.sp-autocomplete--above\s*{[^}]*bottom: calc\(100% \+ 8px\)/s);
-  assert.match(styles, /\.sp-prompt-examples/);
-  assert.match(styles, /\.sp-prompt-example/);
+  assert.doesNotMatch(styles, /\.sp-prompt-examples/);
+  assert.doesNotMatch(styles, /\.sp-prompt-example/);
   assert.doesNotMatch(styles, /\.sp-autocomplete--chat\s*{[^}]*margin:/s);
   assert.match(styles, /\.sp-autocomplete-option/);
   assert.match(styles, /\.sp-autocomplete-option\.is-active/);
@@ -405,13 +405,13 @@ test('collapsed AI seating assistant icon can be dragged without opening the pan
   assert.match(source, /toggle\?\.addEventListener\('pointerdown', e => this\.startChatIconDrag\(e\)\)/);
 });
 
-test('arrange prompt examples replace automatic suggestion opening', async () => {
+test('arrange prompt completion stays manual without static examples or automatic opening', async () => {
   const source = await readFile(sourcePath, 'utf8');
 
   assert.match(source, /_arrangeSuggestionDismissedText/);
   assert.match(source, /scheduleSuggestionRefresh\(kind, immediate = false, options = \{\}\)/);
-  assert.match(source, /sp-arrange-examples/);
-  assert.match(source, /applyArrangeExample/);
+  assert.doesNotMatch(source, /sp-arrange-examples/);
+  assert.doesNotMatch(source, /applyArrangeExample/);
   assert.doesNotMatch(source, /source: 'input'/);
   assert.doesNotMatch(source, /arrangePrompt\?\.addEventListener\('input'/);
   assert.doesNotMatch(source, /arrangePrompt\?\.addEventListener\('focus', \(\) => this\.scheduleSuggestionRefresh\('arrange', true\)\)/);

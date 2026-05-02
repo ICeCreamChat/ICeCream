@@ -122,6 +122,10 @@ class AppLauncher {
                 }
             }
         });
+
+        window.addEventListener('icecream-ai-status-change', (event) => {
+            this._syncToolAiStatus(event.detail);
+        });
     }
 
     open() {
@@ -153,11 +157,18 @@ class AppLauncher {
                 <div class="tool-title">
                     <span>${tool.icon}</span>
                     <span>${tool.title}</span>
+                    ${this._renderToolAiStatus()}
                 </div>
-                <button class="tool-back-btn" id="tool-back-btn">
-                    <i data-lucide="arrow-left"></i>
-                    <span>返回</span>
-                </button>
+                <div class="tool-header-actions">
+                    <button type="button" class="icon-btn tool-theme-toggle" id="tool-theme-toggle" title="切换日间/夜间模式" aria-label="切换日间/夜间模式">
+                        <i data-lucide="sun" class="icon-light"></i>
+                        <i data-lucide="moon" class="icon-dark"></i>
+                    </button>
+                    <button type="button" class="tool-back-btn" id="tool-back-btn">
+                        <i data-lucide="arrow-left"></i>
+                        <span>返回</span>
+                    </button>
+                </div>
             </div>
             <div class="tool-body" id="tool-body">
                 <div style="display:flex; align-items:center; justify-content:center; height:100%; color:var(--text-muted);">
@@ -173,8 +184,11 @@ class AppLauncher {
         if (window.lucide) {
             window.lucide.createIcons();
         }
+        this._syncToolAiStatus();
+        this._syncToolThemeToggle();
 
         // Bind back button
+        document.getElementById('tool-theme-toggle')?.addEventListener('click', () => this._toggleTheme());
         document.getElementById('tool-back-btn').addEventListener('click', () => {
             this._closeTool();
         });
@@ -200,6 +214,54 @@ class AppLauncher {
                 </div>
             `;
         }
+    }
+
+    _currentAiStatus() {
+        return window.icecreamAiStatus || {
+            online: false,
+            label: 'ICeCream Offline'
+        };
+    }
+
+    _renderToolAiStatus() {
+        const status = this._currentAiStatus();
+        const online = Boolean(status.online);
+        return `
+            <div class="tool-ai-status tool-ai-status--${online ? 'online' : 'offline'}" id="tool-ai-status" data-ai-status="${online ? 'online' : 'offline'}" title="${online ? 'ICeCream Online' : 'ICeCream Offline'}">
+                <span class="tool-ai-status-dot" aria-hidden="true"></span>
+                <span class="tool-ai-status-label">ICeCream ${online ? 'Online' : 'Offline'}</span>
+            </div>
+        `;
+    }
+
+    _syncToolAiStatus(status = this._currentAiStatus()) {
+        const node = document.getElementById('tool-ai-status');
+        if (!node) return;
+        const online = Boolean(status.online);
+        const label = online ? 'ICeCream Online' : 'ICeCream Offline';
+        node.classList.toggle('tool-ai-status--online', online);
+        node.classList.toggle('tool-ai-status--offline', !online);
+        node.setAttribute('data-ai-status', online ? 'online' : 'offline');
+        node.setAttribute('title', label);
+        const labelNode = node.querySelector('.tool-ai-status-label');
+        if (labelNode) labelNode.textContent = label;
+    }
+
+    _toggleTheme() {
+        document.body.classList.toggle('light-mode');
+        const isLight = document.body.classList.contains('light-mode');
+        localStorage.setItem('theme', isLight ? 'light' : 'dark');
+        window.ThemeManager?.updateMobileStatusBar?.();
+        this._syncToolThemeToggle();
+    }
+
+    _syncToolThemeToggle() {
+        const button = document.getElementById('tool-theme-toggle');
+        if (!button) return;
+        const isLight = document.body.classList.contains('light-mode');
+        const label = isLight ? '切换到夜间模式' : '切换到日间模式';
+        button.setAttribute('title', label);
+        button.setAttribute('aria-label', label);
     }
 
     _closeTool() {

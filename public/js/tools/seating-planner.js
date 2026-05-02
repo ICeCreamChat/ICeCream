@@ -274,15 +274,6 @@ class SeatingPlanner {
         return document.getElementById('sp-arrange-prompt')?.value?.trim() || '';
     }
 
-    applyArrangeExample(text = '') {
-        const prompt = document.getElementById('sp-arrange-prompt');
-        if (!prompt || !text) return;
-        prompt.value = text;
-        prompt.focus();
-        prompt.setSelectionRange?.(prompt.value.length, prompt.value.length);
-        this.hideSuggestions('arrange');
-    }
-
     pickArrangeCompletion(suggestions = [], currentText = '') {
         const normalized = currentText
             ? this.normalizeSuggestionItems(suggestions, currentText)
@@ -928,11 +919,6 @@ class SeatingPlanner {
                             <div class="sp-autocomplete-anchor">
                                 <textarea id="sp-arrange-prompt" class="sp-arrange-prompt" rows="4" placeholder="例如：两人一组，中间留过道，讲台旁安排左右护法，护法位置要一个成绩较差一个成绩较好的" aria-autocomplete="list" aria-expanded="false" aria-controls="sp-arrange-completions"></textarea>
                                 <div id="sp-arrange-completions" class="sp-autocomplete sp-autocomplete--above sp-hidden" role="listbox"></div>
-                            </div>
-                            <div class="sp-prompt-examples" id="sp-arrange-examples" aria-label="排座要求示例">
-                                <button type="button" class="sp-prompt-example" data-arrange-example="两人一组，中间留过道，讲台旁安排左右护法">两人一组</button>
-                                <button type="button" class="sp-prompt-example" data-arrange-example="考试模式单人单座，中间和两侧都留出过道">考试模式</button>
-                                <button type="button" class="sp-prompt-example" data-arrange-example="按身高从前到后安排，视力不好的同学优先坐前排">身高照顾</button>
                             </div>
                         </section>
 
@@ -1790,9 +1776,6 @@ class SeatingPlanner {
         arrangePrompt?.addEventListener('focus', () => this.hideSuggestions('arrange'));
         arrangePrompt?.addEventListener('blur', () => setTimeout(() => this.hideSuggestions('arrange'), 120));
         $('sp-complete-arrange-prompt')?.addEventListener('click', () => this.completeArrangePrompt());
-        document.querySelectorAll('[data-arrange-example]').forEach(button => {
-            button.addEventListener('click', () => this.applyArrangeExample(button.dataset.arrangeExample));
-        });
 
         // Exports
         $('sp-export-png')?.addEventListener('click', () => this.exportPNG());

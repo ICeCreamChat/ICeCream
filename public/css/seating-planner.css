@@ -696,31 +696,6 @@
     height: 15px;
 }
 
-.sp-prompt-examples {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 8px;
-}
-
-.sp-prompt-example {
-    border: 1px solid var(--sp-border);
-    background: var(--sp-bg-input);
-    color: var(--sp-text-secondary);
-    border-radius: var(--sp-radius-sm);
-    padding: 5px 8px;
-    font-size: 0.78rem;
-    line-height: 1.2;
-    cursor: pointer;
-    transition: all var(--sp-transition-fast);
-}
-
-.sp-prompt-example:hover {
-    border-color: var(--sp-primary);
-    color: var(--sp-text-primary);
-    background: rgba(8, 145, 178, 0.14);
-}
-
 .sp-autocomplete-anchor {
     position: relative;
 }

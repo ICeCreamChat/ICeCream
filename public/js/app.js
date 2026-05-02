@@ -31,7 +31,9 @@ class ICeCreamApp {
             newChatBtn: null,
             moreBtn: null,
             dropdownMenu: null,
-            btnClear: null
+            btnClear: null,
+            aiStatus: null,
+            aiStatusLabel: null
         };
         this.codePanel = null;
     }
@@ -83,6 +85,8 @@ class ICeCreamApp {
         this.elements.dropdownMenu = document.getElementById('dropdownMenu');
         this.elements.btnClear = document.getElementById('btn-clear');
         this.elements.appsBtn = document.getElementById('apps-btn');
+        this.elements.aiStatus = document.getElementById('icecream-ai-status');
+        this.elements.aiStatusLabel = document.getElementById('icecream-ai-status-label');
     }
 
     /**
@@ -316,9 +320,12 @@ class ICeCreamApp {
         try {
             const healthResponse = await fetch('/api/health');
             if (!healthResponse.ok) {
+                this._setAiStatus({ online: false, label: 'ICeCream Offline', reason: 'gateway_unavailable' });
                 showToast('服务连接失败，请检查后端是否启动', 'error');
                 return;
             }
+
+            await this._checkAiStatus();
 
             const manimResponse = await fetch('/api/manim/status');
             const manimStatus = await manimResponse.json();
@@ -331,8 +338,44 @@ class ICeCreamApp {
             }
         } catch (error) {
             devLog.error('服务状态检查失败', error.message);
+            this._setAiStatus({ online: false, label: 'ICeCream Offline', reason: 'status_check_failed' });
             showToast('服务连接失败，请检查服务是否启动', 'error');
         }
+    }
+
+    async _checkAiStatus() {
+        try {
+            const response = await fetch('/api/ai/status');
+            if (!response.ok) throw new Error(`AI status failed: ${response.status}`);
+            const payload = await response.json();
+            this._setAiStatus(payload.data || { online: false, label: 'ICeCream Offline' });
+        } catch (error) {
+            devLog.warn('AI 状态检查失败', error.message);
+            this._setAiStatus({ online: false, label: 'ICeCream Offline', reason: 'status_check_failed' });
+        }
+    }
+
+    _setAiStatus(status = {}) {
+        const online = Boolean(status.online);
+        const label = online ? 'ICeCream Online' : 'ICeCream Offline';
+        const nextStatus = {
+            online,
+            label,
+            checkedAt: status.checkedAt || new Date().toISOString(),
+            cached: Boolean(status.cached),
+            reason: status.reason || (online ? 'ok' : 'unknown'),
+        };
+
+        this.elements.aiStatus?.classList.toggle('ai-status--online', online);
+        this.elements.aiStatus?.classList.toggle('ai-status--offline', !online);
+        this.elements.aiStatus?.setAttribute('data-ai-status', online ? 'online' : 'offline');
+        this.elements.aiStatus?.setAttribute('title', `${label}${nextStatus.cached ? '（缓存）' : ''}`);
+        if (this.elements.aiStatusLabel) {
+            this.elements.aiStatusLabel.textContent = label;
+        }
+        document.body.dataset.aiStatus = online ? 'online' : 'offline';
+        window.icecreamAiStatus = nextStatus;
+        window.dispatchEvent(new CustomEvent('icecream-ai-status-change', { detail: nextStatus }));
     }
 
     /**

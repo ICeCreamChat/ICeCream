@@ -356,6 +356,13 @@ body {
     gap: 10px;
 }
 
+.ai-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
 .status-dot {
     width: 8px;
     height: 8px;
@@ -368,6 +375,25 @@ body {
     font-family: 'JetBrains Mono', monospace;
     font-size: 14px;
     color: var(--accent-color);
+    white-space: nowrap;
+}
+
+.ai-status--online .status-dot {
+    background: var(--accent-color);
+    box-shadow: var(--accent-glow);
+}
+
+.ai-status--online .header-title {
+    color: var(--accent-color);
+}
+
+.ai-status--offline .status-dot {
+    background: #ef4444;
+    box-shadow: 0 0 14px rgba(239, 68, 68, 0.35);
+}
+
+.ai-status--offline .header-title {
+    color: #f87171;
 }
 
 .header-right {
@@ -435,14 +461,17 @@ body.light-mode .mode-tab.active {
 /* ================================
    Theme Toggle
    ================================ */
-#theme-toggle {
+#theme-toggle,
+.tool-theme-toggle {
     position: relative;
     width: 40px;
     height: 40px;
 }
 
 #theme-toggle .icon-light,
-#theme-toggle .icon-dark {
+#theme-toggle .icon-dark,
+.tool-theme-toggle .icon-light,
+.tool-theme-toggle .icon-dark {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -450,17 +479,20 @@ body.light-mode .mode-tab.active {
     transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
-#theme-toggle .icon-dark {
+#theme-toggle .icon-dark,
+.tool-theme-toggle .icon-dark {
     opacity: 0;
     transform: translate(-50%, -50%) rotate(-90deg);
 }
 
-body.light-mode #theme-toggle .icon-light {
+body.light-mode #theme-toggle .icon-light,
+body.light-mode .tool-theme-toggle .icon-light {
     opacity: 0;
     transform: translate(-50%, -50%) rotate(90deg);
 }
 
-body.light-mode #theme-toggle .icon-dark {
+body.light-mode #theme-toggle .icon-dark,
+body.light-mode .tool-theme-toggle .icon-dark {
     opacity: 1;
     transform: translate(-50%, -50%) rotate(0deg);
 }

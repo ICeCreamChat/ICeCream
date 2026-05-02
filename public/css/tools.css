@@ -226,6 +226,12 @@
     -webkit-backdrop-filter: var(--glass-blur);
 }
 
+.tool-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
 .tool-title {
     display: flex;
     align-items: center;
@@ -241,6 +247,58 @@
     height: 24px;
     color: var(--accent-color);
     filter: drop-shadow(var(--accent-glow));
+}
+
+.tool-ai-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 28px;
+    padding: 0 10px;
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.tool-ai-status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.tool-ai-status--online {
+    color: var(--accent-color);
+}
+
+.tool-ai-status--online .tool-ai-status-dot {
+    background: var(--accent-color);
+    box-shadow: var(--accent-glow);
+}
+
+.tool-ai-status--offline {
+    color: #f87171;
+}
+
+.tool-ai-status--offline .tool-ai-status-dot {
+    background: #ef4444;
+    box-shadow: 0 0 14px rgba(239, 68, 68, 0.35);
+}
+
+.tool-theme-toggle {
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+}
+
+.tool-theme-toggle:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(0, 240, 255, 0.3);
 }
 
 .tool-back-btn {
@@ -330,6 +388,15 @@ body.light-mode .tool-back-btn:hover {
     color: var(--accent-color);
 }
 
+body.light-mode .tool-theme-toggle {
+    background: rgba(0, 0, 0, 0.04);
+}
+
+body.light-mode .tool-theme-toggle:hover {
+    background: rgba(14, 165, 233, 0.12);
+    border-color: var(--accent-color);
+}
+
 body.light-mode .tool-body::-webkit-scrollbar-thumb {
     background: rgba(0, 0, 0, 0.1);
 }
@@ -408,6 +475,35 @@ body.light-mode .tool-body::-webkit-scrollbar-thumb {
 
     .app-launcher-title {
         font-size: 1.25rem;
+    }
+
+    .tool-header {
+        gap: 12px;
+        padding: 12px 14px;
+    }
+
+    .tool-header-actions {
+        gap: 8px;
+    }
+
+    .tool-ai-status {
+        justify-content: center;
+        width: 28px;
+        padding: 0 8px;
+        font-size: 0.68rem;
+    }
+
+    .tool-ai-status-label,
+    .tool-back-btn span {
+        display: none;
+    }
+
+    .tool-back-btn {
+        width: 40px;
+        height: 40px;
+        justify-content: center;
+        padding: 0;
+        border-radius: 50%;
     }
 }
 
