@@ -41,6 +41,22 @@ test('seating planner shows clearer strategy labels and applied strategy status'
   assert.match(source, /appliedStrategies/);
 });
 
+test('seating planner surfaces the Timefold arrangement source in status', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(source, /arrangementSource/);
+  assert.match(source, /source: data\.source \|\| null/);
+  assert.match(source, /Timefold 优化/);
+  assert.match(source, /arrangementInterpretation/);
+  assert.match(source, /explainButton\.id = 'sp-toggle-arrangement-explain'/);
+  assert.match(source, /renderArrangementExplainPanel/);
+  assert.match(source, /Timefold 负责学生分配，不改变布局列数/);
+  assert.match(source, /sp-status-item--solver/);
+  assert.match(styles, /\.sp-arrangement-explain/);
+  assert.match(styles, /\.sp-status-item--solver/);
+});
+
 test('seating planner frames constraints as student seating needs in the UI', async () => {
   const source = await readFile(sourcePath, 'utf8');
 

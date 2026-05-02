@@ -19,7 +19,7 @@ function asText(value) {
     return String(value ?? '').trim();
 }
 
-function numberValue(value, fallback = 0) {
+function numberValue(value, fallback = null) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
 }
@@ -195,8 +195,8 @@ function buildStudentAssignments(request, guardianIds) {
             id: student.id,
             name: student.name || student.id,
             gender: normalizeGender(student.gender),
-            grade: numberValue(student.grade, 0),
-            height: numberValue(student.height, 0),
+            grade: numberValue(student.grade),
+            height: numberValue(student.height),
             mustFrontRow: false,
             mustBackRow: false,
             mustPairWith: [],
@@ -248,8 +248,8 @@ function buildConstraintConfig(layout, spec) {
     return {
         frontRowThreshold,
         backRowThreshold,
-        genderBalance: boolValue(policy.genderBalance, false),
-        heightOrder: boolValue(policy.heightOrder, false),
+        genderBalanceEnabled: boolValue(policy.genderBalance, false),
+        heightOrderEnabled: boolValue(policy.heightOrder, false),
         gradeStrategy: asText(policy.gradeStrategy || 'none') || 'none',
     };
 }
@@ -319,6 +319,7 @@ export async function timefoldSolve(problem, {
     }
     const fetchClient = resolveFetch(fetchImpl);
     const deadline = Date.now() + timeout;
+    const startedAt = Date.now();
     let jobId = null;
 
     const remaining = () => Math.max(1, deadline - Date.now());
@@ -351,7 +352,10 @@ export async function timefoldSolve(problem, {
         if (Number(solution.hardScore ?? 0) < 0) {
             throw new TimefoldUnavailableError('Timefold returned a hard constraint violation', 'hard_score_violation');
         }
-        return transformSolutionToAssignments(solution);
+        return {
+            ...transformSolutionToAssignments(solution),
+            durationMs: Date.now() - startedAt,
+        };
     } finally {
         if (jobId) {
             fetchClient(`${solverUrl}/seating-solutions/${encodeURIComponent(jobId)}`, { method: 'DELETE' }).catch(() => {});

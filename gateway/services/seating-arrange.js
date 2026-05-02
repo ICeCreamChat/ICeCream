@@ -612,14 +612,47 @@ function positiveInt(value, fallback, min = 1, max = Number.MAX_SAFE_INTEGER) {
     return Math.max(min, Math.min(max, parsed));
 }
 
+const NATURAL_NUMBER_PATTERN = '[1-9]\\d*|[一二两三四五六七八九十]';
+
+function naturalNumberFromMatch(match) {
+    return match ? chineseNumberValue(match[1]) : NaN;
+}
+
+function extractGroupSize(text) {
+    return naturalNumberFromMatch(text.match(new RegExp(`(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?人一组`)));
+}
+
+function hasGroupColumnWording(text) {
+    return /一组是?一列|每组一列|每列一组|一列一组|一组一列|组块列/.test(text);
+}
+
+function extractColumnCount(text, { physicalOnly = false } = {}) {
+    const pattern = new RegExp(`(一共|共|总共|合计|分成|分为|排成)?\\s*(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?(?:${physicalOnly ? '(?:物理列|座位列|列座位|列桌|列座)' : '列'})`, 'g');
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+        const count = chineseNumberValue(match[2]);
+        if (!Number.isInteger(count) || count <= 0) continue;
+        if (!match[1] && count === 1) continue;
+        const tail = text.slice(match.index, match.index + match[0].length + 4);
+        const physical = /物理列|座位列|列座位|列桌|列座/.test(tail);
+        if (physicalOnly && physical) return count;
+        if (!physicalOnly && !physical) return count;
+    }
+    return 0;
+}
+
 function inferArrangementSpecFromPrompt(prompt = '') {
     const text = asText(prompt);
-    const explicitGroup = text.match(/([1-9]\d*|[一二两三四五六七八九十])\s*(?:个)?人一组/);
-    const groupSize = explicitGroup ? chineseNumberValue(explicitGroup[1]) : 1;
+    const groupSize = extractGroupSize(text) || 1;
     const wantsGroup = Number.isInteger(groupSize) && groupSize > 1;
     const wantsBothAisles = /横.*竖|竖.*横|横过道.*竖过道|竖过道.*横过道/.test(text);
     const wantsVerticalAisle = wantsBothAisles || /竖过道|纵过道|列过道|组间过道|每组之间.*过道/.test(text);
     const wantsHorizontalAisle = wantsBothAisles || /横过道|行过道|每组之间.*横|组与组之间.*横/.test(text);
+    const groupColumnWording = hasGroupColumnWording(text);
+    const physicalCols = extractColumnCount(text, { physicalOnly: true });
+    const groupsPerRow = wantsGroup && !physicalCols
+        ? extractColumnCount(text, { physicalOnly: false })
+        : 0;
     const guardianEnabled = /护法|讲台旁|左右/.test(text);
     const lowestGradeGuardianIndex = text.search(/成绩.{0,8}(最差|最低|差|低)|最差.{0,8}成绩|最低.{0,8}成绩/);
     const topGradeGuardianIndex = text.search(/(成绩.{0,8}(比较好|较好|好|优秀|高|最高)|高分|优秀|前\s*20\s*%|前百分之二十).{0,12}(护法|讲台旁|左右|坐)|(?:护法|讲台旁|左右).{0,12}(成绩.{0,8}(比较好|较好|好|优秀|高|最高)|高分|优秀|前\s*20\s*%|前百分之二十)/);
@@ -631,8 +664,10 @@ function inferArrangementSpecFromPrompt(prompt = '') {
     const singleMode = /考试|单人|单座/.test(text);
     return {
         groupSize: Number.isInteger(groupSize) && groupSize > 0 ? groupSize : 1,
+        groupsPerRow: Number.isInteger(groupsPerRow) && groupsPerRow > 0 ? groupsPerRow : 0,
+        physicalCols: Number.isInteger(physicalCols) && physicalCols > 0 ? physicalCols : 0,
         aislePolicy: {
-            verticalBetweenGroups: wantsVerticalAisle,
+            verticalBetweenGroups: wantsVerticalAisle || Boolean(groupColumnWording || groupsPerRow),
             horizontalBetweenGroupRows: wantsHorizontalAisle,
         },
         guardianPolicy: {
@@ -642,6 +677,11 @@ function inferArrangementSpecFromPrompt(prompt = '') {
         layoutMode: singleMode ? 'single' : (wantsGroup ? 'grouped' : 'standard'),
         placementPolicy: {},
         keepPreviousLayout: /保持|沿用|不改变|当前布局|原布局/.test(text),
+        assumptions: [
+            ...(groupColumnWording && groupsPerRow ? [`已理解为每行 ${groupsPerRow} 个组块列`] : []),
+            ...(physicalCols ? [`已理解为 ${physicalCols} 个物理座位列`] : []),
+            ...(groupColumnWording || groupsPerRow ? ['组块之间默认留竖过道'] : []),
+        ],
     };
 }
 
@@ -772,6 +812,14 @@ function normalizeArrangementSpec(raw = {}, request = {}) {
     const placementPolicy = raw.placementPolicy && typeof raw.placementPolicy === 'object' ? raw.placementPolicy : {};
     const groupSize = positiveInt(raw.groupSize ?? raw.group_size, inferred.groupSize, 1, 12);
     const layoutMode = asText(raw.layoutMode || raw.layout_mode || inferred.layoutMode) || 'standard';
+    const rawGroupsPerRow = positiveInt(raw.groupsPerRow ?? raw.groups_per_row, 0, 0, 1000000);
+    const rawPhysicalCols = positiveInt(raw.physicalCols ?? raw.physical_cols ?? raw.cols, 0, 0, 1000000);
+    const groupsPerRow = inferred.groupsPerRow > 0 ? inferred.groupsPerRow : rawGroupsPerRow;
+    const physicalCols = inferred.physicalCols > 0 ? inferred.physicalCols : rawPhysicalCols;
+    const aislePolicy = normalizeAislePolicy(raw.aislePolicy || raw.aisles || {}, inferred.aislePolicy);
+    if (inferred.aislePolicy?.verticalBetweenGroups) {
+        aislePolicy.verticalBetweenGroups = true;
+    }
     const promptPlacementOverrides = inferPlacementOverridesFromPrompt(request.prompt);
     const rawGuardianPolicy = raw.guardianPolicy || raw.guardians || null;
     const guardianPolicy = normalizeGuardianPolicy(rawGuardianPolicy || {}, inferred.guardianPolicy);
@@ -781,8 +829,9 @@ function normalizeArrangementSpec(raw = {}, request = {}) {
     }
     return {
         groupSize,
-        groupsPerRow: positiveInt(raw.groupsPerRow ?? raw.groups_per_row, 0, 0, 1000000),
-        aislePolicy: normalizeAislePolicy(raw.aislePolicy || raw.aisles || {}, inferred.aislePolicy),
+        groupsPerRow: physicalCols > 0 ? 0 : groupsPerRow,
+        physicalCols,
+        aislePolicy,
         guardianPolicy,
         layoutMode,
         placementPolicy: normalizeUiPlacementPolicy({
@@ -792,17 +841,22 @@ function normalizeArrangementSpec(raw = {}, request = {}) {
         }),
         strategyOverrides: promptPlacementOverrides,
         keepPreviousLayout: boolValue(raw.keepPreviousLayout ?? raw.keep_previous_layout, inferred.keepPreviousLayout),
+        assumptions: inferred.assumptions || [],
         notes: asText(raw.notes || raw.reasoning),
     };
 }
 
 function buildSpecMessages(request) {
+    const hints = inferArrangementSpecFromPrompt(request.prompt);
     const system = `你是座位需求解析器。只把老师的自然语言需求解析成规则 JSON，不要安排任何学生坐标。
 规则:
 - 只输出 JSON，不要 markdown。
 - 不要返回 assignments、classroomLayout、学生坐标或完整名单。
 - 如果老师没有限制容量，布局应允许本地算法自动扩容。
 - groupSize 表示几个人一组；aislePolicy 表示组间是否留横/竖过道。
+- groupsPerRow 表示每行有几个组块；physicalCols 表示物理座位列数，二者不要混用。
+- 如果老师说“一组是一列/每组一列/每列一组”，再说“一共 N 列”，应输出 groupsPerRow=N，并默认 verticalBetweenGroups=true。
+- 如果老师说“N列座位/物理列”，应输出 physicalCols=N，不要输出 groupsPerRow=N。
 - guardianPolicy 用于左右护法规则，例如 lowest_grade 表示成绩最低的同学，top_grade_percent 表示成绩前20%的同学。
 - 如果老师要求左右护法有组合条件，请输出 guardianPolicy.slots，必须是两个对象，例如 [{"gender":"M","strategy":"lowest_grade"},{"gender":"F","strategy":"top_grade_percent"}]。
 - 护法位必须按老师最新自然语言需求输出；遇到“后来/改成/后面说”时以后面的要求为准。`;
@@ -810,6 +864,7 @@ function buildSpecMessages(request) {
         stage: 'arrangement_spec',
         prompt: request.prompt,
         studentCount: request.students.length,
+        hints,
         constraints: request.constraints,
         strategy: request.strategy,
         previousLayoutSummary: request.previousLayout ? {
@@ -821,6 +876,8 @@ function buildSpecMessages(request) {
         } : null,
         outputSchema: {
             groupSize: 3,
+            groupsPerRow: 5,
+            physicalCols: 0,
             aislePolicy: { verticalBetweenGroups: true, horizontalBetweenGroupRows: true },
             guardianPolicy: { enabled: true, strategy: 'lowest_grade', slots: [] },
             layoutMode: 'grouped',
@@ -900,9 +957,12 @@ function buildExpandableClassroomLayout({ regularSeatTarget, spec, previousLayou
     const grouped = groupSize > 1 || spec.layoutMode === 'grouped';
     const verticalAisles = Boolean(spec.aislePolicy.verticalBetweenGroups && grouped);
     const horizontalAisles = Boolean(spec.aislePolicy.horizontalBetweenGroupRows && grouped);
+    const requestedPhysicalCols = positiveInt(spec.physicalCols, 0, 0, 1000000);
 
     if (!grouped) {
-        const cols = Math.min(12, Math.max(4, Math.ceil(Math.sqrt(target))));
+        const cols = requestedPhysicalCols > 0
+            ? requestedPhysicalCols
+            : Math.min(12, Math.max(4, Math.ceil(Math.sqrt(target))));
         const rows = Math.ceil(target / cols);
         const cells = Array.from({ length: rows }, () => Array(cols).fill(CELL.SEAT));
         const groups = Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => r * cols + c + 1));
@@ -914,6 +974,24 @@ function buildExpandableClassroomLayout({ regularSeatTarget, spec, previousLayou
             guardians: { enabled: Boolean(spec.guardianPolicy.enabled), left: null, right: null },
             template: 'ai-local',
             groupSize: 1,
+        };
+    }
+
+    if (requestedPhysicalCols > 0 && !spec.groupsPerRow) {
+        const cols = requestedPhysicalCols;
+        const rows = Math.ceil(target / cols);
+        const cells = Array.from({ length: rows }, () => Array(cols).fill(CELL.SEAT));
+        const groups = Array.from({ length: rows }, (_, r) => (
+            Array.from({ length: cols }, (_, c) => Math.floor(r / groupSize) * cols + c + 1)
+        ));
+        return {
+            rows,
+            cols,
+            cells,
+            groups,
+            guardians: { enabled: Boolean(spec.guardianPolicy.enabled), left: null, right: null },
+            template: 'ai-local',
+            groupSize,
         };
     }
 
@@ -1524,6 +1602,69 @@ function appliedStrategiesFor(spec) {
     return applied;
 }
 
+function buildLayoutInterpretation({ request, spec, layout }) {
+    const logicalGroupRows = spec.groupsPerRow > 0
+        ? Math.ceil(Math.ceil(request.students.length / Math.max(1, spec.groupSize || 1)) / spec.groupsPerRow)
+        : layout.rows;
+    const parts = [];
+    if ((spec.groupSize || 1) > 1 && spec.groupsPerRow > 0) {
+        parts.push(`已理解为：${spec.groupSize === 2 ? '两人' : `${spec.groupSize}人`}一组，每行 ${spec.groupsPerRow} 组，组间${spec.aislePolicy?.verticalBetweenGroups ? '竖过道' : '不留竖过道'}`);
+    } else if (spec.physicalCols > 0) {
+        parts.push(`已理解为：${spec.physicalCols} 个物理座位列`);
+    } else if ((spec.groupSize || 1) > 1) {
+        parts.push(`已理解为：${spec.groupSize}人一组`);
+    } else {
+        parts.push('已理解为：普通座位布局');
+    }
+    parts.push(`布局：${logicalGroupRows} 排 × ${spec.groupsPerRow || layout.cols} ${spec.groupsPerRow ? '组' : '列'} × ${spec.groupsPerRow ? `${spec.groupSize} 座` : '座位'}，可用 ${gridSeatCount(layout)} 个座位`);
+    return {
+        summary: parts.join('；'),
+        assumptions: spec.assumptions || [],
+        confidence: (spec.groupsPerRow > 0 || spec.physicalCols > 0) ? 'high' : 'medium',
+        layoutFacts: {
+            groupSize: spec.groupSize || 1,
+            groupsPerRow: spec.groupsPerRow || 0,
+            physicalCols: spec.physicalCols || 0,
+            rows: layout.rows,
+            cols: layout.cols,
+            regularSeatCount: gridSeatCount(layout),
+            verticalBetweenGroups: Boolean(spec.aislePolicy?.verticalBetweenGroups),
+            horizontalBetweenGroupRows: Boolean(spec.aislePolicy?.horizontalBetweenGroupRows),
+        },
+    };
+}
+
+function buildSolverFacts({ source, solverStats }) {
+    if (source === 'timefold_solver') {
+        return {
+            used: true,
+            name: 'Timefold Solver',
+            hardScore: solverStats.hardScore,
+            softScore: solverStats.softScore,
+            score: solverStats.score,
+            durationMs: solverStats.durationMs,
+            summary: `Timefold Solver 已优化学生分配，硬约束 ${solverStats.hardScore ?? 0}，软分数 ${solverStats.softScore ?? 0}`,
+        };
+    }
+    return {
+        used: false,
+        name: '本地排座',
+        fallbackReason: solverStats.fallbackReason || null,
+        summary: solverStats.fallbackReason
+            ? `Timefold 不可用，已回退本地排座（${solverStats.fallbackReason}）`
+            : '本地排座生成结果',
+    };
+}
+
+function buildArrangementInterpretation({ request, spec, layout, source, solverStats }) {
+    const layoutInterpretation = buildLayoutInterpretation({ request, spec, layout });
+    const solverFacts = buildSolverFacts({ source, solverStats });
+    return {
+        ...layoutInterpretation,
+        solverFacts,
+    };
+}
+
 function strategyOverrideWarnings(spec, uiStrategy = {}) {
     const warnings = [];
     const overrides = spec.strategyOverrides || {};
@@ -1568,6 +1709,15 @@ async function buildLocalArrangement({ request, spec, specWarnings = [], env = p
     let seating;
     let source = 'ai_spec_local_algorithm';
     const solverWarnings = [];
+    const solverStats = {
+        solverUsed: false,
+        solverName: '本地排座',
+        hardScore: null,
+        softScore: null,
+        score: null,
+        durationMs: null,
+        fallbackReason: null,
+    };
     try {
         seating = await solveWithTimefold({
             request,
@@ -1578,7 +1728,16 @@ async function buildLocalArrangement({ request, spec, specWarnings = [], env = p
             fetchImpl,
         });
         source = 'timefold_solver';
+        solverStats.solverUsed = true;
+        solverStats.solverName = 'Timefold Solver';
+        solverStats.hardScore = seating.hardScore ?? null;
+        solverStats.softScore = seating.softScore ?? null;
+        solverStats.score = seating.score ?? null;
+        solverStats.durationMs = seating.durationMs ?? null;
     } catch (error) {
+        solverStats.fallbackReason = error instanceof TimefoldUnavailableError
+            ? error.reason
+            : (error?.message || 'unknown_error');
         if (!(error instanceof TimefoldUnavailableError && error.reason === 'not_configured')
             && asText(env?.TIMEFOLD_SOLVER_URL)) {
             solverWarnings.push(`Timefold solver unavailable (${error.reason || error.message}); used local seating algorithm.`);
@@ -1593,6 +1752,13 @@ async function buildLocalArrangement({ request, spec, specWarnings = [], env = p
         ...solverWarnings,
         ...normalizeWarnings(seating.warnings),
     ];
+    const interpretation = buildArrangementInterpretation({
+        request,
+        spec,
+        layout: classroomLayout,
+        source,
+        solverStats,
+    });
     return {
         reply: `已根据需求自动扩容并安排 ${request.students.length - seating.unassigned.length} 名学生。`,
         classroomLayout,
@@ -1605,6 +1771,7 @@ async function buildLocalArrangement({ request, spec, specWarnings = [], env = p
             ? 'Timefold solver generated the seating plan from the parsed constraints.'
             : (spec.notes || 'AI 解析需求，本地算法稳定生成完整座位表。'),
         source,
+        interpretation,
         arrangementSpec: spec,
         stats: {
             studentCount: request.students.length,
@@ -1613,6 +1780,7 @@ async function buildLocalArrangement({ request, spec, specWarnings = [], env = p
             rows: classroomLayout.rows,
             cols: classroomLayout.cols,
             appliedStrategies: appliedStrategiesFor(spec),
+            ...solverStats,
         },
     };
 }
@@ -1638,6 +1806,7 @@ export async function runAiDrivenArrangement({
         arrangementSpec: arrangement.arrangementSpec,
         stats: arrangement.stats,
         unsatisfied: arrangement.unsatisfied,
+        interpretation: arrangement.interpretation,
     };
 }
 

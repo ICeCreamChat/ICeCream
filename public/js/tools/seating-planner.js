@@ -81,8 +81,11 @@ class SeatingPlanner {
         this._constraintEvaluation = { total: 0, satisfied: 0, unsatisfied: [], hardUnsatisfied: [], softUnsatisfied: [] };
         this._qualityEvaluation = { feasible: true, hardScore: 0, softScore: 0, percent: 100, label: '优秀', constraints: [], topIssues: [], hardViolationCount: 0, softViolationCount: 0 };
         this.arrangementStats = null;
+        this.arrangementSource = null;
+        this.arrangementInterpretation = null;
         this.showSeatDetails = true;
         this.showScoreAnalysis = false;
+        this.showArrangementExplain = false;
     }
 
     // ========== Constants ==========
@@ -471,7 +474,9 @@ class SeatingPlanner {
             unassigned,
             warnings: Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [],
             reasoning: data.reasoning || '',
+            source: data.source || null,
             stats: data.stats || null,
+            interpretation: data.interpretation || null,
             arrangementSpec: data.arrangementSpec || null,
         };
     }
@@ -488,6 +493,8 @@ class SeatingPlanner {
         this.classroomLayout.guardians.enabled = Boolean(this.classroomLayout.guardians.enabled || this.guardians[0] || this.guardians[1]);
         this.unassigned = [...arrangement.unassigned];
         this.arrangementStats = arrangement.stats || null;
+        this.arrangementSource = arrangement.source || null;
+        this.arrangementInterpretation = arrangement.interpretation || null;
 
         this.layout = Array.from({ length: this.rows }, () => Array(this.cols).fill(null));
         for (const assignment of arrangement.assignments) {
@@ -979,6 +986,7 @@ class SeatingPlanner {
                             </div>
                             <div class="sp-status-right"></div>
                         </div>
+                        <div class="sp-arrangement-explain sp-hidden" id="sp-arrangement-explain" aria-live="polite"></div>
                         <div class="sp-score-analysis sp-hidden" id="sp-score-analysis" aria-live="polite"></div>
 
                         <!-- AI Floating Chat Bar -->
@@ -1733,6 +1741,9 @@ class SeatingPlanner {
             this._buildStudentMap();
             this.unassigned = [];
             this.arrangementStats = null;
+            this.arrangementSource = null;
+            this.arrangementInterpretation = null;
+            this.showArrangementExplain = false;
             $('sp-student-count').innerHTML = '<i data-lucide="users"></i><span>0 人</span>';
             $('sp-students-preview').innerHTML = '';
             $('sp-students-input').value = '';
@@ -1750,6 +1761,13 @@ class SeatingPlanner {
 
         if (this._seatDetailsToggleHandler) document.removeEventListener('click', this._seatDetailsToggleHandler);
         this._seatDetailsToggleHandler = e => {
+            const explainToggle = e.target.closest?.('#sp-toggle-arrangement-explain');
+            if (explainToggle) {
+                this.showArrangementExplain = !this.showArrangementExplain;
+                this.updateStatus();
+                return;
+            }
+
             const scoreToggle = e.target.closest?.('#sp-toggle-score-analysis');
             if (scoreToggle) {
                 this.showScoreAnalysis = !this.showScoreAnalysis;
@@ -4496,6 +4514,18 @@ class SeatingPlanner {
         const statusRight = document.querySelector('#sp-status .sp-status-right');
         if (!statusRight) return;
 
+        if (this.arrangementInterpretation || this.arrangementStats) {
+            const explainButton = document.createElement('button');
+            explainButton.type = 'button';
+            explainButton.id = 'sp-toggle-arrangement-explain';
+            explainButton.className = 'sp-icon-btn sp-seat-details-toggle';
+            explainButton.title = this.showArrangementExplain ? '隐藏需求理解与优化说明' : '显示需求理解与优化说明';
+            explainButton.setAttribute('aria-label', explainButton.title);
+            explainButton.setAttribute('aria-pressed', String(this.showArrangementExplain));
+            explainButton.innerHTML = '<i data-lucide="info"></i>';
+            statusRight.appendChild(explainButton);
+        }
+
         const scoreButton = document.createElement('button');
         scoreButton.type = 'button';
         scoreButton.id = 'sp-toggle-score-analysis';
@@ -4529,6 +4559,77 @@ class SeatingPlanner {
             return `${subject}：应${match.expected}，当前${match.actual}`;
         }
         return `${subject}：${reason}`;
+    }
+
+    renderArrangementExplainPanel() {
+        const panel = document.getElementById('sp-arrangement-explain');
+        if (!panel) return;
+
+        panel.replaceChildren();
+        if (!this.showArrangementExplain) {
+            panel.classList.add('sp-hidden');
+            return;
+        }
+
+        const interpretation = this.arrangementInterpretation || {};
+        const stats = this.arrangementStats || {};
+        const layoutFacts = interpretation.layoutFacts || {};
+        const solverFacts = interpretation.solverFacts || {};
+        panel.classList.remove('sp-hidden');
+
+        const header = document.createElement('div');
+        header.className = 'sp-arrangement-explain-header';
+        const title = document.createElement('strong');
+        title.textContent = '需求理解';
+        const confidence = document.createElement('span');
+        confidence.textContent = interpretation.confidence ? `置信度：${interpretation.confidence}` : '';
+        header.append(title, confidence);
+        panel.appendChild(header);
+
+        const summary = document.createElement('p');
+        summary.className = 'sp-arrangement-explain-summary';
+        summary.textContent = interpretation.summary || '已根据排座要求生成布局。';
+        panel.appendChild(summary);
+
+        const grid = document.createElement('div');
+        grid.className = 'sp-arrangement-explain-grid';
+        const rows = [
+            ['布局', layoutFacts.groupsPerRow
+                ? `${Math.ceil((stats.studentCount || this.students.length || 0) / Math.max(1, (layoutFacts.groupsPerRow || 1) * (layoutFacts.groupSize || 1)))} 排 × ${layoutFacts.groupsPerRow} 组 × ${layoutFacts.groupSize} 座`
+                : `${layoutFacts.rows || this.rows} 排 × ${layoutFacts.physicalCols || layoutFacts.cols || this.cols} 列`],
+            ['过道', layoutFacts.verticalBetweenGroups ? '组间竖过道' : '无组间竖过道'],
+            ['优化', solverFacts.used ? 'Timefold Solver' : '本地排座'],
+            ['说明', 'Timefold 负责学生分配，不改变布局列数'],
+        ];
+        if (solverFacts.used || stats.solverUsed) {
+            rows.push(['分数', `硬约束 ${stats.hardScore ?? solverFacts.hardScore ?? 0} · 软分数 ${stats.softScore ?? solverFacts.softScore ?? 0}`]);
+            if (Number.isFinite(Number(stats.durationMs ?? solverFacts.durationMs))) {
+                rows.push(['用时', `${stats.durationMs ?? solverFacts.durationMs} ms`]);
+            }
+        } else if (stats.fallbackReason || solverFacts.fallbackReason) {
+            rows.push(['回退', stats.fallbackReason || solverFacts.fallbackReason]);
+        }
+        for (const [label, value] of rows) {
+            const item = document.createElement('div');
+            item.className = 'sp-arrangement-explain-item';
+            const name = document.createElement('span');
+            name.textContent = label;
+            const detail = document.createElement('strong');
+            detail.textContent = String(value || '-');
+            item.append(name, detail);
+            grid.appendChild(item);
+        }
+        panel.appendChild(grid);
+
+        const assumptions = Array.isArray(interpretation.assumptions)
+            ? interpretation.assumptions.filter(Boolean)
+            : [];
+        if (assumptions.length) {
+            const note = document.createElement('div');
+            note.className = 'sp-arrangement-explain-note';
+            note.textContent = `自动推断：${assumptions.join('；')}`;
+            panel.appendChild(note);
+        }
     }
 
     renderScoreAnalysisPanel() {
@@ -4633,12 +4734,21 @@ class SeatingPlanner {
         const appliedStrategies = Array.isArray(this.arrangementStats?.appliedStrategies)
             ? this.arrangementStats.appliedStrategies.filter(Boolean)
             : [];
+        const sourceLabel = this.arrangementSource === 'timefold_solver'
+            ? 'Timefold 优化'
+            : (this.arrangementSource ? '本地排座' : '');
+        const sourceIcon = this.arrangementSource === 'timefold_solver' ? 'cpu' : 'shuffle';
         let html = `
             <div class="sp-status-left">
                 <span class="sp-status-item ${quality.feasible ? 'sp-status-item--success' : 'sp-status-item--warning'}">
                     <i data-lucide="${quality.feasible ? 'badge-check' : 'alert-triangle'}"></i>
                     评分 ${quality.percent} · ${quality.feasible ? '可行' : '需调整'}
                 </span>
+                ${sourceLabel ? `
+                <span class="sp-status-item sp-status-item--solver">
+                    <i data-lucide="${sourceIcon}"></i>
+                    ${sourceLabel}
+                </span>` : ''}
                 <span class="sp-status-item sp-status-item--success">
                     <i data-lucide="check-circle"></i>
                     满足 ${evaluation.satisfied}/${evaluation.total} 需求
@@ -4687,7 +4797,25 @@ class SeatingPlanner {
 
         html += '</div><div class="sp-status-right"></div>';
         status.innerHTML = sanitizeHtml(html);
+        const solverStatus = status.querySelector('.sp-status-item--solver');
+        if (solverStatus) {
+            solverStatus.setAttribute('role', 'button');
+            solverStatus.setAttribute('tabindex', '0');
+            solverStatus.setAttribute('aria-pressed', String(this.showArrangementExplain));
+            solverStatus.addEventListener('click', () => {
+                this.showArrangementExplain = !this.showArrangementExplain;
+                this.updateStatus();
+            });
+            solverStatus.addEventListener('keydown', event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    this.showArrangementExplain = !this.showArrangementExplain;
+                    this.updateStatus();
+                }
+            });
+        }
         this.renderSeatDetailsToggle();
+        this.renderArrangementExplainPanel();
         this.renderScoreAnalysisPanel();
         if (window.lucide) window.lucide.createIcons();
     }

@@ -277,6 +277,79 @@ test('runAiDrivenArrangement expands beyond old 20x20 limits for large rosters',
   assert.equal(new Set(result.assignments.map(item => item.studentId)).size, 5000);
 });
 
+test('natural language understands two-person group columns as five vertical blocks', async () => {
+  const roster = Array.from({ length: 60 }, (_, index) => ({
+    id: `s${String(index + 1).padStart(2, '0')}`,
+    name: `Student ${index + 1}`,
+    gender: index % 2 === 0 ? 'M' : 'F',
+    grade: 60 + (index % 40),
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '两人一组，一组是一列，一共五列',
+    students: roster,
+    strategy: { genderBalance: false, heightOrder: false, gradeStrategy: 'none' },
+  });
+  let aiPayload = null;
+  const fetchImpl = async (url, options) => {
+    const body = JSON.parse(options.body);
+    aiPayload = JSON.parse(body.messages.at(-1).content);
+    return jsonResponse({
+      groupSize: 2,
+      groupsPerRow: 6,
+      aislePolicy: { verticalBetweenGroups: false, horizontalBetweenGroupRows: false },
+      guardianPolicy: { enabled: false },
+      layoutMode: 'grouped',
+    });
+  };
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.equal(aiPayload.hints.groupSize, 2);
+  assert.equal(aiPayload.hints.groupsPerRow, 5);
+  assert.equal(result.arrangementSpec.groupSize, 2);
+  assert.equal(result.arrangementSpec.groupsPerRow, 5);
+  assert.equal(result.arrangementSpec.aislePolicy.verticalBetweenGroups, true);
+  assert.equal(result.classroomLayout.rows, 6);
+  assert.equal(result.classroomLayout.cols, 14);
+  assert.equal(result.stats.regularSeatCount, 60);
+  assert.equal(result.interpretation.layoutFacts.groupsPerRow, 5);
+  assert.match(result.interpretation.summary, /5/);
+  assert.match(result.interpretation.summary, /两人/);
+});
+
+test('natural language keeps physical seat columns separate from group columns', async () => {
+  const roster = Array.from({ length: 20 }, (_, index) => ({
+    id: `s${String(index + 1).padStart(2, '0')}`,
+    name: `Student ${index + 1}`,
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '两人一组，一共五列座位',
+    students: roster,
+  });
+  const fetchImpl = async () => jsonResponse({
+    groupSize: 2,
+    groupsPerRow: 5,
+    aislePolicy: { verticalBetweenGroups: true, horizontalBetweenGroupRows: false },
+    guardianPolicy: { enabled: false },
+    layoutMode: 'grouped',
+  });
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.equal(result.arrangementSpec.physicalCols, 5);
+  assert.notEqual(result.arrangementSpec.groupsPerRow, 5);
+  assert.equal(result.classroomLayout.cols, 5);
+  assert.equal(result.interpretation.layoutFacts.physicalCols, 5);
+});
+
 test('height care and grade priority both apply within the same arrangement', async () => {
   const roster = [
     { id: 's01', name: 'Tall Top', height: 190, grade: 100, gender: 'M' },
@@ -790,6 +863,13 @@ test('runAiDrivenArrangement uses Timefold when configured and solution is feasi
     's03:1,0',
     's04:1,1',
   ]);
+  assert.equal(result.stats.solverUsed, true);
+  assert.equal(result.stats.solverName, 'Timefold Solver');
+  assert.equal(result.stats.hardScore, 0);
+  assert.equal(result.stats.softScore, 12);
+  assert.equal(typeof result.stats.durationMs, 'number');
+  assert.equal(result.interpretation.solverFacts.used, true);
+  assert.match(result.interpretation.solverFacts.summary, /Timefold/);
 });
 
 test('runAiDrivenArrangement falls back to local seating when Timefold has hard violations', async () => {
@@ -850,6 +930,10 @@ test('runAiDrivenArrangement falls back to local seating when Timefold has hard 
   assert.equal(result.source, 'ai_spec_local_algorithm');
   assert.equal(result.assignments.length, 4);
   assert.equal(result.warnings.some(warning => warning.includes('Timefold solver unavailable')), true);
+  assert.equal(result.stats.solverUsed, false);
+  assert.equal(result.stats.fallbackReason, 'hard_score_violation');
+  assert.equal(result.interpretation.solverFacts.used, false);
+  assert.match(result.interpretation.solverFacts.summary, /本地排座/);
 });
 
 test('Timefold result can be evaluated with the existing quality scorer and is not worse than local', async () => {
