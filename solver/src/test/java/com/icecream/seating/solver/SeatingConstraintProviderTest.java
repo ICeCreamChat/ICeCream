@@ -1,0 +1,113 @@
+package com.icecream.seating.solver;
+
+import ai.timefold.solver.test.api.score.stream.ConstraintVerifier;
+import com.icecream.seating.domain.Seat;
+import com.icecream.seating.domain.SeatingConstraintConfig;
+import com.icecream.seating.domain.SeatingSolution;
+import com.icecream.seating.domain.StudentAssignment;
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Set;
+
+class SeatingConstraintProviderTest {
+
+    private final ConstraintVerifier<SeatingConstraintProvider, SeatingSolution> constraintVerifier =
+            ConstraintVerifier.build(new SeatingConstraintProvider(), SeatingSolution.class, StudentAssignment.class);
+
+    @Test
+    void seatConflictPenalizesTwoStudentsOnSameSeat() {
+        Seat seat = seat("r0c0", 0, 0, 80, 1, Set.of());
+        StudentAssignment left = student("s01", seat);
+        StudentAssignment right = student("s02", seat);
+
+        constraintVerifier.verifyThat(SeatingConstraintProvider::seatConflict)
+                .given(left, right)
+                .penalizesBy(1);
+    }
+
+    @Test
+    void pairRequiresSameGroupWhenBothSeatsHaveGroups() {
+        StudentAssignment left = student("s01", seat("r0c0", 0, 0, 80, 1, Set.of()));
+        StudentAssignment right = student("s02", seat("r0c1", 0, 1, 80, 2, Set.of("r0c0")));
+        left.setMustPairWith(List.of("s02"));
+
+        constraintVerifier.verifyThat(SeatingConstraintProvider::pairNotSameGroup)
+                .given(left, right)
+                .penalizesBy(1);
+    }
+
+    @Test
+    void pairWithoutGroupsFallsBackToNeighborSeats() {
+        StudentAssignment left = student("s01", seat("r0c0", 0, 0, 80, null, Set.of()));
+        StudentAssignment right = student("s02", seat("r0c2", 0, 2, 80, null, Set.of()));
+        left.setMustPairWith(List.of("s02"));
+
+        constraintVerifier.verifyThat(SeatingConstraintProvider::pairNotSameGroup)
+                .given(left, right)
+                .penalizesBy(1);
+
+        left.setSeat(seat("r0c0", 0, 0, 80, null, Set.of("r0c1")));
+        right.setSeat(seat("r0c1", 0, 1, 80, null, Set.of("r0c0")));
+        constraintVerifier.verifyThat(SeatingConstraintProvider::pairNotSameGroup)
+                .given(left, right)
+                .hasNoImpact();
+    }
+
+    @Test
+    void avoidAdjacentUsesNeighborSeatIds() {
+        StudentAssignment left = student("s01", seat("r0c0", 0, 0, 80, 1, Set.of("r0c1")));
+        StudentAssignment right = student("s02", seat("r0c1", 0, 1, 80, 2, Set.of("r0c0")));
+        left.setMustAvoidAdjacent(List.of("s02"));
+
+        constraintVerifier.verifyThat(SeatingConstraintProvider::avoidAdjacent)
+                .given(left, right)
+                .penalizesBy(1);
+    }
+
+    @Test
+    void frontAndBackThresholdsAreHardConstraints() {
+        SeatingConstraintConfig config = new SeatingConstraintConfig();
+        config.setFrontRowThreshold(1);
+        config.setBackRowThreshold(3);
+        StudentAssignment front = student("s01", seat("r2c0", 2, 0, 80, 1, Set.of()));
+        front.setMustFrontRow(true);
+        front.setConfig(config);
+        StudentAssignment back = student("s02", seat("r2c1", 2, 1, 80, 1, Set.of()));
+        back.setMustBackRow(true);
+        back.setConfig(config);
+
+        constraintVerifier.verifyThat(SeatingConstraintProvider::frontRowViolation)
+                .given(front)
+                .penalizesBy(1);
+        constraintVerifier.verifyThat(SeatingConstraintProvider::backRowViolation)
+                .given(back)
+                .penalizesBy(1);
+    }
+
+    @Test
+    void heightOrderPenalizesTallStudentsInFrontRegardlessOfPairOrder() {
+        SeatingConstraintConfig config = new SeatingConstraintConfig();
+        config.setHeightOrderEnabled(true);
+        StudentAssignment back = student("s01", seat("r1c0", 1, 0, 80, 1, Set.of()));
+        back.setHeight(150);
+        back.setConfig(config);
+        StudentAssignment front = student("s02", seat("r0c0", 0, 0, 80, 1, Set.of()));
+        front.setHeight(170);
+        front.setConfig(config);
+
+        constraintVerifier.verifyThat(SeatingConstraintProvider::heightOrder)
+                .given(back, front)
+                .penalizesBy(config.getHeightOrderWeight());
+    }
+
+    private static StudentAssignment student(String id, Seat seat) {
+        StudentAssignment student = new StudentAssignment(id, id);
+        student.setSeat(seat);
+        return student;
+    }
+
+    private static Seat seat(String id, int row, int col, int qualityScore, Integer groupId, Set<String> neighbors) {
+        return new Seat(id, row, col, qualityScore, groupId, neighbors);
+    }
+}

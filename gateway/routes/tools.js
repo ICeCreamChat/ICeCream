@@ -11,6 +11,7 @@ import {
     normalizeArrangeRequest,
     runAiDrivenArrangement,
 } from '../services/seating-arrange.js';
+import { checkTimefoldStatus } from '../services/seating-solver-bridge.js';
 import {
     buildSeatingChatSnapshot,
     classifySeatingChatIntent,
@@ -54,12 +55,14 @@ const router = express.Router();
 // ================================
 // Health Check
 // ================================
-router.get('/health', (req, res) => {
+router.get('/health', async (req, res) => {
+    const timefold = await checkTimefoldStatus({ env: process.env, fetchImpl: fetch });
     res.json({
         status: 'ok',
         service: 'Classroom Tools',
         version: '2.0.0',
-        tools: ['seating', 'sound', 'picker', 'vote']
+        tools: ['seating', 'sound', 'picker', 'vote'],
+        services: { timefold }
     });
 });
 

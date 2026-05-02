@@ -2,6 +2,10 @@ import {
     applyAiLayoutMatrix,
     CELL,
 } from '../../public/js/tools/classroom-layout.js';
+import {
+    solveWithTimefold,
+    TimefoldUnavailableError,
+} from './seating-solver-bridge.js';
 
 const MAX_ROWS = Number.MAX_SAFE_INTEGER;
 const MAX_COLS = Number.MAX_SAFE_INTEGER;
@@ -1547,7 +1551,7 @@ function strategyOverrideWarnings(spec, uiStrategy = {}) {
     return warnings;
 }
 
-function buildLocalArrangement({ request, spec, specWarnings = [] }) {
+async function buildLocalArrangement({ request, spec, specWarnings = [], env = process.env, fetchImpl }) {
     const guardians = chooseGuardians(request.students, spec);
     const guardianIds = new Set([guardians.left, guardians.right].filter(Boolean));
     const regularTarget = request.students.filter(student => !guardianIds.has(student.id)).length;
@@ -1561,12 +1565,32 @@ function buildLocalArrangement({ request, spec, specWarnings = [] }) {
         left: guardians.left,
         right: guardians.right,
     };
-    const seating = assignLocalSeats({ request, layout: classroomLayout, spec, guardians });
+    let seating;
+    let source = 'ai_spec_local_algorithm';
+    const solverWarnings = [];
+    try {
+        seating = await solveWithTimefold({
+            request,
+            layout: classroomLayout,
+            spec,
+            guardians,
+            env,
+            fetchImpl,
+        });
+        source = 'timefold_solver';
+    } catch (error) {
+        if (!(error instanceof TimefoldUnavailableError && error.reason === 'not_configured')
+            && asText(env?.TIMEFOLD_SOLVER_URL)) {
+            solverWarnings.push(`Timefold solver unavailable (${error.reason || error.message}); used local seating algorithm.`);
+        }
+        seating = assignLocalSeats({ request, layout: classroomLayout, spec, guardians });
+    }
     const regularSeatCount = gridSeatCount(classroomLayout);
     const guardianSeatCount = [guardians.left, guardians.right].filter(Boolean).length;
     const warnings = [
         ...specWarnings,
         ...strategyOverrideWarnings(spec, request.strategy),
+        ...solverWarnings,
         ...normalizeWarnings(seating.warnings),
     ];
     return {
@@ -1577,8 +1601,10 @@ function buildLocalArrangement({ request, spec, specWarnings = [] }) {
         unassigned: seating.unassigned,
         warnings,
         unsatisfied: seating.unsatisfied,
-        reasoning: spec.notes || 'AI 解析需求，本地算法稳定生成完整座位表。',
-        source: 'ai_spec_local_algorithm',
+        reasoning: source === 'timefold_solver'
+            ? 'Timefold solver generated the seating plan from the parsed constraints.'
+            : (spec.notes || 'AI 解析需求，本地算法稳定生成完整座位表。'),
+        source,
         arrangementSpec: spec,
         stats: {
             studentCount: request.students.length,
@@ -1599,7 +1625,7 @@ export async function runAiDrivenArrangement({
     if (!request) throw new Error('缺少排座请求');
     const allowUnassigned = shouldAllowUnassigned(request.prompt);
     const { spec, warnings: specWarnings } = await requestArrangementSpec({ request, fetchImpl, env });
-    const arrangement = buildLocalArrangement({ request, spec, specWarnings });
+    const arrangement = await buildLocalArrangement({ request, spec, specWarnings, env, fetchImpl });
     const validation = validateAiArrangement({
         raw: arrangement,
         students: request.students,

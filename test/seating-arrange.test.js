@@ -8,6 +8,7 @@ import {
   normalizeArrangeRequest,
   validateAiArrangement,
 } from '../gateway/services/seating-arrange.js';
+import { evaluateSeatingQuality } from '../public/js/tools/seating-core.js';
 
 const students = [
   { id: 's01', name: 'Zhang San', gender: 'M', grade: 91 },
@@ -724,6 +725,234 @@ test('AI prompt can disable a UI strategy preference', async () => {
   assert.ok(!result.stats.appliedStrategies.includes('身高照顾'));
   assert.ok(result.warnings.some(warning => warning.includes('关闭身高')));
 });
+
+test('runAiDrivenArrangement uses Timefold when configured and solution is feasible', async () => {
+  const roster = [
+    { id: 's01', name: 'A', grade: 90 },
+    { id: 's02', name: 'B', grade: 80 },
+    { id: 's03', name: 'C', grade: 70 },
+    { id: 's04', name: 'D', grade: 60 },
+  ];
+  const request = normalizeArrangeRequest({
+    prompt: '4 students, keep the room',
+    students: roster,
+    previousLayout: {
+      rows: 2,
+      cols: 2,
+      cells: [
+        ['seat', 'seat'],
+        ['seat', 'seat'],
+      ],
+    },
+  });
+  const fetchImpl = async (url, options = {}) => {
+    if (String(url).startsWith('http://fake-ai')) {
+      return jsonResponse({
+        groupSize: 1,
+        guardianPolicy: { enabled: false },
+        keepPreviousLayout: true,
+        layoutMode: 'standard',
+      });
+    }
+    if (options.method === 'POST') return textResponse({ jobId: 'job-1' }, 202);
+    if (String(url).endsWith('/status')) {
+      return textResponse({ jobId: 'job-1', solverStatus: 'NOT_SOLVING', hardScore: 0, softScore: 12 }, 200);
+    }
+    if (options.method === 'DELETE') return textResponse({}, 204);
+    return textResponse({
+      jobId: 'job-1',
+      hardScore: 0,
+      softScore: 12,
+      students: [
+        { id: 's01', seat: 'r0c1' },
+        { id: 's02', seat: 'r0c0' },
+        { id: 's03', seat: 'r1c0' },
+        { id: 's04', seat: 'r1c1' },
+      ],
+    }, 200);
+  };
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl,
+    env: {
+      DEEPSEEK_API_BASE: 'http://fake-ai',
+      DEEPSEEK_API_KEY: 'key',
+      TIMEFOLD_SOLVER_URL: 'http://solver',
+      TIMEFOLD_SOLVER_TIMEOUT: '1',
+    },
+  });
+
+  assert.equal(result.source, 'timefold_solver');
+  assert.deepEqual(result.assignments.map(item => `${item.studentId}:${item.row},${item.col}`), [
+    's01:0,1',
+    's02:0,0',
+    's03:1,0',
+    's04:1,1',
+  ]);
+});
+
+test('runAiDrivenArrangement falls back to local seating when Timefold has hard violations', async () => {
+  const roster = [
+    { id: 's01', name: 'A', grade: 90 },
+    { id: 's02', name: 'B', grade: 80 },
+    { id: 's03', name: 'C', grade: 70 },
+    { id: 's04', name: 'D', grade: 60 },
+  ];
+  const request = normalizeArrangeRequest({
+    prompt: '4 students, keep the room',
+    students: roster,
+    previousLayout: {
+      rows: 2,
+      cols: 2,
+      cells: [
+        ['seat', 'seat'],
+        ['seat', 'seat'],
+      ],
+    },
+  });
+  const fetchImpl = async (url, options = {}) => {
+    if (String(url).startsWith('http://fake-ai')) {
+      return jsonResponse({
+        groupSize: 1,
+        guardianPolicy: { enabled: false },
+        keepPreviousLayout: true,
+        layoutMode: 'standard',
+      });
+    }
+    if (options.method === 'POST') return textResponse({ jobId: 'job-1' }, 202);
+    if (String(url).endsWith('/status')) {
+      return textResponse({ jobId: 'job-1', solverStatus: 'NOT_SOLVING', hardScore: -1, softScore: 0 }, 200);
+    }
+    if (options.method === 'DELETE') return textResponse({}, 204);
+    return textResponse({
+      jobId: 'job-1',
+      hardScore: -1,
+      softScore: 0,
+      students: [
+        { id: 's01', seat: 'r0c0' },
+        { id: 's02', seat: 'r0c0' },
+      ],
+    }, 200);
+  };
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl,
+    env: {
+      DEEPSEEK_API_BASE: 'http://fake-ai',
+      DEEPSEEK_API_KEY: 'key',
+      TIMEFOLD_SOLVER_URL: 'http://solver',
+      TIMEFOLD_SOLVER_TIMEOUT: '1',
+    },
+  });
+
+  assert.equal(result.source, 'ai_spec_local_algorithm');
+  assert.equal(result.assignments.length, 4);
+  assert.equal(result.warnings.some(warning => warning.includes('Timefold solver unavailable')), true);
+});
+
+test('Timefold result can be evaluated with the existing quality scorer and is not worse than local', async () => {
+  const roster = [
+    { id: 's01', name: 'A', grade: 90, gender: 'M' },
+    { id: 's02', name: 'B', grade: 80, gender: 'F' },
+    { id: 's03', name: 'C', grade: 70, gender: 'M' },
+    { id: 's04', name: 'D', grade: 60, gender: 'F' },
+  ];
+  const request = normalizeArrangeRequest({
+    prompt: '4 students, keep the room',
+    students: roster,
+    strategy: { genderBalance: false, heightOrder: false, gradeStrategy: 'none' },
+    previousLayout: {
+      rows: 2,
+      cols: 2,
+      cells: [
+        ['seat', 'seat'],
+        ['seat', 'seat'],
+      ],
+    },
+  });
+  const aiSpec = {
+    groupSize: 1,
+    guardianPolicy: { enabled: false },
+    keepPreviousLayout: true,
+    layoutMode: 'standard',
+    placementPolicy: { genderBalance: false, heightOrder: false, gradeStrategy: 'none' },
+  };
+  const local = await runAiDrivenArrangement({
+    request,
+    fetchImpl: async () => jsonResponse(aiSpec),
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+  const fetchImpl = async (url, options = {}) => {
+    if (String(url).startsWith('http://fake-ai')) return jsonResponse(aiSpec);
+    if (options.method === 'POST') return textResponse({ jobId: 'job-1' }, 202);
+    if (String(url).endsWith('/status')) {
+      return textResponse({ jobId: 'job-1', solverStatus: 'NOT_SOLVING', hardScore: 0, softScore: 0 }, 200);
+    }
+    if (options.method === 'DELETE') return textResponse({}, 204);
+    return textResponse({
+      jobId: 'job-1',
+      hardScore: 0,
+      softScore: 0,
+      students: [
+        { id: 's01', seat: 'r0c0' },
+        { id: 's02', seat: 'r0c1' },
+        { id: 's03', seat: 'r1c0' },
+        { id: 's04', seat: 'r1c1' },
+      ],
+    }, 200);
+  };
+
+  const timefold = await runAiDrivenArrangement({
+    request,
+    fetchImpl,
+    env: {
+      DEEPSEEK_API_BASE: 'http://fake-ai',
+      DEEPSEEK_API_KEY: 'key',
+      TIMEFOLD_SOLVER_URL: 'http://solver',
+      TIMEFOLD_SOLVER_TIMEOUT: '1',
+    },
+  });
+
+  const localQuality = evaluateSeatingQuality({
+    layout: assignmentsToLayout(local),
+    students: roster,
+    classroomLayout: local.classroomLayout,
+    strategy: request.strategy,
+  });
+  const timefoldQuality = evaluateSeatingQuality({
+    layout: assignmentsToLayout(timefold),
+    students: roster,
+    classroomLayout: timefold.classroomLayout,
+    strategy: request.strategy,
+  });
+
+  assert.equal(timefold.source, 'timefold_solver');
+  assert.equal(timefoldQuality.feasible, true);
+  assert.ok(timefoldQuality.percent >= localQuality.percent);
+});
+
+function assignmentsToLayout(arrangement) {
+  const layout = Array.from(
+    { length: arrangement.classroomLayout.rows },
+    () => Array(arrangement.classroomLayout.cols).fill(null)
+  );
+  for (const assignment of arrangement.assignments) {
+    layout[assignment.row][assignment.col] = assignment.studentId;
+  }
+  return layout;
+}
+
+function textResponse(content, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async text() {
+      return status === 204 ? '' : JSON.stringify(content);
+    },
+  };
+}
 
 function jsonResponse(content) {
   return {
