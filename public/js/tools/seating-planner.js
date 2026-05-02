@@ -83,6 +83,9 @@ class SeatingPlanner {
         this.arrangementStats = null;
         this.arrangementSource = null;
         this.arrangementInterpretation = null;
+        this.arrangementSpec = null;
+        this._diagnosticEvents = [];
+        this._lastErrors = [];
         this.showSeatDetails = true;
         this.showScoreAnalysis = false;
         this.showArrangementExplain = false;
@@ -326,9 +329,16 @@ class SeatingPlanner {
             prompt.setSelectionRange?.(prompt.value.length, prompt.value.length);
             this._arrangeSuggestionDismissedText = '';
             this.hideSuggestions('arrange');
+            this.recordDiagnosticEvent('arrange_completion_success', {
+                suggestionCount: suggestions.length,
+                textLength: completion.length,
+            });
             this.showToast('已补全排座要求', 'success');
         } catch (error) {
             if (error.name !== 'AbortError') {
+                this.recordDiagnosticEvent('arrange_completion_failed', {
+                    error: error.message || 'completion_failed',
+                });
                 this.showToast(error.message || '补全要求失败，请稍后再试', 'warning');
             }
         } finally {
@@ -495,6 +505,7 @@ class SeatingPlanner {
         this.arrangementStats = arrangement.stats || null;
         this.arrangementSource = arrangement.source || null;
         this.arrangementInterpretation = arrangement.interpretation || null;
+        this.arrangementSpec = arrangement.arrangementSpec || null;
 
         this.layout = Array.from({ length: this.rows }, () => Array(this.cols).fill(null));
         for (const assignment of arrangement.assignments) {
@@ -520,6 +531,11 @@ class SeatingPlanner {
     }
 
     async requestAiArrangement(prompt) {
+        this.recordDiagnosticEvent('arrangement_request', {
+            prompt,
+            studentCount: this.students.length,
+            constraintCount: this.constraints.length,
+        });
         const res = await fetch('/api/tools/seating/arrange', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -540,9 +556,18 @@ class SeatingPlanner {
         });
         const result = await res.json().catch(() => ({ success: false, error: 'AI 排座服务返回格式错误' }));
         if (!res.ok || !result.success) {
+            this.recordDiagnosticEvent('arrangement_request_failed', {
+                status: res.status,
+                error: result.error || 'AI arrange failed',
+            });
             const details = Array.isArray(result.details) && result.details.length ? `：${result.details.join('；')}` : '';
             throw new Error(`${result.error || 'AI 排座失败'}${details}`);
         }
+        this.recordDiagnosticEvent('arrangement_request_success', {
+            source: result.data?.source || null,
+            stats: result.data?.stats || null,
+            warnings: result.data?.warnings || [],
+        });
         return result.data;
     }
 
@@ -575,6 +600,11 @@ class SeatingPlanner {
             const typing = msgs?.querySelector('.sp-chat-typing');
             if (typing) typing.closest('.sp-chat-msg').remove();
             const arrangement = this.applyArrangementResult(data);
+            this.recordDiagnosticEvent('chat_arrangement_success', {
+                source: arrangement.source || null,
+                stats: arrangement.stats || null,
+                warnings: arrangement.warnings || [],
+            });
             this.appendChatMessage(arrangement.reply, 'ai');
             if (arrangement.warnings.length) this.appendChatMessage(arrangement.warnings.join('；'), 'ai');
             this.hideSuggestions('arrange');
@@ -583,6 +613,9 @@ class SeatingPlanner {
             const typing = msgs?.querySelector('.sp-chat-typing');
             if (typing) typing.closest('.sp-chat-msg').remove();
             this.appendChatMessage(`没有更新座位表：${err.message}`, 'ai');
+            this.recordDiagnosticEvent('chat_arrangement_failed', {
+                error: err.message || 'chat_arrangement_failed',
+            });
             this.showToast(err.message, 'error');
         }
     }
@@ -758,6 +791,11 @@ class SeatingPlanner {
         this.updateStatus();
         const s1 = this.studentMap.get(val1);
         const s2 = this.studentMap.get(val2);
+        this.recordDiagnosticEvent('seat_swap', {
+            from: { row: r1, col: c1, studentId: val1 || null },
+            to: { row: r2, col: c2, studentId: val2 || null },
+            guardian: r1 === -1 || r2 === -1,
+        });
         if (r1 === -1 || r2 === -1) {
             this.showToast(`护法位已更新`, 'success');
         } else {
@@ -1104,6 +1142,55 @@ class SeatingPlanner {
                             <button type="button" class="sp-btn sp-btn--sm" id="sp-image-review-reupload">重新上传</button>
                             <button type="button" class="sp-btn sp-btn--sm" id="sp-image-review-cancel-secondary">取消</button>
                             <button type="button" class="sp-btn sp-btn--sm sp-btn--primary" id="sp-image-review-confirm">确认导入</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="sp-feedback-dialog" class="sp-feedback sp-hidden" role="dialog" aria-modal="true" aria-labelledby="sp-feedback-title">
+                    <div class="sp-feedback-panel">
+                        <div class="sp-feedback-header">
+                            <h3 id="sp-feedback-title">反馈座位安排问题</h3>
+                            <button type="button" class="sp-feedback-close" id="sp-feedback-cancel" aria-label="关闭反馈">
+                                <i data-lucide="x"></i>
+                            </button>
+                        </div>
+                        <div class="sp-feedback-body">
+                            <div class="sp-feedback-note">
+                                会附带脱敏座位快照，帮助我们复现问题
+                            </div>
+                            <div class="sp-feedback-field">
+                                <span class="sp-feedback-label">问题类型</span>
+                                <div class="sp-feedback-chips" data-feedback-group="category">
+                                    <button type="button" class="sp-feedback-chip is-active" data-value="understand">排座要求没听懂</button>
+                                    <button type="button" class="sp-feedback-chip" data-value="result">座位结果不对</button>
+                                    <button type="button" class="sp-feedback-chip" data-value="guardian">护法/微调不对</button>
+                                    <button type="button" class="sp-feedback-chip" data-value="ui">界面/导出问题</button>
+                                    <button type="button" class="sp-feedback-chip" data-value="other">其他</button>
+                                </div>
+                            </div>
+                            <label class="sp-feedback-field" for="sp-feedback-message">
+                                <span class="sp-feedback-label">直接写你觉得哪里不对</span>
+                                <textarea id="sp-feedback-message" class="sp-feedback-textarea" rows="5" maxlength="2000" placeholder="例如：我说右护法换成成绩一般的男生，但它提示成功后座位没有变化。"></textarea>
+                            </label>
+                            <label class="sp-feedback-field" for="sp-feedback-expected">
+                                <span class="sp-feedback-label">你希望它怎么做</span>
+                                <textarea id="sp-feedback-expected" class="sp-feedback-textarea" rows="3" maxlength="1000" placeholder="例如：右护法应该换成一个成绩中等的男生，并告诉我换成了谁。"></textarea>
+                            </label>
+                            <div class="sp-feedback-field">
+                                <span class="sp-feedback-label">影响程度</span>
+                                <div class="sp-feedback-chips" data-feedback-group="severity">
+                                    <button type="button" class="sp-feedback-chip is-active" data-value="blocking">影响使用</button>
+                                    <button type="button" class="sp-feedback-chip" data-value="workaround">还能绕过</button>
+                                    <button type="button" class="sp-feedback-chip" data-value="suggestion">只是建议</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="sp-feedback-actions">
+                            <button type="button" class="sp-btn sp-btn--sm" id="sp-feedback-cancel-secondary">取消</button>
+                            <button type="button" class="sp-btn sp-btn--sm sp-btn--primary" id="sp-feedback-submit">
+                                <i data-lucide="send"></i>
+                                提交反馈
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -1711,6 +1798,20 @@ class SeatingPlanner {
             this.renumberReviewRows();
             this.updateRosterReviewTitle();
         });
+        $('sp-feedback-cancel')?.addEventListener('click', () => this.closeFeedbackDialog());
+        $('sp-feedback-cancel-secondary')?.addEventListener('click', () => this.closeFeedbackDialog());
+        $('sp-feedback-submit')?.addEventListener('click', () => this.submitFeedback());
+        $('sp-feedback-dialog')?.addEventListener('click', e => {
+            if (e.target?.id === 'sp-feedback-dialog') this.closeFeedbackDialog();
+        });
+        document.querySelectorAll('[data-feedback-group]').forEach(group => {
+            group.addEventListener('click', e => {
+                const chip = e.target.closest?.('.sp-feedback-chip');
+                if (!chip) return;
+                group.querySelectorAll('.sp-feedback-chip').forEach(item => item.classList.remove('is-active'));
+                chip.classList.add('is-active');
+            });
+        });
 
         // File input change handler
         fileInput?.addEventListener('change', e => {
@@ -1743,6 +1844,8 @@ class SeatingPlanner {
             this.arrangementStats = null;
             this.arrangementSource = null;
             this.arrangementInterpretation = null;
+            this.arrangementSpec = null;
+            this.recordDiagnosticEvent('students_cleared', {});
             this.showArrangementExplain = false;
             $('sp-student-count').innerHTML = '<i data-lucide="users"></i><span>0 人</span>';
             $('sp-students-preview').innerHTML = '';
@@ -3200,6 +3303,10 @@ class SeatingPlanner {
         if (!prompt) return this.showToast('请先描述教室和排座需求', 'warning');
         if (this._isGenerating) return; // Loading guard
         this._isGenerating = true;
+        this.recordDiagnosticEvent('generate_seating_started', {
+            prompt,
+            studentCount: this.students.length,
+        });
 
         const btn = document.getElementById('sp-generate');
         btn.disabled = true;
@@ -3210,9 +3317,17 @@ class SeatingPlanner {
             const data = await this.requestAiArrangement(prompt);
             const arrangement = this.applyArrangementResult(data);
             this.showToast(arrangement.reply || 'AI 座位表生成完成', 'success');
+            this.recordDiagnosticEvent('generate_seating_success', {
+                source: arrangement.source || null,
+                stats: arrangement.stats || null,
+                warnings: arrangement.warnings || [],
+            });
             this.showArrangementWarnings(arrangement.warnings);
         } catch (err) {
             console.error('[SeatingPlanner] Generation failed:', err);
+            this.recordDiagnosticEvent('generate_seating_failed', {
+                error: err.message || 'generation_failed',
+            });
             this.showToast('AI 生成失败: ' + err.message, 'error');
         } finally {
             this._isGenerating = false;
@@ -4168,6 +4283,10 @@ class SeatingPlanner {
         input.value = '';
 
         this.appendChatMessage(text, 'user');
+        this.recordDiagnosticEvent('chat_request', {
+            mode: this._chatMode,
+            text,
+        });
 
         if (!this.students.length) {
             this.appendChatMessage('请先导入名单，然后我就可以帮你调整或重新生成座位表。', 'ai');
@@ -4201,6 +4320,9 @@ class SeatingPlanner {
             if (typing) typing.closest('.sp-chat-msg').remove();
 
             if (!result.success) {
+                this.recordDiagnosticEvent('chat_failed', {
+                    error: result.error || 'unknown_error',
+                });
                 this.appendChatMessage('抱歉，出了点问题: ' + (result.error || '未知错误'), 'ai');
                 return;
             }
@@ -4209,6 +4331,12 @@ class SeatingPlanner {
             const { reply } = data;
             const intent = data.intent || (data.mutationIntent ? 'direct_edit' : 'explain');
             let operations = Array.isArray(data.operations) ? data.operations : [];
+            this.recordDiagnosticEvent('chat_response', {
+                intent,
+                operationCount: operations.length,
+                rejected: data.rejected || [],
+                needsAction: Boolean(data.needsAction),
+            });
             this._chatHistory.push({ role: 'assistant', content: reply });
 
             const buildFallback = () => parseFallbackSeatingOperations({
@@ -4305,6 +4433,9 @@ class SeatingPlanner {
             if (typing) typing.closest('.sp-chat-msg').remove();
 
             this.appendChatMessage('网络错误，请稍后重试', 'ai');
+            this.recordDiagnosticEvent('chat_network_error', {
+                error: err.message || 'network_error',
+            });
             console.error('[Chat]', err);
         }
     }
@@ -4377,6 +4508,15 @@ class SeatingPlanner {
             this.updateStatus();
             this.highlightCells(result.affectedCells);
         }
+
+        this.recordDiagnosticEvent(result.applied.length > 0 ? 'chat_operations_applied' : 'chat_operations_noop', {
+            operationCount: operations?.length || 0,
+            applied: result.applied.length,
+            rejected: result.rejected.length,
+            reasons: result.rejected.map(item => item.reason).filter(Boolean),
+            guardians: result.guardians || this.guardians,
+            affectedCells: result.affectedCells || [],
+        });
 
         return {
             applied: result.applied.length,
@@ -4963,6 +5103,9 @@ class SeatingPlanner {
             link.click();
             this.showToast('图片已下载', 'success');
         } catch (err) {
+            this.recordDiagnosticEvent('export_png_failed', {
+                error: err.message || 'export_png_failed',
+            });
             this.showToast('导出失败: ' + err.message, 'error');
         } finally {
             this.setExportMode(false);
@@ -4985,6 +5128,287 @@ class SeatingPlanner {
                 height: student.height,
             })),
         };
+    }
+
+    openFeedbackDialog() {
+        const dialog = document.getElementById('sp-feedback-dialog');
+        if (!dialog) return;
+        dialog.classList.remove('sp-hidden');
+        document.getElementById('sp-feedback-message')?.focus();
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    closeFeedbackDialog() {
+        const dialog = document.getElementById('sp-feedback-dialog');
+        if (!dialog) return;
+        dialog.classList.add('sp-hidden');
+    }
+
+    getFeedbackSelection(group, fallback) {
+        return document.querySelector(`[data-feedback-group="${group}"] .sp-feedback-chip.is-active`)?.dataset.value || fallback;
+    }
+
+    makeFeedbackAnonymizer() {
+        const idToAnon = new Map();
+        const nameToAnon = new Map();
+        this.students.forEach((student, index) => {
+            const anonId = `stu_${String(index + 1).padStart(3, '0')}`;
+            if (student.id) idToAnon.set(String(student.id), anonId);
+            if (student.name) nameToAnon.set(String(student.name), anonId);
+        });
+        return { idToAnon, nameToAnon };
+    }
+
+    anonymizeFeedbackText(value, anonymizer = this.makeFeedbackAnonymizer()) {
+        let text = String(value ?? '');
+        const names = Array.from(anonymizer.nameToAnon.entries())
+            .filter(([name]) => name)
+            .sort((a, b) => b[0].length - a[0].length);
+        for (const [name, anonId] of names) {
+            text = text.split(name).join(anonId);
+        }
+        return text;
+    }
+
+    isDiagnosticSensitiveKey(key) {
+        return /(api[_-]?key|authorization|bearer|token|jwt|secret|password|passwd|smtp[_-]?(pass|password)|auth(code)?|credential)/i
+            .test(String(key ?? ''));
+    }
+
+    redactDiagnosticText(value, maxLength = 1000) {
+        let text = String(value ?? '');
+        text = text.replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]');
+        text = text.replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\b/g, '[REDACTED]');
+        text = text.replace(
+            /\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASS|AUTHORIZATION|JWT|SMTP[_-]?PASS)[A-Z0-9_]*)\s*[:=]\s*['"]?[^'",\s;]+/gi,
+            '$1=[REDACTED]'
+        );
+        text = text.replace(
+            /\b((?:smtp|api|bearer|authorization|token|secret|password|pass|auth|授权码)\s*(?:key|pass|password|token|code|secret|授权码)?)\s*[:= ]+\s*['"]?[A-Za-z0-9._~+/-]{8,}/gi,
+            '$1 [REDACTED]'
+        );
+        text = text.replace(/\b(?=[A-Za-z0-9._~+/-]*[A-Za-z])(?=[A-Za-z0-9._~+/-]*\d)[A-Za-z0-9._~+/-]{24,}\b/g, '[REDACTED]');
+        return text.length > maxLength ? `${text.slice(0, maxLength)}...[truncated]` : text;
+    }
+
+    anonymizeFeedbackValue(value, anonymizer) {
+        if (value == null) return value;
+        if (typeof value === 'string') {
+            if (anonymizer.idToAnon.has(value)) return anonymizer.idToAnon.get(value);
+            return this.redactDiagnosticText(this.anonymizeFeedbackText(value, anonymizer));
+        }
+        if (Array.isArray(value)) return value.map(item => this.anonymizeFeedbackValue(item, anonymizer));
+        if (typeof value === 'object') {
+            const result = {};
+            for (const [key, item] of Object.entries(value)) {
+                if (key === 'name' || key === 'studentName') continue;
+                if (this.isDiagnosticSensitiveKey(key)) {
+                    result[key] = '[REDACTED]';
+                    continue;
+                }
+                result[key] = this.anonymizeFeedbackValue(item, anonymizer);
+            }
+            return result;
+        }
+        return value;
+    }
+
+    recordDiagnosticEvent(type, detail = {}) {
+        const anonymizer = this.makeFeedbackAnonymizer();
+        const event = {
+            at: new Date().toISOString(),
+            type: this.redactDiagnosticText(type, 80),
+            detail: this.anonymizeFeedbackValue(detail, anonymizer),
+        };
+        this._diagnosticEvents = [...(this._diagnosticEvents || []), event].slice(-20);
+        if (/error|fail|failed|warning|noop|rejected/i.test(String(type))) {
+            this._lastErrors = [...(this._lastErrors || []), event].slice(-10);
+        }
+        return event;
+    }
+
+    async loadBackendDiagnostics() {
+        try {
+            const response = await fetch('/api/tools/seating/diagnostics', { method: 'GET' });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.success) throw new Error(result.error || 'diagnostics_request_failed');
+            return this.anonymizeFeedbackValue(result.data || {}, this.makeFeedbackAnonymizer());
+        } catch (error) {
+            return {
+                available: false,
+                error: 'diagnostics_request_failed',
+                message: this.redactDiagnosticText(error.message || 'diagnostics_request_failed', 300),
+            };
+        }
+    }
+
+    toFeedbackBand(value, step = 10) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return 'unknown';
+        const start = Math.floor(number / step) * step;
+        return `${start}-${start + step - 1}`;
+    }
+
+    buildFeedbackSnapshot() {
+        const anonymizer = this.makeFeedbackAnonymizer();
+        const arrangePrompt = typeof document !== 'undefined'
+            ? document.getElementById('sp-arrange-prompt')?.value?.trim() || ''
+            : '';
+        const quality = this._qualityEvaluation || {};
+        const constraintEvaluation = this._constraintEvaluation || {};
+        const availableSeats = getClassroomCapacity(this.classroomLayout);
+        const assignedCount = new Set(getPlacedStudentIds(this.layout)).size + this.guardians.filter(Boolean).length;
+        const win = typeof window !== 'undefined' ? window : null;
+
+        const snapshot = {
+            version: 2,
+            diagnosticsVersion: 2,
+            rows: this.rows,
+            cols: this.cols,
+            strategy: structuredClone(this.strategy || {}),
+            arrangePrompt: this.anonymizeFeedbackText(arrangePrompt, anonymizer),
+            students: this.students.map(student => ({
+                anonId: anonymizer.idToAnon.get(String(student.id)),
+                gender: student.gender || 'unknown',
+                gradeBand: this.toFeedbackBand(student.grade),
+                heightBand: this.toFeedbackBand(student.height),
+            })),
+            layout: this.layout.map(row => row.map(value => this.anonymizeFeedbackValue(value || null, anonymizer))),
+            guardians: {
+                left: this.anonymizeFeedbackValue(this.guardians?.[0] || null, anonymizer),
+                right: this.anonymizeFeedbackValue(this.guardians?.[1] || null, anonymizer),
+                enabled: Boolean(this.classroomLayout?.guardians?.enabled || this.guardians?.[0] || this.guardians?.[1]),
+            },
+            classroomLayout: {
+                rows: this.classroomLayout?.rows || this.rows,
+                cols: this.classroomLayout?.cols || this.cols,
+                template: this.classroomLayout?.template || 'standard',
+                groupSize: this.classroomLayout?.groupSize || 1,
+                localAisles: normalizeLocalAisles(this.classroomLayout?.localAisles, this.rows, this.cols),
+            },
+            rowAisles: [...(this.rowAisles || [])],
+            colAisles: [...(this.colAisles || [])],
+            constraints: this.anonymizeFeedbackValue(this.constraints || [], anonymizer),
+            unsatisfied: this.anonymizeFeedbackValue(this.unsatisfied || [], anonymizer),
+            unassigned: this.anonymizeFeedbackValue(this.unassigned || [], anonymizer),
+            arrangementSource: this.arrangementSource || null,
+            arrangementSpec: this.anonymizeFeedbackValue(this.arrangementSpec || null, anonymizer),
+            arrangementStats: this.anonymizeFeedbackValue(this.arrangementStats || null, anonymizer),
+            arrangementInterpretation: this.anonymizeFeedbackValue(this.arrangementInterpretation || null, anonymizer),
+            diagnostics: {
+                page: {
+                    tool: 'seating',
+                    version: 2,
+                    url: win?.location?.href || '',
+                    theme: typeof document !== 'undefined' && document.body?.classList?.contains('light-mode') ? 'light' : 'dark',
+                    width: win?.innerWidth || 0,
+                    height: win?.innerHeight || 0,
+                    userAgent: this.redactDiagnosticText(win?.navigator?.userAgent || '', 500),
+                    capturedAt: new Date().toISOString(),
+                },
+                seatingState: {
+                    rows: this.rows,
+                    cols: this.cols,
+                    availableSeats,
+                    assignedCount,
+                    unassignedCount: this.unassigned?.length || 0,
+                    guardianEnabled: Boolean(this.classroomLayout?.guardians?.enabled || this.guardians?.some(Boolean)),
+                    rowAisles: [...(this.rowAisles || [])],
+                    colAisles: [...(this.colAisles || [])],
+                    localAisles: normalizeLocalAisles(this.classroomLayout?.localAisles, this.rows, this.cols),
+                },
+                arrangement: {
+                    source: this.arrangementSource || null,
+                    spec: this.anonymizeFeedbackValue(this.arrangementSpec || null, anonymizer),
+                    stats: this.anonymizeFeedbackValue(this.arrangementStats || null, anonymizer),
+                    interpretation: this.anonymizeFeedbackValue(this.arrangementInterpretation || null, anonymizer),
+                },
+                scoring: {
+                    quality: this.anonymizeFeedbackValue(quality, anonymizer),
+                    constraints: this.anonymizeFeedbackValue(constraintEvaluation, anonymizer),
+                },
+            },
+            diagnosticEvents: this.anonymizeFeedbackValue(this._diagnosticEvents || [], anonymizer),
+            lastErrors: this.anonymizeFeedbackValue(this._lastErrors || [], anonymizer),
+            quality: {
+                feasible: Boolean(quality.feasible),
+                percent: quality.percent,
+                label: quality.label,
+                hardScore: quality.hardScore,
+                softScore: quality.softScore,
+                hardViolationCount: quality.hardViolationCount,
+                softViolationCount: quality.softViolationCount,
+                topIssues: this.anonymizeFeedbackValue(quality.topIssues || [], anonymizer),
+            },
+            anonymizer,
+        };
+        return snapshot;
+    }
+
+    async buildFeedbackPayload() {
+        const snapshot = this.buildFeedbackSnapshot();
+        const { anonymizer, ...safeSnapshot } = snapshot;
+        safeSnapshot.backendDiagnostics = await this.loadBackendDiagnostics();
+        const message = document.getElementById('sp-feedback-message')?.value?.trim() || '';
+        const expected = document.getElementById('sp-feedback-expected')?.value?.trim() || '';
+        const win = typeof window !== 'undefined' ? window : null;
+        return {
+            message: this.redactDiagnosticText(this.anonymizeFeedbackText(message, anonymizer), 2000),
+            expected: this.redactDiagnosticText(this.anonymizeFeedbackText(expected, anonymizer), 1000),
+            category: this.getFeedbackSelection('category', 'other'),
+            severity: this.getFeedbackSelection('severity', 'workaround'),
+            snapshot: safeSnapshot,
+            client: {
+                url: win?.location?.href || '',
+                width: win?.innerWidth || 0,
+                height: win?.innerHeight || 0,
+                theme: document.body?.classList?.contains('light-mode') ? 'light' : 'dark',
+                sentAt: new Date().toISOString(),
+            },
+        };
+    }
+
+    async submitFeedback() {
+        const button = document.getElementById('sp-feedback-submit');
+        const message = document.getElementById('sp-feedback-message')?.value?.trim() || '';
+        if (message.length < 5) {
+            this.showToast('请至少写 5 个字，方便我们复现问题', 'warning');
+            return;
+        }
+
+        const originalHtml = button?.innerHTML;
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<i data-lucide="loader-2" class="sp-spin"></i> 提交中';
+            if (window.lucide) window.lucide.createIcons();
+        }
+
+        try {
+            const response = await fetch('/api/tools/seating/feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(await this.buildFeedbackPayload()),
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.success) {
+                throw new Error(result.error || '反馈提交失败');
+            }
+            const id = result.data?.id || '已记录';
+            this.closeFeedbackDialog();
+            const messageInput = document.getElementById('sp-feedback-message');
+            const expectedInput = document.getElementById('sp-feedback-expected');
+            if (messageInput) messageInput.value = '';
+            if (expectedInput) expectedInput.value = '';
+            this.showToast(`反馈已提交：${id}`, 'success');
+        } catch (error) {
+            this.showToast(error.message || '反馈提交失败，请稍后再试', 'error');
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = originalHtml;
+                if (window.lucide) window.lucide.createIcons();
+            }
+        }
     }
 
     async exportXLSX() {
@@ -5011,6 +5435,9 @@ class SeatingPlanner {
             setTimeout(() => URL.revokeObjectURL(url), 5000);
             this.showToast('Excel 已下载', 'success');
         } catch (err) {
+            this.recordDiagnosticEvent('export_xlsx_failed', {
+                error: err.message || 'export_xlsx_failed',
+            });
             this.showToast('导出失败: ' + err.message, 'error');
         }
     }
@@ -5043,6 +5470,9 @@ class SeatingPlanner {
     }
 
     showToast(msg, type = 'info') {
+        if (type === 'error' || type === 'warning') {
+            this.recordDiagnosticEvent(`toast_${type}`, { message: msg });
+        }
         if (window.ICeCream?.showToast) {
             window.ICeCream.showToast(msg, type);
         } else {

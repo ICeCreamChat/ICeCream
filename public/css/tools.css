@@ -296,9 +296,32 @@
     color: var(--text-secondary);
 }
 
-.tool-theme-toggle:hover {
+.tool-feedback-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-width: 40px;
+    width: auto;
+    padding: 0 12px;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.tool-feedback-btn .lucide {
+    width: 16px;
+    height: 16px;
+}
+
+.tool-theme-toggle:hover,
+.tool-feedback-btn:hover {
     background: rgba(255, 255, 255, 0.12);
     border-color: rgba(0, 240, 255, 0.3);
+    color: var(--accent-color);
 }
 
 .tool-back-btn {
@@ -388,11 +411,13 @@ body.light-mode .tool-back-btn:hover {
     color: var(--accent-color);
 }
 
-body.light-mode .tool-theme-toggle {
+body.light-mode .tool-theme-toggle,
+body.light-mode .tool-feedback-btn {
     background: rgba(0, 0, 0, 0.04);
 }
 
-body.light-mode .tool-theme-toggle:hover {
+body.light-mode .tool-theme-toggle:hover,
+body.light-mode .tool-feedback-btn:hover {
     background: rgba(14, 165, 233, 0.12);
     border-color: var(--accent-color);
 }
@@ -494,8 +519,16 @@ body.light-mode .tool-body::-webkit-scrollbar-thumb {
     }
 
     .tool-ai-status-label,
+    .tool-feedback-btn span,
     .tool-back-btn span {
         display: none;
+    }
+
+    .tool-feedback-btn {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border-radius: 50%;
     }
 
     .tool-back-btn {

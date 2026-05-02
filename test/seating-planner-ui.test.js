@@ -6,6 +6,7 @@ import seatingPlanner from '../public/js/tools/seating-planner.js';
 
 const sourcePath = new URL('../public/js/tools/seating-planner.js', import.meta.url);
 const stylePath = new URL('../public/css/seating-planner.css', import.meta.url);
+const launcherPath = new URL('../public/js/tools/app-launcher.js', import.meta.url);
 
 test('seating planner exposes AI requirement entry instead of fixed layout controls', async () => {
   const source = await readFile(sourcePath, 'utf8');
@@ -55,6 +56,77 @@ test('seating planner surfaces the Timefold arrangement source in status', async
   assert.match(source, /sp-status-item--solver/);
   assert.match(styles, /\.sp-arrangement-explain/);
   assert.match(styles, /\.sp-status-item--solver/);
+});
+
+test('seating planner exposes a feedback entry before the tool theme toggle', async () => {
+  const launcherSource = await readFile(launcherPath, 'utf8');
+  const plannerSource = await readFile(sourcePath, 'utf8');
+  const plannerStyles = await readFile(stylePath, 'utf8');
+
+  const feedbackIndex = launcherSource.indexOf('tool-feedback-btn');
+  const themeIndex = launcherSource.indexOf('tool-theme-toggle');
+  assert.ok(feedbackIndex > -1, 'feedback button should exist in the tool header');
+  assert.ok(themeIndex > -1, 'theme toggle should exist in the tool header');
+  assert.ok(feedbackIndex < themeIndex, 'feedback button should be rendered before the theme toggle');
+  assert.match(launcherSource, /tool\.id === 'seating'/);
+  assert.match(launcherSource, /openFeedbackDialog/);
+
+  assert.match(plannerSource, /openFeedbackDialog/);
+  assert.match(plannerSource, /buildFeedbackSnapshot/);
+  assert.match(plannerSource, /recordDiagnosticEvent/);
+  assert.match(plannerSource, /loadBackendDiagnostics/);
+  assert.match(plannerSource, /\/api\/tools\/seating\/feedback/);
+  assert.match(plannerSource, /\/api\/tools\/seating\/diagnostics/);
+  assert.match(plannerSource, /diagnostics_request_failed/);
+  assert.match(plannerSource, /反馈座位安排问题/);
+  assert.match(plannerSource, /会附带脱敏座位快照，帮助我们复现问题/);
+  assert.match(plannerStyles, /\.sp-feedback/);
+  assert.match(plannerStyles, /\.sp-feedback-chip/);
+});
+
+test('seating feedback snapshot anonymizes names and keeps useful seating context', () => {
+  seatingPlanner.students = [
+    { id: 's01', name: '张三', gender: 'M', grade: 88, height: 171 },
+    { id: 's02', name: '李四', gender: 'F', grade: 73, height: 160 },
+  ];
+  seatingPlanner._buildStudentMap();
+  seatingPlanner.rows = 1;
+  seatingPlanner.cols = 2;
+  seatingPlanner.layout = [['s01', 's02']];
+  seatingPlanner.guardians = ['s01', null];
+  seatingPlanner.constraints = [{ type: 'avoid', target: '张三', related: '李四', reason: '不要相邻' }];
+  seatingPlanner.strategy = { genderBalance: true, gradeStrategy: 'balance', heightOrder: false };
+  seatingPlanner.arrangementStats = { solverUsed: true, solverName: 'Timefold Solver' };
+  seatingPlanner.arrangementSource = 'timefold_solver';
+  seatingPlanner.arrangementSpec = { groupSize: 2, groupsPerRow: 5 };
+  seatingPlanner.arrangementInterpretation = { summary: '已理解为两人一组' };
+  seatingPlanner.unassigned = [];
+  seatingPlanner._diagnosticEvents = [];
+  seatingPlanner._lastErrors = [];
+  seatingPlanner.recordDiagnosticEvent('chat_noop', {
+    student: 's01',
+    message: 'Bearer live-secret-token',
+    token: 'live-secret-token',
+  });
+
+  const snapshot = seatingPlanner.buildFeedbackSnapshot();
+  const text = seatingPlanner.anonymizeFeedbackText('张三和李四没有按要求排开', snapshot.anonymizer);
+  const serialized = JSON.stringify({ snapshot, text });
+
+  assert.match(serialized, /stu_001/);
+  assert.match(serialized, /stu_002/);
+  assert.match(serialized, /80-89/);
+  assert.match(serialized, /70-79/);
+  assert.match(serialized, /170-179/);
+  assert.match(serialized, /"diagnosticsVersion":2/);
+  assert.match(serialized, /chat_noop/);
+  assert.match(serialized, /arrangementSpec/);
+  assert.match(serialized, /timefold_solver/);
+  assert.match(serialized, /\[REDACTED\]/);
+  assert.doesNotMatch(serialized, /张三|李四/);
+  assert.doesNotMatch(serialized, /live-secret-token/);
+  assert.equal(snapshot.layout[0][0], 'stu_001');
+  assert.equal(snapshot.guardians.left, 'stu_001');
 });
 
 test('seating planner frames constraints as student seating needs in the UI', async () => {

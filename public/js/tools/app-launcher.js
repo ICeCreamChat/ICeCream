@@ -160,6 +160,11 @@ class AppLauncher {
                     ${this._renderToolAiStatus()}
                 </div>
                 <div class="tool-header-actions">
+                    ${tool.id === 'seating' ? `
+                    <button type="button" class="icon-btn tool-feedback-btn" id="tool-feedback-btn" title="反馈座位安排问题" aria-label="反馈座位安排问题">
+                        <i data-lucide="message-square-plus"></i>
+                        <span>反馈</span>
+                    </button>` : ''}
                     <button type="button" class="icon-btn tool-theme-toggle" id="tool-theme-toggle" title="切换日间/夜间模式" aria-label="切换日间/夜间模式">
                         <i data-lucide="sun" class="icon-light"></i>
                         <i data-lucide="moon" class="icon-dark"></i>
@@ -187,7 +192,12 @@ class AppLauncher {
         this._syncToolAiStatus();
         this._syncToolThemeToggle();
 
-        // Bind back button
+        // Bind header buttons
+        document.getElementById('tool-feedback-btn')?.addEventListener('click', () => {
+            if (this.currentToolInstance && typeof this.currentToolInstance.openFeedbackDialog === 'function') {
+                this.currentToolInstance.openFeedbackDialog();
+            }
+        });
         document.getElementById('tool-theme-toggle')?.addEventListener('click', () => this._toggleTheme());
         document.getElementById('tool-back-btn').addEventListener('click', () => {
             this._closeTool();
