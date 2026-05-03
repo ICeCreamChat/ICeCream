@@ -904,6 +904,83 @@ function adjacent(pos1, pos2, localAisles = {}) {
         && !localAisleSeparates(pos1, pos2, localAisles);
 }
 
+function nearSeat(pos1, pos2, localAisles = {}) {
+    if (!pos1 || !pos2) return false;
+    if (adjacent(pos1, pos2, localAisles)) return true;
+    return Math.abs(pos1.r - pos2.r) + Math.abs(pos1.c - pos2.c) <= 2;
+}
+
+function usableIndexes(count = 0, blocked = []) {
+    const blockedSet = new Set(blocked || []);
+    return Array.from({ length: count }, (_, index) => index).filter(index => !blockedSet.has(index));
+}
+
+function middleIndexSet(indexes = []) {
+    if (!indexes.length) return new Set();
+    const size = Math.max(1, Math.ceil(indexes.length / 3));
+    const start = Math.max(0, Math.floor((indexes.length - size) / 2));
+    return new Set(indexes.slice(start, start + size));
+}
+
+function seatingZones(rows, cols, rowAisles = [], colAisles = []) {
+    const rowsInUse = usableIndexes(rows, rowAisles);
+    const colsInUse = usableIndexes(cols, colAisles);
+    const frontCount = Math.max(1, Math.ceil(rowsInUse.length / 3));
+    const frontMidCount = Math.max(1, Math.ceil(rowsInUse.length * 2 / 3));
+    return {
+        rowsInUse,
+        colsInUse,
+        firstRow: rowsInUse[0],
+        lastRow: rowsInUse[rowsInUse.length - 1],
+        frontRows: new Set(rowsInUse.slice(0, frontCount)),
+        backRows: new Set(rowsInUse.slice(rowsInUse.length - frontCount)),
+        frontMidRows: new Set(rowsInUse.slice(0, frontMidCount)),
+        middleCols: middleIndexSet(colsInUse),
+    };
+}
+
+function gradeSets(students = []) {
+    const graded = students
+        .filter(student => Number.isFinite(Number(student?.grade)))
+        .sort((a, b) => Number(b.grade) - Number(a.grade));
+    const count = Math.max(1, Math.ceil(graded.length * 0.25));
+    return {
+        high: new Set(graded.slice(0, count).map(student => student.id)),
+        low: new Set(graded.slice(Math.max(0, graded.length - count)).map(student => student.id)),
+    };
+}
+
+function adjacentStudentIds(layout = [], pos, localAisles = {}) {
+    if (!pos) return [];
+    const candidates = [
+        { r: pos.r - 1, c: pos.c },
+        { r: pos.r + 1, c: pos.c },
+        { r: pos.r, c: pos.c - 1 },
+        { r: pos.r, c: pos.c + 1 },
+    ];
+    return candidates
+        .filter(candidate => adjacent(pos, candidate, localAisles))
+        .map(candidate => layout[candidate.r]?.[candidate.c])
+        .filter(Boolean);
+}
+
+function hasHighGradeNeighbor(layout, pos, highGradeIds, localAisles = {}) {
+    return adjacentStudentIds(layout, pos, localAisles).some(id => highGradeIds.has(id));
+}
+
+function hasLowGradeNeighbor(layout, pos, lowGradeIds, localAisles = {}) {
+    return adjacentStudentIds(layout, pos, localAisles).some(id => lowGradeIds.has(id));
+}
+
+function isAisleAdjacentPosition(pos, rows, cols, colAisles = [], localAisles = {}) {
+    if (!pos) return false;
+    if (pos.c > 0 && colAisles.includes(pos.c - 1)) return true;
+    if (pos.c < cols - 1 && colAisles.includes(pos.c + 1)) return true;
+    if (hasLocalAisle(localAisles, 'vertical', pos.r, pos.c)) return true;
+    if (hasLocalAisle(localAisles, 'vertical', pos.r, pos.c - 1)) return true;
+    return pos.c === 0 || pos.c === cols - 1;
+}
+
 function makeUnsatisfied(constraint, reason) {
     return {
         ...constraint,
@@ -919,13 +996,12 @@ export function evaluateSeatingConstraints({
     rows = layout.length,
     cols = layout[0]?.length || 0,
     rowAisles = [],
+    colAisles = [],
     localAisles = {},
 }) {
-    const rowsInUse = usableRows(rows, rowAisles);
+    const zones = seatingZones(rows, cols, rowAisles, colAisles);
     const normalizedLocalAisles = normalizeLocalAisles(localAisles, rows, cols);
-    const frontCount = Math.max(1, Math.ceil(rowsInUse.length / 3));
-    const frontRows = new Set(rowsInUse.slice(0, frontCount));
-    const backRows = new Set(rowsInUse.slice(rowsInUse.length - frontCount));
+    const { high: highGradeIds, low: lowGradeIds } = gradeSets(students);
     const unsatisfied = [];
 
     for (const constraint of constraints || []) {
@@ -939,16 +1015,49 @@ export function evaluateSeatingConstraints({
             continue;
         }
 
-        if (constraint.type === 'front_row' && !frontRows.has(targetPos.r)) {
+        if (constraint.type === 'front_row' && !zones.frontRows.has(targetPos.r)) {
             unsatisfied.push(makeUnsatisfied(constraint, '未坐在前排区域'));
-        } else if (constraint.type === 'back_row' && !backRows.has(targetPos.r)) {
+        } else if (constraint.type === 'back_row' && !zones.backRows.has(targetPos.r)) {
             unsatisfied.push(makeUnsatisfied(constraint, '未坐在后排区域'));
+        } else if (constraint.type === 'avoid_first_row' && targetPos.r === zones.firstRow) {
+            unsatisfied.push(makeUnsatisfied(constraint, '仍然坐在第一排'));
+        } else if (constraint.type === 'avoid_last_row' && targetPos.r === zones.lastRow) {
+            unsatisfied.push(makeUnsatisfied(constraint, '仍然坐在最后一排'));
+        } else if (constraint.type === 'avoid_front_row' && zones.frontRows.has(targetPos.r)) {
+            unsatisfied.push(makeUnsatisfied(constraint, '仍然坐在前排区域'));
+        } else if (constraint.type === 'avoid_back_row' && zones.backRows.has(targetPos.r)) {
+            unsatisfied.push(makeUnsatisfied(constraint, '仍然坐在后排区域'));
+        } else if (constraint.type === 'prefer_front_middle'
+            && (!zones.frontRows.has(targetPos.r) || !zones.middleCols.has(targetPos.c))) {
+            unsatisfied.push(makeUnsatisfied({ ...constraint, priority: constraint.priority || 'soft' }, '未坐在前排中间区域'));
+        } else if (constraint.type === 'prefer_front_mid_rows' && !zones.frontMidRows.has(targetPos.r)) {
+            unsatisfied.push(makeUnsatisfied({ ...constraint, priority: constraint.priority || 'soft' }, '未坐在前中排区域'));
+        } else if (constraint.type === 'prefer_aisle'
+            && !isAisleAdjacentPosition(targetPos, rows, cols, colAisles, normalizedLocalAisles)) {
+            unsatisfied.push(makeUnsatisfied({ ...constraint, priority: constraint.priority || 'soft' }, '未坐在靠过道位置'));
+        } else if (constraint.type === 'avoid_behind' && (!relatedId || !relatedPos || targetPos.r > relatedPos.r)) {
+            unsatisfied.push(makeUnsatisfied(constraint, '仍然坐在相关同学后面'));
         } else if (constraint.type === 'avoid' && relatedId && adjacent(targetPos, relatedPos, normalizedLocalAisles)) {
             unsatisfied.push(makeUnsatisfied(constraint, '两人仍然相邻'));
-        } else if (constraint.type === 'pair' && (!relatedId || !adjacent(targetPos, relatedPos, normalizedLocalAisles))) {
+        } else if ((constraint.type === 'not_adjacent') && relatedId && adjacent(targetPos, relatedPos, normalizedLocalAisles)) {
+            unsatisfied.push(makeUnsatisfied(constraint, '两人仍然相邻'));
+        } else if (constraint.type === 'avoid_near' && relatedId && nearSeat(targetPos, relatedPos, normalizedLocalAisles)) {
+            unsatisfied.push(makeUnsatisfied(constraint, '两人仍然坐得过近'));
+        } else if ((constraint.type === 'pair' || constraint.type === 'must_adjacent')
+            && (!relatedId || !adjacent(targetPos, relatedPos, normalizedLocalAisles))) {
             unsatisfied.push(makeUnsatisfied(constraint, '两人没有相邻'));
-        } else if (constraint.type === 'prefer' && (!relatedId || !adjacent(targetPos, relatedPos, normalizedLocalAisles))) {
+        } else if (constraint.type === 'prefer'
+            && (!relatedId || !adjacent(targetPos, relatedPos, normalizedLocalAisles))) {
             unsatisfied.push(makeUnsatisfied({ ...constraint, priority: constraint.priority || 'soft' }, '偏好未满足'));
+        } else if (constraint.type === 'prefer_near'
+            && (!relatedId || !nearSeat(targetPos, relatedPos, normalizedLocalAisles))) {
+            unsatisfied.push(makeUnsatisfied({ ...constraint, priority: constraint.priority || 'soft' }, '偏好未满足'));
+        } else if (constraint.type === 'prefer_high_grade_neighbor'
+            && !hasHighGradeNeighbor(layout, targetPos, highGradeIds, normalizedLocalAisles)) {
+            unsatisfied.push(makeUnsatisfied({ ...constraint, priority: constraint.priority || 'soft' }, '旁边没有成绩较好的同学'));
+        } else if (constraint.type === 'avoid_low_grade_deskmate'
+            && hasLowGradeNeighbor(layout, targetPos, lowGradeIds, normalizedLocalAisles)) {
+            unsatisfied.push(makeUnsatisfied(constraint, '旁边仍有成绩偏低的同学'));
         }
     }
 
@@ -1100,9 +1209,22 @@ function buildQualityPlacement({ layout = [], students = [], classroomLayout = {
 function constraintExpectedText(constraint = {}) {
     if (constraint.type === 'front_row') return '坐在前排区域';
     if (constraint.type === 'back_row') return '坐在后排区域';
+    if (constraint.type === 'avoid_first_row') return '避开第一排';
+    if (constraint.type === 'avoid_last_row') return '避开最后一排';
+    if (constraint.type === 'avoid_front_row') return '避开前排区域';
+    if (constraint.type === 'avoid_back_row') return '避开后排区域';
+    if (constraint.type === 'avoid_behind') return '不要坐在相关同学后面';
+    if (constraint.type === 'avoid_near') return '两人不要坐得过近';
+    if (constraint.type === 'prefer_front_middle') return '尽量坐在前排中间区域';
+    if (constraint.type === 'prefer_front_mid_rows') return '尽量坐在前中排区域';
+    if (constraint.type === 'prefer_aisle') return '尽量靠过道';
+    if (constraint.type === 'prefer_high_grade_neighbor') return '旁边有成绩较好的同学';
+    if (constraint.type === 'avoid_low_grade_deskmate') return '避免低分同桌';
     if (constraint.type === 'avoid') return '两人不要相邻';
+    if (constraint.type === 'not_adjacent') return '两人不要相邻';
     if (constraint.type === 'pair') return '两人相邻';
-    if (constraint.type === 'prefer') return '尽量相邻';
+    if (constraint.type === 'must_adjacent') return '两人相邻';
+    if (constraint.type === 'prefer' || constraint.type === 'prefer_near') return '尽量相近';
     return '满足学生需求';
 }
 
@@ -1414,6 +1536,7 @@ export function evaluateSeatingQuality({
         rows: safeRows,
         cols: safeCols,
         rowAisles: mergedRowAisles,
+        colAisles: mergedColAisles,
         localAisles: normalizedLocalAisles,
     });
     addQualityConstraint(scoreConstraints, {

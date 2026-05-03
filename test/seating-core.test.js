@@ -400,6 +400,48 @@ test('evaluateSeatingConstraints recalculates front, back, avoid, pair, and pref
   assert.equal(result.softUnsatisfied.length, 1);
 });
 
+test('evaluateSeatingConstraints understands rich row, relative, and grade-neighbor needs', () => {
+  const localStudents = [
+    { id: 'a', name: '前排学生', grade: 95 },
+    { id: 'b', name: '最后学生', grade: 40 },
+    { id: 'c', name: '后方学生', grade: 80 },
+    { id: 'd', name: '参照学生', grade: 70 },
+    { id: 'e', name: '需强邻', grade: 60 },
+    { id: 'f', name: '低分邻座', grade: 45 },
+    { id: 'g', name: '普通同学', grade: 55 },
+  ];
+  const layout = [
+    ['a', null, null, null],
+    ['d', null, 'g', null],
+    ['c', null, 'e', 'f'],
+    [null, null, null, 'b'],
+  ];
+
+  const result = evaluateSeatingConstraints({
+    layout,
+    students: localStudents,
+    rows: 4,
+    cols: 4,
+    constraints: [
+      { type: 'avoid_first_row', target: '前排学生', priority: 'hard' },
+      { type: 'avoid_last_row', target: '最后学生', priority: 'hard' },
+      { type: 'avoid_behind', target: '后方学生', related: '参照学生', priority: 'hard' },
+      { type: 'prefer_high_grade_neighbor', target: '需强邻', priority: 'soft' },
+      { type: 'avoid_low_grade_deskmate', target: '低分邻座', priority: 'hard' },
+    ],
+  });
+
+  assert.deepEqual(result.unsatisfied.map(item => item.type), [
+    'avoid_first_row',
+    'avoid_last_row',
+    'avoid_behind',
+    'prefer_high_grade_neighbor',
+    'avoid_low_grade_deskmate',
+  ]);
+  assert.equal(result.hardUnsatisfied.length, 4);
+  assert.equal(result.softUnsatisfied.length, 1);
+});
+
 test('evaluateSeatingQuality reports hard layout problems and caps invalid scores', () => {
   const result = evaluateSeatingQuality({
     layout: [

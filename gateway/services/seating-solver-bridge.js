@@ -6,6 +6,16 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 8000;
 const POLL_INTERVAL_MS = 500;
+const TIMEFOLD_SUPPORTED_CONSTRAINT_TYPES = new Set([
+    'front_row',
+    'back_row',
+    'avoid',
+    'not_adjacent',
+    'prefer',
+    'prefer_near',
+    'pair',
+    'must_adjacent',
+]);
 
 export class TimefoldUnavailableError extends Error {
     constructor(message, reason = 'unavailable') {
@@ -225,7 +235,7 @@ function buildStudentAssignments(request, guardianIds) {
             pushUnique(id, 'mustAvoidAdjacent', related);
             pushUnique(related, 'mustAvoidAdjacent', id);
         }
-        if (constraint.type === 'prefer' && related) {
+        if ((constraint.type === 'prefer' || constraint.type === 'prefer_near') && related) {
             pushUnique(id, 'preferAdjacent', related);
             pushUnique(related, 'preferAdjacent', id);
         }
@@ -257,6 +267,14 @@ function buildConstraintConfig(layout, spec) {
 export function buildTimefoldProblem({ request, layout, spec, guardians = {} } = {}) {
     if (!request || !layout || !spec) {
         throw new TimefoldUnavailableError('Timefold problem input is incomplete', 'invalid_input');
+    }
+    const unsupported = (request.constraints || [])
+        .find(constraint => constraint?.type && !TIMEFOLD_SUPPORTED_CONSTRAINT_TYPES.has(constraint.type));
+    if (unsupported) {
+        throw new TimefoldUnavailableError(
+            `Timefold skipped because rich student need "${unsupported.type}" requires local constraint handling`,
+            'rich_constraints'
+        );
     }
     const guardianIds = new Set([guardians.left, guardians.right].filter(Boolean));
     const seats = buildSeatList(layout);

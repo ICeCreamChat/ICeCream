@@ -1058,6 +1058,13 @@ function getTopGradeStudentIds(students, minimumCount = 1) {
     return new Set(ranked.slice(0, count).map(student => student.id));
 }
 
+function getLowGradeStudentIds(students, minimumCount = 1) {
+    const ranked = rankedStudentsByGradeDesc(students);
+    if (!ranked.length) return new Set();
+    const count = Math.max(minimumCount, Math.ceil(ranked.length * TOP_GRADE_PERCENT));
+    return new Set(ranked.slice(Math.max(0, ranked.length - count)).map(student => student.id));
+}
+
 function protectExcellentStudentsFromLastRow({ assignments, studentsById, seats, gradeStrategy, scoreMap = new Map() }) {
     if (gradeStrategy !== 'priority' || !assignments.length || !seats.length) {
         return { moved: 0, remaining: 0 };
@@ -1397,6 +1404,16 @@ function areAdjacent(a, b) {
     return Math.abs(a.row - b.row) + Math.abs(a.col - b.col) <= 1;
 }
 
+function areAdjacentSeats(a, b) {
+    if (!a || !b) return false;
+    return Math.abs(a.r - b.r) + Math.abs(a.c - b.c) === 1;
+}
+
+function areNearAssignments(a, b) {
+    if (!a || !b) return false;
+    return Math.abs(a.row - b.row) + Math.abs(a.col - b.col) <= 2;
+}
+
 function assignLocalSeats({ request, layout, spec, guardians }) {
     const guardianIds = new Set([guardians.left, guardians.right].filter(Boolean));
     const regularStudents = request.students.filter(student => !guardianIds.has(student.id));
@@ -1404,6 +1421,18 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
     const studentsByName = new Map(request.students.map(student => [student.name, student]));
     const allSeats = layoutSeatList(layout);
     const seatScoreMap = calculateSeatScoreMap(layout);
+    const seatRows = [...new Set(allSeats.map(seat => seat.r))].sort((a, b) => a - b);
+    const seatCols = [...new Set(allSeats.map(seat => seat.c))].sort((a, b) => a - b);
+    const rowBandSize = Math.max(1, Math.ceil(seatRows.length / 3));
+    const firstRow = seatRows[0];
+    const lastRow = seatRows[seatRows.length - 1];
+    const frontRows = new Set(seatRows.slice(0, rowBandSize));
+    const backRows = new Set(seatRows.slice(Math.max(0, seatRows.length - rowBandSize)));
+    const frontMidRows = new Set(seatRows.slice(0, Math.max(1, Math.ceil(seatRows.length * 2 / 3))));
+    const middleColSize = Math.max(1, Math.ceil(seatCols.length / 3));
+    const middleColStart = Math.max(0, Math.floor((seatCols.length - middleColSize) / 2));
+    const middleCols = new Set(seatCols.slice(middleColStart, middleColStart + middleColSize));
+    const hardSeatRules = new Map();
     const occupied = new Set();
     const placed = new Set();
     const assignments = [];
@@ -1418,8 +1447,32 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
         return seat && !occupied.has(seatKey(seat));
     }
 
-    function place(studentId, seat) {
+    function rulesFor(studentId) {
+        if (!hardSeatRules.has(studentId)) {
+            hardSeatRules.set(studentId, {
+                avoidFirstRow: false,
+                avoidLastRow: false,
+                avoidFrontRow: false,
+                avoidBackRow: false,
+            });
+        }
+        return hardSeatRules.get(studentId);
+    }
+
+    function allowedSeatForStudent(studentId, seat) {
+        if (!studentId || !seat) return false;
+        const rules = hardSeatRules.get(studentId);
+        if (!rules) return true;
+        if (rules.avoidFirstRow && seat.r === firstRow) return false;
+        if (rules.avoidLastRow && seat.r === lastRow) return false;
+        if (rules.avoidFrontRow && frontRows.has(seat.r)) return false;
+        if (rules.avoidBackRow && backRows.has(seat.r)) return false;
+        return true;
+    }
+
+    function place(studentId, seat, { allowHardViolation = false } = {}) {
         if (!studentId || !seat || occupied.has(seatKey(seat)) || placed.has(studentId)) return false;
+        if (!allowHardViolation && !allowedSeatForStudent(studentId, seat)) return false;
         assignments.push({ studentId, row: seat.r, col: seat.c });
         occupied.add(seatKey(seat));
         placed.add(studentId);
@@ -1431,12 +1484,26 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
         return seats.find(seat => isFree(seat) && predicate(seat));
     }
 
+    function nextSeatForStudent(studentId, predicate = () => true, options = {}) {
+        return nextSeat(seat => predicate(seat) && allowedSeatForStudent(studentId, seat), options);
+    }
+
+    function isAisleSeat(seat) {
+        if (!seat) return false;
+        const left = seat.c > 0 ? layout.cells?.[seat.r]?.[seat.c - 1] : null;
+        const right = seat.c < layout.cols - 1 ? layout.cells?.[seat.r]?.[seat.c + 1] : null;
+        return left === CELL.AISLE || right === CELL.AISLE || seat.c === 0 || seat.c === layout.cols - 1;
+    }
+
     function placeRemainingStudents(regionStudents, regionSeats) {
-        const availableSeats = regionSeats.filter(isFree);
         let ordered = [...regionStudents];
         if (spec.placementPolicy?.genderBalance) ordered = interleaveGender(ordered);
-        for (let i = 0; i < ordered.length && i < availableSeats.length; i++) {
-            place(ordered[i].id, availableSeats[i]);
+        for (const student of ordered) {
+            const seat = regionSeats.find(candidate => isFree(candidate) && allowedSeatForStudent(student.id, candidate))
+                || regionSeats.find(candidate => isFree(candidate));
+            if (seat) {
+                place(student.id, seat, { allowHardViolation: !allowedSeatForStudent(student.id, seat) });
+            }
         }
     }
 
@@ -1482,27 +1549,46 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
     }
 
     const avoidPairs = [];
+    const avoidNearPairs = [];
+    const avoidBehindPairs = [];
     const pairConstraints = [];
     const frontIds = [];
     const backIds = [];
+    const frontMiddleIds = [];
+    const frontMidIds = [];
+    const aisleIds = [];
+    const highGradeNeighborIds = [];
+    const avoidLowGradeNeighborIds = [];
 
     for (const constraint of request.constraints || []) {
         const id = resolveConstraintStudentId(constraint.target, studentsById, studentsByName);
         const related = resolveConstraintStudentId(constraint.related, studentsById, studentsByName);
         if (constraint.type === 'front_row' && id) frontIds.push(id);
         if (constraint.type === 'back_row' && id) backIds.push(id);
+        if (constraint.type === 'prefer_front_middle' && id) frontMiddleIds.push(id);
+        if (constraint.type === 'prefer_front_mid_rows' && id) frontMidIds.push(id);
+        if (constraint.type === 'prefer_aisle' && id) aisleIds.push(id);
+        if (constraint.type === 'prefer_high_grade_neighbor' && id) highGradeNeighborIds.push(id);
+        if (constraint.type === 'avoid_low_grade_deskmate' && id) avoidLowGradeNeighborIds.push(id);
+        if (constraint.type === 'avoid_first_row' && id) rulesFor(id).avoidFirstRow = true;
+        if (constraint.type === 'avoid_last_row' && id) rulesFor(id).avoidLastRow = true;
+        if (constraint.type === 'avoid_front_row' && id) rulesFor(id).avoidFrontRow = true;
+        if (constraint.type === 'avoid_back_row' && id) rulesFor(id).avoidBackRow = true;
         if ((constraint.type === 'pair' || constraint.type === 'must_adjacent') && id && related) pairConstraints.push([id, related]);
         if ((constraint.type === 'avoid' || constraint.type === 'not_adjacent') && id && related) avoidPairs.push([id, related]);
+        if (constraint.type === 'avoid_near' && id && related) avoidNearPairs.push([id, related]);
+        if (constraint.type === 'avoid_behind' && id && related) avoidBehindPairs.push([id, related]);
     }
 
     for (const [id1, id2] of pairConstraints) {
         if (guardianIds.has(id1) || guardianIds.has(id2) || placed.has(id1) || placed.has(id2)) continue;
         let placedPair = false;
         for (const seat of allSeats) {
-            if (!isFree(seat)) continue;
+            if (!isFree(seat) || !allowedSeatForStudent(id1, seat)) continue;
             const mate = allSeats.find(candidate => isFree(candidate)
+                && allowedSeatForStudent(id2, candidate)
                 && candidate.group === seat.group
-                && Math.abs(candidate.r - seat.r) + Math.abs(candidate.c - seat.c) === 1);
+                && areAdjacentSeats(candidate, seat));
             if (mate && place(id1, seat) && place(id2, mate)) {
                 placedPair = true;
                 break;
@@ -1514,14 +1600,57 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
         }
     }
 
-    const seatRows = [...new Set(allSeats.map(seat => seat.r))].sort((a, b) => a - b);
-    const frontRows = new Set(seatRows.slice(0, Math.max(1, Math.ceil(seatRows.length / 3))));
-    const backRows = new Set(seatRows.slice(Math.max(0, seatRows.length - Math.max(1, Math.ceil(seatRows.length / 3)))));
+    const targetSeatPredicate = id => {
+        if (frontMiddleIds.includes(id)) return seat => frontRows.has(seat.r) && middleCols.has(seat.c);
+        if (frontMidIds.includes(id)) return seat => frontMidRows.has(seat.r);
+        if (frontIds.includes(id)) return seat => frontRows.has(seat.r);
+        if (backIds.includes(id)) return seat => backRows.has(seat.r);
+        if (aisleIds.includes(id)) return seat => isAisleSeat(seat);
+        return () => true;
+    };
+
+    const topGradeIds = getTopGradeStudentIds([...studentsById.values()]);
+    for (const id of highGradeNeighborIds) {
+        if (guardianIds.has(id) || placed.has(id)) continue;
+        const partner = rankedStudentsByGradeDesc(regularStudents)
+            .find(student => student.id !== id && topGradeIds.has(student.id) && !placed.has(student.id) && !guardianIds.has(student.id));
+        if (!partner) continue;
+        const preferredTargetSeat = targetSeatPredicate(id);
+        let placedNeighbor = false;
+        for (const seat of sortSeatsByQuality(allSeats, seatScoreMap)) {
+            if (!isFree(seat) || !preferredTargetSeat(seat) || !allowedSeatForStudent(id, seat)) continue;
+            const mate = allSeats.find(candidate => isFree(candidate)
+                && allowedSeatForStudent(partner.id, candidate)
+                && candidate.group === seat.group
+                && areAdjacentSeats(candidate, seat));
+            if (mate && place(id, seat) && place(partner.id, mate)) {
+                placedNeighbor = true;
+                break;
+            }
+        }
+        if (!placedNeighbor) {
+            warnings.push(`未能优先为 ${id} 安排成绩较好的邻座`);
+        }
+    }
+
+    for (const id of frontMiddleIds) {
+        if (!guardianIds.has(id) && !placed.has(id)) {
+            place(id, nextSeatForStudent(id, seat => frontRows.has(seat.r) && middleCols.has(seat.c), { byQuality: true }));
+        }
+    }
+    for (const id of frontMidIds) {
+        if (!guardianIds.has(id) && !placed.has(id)) {
+            place(id, nextSeatForStudent(id, seat => frontMidRows.has(seat.r), { byQuality: true }));
+        }
+    }
     for (const id of frontIds) {
-        if (!guardianIds.has(id) && !placed.has(id)) place(id, nextSeat(seat => frontRows.has(seat.r), { byQuality: true }));
+        if (!guardianIds.has(id) && !placed.has(id)) place(id, nextSeatForStudent(id, seat => frontRows.has(seat.r), { byQuality: true }));
     }
     for (const id of backIds) {
-        if (!guardianIds.has(id) && !placed.has(id)) place(id, nextSeat(seat => backRows.has(seat.r), { byQuality: true }));
+        if (!guardianIds.has(id) && !placed.has(id)) place(id, nextSeatForStudent(id, seat => backRows.has(seat.r), { byQuality: true }));
+    }
+    for (const id of aisleIds) {
+        if (!guardianIds.has(id) && !placed.has(id)) place(id, nextSeatForStudent(id, isAisleSeat, { byQuality: true }));
     }
 
     const freeSeatsForRemaining = allSeats.filter(isFree);
@@ -1534,8 +1663,10 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
             spec,
             freeSeatsForRemaining
         );
-        for (let i = 0; i < remaining.length && i < freeSeatsForRemaining.length; i++) {
-            place(remaining[i].id, freeSeatsForRemaining[i]);
+        for (const student of remaining) {
+            const seat = freeSeatsForRemaining.find(candidate => isFree(candidate) && allowedSeatForStudent(student.id, candidate))
+                || freeSeatsForRemaining.find(candidate => isFree(candidate));
+            if (seat) place(student.id, seat, { allowHardViolation: !allowedSeatForStudent(student.id, seat) });
         }
     }
 
@@ -1551,6 +1682,8 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
             const candidate = assignments[i];
             if (candidate.studentId === id1 || candidate.studentId === id2) continue;
             if (areAdjacent(pos1, candidate)) continue;
+            if (!allowedSeatForStudent(id2, { r: candidate.row, c: candidate.col })) continue;
+            if (!allowedSeatForStudent(candidate.studentId, { r: pos2.row, c: pos2.col })) continue;
             const original = { row: candidate.row, col: candidate.col };
             candidate.row = pos2.row;
             candidate.col = pos2.col;
@@ -1565,6 +1698,77 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
         if (!fixed) {
             warnings.push(`未能完全满足 ${id1} 和 ${id2} 不相邻`);
             unsatisfied.push({ target: id1, related: id2, type: 'avoid', reason: '没有找到可交换的远离座位' });
+        }
+    }
+
+    for (const [id1, id2] of avoidNearPairs) {
+        let positions = positionById();
+        const pos1 = positions.get(id1);
+        const pos2 = positions.get(id2);
+        if (!areNearAssignments(pos1, pos2)) continue;
+        const index2 = assignments.findIndex(assignment => assignment.studentId === id2);
+        let fixed = false;
+        for (const candidate of assignments) {
+            if (candidate.studentId === id1 || candidate.studentId === id2) continue;
+            if (areNearAssignments(pos1, candidate)) continue;
+            if (!allowedSeatForStudent(id2, { r: candidate.row, c: candidate.col })) continue;
+            if (!allowedSeatForStudent(candidate.studentId, { r: pos2.row, c: pos2.col })) continue;
+            const original = { row: candidate.row, col: candidate.col };
+            candidate.row = pos2.row;
+            candidate.col = pos2.col;
+            assignments[index2].row = original.row;
+            assignments[index2].col = original.col;
+            positions = positionById();
+            if (!areNearAssignments(positions.get(id1), positions.get(id2))) {
+                fixed = true;
+                break;
+            }
+        }
+        if (!fixed) {
+            warnings.push(`未能完全满足 ${id1} 和 ${id2} 不要太近`);
+            unsatisfied.push({ target: id1, related: id2, type: 'avoid_near', reason: '没有找到更远座位' });
+        }
+    }
+
+    for (const [targetId, relatedId] of avoidBehindPairs) {
+        let positions = positionById();
+        const target = positions.get(targetId);
+        const related = positions.get(relatedId);
+        if (!target || !related || target.row <= related.row) continue;
+        const targetIndex = assignments.findIndex(assignment => assignment.studentId === targetId);
+        let fixed = false;
+        for (const candidate of assignments) {
+            if (candidate.studentId === targetId || candidate.studentId === relatedId) continue;
+            if (candidate.row > related.row) continue;
+            if (!allowedSeatForStudent(targetId, { r: candidate.row, c: candidate.col })) continue;
+            if (!allowedSeatForStudent(candidate.studentId, { r: target.row, c: target.col })) continue;
+            const original = { row: candidate.row, col: candidate.col };
+            candidate.row = target.row;
+            candidate.col = target.col;
+            assignments[targetIndex].row = original.row;
+            assignments[targetIndex].col = original.col;
+            positions = positionById();
+            if (positions.get(targetId)?.row <= positions.get(relatedId)?.row) {
+                fixed = true;
+                break;
+            }
+        }
+        if (!fixed) {
+            warnings.push(`未能完全满足 ${targetId} 不坐在 ${relatedId} 后面`);
+            unsatisfied.push({ target: targetId, related: relatedId, type: 'avoid_behind', reason: '没有找到前方可交换座位' });
+        }
+    }
+
+    const lowGradeIds = getLowGradeStudentIds([...studentsById.values()]);
+    for (const id of avoidLowGradeNeighborIds) {
+        const positions = positionById();
+        const pos = positions.get(id);
+        if (!pos) continue;
+        const hasLowNeighbor = assignments.some(candidate => candidate.studentId !== id
+            && lowGradeIds.has(candidate.studentId)
+            && areAdjacent(pos, candidate));
+        if (hasLowNeighbor) {
+            unsatisfied.push({ target: id, type: 'avoid_low_grade_deskmate', reason: '旁边仍有成绩偏低的同学' });
         }
     }
 
@@ -1738,7 +1942,7 @@ async function buildLocalArrangement({ request, spec, specWarnings = [], env = p
         solverStats.fallbackReason = error instanceof TimefoldUnavailableError
             ? error.reason
             : (error?.message || 'unknown_error');
-        if (!(error instanceof TimefoldUnavailableError && error.reason === 'not_configured')
+        if (!(error instanceof TimefoldUnavailableError && ['not_configured', 'rich_constraints'].includes(error.reason))
             && asText(env?.TIMEFOLD_SOLVER_URL)) {
             solverWarnings.push(`Timefold solver unavailable (${error.reason || error.message}); used local seating algorithm.`);
         }

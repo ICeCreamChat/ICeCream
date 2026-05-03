@@ -3253,13 +3253,59 @@ class SeatingPlanner {
             if (!result.success) throw new Error(result.error);
 
             this.constraints = result.data.constraints;
+            const warnings = Array.isArray(result.data.warnings) ? result.data.warnings.filter(Boolean) : [];
             const list = document.getElementById('sp-constraints-list');
             if (this.constraints.length === 0) {
-                list.innerHTML = '<div style="text-align:center;color:var(--sp-text-muted);font-size:0.85rem;padding:16px;">未识别到学生需求</div>';
+                const message = warnings.length ? `解析未得到可执行需求：${warnings.join('；')}` : '未识别到学生需求';
+                list.innerHTML = '';
+                const empty = document.createElement('div');
+                empty.style.cssText = 'text-align:center;color:var(--sp-text-muted);font-size:0.85rem;padding:16px;';
+                empty.textContent = message;
+                list.appendChild(empty);
             } else {
                 list.innerHTML = '';
-                const iconMap = { front_row: 'eye', back_row: 'arrow-down', avoid: 'x-circle', prefer: 'heart', pair: 'link' };
-                const typeMap = { front_row: 'front', avoid: 'avoid', prefer: 'prefer', pair: 'prefer', back_row: 'front' };
+                const iconMap = {
+                    front_row: 'eye',
+                    back_row: 'arrow-down',
+                    avoid_first_row: 'arrow-down',
+                    avoid_last_row: 'arrow-up',
+                    avoid_front_row: 'arrow-down',
+                    avoid_back_row: 'arrow-up',
+                    avoid_behind: 'move-up',
+                    avoid_near: 'x-circle',
+                    avoid_low_grade_deskmate: 'shield-alert',
+                    prefer_front_middle: 'crosshair',
+                    prefer_front_mid_rows: 'panel-top',
+                    prefer_aisle: 'footprints',
+                    prefer_high_grade_neighbor: 'graduation-cap',
+                    prefer_near: 'heart',
+                    avoid: 'x-circle',
+                    not_adjacent: 'x-circle',
+                    prefer: 'heart',
+                    pair: 'link',
+                    must_adjacent: 'link',
+                };
+                const typeMap = {
+                    front_row: 'front',
+                    back_row: 'front',
+                    avoid_first_row: 'avoid',
+                    avoid_last_row: 'avoid',
+                    avoid_front_row: 'avoid',
+                    avoid_back_row: 'avoid',
+                    avoid_behind: 'avoid',
+                    avoid_near: 'avoid',
+                    avoid_low_grade_deskmate: 'avoid',
+                    prefer_front_middle: 'prefer',
+                    prefer_front_mid_rows: 'prefer',
+                    prefer_aisle: 'prefer',
+                    prefer_high_grade_neighbor: 'prefer',
+                    prefer_near: 'prefer',
+                    avoid: 'avoid',
+                    not_adjacent: 'avoid',
+                    prefer: 'prefer',
+                    pair: 'prefer',
+                    must_adjacent: 'prefer',
+                };
                 this.constraints.forEach(c => {
                     const div = document.createElement('div');
                     div.className = 'sp-constraint';
@@ -3286,7 +3332,8 @@ class SeatingPlanner {
             if (window.lucide) window.lucide.createIcons();
             this.refreshConstraintStatus();
             this.updateStatus();
-            this.showToast(`识别到 ${this.constraints.length} 条学生需求`, 'success');
+            if (warnings.length) this.showToast(warnings.join('；'), 'warning');
+            else this.showToast(`识别到 ${this.constraints.length} 条学生需求`, 'success');
             this.hideSuggestions('arrange');
         } catch (err) {
             this.showToast(err.message, 'error');
@@ -4630,6 +4677,7 @@ class SeatingPlanner {
             rows: this.rows,
             cols: this.cols,
             rowAisles: this.rowAisles,
+            colAisles: this.colAisles,
             localAisles: this.classroomLayout?.localAisles,
         });
         this.unsatisfied = this._constraintEvaluation.unsatisfied;

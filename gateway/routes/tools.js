@@ -22,6 +22,7 @@ import {
     generateSeatingSuggestions,
     normalizeSuggestionRequest,
 } from '../services/seating-suggestions.js';
+import { parseSeatingConstraints } from '../services/seating-constraints.js';
 import { buildSeatingDiagnostics } from '../services/seating-diagnostics.js';
 import { submitSeatingFeedback } from '../services/seating-feedback.js';
 import {
@@ -209,66 +210,20 @@ router.post('/seating/parse', async (req, res) => {
             return res.status(400).json({                success: false,                error: '请提供约束描述文本'            });
         }
 
-        const systemPrompt = `你是座位安排约束解析助手。从老师的话中提取约束条件。
-
-输出格式 (严格JSON，不要markdown):
-{
-  "constraints": [
-    {"type": "front_row", "target": "张三", "reason": "视力不好", "priority": "hard"},
-    {"type": "avoid", "target": "李四", "related": "王五", "reason": "爱讲话", "priority": "hard"},
-    {"type": "prefer", "target": "赵六", "related": "钱七", "reason": "学生心愿", "priority": "soft"}
-  ]
-}
-
-约束类型:
-- front_row: 必须坐前排 (视力/身高等硬需求)
-- back_row: 必须坐后排 (个子高)
-- avoid: 两人不能相邻 (纪律问题)
-- prefer: 希望相邻 (软约束/心愿)
-- pair: 必须相邻 (学习互助等硬约束)
-
-priority: hard=必须满足, soft=尽量满足
-
-如果没有识别到约束，返回空数组: {"constraints": []}`;
-
-        const response = await fetch(`${process.env.DEEPSEEK_API_BASE}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: `老师说：${text}\n\n${students ? `学生名单：${students.map(s => s.name).join('、')}` : ''}` }
-                ],
-                temperature: 0.3,
-                max_tokens: 1024,
-                response_format: { type: "json_object" }
-            }),
-            signal: AbortSignal.timeout(60000) // 60s timeout
+        const parsed = await parseSeatingConstraints({
+            text,
+            students,
+            fetchImpl: fetch,
+            env: process.env,
         });
-
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error?.message || `API Error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const content = data.choices?.[0]?.message?.content || '{}';
-        let parsed;
-        try {
-            parsed = JSON.parse(content);
-        } catch (e) {
-            parsed = { constraints: [] };
-        }
 
         res.json({
             success: true,
             data: {
                 constraints: parsed.constraints || [],
-                raw: content
+                raw: parsed.raw,
+                warnings: parsed.warnings || [],
+                source: parsed.source,
             }
         });
 

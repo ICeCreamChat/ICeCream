@@ -591,6 +591,47 @@ test('grade priority does not override hard front-row requirements', async () =>
   );
 });
 
+test('local arrangement keeps rich row constraints actionable instead of treating them as adjacency', async () => {
+  const roster = Array.from({ length: 8 }, (_, index) => ({
+    id: `s${index + 1}`,
+    name: `Student ${index + 1}`,
+    grade: 80 - index,
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '8 students, use the existing room',
+    students: roster,
+    constraints: [
+      { type: 'avoid_first_row', target: 'Student 1', priority: 'hard' },
+      { type: 'avoid_last_row', target: 'Student 2', priority: 'hard' },
+      { type: 'prefer_front_middle', target: 'Student 3', priority: 'soft' },
+    ],
+    strategy: { genderBalance: false, heightOrder: false, gradeStrategy: 'none' },
+    previousLayout: {
+      rows: 4,
+      cols: 4,
+      cells: Array.from({ length: 4 }, () => Array(4).fill('seat')),
+    },
+  });
+  const fetchImpl = async () => jsonResponse({
+    groupSize: 1,
+    guardianPolicy: { enabled: false },
+    keepPreviousLayout: true,
+    layoutMode: 'standard',
+  });
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  const byStudent = new Map(result.assignments.map(item => [item.studentId, item]));
+  assert.notEqual(byStudent.get('s1').row, 0);
+  assert.notEqual(byStudent.get('s2').row, 3);
+  assert.ok(byStudent.get('s3').row <= 1);
+  assert.ok([1, 2].includes(byStudent.get('s3').col));
+});
+
 test('grade priority keeps excellent students out of the last row after gender balancing', async () => {
   const roster = [
     { id: 'm01', name: 'Low M1', grade: 10, gender: 'M' },
