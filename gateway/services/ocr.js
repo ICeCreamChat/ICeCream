@@ -87,7 +87,12 @@ export async function extractStudentsDirectVLM(imageBuffer, mimeType = 'image/jp
     let content = data.choices[0]?.message?.content || '[]';
     // Clean up markdown code blocks if present
     content = content.replace(/```json/g, '').replace(/```/g, '').trim();
-    const students = JSON.parse(content);
+    let students;
+    try {
+        students = JSON.parse(content);
+    } catch {
+        throw new Error('VLM 返回了无法解析的 JSON');
+    }
     if (Array.isArray(students)) return students;
     if (students.students && Array.isArray(students.students)) return students.students;
     throw new Error('VLM did not return a valid array');

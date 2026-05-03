@@ -1,6 +1,6 @@
-/**
+﻿/**
  * Chat Handler Service
- * 处理普通对话请求，调用 DeepSeek API
+ * Handles chat and streaming chat requests via DeepSeek API.
  */
 
 import fetch from 'node-fetch';
@@ -10,48 +10,58 @@ const SYSTEM_PROMPT = `你是 ICeCream，一个友好、智能的 AI 助手。�
 2. 知识咨询和解释
 3. 代码帮助和技术讨论
 4. 数学和科学问题
-
 请用中文回复，保持友好和专业。如果用户想要生成动画或解题，建议他们使用对应的模式。`;
 
+const MAX_MESSAGE_LENGTH = 10000;
+const MAX_HISTORY_MESSAGES = 20;
+
+function normalizeMessages(messages) {
+    const source = Array.isArray(messages) ? messages : [];
+    return source
+        .filter(item => item && (item.role === 'user' || item.role === 'assistant'))
+        .map(item => ({
+            role: item.role,
+            content: typeof item.content === 'string' ? item.content : String(item.content || ''),
+        }))
+        .slice(-MAX_HISTORY_MESSAGES);
+}
+
 /**
- * 处理聊天请求
+ * Handle regular chat request
  */
 export async function handleChat(req, res) {
     try {
-        const { message, messages = [], context } = req.body;
+        const { message, messages = [] } = req.body;
+        const safeMessages = normalizeMessages(messages);
+        const normalizedMessage = typeof message === 'string' ? message : String(message || '');
 
-        if (!message && messages.length === 0) {
+        if (!normalizedMessage && (!messages || messages.length === 0)) {
             return res.status(400).json({
                 success: false,
                 error: '消息不能为空'
             });
         }
 
-        // 输入验证：限制消息长度
-        const maxMessageLength = 10000;
-        if (message && message.length > maxMessageLength) {
+        if (normalizedMessage && normalizedMessage.length > MAX_MESSAGE_LENGTH) {
             return res.status(400).json({
                 success: false,
-                error: `消息过长，请限制在 ${maxMessageLength} 字符以内`
+                error: `消息过长，请限制在 ${MAX_MESSAGE_LENGTH} 字符以内`
             });
         }
 
-        // 构建消息列表
         const chatMessages = [
             { role: 'system', content: SYSTEM_PROMPT },
-            ...messages,
+            ...safeMessages,
         ];
 
-        if (message) {
-            chatMessages.push({ role: 'user', content: message });
+        if (normalizedMessage) {
+            chatMessages.push({ role: 'user', content: normalizedMessage });
         }
 
-        // 创建超时控制器
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 30000); // 30秒超时
+        const timeout = setTimeout(() => controller.abort(), 30000);
 
         try {
-            // 调用 DeepSeek API
             const response = await fetch(`${process.env.DEEPSEEK_API_BASE}/chat/completions`, {
                 method: 'POST',
                 headers: {
@@ -81,7 +91,7 @@ export async function handleChat(req, res) {
                 success: true,
                 intent: 'chat',
                 data: {
-                    reply: reply,
+                    reply,
                     usage: data.usage
                 }
             });
@@ -103,25 +113,46 @@ export async function handleChat(req, res) {
 }
 
 /**
- * 处理流式聊天请求
+ * Handle streaming chat request
  */
 export async function handleChatStream(req, res) {
+    let timeout = null;
+    let controller = null;
+    let clientClosed = false;
+
+    const onClose = () => {
+        clientClosed = true;
+        controller?.abort();
+    };
+
     try {
         const { message, messages = [] } = req.body;
+        const safeMessages = normalizeMessages(messages);
+        const normalizedMessage = typeof message === 'string' ? message : String(message || '');
 
-        // 设置 SSE 响应头
+        if (normalizedMessage && normalizedMessage.length > MAX_MESSAGE_LENGTH) {
+            return res.status(400).json({
+                success: false,
+                error: `消息过长，请限制在 ${MAX_MESSAGE_LENGTH} 字符以内`
+            });
+        }
+
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
 
         const chatMessages = [
             { role: 'system', content: SYSTEM_PROMPT },
-            ...messages,
+            ...safeMessages,
         ];
 
-        if (message) {
-            chatMessages.push({ role: 'user', content: message });
+        if (normalizedMessage) {
+            chatMessages.push({ role: 'user', content: normalizedMessage });
         }
+
+        controller = new AbortController();
+        timeout = setTimeout(() => controller.abort(), 60000);
+        req.on('close', onClose);
 
         const response = await fetch(`${process.env.DEEPSEEK_API_BASE}/chat/completions`, {
             method: 'POST',
@@ -135,20 +166,32 @@ export async function handleChatStream(req, res) {
                 temperature: 0.7,
                 max_tokens: 2048,
                 stream: true
-            })
+            }),
+            signal: controller.signal
         });
 
+        clearTimeout(timeout);
+        timeout = null;
+
         if (!response.ok) {
-            res.write(`data: ${JSON.stringify({ error: 'API Error' })}\n\n`);
+            const errorBody = await response.json().catch(() => ({}));
+            res.write(`data: ${JSON.stringify({ error: errorBody.error?.message || 'API Error' })}\n\n`);
             res.end();
             return;
         }
 
-        // 流式转发
+        if (!response.body) {
+            res.write(`data: ${JSON.stringify({ error: 'Empty stream body' })}\n\n`);
+            res.end();
+            return;
+        }
+
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
         while (true) {
+            if (clientClosed) break;
+
             const { done, value } = await reader.read();
             if (done) break;
 
@@ -156,13 +199,36 @@ export async function handleChatStream(req, res) {
             res.write(chunk);
         }
 
-        res.write('data: [DONE]\n\n');
-        res.end();
-
+        if (!clientClosed && !res.writableEnded) {
+            res.write('data: [DONE]\n\n');
+            res.end();
+        }
     } catch (error) {
+        if (timeout) {
+            clearTimeout(timeout);
+            timeout = null;
+        }
+
+        if (error.name === 'AbortError' && clientClosed) {
+            return;
+        }
+
+        if (error.name === 'AbortError') {
+            if (!res.writableEnded) {
+                res.write(`data: ${JSON.stringify({ error: '请求超时，请稍后重试' })}\n\n`);
+                res.end();
+            }
+            return;
+        }
+
         console.error('[Chat Handler] Stream Error:', error);
-        res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
-        res.end();
+        if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+            res.end();
+        }
+    } finally {
+        if (timeout) clearTimeout(timeout);
+        req.off('close', onClose);
     }
 }
 

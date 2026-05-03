@@ -72,10 +72,19 @@ if defined PYTHON_CMD if exist "manim-service\main.py" (
         popd
     )
 
-    if "!MANIM_ENABLED!"=="1" if exist "manim-service\requirements.txt" if not exist "manim-service\.venv\.icecream-requirements-ok" (
+if "!MANIM_ENABLED!"=="1" if exist "manim-service\requirements.txt" if not exist "manim-service\.venv\.icecream-requirements-ok" (
         echo [Setup] Installing Manim Python dependencies...
         pushd "manim-service"
-        .venv\Scripts\python.exe -m pip install -r requirements.txt
+        set "PIP_DISABLE_PIP_VERSION_CHECK=1"
+        set "PIP_CACHE_DIR=%CD%\.pip-cache"
+        if not exist ".pip-cache" mkdir ".pip-cache" >nul 2>&1
+
+        .venv\Scripts\python.exe -m pip install -r requirements.txt --cache-dir ".pip-cache"
+        if errorlevel 1 (
+            echo [WARN] pip install failed with cache enabled. Retrying without cache...
+            .venv\Scripts\python.exe -m pip install -r requirements.txt --no-cache-dir
+        )
+
         if errorlevel 1 (
             echo [WARN] Failed to install Manim dependencies. Manim will be disabled.
             set "MANIM_ENABLED=0"

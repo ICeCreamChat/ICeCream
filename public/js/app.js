@@ -261,7 +261,12 @@ class ICeCreamApp {
      * @private
      */
     _initTheme() {
-        const savedTheme = localStorage.getItem('theme');
+        let savedTheme;
+        try {
+            savedTheme = localStorage.getItem('theme');
+        } catch {
+            savedTheme = null;
+        }
         if (savedTheme === 'light') {
             document.body.classList.add('light-mode');
         }
@@ -274,7 +279,11 @@ class ICeCreamApp {
     _toggleTheme() {
         document.body.classList.toggle('light-mode');
         const isLight = document.body.classList.contains('light-mode');
-        localStorage.setItem('theme', isLight ? 'light' : 'dark');
+        try {
+            localStorage.setItem('theme', isLight ? 'light' : 'dark');
+        } catch {
+            // ignore storage errors in private mode / quota limits
+        }
     }
 
     /**

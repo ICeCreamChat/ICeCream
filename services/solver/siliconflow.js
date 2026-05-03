@@ -95,7 +95,12 @@ export async function detectWithQwenGrounding(imagePath) {
         const match = content.match(/\{[\s\S]*"bbox_2d"[\s\S]*\}/);
         if (!match) return null;
 
-        const parsed = JSON.parse(match[0]);
+        let parsed;
+        try {
+            parsed = JSON.parse(match[0]);
+        } catch {
+            return null;
+        }
         if (!parsed.bbox_2d || !Array.isArray(parsed.bbox_2d)) return null;
 
         const [x1, y1, x2, y2] = parsed.bbox_2d;
@@ -145,7 +150,12 @@ export async function detectWithFallbackAPI(imagePath, base64Image, mimeType) {
         const match = content.match(/\{[\s\S]*"box"[\s\S]*\}/);
         if (!match) return null;
 
-        const parsed = JSON.parse(match[0]);
+        let parsed;
+        try {
+            parsed = JSON.parse(match[0]);
+        } catch {
+            return null;
+        }
         if (!parsed.box || parsed.box.length !== 4) return null;
 
         const [left, top, right, bottom] = parsed.box.map(v => Math.max(0, Math.min(100, Number(v) || 0)));

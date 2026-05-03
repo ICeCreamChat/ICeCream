@@ -30,6 +30,10 @@ export function getGatewayConfig(env = process.env) {
 export function validateGatewayEnv(env = process.env, logger = console) {
     const warnings = [];
 
+    if (!env.DEEPSEEK_API_BASE) {
+        warnings.push('DEEPSEEK_API_BASE is missing. Chat, Manim, and Solver features will not work.');
+    }
+
     if (!env.DEEPSEEK_API_KEY || env.DEEPSEEK_API_KEY.includes('your_')) {
         warnings.push('DEEPSEEK_API_KEY is missing or still uses a placeholder value.');
     }

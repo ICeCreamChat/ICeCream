@@ -94,6 +94,8 @@ export function createRateLimiter({ windowMs, max, message = '请求过于频繁
             return res.status(429).json({ success: false, error: message });
         }
 
+        // Lazy cleanup: only scan stale buckets when the in-memory map grows large.
+        // For higher concurrency or multi-instance deployment, replace with Redis.
         if (hits.size > 10000) {
             for (const [hitKey, value] of hits) {
                 if (value.resetAt <= now) hits.delete(hitKey);
@@ -127,6 +129,8 @@ export function buildCorsOptions() {
 
     return {
         origin(origin, callback) {
+            // Allow no-origin requests (same-origin server calls, curl, local scripts).
+            // If production requires stricter policy, reject when origin is missing.
             if (!origin || allowedOrigins.includes(origin)) {
                 callback(null, true);
                 return;

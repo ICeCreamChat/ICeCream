@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+﻿import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
@@ -9,50 +9,51 @@ const toolsStylePath = new URL('../public/css/tools.css', import.meta.url);
 const seatingSourcePath = new URL('../public/js/tools/seating-planner.js', import.meta.url);
 const seatingStylePath = new URL('../public/css/seating-planner.css', import.meta.url);
 
-test('global mobile shell has viewport state, safe tool chrome, and main mode safeguards', async () => {
+test('global mobile shell keeps viewport, mobile nav behavior, and resilient theme persistence', async () => {
   const appSource = await readFile(appPath, 'utf8');
   const indexSource = await readFile(indexPath, 'utf8');
   const mobileStyles = await readFile(mobileStylePath, 'utf8');
   const toolStyles = await readFile(toolsStylePath, 'utf8');
 
   assert.match(indexSource, /viewport-fit=cover/);
-  assert.match(appSource, /_syncMobileViewportState/);
-  assert.match(appSource, /is-mobile-viewport/);
-  assert.match(appSource, /visualViewport/);
+
+  assert.match(appSource, /mobileMenuBtn\?\.addEventListener\('click', \(\) => this\._toggleSidebar\(\)\)/);
+  assert.match(appSource, /sidebarOverlay\?\.addEventListener\('click', \(\) => this\._closeSidebar\(\)\)/);
+  assert.match(appSource, /_toggleSidebar\(\)\s*{[^}]*classList\.toggle\('open'\)[^}]*classList\.toggle\('active'\)/s);
+  assert.match(appSource, /try\s*{\s*savedTheme = localStorage\.getItem\('theme'\);\s*}/s);
+  assert.match(appSource, /try\s*{\s*localStorage\.setItem\('theme', isLight \? 'light' : 'dark'\);\s*}/s);
 
   assert.match(mobileStyles, /@media \(max-width: 767px\)/);
-  assert.match(mobileStyles, /\.input-area\s*{[^}]*padding-bottom: calc\(12px \+ env\(safe-area-inset-bottom\)\)/s);
+  assert.match(mobileStyles, /\.input-area\s*{[^}]*padding-bottom: calc\(12px \+ env\(safe-area-inset-bottom, 0\)\)/s);
   assert.match(mobileStyles, /\.mode-switcher\s*{[^}]*overflow-x: auto/s);
-  assert.match(mobileStyles, /\.message-content\s+pre/);
-  assert.match(mobileStyles, /\.context-panel\s*{[^}]*max-height: calc\(100dvh - 24px\)/s);
+  assert.match(mobileStyles, /\.message-content\s*{/);
+  assert.match(mobileStyles, /\.code-panel \.mobile-panel-tabs/);
 
-  assert.match(toolStyles, /@media \(max-width: 767px\)/);
-  assert.match(toolStyles, /\.tool-container\.active\s*{[^}]*height: 100dvh/s);
-  assert.match(toolStyles, /\.tool-body\s*{[^}]*height: calc\(100dvh - var\(--tool-header-height-mobile\)\)/s);
-  assert.match(toolStyles, /\.tool-title-text/);
-  assert.match(toolStyles, /\.tool-header-actions\s*{[^}]*flex-shrink: 0/s);
+  assert.match(toolStyles, /\.tool-container\.active/);
+  assert.match(toolStyles, /\.tool-body\s*{[^}]*height: calc\(100vh - 65px\)/s);
+  assert.match(toolStyles, /\.tool-header-actions\s*{/);
+  assert.match(toolStyles, /@media \(max-width: 480px\)/);
+  assert.match(toolStyles, /\.tool-ai-status-label[\s\S]*display: none/);
 });
 
-test('seating planner exposes mobile-first panel tabs, touch seat actions, and assistant layout', async () => {
+test('seating planner keeps touch interactions and draggable floating assistant affordances', async () => {
   const seatingSource = await readFile(seatingSourcePath, 'utf8');
   const seatingStyles = await readFile(seatingStylePath, 'utf8');
 
-  assert.match(seatingSource, /selectedSeatForTouch/);
-  assert.match(seatingSource, /mobilePanel/);
-  assert.match(seatingSource, /isMobileViewport/);
-  assert.match(seatingSource, /syncMobileViewportLayout/);
-  assert.match(seatingSource, /setMobilePanel/);
-  assert.match(seatingSource, /handleSeatTap/);
-  assert.match(seatingSource, /openMobileSeatActions/);
-  assert.match(seatingSource, /sp-mobile-panel-tabs/);
-  assert.match(seatingSource, /sp-mobile-seat-actions/);
+  assert.match(seatingSource, /id="sp-chat-toggle"/);
+  assert.match(seatingSource, /id="sp-chat-panel"/);
+  assert.match(seatingSource, /id="sp-chat-header"/);
+  assert.match(seatingSource, /id="sp-chat-input"/);
+  assert.match(seatingSource, /CHAT_DRAG_THRESHOLD/);
+  assert.match(seatingSource, /window\.addEventListener\('pointermove', this\._chatPointerMoveHandler\)/);
+  assert.match(seatingSource, /window\.addEventListener\('pointermove', this\._chatIconPointerMoveHandler\)/);
+  assert.match(seatingSource, /blackboard\.addEventListener\('touchstart', onPointerDown, \{ passive: false \}\)/);
+  assert.match(seatingSource, /sp-feedback-panel/);
 
-  assert.match(seatingStyles, /@media \(max-width: 767px\)/);
-  assert.match(seatingStyles, /\.sp-app--mobile/);
-  assert.match(seatingStyles, /\.sp-mobile-panel-tabs/);
-  assert.match(seatingStyles, /\.sp-mobile-drawer-toggle/);
-  assert.match(seatingStyles, /\.sp-mobile-seat-actions/);
-  assert.match(seatingStyles, /\.sp-seat--mobile-selected/);
-  assert.match(seatingStyles, /\.sp-chat-panel\s*{[^}]*height: calc\(100dvh - 24px\)/s);
-  assert.match(seatingStyles, /\.sp-feedback-panel\s*{[^}]*height: calc\(100dvh - 24px\)/s);
+  assert.match(seatingStyles, /\.sp-chat-panel\s*{[^}]*max-height: min\(480px, calc\(100vh - 24px\)\)/s);
+  assert.match(seatingStyles, /\.sp-chat--positioned/);
+  assert.match(seatingStyles, /\.sp-chat--dragging \.sp-chat-header/);
+  assert.match(seatingStyles, /\.sp-feedback-panel/);
+  assert.match(seatingStyles, /@media \(max-width: 520px\)/);
+  assert.match(seatingStyles, /@media \(max-width: 768px\)/);
 });

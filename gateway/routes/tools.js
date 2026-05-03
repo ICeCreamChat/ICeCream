@@ -295,6 +295,11 @@ router.post('/seating/plan', async (req, res) => {
             signal: AbortSignal.timeout(60000)
         });
 
+        if (!response.ok) {
+            const errBody = await response.json().catch(() => ({}));
+            throw new Error(errBody.error?.message || `AI API 返回 ${response.status}`);
+        }
+
         const data = await response.json();
         const content = data.choices?.[0]?.message?.content;
         if (!content) throw new Error('AI 无响应');
@@ -599,6 +604,11 @@ ${studentList}
             }),
             signal: AbortSignal.timeout(30000)
         });
+
+        if (!response.ok) {
+            const errBody = await response.json().catch(() => ({}));
+            throw new Error(errBody.error?.message || `AI API 返回 ${response.status}`);
+        }
 
         const data = await response.json();
         if (!data.choices?.[0]?.message?.content) {
