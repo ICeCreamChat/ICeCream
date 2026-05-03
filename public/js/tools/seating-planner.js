@@ -1169,11 +1169,11 @@ class SeatingPlanner {
                                 </div>
                             </div>
                             <label class="sp-feedback-field" for="sp-feedback-message">
-                                <span class="sp-feedback-label">直接写你觉得哪里不对</span>
+                                <span class="sp-feedback-label">直接写您觉得哪里不对</span>
                                 <textarea id="sp-feedback-message" class="sp-feedback-textarea" rows="5" maxlength="2000" placeholder="例如：我说右护法换成成绩一般的男生，但它提示成功后座位没有变化。"></textarea>
                             </label>
                             <label class="sp-feedback-field" for="sp-feedback-expected">
-                                <span class="sp-feedback-label">你希望它怎么做</span>
+                                <span class="sp-feedback-label">您希望它怎么做</span>
                                 <textarea id="sp-feedback-expected" class="sp-feedback-textarea" rows="3" maxlength="1000" placeholder="例如：右护法应该换成一个成绩中等的男生，并告诉我换成了谁。"></textarea>
                             </label>
                             <div class="sp-feedback-field">

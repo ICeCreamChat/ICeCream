@@ -79,6 +79,10 @@ test('seating planner exposes a feedback entry before the tool theme toggle', as
   assert.match(plannerSource, /\/api\/tools\/seating\/diagnostics/);
   assert.match(plannerSource, /diagnostics_request_failed/);
   assert.match(plannerSource, /反馈座位安排问题/);
+  assert.match(plannerSource, /直接写您觉得哪里不对/);
+  assert.match(plannerSource, /您希望它怎么做/);
+  assert.doesNotMatch(plannerSource, /直接写你觉得哪里不对/);
+  assert.doesNotMatch(plannerSource, /你希望它怎么做/);
   assert.match(plannerSource, /会附带脱敏座位快照，帮助我们复现问题/);
   assert.match(plannerStyles, /\.sp-feedback/);
   assert.match(plannerStyles, /\.sp-feedback-chip/);
