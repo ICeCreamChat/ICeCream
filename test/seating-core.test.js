@@ -13,6 +13,7 @@ import {
   insertAisleRow,
   insertLocalAisle,
   parseFallbackSeatingOperations,
+  resolveStudentId,
   validateLayoutIntegrity,
 } from '../public/js/tools/seating-core.js';
 
@@ -440,6 +441,33 @@ test('evaluateSeatingConstraints understands rich row, relative, and grade-neigh
   ]);
   assert.equal(result.hardUnsatisfied.length, 4);
   assert.equal(result.softUnsatisfied.length, 1);
+});
+
+test('resolveStudentId normalizes whitespace punctuation and full-width text', () => {
+  const localStudents = [
+    { id: 's01', name: 'Alice Wang' },
+    { id: 's02', name: 'Bob Chen' },
+  ];
+
+  assert.equal(resolveStudentId('Ａｌｉｃｅ－Ｗａｎｇ', localStudents), 's01');
+  assert.equal(resolveStudentId(' Bob　Chen ', localStudents), 's02');
+});
+
+test('evaluateSeatingConstraints dedupes normalized duplicate needs', () => {
+  const localStudents = [{ id: 's01', name: 'Bob Chen' }];
+  const result = evaluateSeatingConstraints({
+    layout: [['s01'], [null]],
+    students: localStudents,
+    rows: 2,
+    cols: 1,
+    constraints: [
+      { type: 'avoid_first_row', target: 'Bob Chen', priority: 'hard' },
+      { type: 'avoid_first_row', target: 'Ｂｏｂ－Ｃｈｅｎ', priority: 'hard' },
+    ],
+  });
+
+  assert.equal(result.unsatisfied.length, 1);
+  assert.equal(result.hardUnsatisfied.length, 1);
 });
 
 test('evaluateSeatingQuality reports hard layout problems and caps invalid scores', () => {

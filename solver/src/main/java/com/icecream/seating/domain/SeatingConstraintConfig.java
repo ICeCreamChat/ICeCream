@@ -4,6 +4,11 @@ public class SeatingConstraintConfig {
 
     private int frontRowThreshold = 0;
     private int backRowThreshold = Integer.MAX_VALUE;
+    private int firstRow = 0;
+    private int lastRow = Integer.MAX_VALUE;
+    private int frontMidRowThreshold = 0;
+    private int middleColStart = 0;
+    private int middleColEnd = Integer.MAX_VALUE;
     private boolean genderBalanceEnabled = false;
     private boolean heightOrderEnabled = false;
     private String gradeStrategy = "none";
@@ -27,6 +32,46 @@ public class SeatingConstraintConfig {
 
     public void setBackRowThreshold(int backRowThreshold) {
         this.backRowThreshold = backRowThreshold;
+    }
+
+    public int getFirstRow() {
+        return firstRow;
+    }
+
+    public void setFirstRow(int firstRow) {
+        this.firstRow = firstRow;
+    }
+
+    public int getLastRow() {
+        return lastRow;
+    }
+
+    public void setLastRow(int lastRow) {
+        this.lastRow = lastRow;
+    }
+
+    public int getFrontMidRowThreshold() {
+        return frontMidRowThreshold;
+    }
+
+    public void setFrontMidRowThreshold(int frontMidRowThreshold) {
+        this.frontMidRowThreshold = frontMidRowThreshold;
+    }
+
+    public int getMiddleColStart() {
+        return middleColStart;
+    }
+
+    public void setMiddleColStart(int middleColStart) {
+        this.middleColStart = middleColStart;
+    }
+
+    public int getMiddleColEnd() {
+        return middleColEnd;
+    }
+
+    public void setMiddleColEnd(int middleColEnd) {
+        this.middleColEnd = middleColEnd;
     }
 
     public boolean isGenderBalanceEnabled() {

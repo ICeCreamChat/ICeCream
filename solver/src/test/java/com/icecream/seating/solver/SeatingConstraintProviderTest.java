@@ -86,6 +86,78 @@ class SeatingConstraintProviderTest {
     }
 
     @Test
+    void avoidRowConstraintsAreHardConstraints() {
+        SeatingConstraintConfig config = new SeatingConstraintConfig();
+        config.setFirstRow(0);
+        config.setLastRow(3);
+        config.setFrontRowThreshold(1);
+        config.setBackRowThreshold(2);
+        StudentAssignment first = student("s01", seat("r0c0", 0, 0, 80, 1, Set.of()));
+        first.setMustAvoidFirstRow(true);
+        first.setConfig(config);
+        StudentAssignment last = student("s02", seat("r3c0", 3, 0, 80, 1, Set.of()));
+        last.setMustAvoidLastRow(true);
+        last.setConfig(config);
+        StudentAssignment front = student("s03", seat("r1c0", 1, 0, 80, 1, Set.of()));
+        front.setMustAvoidFrontRow(true);
+        front.setConfig(config);
+        StudentAssignment back = student("s04", seat("r2c0", 2, 0, 80, 1, Set.of()));
+        back.setMustAvoidBackRow(true);
+        back.setConfig(config);
+
+        constraintVerifier.verifyThat(SeatingConstraintProvider::avoidFirstRowViolation)
+                .given(first)
+                .penalizesBy(1);
+        constraintVerifier.verifyThat(SeatingConstraintProvider::avoidLastRowViolation)
+                .given(last)
+                .penalizesBy(1);
+        constraintVerifier.verifyThat(SeatingConstraintProvider::avoidFrontRowViolation)
+                .given(front)
+                .penalizesBy(1);
+        constraintVerifier.verifyThat(SeatingConstraintProvider::avoidBackRowViolation)
+                .given(back)
+                .penalizesBy(1);
+    }
+
+    @Test
+    void avoidBehindOnlyPenalizesTargetBehindRelatedStudent() {
+        StudentAssignment target = student("s01", seat("r2c0", 2, 0, 80, 1, Set.of()));
+        StudentAssignment related = student("s02", seat("r1c0", 1, 0, 80, 1, Set.of()));
+        target.setMustAvoidBehind(List.of("s02"));
+
+        constraintVerifier.verifyThat(SeatingConstraintProvider::avoidBehindViolation)
+                .given(target, related)
+                .penalizesBy(1);
+
+        target.setSeat(seat("r0c0", 0, 0, 80, 1, Set.of()));
+        constraintVerifier.verifyThat(SeatingConstraintProvider::avoidBehindViolation)
+                .given(target, related)
+                .hasNoImpact();
+    }
+
+    @Test
+    void frontMiddlePreferencesAreSoftConstraints() {
+        SeatingConstraintConfig config = new SeatingConstraintConfig();
+        config.setFrontRowThreshold(1);
+        config.setFrontMidRowThreshold(2);
+        config.setMiddleColStart(1);
+        config.setMiddleColEnd(2);
+        StudentAssignment frontMiddle = student("s01", seat("r2c0", 2, 0, 80, 1, Set.of()));
+        frontMiddle.setPreferFrontMiddle(true);
+        frontMiddle.setConfig(config);
+        StudentAssignment frontMid = student("s02", seat("r3c1", 3, 1, 80, 1, Set.of()));
+        frontMid.setPreferFrontMidRows(true);
+        frontMid.setConfig(config);
+
+        constraintVerifier.verifyThat(SeatingConstraintProvider::preferFrontMiddle)
+                .given(frontMiddle)
+                .penalizesBy(1);
+        constraintVerifier.verifyThat(SeatingConstraintProvider::preferFrontMidRows)
+                .given(frontMid)
+                .penalizesBy(1);
+    }
+
+    @Test
     void heightOrderPenalizesTallStudentsInFrontRegardlessOfPairOrder() {
         SeatingConstraintConfig config = new SeatingConstraintConfig();
         config.setHeightOrderEnabled(true);

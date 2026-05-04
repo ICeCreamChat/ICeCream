@@ -20,6 +20,13 @@ public class SeatingConstraintProvider implements ConstraintProvider {
                 pairNotSameGroup(constraintFactory),
                 frontRowViolation(constraintFactory),
                 backRowViolation(constraintFactory),
+                avoidFirstRowViolation(constraintFactory),
+                avoidLastRowViolation(constraintFactory),
+                avoidFrontRowViolation(constraintFactory),
+                avoidBackRowViolation(constraintFactory),
+                avoidBehindViolation(constraintFactory),
+                preferFrontMiddle(constraintFactory),
+                preferFrontMidRows(constraintFactory),
                 avoidAdjacent(constraintFactory),
                 preferAdjacent(constraintFactory),
                 seatQualityByGrade(constraintFactory),
@@ -63,6 +70,74 @@ public class SeatingConstraintProvider implements ConstraintProvider {
                         && student.getSeat().getRow() < config(student).getBackRowThreshold())
                 .penalize(HardSoftScore.ONE_HARD)
                 .asConstraint("Back row violation");
+    }
+
+    Constraint avoidFirstRowViolation(ConstraintFactory constraintFactory) {
+        return constraintFactory
+                .forEach(StudentAssignment.class)
+                .filter(student -> student.isMustAvoidFirstRow()
+                        && student.getSeat() != null
+                        && student.getSeat().getRow() == config(student).getFirstRow())
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Avoid first row violation");
+    }
+
+    Constraint avoidLastRowViolation(ConstraintFactory constraintFactory) {
+        return constraintFactory
+                .forEach(StudentAssignment.class)
+                .filter(student -> student.isMustAvoidLastRow()
+                        && student.getSeat() != null
+                        && student.getSeat().getRow() == config(student).getLastRow())
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Avoid last row violation");
+    }
+
+    Constraint avoidFrontRowViolation(ConstraintFactory constraintFactory) {
+        return constraintFactory
+                .forEach(StudentAssignment.class)
+                .filter(student -> student.isMustAvoidFrontRow()
+                        && student.getSeat() != null
+                        && student.getSeat().getRow() <= config(student).getFrontRowThreshold())
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Avoid front row violation");
+    }
+
+    Constraint avoidBackRowViolation(ConstraintFactory constraintFactory) {
+        return constraintFactory
+                .forEach(StudentAssignment.class)
+                .filter(student -> student.isMustAvoidBackRow()
+                        && student.getSeat() != null
+                        && student.getSeat().getRow() >= config(student).getBackRowThreshold())
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Avoid back row violation");
+    }
+
+    Constraint avoidBehindViolation(ConstraintFactory constraintFactory) {
+        return constraintFactory
+                .forEachUniquePair(StudentAssignment.class)
+                .filter((left, right) -> behindViolation(left, right) || behindViolation(right, left))
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Avoid behind violation");
+    }
+
+    Constraint preferFrontMiddle(ConstraintFactory constraintFactory) {
+        return constraintFactory
+                .forEach(StudentAssignment.class)
+                .filter(student -> student.isPreferFrontMiddle()
+                        && student.getSeat() != null
+                        && !frontMiddleSatisfied(student))
+                .penalize(HardSoftScore.ONE_SOFT)
+                .asConstraint("Prefer front middle");
+    }
+
+    Constraint preferFrontMidRows(ConstraintFactory constraintFactory) {
+        return constraintFactory
+                .forEach(StudentAssignment.class)
+                .filter(student -> student.isPreferFrontMidRows()
+                        && student.getSeat() != null
+                        && student.getSeat().getRow() > config(student).getFrontMidRowThreshold())
+                .penalize(HardSoftScore.ONE_SOFT)
+                .asConstraint("Prefer front mid rows");
     }
 
     Constraint avoidAdjacent(ConstraintFactory constraintFactory) {
@@ -141,6 +216,21 @@ public class SeatingConstraintProvider implements ConstraintProvider {
 
     private static boolean neighbors(Seat left, Seat right) {
         return left != null && right != null && (left.isNeighbor(right) || right.isNeighbor(left));
+    }
+
+    private static boolean behindViolation(StudentAssignment target, StudentAssignment related) {
+        return target.mustAvoidBehind(related)
+                && target.getSeat() != null
+                && related.getSeat() != null
+                && target.getSeat().getRow() > related.getSeat().getRow();
+    }
+
+    private static boolean frontMiddleSatisfied(StudentAssignment student) {
+        SeatingConstraintConfig config = config(student);
+        Seat seat = student.getSeat();
+        return seat.getRow() <= config.getFrontRowThreshold()
+                && seat.getCol() >= config.getMiddleColStart()
+                && seat.getCol() <= config.getMiddleColEnd();
     }
 
     private static boolean rowBefore(Seat left, Seat right) {

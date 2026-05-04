@@ -251,6 +251,14 @@ function normalizeText(value) {
     return String(value ?? '').trim();
 }
 
+function normalizeStudentLookupKey(value) {
+    return normalizeText(value)
+        .normalize('NFKC')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/[\s\p{P}\p{S}]+/gu, '')
+        .toLowerCase();
+}
+
 function stripCommandNoise(value) {
     return normalizeText(value)
         .replace(/^把/, '')
@@ -260,21 +268,28 @@ function stripCommandNoise(value) {
 function buildStudentLookup(students = []) {
     const byId = new Map();
     const byName = new Map();
+    const byNormalized = new Map();
     for (const student of students) {
         if (!student?.id) continue;
         byId.set(student.id, student);
+        const normalizedId = normalizeStudentLookupKey(student.id);
+        if (normalizedId && !byNormalized.has(normalizedId)) byNormalized.set(normalizedId, student);
         const name = normalizeText(student.name);
         if (name && !byName.has(name)) byName.set(name, student);
+        const normalizedName = normalizeStudentLookupKey(name);
+        if (normalizedName && !byNormalized.has(normalizedName)) byNormalized.set(normalizedName, student);
     }
-    return { byId, byName };
+    return { byId, byName, byNormalized };
 }
 
 export function resolveStudentId(value, students = []) {
     const raw = normalizeText(value);
     if (!raw) return null;
-    const { byId, byName } = buildStudentLookup(students);
+    const { byId, byName, byNormalized } = buildStudentLookup(students);
     if (byId.has(raw)) return raw;
     if (byName.has(raw)) return byName.get(raw).id;
+    const normalized = normalizeStudentLookupKey(raw);
+    if (normalized && byNormalized.has(normalized)) return byNormalized.get(normalized).id;
     return null;
 }
 
@@ -989,6 +1004,22 @@ function makeUnsatisfied(constraint, reason) {
     };
 }
 
+function dedupeEvalConstraints(constraints = []) {
+    const seen = new Set();
+    const result = [];
+    for (const constraint of constraints) {
+        const type = normalizeText(constraint?.type);
+        const target = normalizeStudentLookupKey(constraint?.target);
+        if (!type || !target) continue;
+        const related = normalizeStudentLookupKey(constraint?.related);
+        const key = `${type}|${target}|${related}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result.push(constraint);
+    }
+    return result;
+}
+
 export function evaluateSeatingConstraints({
     layout = [],
     students = [],
@@ -1004,14 +1035,23 @@ export function evaluateSeatingConstraints({
     const { high: highGradeIds, low: lowGradeIds } = gradeSets(students);
     const unsatisfied = [];
 
-    for (const constraint of constraints || []) {
+    // Deduplicate constraints before evaluation to avoid double-counting
+    const deduped = dedupeEvalConstraints(constraints || []);
+
+    for (const constraint of deduped) {
         const targetId = resolveStudentId(constraint.target, students);
         const relatedId = resolveStudentId(constraint.related, students);
         const targetPos = targetId ? findStudentPosition(layout, targetId) : null;
         const relatedPos = relatedId ? findStudentPosition(layout, relatedId) : null;
 
-        if (!targetId || !targetPos) {
-            unsatisfied.push(makeUnsatisfied(constraint, '未找到学生座位'));
+        // If targetId can't be resolved at all, skip — don't penalize as hard violation
+        if (!targetId) continue;
+        if (!targetPos) {
+            // Student exists but not placed in grid (may be guardian or unassigned)
+            unsatisfied.push(makeUnsatisfied(
+                { ...constraint, priority: 'soft' },
+                '学生未在座位表中，无法评估约束'
+            ));
             continue;
         }
 
@@ -1453,9 +1493,9 @@ function addGradeBalanceIssues(collection, { placement, studentsById }) {
 function qualityPercent({ hardScore, softScore, hardViolationCount }) {
     const softPenalty = Math.abs(softScore);
     if (hardScore < 0) {
-        return Math.max(0, Math.min(59, Math.round(59 - Math.max(0, hardViolationCount - 1) * 8 - softPenalty / 5)));
+        return Math.max(10, Math.min(59, Math.round(59 - Math.max(0, hardViolationCount - 1) * 5 - softPenalty / 8)));
     }
-    return Math.max(60, Math.min(100, Math.round(100 - softPenalty)));
+    return Math.max(60, Math.min(100, Math.round(100 - softPenalty / 2)));
 }
 
 export function evaluateSeatingQuality({
@@ -1543,7 +1583,7 @@ export function evaluateSeatingQuality({
         id: 'needs.hard',
         name: '硬性学生需求',
         level: 'hard',
-        weight: 10,
+        weight: 5,
         matches: studentNeedEvaluation.hardUnsatisfied.map(item => constraintMatchForUnsatisfied(item, students, layout)),
         message: `${studentNeedEvaluation.hardUnsatisfied.length} 条硬性学生需求未满足`,
     });
@@ -1551,7 +1591,7 @@ export function evaluateSeatingQuality({
         id: 'needs.soft',
         name: '软性学生需求',
         level: 'soft',
-        weight: 5,
+        weight: 2,
         matches: studentNeedEvaluation.softUnsatisfied.map(item => constraintMatchForUnsatisfied(item, students, layout)),
         message: `${studentNeedEvaluation.softUnsatisfied.length} 条软性学生需求未满足`,
     });

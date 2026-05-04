@@ -6,6 +6,10 @@ import {
     solveWithTimefold,
     TimefoldUnavailableError,
 } from './seating-solver-bridge.js';
+import {
+    evaluateSeatingConstraints,
+    evaluateSeatingQuality,
+} from '../../public/js/tools/seating-core.js';
 
 const MAX_ROWS = Number.MAX_SAFE_INTEGER;
 const MAX_COLS = Number.MAX_SAFE_INTEGER;
@@ -1303,11 +1307,30 @@ function sortSeatsByQuality(seats, scoreMap) {
     });
 }
 
-function resolveConstraintStudentId(value, studentsById, studentsByName) {
+function normalizeStudentRefKey(value) {
+    return asText(value)
+        .normalize('NFKC')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/[\s\p{P}\p{S}]+/gu, '')
+        .toLowerCase();
+}
+
+function buildNormalizedStudentMap(students = []) {
+    const byNormalized = new Map();
+    for (const student of students) {
+        for (const value of [student?.id, student?.name]) {
+            const key = normalizeStudentRefKey(value);
+            if (key && !byNormalized.has(key)) byNormalized.set(key, student);
+        }
+    }
+    return byNormalized;
+}
+
+function resolveConstraintStudentId(value, studentsById, studentsByName, studentsByNormalized) {
     const ref = asText(value);
     if (!ref) return null;
     if (studentsById.has(ref)) return ref;
-    return studentsByName.get(ref)?.id || null;
+    return studentsByName.get(ref)?.id || studentsByNormalized.get(normalizeStudentRefKey(ref))?.id || null;
 }
 
 function interleaveGender(students) {
@@ -1419,6 +1442,7 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
     const regularStudents = request.students.filter(student => !guardianIds.has(student.id));
     const studentsById = new Map(request.students.map(student => [student.id, student]));
     const studentsByName = new Map(request.students.map(student => [student.name, student]));
+    const studentsByNormalized = buildNormalizedStudentMap(request.students);
     const allSeats = layoutSeatList(layout);
     const seatScoreMap = calculateSeatScoreMap(layout);
     const seatRows = [...new Set(allSeats.map(seat => seat.r))].sort((a, b) => a - b);
@@ -1561,8 +1585,8 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
     const avoidLowGradeNeighborIds = [];
 
     for (const constraint of request.constraints || []) {
-        const id = resolveConstraintStudentId(constraint.target, studentsById, studentsByName);
-        const related = resolveConstraintStudentId(constraint.related, studentsById, studentsByName);
+        const id = resolveConstraintStudentId(constraint.target, studentsById, studentsByName, studentsByNormalized);
+        const related = resolveConstraintStudentId(constraint.related, studentsById, studentsByName, studentsByNormalized);
         if (constraint.type === 'front_row' && id) frontIds.push(id);
         if (constraint.type === 'back_row' && id) backIds.push(id);
         if (constraint.type === 'prefer_front_middle' && id) frontMiddleIds.push(id);
@@ -1788,6 +1812,168 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
     return { assignments, unassigned, warnings, unsatisfied };
 }
 
+function assignmentsToLayout(assignments = [], classroomLayout = {}) {
+    const rows = Math.max(0, Number(classroomLayout.rows) || 0);
+    const cols = Math.max(0, Number(classroomLayout.cols) || 0);
+    const matrix = Array.from({ length: rows }, () => Array(cols).fill(null));
+    for (const assignment of assignments) {
+        if (!Number.isInteger(assignment?.row) || !Number.isInteger(assignment?.col)) continue;
+        if (assignment.row < 0 || assignment.col < 0 || assignment.row >= rows || assignment.col >= cols) continue;
+        matrix[assignment.row][assignment.col] = assignment.studentId;
+    }
+    return matrix;
+}
+
+function constraintEvaluationForAssignments({
+    assignments,
+    request,
+    classroomLayout,
+    guardians,
+    unassigned,
+    spec,
+}) {
+    const layout = assignmentsToLayout(assignments, classroomLayout);
+    const guardianIds = [guardians.left, guardians.right].filter(Boolean);
+    const needEvaluation = evaluateSeatingConstraints({
+        layout,
+        students: request.students,
+        constraints: request.constraints,
+        rows: classroomLayout.rows,
+        cols: classroomLayout.cols,
+        localAisles: classroomLayout.localAisles,
+    });
+    const quality = evaluateSeatingQuality({
+        layout,
+        students: request.students,
+        constraints: request.constraints,
+        classroomLayout,
+        guardians: guardianIds,
+        unassigned,
+        strategy: spec.placementPolicy || {},
+    });
+    return {
+        needEvaluation,
+        quality,
+        hard: needEvaluation.hardUnsatisfied.length,
+        soft: needEvaluation.softUnsatisfied.length,
+        percent: quality.percent,
+    };
+}
+
+function betterConstraintEvaluation(candidate, current) {
+    if (candidate.hard > current.hard) return false;
+    if (candidate.hard < current.hard) return true;
+    if (candidate.soft < current.soft) return true;
+    return candidate.soft <= current.soft && candidate.percent > current.percent;
+}
+
+function cloneAssignments(assignments = []) {
+    return assignments.map(assignment => ({ ...assignment }));
+}
+
+function assignmentSeatKey(assignment) {
+    return `${assignment.row},${assignment.col}`;
+}
+
+function refineSeatingAssignments({
+    seating,
+    request,
+    classroomLayout,
+    guardians,
+    spec,
+    maxRounds = 100,
+}) {
+    if (!request.constraints?.length || !seating?.assignments?.length) {
+        return {
+            ...seating,
+            refinementApplied: false,
+            refinementRounds: 0,
+        };
+    }
+
+    let assignments = cloneAssignments(seating.assignments);
+    let current = constraintEvaluationForAssignments({
+        assignments,
+        request,
+        classroomLayout,
+        guardians,
+        unassigned: seating.unassigned || [],
+        spec,
+    });
+    if (!current.needEvaluation.unsatisfied.length) {
+        return {
+            ...seating,
+            assignments,
+            unsatisfied: [],
+            refinementApplied: false,
+            refinementRounds: 0,
+        };
+    }
+
+    const guardianIds = new Set([guardians.left, guardians.right].filter(Boolean));
+    const seatOptions = layoutSeatList(classroomLayout);
+    let rounds = 0;
+    let applied = false;
+
+    while (rounds < maxRounds) {
+        let improved = false;
+        const occupied = new Map(assignments.map((assignment, index) => [assignmentSeatKey(assignment), index]));
+
+        for (let i = 0; i < assignments.length && !improved; i++) {
+            if (guardianIds.has(assignments[i].studentId)) continue;
+
+            for (const seat of seatOptions) {
+                const key = `${seat.r},${seat.c}`;
+                const occupantIndex = occupied.get(key);
+                if (occupantIndex === i) continue;
+                if (occupantIndex != null && guardianIds.has(assignments[occupantIndex].studentId)) continue;
+
+                const candidateAssignments = cloneAssignments(assignments);
+                if (occupantIndex == null) {
+                    candidateAssignments[i].row = seat.r;
+                    candidateAssignments[i].col = seat.c;
+                } else {
+                    const original = {
+                        row: candidateAssignments[i].row,
+                        col: candidateAssignments[i].col,
+                    };
+                    candidateAssignments[i].row = candidateAssignments[occupantIndex].row;
+                    candidateAssignments[i].col = candidateAssignments[occupantIndex].col;
+                    candidateAssignments[occupantIndex].row = original.row;
+                    candidateAssignments[occupantIndex].col = original.col;
+                }
+
+                const candidate = constraintEvaluationForAssignments({
+                    assignments: candidateAssignments,
+                    request,
+                    classroomLayout,
+                    guardians,
+                    unassigned: seating.unassigned || [],
+                    spec,
+                });
+                if (!betterConstraintEvaluation(candidate, current)) continue;
+
+                assignments = candidateAssignments;
+                current = candidate;
+                improved = true;
+                applied = true;
+                rounds++;
+                break;
+            }
+        }
+
+        if (!improved) break;
+    }
+
+    return {
+        ...seating,
+        assignments,
+        unsatisfied: current.needEvaluation.unsatisfied,
+        refinementApplied: applied,
+        refinementRounds: rounds,
+    };
+}
+
 function appliedStrategiesFor(spec) {
     const applied = [];
     const policy = spec.placementPolicy || {};
@@ -1921,6 +2107,8 @@ async function buildLocalArrangement({ request, spec, specWarnings = [], env = p
         score: null,
         durationMs: null,
         fallbackReason: null,
+        refinementApplied: false,
+        refinementRounds: 0,
     };
     try {
         seating = await solveWithTimefold({
@@ -1948,6 +2136,15 @@ async function buildLocalArrangement({ request, spec, specWarnings = [], env = p
         }
         seating = assignLocalSeats({ request, layout: classroomLayout, spec, guardians });
     }
+    seating = refineSeatingAssignments({
+        seating,
+        request,
+        classroomLayout,
+        guardians,
+        spec,
+    });
+    solverStats.refinementApplied = Boolean(seating.refinementApplied);
+    solverStats.refinementRounds = seating.refinementRounds || 0;
     const regularSeatCount = gridSeatCount(classroomLayout);
     const guardianSeatCount = [guardians.left, guardians.right].filter(Boolean).length;
     const warnings = [

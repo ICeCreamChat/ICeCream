@@ -20,6 +20,13 @@ public class StudentAssignment {
     private Integer height;
     private boolean mustFrontRow;
     private boolean mustBackRow;
+    private boolean mustAvoidFirstRow;
+    private boolean mustAvoidLastRow;
+    private boolean mustAvoidFrontRow;
+    private boolean mustAvoidBackRow;
+    private List<String> mustAvoidBehind = new ArrayList<>();
+    private boolean preferFrontMiddle;
+    private boolean preferFrontMidRows;
     private List<String> mustPairWith = new ArrayList<>();
     private List<String> mustAvoidAdjacent = new ArrayList<>();
     private List<String> preferAdjacent = new ArrayList<>();
@@ -95,6 +102,62 @@ public class StudentAssignment {
         this.mustBackRow = mustBackRow;
     }
 
+    public boolean isMustAvoidFirstRow() {
+        return mustAvoidFirstRow;
+    }
+
+    public void setMustAvoidFirstRow(boolean mustAvoidFirstRow) {
+        this.mustAvoidFirstRow = mustAvoidFirstRow;
+    }
+
+    public boolean isMustAvoidLastRow() {
+        return mustAvoidLastRow;
+    }
+
+    public void setMustAvoidLastRow(boolean mustAvoidLastRow) {
+        this.mustAvoidLastRow = mustAvoidLastRow;
+    }
+
+    public boolean isMustAvoidFrontRow() {
+        return mustAvoidFrontRow;
+    }
+
+    public void setMustAvoidFrontRow(boolean mustAvoidFrontRow) {
+        this.mustAvoidFrontRow = mustAvoidFrontRow;
+    }
+
+    public boolean isMustAvoidBackRow() {
+        return mustAvoidBackRow;
+    }
+
+    public void setMustAvoidBackRow(boolean mustAvoidBackRow) {
+        this.mustAvoidBackRow = mustAvoidBackRow;
+    }
+
+    public List<String> getMustAvoidBehind() {
+        return mustAvoidBehind;
+    }
+
+    public void setMustAvoidBehind(List<String> mustAvoidBehind) {
+        this.mustAvoidBehind = mustAvoidBehind == null ? new ArrayList<>() : new ArrayList<>(mustAvoidBehind);
+    }
+
+    public boolean isPreferFrontMiddle() {
+        return preferFrontMiddle;
+    }
+
+    public void setPreferFrontMiddle(boolean preferFrontMiddle) {
+        this.preferFrontMiddle = preferFrontMiddle;
+    }
+
+    public boolean isPreferFrontMidRows() {
+        return preferFrontMidRows;
+    }
+
+    public void setPreferFrontMidRows(boolean preferFrontMidRows) {
+        this.preferFrontMidRows = preferFrontMidRows;
+    }
+
     public List<String> getMustPairWith() {
         return mustPairWith;
     }
@@ -141,6 +204,10 @@ public class StudentAssignment {
 
     public boolean mustAvoidAdjacent(StudentAssignment other) {
         return other != null && mustAvoidAdjacent != null && mustAvoidAdjacent.contains(other.getId());
+    }
+
+    public boolean mustAvoidBehind(StudentAssignment other) {
+        return other != null && mustAvoidBehind != null && mustAvoidBehind.contains(other.getId());
     }
 
     public boolean prefersAdjacent(StudentAssignment other) {

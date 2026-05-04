@@ -74,6 +74,51 @@ test('buildTimefoldProblem excludes guardians and aisle cells', () => {
   assert.equal(problem.config.gradeStrategy, 'priority');
 });
 
+test('buildTimefoldProblem preserves rich constraint semantics for Timefold', () => {
+  const problem = buildTimefoldProblem({
+    request: {
+      students,
+      constraints: [
+        { type: 'avoid_first_row', target: 'Ａ' },
+        { type: 'avoid_last_row', target: 'A' },
+        { type: 'avoid_front_row', target: 'A' },
+        { type: 'avoid_back_row', target: 'A' },
+        { type: 'avoid_behind', target: 'A', related: 'B' },
+        { type: 'prefer_front_middle', target: 'A' },
+        { type: 'prefer_front_mid_rows', target: 'A' },
+        { type: 'avoid_near', target: 'A', related: 'C' },
+        { type: 'prefer_aisle', target: 'B' },
+      ],
+    },
+    layout: {
+      rows: 4,
+      cols: 5,
+      cells: Array.from({ length: 4 }, () => Array(5).fill('seat')),
+      groups: Array.from({ length: 4 }, () => Array(5).fill(1)),
+    },
+    spec: { placementPolicy: {} },
+    guardians: {},
+  });
+
+  const a = problem.students.find(student => student.id === 's01');
+  assert.equal(a.mustFrontRow, false);
+  assert.equal(a.mustAvoidFirstRow, true);
+  assert.equal(a.mustAvoidLastRow, true);
+  assert.equal(a.mustAvoidFrontRow, true);
+  assert.equal(a.mustAvoidBackRow, true);
+  assert.deepEqual(a.mustAvoidBehind, ['s02']);
+  assert.equal(a.preferFrontMiddle, true);
+  assert.equal(a.preferFrontMidRows, true);
+  assert.deepEqual(a.mustAvoidAdjacent, []);
+  assert.deepEqual(problem.localOnlyConstraints.map(item => item.type), ['avoid_near', 'prefer_aisle']);
+  assert.deepEqual(problem.unsupportedConstraints, problem.localOnlyConstraints);
+  assert.equal(problem.config.firstRow, 0);
+  assert.equal(problem.config.lastRow, 3);
+  assert.equal(problem.config.frontMidRowThreshold, 2);
+  assert.equal(problem.config.middleColStart, 1);
+  assert.equal(problem.config.middleColEnd, 2);
+});
+
 test('buildTimefoldProblem skips Timefold when regular students exceed grid capacity', () => {
   assert.throws(() => buildTimefoldProblem({
     request: {

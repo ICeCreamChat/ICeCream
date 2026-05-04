@@ -50,6 +50,32 @@ function looksLikeRowOrPlaceholder(value) {
     return /(前排|后排|第一排|最后一排|中排|过道|位置|成绩|同学|学生|较好|偏低|较高|中间)/.test(asText(value));
 }
 
+function looksLikeDescriptorNotName(value) {
+    return /^(高个子|矮个子|胖子|瘦子|近视|近视的|戴眼镜|戴眼镜的|视力不好|个子高|个子高的|个子矮|个子矮的|个头高|个头高的|个头矮|个头矮的|身高高|身高高的|身高较高|身高矮|身高矮的|身高较矮|大个子|小个子|高的|矮的|胖的|瘦的|高的同学|矮的同学|胖的同学|瘦的同学)$/.test(asText(value));
+}
+
+function shouldPreferFrontRowForView(value) {
+    const text = asText(value);
+    if (!text) return false;
+    return /(看不清|看不见|看不到).*(黑板|屏幕|投影|老师|前面)?/.test(text)
+        || /(近视|戴眼镜|视力不好)/.test(text)
+        || /(高个子|个子高|个头高|身高高|身高较高|大个子).*(后面|后方|身后|挡|遮挡|挡住)/.test(text)
+        || /(后面|后方|身后).*(高个子|个子高|个头高|身高高|身高较高|大个子)/.test(text)
+        || /被.*(挡|遮挡|挡住)/.test(text)
+        || /(矮个子|个子矮|个头矮|身高矮|身高较矮|小个子).*(后面|后排|看不清|看不见|看不到)/.test(text);
+}
+
+function frontRowPriorityForView(value) {
+    return /(必须|需要|看不清|看不见|看不到|视力不好|近视严重)/.test(asText(value)) ? 'hard' : 'soft';
+}
+
+function shouldAvoidFrontRowForTallStudent(value) {
+    const text = asText(value);
+    if (!text) return false;
+    return /(自己|本人|我|身高较高|身高高|个子高|个头高|高个子|大个子)/.test(text)
+        && /(挡住|遮挡|影响).*(别人|同学|后排)|怕.*(挡住|遮挡).*(别人|同学|后排)/.test(text);
+}
+
 function splitNameList(value, context = {}) {
     const raw = asText(value)
         .replace(/[()（）]/g, '')
@@ -65,7 +91,7 @@ function splitNameList(value, context = {}) {
     return raw
         .split(/[、,，;；/和或与及\s]+/)
         .map(item => item.trim())
-        .filter(item => item && !looksLikeRowOrPlaceholder(item));
+        .filter(item => item && !looksLikeRowOrPlaceholder(item) && !looksLikeDescriptorNotName(item));
 }
 
 function splitTargets(value, context = {}) {
@@ -182,8 +208,19 @@ function mapAiConstraint({ type, target, related, reason, priority }, context) {
     if ((type === 'avoid' || type === 'not_adjacent') && isLowGradeText(combined)) {
         return [{ type: 'avoid_low_grade_deskmate', target, reason, priority: hard }];
     }
-
     const relatedName = splitNameList(related, context)[0];
+    const relatedText = asText(related);
+    const relatedIsDescriptor = relatedText && looksLikeDescriptorNotName(relatedText);
+    if ((!relatedName || relatedIsDescriptor) && shouldPreferFrontRowForView(combined)) {
+        return [{ type: 'front_row', target, reason, priority: frontRowPriorityForView(combined) }];
+    }
+    if (shouldAvoidFrontRowForTallStudent(combined)) {
+        return [{ type: 'avoid_front_row', target, reason, priority: hard }];
+    }
+
+    if (relatedIsDescriptor && ['avoid', 'not_adjacent', 'avoid_behind', 'avoid_near', 'prefer', 'prefer_near', 'pair', 'must_adjacent'].includes(type)) {
+        return [];
+    }
     if ((type === 'avoid' || type === 'not_adjacent') && relatedName && /(后面|后方|身后|其后面)/.test(combined)) {
         return [{ type: 'avoid_behind', target, related: relatedName, reason, priority: hard }];
     }
@@ -284,6 +321,13 @@ export function parseSeatingConstraintsLocally({ text, students = [] } = {}) {
                 priority: /(必须|需要|视力不好|看不清)/.test(sentence) ? 'hard' : 'soft',
             });
         }
+        if (shouldPreferFrontRowForView(sentence) && !/(不希望|不想|不要).*?前排/.test(sentence)) {
+            addForTargets(constraints, targets, {
+                type: 'front_row',
+                reason: '希望坐在前排以看清黑板',
+                priority: frontRowPriorityForView(sentence),
+            });
+        }
 
         if (/(不希望|不想|不要).*?第一排/.test(sentence)) {
             addForTargets(constraints, targets, { type: 'avoid_first_row', reason: '不希望坐在第一排', priority: 'hard' });
@@ -294,13 +338,16 @@ export function parseSeatingConstraintsLocally({ text, students = [] } = {}) {
         if (/(不希望|不想|不要).*?前排/.test(sentence)) {
             addForTargets(constraints, targets, { type: 'avoid_front_row', reason: '不希望坐前排', priority: 'hard' });
         }
+        if (shouldAvoidFrontRowForTallStudent(sentence)) {
+            addForTargets(constraints, targets, { type: 'avoid_front_row', reason: '身高较高，避免遮挡后排同学', priority: 'hard' });
+        }
         if (/(不希望|不想|不要).*?坐(?:在)?后排/.test(sentence)) {
             addForTargets(constraints, targets, { type: 'avoid_back_row', reason: '不希望坐后排', priority: 'hard' });
         }
 
         const behind = extractRelatedAfter(sentence, /不想坐在(.+?)后面|不希望坐在(.+?)后面/, context);
         for (const target of targets) {
-            for (const related of behind.filter(name => name !== target)) {
+            for (const related of behind.filter(name => name !== target && !looksLikeDescriptorNotName(name))) {
                 addConstraint(constraints, { type: 'avoid_behind', target, related, reason: '不想坐在其后面', priority: 'hard' });
             }
         }
@@ -348,7 +395,12 @@ function buildConstraintParseMessages({ text, students = [] }) {
 - prefer/prefer_near/pair/must_adjacent: 希望近、必须相邻
 - prefer_front_middle/prefer_front_mid_rows/prefer_aisle: 前排中间、前中排、靠过道
 - prefer_high_grade_neighbor/avoid_low_grade_deskmate: 希望成绩好邻座、避免低分同桌
-多人列表必须拆成多条约束；如果是“甲、乙、丙不希望坐第一排”，三人各一条。`;
+多人列表必须拆成多条约束；如果是“甲、乙、丙不希望坐第一排”，三人各一条。
+描述词规则：
+- “高个子、矮个子、胖子、瘦子、近视、戴眼镜、看不清、看不见、被挡住、遮挡”通常不是学生姓名，不要放入 related。
+- “不想坐在高个子后面、怕被挡住、看不清黑板、近视、矮个子坐后面看不见”输出 front_row。
+- “自己个子高、身高较高、怕挡住别人、不想坐前排”输出 avoid_front_row。
+- 没有明确可执行座位含义的身体描述词不要生成具体同学关系约束。`;
 
     return [
         { role: 'system', content: systemPrompt },
@@ -408,8 +460,24 @@ export async function parseSeatingConstraints({
         }
     }
 
+    let constraints = dedupeConstraints([...aiConstraints, ...localConstraints]);
+
+    // Cap constraint count to prevent score collapse from inflation
+    const MAX_CONSTRAINTS = 100;
+    if (constraints.length > MAX_CONSTRAINTS) {
+        // Constraints with prefer_ prefix are soft; everything else is hard
+        const isSoft = c => String(c?.type || '').startsWith('prefer');
+        const hard = constraints.filter(c => !isSoft(c));
+        const soft = constraints.filter(c => isSoft(c));
+        const hardKeep = hard.slice(0, MAX_CONSTRAINTS);
+        const softKeep = soft.slice(0, Math.max(0, MAX_CONSTRAINTS - hardKeep.length));
+        const totalBefore = constraints.length;
+        constraints = [...hardKeep, ...softKeep];
+        warnings.push(`学生需求过多（${totalBefore}条），已保留最重要的 ${constraints.length} 条`);
+    }
+
     return {
-        constraints: dedupeConstraints([...aiConstraints, ...localConstraints]),
+        constraints,
         raw,
         warnings,
         source: aiConstraints.length ? 'ai_with_local_normalization' : 'local_rules',

@@ -15,6 +15,13 @@ const TIMEFOLD_SUPPORTED_CONSTRAINT_TYPES = new Set([
     'prefer_near',
     'pair',
     'must_adjacent',
+    'avoid_first_row',
+    'avoid_last_row',
+    'avoid_front_row',
+    'avoid_back_row',
+    'avoid_behind',
+    'prefer_front_middle',
+    'prefer_front_mid_rows',
 ]);
 
 export class TimefoldUnavailableError extends Error {
@@ -27,6 +34,14 @@ export class TimefoldUnavailableError extends Error {
 
 function asText(value) {
     return String(value ?? '').trim();
+}
+
+function normalizeStudentRefKey(value) {
+    return asText(value)
+        .normalize('NFKC')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/[\s\p{P}\p{S}]+/gu, '')
+        .toLowerCase();
 }
 
 function numberValue(value, fallback = null) {
@@ -83,11 +98,11 @@ function parseSeat(value) {
     };
 }
 
-function resolveConstraintStudentId(value, studentsById, studentsByName) {
+function resolveConstraintStudentId(value, studentsById, studentsByName, studentsByNormalized) {
     const ref = asText(value?.studentId ?? value?.id ?? value?.name ?? value);
     if (!ref) return null;
     if (studentsById.has(ref)) return ref;
-    return studentsByName.get(ref)?.id || null;
+    return studentsByName.get(ref)?.id || studentsByNormalized.get(normalizeStudentRefKey(ref))?.id || null;
 }
 
 function constraintTarget(constraint) {
@@ -197,6 +212,13 @@ export function computeNeighborSeatIds(seats, localAisles = {}, rows = 0, cols =
 function buildStudentAssignments(request, guardianIds) {
     const studentsById = new Map(request.students.map(student => [student.id, student]));
     const studentsByName = new Map(request.students.map(student => [student.name, student]));
+    const studentsByNormalized = new Map();
+    for (const student of request.students) {
+        for (const value of [student.id, student.name]) {
+            const key = normalizeStudentRefKey(value);
+            if (key && !studentsByNormalized.has(key)) studentsByNormalized.set(key, student);
+        }
+    }
     const byId = new Map();
 
     for (const student of request.students) {
@@ -209,6 +231,13 @@ function buildStudentAssignments(request, guardianIds) {
             height: numberValue(student.height),
             mustFrontRow: false,
             mustBackRow: false,
+            mustAvoidFirstRow: false,
+            mustAvoidLastRow: false,
+            mustAvoidFrontRow: false,
+            mustAvoidBackRow: false,
+            mustAvoidBehind: [],
+            preferFrontMiddle: false,
+            preferFrontMidRows: false,
             mustPairWith: [],
             mustAvoidAdjacent: [],
             preferAdjacent: [],
@@ -222,11 +251,20 @@ function buildStudentAssignments(request, guardianIds) {
     };
 
     for (const constraint of request.constraints || []) {
-        const id = resolveConstraintStudentId(constraintTarget(constraint), studentsById, studentsByName);
-        const related = resolveConstraintStudentId(constraintRelated(constraint), studentsById, studentsByName);
+        const id = resolveConstraintStudentId(constraintTarget(constraint), studentsById, studentsByName, studentsByNormalized);
+        const related = resolveConstraintStudentId(constraintRelated(constraint), studentsById, studentsByName, studentsByNormalized);
         if (!id || !byId.has(id)) continue;
         if (constraint.type === 'front_row') byId.get(id).mustFrontRow = true;
         if (constraint.type === 'back_row') byId.get(id).mustBackRow = true;
+        if (constraint.type === 'avoid_first_row') byId.get(id).mustAvoidFirstRow = true;
+        if (constraint.type === 'avoid_last_row') byId.get(id).mustAvoidLastRow = true;
+        if (constraint.type === 'avoid_front_row') byId.get(id).mustAvoidFrontRow = true;
+        if (constraint.type === 'avoid_back_row') byId.get(id).mustAvoidBackRow = true;
+        if (constraint.type === 'avoid_behind' && related) {
+            pushUnique(id, 'mustAvoidBehind', related);
+        }
+        if (constraint.type === 'prefer_front_middle') byId.get(id).preferFrontMiddle = true;
+        if (constraint.type === 'prefer_front_mid_rows') byId.get(id).preferFrontMidRows = true;
         if ((constraint.type === 'pair' || constraint.type === 'must_adjacent') && related) {
             pushUnique(id, 'mustPairWith', related);
             pushUnique(related, 'mustPairWith', id);
@@ -246,39 +284,65 @@ function buildStudentAssignments(request, guardianIds) {
 
 function buildConstraintConfig(layout, spec) {
     const rowsWithSeats = [];
+    const colsWithSeats = [];
     for (let r = 0; r < layout.rows; r++) {
         if (Array.from({ length: layout.cols }, (_, c) => c).some(c => layout.cells[r]?.[c] === CELL.SEAT)) {
             rowsWithSeats.push(r);
         }
     }
+    for (let c = 0; c < layout.cols; c++) {
+        if (Array.from({ length: layout.rows }, (_, r) => r).some(r => layout.cells[r]?.[c] === CELL.SEAT)) {
+            colsWithSeats.push(c);
+        }
+    }
     const regionSize = Math.max(1, Math.ceil(rowsWithSeats.length / 3));
     const frontRowThreshold = rowsWithSeats[Math.min(regionSize - 1, rowsWithSeats.length - 1)] ?? 0;
     const backRowThreshold = rowsWithSeats[Math.max(0, rowsWithSeats.length - regionSize)] ?? 0;
+    const frontMidCount = Math.max(1, Math.ceil(rowsWithSeats.length * 2 / 3));
+    const frontMidRowThreshold = rowsWithSeats[Math.min(frontMidCount - 1, rowsWithSeats.length - 1)] ?? frontRowThreshold;
+    const middleColSize = Math.max(1, Math.ceil(colsWithSeats.length / 3));
+    const middleColStartIndex = Math.max(0, Math.floor((colsWithSeats.length - middleColSize) / 2));
+    const middleCols = colsWithSeats.slice(middleColStartIndex, middleColStartIndex + middleColSize);
     const policy = spec.placementPolicy || {};
     return {
+        firstRow: rowsWithSeats[0] ?? 0,
+        lastRow: rowsWithSeats[rowsWithSeats.length - 1] ?? 0,
         frontRowThreshold,
         backRowThreshold,
+        frontMidRowThreshold,
+        middleColStart: middleCols[0] ?? 0,
+        middleColEnd: middleCols[middleCols.length - 1] ?? 0,
         genderBalanceEnabled: boolValue(policy.genderBalance, false),
         heightOrderEnabled: boolValue(policy.heightOrder, false),
         gradeStrategy: asText(policy.gradeStrategy || 'none') || 'none',
     };
 }
 
+function partitionConstraints(constraints = []) {
+    const supported = [];
+    const localOnlyConstraints = [];
+    for (const constraint of constraints) {
+        const type = constraint?.type;
+        if (!type) continue;
+        if (TIMEFOLD_SUPPORTED_CONSTRAINT_TYPES.has(type)) {
+            supported.push(constraint);
+        } else {
+            localOnlyConstraints.push(constraint);
+        }
+    }
+    return { supported, localOnlyConstraints };
+}
+
 export function buildTimefoldProblem({ request, layout, spec, guardians = {} } = {}) {
     if (!request || !layout || !spec) {
         throw new TimefoldUnavailableError('Timefold problem input is incomplete', 'invalid_input');
     }
-    const unsupported = (request.constraints || [])
-        .find(constraint => constraint?.type && !TIMEFOLD_SUPPORTED_CONSTRAINT_TYPES.has(constraint.type));
-    if (unsupported) {
-        throw new TimefoldUnavailableError(
-            `Timefold skipped because rich student need "${unsupported.type}" requires local constraint handling`,
-            'rich_constraints'
-        );
-    }
+    // Best-effort: partition constraints instead of rejecting entirely
+    const { supported, localOnlyConstraints } = partitionConstraints(request.constraints);
     const guardianIds = new Set([guardians.left, guardians.right].filter(Boolean));
     const seats = buildSeatList(layout);
-    const students = buildStudentAssignments(request, guardianIds);
+    // Build students using only supported constraints
+    const students = buildStudentAssignments({ ...request, constraints: supported }, guardianIds);
     if (students.length > seats.length) {
         throw new TimefoldUnavailableError('Timefold skipped because there are more students than grid seats', 'capacity_exceeded');
     }
@@ -287,7 +351,14 @@ export function buildTimefoldProblem({ request, layout, spec, guardians = {} } =
         seats,
         students,
         config: buildConstraintConfig(layout, spec),
+        localOnlyConstraints,
+        unsupportedConstraints: localOnlyConstraints,
     };
+}
+
+function solverRequestPayload(problem = {}) {
+    const { localOnlyConstraints, unsupportedConstraints, ...payload } = problem;
+    return payload;
 }
 
 async function parseJsonResponse(response, fallback = {}) {
@@ -346,7 +417,7 @@ export async function timefoldSolve(problem, {
         const created = await fetchJson(fetchClient, `${solverUrl}/seating-solutions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(problem),
+            body: JSON.stringify(solverRequestPayload(problem)),
         }, remaining());
         jobId = created.jobId;
         if (!jobId) throw new TimefoldUnavailableError('Timefold did not return a jobId', 'invalid_response');
@@ -425,11 +496,16 @@ export async function solveWithTimefold({
         throw new TimefoldUnavailableError('TIMEFOLD_SOLVER_URL is not configured', 'not_configured');
     }
     const problem = buildTimefoldProblem({ request, layout, spec, guardians });
-    return timefoldSolve(problem, {
+    const result = await timefoldSolve(problem, {
         solverUrl,
         timeout: timeoutMs(env),
         fetchImpl,
     });
+    return {
+        ...result,
+        localOnlyConstraints: problem.localOnlyConstraints || [],
+        unsupportedConstraints: problem.unsupportedConstraints || [],
+    };
 }
 
 export async function checkTimefoldStatus({ env = process.env, fetchImpl } = {}) {

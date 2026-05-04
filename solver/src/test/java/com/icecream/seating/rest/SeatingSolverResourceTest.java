@@ -99,12 +99,36 @@ class SeatingSolverResourceTest {
                         )
                 ),
                 "students", List.of(
-                        Map.of("id", "s01", "name", "A", "gender", "M", "grade", 90, "height", 160),
-                        Map.of("id", "s02", "name", "B", "gender", "F", "grade", 80, "height", 150)
+                        Map.of(
+                                "id", "s01",
+                                "name", "A",
+                                "gender", "M",
+                                "grade", 90,
+                                "height", 160,
+                                "mustAvoidBehind", List.of(),
+                                "preferFrontMiddle", false,
+                                "preferFrontMidRows", false
+                        ),
+                        Map.of(
+                                "id", "s02",
+                                "name", "B",
+                                "gender", "F",
+                                "grade", 80,
+                                "height", 150,
+                                "mustAvoidFirstRow", false,
+                                "mustAvoidLastRow", false,
+                                "mustAvoidFrontRow", false,
+                                "mustAvoidBackRow", false
+                        )
                 ),
                 "config", Map.of(
                         "frontRowThreshold", 0,
                         "backRowThreshold", 0,
+                        "firstRow", 0,
+                        "lastRow", 0,
+                        "frontMidRowThreshold", 0,
+                        "middleColStart", 0,
+                        "middleColEnd", 1,
                         "gradeStrategy", "none"
                 )
         );

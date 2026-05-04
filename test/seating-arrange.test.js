@@ -632,6 +632,45 @@ test('local arrangement keeps rich row constraints actionable instead of treatin
   assert.ok([1, 2].includes(byStudent.get('s3').col));
 });
 
+test('local refinement improves unmet local-only constraints after local seating', async () => {
+  const roster = [
+    { id: 's01', name: 'Target', grade: 50 },
+    { id: 's02', name: 'Low Neighbor', grade: 10 },
+    { id: 's03', name: 'High A', grade: 90 },
+    { id: 's04', name: 'High B', grade: 80 },
+  ];
+  const request = normalizeArrangeRequest({
+    prompt: '4 students, use the existing room',
+    students: roster,
+    constraints: [{ type: 'avoid_low_grade_deskmate', target: 'Target', priority: 'hard' }],
+    strategy: { genderBalance: false, heightOrder: false, gradeStrategy: 'none' },
+    previousLayout: {
+      rows: 2,
+      cols: 4,
+      cells: Array.from({ length: 2 }, () => Array(4).fill('seat')),
+    },
+  });
+  const fetchImpl = async () => jsonResponse({
+    groupSize: 1,
+    guardianPolicy: { enabled: false },
+    keepPreviousLayout: true,
+    layoutMode: 'standard',
+  });
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  const byStudent = new Map(result.assignments.map(item => [item.studentId, item]));
+  const target = byStudent.get('s01');
+  const low = byStudent.get('s02');
+  assert.ok(Math.abs(target.row - low.row) + Math.abs(target.col - low.col) > 1);
+  assert.equal(result.unsatisfied.some(item => item.type === 'avoid_low_grade_deskmate'), false);
+  assert.equal(result.stats.refinementApplied, true);
+});
+
 test('grade priority keeps excellent students out of the last row after gender balancing', async () => {
   const roster = [
     { id: 'm01', name: 'Low M1', grade: 10, gender: 'M' },
@@ -911,6 +950,76 @@ test('runAiDrivenArrangement uses Timefold when configured and solution is feasi
   assert.equal(typeof result.stats.durationMs, 'number');
   assert.equal(result.interpretation.solverFacts.used, true);
   assert.match(result.interpretation.solverFacts.summary, /Timefold/);
+});
+
+test('Timefold success is locally refined for constraints kept out of solver payload', async () => {
+  const roster = [
+    { id: 's01', name: 'A', grade: 90 },
+    { id: 's02', name: 'B', grade: 80 },
+    { id: 's03', name: 'C', grade: 70 },
+    { id: 's04', name: 'D', grade: 60 },
+  ];
+  const request = normalizeArrangeRequest({
+    prompt: '4 students, keep the room',
+    students: roster,
+    constraints: [{ type: 'avoid_near', target: 'A', related: 'B', priority: 'hard' }],
+    previousLayout: {
+      rows: 2,
+      cols: 3,
+      cells: Array.from({ length: 2 }, () => Array(3).fill('seat')),
+    },
+  });
+  let postedProblem = null;
+  const fetchImpl = async (url, options = {}) => {
+    if (String(url).startsWith('http://fake-ai')) {
+      return jsonResponse({
+        groupSize: 1,
+        guardianPolicy: { enabled: false },
+        keepPreviousLayout: true,
+        layoutMode: 'standard',
+      });
+    }
+    if (options.method === 'POST') {
+      postedProblem = JSON.parse(options.body);
+      return textResponse({ jobId: 'job-1' }, 202);
+    }
+    if (String(url).endsWith('/status')) {
+      return textResponse({ jobId: 'job-1', solverStatus: 'NOT_SOLVING', hardScore: 0, softScore: 0 }, 200);
+    }
+    if (options.method === 'DELETE') return textResponse({}, 204);
+    return textResponse({
+      jobId: 'job-1',
+      hardScore: 0,
+      softScore: 0,
+      students: [
+        { id: 's01', seat: 'r0c0' },
+        { id: 's02', seat: 'r0c1' },
+        { id: 's03', seat: 'r0c2' },
+        { id: 's04', seat: 'r1c2' },
+      ],
+    }, 200);
+  };
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl,
+    env: {
+      DEEPSEEK_API_BASE: 'http://fake-ai',
+      DEEPSEEK_API_KEY: 'key',
+      TIMEFOLD_SOLVER_URL: 'http://solver',
+      TIMEFOLD_SOLVER_TIMEOUT: '1',
+    },
+  });
+
+  const byStudent = new Map(result.assignments.map(item => [item.studentId, item]));
+  const a = byStudent.get('s01');
+  const b = byStudent.get('s02');
+  assert.equal(postedProblem.localOnlyConstraints, undefined);
+  assert.equal(postedProblem.unsupportedConstraints, undefined);
+  assert.ok(Math.abs(a.row - b.row) + Math.abs(a.col - b.col) > 2);
+  assert.equal(result.source, 'timefold_solver');
+  assert.equal(result.unsatisfied.some(item => item.type === 'avoid_near'), false);
+  assert.equal(result.stats.refinementApplied, true);
 });
 
 test('runAiDrivenArrangement falls back to local seating when Timefold has hard violations', async () => {

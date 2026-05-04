@@ -103,3 +103,67 @@ test('parseSeatingConstraints falls back to deterministic extraction when AI JSO
   assert.equal(result.constraints.filter(item => item.type === 'front_row').length, 70);
   assert.match(result.warnings.join('；'), /AI 返回的学生需求 JSON 无效/);
 });
+
+test('local parser turns blocked-view descriptors into front row preferences instead of person constraints', () => {
+  const constraints = parseSeatingConstraintsLocally({
+    text: [
+      '王妍兰晓不想坐在高个子后面。',
+      '卫黛宜近视，看不清黑板。',
+      '卢宁倩荔个子矮，坐后面看不见。',
+    ].join('\n'),
+    students: [{ name: '王妍兰晓' }, ...exampleStudents],
+  });
+
+  assert.ok(constraints.some(item =>
+    item.type === 'front_row' && item.target === '王妍兰晓' && item.priority === 'soft'
+  ));
+  assert.ok(constraints.some(item =>
+    item.type === 'front_row' && item.target === '卫黛宜' && item.priority === 'hard'
+  ));
+  assert.ok(constraints.some(item =>
+    item.type === 'front_row' && item.target === '卢宁倩荔' && item.priority === 'hard'
+  ));
+  assert.ok(!constraints.some(item =>
+    item.type === 'avoid_behind' && item.related === '高个子'
+  ));
+});
+
+test('local parser keeps real related names in avoid behind constraints', () => {
+  const constraints = parseSeatingConstraintsLocally({
+    text: '王妍兰晓不想坐在鲜于振后面。',
+    students: [{ name: '王妍兰晓' }, ...exampleStudents],
+  });
+
+  assert.ok(constraints.some(item =>
+    item.type === 'avoid_behind' && item.target === '王妍兰晓' && item.related === '鲜于振'
+  ));
+});
+
+test('local parser still handles tall students avoiding the front row', () => {
+  const constraints = parseSeatingConstraintsLocally({
+    text: '家枝飘身高较高，不希望坐前排。',
+    students: exampleStudents,
+  });
+
+  assert.ok(constraints.some(item =>
+    item.type === 'avoid_front_row' && item.target === '家枝飘'
+  ));
+});
+
+test('AI normalization converts blocked-view descriptors to front row and rejects body descriptors as related names', () => {
+  const constraints = normalizeConstraintItems([
+    { type: 'avoid_behind', target: '王妍兰晓', related: '高个子', reason: '不想坐在高个子后面', priority: 'hard' },
+    { type: 'avoid_behind', target: '卫黛宜', related: '胖子', reason: '不想坐在胖子后面', priority: 'hard' },
+    { type: 'front_row', target: '卢宁倩荔', related: '', reason: '个子矮，坐后面看不见', priority: 'hard' },
+  ], { students: [{ name: '王妍兰晓' }, ...exampleStudents] });
+
+  assert.ok(constraints.some(item =>
+    item.type === 'front_row' && item.target === '王妍兰晓'
+  ));
+  assert.ok(constraints.some(item =>
+    item.type === 'front_row' && item.target === '卢宁倩荔' && item.priority === 'hard'
+  ));
+  assert.ok(!constraints.some(item =>
+    item.type === 'avoid_behind' && ['高个子', '胖子'].includes(item.related)
+  ));
+});
