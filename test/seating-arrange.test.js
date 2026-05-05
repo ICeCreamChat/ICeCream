@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildArrangeRepairPrompt,
   optimizeSeatingScore,
+  runAiLayoutPreview,
   runAiDrivenArrangement,
   shouldAllowUnassigned,
   normalizeArrangeRequest,
@@ -302,7 +303,190 @@ test('validateAiArrangement accepts matrix responses and repair prompt includes 
   assert.match(buildArrangeRepairPrompt(['s01 重复安排', 's03 缺少学生']), /s01 重复安排/);
 });
 
-test('runAiDrivenArrangement lets AI return rules and locally seats 60 students with guardians', async () => {
+test('runAiLayoutPreview returns an AI-designed layout preview without assignments', async () => {
+  const roster = Array.from({ length: 4 }, (_, index) => ({
+    id: `s0${index + 1}`,
+    name: `Student ${index + 1}`,
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '座位不要太死板，但过道要留出来',
+    students: roster,
+    strategy: { genderBalance: true },
+  });
+  let aiPayload = null;
+  const fetchImpl = async (url, options) => {
+    const body = JSON.parse(options.body);
+    aiPayload = JSON.parse(body.messages.at(-1).content);
+    return jsonResponse({
+      reply: '已生成布局预览',
+      classroomLayout: {
+        rows: 2,
+        cols: 3,
+        cells: [
+          ['seat', 'aisle', 'seat'],
+          ['seat', 'aisle', 'seat'],
+        ],
+        groups: [
+          [1, null, 2],
+          [3, null, 4],
+        ],
+        guardians: { enabled: false, left: null, right: null },
+        template: 'ai-preview',
+        groupSize: 1,
+      },
+      layoutIntent: { type: 'standard', description: '中间留出过道' },
+      arrangementSpec: { groupSize: 1, layoutMode: 'standard' },
+      reasoning: '保留中间纵向过道。',
+    });
+  };
+
+  const result = await runAiLayoutPreview({
+    request,
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.equal(aiPayload.stage, 'layout_preview');
+  assert.equal(aiPayload.studentCount, 4);
+  assert.equal(Boolean(aiPayload.students), false);
+  assert.equal(result.source, 'ai_layout_preview');
+  assert.equal(result.classroomLayout.rows, 2);
+  assert.equal(result.classroomLayout.cols, 3);
+  assert.deepEqual(result.layoutIntent, { type: 'standard', description: '中间留出过道' });
+  assert.equal(Object.prototype.hasOwnProperty.call(result, 'assignments'), false);
+});
+
+test('runAiLayoutPreview falls back to local layout after invalid AI previews', async () => {
+  const roster = Array.from({ length: 8 }, (_, index) => ({
+    id: `s0${index + 1}`,
+    name: `Student ${index + 1}`,
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '两人一桌，中间留过道',
+    students: roster,
+  });
+  let attempts = 0;
+  const fetchImpl = async () => {
+    attempts += 1;
+    if (attempts === 2) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { choices: [{ message: { content: '{invalid json' } }] };
+        },
+      };
+    }
+    return jsonResponse({
+      classroomLayout: {
+        rows: 1,
+        cols: 2,
+        cells: [['seat', 'aisle']],
+      },
+    });
+  };
+
+  const result = await runAiLayoutPreview({
+    request,
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.equal(attempts, 3);
+  assert.equal(result.source, 'local_layout_fallback');
+  assert.ok(result.classroomLayout.cells.flat().filter(cell => cell === 'seat').length >= 8);
+  assert.ok(result.warnings.some(warning => /AI.*布局|fallback|降级|备用/.test(warning)));
+});
+
+test('runAiLayoutPreview uses local fallback without calling AI when DeepSeek is not configured', async () => {
+  const request = normalizeArrangeRequest({
+    prompt: '普通教室，中间留过道',
+    students,
+  });
+  let calls = 0;
+  const result = await runAiLayoutPreview({
+    request,
+    fetchImpl: async () => {
+      calls += 1;
+      throw new Error('should not call AI');
+    },
+    env: {},
+  });
+
+  assert.equal(calls, 0);
+  assert.equal(result.source, 'local_layout_fallback');
+  assert.ok(result.classroomLayout.cells.flat().filter(cell => cell === 'seat').length >= students.length);
+});
+
+test('runAiDrivenArrangement assigns students to a confirmed layout without requesting AI layout again', async () => {
+  const request = normalizeArrangeRequest({
+    prompt: '确认这个布局后直接排学生',
+    students,
+    confirmedLayout: {
+      rows: 2,
+      cols: 2,
+      cells: [
+        ['seat', 'seat'],
+        ['seat', 'seat'],
+      ],
+      guardians: { enabled: false },
+      template: 'confirmed',
+      groupSize: 1,
+      localAisles: { vertical: [{ row: 0, col: 0 }], horizontal: [] },
+    },
+    arrangementSpec: { groupSize: 1, layoutMode: 'standard' },
+  });
+  let calls = 0;
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl: async () => {
+      calls += 1;
+      throw new Error('AI should not be called for confirmedLayout');
+    },
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.equal(calls, 0);
+  assert.equal(result.source, 'confirmed_layout_local_assignment');
+  assert.equal(result.assignments.length, 4);
+  assert.equal(result.unassigned.length, 0);
+  assert.deepEqual(result.classroomLayout.localAisles, {
+    vertical: [{ row: 0, col: 0 }],
+    horizontal: [],
+  });
+});
+
+test('runAiDrivenArrangement honors edge preferences on confirmed layouts', async () => {
+  const request = normalizeArrangeRequest({
+    prompt: '确认布局后安排靠边偏好',
+    students: [{ id: 's01', name: '鲜于振', grade: 80 }],
+    constraints: [{ type: 'prefer_edge', target: '鲜于振', priority: 'soft' }],
+    confirmedLayout: {
+      rows: 3,
+      cols: 3,
+      cells: Array.from({ length: 3 }, () => Array(3).fill('seat')),
+      guardians: { enabled: false },
+      template: 'confirmed',
+      groupSize: 1,
+    },
+    arrangementSpec: { groupSize: 1, layoutMode: 'standard' },
+  });
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl: async () => {
+      throw new Error('AI should not be called for confirmedLayout');
+    },
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  const assignment = result.assignments.find(item => item.studentId === 's01');
+  assert.ok([0, 2].includes(assignment.col));
+  assert.equal(result.source, 'confirmed_layout_local_assignment');
+});
+
+test('runAiDrivenArrangement uses AI layout preview before assigning a 60-student room', async () => {
   const manyStudents = Array.from({ length: 60 }, (_, index) => ({
     id: `s${String(index + 1).padStart(2, '0')}`,
     name: `Student ${index + 1}`,
@@ -327,16 +511,27 @@ test('runAiDrivenArrangement lets AI return rules and locally seats 60 students 
     const body = JSON.parse(options.body);
     const payload = JSON.parse(body.messages.at(-1).content);
     stages.push(payload.stage);
-    assert.equal(payload.stage, 'arrangement_spec');
+    assert.equal(payload.stage, 'layout_preview');
     assert.equal(payload.studentCount, 60);
     assert.equal(Boolean(payload.students), false);
     return jsonResponse({
-      groupSize: 3,
-      aislePolicy: { verticalBetweenGroups: true, horizontalBetweenGroupRows: true },
-      guardianPolicy: { enabled: true, strategy: 'lowest_grade' },
-      layoutMode: 'grouped',
-      placementPolicy: { genderBalance: true },
-      notes: 'rules only',
+      classroomLayout: {
+        rows: 10,
+        cols: 6,
+        cells: Array.from({ length: 10 }, () => Array(6).fill('seat')),
+        guardians: { enabled: false },
+        template: 'ai-preview',
+        groupSize: 3,
+      },
+      arrangementSpec: {
+        groupSize: 3,
+        aislePolicy: { verticalBetweenGroups: true, horizontalBetweenGroupRows: true },
+        guardianPolicy: { enabled: true, strategy: 'lowest_grade' },
+        layoutMode: 'grouped',
+        placementPolicy: { genderBalance: true },
+        notes: 'AI preview rules',
+      },
+      layoutIntent: { type: 'grouped', description: '三人一组，保留过道' },
     });
   };
 
@@ -346,16 +541,15 @@ test('runAiDrivenArrangement lets AI return rules and locally seats 60 students 
     env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
   });
 
-  assert.equal(result.source, 'ai_spec_local_algorithm');
+  assert.equal(result.source, 'ai_layout_local_assignment');
   assert.equal(result.assignments.length, 58);
   assert.deepEqual(new Set([result.guardians.left, result.guardians.right]), new Set(['s05', 's55']));
   assert.equal(result.unassigned.length, 0);
   assert.equal(new Set(result.assignments.map(item => item.studentId)).size, 58);
   assert.equal(new Set(result.assignments.map(item => `${item.row},${item.col}`)).size, 58);
   assert.ok(result.classroomLayout.rows > 6 || result.classroomLayout.cols > 8);
-  assert.ok(result.classroomLayout.cells.flat().includes('aisle'));
   assert.equal(result.arrangementSpec.groupSize, 3);
-  assert.deepEqual(stages, ['arrangement_spec']);
+  assert.deepEqual(stages, ['layout_preview']);
 });
 
 test('runAiDrivenArrangement expands beyond old 20x20 limits for large rosters', async () => {

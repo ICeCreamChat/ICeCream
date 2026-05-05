@@ -1,0 +1,2 @@
+"""ICeCream Manim service package."""
+

@@ -18,8 +18,16 @@ const DIRECT_TYPES = new Set([
     'prefer_front_middle',
     'prefer_front_mid_rows',
     'prefer_aisle',
+    'prefer_edge',
     'prefer_high_grade_neighbor',
     'avoid_low_grade_deskmate',
+]);
+
+const ROW_AVOID_TYPES = new Set([
+    'avoid_first_row',
+    'avoid_last_row',
+    'avoid_front_row',
+    'avoid_back_row',
 ]);
 
 function asText(value) {
@@ -73,7 +81,7 @@ function findRosterNames(value, names = []) {
 }
 
 function looksLikeRowOrPlaceholder(value) {
-    return /(前排|后排|第一排|最后一排|中排|过道|位置|成绩|同学|学生|较好|偏低|较高|中间)/.test(asText(value));
+    return /(前排|后排|第一排|最后一排|中排|过道|位置|成绩|同学|学生|较好|偏低|较高|中间|靠边|边上|外侧)/.test(asText(value));
 }
 
 function looksLikeDescriptorNotName(value) {
@@ -194,6 +202,10 @@ function isAisleText(value) {
     return /过道|走道/.test(asText(value));
 }
 
+function isEdgeText(value) {
+    return /靠边|边上|外侧|边列|靠窗|靠墙/.test(asText(value));
+}
+
 function isHighGradeText(value) {
     return /成绩较好|成绩好|成绩高|优秀|高分|较好的同学|较好的学生/.test(asText(value));
 }
@@ -210,18 +222,19 @@ function mapAiConstraint({ type, target, related, reason, priority }, context) {
     const combined = `${reason} ${related}`.trim();
     const soft = priorityForNeed({ type, text: combined, suggestedPriority: priority, fallback: 'soft' });
     const hard = priorityForNeed({ type, text: combined, suggestedPriority: priority, fallback: 'hard' });
+    const rowHard = normalizePriority(priority, 'hard');
 
     if ((type === 'avoid' || type === 'not_adjacent') && isFirstRowText(combined)) {
-        return [{ type: 'avoid_first_row', target, reason, priority: hard }];
+        return [{ type: 'avoid_first_row', target, reason, priority: rowHard }];
     }
     if ((type === 'avoid' || type === 'not_adjacent') && isLastRowText(combined)) {
-        return [{ type: 'avoid_last_row', target, reason, priority: hard }];
+        return [{ type: 'avoid_last_row', target, reason, priority: rowHard }];
     }
     if ((type === 'avoid' || type === 'not_adjacent') && isFrontRowText(combined) && !isBackRowText(combined)) {
-        return [{ type: 'avoid_front_row', target, reason, priority: hard }];
+        return [{ type: 'avoid_front_row', target, reason, priority: rowHard }];
     }
     if ((type === 'avoid' || type === 'not_adjacent') && isBackRowText(combined) && !/坐在.*后面|其后面|后面/.test(combined)) {
-        return [{ type: 'avoid_back_row', target, reason, priority: hard }];
+        return [{ type: 'avoid_back_row', target, reason, priority: rowHard }];
     }
     if ((type === 'prefer' || type === 'front_row') && /前排.*中间|前排中间|正中间/.test(combined) && !/不一定/.test(combined)) {
         return [{ type: 'prefer_front_middle', target, reason, priority: soft }];
@@ -229,8 +242,22 @@ function mapAiConstraint({ type, target, related, reason, priority }, context) {
     if ((type === 'prefer' || type === 'front_row') && /前中排|前中/.test(combined)) {
         return [{ type: 'prefer_front_mid_rows', target, reason, priority: soft }];
     }
+    if (type === 'prefer' && isBackRowText(combined)) {
+        const mapped = [{ type: 'back_row', target, reason, priority: soft }];
+        if (isEdgeText(combined)) mapped.push({ type: 'prefer_edge', target, reason, priority: soft });
+        if (isAisleText(combined)) mapped.push({ type: 'prefer_aisle', target, reason, priority: soft });
+        return mapped;
+    }
     if ((type === 'prefer' || type === 'front_row') && isAisleText(combined)) {
         return [{ type: 'prefer_aisle', target, reason, priority: soft }];
+    }
+    if ((type === 'prefer' || type === 'front_row' || type === 'back_row')
+        && isEdgeText(combined)
+        && !/(不希望|不想|不要).*?(靠边|边上|外侧|边列|靠窗|靠墙)/.test(combined)) {
+        const mapped = [];
+        if (type === 'front_row' || type === 'back_row') mapped.push({ type, target, reason, priority: soft });
+        mapped.push({ type: 'prefer_edge', target, reason, priority: soft });
+        return mapped;
     }
     if (type === 'prefer' && isHighGradeText(combined)) {
         return [{ type: 'prefer_high_grade_neighbor', target, reason, priority: soft }];
@@ -245,7 +272,7 @@ function mapAiConstraint({ type, target, related, reason, priority }, context) {
         return [{ type: 'front_row', target, reason, priority: frontRowPriorityForView(combined) }];
     }
     if (shouldAvoidFrontRowForTallStudent(combined)) {
-        return [{ type: 'avoid_front_row', target, reason, priority: hard }];
+        return [{ type: 'avoid_front_row', target, reason, priority: rowHard }];
     }
 
     if (relatedIsDescriptor && ['avoid', 'not_adjacent', 'avoid_behind', 'avoid_near', 'prefer', 'prefer_near', 'pair', 'must_adjacent'].includes(type)) {
@@ -288,7 +315,9 @@ function mapAiConstraint({ type, target, related, reason, priority }, context) {
             target,
             ...(relatedName || asText(related) ? { related: relatedName || asText(related) } : {}),
             reason,
-            priority: priorityForNeed({ type, text: combined, suggestedPriority: priority, fallback: defaultPriorityForType(type) }),
+            priority: ROW_AVOID_TYPES.has(type)
+                ? normalizePriority(priority, 'hard')
+                : priorityForNeed({ type, text: combined, suggestedPriority: priority, fallback: defaultPriorityForType(type) }),
         }];
     }
     return [];
@@ -348,6 +377,17 @@ function extractRelatedAfter(sentence, regex, context) {
     return splitNameList(captured, context);
 }
 
+function sentenceClauses(sentence) {
+    return asText(sentence)
+        .split(/[，,；;]+/)
+        .map(clause => clause.trim())
+        .filter(Boolean);
+}
+
+function hasClauseMatching(sentence, regex) {
+    return sentenceClauses(sentence).some(clause => regex.test(clause));
+}
+
 export function parseSeatingConstraintsLocally({ text, students = [] } = {}) {
     const context = { students };
     const constraints = [];
@@ -392,8 +432,11 @@ export function parseSeatingConstraintsLocally({ text, students = [] } = {}) {
         if (shouldAvoidFrontRowForTallStudent(sentence)) {
             addForTargets(constraints, targets, { type: 'avoid_front_row', reason: '身高较高，避免遮挡后排同学', priority: 'hard' });
         }
-        if (/(不希望|不想|不要).*?坐(?:在)?后排/.test(sentence)) {
+        if (hasClauseMatching(sentence, /(不希望|不想|不要).*?坐(?:在)?后排/)) {
             addForTargets(constraints, targets, { type: 'avoid_back_row', reason: '不希望坐后排', priority: 'hard' });
+        }
+        if (hasClauseMatching(sentence, /(希望|想|最好|尽量|可以的话|优先|倾向).*?(中后排|后排|靠后)/)) {
+            addForTargets(constraints, targets, { type: 'back_row', reason: '希望坐在后排区域', priority: 'soft' });
         }
 
         const behind = extractRelatedAfter(sentence, /(?:不想|不希望|不要|不能|不可以)坐在(.+?)后面|(?:不想|不希望|不要|不能|不可以)坐.*?在(.+?)后面/, context);
@@ -444,6 +487,9 @@ export function parseSeatingConstraintsLocally({ text, students = [] } = {}) {
         if (/靠过道|过道位置|走道/.test(sentence)) {
             addForTargets(constraints, targets, { type: 'prefer_aisle', reason: '希望坐在靠过道位置', priority: 'soft' });
         }
+        if (hasClauseMatching(sentence, /(希望|想|最好|尽量|可以的话|优先|倾向).*?(靠边|边上|外侧|边列|靠窗|靠墙)/)) {
+            addForTargets(constraints, targets, { type: 'prefer_edge', reason: '希望坐在靠边位置', priority: 'soft' });
+        }
         if (/(分散|不希望.*?(过近|太近)|不想.*?(过近|太近))/.test(sentence) && targets.length > 1) {
             for (const [target, related] of pairwise(targets)) {
                 addConstraint(constraints, { type: 'avoid_near', target, related, reason: '不希望坐得过近', priority: 'hard' });
@@ -470,9 +516,12 @@ priority 必须输出 "hard" 或 "soft"：hard=必须满足，未满足会导致
 - avoid_behind: target 不想坐在 related 后面
 - avoid/not_adjacent/avoid_near: 不相邻/不要太近
 - prefer/prefer_near/pair/must_adjacent: 希望近、必须相邻
-- prefer_front_middle/prefer_front_mid_rows/prefer_aisle: 前排中间、前中排、靠过道
+- prefer_front_middle/prefer_front_mid_rows/prefer_aisle/prefer_edge: 前排中间、前中排、靠过道、靠边/边上/外侧
 - prefer_high_grade_neighbor/avoid_low_grade_deskmate: 希望成绩好邻座、避免低分同桌
 多人列表必须拆成多条约束；如果是“甲、乙、丙不希望坐第一排”，三人各一条。
+关键判别：
+- “不想坐第一排，希望坐后排靠边”必须输出 avoid_first_row + back_row + prefer_edge，不能输出 avoid_back_row。
+- “靠边、边上、外侧、边列、靠窗、靠墙”输出 prefer_edge；“靠过道、走道”输出 prefer_aisle。
 描述词规则：
 - “高个子、矮个子、胖子、瘦子、近视、戴眼镜、看不清、看不见、被挡住、遮挡”通常不是学生姓名，不要放入 related。
 - “不想坐在高个子后面、怕被挡住、看不清黑板、近视、矮个子坐后面看不见”输出 front_row。
@@ -497,10 +546,12 @@ export async function parseSeatingConstraints({
     fetchImpl = globalThis.fetch,
     env = process.env,
 } = {}) {
-    const localConstraints = parseSeatingConstraintsLocally({ text, students });
     const warnings = [];
     let raw = '';
     let aiConstraints = [];
+    let constraints = [];
+    let source = 'local_rules_fallback';
+    let usedAi = false;
 
     if (typeof fetchImpl === 'function' && env?.DEEPSEEK_API_BASE && env?.DEEPSEEK_API_KEY) {
         try {
@@ -527,17 +578,26 @@ export async function parseSeatingConstraints({
                 raw = payload.choices?.[0]?.message?.content || '{}';
                 try {
                     const parsed = JSON.parse(raw);
-                    aiConstraints = normalizeConstraintItems(parsed.constraints || [], { students });
+                    if (Array.isArray(parsed?.constraints)) {
+                        aiConstraints = normalizeConstraintItems(parsed.constraints, { students });
+                        constraints = aiConstraints;
+                        source = 'ai_constraints';
+                        usedAi = true;
+                    } else {
+                        warnings.push('AI 返回的学生需求 JSON 缺少 constraints 数组，已使用本地备用规则。');
+                    }
                 } catch (error) {
-                    warnings.push(`AI 返回的学生需求 JSON 无效，已使用本地规则补全：${error.message}`);
+                    warnings.push(`AI 返回的学生需求 JSON 无效，已使用本地备用规则：${error.message}`);
                 }
             }
         } catch (error) {
-            warnings.push(`AI 学生需求解析不可用，已使用本地规则补全：${error.message}`);
+            warnings.push(`AI 学生需求解析不可用，已使用本地备用规则：${error.message}`);
         }
     }
 
-    let constraints = dedupeConstraints([...aiConstraints, ...localConstraints]);
+    if (!usedAi) {
+        constraints = parseSeatingConstraintsLocally({ text, students });
+    }
 
     // Cap constraint count to prevent score collapse from inflation
     const MAX_CONSTRAINTS = 100;
@@ -556,6 +616,6 @@ export async function parseSeatingConstraints({
         constraints,
         raw,
         warnings,
-        source: aiConstraints.length ? 'ai_with_local_normalization' : 'local_rules',
+        source,
     };
 }

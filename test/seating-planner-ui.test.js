@@ -13,6 +13,7 @@ test('seating planner exposes AI requirement entry instead of fixed layout contr
 
   assert.match(source, /sp-arrange-prompt/);
   assert.match(source, /\/api\/tools\/seating\/arrange/);
+  assert.match(source, /\/api\/tools\/seating\/layout-preview/);
   assert.match(source, /排座要求/);
   assert.match(source, /例如：两人一组，中间留过道，讲台旁安排左右护法，护法位置要一个成绩较差一个成绩较好的/);
   assert.match(source, />\s*生成座位表\s*</);
@@ -23,6 +24,104 @@ test('seating planner exposes AI requirement entry instead of fixed layout contr
   assert.doesNotMatch(source, /id="sp-rows"/);
   assert.doesNotMatch(source, /id="sp-cols"/);
   assert.doesNotMatch(source, /sp-layout-prompt/);
+});
+
+test('seating planner previews AI layout before confirming student assignment', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  assert.match(source, /pendingLayoutPreview/);
+  assert.match(source, /requestLayoutPreview/);
+  assert.match(source, /showLayoutPreviewConfirmation/);
+  assert.match(source, /confirmLayoutPreview/);
+  assert.match(source, /cancelLayoutPreview/);
+  assert.match(source, /const confirmedLayout = this\.getConfirmedPreviewLayout\(\)/);
+  assert.match(source, /confirmedLayout,/);
+  assert.match(source, /sp-layout-preview-confirm/);
+  assert.match(source, /sp-layout-preview-cancel/);
+  assert.match(source, /sp-layout-preview-regenerate/);
+  assert.match(source, /this\.requestLayoutPreview\(prompt\)/);
+  assert.doesNotMatch(source, /const data = await this\.requestAiArrangement\(prompt\);\s*const arrangement = this\.applyArrangementResult\(data\);/s);
+});
+
+test('seating planner renders an editable visual-only layout preview', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.doesNotMatch(source, /sp-layout-preview-summary/);
+  assert.doesNotMatch(source, /layoutPreviewSummary/);
+  assert.match(source, /renderEditableLayoutPreviewGrid/);
+  assert.match(source, /handleLayoutPreviewEditClick/);
+  assert.match(source, /insertPreviewAisleRowAt/);
+  assert.match(source, /insertPreviewAisleColumnAt/);
+  assert.match(source, /deletePreviewAisleRowAt/);
+  assert.match(source, /deletePreviewAisleColumnAt/);
+  assert.match(source, /togglePreviewLocalAisle/);
+  assert.match(source, /insertLocalAisle/);
+  assert.match(source, /deleteLocalAisle/);
+  assert.match(source, /pendingLayoutPreview\.classroomLayout = layout/);
+  assert.match(source, /localAisles: normalizeLocalAisles\(source\.localAisles, rows, cols\)/);
+  assert.match(styles, /\.sp-layout-preview-mini\s*{[^}]*justify-content: center/s);
+  assert.match(styles, /\.sp-layout-preview-local-gap/);
+  assert.match(styles, /\.sp-layout-preview-full-row-handle/);
+  assert.match(styles, /\.sp-layout-preview-full-col-handle/);
+});
+
+test('seating planner preview colors adapt to day and night themes with group classes', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(styles, /--sp-preview-bg:\s*rgba\(15,\s*23,\s*42,\s*0\.34\)/);
+  assert.match(styles, /--sp-preview-seat-even-top:\s*#60a5fa/);
+  assert.match(styles, /--sp-preview-seat-odd-bottom:\s*#059669/);
+  assert.match(styles, /--sp-preview-aisle-border:\s*rgba\(148,\s*163,\s*184,\s*0\.34\)/);
+  assert.match(styles, /body\.light-mode \.sp-app\s*{[^}]*--sp-preview-bg:\s*rgba\(241,\s*245,\s*249,\s*0\.84\)/s);
+  assert.match(styles, /body\.light-mode \.sp-app\s*{[^}]*--sp-preview-seat-even-bottom:\s*#1d4ed8/s);
+  assert.match(styles, /\.sp-layout-preview-mini\s*{[^}]*background:\s*var\(--sp-preview-bg\)/s);
+  assert.match(styles, /\.sp-layout-preview-cell--group-even/);
+  assert.match(styles, /\.sp-layout-preview-cell--group-odd\s*{[^}]*--sp-preview-seat-top:\s*var\(--sp-preview-seat-odd-top\)/s);
+  assert.match(styles, /\.sp-layout-preview-cell--aisle\s*{[^}]*border:\s*1px dashed var\(--sp-preview-aisle-border\)/s);
+  assert.match(styles, /\.sp-layout-preview-local-gap\.is-active\s*{[^}]*var\(--sp-preview-gap-active-bg\)[^}]*var\(--sp-preview-gap-active-shadow\)/s);
+
+  assert.match(source, /const groupId = layout\.groups\?\.\[r\]\?\.\[c\]/);
+  assert.match(source, /cell\.dataset\.group = String\(groupId\)/);
+  assert.match(source, /Number\(groupId\) % 2 === 0/);
+  assert.match(source, /sp-layout-preview-cell--group-even/);
+  assert.match(source, /sp-layout-preview-cell--group-odd/);
+});
+
+test('seating planner localizes preview editing hints and keeps confirmed preview readonly', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.doesNotMatch(source, /Add local aisle|Remove local aisle|Insert full|Remove full/);
+  assert.match(source, /添加局部过道/);
+  assert.match(source, /删除局部过道/);
+  assert.match(source, /插入整列过道/);
+  assert.match(source, /删除整行过道/);
+  assert.match(source, /删除整列过道/);
+  assert.match(source, /插入整行过道/);
+  assert.match(source, /applyArrangementResult\(data,\s*\{[^}]*preserveLayoutPreview = false/s);
+  assert.match(source, /if \(!preserveLayoutPreview\) this\.cancelLayoutPreview\(\)/);
+  assert.match(source, /showConfirmedLayoutPreview/);
+  assert.match(source, /readOnly:\s*true/);
+  assert.match(source, /confirmed:\s*true/);
+  assert.match(source, /preserveLayoutPreview:\s*true/);
+  assert.match(source, /if \(this\.pendingLayoutPreview\.readOnly \|\| this\.pendingLayoutPreview\.confirmed\) return/);
+  assert.match(styles, /\.sp-layout-preview-mini--readonly/);
+});
+
+test('seating planner displays confirmed local aisles as seat gaps', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(source, /appendLocalAisleMarkers/);
+  assert.match(source, /sp-local-aisle-marker--vertical/);
+  assert.match(source, /sp-local-aisle-marker--horizontal/);
+  assert.match(source, /hasLocalAisle\(localAisles, 'vertical', row, col\)/);
+  assert.match(source, /hasLocalAisle\(localAisles, 'horizontal', row, col\)/);
+  assert.match(styles, /\.sp-local-aisle-marker/);
+  assert.match(styles, /\.sp-local-aisle-marker--vertical/);
+  assert.match(styles, /\.sp-local-aisle-marker--horizontal/);
 });
 
 test('seating planner has a large-grid virtual rendering guard', async () => {
@@ -169,6 +268,8 @@ test('seating planner frames constraints as student seating needs in the UI', as
   assert.doesNotMatch(source, /学生座位需求/);
   assert.doesNotMatch(source, /座位约束/);
   assert.doesNotMatch(source, /描述座位约束/);
+  assert.match(source, /prefer_edge/);
+  assert.match(source, /靠边/);
 });
 
 test('seating planner lets teachers adjust extracted needs before arranging', async () => {
@@ -227,7 +328,7 @@ test('seating planner renders desk icons through one helper for normal virtual a
   const source = await readFile(sourcePath, 'utf8');
 
   assert.match(source, /renderDeskItems\(student\)/);
-  assert.match(source, /createVirtualSeatCell\(r,\s*c\)[\s\S]*renderDeskItems\(student\)/);
+  assert.match(source, /createVirtualSeatCell\(r,\s*c[^)]*\)[\s\S]*renderDeskItems\(student\)/);
   assert.match(source, /renderGrid\(\)[\s\S]*renderDeskItems\(student\)/);
   assert.match(source, /renderPodiumSeats\(\)[\s\S]*renderDeskItems\(student\)/);
   assert.match(source, /studentHasUnmetNeed\(student\.id\)/);
@@ -253,7 +354,7 @@ test('seating planner opens a detailed popover when clicking assigned seats', as
   assert.match(source, /this\._seatDetailAnchor = null/);
   assert.match(source, /this\._seatDetailStudentId = null/);
   assert.match(source, /delete seat\.dataset\.studentId/);
-  assert.match(source, /createVirtualSeatCell\(r,\s*c\)[\s\S]*bindSeatDetailPopover\(cell,\s*studentId\)/);
+  assert.match(source, /createVirtualSeatCell\(r,\s*c[^)]*\)[\s\S]*bindSeatDetailPopover\(cell,\s*studentId\)/);
   assert.match(source, /renderGrid\(\)[\s\S]*bindSeatDetailPopover\(cell,\s*student\.id\)/);
   assert.match(source, /renderPodiumSeats\(\)[\s\S]*bindSeatDetailPopover\(seat,\s*student\.id\)/);
   assert.match(source, /this\._justDragged = true/);
@@ -587,8 +688,8 @@ test('seating planner inserts full row and column aisles from gap handles', asyn
   assert.match(source, /shouldShowColumnAisleBoundary/);
   assert.match(source, /this\.insertAisleRowAt\(row\)/);
   assert.match(source, /this\.insertAisleColumnAt\(col\)/);
-  assert.doesNotMatch(source, /makeLocalHandle/);
-  assert.doesNotMatch(source, /data-local-aisle-orientation/);
+  assert.match(source, /insertPreviewAisleRowAt/);
+  assert.match(source, /insertPreviewAisleColumnAt/);
   assert.match(styles, /\.sp-aisle-gap/);
 });
 

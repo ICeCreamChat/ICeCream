@@ -9,10 +9,11 @@ import {
 import {
     evaluateSeatingConstraints,
     evaluateSeatingQuality,
+    normalizeLocalAisles,
 } from '../../public/js/tools/seating-core.js';
 
-const MAX_ROWS = Number.MAX_SAFE_INTEGER;
-const MAX_COLS = Number.MAX_SAFE_INTEGER;
+const MAX_ROWS = 300;
+const MAX_COLS = 80;
 const TOP_GRADE_PERCENT = 0.2;
 
 function asText(value) {
@@ -75,6 +76,8 @@ export function normalizeArrangeRequest(body = {}) {
         strategy: body.strategy && typeof body.strategy === 'object' ? body.strategy : {},
         previousLayout: body.previousLayout || null,
         previousAssignments: Array.isArray(body.previousAssignments) ? body.previousAssignments : [],
+        confirmedLayout: body.confirmedLayout || null,
+        arrangementSpec: body.arrangementSpec && typeof body.arrangementSpec === 'object' ? body.arrangementSpec : null,
     };
 }
 
@@ -128,6 +131,7 @@ function normalizeLayout(raw) {
         },
         template: asText(source.template) || 'ai',
         groupSize: Math.max(1, Math.min(8, numberValue(source.groupSize) || 1)),
+        localAisles: normalizeLocalAisles(source.localAisles, rows, cols),
     };
 }
 
@@ -349,18 +353,113 @@ function buildStageMessages({ stage, request, context = {}, repairErrors = [] })
     ];
 }
 
+function layoutSummary(layout) {
+    if (!layout || !Array.isArray(layout.cells)) return null;
+    const rows = Number(layout.rows) || layout.cells.length;
+    const cols = Number(layout.cols) || layout.cells[0]?.length || 0;
+    const seats = layout.cells.flat().filter(cell => cell === CELL.SEAT || cell === 'seat' || cell === 1).length;
+    return {
+        rows,
+        cols,
+        capacity: seats + (layout.guardians?.enabled ? 2 : 0),
+        template: asText(layout.template),
+        guardiansEnabled: Boolean(layout.guardians?.enabled),
+    };
+}
+
+function compactConstraintForPreview(constraint = {}) {
+    return {
+        type: asText(constraint.type),
+        target: asText(constraint.target),
+        related: asText(constraint.related),
+        reason: asText(constraint.reason),
+        priority: asText(constraint.priority) || 'soft',
+    };
+}
+
+function buildLayoutPreviewMessages({ request, context = {}, repairErrors = [] }) {
+    const hints = inferArrangementSpecFromPrompt(request.prompt);
+    const system = `你是教室布局设计师。你只负责根据老师自然语言生成空教室布局预览，不安排学生坐标。
+
+硬性规则：
+- 只输出 JSON，不要 markdown。
+- 不要输出 assignments、unassigned 或学生坐标。
+- classroomLayout.cells 只能使用 "seat"、"aisle"、"empty"。
+- 缺少行列尺寸时，必须根据 studentCount 自动扩容。
+- arrangementSpec.physicalRows 表示物理座位行数，physicalCols 表示物理座位列数，例如“每列6人”应理解为 physicalRows=6。
+- arrangementSpec.capacityPolicy 只能是 "auto_expand" 或 "fixed"，老师没说固定容量时默认 auto_expand。
+- arrangementSpec.columnPattern 用于混合列布局，例如“两边一人一组，中间两人一组”可用 [1,"aisle",2,"aisle",2,"aisle",1]。
+- “两人一桌/双人桌/同桌两个”表示 groupSize=2；“边上/两边一人一组，中间两人一组”表示混合列布局。
+- 没有明确固定容量时，座位容量必须覆盖 studentCount。
+- 过道应连续、清楚；整体布局要整齐、可真实使用。
+- 如果老师要求护法位，只在 classroomLayout.guardians.enabled 标记，不要填写具体学生。`;
+    const payload = {
+        stage: 'layout_preview',
+        prompt: request.prompt,
+        studentCount: request.students.length,
+        constraints: (request.constraints || []).slice(0, 80).map(compactConstraintForPreview),
+        strategy: request.strategy || {},
+        previousLayoutSummary: layoutSummary(request.previousLayout),
+        hints,
+        outputSchema: {
+            reply: '给老师的简短布局预览说明',
+            physicalRows: 6,
+            capacityPolicy: 'auto_expand',
+            columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
+            layoutIntent: {
+                type: 'standard|grouped|exam|u_shape|island|custom_matrix',
+                description: '一句话说明布局意图',
+                confidence: 'high|medium|low',
+            },
+            classroomLayout: {
+                rows: 6,
+                cols: 8,
+                cells: [['seat', 'seat', 'aisle', 'seat']],
+                groups: [[1, 1, null, 2]],
+                guardians: { enabled: false, left: null, right: null },
+                template: 'ai-preview',
+                groupSize: 2,
+            },
+            arrangementSpec: {
+                groupSize: 2,
+                capacityPolicy: 'auto_expand',
+                aislePolicy: { verticalBetweenGroups: true, horizontalBetweenGroupRows: false },
+                guardianPolicy: { enabled: false, strategy: 'none', slots: [] },
+                layoutMode: 'grouped',
+                placementPolicy: { genderBalance: true, gradeStrategy: 'none', heightOrder: false },
+                notes: '短说明',
+            },
+            warnings: [],
+            reasoning: '为什么这样设计布局',
+        },
+        ...context,
+    };
+    if (repairErrors.length) payload.repairErrors = repairErrors;
+    return [
+        { role: 'system', content: system },
+        { role: 'user', content: JSON.stringify(payload) },
+    ];
+}
+
 function normalizeLayoutPlan(raw) {
     const classroomLayout = normalizeLayout(raw || {});
     return {
-        reply: asText(raw?.reply) || '已根据需求生成座位表',
+        reply: asText(raw?.reply) || '已生成座位布局预览',
         classroomLayout,
         warnings: normalizeWarnings(raw?.warnings),
         reasoning: asText(raw?.reasoning),
+        layoutIntent: raw?.layoutIntent && typeof raw.layoutIntent === 'object' ? raw.layoutIntent : null,
+        arrangementSpec: raw?.arrangementSpec && typeof raw.arrangementSpec === 'object'
+            ? raw.arrangementSpec
+            : (raw?.spec && typeof raw.spec === 'object' ? raw.spec : null),
     };
 }
 
 function validateLayoutPlan(plan, studentCount, allowUnassigned) {
     const errors = [];
+    if (plan.classroomLayout.rows > MAX_ROWS || plan.classroomLayout.cols > MAX_COLS) {
+        errors.push(`布局尺寸必须在 1-${MAX_ROWS} 行、1-${MAX_COLS} 列内`);
+    }
     if (!allowUnassigned && seatCapacity(plan.classroomLayout) < studentCount) {
         errors.push(`布局容量不足：当前 ${seatCapacity(plan.classroomLayout)} 个可用位置，需要 ${studentCount} 个`);
     }
@@ -539,6 +638,9 @@ async function requestAiStage({
         throw new Error('AI 排座服务未配置');
     }
 
+    const messages = stage === 'layout_preview'
+        ? buildLayoutPreviewMessages({ request, context, repairErrors })
+        : buildStageMessages({ stage, request, context, repairErrors });
     const response = await fetchImpl(`${env.DEEPSEEK_API_BASE}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -547,7 +649,7 @@ async function requestAiStage({
         },
         body: JSON.stringify({
             model: env.DEEPSEEK_CHAT_MODEL || 'deepseek-chat',
-            messages: buildStageMessages({ stage, request, context, repairErrors }),
+            messages,
             temperature: 0.2,
             max_tokens: maxTokens || arrangeMaxTokens(env),
             response_format: { type: 'json_object' },
@@ -1736,6 +1838,7 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
     const middleColSize = Math.max(1, Math.ceil(seatCols.length / 3));
     const middleColStart = Math.max(0, Math.floor((seatCols.length - middleColSize) / 2));
     const middleCols = new Set(seatCols.slice(middleColStart, middleColStart + middleColSize));
+    const edgeCols = new Set([seatCols[0], seatCols[seatCols.length - 1]].filter(Number.isInteger));
     const hardSeatRules = new Map();
     const occupied = new Set();
     const placed = new Set();
@@ -1797,6 +1900,10 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
         const left = seat.c > 0 ? layout.cells?.[seat.r]?.[seat.c - 1] : null;
         const right = seat.c < layout.cols - 1 ? layout.cells?.[seat.r]?.[seat.c + 1] : null;
         return left === CELL.AISLE || right === CELL.AISLE || seat.c === 0 || seat.c === layout.cols - 1;
+    }
+
+    function isEdgeSeat(seat) {
+        return Boolean(seat && edgeCols.has(seat.c));
     }
 
     function placeRemainingStudents(regionStudents, regionSeats) {
@@ -1861,6 +1968,7 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
     const frontMiddleIds = [];
     const frontMidIds = [];
     const aisleIds = [];
+    const edgeIds = [];
     const highGradeNeighborIds = [];
     const avoidLowGradeNeighborIds = [];
 
@@ -1872,6 +1980,7 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
         if (constraint.type === 'prefer_front_middle' && id) frontMiddleIds.push(id);
         if (constraint.type === 'prefer_front_mid_rows' && id) frontMidIds.push(id);
         if (constraint.type === 'prefer_aisle' && id) aisleIds.push(id);
+        if (constraint.type === 'prefer_edge' && id) edgeIds.push(id);
         if (constraint.type === 'prefer_high_grade_neighbor' && id) highGradeNeighborIds.push(id);
         if (constraint.type === 'avoid_low_grade_deskmate' && id) avoidLowGradeNeighborIds.push(id);
         if (constraint.type === 'avoid_first_row' && id) rulesFor(id).avoidFirstRow = true;
@@ -1905,12 +2014,16 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
     }
 
     const targetSeatPredicate = id => {
-        if (frontMiddleIds.includes(id)) return seat => frontRows.has(seat.r) && middleCols.has(seat.c);
-        if (frontMidIds.includes(id)) return seat => frontMidRows.has(seat.r);
-        if (frontIds.includes(id)) return seat => frontRows.has(seat.r);
-        if (backIds.includes(id)) return seat => backRows.has(seat.r);
-        if (aisleIds.includes(id)) return seat => isAisleSeat(seat);
-        return () => true;
+        const predicates = [];
+        if (frontMiddleIds.includes(id)) predicates.push(seat => frontRows.has(seat.r) && middleCols.has(seat.c));
+        else if (frontMidIds.includes(id)) predicates.push(seat => frontMidRows.has(seat.r));
+        else {
+            if (frontIds.includes(id)) predicates.push(seat => frontRows.has(seat.r));
+            if (backIds.includes(id)) predicates.push(seat => backRows.has(seat.r));
+        }
+        if (edgeIds.includes(id)) predicates.push(isEdgeSeat);
+        if (aisleIds.includes(id)) predicates.push(isAisleSeat);
+        return predicates.length ? seat => predicates.every(predicate => predicate(seat)) : () => true;
     };
 
     const topGradeIds = getTopGradeStudentIds([...studentsById.values()]);
@@ -1939,22 +2052,25 @@ function assignLocalSeats({ request, layout, spec, guardians }) {
 
     for (const id of frontMiddleIds) {
         if (!guardianIds.has(id) && !placed.has(id)) {
-            place(id, nextSeatForStudent(id, seat => frontRows.has(seat.r) && middleCols.has(seat.c), { byQuality: true }));
+            place(id, nextSeatForStudent(id, targetSeatPredicate(id), { byQuality: true }));
         }
     }
     for (const id of frontMidIds) {
         if (!guardianIds.has(id) && !placed.has(id)) {
-            place(id, nextSeatForStudent(id, seat => frontMidRows.has(seat.r), { byQuality: true }));
+            place(id, nextSeatForStudent(id, targetSeatPredicate(id), { byQuality: true }));
         }
     }
     for (const id of frontIds) {
-        if (!guardianIds.has(id) && !placed.has(id)) place(id, nextSeatForStudent(id, seat => frontRows.has(seat.r), { byQuality: true }));
+        if (!guardianIds.has(id) && !placed.has(id)) place(id, nextSeatForStudent(id, targetSeatPredicate(id), { byQuality: true }));
     }
     for (const id of backIds) {
-        if (!guardianIds.has(id) && !placed.has(id)) place(id, nextSeatForStudent(id, seat => backRows.has(seat.r), { byQuality: true }));
+        if (!guardianIds.has(id) && !placed.has(id)) place(id, nextSeatForStudent(id, targetSeatPredicate(id), { byQuality: true }));
+    }
+    for (const id of edgeIds) {
+        if (!guardianIds.has(id) && !placed.has(id)) place(id, nextSeatForStudent(id, targetSeatPredicate(id), { byQuality: true }));
     }
     for (const id of aisleIds) {
-        if (!guardianIds.has(id) && !placed.has(id)) place(id, nextSeatForStudent(id, isAisleSeat, { byQuality: true }));
+        if (!guardianIds.has(id) && !placed.has(id)) place(id, nextSeatForStudent(id, targetSeatPredicate(id), { byQuality: true }));
     }
 
     const freeSeatsForRemaining = allSeats.filter(isFree);
@@ -2543,22 +2659,173 @@ function strategyOverrideWarnings(spec, uiStrategy = {}) {
     return warnings;
 }
 
-async function buildLocalArrangement({ request, spec, specWarnings = [], env = process.env, fetchImpl }) {
-    const guardians = chooseGuardians(request.students, spec);
-    const guardianIds = new Set([guardians.left, guardians.right].filter(Boolean));
-    const regularTarget = request.students.filter(student => !guardianIds.has(student.id)).length;
+function hasLayoutPreviewPayload(raw = {}) {
+    return Boolean(raw?.classroomLayout || raw?.layout || Array.isArray(raw?.matrix));
+}
+
+function hasArrangementSpecPayload(raw = {}) {
+    if (!raw || typeof raw !== 'object') return false;
+    return [
+        'groupSize', 'group_size', 'groupsPerRow', 'groups_per_row',
+        'physicalCols', 'physical_cols', 'physicalRows', 'physical_rows',
+        'columnPattern', 'column_pattern', 'aislePolicy', 'aisles',
+        'guardianPolicy', 'guardians', 'layoutMode', 'layout_mode',
+        'placementPolicy', 'capacityPolicy',
+    ].some(key => Object.prototype.hasOwnProperty.call(raw, key));
+}
+
+function layoutIntentFromSpec(spec = {}) {
+    return {
+        type: asText(spec.layoutMode) || 'standard',
+        description: asText(spec.notes) || ((spec.groupSize || 1) > 1 ? `${spec.groupSize}人一组布局` : '标准教室布局'),
+        confidence: spec.notes ? 'medium' : 'low',
+    };
+}
+
+function previewStats({ request, classroomLayout, source }) {
+    return {
+        studentCount: request.students.length,
+        regularSeatCount: gridSeatCount(classroomLayout),
+        rows: classroomLayout.rows,
+        cols: classroomLayout.cols,
+        source,
+    };
+}
+
+function buildPreviewLayoutFromSpec({ request, spec, source = 'local_layout_fallback', warnings = [], reply, reasoning }) {
+    const guardianReserve = spec.guardianPolicy?.enabled ? Math.min(2, request.students.length) : 0;
     const classroomLayout = buildExpandableClassroomLayout({
-        regularSeatTarget: regularTarget,
+        regularSeatTarget: Math.max(1, request.students.length - guardianReserve),
         spec,
         previousLayout: request.previousLayout,
     });
+    classroomLayout.guardians = {
+        enabled: Boolean(spec.guardianPolicy?.enabled),
+        left: null,
+        right: null,
+    };
+    return {
+        reply: reply || (source === 'local_layout_fallback' ? 'AI 布局不可用，已生成本地备用布局预览。' : '已根据 AI 规则生成布局预览。'),
+        classroomLayout,
+        layoutIntent: layoutIntentFromSpec(spec),
+        warnings: normalizeWarnings(warnings),
+        reasoning: reasoning || (source === 'local_layout_fallback' ? '本地算法根据已解析规则生成备用布局。' : (spec.notes || 'AI 返回规则参数，本地算法生成布局矩阵。')),
+        source,
+        arrangementSpec: spec,
+        stats: previewStats({ request, classroomLayout, source }),
+    };
+}
+
+function normalizeLayoutPreviewRaw({ raw, request, allowUnassigned }) {
+    if (hasLayoutPreviewPayload(raw)) {
+        let plan;
+        try {
+            plan = normalizeLayoutPlan(raw);
+        } catch (error) {
+            return { ok: false, errors: [error.message] };
+        }
+        const validation = validateLayoutPlan(plan, request.students.length, allowUnassigned);
+        if (!validation.ok) return validation;
+        const spec = normalizeArrangementSpec(plan.arrangementSpec || {}, request);
+        const source = 'ai_layout_preview';
+        return {
+            ok: true,
+            errors: [],
+            data: {
+                reply: plan.reply,
+                classroomLayout: plan.classroomLayout,
+                layoutIntent: plan.layoutIntent || layoutIntentFromSpec(spec),
+                warnings: [
+                    ...normalizeWarnings(plan.warnings),
+                    ...(spec.parseWarnings || []),
+                ],
+                reasoning: plan.reasoning,
+                source,
+                arrangementSpec: spec,
+                stats: previewStats({ request, classroomLayout: plan.classroomLayout, source }),
+            },
+        };
+    }
+
+    if (hasArrangementSpecPayload(raw)) {
+        const spec = normalizeArrangementSpec(raw, request);
+        return {
+            ok: true,
+            errors: [],
+            data: buildPreviewLayoutFromSpec({
+                request,
+                spec,
+                source: 'ai_spec_local_algorithm',
+                warnings: spec.parseWarnings || [],
+                reply: 'AI 返回了规则参数，已用本地算法生成布局预览。',
+            }),
+        };
+    }
+
+    return { ok: false, errors: ['AI 未返回 classroomLayout.cells'] };
+}
+
+export async function runAiLayoutPreview({
+    request,
+    fetchImpl,
+    env = process.env,
+} = {}) {
+    if (!request) throw new Error('缺少排座请求');
+    const fallbackSpec = normalizeArrangementSpec(request.arrangementSpec || {}, request);
+    const allowUnassigned = shouldAllowUnassigned(request.prompt) || fallbackSpec.capacityPolicy === 'fixed';
+
+    if (typeof fetchImpl !== 'function' || !env.DEEPSEEK_API_BASE || !env.DEEPSEEK_API_KEY) {
+        return buildPreviewLayoutFromSpec({
+            request,
+            spec: fallbackSpec,
+            source: 'local_layout_fallback',
+            warnings: ['AI 布局服务未配置，已使用本地备用布局。'],
+        });
+    }
+
+    try {
+        const result = await requestStageWithRetry({
+            stage: 'layout_preview',
+            request,
+            fetchImpl,
+            env,
+            context: {},
+            validate: raw => normalizeLayoutPreviewRaw({ raw, request, allowUnassigned }),
+            maxAttempts: 3,
+            maxTokens: arrangeMaxTokens(env),
+        });
+        return result.data;
+    } catch (error) {
+        return buildPreviewLayoutFromSpec({
+            request,
+            spec: fallbackSpec,
+            source: 'local_layout_fallback',
+            warnings: [`AI 布局预览不可用，已使用本地备用布局：${error.message}`],
+        });
+    }
+}
+
+async function assignStudentsToLayout({
+    request,
+    spec,
+    specWarnings = [],
+    classroomLayout,
+    layoutSource = 'local_layout_fallback',
+    env = process.env,
+    fetchImpl,
+}) {
+    const guardians = chooseGuardians(request.students, spec);
     classroomLayout.guardians = {
         enabled: Boolean(spec.guardianPolicy.enabled || guardians.left || guardians.right),
         left: guardians.left,
         right: guardians.right,
     };
     let seating;
-    let source = 'ai_spec_local_algorithm';
+    let source = layoutSource === 'ai_layout_preview'
+        ? 'ai_layout_local_assignment'
+        : layoutSource === 'confirmed_layout'
+            ? 'confirmed_layout_local_assignment'
+            : layoutSource;
     const solverWarnings = [];
     const solverStats = {
         solverUsed: false,
@@ -2658,10 +2925,29 @@ async function buildLocalArrangement({ request, spec, specWarnings = [], env = p
             guardianSeatCount,
             rows: classroomLayout.rows,
             cols: classroomLayout.cols,
+            layoutSource,
             appliedStrategies: appliedStrategiesFor(spec),
             ...solverStats,
         },
     };
+}
+
+async function buildLocalArrangement({ request, spec, specWarnings = [], env = process.env, fetchImpl }) {
+    const preview = buildPreviewLayoutFromSpec({
+        request,
+        spec,
+        source: 'ai_spec_local_algorithm',
+        warnings: [],
+    });
+    return assignStudentsToLayout({
+        request,
+        spec,
+        specWarnings,
+        classroomLayout: preview.classroomLayout,
+        layoutSource: preview.source,
+        env,
+        fetchImpl,
+    });
 }
 
 export async function runAiDrivenArrangement({
@@ -2670,9 +2956,53 @@ export async function runAiDrivenArrangement({
     env = process.env,
 } = {}) {
     if (!request) throw new Error('缺少排座请求');
-    const { spec, warnings: specWarnings } = await requestArrangementSpec({ request, fetchImpl, env });
+    if (request.confirmedLayout) {
+        const spec = normalizeArrangementSpec(request.arrangementSpec || {}, request);
+        const plan = normalizeLayoutPlan({
+            classroomLayout: request.confirmedLayout,
+            arrangementSpec: request.arrangementSpec || {},
+        });
+        const allowUnassigned = shouldAllowUnassigned(request.prompt) || spec.capacityPolicy === 'fixed';
+        const layoutValidation = validateLayoutPlan(plan, request.students.length, allowUnassigned);
+        if (!layoutValidation.ok) throw new Error(`确认布局校验失败：${layoutValidation.errors.join('；')}`);
+        const arrangement = await assignStudentsToLayout({
+            request,
+            spec,
+            specWarnings: spec.parseWarnings || [],
+            classroomLayout: plan.classroomLayout,
+            layoutSource: 'confirmed_layout',
+            env,
+            fetchImpl,
+        });
+        const validation = validateAiArrangement({
+            raw: arrangement,
+            students: request.students,
+            allowUnassigned,
+        });
+        if (!validation.ok) throw new Error(`确认布局排座校验失败：${validation.errors.join('；')}`);
+        return {
+            ...validation.data,
+            source: arrangement.source,
+            arrangementSpec: arrangement.arrangementSpec,
+            stats: arrangement.stats,
+            unsatisfied: arrangement.unsatisfied,
+            interpretation: arrangement.interpretation,
+        };
+    }
+
+    const preview = await runAiLayoutPreview({ request, fetchImpl, env });
+    const spec = preview.arrangementSpec || normalizeArrangementSpec(request.arrangementSpec || {}, request);
+    const specWarnings = normalizeWarnings(preview.warnings);
     const allowUnassigned = shouldAllowUnassigned(request.prompt) || spec.capacityPolicy === 'fixed';
-    const arrangement = await buildLocalArrangement({ request, spec, specWarnings, env, fetchImpl });
+    const arrangement = await assignStudentsToLayout({
+        request,
+        spec,
+        specWarnings,
+        classroomLayout: preview.classroomLayout,
+        layoutSource: preview.source,
+        env,
+        fetchImpl,
+    });
     const validation = validateAiArrangement({
         raw: arrangement,
         students: request.students,

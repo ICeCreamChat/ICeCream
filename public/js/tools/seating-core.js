@@ -60,6 +60,61 @@ export function normalizeLocalAisles(localAisles = {}, rows = 0, cols = 0) {
     };
 }
 
+function remapLocalAisles(localAisles, rows, cols, nextRows, nextCols, mapper) {
+    const normalized = normalizeLocalAisles(localAisles, rows, cols);
+    const mapped = {
+        vertical: normalized.vertical.map(mapper.vertical).filter(Boolean),
+        horizontal: normalized.horizontal.map(mapper.horizontal).filter(Boolean),
+    };
+    return normalizeLocalAisles(mapped, nextRows, nextCols);
+}
+
+function localAislesAfterRowInsert(localAisles, rows, cols, index) {
+    return remapLocalAisles(localAisles, rows, cols, rows + 1, cols, {
+        vertical: item => ({ ...item, row: item.row >= index ? item.row + 1 : item.row }),
+        horizontal: item => {
+            if (item.row === index - 1) return null;
+            return { ...item, row: item.row >= index ? item.row + 1 : item.row };
+        },
+    });
+}
+
+function localAislesAfterColumnInsert(localAisles, rows, cols, index) {
+    return remapLocalAisles(localAisles, rows, cols, rows, cols + 1, {
+        vertical: item => {
+            if (item.col === index - 1) return null;
+            return { ...item, col: item.col >= index ? item.col + 1 : item.col };
+        },
+        horizontal: item => ({ ...item, col: item.col >= index ? item.col + 1 : item.col }),
+    });
+}
+
+function localAislesAfterRowDelete(localAisles, rows, cols, index) {
+    return remapLocalAisles(localAisles, rows, cols, rows - 1, cols, {
+        vertical: item => {
+            if (item.row === index) return null;
+            return { ...item, row: item.row > index ? item.row - 1 : item.row };
+        },
+        horizontal: item => {
+            if (item.row === index || item.row === index - 1) return null;
+            return { ...item, row: item.row > index ? item.row - 1 : item.row };
+        },
+    });
+}
+
+function localAislesAfterColumnDelete(localAisles, rows, cols, index) {
+    return remapLocalAisles(localAisles, rows, cols, rows, cols - 1, {
+        vertical: item => {
+            if (item.col === index || item.col === index - 1) return null;
+            return { ...item, col: item.col > index ? item.col - 1 : item.col };
+        },
+        horizontal: item => {
+            if (item.col === index) return null;
+            return { ...item, col: item.col > index ? item.col - 1 : item.col };
+        },
+    });
+}
+
 export function hasLocalAisle(localAisles = {}, orientation, row, col) {
     const list = orientation === 'horizontal' ? localAisles?.horizontal : localAisles?.vertical;
     return Array.isArray(list) && list.some(item => item.row === row && item.col === col);
@@ -150,7 +205,7 @@ function legacyAislesFromCells(cells = []) {
     return { rowAisles, colAisles };
 }
 
-function buildAisleEditResult({ layout, classroomLayout, cells }) {
+function buildAisleEditResult({ layout, classroomLayout, cells, localAisles = classroomLayout?.localAisles }) {
     const rows = cells.length;
     const cols = cells[0]?.length || 0;
     const groupSize = classroomLayout?.groupSize || 1;
@@ -160,7 +215,7 @@ function buildAisleEditResult({ layout, classroomLayout, cells }) {
         cols,
         cells,
         groups: rebuildGroups(cells, groupSize),
-        localAisles: normalizeLocalAisles(classroomLayout?.localAisles, rows, cols),
+        localAisles: normalizeLocalAisles(localAisles, rows, cols),
         template: 'custom',
         groupSize,
         guardians: {
@@ -207,7 +262,12 @@ export function insertAisleRow({ layout = [], classroomLayout = {}, index }) {
     nextLayout.splice(index, 0, Array(cols).fill(null));
     const cells = normalizeCells(classroomLayout, rows, cols);
     cells.splice(index, 0, Array(cols).fill('aisle'));
-    return buildAisleEditResult({ layout: nextLayout, classroomLayout, cells });
+    return buildAisleEditResult({
+        layout: nextLayout,
+        classroomLayout,
+        cells,
+        localAisles: localAislesAfterRowInsert(classroomLayout?.localAisles, rows, cols, index),
+    });
 }
 
 export function insertAisleColumn({ layout = [], classroomLayout = {}, index }) {
@@ -223,7 +283,12 @@ export function insertAisleColumn({ layout = [], classroomLayout = {}, index }) 
         nextRow.splice(index, 0, 'aisle');
         return nextRow;
     });
-    return buildAisleEditResult({ layout: nextLayout, classroomLayout, cells });
+    return buildAisleEditResult({
+        layout: nextLayout,
+        classroomLayout,
+        cells,
+        localAisles: localAislesAfterColumnInsert(classroomLayout?.localAisles, rows, cols, index),
+    });
 }
 
 export function deleteAisleRow({ layout = [], classroomLayout = {}, index }) {
@@ -234,7 +299,12 @@ export function deleteAisleRow({ layout = [], classroomLayout = {}, index }) {
     const nextLayout = normalizeLayoutRows(layout, rows, cols);
     nextLayout.splice(index, 1);
     cells.splice(index, 1);
-    return buildAisleEditResult({ layout: nextLayout, classroomLayout, cells });
+    return buildAisleEditResult({
+        layout: nextLayout,
+        classroomLayout,
+        cells,
+        localAisles: localAislesAfterRowDelete(classroomLayout?.localAisles, rows, cols, index),
+    });
 }
 
 export function deleteAisleColumn({ layout = [], classroomLayout = {}, index }) {
@@ -244,7 +314,12 @@ export function deleteAisleColumn({ layout = [], classroomLayout = {}, index }) 
     if (!cells.every(row => row?.[index] !== 'seat')) throw new Error('只能删除整列过道');
     const nextLayout = normalizeLayoutRows(layout, rows, cols).map(row => row.filter((_, c) => c !== index));
     const nextCells = cells.map(row => row.filter((_, c) => c !== index));
-    return buildAisleEditResult({ layout: nextLayout, classroomLayout, cells: nextCells });
+    return buildAisleEditResult({
+        layout: nextLayout,
+        classroomLayout,
+        cells: nextCells,
+        localAisles: localAislesAfterColumnDelete(classroomLayout?.localAisles, rows, cols, index),
+    });
 }
 
 function normalizeText(value) {
@@ -996,6 +1071,13 @@ function isAisleAdjacentPosition(pos, rows, cols, colAisles = [], localAisles = 
     return pos.c === 0 || pos.c === cols - 1;
 }
 
+function isEdgePosition(pos, cols, colAisles = []) {
+    if (!pos) return false;
+    const colsInUse = usableIndexes(cols, colAisles);
+    if (!colsInUse.length) return false;
+    return pos.c === colsInUse[0] || pos.c === colsInUse[colsInUse.length - 1];
+}
+
 function makeUnsatisfied(constraint, reason) {
     return {
         ...constraint,
@@ -1075,6 +1157,9 @@ export function evaluateSeatingConstraints({
         } else if (constraint.type === 'prefer_aisle'
             && !isAisleAdjacentPosition(targetPos, rows, cols, colAisles, normalizedLocalAisles)) {
             unsatisfied.push(makeUnsatisfied({ ...constraint, priority: constraint.priority || 'soft' }, '未坐在靠过道位置'));
+        } else if (constraint.type === 'prefer_edge'
+            && !isEdgePosition(targetPos, cols, colAisles)) {
+            unsatisfied.push(makeUnsatisfied({ ...constraint, priority: constraint.priority || 'soft' }, '未坐在靠边位置'));
         } else if (constraint.type === 'avoid_behind' && (!relatedId || !relatedPos || targetPos.r > relatedPos.r)) {
             unsatisfied.push(makeUnsatisfied(constraint, '仍然坐在相关同学后面'));
         } else if (constraint.type === 'avoid' && relatedId && adjacent(targetPos, relatedPos, normalizedLocalAisles)) {
@@ -1258,6 +1343,7 @@ function constraintExpectedText(constraint = {}) {
     if (constraint.type === 'prefer_front_middle') return '尽量坐在前排中间区域';
     if (constraint.type === 'prefer_front_mid_rows') return '尽量坐在前中排区域';
     if (constraint.type === 'prefer_aisle') return '尽量靠过道';
+    if (constraint.type === 'prefer_edge') return '尽量靠边';
     if (constraint.type === 'prefer_high_grade_neighbor') return '旁边有成绩较好的同学';
     if (constraint.type === 'avoid_low_grade_deskmate') return '避免低分同桌';
     if (constraint.type === 'avoid') return '两人不要相邻';

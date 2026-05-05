@@ -355,6 +355,70 @@ test('local aisle helpers only toggle the boundary between two seats', () => {
   assert.deepEqual(classroomLayout.localAisles, undefined);
 });
 
+test('full aisle edits keep local aisle coordinates aligned', () => {
+  const layout = Array.from({ length: 3 }, () => Array(3).fill(null));
+  const classroomLayout = {
+    rows: 3,
+    cols: 3,
+    cells: Array.from({ length: 3 }, () => Array(3).fill('seat')),
+    groups: Array.from({ length: 3 }, () => Array(3).fill(null)),
+    template: 'custom',
+    groupSize: 1,
+    localAisles: {
+      vertical: [{ row: 2, col: 1 }],
+      horizontal: [{ row: 1, col: 2 }],
+    },
+  };
+
+  const insertedRow = insertAisleRow({ layout, classroomLayout, index: 1 }).classroomLayout;
+  assert.deepEqual(insertedRow.localAisles, {
+    vertical: [{ row: 3, col: 1 }],
+    horizontal: [{ row: 2, col: 2 }],
+  });
+
+  const insertedCol = insertAisleColumn({ layout, classroomLayout, index: 1 }).classroomLayout;
+  assert.deepEqual(insertedCol.localAisles, {
+    vertical: [{ row: 2, col: 2 }],
+    horizontal: [{ row: 1, col: 3 }],
+  });
+
+  const rowAisleLayout = {
+    ...classroomLayout,
+    cells: [
+      ['seat', 'seat', 'seat'],
+      ['aisle', 'aisle', 'aisle'],
+      ['seat', 'seat', 'seat'],
+    ],
+    localAisles: {
+      vertical: [{ row: 2, col: 1 }],
+      horizontal: [{ row: 1, col: 2 }],
+    },
+  };
+  const deletedRow = deleteAisleRow({ layout, classroomLayout: rowAisleLayout, index: 1 }).classroomLayout;
+  assert.deepEqual(deletedRow.localAisles, {
+    vertical: [{ row: 1, col: 1 }],
+    horizontal: [],
+  });
+
+  const colAisleLayout = {
+    ...classroomLayout,
+    cells: [
+      ['seat', 'aisle', 'seat'],
+      ['seat', 'aisle', 'seat'],
+      ['seat', 'aisle', 'seat'],
+    ],
+    localAisles: {
+      vertical: [{ row: 2, col: 1 }],
+      horizontal: [{ row: 1, col: 2 }],
+    },
+  };
+  const deletedCol = deleteAisleColumn({ layout, classroomLayout: colAisleLayout, index: 1 }).classroomLayout;
+  assert.deepEqual(deletedCol.localAisles, {
+    vertical: [],
+    horizontal: [{ row: 1, col: 1 }],
+  });
+});
+
 test('validateLayoutIntegrity reports duplicates and missing placed students', () => {
   const result = validateLayoutIntegrity({
     layout: [
@@ -441,6 +505,29 @@ test('evaluateSeatingConstraints understands rich row, relative, and grade-neigh
   ]);
   assert.equal(result.hardUnsatisfied.length, 4);
   assert.equal(result.softUnsatisfied.length, 1);
+});
+
+test('evaluateSeatingConstraints scores edge seat preferences separately from aisle preferences', () => {
+  const localStudents = [{ id: 's01', name: '鲜于振' }];
+
+  const middle = evaluateSeatingConstraints({
+    layout: [[null, 's01', null]],
+    students: localStudents,
+    rows: 1,
+    cols: 3,
+    constraints: [{ type: 'prefer_edge', target: '鲜于振', priority: 'soft' }],
+  });
+  assert.deepEqual(middle.unsatisfied.map(item => item.type), ['prefer_edge']);
+  assert.equal(middle.softUnsatisfied.length, 1);
+
+  const edge = evaluateSeatingConstraints({
+    layout: [['s01', null, null]],
+    students: localStudents,
+    rows: 1,
+    cols: 3,
+    constraints: [{ type: 'prefer_edge', target: '鲜于振', priority: 'soft' }],
+  });
+  assert.equal(edge.unsatisfied.length, 0);
 });
 
 test('resolveStudentId normalizes whitespace punctuation and full-width text', () => {

@@ -222,3 +222,105 @@ test('AI normalization corrects obvious priority mismatches with rule guardrails
     item.type === 'avoid_behind' && item.target === '卢宁倩荔' && item.related === '鲜于振' && item.priority === 'soft'
   ));
 });
+
+test('parseSeatingConstraints trusts valid AI constraints without merging local rules', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => ({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            constraints: [
+              { type: 'prefer_edge', target: '鲜于振', reason: 'AI 只保留靠边偏好', priority: 'soft' },
+            ],
+          }),
+        },
+      }],
+    }),
+  });
+
+  const result = await parseSeatingConstraints({
+    text: '鲜于振不想坐第一排，希望坐后排靠边。',
+    students: [{ name: '鲜于振' }],
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.equal(result.source, 'ai_constraints');
+  assert.deepEqual(result.constraints.map(item => item.type), ['prefer_edge']);
+  assert.ok(!result.constraints.some(item => item.type === 'avoid_first_row'));
+  assert.ok(!result.constraints.some(item => item.type === 'avoid_back_row'));
+});
+
+test('AI parsing can express first-row avoidance with back-row and edge preferences', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    json: async () => ({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            constraints: [
+              { type: 'avoid_first_row', target: '鲜于振', reason: '不想坐第一排', priority: 'hard' },
+              { type: 'back_row', target: '鲜于振', reason: '希望坐后排靠边', priority: 'soft' },
+              { type: 'prefer_edge', target: '鲜于振', reason: '希望坐后排靠边', priority: 'soft' },
+            ],
+          }),
+        },
+      }],
+    }),
+  });
+
+  const result = await parseSeatingConstraints({
+    text: '鲜于振不想坐第一排，希望坐后排靠边。',
+    students: [{ name: '鲜于振' }],
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.equal(result.source, 'ai_constraints');
+  assert.ok(result.constraints.some(item => item.type === 'avoid_first_row' && item.target === '鲜于振' && item.priority === 'hard'));
+  assert.ok(result.constraints.some(item => item.type === 'back_row' && item.target === '鲜于振' && item.priority === 'soft'));
+  assert.ok(result.constraints.some(item => item.type === 'prefer_edge' && item.target === '鲜于振' && item.priority === 'soft'));
+  assert.ok(!result.constraints.some(item => item.type === 'avoid_back_row'));
+});
+
+test('local fallback does not turn desired back row into avoid back row', async () => {
+  const result = await parseSeatingConstraints({
+    text: '鲜于振不想坐第一排，希望坐后排靠边。',
+    students: [{ name: '鲜于振' }],
+    env: {},
+  });
+
+  assert.equal(result.source, 'local_rules_fallback');
+  assert.ok(result.constraints.some(item => item.type === 'avoid_first_row' && item.target === '鲜于振'));
+  assert.ok(result.constraints.some(item => item.type === 'back_row' && item.target === '鲜于振'));
+  assert.ok(result.constraints.some(item => item.type === 'prefer_edge' && item.target === '鲜于振'));
+  assert.ok(!result.constraints.some(item => item.type === 'avoid_back_row'));
+});
+
+test('local fallback keeps back row edge and aisle combinations separated', () => {
+  const text = [
+    '家枝飘不想坐第一排，也不想坐最后一排，希望坐中后排靠过道。',
+    '鲜于振不想坐第一排，希望坐后排靠边。',
+    '司婕燕不想坐第一排，希望坐后排或靠边。',
+    '邵元不想坐第一排，希望坐后排靠边。',
+    '费婕不想坐第一排，希望坐中后排。',
+  ].join('\n');
+  const names = ['家枝飘', '鲜于振', '司婕燕', '邵元', '费婕'];
+  const constraints = parseSeatingConstraintsLocally({
+    text,
+    students: names.map(name => ({ name })),
+  });
+
+  for (const name of names) {
+    assert.ok(constraints.some(item => item.type === 'avoid_first_row' && item.target === name), `${name} should avoid first row`);
+    assert.ok(constraints.some(item => item.type === 'back_row' && item.target === name), `${name} should prefer back row`);
+    assert.ok(!constraints.some(item => item.type === 'avoid_back_row' && item.target === name), `${name} should not avoid back row`);
+  }
+  assert.ok(constraints.some(item => item.type === 'avoid_last_row' && item.target === '家枝飘'));
+  assert.ok(constraints.some(item => item.type === 'prefer_aisle' && item.target === '家枝飘'));
+  assert.ok(constraints.some(item => item.type === 'prefer_edge' && item.target === '鲜于振'));
+  assert.ok(constraints.some(item => item.type === 'prefer_edge' && item.target === '司婕燕'));
+  assert.ok(constraints.some(item => item.type === 'prefer_edge' && item.target === '邵元'));
+  assert.ok(!constraints.some(item => item.type === 'prefer_edge' && item.target === '费婕'));
+});

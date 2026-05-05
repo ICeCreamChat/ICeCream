@@ -14,6 +14,7 @@ import {
     evaluateSeatingConstraints,
     evaluateSeatingQuality,
     getPlacedStudentIds,
+    hasLocalAisle,
     insertAisleColumn,
     insertAisleRow,
     insertLocalAisle,
@@ -96,6 +97,7 @@ class SeatingPlanner {
         this.arrangementSource = null;
         this.arrangementInterpretation = null;
         this.arrangementSpec = null;
+        this.pendingLayoutPreview = null;
         this._diagnosticEvents = [];
         this._lastErrors = [];
         this.showSeatDetails = true;
@@ -508,8 +510,65 @@ class SeatingPlanner {
         };
     }
 
-    applyArrangementResult(data, { save = true } = {}) {
+    normalizeLayoutPreview(data) {
+        const errors = [];
+        const sourceLayout = data?.classroomLayout;
+        if (!sourceLayout || !Array.isArray(sourceLayout.cells)) {
+            throw new Error('AI 没有返回有效布局预览');
+        }
+        const rows = Number(sourceLayout.rows || sourceLayout.cells.length);
+        const cols = Number(sourceLayout.cols || sourceLayout.cells[0]?.length || 0);
+        if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows < 1 || cols < 1) {
+            throw new Error('AI 返回的布局尺寸不合法');
+        }
+        const cells = sourceLayout.cells.map((row, r) => {
+            if (!Array.isArray(row) || row.length !== cols) {
+                errors.push(`第 ${r + 1} 行列数不一致`);
+                return Array.from({ length: cols }, () => 'empty');
+            }
+            return row.map((cell, c) => {
+                if (cell === 'seat' || cell === 1 || cell === true || cell === '1') return 'seat';
+                if (cell === 'aisle' || cell === 0 || cell === false || cell === '0') return 'aisle';
+                if (cell === 'empty') return 'empty';
+                errors.push(`第 ${r + 1} 行第 ${c + 1} 列不是合法格子`);
+                return 'empty';
+            });
+        });
+        if (cells.length !== rows) errors.push('布局行数不一致');
+        if (errors.length) throw new Error(errors.join('；'));
+
+        const groups = Array.from({ length: rows }, (_, r) => {
+            const groupRow = Array.isArray(sourceLayout.groups?.[r]) ? sourceLayout.groups[r] : [];
+            return Array.from({ length: cols }, (_, c) => groupRow[c] ?? null);
+        });
+        return {
+            reply: data.reply || '已生成布局预览',
+            classroomLayout: {
+                rows,
+                cols,
+                cells,
+                groups,
+                guardians: {
+                    enabled: Boolean(sourceLayout.guardians?.enabled),
+                    left: null,
+                    right: null,
+                },
+                template: sourceLayout.template || 'ai-preview',
+                groupSize: sourceLayout.groupSize || 1,
+                localAisles: normalizeLocalAisles(sourceLayout.localAisles, rows, cols),
+            },
+            layoutIntent: data.layoutIntent || null,
+            warnings: Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [],
+            reasoning: data.reasoning || '',
+            source: data.source || null,
+            stats: data.stats || null,
+            arrangementSpec: data.arrangementSpec || null,
+        };
+    }
+
+    applyArrangementResult(data, { save = true, preserveLayoutPreview = false } = {}) {
         const arrangement = this.normalizeArrangementForApply(data);
+        if (!preserveLayoutPreview) this.cancelLayoutPreview();
         this.rows = arrangement.classroomLayout.rows;
         this.cols = arrangement.classroomLayout.cols;
         this.classroomLayout = structuredClone(arrangement.classroomLayout);
@@ -547,11 +606,54 @@ class SeatingPlanner {
         return arrangement;
     }
 
-    async requestAiArrangement(prompt) {
+    async requestLayoutPreview(prompt) {
+        this.recordDiagnosticEvent('layout_preview_request', {
+            prompt,
+            studentCount: this.students.length,
+            constraintCount: this.constraints.length,
+        });
+        const res = await fetch('/api/tools/seating/layout-preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                prompt,
+                students: this.students.map(student => ({
+                    id: student.id,
+                    name: student.name,
+                    gender: student.gender,
+                    grade: student.grade,
+                    height: student.height,
+                })),
+                constraints: this.constraints,
+                strategy: this.strategy,
+                previousLayout: this.classroomLayout,
+                previousAssignments: this.getCurrentAssignments(),
+            }),
+        });
+        const result = await res.json().catch(() => ({ success: false, error: 'AI 布局预览返回格式错误' }));
+        if (!res.ok || !result.success) {
+            this.recordDiagnosticEvent('layout_preview_request_failed', {
+                status: res.status,
+                error: result.error || 'AI layout preview failed',
+            });
+            const details = Array.isArray(result.details) && result.details.length ? `：${result.details.join('；')}` : '';
+            throw new Error(`${result.error || 'AI 布局预览失败'}${details}`);
+        }
+        const preview = this.normalizeLayoutPreview(result.data);
+        this.recordDiagnosticEvent('layout_preview_request_success', {
+            source: preview.source || null,
+            stats: preview.stats || null,
+            warnings: preview.warnings || [],
+        });
+        return preview;
+    }
+
+    async requestAiArrangement(prompt, options = {}) {
         this.recordDiagnosticEvent('arrangement_request', {
             prompt,
             studentCount: this.students.length,
             constraintCount: this.constraints.length,
+            confirmedLayout: Boolean(options.confirmedLayout),
         });
         const res = await fetch('/api/tools/seating/arrange', {
             method: 'POST',
@@ -569,6 +671,8 @@ class SeatingPlanner {
                 strategy: this.strategy,
                 previousLayout: this.classroomLayout,
                 previousAssignments: this.getCurrentAssignments(),
+                ...(options.confirmedLayout ? { confirmedLayout: options.confirmedLayout } : {}),
+                ...(options.arrangementSpec ? { arrangementSpec: options.arrangementSpec } : {}),
             }),
         });
         const result = await res.json().catch(() => ({ success: false, error: 'AI 排座服务返回格式错误' }));
@@ -999,6 +1103,34 @@ class SeatingPlanner {
                             <i data-lucide="sparkles"></i>
                             生成座位表
                         </button>
+                        <div id="sp-layout-preview-confirm" class="sp-layout-preview sp-hidden" aria-live="polite" aria-label="布局预览待确认">
+                            <div id="sp-layout-preview-mini" class="sp-layout-preview-mini"></div>
+                            <div class="sp-layout-preview-legend" aria-label="布局颜色说明">
+                                <span class="sp-layout-preview-legend-item">
+                                    <span class="sp-layout-preview-legend-dot sp-layout-preview-legend-dot--seat-even"></span>
+                                    座位
+                                </span>
+                                <span class="sp-layout-preview-legend-item">
+                                    <span class="sp-layout-preview-legend-dot sp-layout-preview-legend-dot--seat-odd"></span>
+                                    分组
+                                </span>
+                                <span class="sp-layout-preview-legend-item">
+                                    <span class="sp-layout-preview-legend-dot sp-layout-preview-legend-dot--aisle"></span>
+                                    过道
+                                </span>
+                            </div>
+                            <div class="sp-layout-preview-actions">
+                                <button type="button" class="sp-btn sp-btn--sm" id="sp-layout-preview-cancel">取消</button>
+                                <button type="button" class="sp-btn sp-btn--sm" id="sp-layout-preview-regenerate">
+                                    <i data-lucide="refresh-cw"></i>
+                                    重新生成
+                                </button>
+                                <button type="button" class="sp-btn sp-btn--sm sp-btn--primary" id="sp-layout-preview-assign">
+                                    <i data-lucide="check"></i>
+                                    确认排学生
+                                </button>
+                            </div>
+                        </div>
                     </aside>
 
                     <!-- Right Classroom -->
@@ -1873,6 +2005,7 @@ class SeatingPlanner {
             this.arrangementSource = null;
             this.arrangementInterpretation = null;
             this.arrangementSpec = null;
+            this.cancelLayoutPreview();
             this.recordDiagnosticEvent('students_cleared', {});
             this.showArrangementExplain = false;
             $('sp-student-count').innerHTML = '<i data-lucide="users"></i><span>0 人</span>';
@@ -1917,6 +2050,10 @@ class SeatingPlanner {
 
         // Generate
         $('sp-generate')?.addEventListener('click', () => this.generateSeating());
+        $('sp-layout-preview-assign')?.addEventListener('click', () => this.confirmLayoutPreview());
+        $('sp-layout-preview-cancel')?.addEventListener('click', () => this.cancelLayoutPreview());
+        $('sp-layout-preview-regenerate')?.addEventListener('click', () => this.regenerateLayoutPreview());
+        $('sp-layout-preview-mini')?.addEventListener('click', event => this.handleLayoutPreviewEditClick(event));
         const arrangePrompt = $('sp-arrange-prompt');
         arrangePrompt?.addEventListener('keydown', e => {
             if (this.handleSuggestionKeyDown(e, 'arrange')) return;
@@ -2114,6 +2251,7 @@ class SeatingPlanner {
             prefer_front_middle: '前排中间',
             prefer_front_mid_rows: '前中排',
             prefer_aisle: '靠过道',
+            prefer_edge: '靠边',
             prefer_high_grade_neighbor: '高分同伴',
             prefer_near: '尽量靠近',
             avoid: '不要相邻',
@@ -2420,7 +2558,7 @@ class SeatingPlanner {
         cell._seatDetailPointerStart = null;
     }
 
-    createVirtualSeatCell(r, c) {
+    createVirtualSeatCell(r, c, localAisles = this.getCurrentLocalAisles()) {
         const cell = document.createElement('div');
         cell.className = 'sp-seat';
         cell.dataset.row = r;
@@ -2469,6 +2607,7 @@ class SeatingPlanner {
         cell.addEventListener('dragleave', e => this.handleDragLeave(e, cell));
         cell.addEventListener('drop', e => this.handleDrop(e, r, c));
         cell.addEventListener('contextmenu', e => this.showContextMenu(e, r, c));
+        this.appendLocalAisleMarkers(cell, r, c, localAisles);
         return cell;
     }
 
@@ -2485,6 +2624,7 @@ class SeatingPlanner {
         const startRow = Math.max(0, Math.floor(scrollTop / visibleRowHeight) - overscan);
         const visibleRows = Math.ceil(viewportHeight / visibleRowHeight) + overscan * 2;
         const endRow = Math.min(this.rows, startRow + visibleRows);
+        const localAisles = this.getCurrentLocalAisles();
 
         this._virtualGridActive = true;
         grid.classList.add('sp-grid--virtual');
@@ -2498,7 +2638,7 @@ class SeatingPlanner {
         windowEl.style.transform = `translateY(${startRow * rowHeight}px)`;
         for (let r = startRow; r < endRow; r++) {
             for (let c = 0; c < this.cols; c++) {
-                windowEl.appendChild(this.createVirtualSeatCell(r, c));
+                windowEl.appendChild(this.createVirtualSeatCell(r, c, localAisles));
             }
         }
         grid.appendChild(windowEl);
@@ -2534,6 +2674,7 @@ class SeatingPlanner {
         grid.style.height = '';
         grid.innerHTML = '';
         grid.style.gridTemplateColumns = `repeat(${this.cols}, 1fr)`;
+        const localAisles = this.getCurrentLocalAisles();
         for (let r = 0; r < this.rows; r++) {
             for (let c = 0; c < this.cols; c++) {
                 const cell = document.createElement('div');
@@ -2614,6 +2755,7 @@ class SeatingPlanner {
                 // Context menu
                 cell.addEventListener('contextmenu', e => this.showContextMenu(e, r, c));
 
+                this.appendLocalAisleMarkers(cell, r, c, localAisles);
                 grid.appendChild(cell);
             }
         }
@@ -2786,6 +2928,35 @@ class SeatingPlanner {
         const localAisles = normalizeLocalAisles(this.classroomLayout?.localAisles, this.rows, this.cols);
         if (this.classroomLayout) this.classroomLayout.localAisles = localAisles;
         return localAisles;
+    }
+
+    isSeatPairForLocalAisle(layout, orientation, row, col) {
+        if (!layout?.cells) return false;
+        if (orientation === 'vertical') {
+            return layout.cells?.[row]?.[col] === 'seat'
+                && layout.cells?.[row]?.[col + 1] === 'seat';
+        }
+        if (orientation === 'horizontal') {
+            return layout.cells?.[row]?.[col] === 'seat'
+                && layout.cells?.[row + 1]?.[col] === 'seat';
+        }
+        return false;
+    }
+
+    appendLocalAisleMarkers(cell, row, col, localAisles = this.getCurrentLocalAisles()) {
+        if (!cell || !isLayoutSeat(this.classroomLayout, row, col)) return;
+        if (hasLocalAisle(localAisles, 'vertical', row, col)
+            && this.isSeatPairForLocalAisle(this.classroomLayout, 'vertical', row, col)) {
+            const marker = document.createElement('span');
+            marker.className = 'sp-local-aisle-marker sp-local-aisle-marker--vertical';
+            cell.appendChild(marker);
+        }
+        if (hasLocalAisle(localAisles, 'horizontal', row, col)
+            && this.isSeatPairForLocalAisle(this.classroomLayout, 'horizontal', row, col)) {
+            const marker = document.createElement('span');
+            marker.className = 'sp-local-aisle-marker sp-local-aisle-marker--horizontal';
+            cell.appendChild(marker);
+        }
     }
 
     isInteractiveSeatCell(row, col) {
@@ -3736,6 +3907,7 @@ class SeatingPlanner {
                     prefer_front_middle: 'crosshair',
                     prefer_front_mid_rows: 'panel-top',
                     prefer_aisle: 'footprints',
+                    prefer_edge: 'panel-left',
                     prefer_high_grade_neighbor: 'graduation-cap',
                     prefer_near: 'heart',
                     avoid: 'x-circle',
@@ -3757,6 +3929,7 @@ class SeatingPlanner {
                     prefer_front_middle: 'prefer',
                     prefer_front_mid_rows: 'prefer',
                     prefer_aisle: 'prefer',
+                    prefer_edge: 'prefer',
                     prefer_high_grade_neighbor: 'prefer',
                     prefer_near: 'prefer',
                     avoid: 'avoid',
@@ -3834,6 +4007,7 @@ class SeatingPlanner {
             prefer_front_middle: 'crosshair',
             prefer_front_mid_rows: 'panel-top',
             prefer_aisle: 'footprints',
+            prefer_edge: 'panel-left',
             prefer_high_grade_neighbor: 'graduation-cap',
             prefer_near: 'heart',
             avoid: 'x-circle',
@@ -3855,6 +4029,7 @@ class SeatingPlanner {
             prefer_front_middle: 'prefer',
             prefer_front_mid_rows: 'prefer',
             prefer_aisle: 'prefer',
+            prefer_edge: 'prefer',
             prefer_high_grade_neighbor: 'prefer',
             prefer_near: 'prefer',
             avoid: 'avoid',
@@ -3934,6 +4109,384 @@ class SeatingPlanner {
         this.renderScoreAnalysisPanel();
     }
 
+    normalizePreviewClassroomLayout(layout = {}) {
+        const source = structuredClone(layout || {});
+        const sourceCells = Array.isArray(source.cells) ? source.cells : [];
+        const rows = Math.max(1, Number.parseInt(source.rows, 10) || sourceCells.length || 1);
+        const cols = Math.max(
+            1,
+            Number.parseInt(source.cols, 10)
+                || Math.max(1, ...sourceCells.map(row => Array.isArray(row) ? row.length : 0))
+        );
+        const cells = Array.from({ length: rows }, (_, r) => {
+            const row = Array.isArray(sourceCells[r]) ? sourceCells[r] : [];
+            return Array.from({ length: cols }, (_, c) => {
+                const cell = row[c];
+                if (cell === 'aisle' || cell === 'empty') return cell;
+                return 'seat';
+            });
+        });
+        const groups = Array.from({ length: rows }, (_, r) => {
+            const row = Array.isArray(source.groups?.[r]) ? source.groups[r] : [];
+            return Array.from({ length: cols }, (_, c) => row[c] ?? null);
+        });
+        return {
+            ...source,
+            rows,
+            cols,
+            cells,
+            groups,
+            localAisles: normalizeLocalAisles(source.localAisles, rows, cols),
+            guardians: {
+                enabled: Boolean(source.guardians?.enabled),
+                left: source.guardians?.left ?? null,
+                right: source.guardians?.right ?? null,
+            },
+        };
+    }
+
+    previewAssignmentGrid(layout) {
+        return Array.from({ length: layout.rows }, () => Array(layout.cols).fill(null));
+    }
+
+    gridTemplateForPreview(cols) {
+        return Array.from({ length: cols * 2 - 1 }, (_, index) => (
+            index % 2 === 0 ? 'var(--sp-preview-cell)' : 'var(--sp-preview-gap)'
+        )).join(' ');
+    }
+
+    applyPreviewClassroomLayout(layout) {
+        if (!this.pendingLayoutPreview) return;
+        this.pendingLayoutPreview = {
+            ...this.pendingLayoutPreview,
+            classroomLayout: this.normalizePreviewClassroomLayout(layout),
+        };
+        this.renderEditableLayoutPreviewGrid();
+    }
+
+    getConfirmedPreviewLayout() {
+        return this.normalizePreviewClassroomLayout(this.pendingLayoutPreview?.classroomLayout || {});
+    }
+
+    renderPreviewLocalGap({ orientation, row, col, layout, localAisles, readOnly = false }) {
+        const active = hasLocalAisle(localAisles, orientation, row, col);
+        const allowed = active || this.isSeatPairForLocalAisle(layout, orientation, row, col);
+        if (!allowed || (readOnly && !active)) {
+            const spacer = document.createElement('span');
+            spacer.className = `sp-layout-preview-local-gap sp-layout-preview-local-gap--${orientation} sp-layout-preview-local-gap--disabled`;
+            return spacer;
+        }
+        const control = document.createElement(readOnly ? 'span' : 'button');
+        if (!readOnly) control.type = 'button';
+        control.className = `sp-layout-preview-local-gap sp-layout-preview-local-gap--${orientation}`;
+        if (active) control.classList.add('is-active');
+        if (!readOnly) {
+            control.dataset.previewAction = 'toggle-local';
+            control.dataset.orientation = orientation;
+            control.dataset.row = String(row);
+            control.dataset.col = String(col);
+            control.title = active ? '删除局部过道' : '添加局部过道';
+            control.setAttribute('aria-label', active ? '删除局部过道' : '添加局部过道');
+        }
+        return control;
+    }
+
+    renderEditableLayoutPreviewGrid(preview = this.pendingLayoutPreview) {
+        const target = document.getElementById('sp-layout-preview-mini');
+        if (!target || !preview?.classroomLayout) return;
+        const layout = this.normalizePreviewClassroomLayout(preview.classroomLayout);
+        this.pendingLayoutPreview.classroomLayout = layout;
+        const { rowAisles, colAisles } = layoutToLegacyAisles(layout);
+        const localAisles = normalizeLocalAisles(layout.localAisles, layout.rows, layout.cols);
+        const template = this.gridTemplateForPreview(layout.cols);
+        const cellSize = Math.max(10, Math.min(22, Math.floor(236 / Math.max(layout.cols, 1))));
+        const readOnly = Boolean(preview.readOnly || preview.confirmed);
+
+        target.innerHTML = '';
+        target.style.setProperty('--sp-preview-cell', `${cellSize}px`);
+        target.style.setProperty('--sp-preview-gap', `${Math.max(6, Math.round(cellSize * 0.36))}px`);
+        target.classList.toggle('sp-layout-preview-mini--dense', layout.rows * layout.cols > 180);
+        target.classList.toggle('sp-layout-preview-mini--readonly', readOnly);
+
+        const stage = document.createElement('div');
+        stage.className = 'sp-layout-preview-stage';
+
+        if (!readOnly) {
+            const colControls = document.createElement('div');
+            colControls.className = 'sp-layout-preview-col-controls';
+            colControls.style.gridTemplateColumns = template;
+            for (let c = 0; c < layout.cols; c++) {
+                const spacer = document.createElement('span');
+                spacer.className = 'sp-layout-preview-col-spacer';
+                colControls.appendChild(spacer);
+                if (c < layout.cols - 1) {
+                    const allowed = !colAisles.includes(c) && !colAisles.includes(c + 1);
+                    const control = document.createElement(allowed ? 'button' : 'span');
+                    control.className = 'sp-layout-preview-full-col-handle';
+                    if (allowed) {
+                        control.type = 'button';
+                        control.dataset.previewAction = 'insert-col';
+                        control.dataset.col = String(c + 1);
+                        control.title = '插入整列过道';
+                        control.setAttribute('aria-label', '插入整列过道');
+                    }
+                    colControls.appendChild(control);
+                }
+            }
+            stage.appendChild(colControls);
+        }
+
+        const matrix = document.createElement('div');
+        matrix.className = 'sp-layout-preview-matrix';
+        matrix.style.setProperty('--sp-preview-template', template);
+
+        for (let r = 0; r < layout.rows; r++) {
+            const row = document.createElement('div');
+            row.className = 'sp-layout-preview-row';
+            row.style.gridTemplateColumns = template;
+            const isRowAisle = rowAisles.includes(r);
+
+            for (let c = 0; c < layout.cols; c++) {
+                const isColAisle = colAisles.includes(c);
+                const removable = isRowAisle || isColAisle;
+                const cell = document.createElement(removable && !readOnly ? 'button' : 'span');
+                const cellType = layout.cells[r]?.[c] === 'seat' ? 'seat' : layout.cells[r]?.[c] === 'aisle' ? 'aisle' : 'empty';
+                cell.className = `sp-layout-preview-cell sp-layout-preview-cell--${cellType}`;
+                if (cellType === 'seat') {
+                    const groupId = layout.groups?.[r]?.[c];
+                    if (groupId !== null && groupId !== undefined) {
+                        cell.dataset.group = String(groupId);
+                        cell.classList.add(Number(groupId) % 2 === 0
+                            ? 'sp-layout-preview-cell--group-even'
+                            : 'sp-layout-preview-cell--group-odd');
+                    }
+                }
+                if (removable && !readOnly) {
+                    cell.type = 'button';
+                    cell.classList.add('sp-layout-preview-cell--removable');
+                    cell.dataset.previewAction = isRowAisle ? 'delete-row' : 'delete-col';
+                    cell.dataset.row = String(r);
+                    cell.dataset.col = String(c);
+                    cell.title = isRowAisle ? '删除整行过道' : '删除整列过道';
+                    cell.setAttribute('aria-label', isRowAisle ? '删除整行过道' : '删除整列过道');
+                }
+                row.appendChild(cell);
+                if (c < layout.cols - 1) {
+                    row.appendChild(this.renderPreviewLocalGap({
+                        orientation: 'vertical',
+                        row: r,
+                        col: c,
+                        layout,
+                        localAisles,
+                        readOnly,
+                    }));
+                }
+            }
+            matrix.appendChild(row);
+
+            if (r < layout.rows - 1) {
+                const gapRow = document.createElement('div');
+                gapRow.className = 'sp-layout-preview-row-gap';
+                gapRow.style.gridTemplateColumns = template;
+                const canInsertRow = !rowAisles.includes(r) && !rowAisles.includes(r + 1);
+                if (canInsertRow && !readOnly) {
+                    const fullRow = document.createElement('button');
+                    fullRow.type = 'button';
+                    fullRow.className = 'sp-layout-preview-full-row-handle';
+                    fullRow.dataset.previewAction = 'insert-row';
+                    fullRow.dataset.row = String(r + 1);
+                    fullRow.title = '插入整行过道';
+                    fullRow.setAttribute('aria-label', '插入整行过道');
+                    gapRow.appendChild(fullRow);
+                }
+                for (let c = 0; c < layout.cols; c++) {
+                    gapRow.appendChild(this.renderPreviewLocalGap({
+                        orientation: 'horizontal',
+                        row: r,
+                        col: c,
+                        layout,
+                        localAisles,
+                        readOnly,
+                    }));
+                    if (c < layout.cols - 1) {
+                        const spacer = document.createElement('span');
+                        spacer.className = 'sp-layout-preview-gap-corner';
+                        gapRow.appendChild(spacer);
+                    }
+                }
+                matrix.appendChild(gapRow);
+            }
+        }
+
+        stage.appendChild(matrix);
+        target.appendChild(stage);
+    }
+
+    insertPreviewAisleRowAt(index) {
+        const layout = this.getConfirmedPreviewLayout();
+        const result = insertAisleRow({
+            layout: this.previewAssignmentGrid(layout),
+            classroomLayout: layout,
+            index,
+        });
+        this.applyPreviewClassroomLayout(result.classroomLayout);
+    }
+
+    insertPreviewAisleColumnAt(index) {
+        const layout = this.getConfirmedPreviewLayout();
+        const result = insertAisleColumn({
+            layout: this.previewAssignmentGrid(layout),
+            classroomLayout: layout,
+            index,
+        });
+        this.applyPreviewClassroomLayout(result.classroomLayout);
+    }
+
+    deletePreviewAisleRowAt(index) {
+        const layout = this.getConfirmedPreviewLayout();
+        const result = deleteAisleRow({
+            layout: this.previewAssignmentGrid(layout),
+            classroomLayout: layout,
+            index,
+        });
+        this.applyPreviewClassroomLayout(result.classroomLayout);
+    }
+
+    deletePreviewAisleColumnAt(index) {
+        const layout = this.getConfirmedPreviewLayout();
+        const result = deleteAisleColumn({
+            layout: this.previewAssignmentGrid(layout),
+            classroomLayout: layout,
+            index,
+        });
+        this.applyPreviewClassroomLayout(result.classroomLayout);
+    }
+
+    togglePreviewLocalAisle(orientation, row, col) {
+        const layout = this.getConfirmedPreviewLayout();
+        const localAisles = normalizeLocalAisles(layout.localAisles, layout.rows, layout.cols);
+        const active = hasLocalAisle(localAisles, orientation, row, col);
+        if (!active && !this.isSeatPairForLocalAisle(layout, orientation, row, col)) {
+            this.showToast('局部过道只能添加在相邻座位之间', 'warning');
+            return;
+        }
+        const next = active
+            ? deleteLocalAisle({ classroomLayout: layout, orientation, row, col })
+            : insertLocalAisle({ classroomLayout: layout, orientation, row, col });
+        this.applyPreviewClassroomLayout(next);
+    }
+
+    handleLayoutPreviewEditClick(event) {
+        const control = event.target.closest?.('[data-preview-action]');
+        const target = document.getElementById('sp-layout-preview-mini');
+        if (!control || !target?.contains(control) || !this.pendingLayoutPreview) return;
+        if (this.pendingLayoutPreview.readOnly || this.pendingLayoutPreview.confirmed) return;
+        event.preventDefault();
+        event.stopPropagation();
+
+        const action = control.dataset.previewAction;
+        const row = Number.parseInt(control.dataset.row, 10);
+        const col = Number.parseInt(control.dataset.col, 10);
+        const orientation = control.dataset.orientation;
+        try {
+            if (action === 'insert-row') this.insertPreviewAisleRowAt(row);
+            if (action === 'insert-col') this.insertPreviewAisleColumnAt(col);
+            if (action === 'delete-row') this.deletePreviewAisleRowAt(row);
+            if (action === 'delete-col') this.deletePreviewAisleColumnAt(col);
+            if (action === 'toggle-local') this.togglePreviewLocalAisle(orientation, row, col);
+        } catch (error) {
+            this.showToast(error.message || '无法编辑布局预览', 'warning');
+        }
+    }
+
+    showLayoutPreviewConfirmation(preview, prompt) {
+        this.pendingLayoutPreview = {
+            ...preview,
+            prompt,
+            classroomLayout: this.normalizePreviewClassroomLayout(preview.classroomLayout),
+            readOnly: false,
+            confirmed: false,
+        };
+        const panel = document.getElementById('sp-layout-preview-confirm');
+        this.renderEditableLayoutPreviewGrid();
+        panel?.classList.remove('sp-hidden');
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    showConfirmedLayoutPreview(preview = {}) {
+        if (!preview.classroomLayout) return;
+        this.pendingLayoutPreview = {
+            ...preview,
+            classroomLayout: this.normalizePreviewClassroomLayout(preview.classroomLayout),
+            readOnly: true,
+            confirmed: true,
+            source: preview.source || 'confirmed_layout',
+        };
+        const panel = document.getElementById('sp-layout-preview-confirm');
+        this.renderEditableLayoutPreviewGrid();
+        panel?.classList.remove('sp-hidden');
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    cancelLayoutPreview() {
+        this.pendingLayoutPreview = null;
+        document.getElementById('sp-layout-preview-confirm')?.classList.add('sp-hidden');
+        const mini = document.getElementById('sp-layout-preview-mini');
+        if (mini) mini.innerHTML = '';
+    }
+
+    async regenerateLayoutPreview() {
+        const prompt = this.pendingLayoutPreview?.prompt || this.getArrangePrompt();
+        this.cancelLayoutPreview();
+        if (prompt) await this.generateSeating();
+    }
+
+    async confirmLayoutPreview() {
+        if (!this.pendingLayoutPreview || this._isGenerating) return;
+        const preview = this.pendingLayoutPreview;
+        const confirmedLayout = this.getConfirmedPreviewLayout();
+        const confirmedPreview = {
+            ...preview,
+            classroomLayout: structuredClone(confirmedLayout),
+        };
+        this._isGenerating = true;
+        const assignButton = document.getElementById('sp-layout-preview-assign');
+        const originalHtml = assignButton?.innerHTML;
+        if (assignButton) {
+            assignButton.disabled = true;
+            assignButton.innerHTML = '<i data-lucide="loader-2" class="sp-spin"></i> 排学生中...';
+        }
+        if (window.lucide) window.lucide.createIcons();
+        try {
+            const data = await this.requestAiArrangement(preview.prompt, {
+                confirmedLayout,
+                arrangementSpec: this.pendingLayoutPreview.arrangementSpec,
+            });
+            const arrangement = this.applyArrangementResult(data, { preserveLayoutPreview: true });
+            this.showConfirmedLayoutPreview(confirmedPreview);
+            this.showToast(arrangement.reply || '座位表生成完成', 'success');
+            this.recordDiagnosticEvent('generate_seating_success', {
+                source: arrangement.source || null,
+                stats: arrangement.stats || null,
+                warnings: arrangement.warnings || [],
+            });
+            this.showArrangementWarnings(arrangement.warnings);
+        } catch (err) {
+            console.error('[SeatingPlanner] Confirmed arrangement failed:', err);
+            this.recordDiagnosticEvent('generate_seating_failed', {
+                error: err.message || 'confirmed_arrangement_failed',
+            });
+            this.showToast('排学生失败: ' + err.message, 'error');
+        } finally {
+            this._isGenerating = false;
+            if (assignButton) {
+                assignButton.disabled = false;
+                assignButton.innerHTML = originalHtml || '<i data-lucide="check"></i> 确认排学生';
+            }
+            if (window.lucide) window.lucide.createIcons();
+        }
+    }
+
     async generateSeating() {
         if (!this.students.length) return this.showToast('请先导入名单', 'warning');
         const prompt = this.getArrangePrompt();
@@ -3947,19 +4500,19 @@ class SeatingPlanner {
 
         const btn = document.getElementById('sp-generate');
         btn.disabled = true;
-        btn.innerHTML = '<i data-lucide="loader-2" class="sp-spin"></i> AI 排座中...';
+        btn.innerHTML = '<i data-lucide="loader-2" class="sp-spin"></i> AI 设计布局中...';
         if (window.lucide) window.lucide.createIcons();
 
         try {
-            const data = await this.requestAiArrangement(prompt);
-            const arrangement = this.applyArrangementResult(data);
-            this.showToast(arrangement.reply || 'AI 座位表生成完成', 'success');
-            this.recordDiagnosticEvent('generate_seating_success', {
-                source: arrangement.source || null,
-                stats: arrangement.stats || null,
-                warnings: arrangement.warnings || [],
+            const preview = await this.requestLayoutPreview(prompt);
+            this.showLayoutPreviewConfirmation(preview, prompt);
+            this.showToast(preview.reply || '布局预览已生成，请确认后排学生', 'success');
+            this.recordDiagnosticEvent('layout_preview_ready', {
+                source: preview.source || null,
+                stats: preview.stats || null,
+                warnings: preview.warnings || [],
             });
-            this.showArrangementWarnings(arrangement.warnings);
+            this.showArrangementWarnings(preview.warnings);
         } catch (err) {
             console.error('[SeatingPlanner] Generation failed:', err);
             this.recordDiagnosticEvent('generate_seating_failed', {
