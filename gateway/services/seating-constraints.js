@@ -31,6 +31,32 @@ function normalizePriority(value, fallback = 'hard') {
     return text === 'soft' ? 'soft' : text === 'hard' ? 'hard' : fallback;
 }
 
+function hasSoftPriorityCue(value) {
+    return /(最好.*不要|尽量.*不要|可以的话|不太想|希望不要|不希望|不想|希望|想|最好|尽量|优先|尽可能|方便)/.test(asText(value));
+}
+
+function hasHardPriorityCue(value) {
+    const text = asText(value);
+    if (/(视力不好|近视严重|严重近视|看不清|看不见|看不到|被挡|挡住|遮挡)/.test(text)) return true;
+    if (/(最好.*不要|尽量.*不要|可以的话.*不要|不太想|希望不要)/.test(text)) return false;
+    return /(必须|需要|一定|务必|不能|不可|不可以|不准|禁止|绝对|千万)/.test(text);
+}
+
+function defaultPriorityForType(type, fallback = 'hard') {
+    const normalizedType = asText(type);
+    if (normalizedType.startsWith('prefer')) return 'soft';
+    if (normalizedType === 'front_row' || normalizedType === 'back_row') return 'soft';
+    if (normalizedType === 'avoid_behind') return 'soft';
+    return fallback;
+}
+
+function priorityForNeed({ type, text, suggestedPriority, fallback } = {}) {
+    const combined = asText(text);
+    if (hasHardPriorityCue(combined)) return 'hard';
+    if (hasSoftPriorityCue(combined)) return 'soft';
+    return normalizePriority(suggestedPriority, defaultPriorityForType(type, fallback));
+}
+
 function studentNames(students = []) {
     return [...new Set((students || [])
         .map(student => asText(student?.name || student?.id))
@@ -102,7 +128,7 @@ function splitTargets(value, context = {}) {
 }
 
 function firstMarkerIndex(sentence) {
-    const markers = ['不希望', '不想', '希望', '想', '需要', '必须', '因为', '成绩', '身高', '可以'];
+    const markers = ['不希望', '不想', '不能', '不要', '不可以', '最好', '希望', '想', '需要', '必须', '因为', '成绩', '身高', '可以'];
     return markers
         .map(marker => sentence.indexOf(marker))
         .filter(index => index >= 0)
@@ -176,10 +202,14 @@ function isLowGradeText(value) {
     return /成绩同样偏低|成绩偏低|低分|较低/.test(asText(value));
 }
 
+function isNotAdjacentText(value) {
+    return /(同桌|坐一起|相邻)/.test(asText(value));
+}
+
 function mapAiConstraint({ type, target, related, reason, priority }, context) {
     const combined = `${reason} ${related}`.trim();
-    const soft = normalizePriority(priority, 'soft');
-    const hard = normalizePriority(priority, 'hard');
+    const soft = priorityForNeed({ type, text: combined, suggestedPriority: priority, fallback: 'soft' });
+    const hard = priorityForNeed({ type, text: combined, suggestedPriority: priority, fallback: 'hard' });
 
     if ((type === 'avoid' || type === 'not_adjacent') && isFirstRowText(combined)) {
         return [{ type: 'avoid_first_row', target, reason, priority: hard }];
@@ -221,11 +251,32 @@ function mapAiConstraint({ type, target, related, reason, priority }, context) {
     if (relatedIsDescriptor && ['avoid', 'not_adjacent', 'avoid_behind', 'avoid_near', 'prefer', 'prefer_near', 'pair', 'must_adjacent'].includes(type)) {
         return [];
     }
+    if ((type === 'avoid' || type === 'not_adjacent') && relatedName && isNotAdjacentText(combined)) {
+        return [{
+            type: 'not_adjacent',
+            target,
+            related: relatedName,
+            reason,
+            priority: priorityForNeed({ type: 'not_adjacent', text: combined, suggestedPriority: priority, fallback: 'hard' }),
+        }];
+    }
     if ((type === 'avoid' || type === 'not_adjacent') && relatedName && /(后面|后方|身后|其后面)/.test(combined)) {
-        return [{ type: 'avoid_behind', target, related: relatedName, reason, priority: hard }];
+        return [{
+            type: 'avoid_behind',
+            target,
+            related: relatedName,
+            reason,
+            priority: priorityForNeed({ type: 'avoid_behind', text: combined, suggestedPriority: priority, fallback: 'soft' }),
+        }];
     }
     if ((type === 'avoid' || type === 'not_adjacent') && relatedName && /(过近|太近|靠太近|坐得近)/.test(combined)) {
-        return [{ type: 'avoid_near', target, related: relatedName, reason, priority: hard }];
+        return [{
+            type: 'avoid_near',
+            target,
+            related: relatedName,
+            reason,
+            priority: priorityForNeed({ type: 'avoid_near', text: combined, suggestedPriority: priority, fallback: 'hard' }),
+        }];
     }
     if (type === 'prefer' && relatedName && /(近一些|坐得近|交流|相邻|同桌)/.test(combined)) {
         return [{ type: 'prefer_near', target, related: relatedName, reason, priority: soft }];
@@ -237,7 +288,7 @@ function mapAiConstraint({ type, target, related, reason, priority }, context) {
             target,
             ...(relatedName || asText(related) ? { related: relatedName || asText(related) } : {}),
             reason,
-            priority: normalizePriority(priority, type.startsWith('prefer') ? 'soft' : 'hard'),
+            priority: priorityForNeed({ type, text: combined, suggestedPriority: priority, fallback: defaultPriorityForType(type) }),
         }];
     }
     return [];
@@ -345,10 +396,35 @@ export function parseSeatingConstraintsLocally({ text, students = [] } = {}) {
             addForTargets(constraints, targets, { type: 'avoid_back_row', reason: '不希望坐后排', priority: 'hard' });
         }
 
-        const behind = extractRelatedAfter(sentence, /不想坐在(.+?)后面|不希望坐在(.+?)后面/, context);
+        const behind = extractRelatedAfter(sentence, /(?:不想|不希望|不要|不能|不可以)坐在(.+?)后面|(?:不想|不希望|不要|不能|不可以)坐.*?在(.+?)后面/, context);
         for (const target of targets) {
             for (const related of behind.filter(name => name !== target && !looksLikeDescriptorNotName(name))) {
-                addConstraint(constraints, { type: 'avoid_behind', target, related, reason: '不想坐在其后面', priority: 'hard' });
+                addConstraint(constraints, {
+                    type: 'avoid_behind',
+                    target,
+                    related,
+                    reason: '不想坐在其后面',
+                    priority: priorityForNeed({ type: 'avoid_behind', text: sentence, fallback: 'soft' }),
+                });
+            }
+        }
+
+        if (isNotAdjacentText(sentence) && /(不想|不希望|不要|不能|不可以|最好)/.test(sentence)) {
+            const priority = priorityForNeed({ type: 'not_adjacent', text: sentence, fallback: 'hard' });
+            if (targets.length > 1) {
+                for (const [target, related] of pairwise(targets)) {
+                    addConstraint(constraints, { type: 'not_adjacent', target, related, reason: '不希望坐一起或同桌', priority });
+                }
+            }
+            const notAdjacentRelated = [
+                ...extractRelatedAfter(sentence, /(?:不想|不希望|不要|不能|不可以)(?:和|跟|与)(.+?)(?:同桌|坐一起|相邻)/, context),
+                ...extractRelatedAfter(sentence, /最好(?:和|跟|与)(.+?)(?:不要|别)(?:同桌|坐一起|相邻)/, context),
+                ...extractRelatedAfter(sentence, /最好(?:不要|别)(?:和|跟|与)(.+?)(?:同桌|坐一起|相邻)/, context),
+            ];
+            for (const target of targets) {
+                for (const related of notAdjacentRelated.filter(name => name !== target && !looksLikeDescriptorNotName(name))) {
+                    addConstraint(constraints, { type: 'not_adjacent', target, related, reason: '不希望坐一起或同桌', priority });
+                }
             }
         }
 
@@ -387,6 +463,7 @@ function parseMaxTokens(env = {}) {
 function buildConstraintParseMessages({ text, students = [] }) {
     const systemPrompt = `你是座位安排学生需求解析器。从老师的话中提取所有学生约束。
 只输出紧凑 JSON，不要 markdown。输出结构：{"constraints":[{"type":"front_row","target":"张三","related":"李四","reason":"简短原因","priority":"hard"}]}
+priority 必须输出 "hard" 或 "soft"：hard=必须满足，未满足会导致需调整；soft=尽量满足，只影响评分。包含“必须、需要、一定、不能、不可以、视力不好、近视严重、看不清、看不见、被挡住”等强制或健康/视力原因时输出 hard；普通“想、希望、最好、尽量、可以的话、不想”等偏好通常输出 soft。avoid_behind 不要按类型一律 hard，必须根据语义判断：普通“不想坐在 X 后面”为 soft，视力原因或“必须不能/不能”才 hard。
 可用 type:
 - front_row/back_row: 希望或必须在前排/后排区域
 - avoid_first_row/avoid_last_row/avoid_front_row/avoid_back_row: 不想坐第一排/最后一排/前排/后排
@@ -465,8 +542,7 @@ export async function parseSeatingConstraints({
     // Cap constraint count to prevent score collapse from inflation
     const MAX_CONSTRAINTS = 100;
     if (constraints.length > MAX_CONSTRAINTS) {
-        // Constraints with prefer_ prefix are soft; everything else is hard
-        const isSoft = c => String(c?.type || '').startsWith('prefer');
+        const isSoft = c => c?.priority === 'soft';
         const hard = constraints.filter(c => !isSoft(c));
         const soft = constraints.filter(c => isSoft(c));
         const hardKeep = hard.slice(0, MAX_CONSTRAINTS);

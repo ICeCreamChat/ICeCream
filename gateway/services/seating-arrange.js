@@ -622,8 +622,26 @@ function naturalNumberFromMatch(match) {
     return match ? chineseNumberValue(match[1]) : NaN;
 }
 
+function firstNaturalNumber(text, patterns = []) {
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        const value = naturalNumberFromMatch(match);
+        if (Number.isInteger(value) && value > 0) return value;
+    }
+    return NaN;
+}
+
 function extractGroupSize(text) {
-    return naturalNumberFromMatch(text.match(new RegExp(`(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?人一组`)));
+    if (/双人|两两(?:并排|搭配)|二人桌|双人桌/.test(text)) return 2;
+    if (/三三制|三人桌/.test(text)) return 3;
+    return firstNaturalNumber(text, [
+        new RegExp(`(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?人一组`),
+        new RegExp(`(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?人一桌`),
+        new RegExp(`(?:每|一)(?:桌|组)\\s*(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?人`),
+        new RegExp(`同(?:桌|排|行)\\s*(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?人?`),
+        new RegExp(`(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?人\\s*(?:坐在?一起|并排|同桌)`),
+        new RegExp(`(${NATURAL_NUMBER_PATTERN})\\s*三制`),
+    ]);
 }
 
 function hasGroupColumnWording(text) {
@@ -631,32 +649,107 @@ function hasGroupColumnWording(text) {
 }
 
 function extractColumnCount(text, { physicalOnly = false } = {}) {
-    const pattern = new RegExp(`(一共|共|总共|合计|分成|分为|排成)?\\s*(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?(?:${physicalOnly ? '(?:物理列|座位列|列座位|列桌|列座)' : '列'})`, 'g');
+    const perRow = firstNaturalNumber(text, [
+        new RegExp(`每\\s*(?:排|行)\\s*(?:坐|有|安排|放)?\\s*(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?人`),
+        new RegExp(`(?:一|每)(?:排|行)\\s*(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?(?:座|座位|人)`),
+    ]);
+    if (physicalOnly && Number.isInteger(perRow) && perRow > 0) return perRow;
+
+    const pattern = new RegExp(`(一共|共|总共|合计|分成|分为|排成)?\\s*(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?(?:${physicalOnly ? '(?:物理列|座位列|列座位|列桌|列座|纵列)' : '列|纵列'})`, 'g');
     let match;
     while ((match = pattern.exec(text)) !== null) {
         const count = chineseNumberValue(match[2]);
         if (!Number.isInteger(count) || count <= 0) continue;
         if (!match[1] && count === 1) continue;
         const tail = text.slice(match.index, match.index + match[0].length + 4);
-        const physical = /物理列|座位列|列座位|列桌|列座/.test(tail);
+        const physical = /物理列|座位列|列座位|列桌|列座|纵列/.test(tail);
         if (physicalOnly && physical) return count;
         if (!physicalOnly && !physical) return count;
     }
     return 0;
 }
 
+function extractGridDimensions(text) {
+    const rowCol = text.match(new RegExp(`(${NATURAL_NUMBER_PATTERN})\\s*(?:行|排)\\s*(${NATURAL_NUMBER_PATTERN})\\s*(?:列|纵列)`));
+    if (rowCol) {
+        return {
+            physicalRows: chineseNumberValue(rowCol[1]),
+            physicalCols: chineseNumberValue(rowCol[2]),
+        };
+    }
+    const colRow = text.match(new RegExp(`(${NATURAL_NUMBER_PATTERN})\\s*(?:列|纵列)\\s*(${NATURAL_NUMBER_PATTERN})\\s*(?:行|排)`));
+    if (colRow) {
+        return {
+            physicalRows: chineseNumberValue(colRow[2]),
+            physicalCols: chineseNumberValue(colRow[1]),
+        };
+    }
+    return { physicalRows: 0, physicalCols: 0 };
+}
+
+function extractRowCount(text) {
+    return firstNaturalNumber(text, [
+        new RegExp(`每\\s*(?:列|纵列)\\s*(?:坐|有|安排|放)?\\s*(${NATURAL_NUMBER_PATTERN})\\s*(?:个)?人`),
+        new RegExp(`(?:^|[^每])(${NATURAL_NUMBER_PATTERN})\\s*(?:行|排)(?:座位)?`),
+    ]);
+}
+
+function inferColumnPattern(text) {
+    const edgeSingle = /(?:边上|两边|最边|靠边|外侧).{0,10}(?:一|1)\s*(?:个)?人?(?:一组)?/.test(text)
+        || /(?:一|1)\s*(?:个)?人?(?:一组)?.{0,10}(?:边上|两边|最边|靠边|外侧)/.test(text);
+    const innerPair = /(?:中间|里面|内侧).{0,10}(?:两|二|2)\s*(?:个)?人?(?:一组)?/.test(text)
+        || /(?:两|二|2)\s*(?:个)?人?(?:一组)?.{0,10}(?:中间|里面|内侧)/.test(text);
+    return edgeSingle && innerPair ? [1, 'aisle', 2, 'aisle', 2, 'aisle', 1] : [];
+}
+
+function normalizeColumnPattern(rawPattern) {
+    if (!Array.isArray(rawPattern)) return [];
+    const normalized = [];
+    for (const item of rawPattern) {
+        if (typeof item === 'string' && /^(aisle|过道|通道|空|empty)$/i.test(item.trim())) {
+            if (normalized.at(-1) !== 'aisle') normalized.push('aisle');
+            continue;
+        }
+        const value = Number.parseInt(item, 10);
+        if (Number.isInteger(value) && value > 0 && value <= 12) {
+            normalized.push(value);
+        }
+    }
+    while (normalized[0] === 'aisle') normalized.shift();
+    while (normalized.at(-1) === 'aisle') normalized.pop();
+    return normalized.some(item => Number.isInteger(item)) ? normalized : [];
+}
+
+function normalizeCapacityPolicy(value, fallback = 'auto_expand') {
+    const policy = asText(value).toLowerCase();
+    if (['fixed', 'limited', 'limit', '固定', '限制'].includes(policy)) return 'fixed';
+    if (['auto_expand', 'auto', 'expand', '自动扩容', '自动'].includes(policy)) return 'auto_expand';
+    return fallback === 'fixed' ? 'fixed' : 'auto_expand';
+}
+
+function inferCapacityPolicy(text) {
+    return shouldAllowUnassigned(text) ? 'fixed' : 'auto_expand';
+}
+
 function inferArrangementSpecFromPrompt(prompt = '') {
     const text = asText(prompt);
+    const gridDimensions = extractGridDimensions(text);
     const groupSize = extractGroupSize(text) || 1;
     const wantsGroup = Number.isInteger(groupSize) && groupSize > 1;
     const wantsBothAisles = /横.*竖|竖.*横|横过道.*竖过道|竖过道.*横过道/.test(text);
-    const wantsVerticalAisle = wantsBothAisles || /竖过道|纵过道|列过道|组间过道|每组之间.*过道/.test(text);
-    const wantsHorizontalAisle = wantsBothAisles || /横过道|行过道|每组之间.*横|组与组之间.*横/.test(text);
+    const wantsVerticalAisle = wantsBothAisles
+        || /竖过道|纵过道|列过道|组间过道|每组之间.*过道/.test(text)
+        || /中间.*(?:通道|走道|过道|空|隔开)|(?:每组|组间|组与组之间).*(?:隔开|分开|空|留空|通道|走道)|左右.*(?:隔开|分开|通道|走道)/.test(text);
+    const wantsHorizontalAisle = wantsBothAisles
+        || /横过道|行过道|每组之间.*横|组与组之间.*横/.test(text)
+        || /(?:前后|上下).*(?:通道|走道|过道|隔开)/.test(text);
     const groupColumnWording = hasGroupColumnWording(text);
-    const physicalCols = extractColumnCount(text, { physicalOnly: true });
+    const physicalCols = gridDimensions.physicalCols || extractColumnCount(text, { physicalOnly: true });
+    const physicalRows = gridDimensions.physicalRows || extractRowCount(text) || 0;
     const groupsPerRow = wantsGroup && !physicalCols
         ? extractColumnCount(text, { physicalOnly: false })
         : 0;
+    const columnPattern = inferColumnPattern(text);
     const guardianEnabled = /护法|讲台旁|左右/.test(text);
     const lowestGradeGuardianIndex = text.search(/成绩.{0,8}(最差|最低|差|低)|最差.{0,8}成绩|最低.{0,8}成绩/);
     const topGradeGuardianIndex = text.search(/(成绩.{0,8}(比较好|较好|好|优秀|高|最高)|高分|优秀|前\s*20\s*%|前百分之二十).{0,12}(护法|讲台旁|左右|坐)|(?:护法|讲台旁|左右).{0,12}(成绩.{0,8}(比较好|较好|好|优秀|高|最高)|高分|优秀|前\s*20\s*%|前百分之二十)/);
@@ -670,6 +763,9 @@ function inferArrangementSpecFromPrompt(prompt = '') {
         groupSize: Number.isInteger(groupSize) && groupSize > 0 ? groupSize : 1,
         groupsPerRow: Number.isInteger(groupsPerRow) && groupsPerRow > 0 ? groupsPerRow : 0,
         physicalCols: Number.isInteger(physicalCols) && physicalCols > 0 ? physicalCols : 0,
+        physicalRows: Number.isInteger(physicalRows) && physicalRows > 0 ? physicalRows : 0,
+        columnPattern,
+        capacityPolicy: inferCapacityPolicy(text),
         aislePolicy: {
             verticalBetweenGroups: wantsVerticalAisle || Boolean(groupColumnWording || groupsPerRow),
             horizontalBetweenGroupRows: wantsHorizontalAisle,
@@ -684,7 +780,9 @@ function inferArrangementSpecFromPrompt(prompt = '') {
         assumptions: [
             ...(groupColumnWording && groupsPerRow ? [`已理解为每行 ${groupsPerRow} 个组块列`] : []),
             ...(physicalCols ? [`已理解为 ${physicalCols} 个物理座位列`] : []),
+            ...(physicalRows ? [`已理解为 ${physicalRows} 个物理座位行`] : []),
             ...(groupColumnWording || groupsPerRow ? ['组块之间默认留竖过道'] : []),
+            ...(columnPattern.length ? ['已理解为两边单人组、中间双人组的混合列布局'] : []),
         ],
     };
 }
@@ -811,19 +909,58 @@ function inferPlacementOverridesFromPrompt(prompt = '') {
     return overrides;
 }
 
+function hasAnyOwn(raw = {}, keys = []) {
+    return keys.some(key => Object.prototype.hasOwnProperty.call(raw, key));
+}
+
+function valueConflict(aiValue, localValue) {
+    if (aiValue === undefined || aiValue === null || aiValue === '' || aiValue === 0) return false;
+    if (localValue === undefined || localValue === null || localValue === '' || localValue === 0) return false;
+    return JSON.stringify(aiValue) !== JSON.stringify(localValue);
+}
+
+function specConflictWarnings(raw = {}, inferred = {}, normalized = {}) {
+    const conflicts = [];
+    const add = (field, aiValue, localValue) => {
+        if (valueConflict(aiValue, localValue)) conflicts.push(`${field}: AI=${JSON.stringify(aiValue)} 本地=${JSON.stringify(localValue)}`);
+    };
+    if (hasAnyOwn(raw, ['groupSize', 'group_size'])) add('groupSize', normalized.groupSize, inferred.groupSize);
+    if (hasAnyOwn(raw, ['groupsPerRow', 'groups_per_row'])) add('groupsPerRow', normalized.groupsPerRow, inferred.groupsPerRow);
+    if (hasAnyOwn(raw, ['physicalCols', 'physical_cols', 'cols'])) add('physicalCols', normalized.physicalCols, inferred.physicalCols);
+    if (hasAnyOwn(raw, ['physicalRows', 'physical_rows', 'rows'])) add('physicalRows', normalized.physicalRows, inferred.physicalRows);
+    if (hasAnyOwn(raw, ['capacityPolicy', 'capacity_policy'])) add('capacityPolicy', normalized.capacityPolicy, inferred.capacityPolicy);
+    if (hasAnyOwn(raw, ['columnPattern', 'column_pattern'])) add('columnPattern', normalized.columnPattern, inferred.columnPattern);
+    const rawAisles = raw.aislePolicy || raw.aisles || {};
+    if (rawAisles && typeof rawAisles === 'object') {
+        if (hasAnyOwn(rawAisles, ['verticalBetweenGroups', 'vertical', 'colAisles'])) {
+            add('aislePolicy.verticalBetweenGroups', normalized.aislePolicy?.verticalBetweenGroups, inferred.aislePolicy?.verticalBetweenGroups);
+        }
+        if (hasAnyOwn(rawAisles, ['horizontalBetweenGroupRows', 'horizontal', 'rowAisles'])) {
+            add('aislePolicy.horizontalBetweenGroupRows', normalized.aislePolicy?.horizontalBetweenGroupRows, inferred.aislePolicy?.horizontalBetweenGroupRows);
+        }
+    }
+    return conflicts.length ? [`AI 解析与本地规则解析不一致，已优先采用 AI：${conflicts.join('；')}`] : [];
+}
+
 function normalizeArrangementSpec(raw = {}, request = {}) {
     const inferred = inferArrangementSpecFromPrompt(request.prompt);
     const placementPolicy = raw.placementPolicy && typeof raw.placementPolicy === 'object' ? raw.placementPolicy : {};
-    const groupSize = positiveInt(raw.groupSize ?? raw.group_size, inferred.groupSize, 1, 12);
-    const layoutMode = asText(raw.layoutMode || raw.layout_mode || inferred.layoutMode) || 'standard';
+    const rawGroupSize = positiveInt(raw.groupSize ?? raw.group_size, 0, 0, 12);
+    const groupSize = rawGroupSize > 0 ? rawGroupSize : inferred.groupSize;
+    const layoutMode = asText(raw.layoutMode || raw.layout_mode) || inferred.layoutMode || 'standard';
     const rawGroupsPerRow = positiveInt(raw.groupsPerRow ?? raw.groups_per_row, 0, 0, 1000000);
     const rawPhysicalCols = positiveInt(raw.physicalCols ?? raw.physical_cols ?? raw.cols, 0, 0, 1000000);
-    const groupsPerRow = inferred.groupsPerRow > 0 ? inferred.groupsPerRow : rawGroupsPerRow;
-    const physicalCols = inferred.physicalCols > 0 ? inferred.physicalCols : rawPhysicalCols;
-    const aislePolicy = normalizeAislePolicy(raw.aislePolicy || raw.aisles || {}, inferred.aislePolicy);
-    if (inferred.aislePolicy?.verticalBetweenGroups) {
-        aislePolicy.verticalBetweenGroups = true;
+    const rawPhysicalRows = positiveInt(raw.physicalRows ?? raw.physical_rows ?? raw.rows, 0, 0, 1000000);
+    const groupsPerRow = rawGroupsPerRow > 0 ? rawGroupsPerRow : inferred.groupsPerRow;
+    const physicalCols = rawPhysicalCols > 0 ? rawPhysicalCols : inferred.physicalCols;
+    const physicalRows = rawPhysicalRows > 0 ? rawPhysicalRows : inferred.physicalRows;
+    const rawColumnPattern = normalizeColumnPattern(raw.columnPattern ?? raw.column_pattern);
+    const columnPattern = rawColumnPattern.length ? rawColumnPattern : normalizeColumnPattern(inferred.columnPattern);
+    if (!rawColumnPattern.length && /edge-single-inner-pair/.test(asText(raw.customPattern || raw.custom_pattern))) {
+        columnPattern.splice(0, columnPattern.length, 1, 'aisle', 2, 'aisle', 2, 'aisle', 1);
     }
+    const capacityPolicy = normalizeCapacityPolicy(raw.capacityPolicy ?? raw.capacity_policy, inferred.capacityPolicy);
+    const aislePolicy = normalizeAislePolicy(raw.aislePolicy || raw.aisles || {}, inferred.aislePolicy);
     const promptPlacementOverrides = inferPlacementOverridesFromPrompt(request.prompt);
     const rawGuardianPolicy = raw.guardianPolicy || raw.guardians || null;
     const guardianPolicy = normalizeGuardianPolicy(rawGuardianPolicy || {}, inferred.guardianPolicy);
@@ -831,23 +968,28 @@ function normalizeArrangementSpec(raw = {}, request = {}) {
         guardianPolicy.enabled = true;
         guardianPolicy.strategy = inferred.guardianPolicy.strategy;
     }
-    return {
+    const normalized = {
         groupSize,
         groupsPerRow: physicalCols > 0 ? 0 : groupsPerRow,
         physicalCols,
+        physicalRows,
+        capacityPolicy,
+        columnPattern,
         aislePolicy,
         guardianPolicy,
         layoutMode,
         placementPolicy: normalizeUiPlacementPolicy({
             ...normalizeUiPlacementPolicy(request.strategy),
-            ...definedPlacementPolicy(placementPolicy),
             ...promptPlacementOverrides,
+            ...definedPlacementPolicy(placementPolicy),
         }),
         strategyOverrides: promptPlacementOverrides,
         keepPreviousLayout: boolValue(raw.keepPreviousLayout ?? raw.keep_previous_layout, inferred.keepPreviousLayout),
         assumptions: inferred.assumptions || [],
         notes: asText(raw.notes || raw.reasoning),
     };
+    normalized.parseWarnings = specConflictWarnings(raw, inferred, normalized);
+    return normalized;
 }
 
 function buildSpecMessages(request) {
@@ -858,12 +1000,25 @@ function buildSpecMessages(request) {
 - 不要返回 assignments、classroomLayout、学生坐标或完整名单。
 - 如果老师没有限制容量，布局应允许本地算法自动扩容。
 - groupSize 表示几个人一组；aislePolicy 表示组间是否留横/竖过道。
-- groupsPerRow 表示每行有几个组块；physicalCols 表示物理座位列数，二者不要混用。
+- groupsPerRow 表示每行有几个组块；physicalCols 表示物理座位列数；physicalRows 表示物理座位行数，三者不要混用。
+- capacityPolicy 只能是 "auto_expand" 或 "fixed"；老师没说固定容量时默认 auto_expand，明确说固定/只有/最多/不超过/座位有限时用 fixed。
+- columnPattern 用于非均匀混合列布局：正整数表示连续座位组，"aisle" 表示一列过道，例如 [1,"aisle",2,"aisle",2,"aisle",1]。
 - 如果老师说“一组是一列/每组一列/每列一组”，再说“一共 N 列”，应输出 groupsPerRow=N，并默认 verticalBetweenGroups=true。
 - 如果老师说“N列座位/物理列”，应输出 physicalCols=N，不要输出 groupsPerRow=N。
+- 如果老师说“每排/每行 N 人”，应输出 physicalCols=N；如果说“每列 N 人”，应输出 physicalRows=N；如果说“N行M列”，应同时输出 physicalRows=N、physicalCols=M。
+- “两人一桌/双人桌/同桌两个/两两并排”都表示 groupSize=2；“三三制/三人一桌”表示 groupSize=3。
+- “中间留通道/组间空一列/左右隔开”通常表示 aislePolicy.verticalBetweenGroups=true。
+- “边上/两边/最边一人一组，中间/里面两人一组”应输出 columnPattern=[1,"aisle",2,"aisle",2,"aisle",1]，notes 写“两边1人组，中间2人组，组间过道”。
 - guardianPolicy 用于左右护法规则，例如 lowest_grade 表示成绩最低的同学，top_grade_percent 表示成绩前20%的同学。
 - 如果老师要求左右护法有组合条件，请输出 guardianPolicy.slots，必须是两个对象，例如 [{"gender":"M","strategy":"lowest_grade"},{"gender":"F","strategy":"top_grade_percent"}]。
-- 护法位必须按老师最新自然语言需求输出；遇到“后来/改成/后面说”时以后面的要求为准。`;
+- 护法位必须按老师最新自然语言需求输出；遇到“后来/改成/后面说”时以后面的要求为准。
+示例:
+输入: "两人一桌，中间留通道" -> {"groupSize":2,"aislePolicy":{"verticalBetweenGroups":true},"layoutMode":"grouped"}
+输入: "同桌两个，分成4列组" -> {"groupSize":2,"groupsPerRow":4,"aislePolicy":{"verticalBetweenGroups":true},"layoutMode":"grouped"}
+输入: "每排8人，每列6人" -> {"physicalCols":8,"physicalRows":6,"layoutMode":"standard"}
+输入: "6行8列，双人桌" -> {"physicalRows":6,"physicalCols":8,"groupSize":2,"layoutMode":"grouped"}
+输入: "固定6行8列，最多这些座位" -> {"physicalRows":6,"physicalCols":8,"capacityPolicy":"fixed","layoutMode":"standard"}
+输入: "边上一人一组，里面两人一组，组间有过道" -> {"groupSize":2,"columnPattern":[1,"aisle",2,"aisle",2,"aisle",1],"capacityPolicy":"auto_expand","layoutMode":"grouped","notes":"两边1人组，中间2人组，组间过道"}`;
     const payload = {
         stage: 'arrangement_spec',
         prompt: request.prompt,
@@ -882,6 +1037,9 @@ function buildSpecMessages(request) {
             groupSize: 3,
             groupsPerRow: 5,
             physicalCols: 0,
+            physicalRows: 6,
+            capacityPolicy: 'auto_expand',
+            columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
             aislePolicy: { verticalBetweenGroups: true, horizontalBetweenGroupRows: true },
             guardianPolicy: { enabled: true, strategy: 'lowest_grade', slots: [] },
             layoutMode: 'grouped',
@@ -902,8 +1060,9 @@ async function requestArrangementSpec({
     env = process.env,
 }) {
     if (typeof fetchImpl !== 'function' || !env.DEEPSEEK_API_BASE || !env.DEEPSEEK_API_KEY) {
+        const spec = normalizeArrangementSpec({}, request);
         return {
-            spec: normalizeArrangementSpec({}, request),
+            spec,
             warnings: ['AI 规则解析不可用，已使用本地规则解析。'],
         };
     }
@@ -926,19 +1085,22 @@ async function requestArrangementSpec({
 
     const payload = await response.json();
     if (!response.ok) {
+        const spec = normalizeArrangementSpec({}, request);
         return {
-            spec: normalizeArrangementSpec({}, request),
+            spec,
             warnings: [payload?.error?.message || `AI 规则解析失败: ${response.status}，已使用本地规则解析。`],
         };
     }
     try {
+        const spec = normalizeArrangementSpec(parseAiJson(payload.choices?.[0]?.message?.content), request);
         return {
-            spec: normalizeArrangementSpec(parseAiJson(payload.choices?.[0]?.message?.content), request),
-            warnings: [],
+            spec,
+            warnings: spec.parseWarnings || [],
         };
     } catch (error) {
+        const spec = normalizeArrangementSpec({}, request);
         return {
-            spec: normalizeArrangementSpec({}, request),
+            spec,
             warnings: [`AI 规则 JSON 无效，已使用本地规则解析：${error.message}`],
         };
     }
@@ -949,6 +1111,120 @@ function desiredGroupsPerRow(groupCount, spec) {
     if (groupCount <= 0) return 1;
     if (groupCount < 4) return groupCount;
     return Math.min(6, Math.max(4, Math.ceil(Math.sqrt(groupCount))));
+}
+
+function resolveSeatRows({ target, seatsPerRow, requestedRows = 0, capacityPolicy = 'auto_expand' }) {
+    const requiredRows = Math.max(1, Math.ceil(Math.max(1, target) / Math.max(1, seatsPerRow)));
+    const safeRequested = positiveInt(requestedRows, 0, 0, 1000000);
+    if (safeRequested > 0) {
+        return capacityPolicy === 'fixed' ? safeRequested : Math.max(safeRequested, requiredRows);
+    }
+    return requiredRows;
+}
+
+function columnPatternSeatCount(pattern = []) {
+    return pattern.reduce((total, item) => total + (Number.isInteger(item) ? item : 0), 0);
+}
+
+function buildSeatRowFromRuns(runs, { groupSize = 1, startGroupId = 1, verticalAisleAfterRun = -1 } = {}) {
+    const cells = [];
+    const groups = [];
+    let groupId = startGroupId;
+    for (let runIndex = 0; runIndex < runs.length; runIndex++) {
+        const runLength = Math.max(0, Number.parseInt(runs[runIndex], 10) || 0);
+        for (let offset = 0; offset < runLength; offset++) {
+            if (offset % Math.max(1, groupSize) === 0) groupId++;
+            cells.push(CELL.SEAT);
+            groups.push(groupId - 1);
+        }
+        if (runIndex === verticalAisleAfterRun) {
+            cells.push(CELL.AISLE);
+            groups.push(null);
+        }
+    }
+    return { cells, groups, nextGroupId: groupId };
+}
+
+function buildPhysicalGridLayout({ target, seatRows, seatCols, groupSize, verticalAisles, horizontalAisles, spec }) {
+    const leftCols = verticalAisles && seatCols >= 2 ? Math.ceil(seatCols / 2) : seatCols;
+    const rightCols = verticalAisles && seatCols >= 2 ? seatCols - leftCols : 0;
+    const runs = rightCols > 0 ? [leftCols, rightCols] : [seatCols];
+    const cells = [];
+    const groups = [];
+    let groupId = 1;
+    for (let row = 0; row < seatRows; row++) {
+        const seatRow = buildSeatRowFromRuns(runs, {
+            groupSize,
+            startGroupId: groupId,
+            verticalAisleAfterRun: rightCols > 0 ? 0 : -1,
+        });
+        cells.push(seatRow.cells);
+        groups.push(seatRow.groups);
+        groupId = seatRow.nextGroupId;
+        if (horizontalAisles && row < seatRows - 1) {
+            cells.push(Array(seatRow.cells.length).fill(CELL.AISLE));
+            groups.push(Array(seatRow.cells.length).fill(null));
+        }
+    }
+    return {
+        rows: cells.length,
+        cols: cells[0]?.length || 0,
+        cells,
+        groups,
+        guardians: { enabled: Boolean(spec.guardianPolicy.enabled), left: null, right: null },
+        template: 'ai-local',
+        groupSize,
+        localAisles: { vertical: [], horizontal: [] },
+    };
+}
+
+function buildColumnPatternLayout({ regularSeatTarget, spec }) {
+    const pattern = normalizeColumnPattern(spec.columnPattern);
+    if (!pattern.length) return null;
+    const seatsPerRow = columnPatternSeatCount(pattern);
+    if (seatsPerRow <= 0) return null;
+    const seatRows = resolveSeatRows({
+        target: regularSeatTarget,
+        seatsPerRow,
+        requestedRows: spec.physicalRows,
+        capacityPolicy: spec.capacityPolicy,
+    });
+    const horizontalAisles = Boolean(spec.aislePolicy?.horizontalBetweenGroupRows);
+    const cells = [];
+    const groups = [];
+    let groupId = 1;
+    for (let row = 0; row < seatRows; row++) {
+        const seatRow = [];
+        const groupRow = [];
+        for (const item of pattern) {
+            if (item === 'aisle') {
+                seatRow.push(CELL.AISLE);
+                groupRow.push(null);
+                continue;
+            }
+            const currentGroup = groupId++;
+            for (let offset = 0; offset < item; offset++) {
+                seatRow.push(CELL.SEAT);
+                groupRow.push(currentGroup);
+            }
+        }
+        cells.push(seatRow);
+        groups.push(groupRow);
+        if (horizontalAisles && row < seatRows - 1) {
+            cells.push(Array(seatRow.length).fill(CELL.AISLE));
+            groups.push(Array(seatRow.length).fill(null));
+        }
+    }
+    return {
+        rows: cells.length,
+        cols: cells[0]?.length || 0,
+        cells,
+        groups,
+        guardians: { enabled: Boolean(spec.guardianPolicy.enabled), left: null, right: null },
+        template: 'ai-local-mixed',
+        groupSize: Math.max(1, spec.groupSize || 1),
+        localAisles: { vertical: [], horizontal: [] },
+    };
 }
 
 function buildExpandableClassroomLayout({ regularSeatTarget, spec, previousLayout }) {
@@ -962,46 +1238,50 @@ function buildExpandableClassroomLayout({ regularSeatTarget, spec, previousLayou
     const verticalAisles = Boolean(spec.aislePolicy.verticalBetweenGroups && grouped);
     const horizontalAisles = Boolean(spec.aislePolicy.horizontalBetweenGroupRows && grouped);
     const requestedPhysicalCols = positiveInt(spec.physicalCols, 0, 0, 1000000);
+    const requestedPhysicalRows = positiveInt(spec.physicalRows, 0, 0, 1000000);
+    const capacityPolicy = normalizeCapacityPolicy(spec.capacityPolicy);
+
+    const mixedLayout = buildColumnPatternLayout({ regularSeatTarget: target, spec });
+    if (mixedLayout) return mixedLayout;
 
     if (!grouped) {
         const cols = requestedPhysicalCols > 0
             ? requestedPhysicalCols
             : Math.min(12, Math.max(4, Math.ceil(Math.sqrt(target))));
-        const rows = Math.ceil(target / cols);
-        const cells = Array.from({ length: rows }, () => Array(cols).fill(CELL.SEAT));
-        const groups = Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => r * cols + c + 1));
-        return {
-            rows,
-            cols,
-            cells,
-            groups,
-            guardians: { enabled: Boolean(spec.guardianPolicy.enabled), left: null, right: null },
-            template: 'ai-local',
+        const rows = resolveSeatRows({ target, seatsPerRow: cols, requestedRows: requestedPhysicalRows, capacityPolicy });
+        return buildPhysicalGridLayout({
+            target,
+            seatRows: rows,
+            seatCols: cols,
             groupSize: 1,
-        };
+            verticalAisles: false,
+            horizontalAisles: false,
+            spec,
+        });
     }
 
     if (requestedPhysicalCols > 0 && !spec.groupsPerRow) {
         const cols = requestedPhysicalCols;
-        const rows = Math.ceil(target / cols);
-        const cells = Array.from({ length: rows }, () => Array(cols).fill(CELL.SEAT));
-        const groups = Array.from({ length: rows }, (_, r) => (
-            Array.from({ length: cols }, (_, c) => Math.floor(r / groupSize) * cols + c + 1)
-        ));
-        return {
-            rows,
-            cols,
-            cells,
-            groups,
-            guardians: { enabled: Boolean(spec.guardianPolicy.enabled), left: null, right: null },
-            template: 'ai-local',
+        const rows = resolveSeatRows({ target, seatsPerRow: cols, requestedRows: requestedPhysicalRows, capacityPolicy });
+        return buildPhysicalGridLayout({
+            target,
+            seatRows: rows,
+            seatCols: cols,
             groupSize,
-        };
+            verticalAisles,
+            horizontalAisles,
+            spec,
+        });
     }
 
     const groupCount = Math.ceil(target / groupSize);
     const groupsPerRow = desiredGroupsPerRow(groupCount, spec);
-    const logicalRows = Math.ceil(groupCount / groupsPerRow);
+    const logicalRows = resolveSeatRows({
+        target,
+        seatsPerRow: groupsPerRow * groupSize,
+        requestedRows: requestedPhysicalRows,
+        capacityPolicy,
+    });
     const cols = groupsPerRow * groupSize + (verticalAisles ? groupsPerRow - 1 : 0);
     const rows = logicalRows + (horizontalAisles ? logicalRows - 1 : 0);
     const cells = [];
@@ -1867,6 +2147,32 @@ function betterConstraintEvaluation(candidate, current) {
     return candidate.soft <= current.soft && candidate.percent > current.percent;
 }
 
+function betterScoreEvaluation(candidate, current) {
+    const candidateQuality = candidate.quality || {};
+    const currentQuality = current.quality || {};
+    const candidateHardViolations = candidateQuality.hardViolationCount || 0;
+    const currentHardViolations = currentQuality.hardViolationCount || 0;
+    if (candidateHardViolations > currentHardViolations) return false;
+    if (candidateHardViolations < currentHardViolations) return true;
+
+    const candidateHardScore = candidateQuality.hardScore || 0;
+    const currentHardScore = currentQuality.hardScore || 0;
+    if (candidateHardScore < currentHardScore) return false;
+    if (candidateHardScore > currentHardScore) return true;
+
+    const candidateSoftViolations = candidateQuality.softViolationCount || 0;
+    const currentSoftViolations = currentQuality.softViolationCount || 0;
+    if (candidateSoftViolations < currentSoftViolations) return true;
+    if (candidateSoftViolations > currentSoftViolations) return false;
+
+    const candidateSoftScore = candidateQuality.softScore || 0;
+    const currentSoftScore = currentQuality.softScore || 0;
+    if (candidateSoftScore > currentSoftScore) return true;
+    if (candidateSoftScore < currentSoftScore) return false;
+
+    return (candidateQuality.percent || 0) > (currentQuality.percent || 0);
+}
+
 function cloneAssignments(assignments = []) {
     return assignments.map(assignment => ({ ...assignment }));
 }
@@ -1974,6 +2280,150 @@ function refineSeatingAssignments({
     };
 }
 
+export function optimizeSeatingScore({
+    seating,
+    request,
+    classroomLayout,
+    guardians = {},
+    spec = {},
+    maxRounds = 250,
+    maxDurationMs = 4000,
+    now = () => Date.now(),
+} = {}) {
+    if (!seating?.assignments?.length) {
+        return {
+            ...seating,
+            scoreOptimizationApplied: false,
+            scoreOptimizationRounds: 0,
+            scoreBeforePercent: null,
+            scoreAfterPercent: null,
+            scoreOptimizerTimedOut: false,
+        };
+    }
+
+    let assignments = cloneAssignments(seating.assignments);
+    let current = constraintEvaluationForAssignments({
+        assignments,
+        request,
+        classroomLayout,
+        guardians,
+        unassigned: seating.unassigned || [],
+        spec,
+    });
+    const scoreBeforePercent = current.quality.percent;
+    const guardianIds = new Set([guardians.left, guardians.right].filter(Boolean));
+    const scoreMap = calculateSeatScoreMap(classroomLayout);
+    const seatOptions = sortSeatsByQuality(layoutSeatList(classroomLayout), scoreMap);
+    const policy = spec.placementPolicy || request.strategy || {};
+    const usableRows = [...new Set(seatOptions.map(seat => seat.r))].sort((a, b) => a - b);
+    const lastUsableRow = usableRows.at(-1);
+    const topGradeIds = getTopGradeStudentIds(request.students || []);
+    const canMoveStudentToSeat = (studentId, fromRow, seat) => {
+        if (!studentId || !seat) return false;
+        if (policy.heightOrder && seat.r !== fromRow) return false;
+        if (policy.gradeStrategy === 'priority' && topGradeIds.has(studentId) && seat.r === lastUsableRow) return false;
+        return true;
+    };
+    const deadline = now() + Math.max(1, Number(maxDurationMs) || 1);
+    let rounds = 0;
+    let applied = false;
+    let timedOut = false;
+
+    while (rounds < maxRounds) {
+        if (now() >= deadline) {
+            timedOut = true;
+            break;
+        }
+        let improved = false;
+        const occupied = new Map(assignments.map((assignment, index) => [assignmentSeatKey(assignment), index]));
+
+        for (let i = 0; i < assignments.length && !improved; i++) {
+            if (guardianIds.has(assignments[i].studentId)) continue;
+
+            for (const seat of seatOptions) {
+                if (now() >= deadline) {
+                    timedOut = true;
+                    break;
+                }
+                const key = `${seat.r},${seat.c}`;
+                const occupantIndex = occupied.get(key);
+                if (occupantIndex === i) continue;
+                if (occupantIndex != null && guardianIds.has(assignments[occupantIndex].studentId)) continue;
+                if (!canMoveStudentToSeat(assignments[i].studentId, assignments[i].row, seat)) continue;
+                if (occupantIndex != null) {
+                    const occupant = assignments[occupantIndex];
+                    if (!canMoveStudentToSeat(occupant.studentId, occupant.row, assignments[i])) continue;
+                }
+
+                const candidateAssignments = cloneAssignments(assignments);
+                if (occupantIndex == null) {
+                    candidateAssignments[i].row = seat.r;
+                    candidateAssignments[i].col = seat.c;
+                } else {
+                    const original = {
+                        row: candidateAssignments[i].row,
+                        col: candidateAssignments[i].col,
+                    };
+                    candidateAssignments[i].row = candidateAssignments[occupantIndex].row;
+                    candidateAssignments[i].col = candidateAssignments[occupantIndex].col;
+                    candidateAssignments[occupantIndex].row = original.row;
+                    candidateAssignments[occupantIndex].col = original.col;
+                }
+
+                const candidate = constraintEvaluationForAssignments({
+                    assignments: candidateAssignments,
+                    request,
+                    classroomLayout,
+                    guardians,
+                    unassigned: seating.unassigned || [],
+                    spec,
+                });
+                if (!betterScoreEvaluation(candidate, current)) continue;
+
+                assignments = candidateAssignments;
+                current = candidate;
+                rounds++;
+                applied = true;
+                improved = true;
+                break;
+            }
+        }
+
+        if (timedOut || !improved) break;
+    }
+
+    const protection = protectExcellentStudentsFromLastRow({
+        assignments,
+        studentsById: new Map((request.students || []).map(student => [student.id, student])),
+        seats: seatOptions,
+        gradeStrategy: policy.gradeStrategy,
+        scoreMap,
+    });
+    if (protection.moved > 0) {
+        current = constraintEvaluationForAssignments({
+            assignments,
+            request,
+            classroomLayout,
+            guardians,
+            unassigned: seating.unassigned || [],
+            spec,
+        });
+        applied = true;
+        rounds += protection.moved;
+    }
+
+    return {
+        ...seating,
+        assignments,
+        unsatisfied: current.needEvaluation.unsatisfied,
+        scoreOptimizationApplied: applied,
+        scoreOptimizationRounds: rounds,
+        scoreBeforePercent,
+        scoreAfterPercent: current.quality.percent,
+        scoreOptimizerTimedOut: timedOut,
+    };
+}
+
 function appliedStrategiesFor(spec) {
     const applied = [];
     const policy = spec.placementPolicy || {};
@@ -1997,24 +2447,35 @@ function buildLayoutInterpretation({ request, spec, layout }) {
         ? Math.ceil(Math.ceil(request.students.length / Math.max(1, spec.groupSize || 1)) / spec.groupsPerRow)
         : layout.rows;
     const parts = [];
-    if ((spec.groupSize || 1) > 1 && spec.groupsPerRow > 0) {
+    const mixedColumnPattern = Array.isArray(spec.columnPattern) && spec.columnPattern.length > 0;
+    if (mixedColumnPattern) {
+        parts.push(`已理解为：${spec.notes || '两边1人组，中间2人组，组间过道'}`);
+    } else if ((spec.groupSize || 1) > 1 && spec.groupsPerRow > 0) {
         parts.push(`已理解为：${spec.groupSize === 2 ? '两人' : `${spec.groupSize}人`}一组，每行 ${spec.groupsPerRow} 组，组间${spec.aislePolicy?.verticalBetweenGroups ? '竖过道' : '不留竖过道'}`);
     } else if (spec.physicalCols > 0) {
-        parts.push(`已理解为：${spec.physicalCols} 个物理座位列`);
+        parts.push(`已理解为：${spec.physicalRows > 0 ? `${spec.physicalRows} 行 × ` : ''}${spec.physicalCols} 个物理座位列`);
     } else if ((spec.groupSize || 1) > 1) {
         parts.push(`已理解为：${spec.groupSize}人一组`);
     } else {
         parts.push('已理解为：普通座位布局');
     }
-    parts.push(`布局：${logicalGroupRows} 排 × ${spec.groupsPerRow || layout.cols} ${spec.groupsPerRow ? '组' : '列'} × ${spec.groupsPerRow ? `${spec.groupSize} 座` : '座位'}，可用 ${gridSeatCount(layout)} 个座位`);
+    if (mixedColumnPattern) {
+        parts.push(`布局：${spec.physicalRows || layout.rows} 排 × 混合列模式，可用 ${gridSeatCount(layout)} 个座位`);
+    } else {
+        parts.push(`布局：${logicalGroupRows} 排 × ${spec.groupsPerRow || layout.cols} ${spec.groupsPerRow ? '组' : '列'} × ${spec.groupsPerRow ? `${spec.groupSize} 座` : '座位'}，可用 ${gridSeatCount(layout)} 个座位`);
+    }
     return {
         summary: parts.join('；'),
         assumptions: spec.assumptions || [],
-        confidence: (spec.groupsPerRow > 0 || spec.physicalCols > 0) ? 'high' : 'medium',
+        confidence: (mixedColumnPattern || spec.groupsPerRow > 0 || spec.physicalCols > 0 || spec.physicalRows > 0) ? 'high' : 'medium',
         layoutFacts: {
             groupSize: spec.groupSize || 1,
             groupsPerRow: spec.groupsPerRow || 0,
             physicalCols: spec.physicalCols || 0,
+            physicalRows: spec.physicalRows || 0,
+            capacityPolicy: spec.capacityPolicy || 'auto_expand',
+            columnPattern: spec.columnPattern || [],
+            mixedColumnPattern,
             rows: layout.rows,
             cols: layout.cols,
             regularSeatCount: gridSeatCount(layout),
@@ -2109,6 +2570,11 @@ async function buildLocalArrangement({ request, spec, specWarnings = [], env = p
         fallbackReason: null,
         refinementApplied: false,
         refinementRounds: 0,
+        scoreOptimizationApplied: false,
+        scoreOptimizationRounds: 0,
+        scoreBeforePercent: null,
+        scoreAfterPercent: null,
+        scoreOptimizerTimedOut: false,
     };
     try {
         seating = await solveWithTimefold({
@@ -2145,6 +2611,18 @@ async function buildLocalArrangement({ request, spec, specWarnings = [], env = p
     });
     solverStats.refinementApplied = Boolean(seating.refinementApplied);
     solverStats.refinementRounds = seating.refinementRounds || 0;
+    seating = optimizeSeatingScore({
+        seating,
+        request,
+        classroomLayout,
+        guardians,
+        spec,
+    });
+    solverStats.scoreOptimizationApplied = Boolean(seating.scoreOptimizationApplied);
+    solverStats.scoreOptimizationRounds = seating.scoreOptimizationRounds || 0;
+    solverStats.scoreBeforePercent = seating.scoreBeforePercent ?? null;
+    solverStats.scoreAfterPercent = seating.scoreAfterPercent ?? null;
+    solverStats.scoreOptimizerTimedOut = Boolean(seating.scoreOptimizerTimedOut);
     const regularSeatCount = gridSeatCount(classroomLayout);
     const guardianSeatCount = [guardians.left, guardians.right].filter(Boolean).length;
     const warnings = [
@@ -2192,8 +2670,8 @@ export async function runAiDrivenArrangement({
     env = process.env,
 } = {}) {
     if (!request) throw new Error('缺少排座请求');
-    const allowUnassigned = shouldAllowUnassigned(request.prompt);
     const { spec, warnings: specWarnings } = await requestArrangementSpec({ request, fetchImpl, env });
+    const allowUnassigned = shouldAllowUnassigned(request.prompt) || spec.capacityPolicy === 'fixed';
     const arrangement = await buildLocalArrangement({ request, spec, specWarnings, env, fetchImpl });
     const validation = validateAiArrangement({
         raw: arrangement,

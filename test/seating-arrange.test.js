@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   buildArrangeRepairPrompt,
+  optimizeSeatingScore,
   runAiDrivenArrangement,
   shouldAllowUnassigned,
   normalizeArrangeRequest,
@@ -16,6 +17,14 @@ const students = [
   { id: 's03', name: 'Wang Wu', gender: 'M', grade: 76 },
   { id: 's04', name: 'Zhao Liu', gender: 'F', grade: 88 },
 ];
+
+function layoutFromAssignments(assignments, rows, cols) {
+  const matrix = Array.from({ length: rows }, () => Array(cols).fill(null));
+  for (const assignment of assignments) {
+    matrix[assignment.row][assignment.col] = assignment.studentId;
+  }
+  return matrix;
+}
 
 test('normalizeArrangeRequest requires prompt and student ids', () => {
   const result = normalizeArrangeRequest({
@@ -100,6 +109,114 @@ test('validateAiArrangement rejects unassigned students by default so the room e
   assert.match(result.errors.join(';'), /不能留下未安排学生/);
   assert.equal(shouldAllowUnassigned('60个人，三人一组，中间过道'), false);
   assert.equal(shouldAllowUnassigned('教室只有5排8列，尽量安排'), true);
+});
+
+test('score optimization moves a student into an empty better seat after needs are satisfied', () => {
+  const roster = [
+    { id: 'top', name: 'Top', grade: 100 },
+    { id: 'mid', name: 'Mid', grade: 70 },
+  ];
+  const classroomLayout = {
+    rows: 3,
+    cols: 3,
+    cells: Array.from({ length: 3 }, () => Array(3).fill('seat')),
+    groups: Array.from({ length: 3 }, () => Array(3).fill(1)),
+  };
+  const request = normalizeArrangeRequest({
+    prompt: '质量优先排座',
+    students: roster,
+    constraints: [],
+    strategy: { gradeStrategy: 'priority' },
+  });
+  const seating = {
+    assignments: [
+      { studentId: 'top', row: 2, col: 0 },
+      { studentId: 'mid', row: 2, col: 1 },
+    ],
+    unassigned: [],
+    warnings: [],
+    unsatisfied: [],
+  };
+
+  const result = optimizeSeatingScore({
+    seating,
+    request,
+    classroomLayout,
+    guardians: {},
+    spec: { placementPolicy: { gradeStrategy: 'priority' } },
+    maxRounds: 20,
+    maxDurationMs: 1000,
+  });
+
+  assert.equal(result.scoreOptimizationApplied, true);
+  assert.ok(result.scoreAfterPercent > result.scoreBeforePercent);
+  assert.equal(result.scoreOptimizerTimedOut, false);
+
+  const topSeat = result.assignments.find(item => item.studentId === 'top');
+  assert.notDeepEqual({ row: topSeat.row, col: topSeat.col }, { row: 2, col: 0 });
+});
+
+test('score optimization swaps occupied seats without increasing hard violations', () => {
+  const roster = [
+    { id: 'top', name: 'Top', grade: 100 },
+    { id: 'nearTop', name: 'Near Top', grade: 99 },
+    { id: 'a', name: 'A', grade: 60 },
+    { id: 'b', name: 'B', grade: 50 },
+    { id: 'c', name: 'C', grade: 40 },
+    { id: 'd', name: 'D', grade: 30 },
+  ];
+  const classroomLayout = {
+    rows: 3,
+    cols: 2,
+    cells: Array.from({ length: 3 }, () => Array(2).fill('seat')),
+    groups: Array.from({ length: 3 }, () => Array(2).fill(1)),
+  };
+  const request = normalizeArrangeRequest({
+    prompt: '质量优先排座',
+    students: roster,
+    constraints: [],
+    strategy: { gradeStrategy: 'priority' },
+  });
+  const seating = {
+    assignments: [
+      { studentId: 'top', row: 0, col: 0 },
+      { studentId: 'nearTop', row: 0, col: 1 },
+      { studentId: 'a', row: 1, col: 0 },
+      { studentId: 'b', row: 1, col: 1 },
+      { studentId: 'c', row: 2, col: 0 },
+      { studentId: 'd', row: 2, col: 1 },
+    ],
+    unassigned: [],
+    warnings: [],
+    unsatisfied: [],
+  };
+  const before = evaluateSeatingQuality({
+    layout: layoutFromAssignments(seating.assignments, 3, 2),
+    students: roster,
+    classroomLayout,
+    strategy: request.strategy,
+  });
+
+  const result = optimizeSeatingScore({
+    seating,
+    request,
+    classroomLayout,
+    guardians: {},
+    spec: { placementPolicy: { gradeStrategy: 'priority' } },
+    maxRounds: 20,
+    maxDurationMs: 1000,
+  });
+  const after = evaluateSeatingQuality({
+    layout: layoutFromAssignments(result.assignments, 3, 2),
+    students: roster,
+    classroomLayout,
+    strategy: request.strategy,
+  });
+
+  assert.equal(result.scoreOptimizationApplied, true);
+  assert.ok(after.percent > before.percent);
+  assert.ok(after.hardViolationCount <= before.hardViolationCount);
+  assert.ok(result.scoreOptimizationRounds > 0);
 });
 
 test('validateAiArrangement rejects unsafe AI seat plans', () => {
@@ -277,7 +394,7 @@ test('runAiDrivenArrangement expands beyond old 20x20 limits for large rosters',
   assert.equal(new Set(result.assignments.map(item => item.studentId)).size, 5000);
 });
 
-test('natural language understands two-person group columns as five vertical blocks', async () => {
+test('AI arrangement spec wins over conflicting local layout hints and records a warning', async () => {
   const roster = Array.from({ length: 60 }, (_, index) => ({
     id: `s${String(index + 1).padStart(2, '0')}`,
     name: `Student ${index + 1}`,
@@ -311,17 +428,18 @@ test('natural language understands two-person group columns as five vertical blo
   assert.equal(aiPayload.hints.groupSize, 2);
   assert.equal(aiPayload.hints.groupsPerRow, 5);
   assert.equal(result.arrangementSpec.groupSize, 2);
-  assert.equal(result.arrangementSpec.groupsPerRow, 5);
-  assert.equal(result.arrangementSpec.aislePolicy.verticalBetweenGroups, true);
-  assert.equal(result.classroomLayout.rows, 6);
-  assert.equal(result.classroomLayout.cols, 14);
+  assert.equal(result.arrangementSpec.groupsPerRow, 6);
+  assert.equal(result.arrangementSpec.aislePolicy.verticalBetweenGroups, false);
+  assert.equal(result.classroomLayout.rows, 5);
+  assert.equal(result.classroomLayout.cols, 12);
   assert.equal(result.stats.regularSeatCount, 60);
-  assert.equal(result.interpretation.layoutFacts.groupsPerRow, 5);
-  assert.match(result.interpretation.summary, /5/);
+  assert.equal(result.interpretation.layoutFacts.groupsPerRow, 6);
+  assert.match(result.interpretation.summary, /6/);
   assert.match(result.interpretation.summary, /两人/);
+  assert.ok(result.warnings.some(warning => /AI.*本地|本地.*AI/.test(warning)));
 });
 
-test('natural language keeps physical seat columns separate from group columns', async () => {
+test('AI arrangement spec keeps physical seat columns separate from group columns', async () => {
   const roster = Array.from({ length: 20 }, (_, index) => ({
     id: `s${String(index + 1).padStart(2, '0')}`,
     name: `Student ${index + 1}`,
@@ -332,8 +450,8 @@ test('natural language keeps physical seat columns separate from group columns',
   });
   const fetchImpl = async () => jsonResponse({
     groupSize: 2,
-    groupsPerRow: 5,
-    aislePolicy: { verticalBetweenGroups: true, horizontalBetweenGroupRows: false },
+    physicalCols: 5,
+    aislePolicy: { verticalBetweenGroups: false, horizontalBetweenGroupRows: false },
     guardianPolicy: { enabled: false },
     layoutMode: 'grouped',
   });
@@ -348,6 +466,141 @@ test('natural language keeps physical seat columns separate from group columns',
   assert.notEqual(result.arrangementSpec.groupsPerRow, 5);
   assert.equal(result.classroomLayout.cols, 5);
   assert.equal(result.interpretation.layoutFacts.physicalCols, 5);
+});
+
+test('local fallback understands varied natural language for rows columns groups and aisles', async () => {
+  const roster = Array.from({ length: 48 }, (_, index) => ({
+    id: `s${String(index + 1).padStart(2, '0')}`,
+    name: `Student ${index + 1}`,
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '6行8列，双人桌，中间留通道',
+    students: roster,
+  });
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl: undefined,
+    env: {},
+  });
+
+  assert.equal(result.arrangementSpec.groupSize, 2);
+  assert.equal(result.arrangementSpec.physicalRows, 6);
+  assert.equal(result.arrangementSpec.physicalCols, 8);
+  assert.equal(result.arrangementSpec.aislePolicy.verticalBetweenGroups, true);
+  assert.equal(result.arrangementSpec.capacityPolicy, 'auto_expand');
+  assert.equal(result.classroomLayout.rows, 6);
+  assert.equal(result.classroomLayout.cols, 9);
+  assert.deepEqual(result.classroomLayout.cells[0], ['seat', 'seat', 'seat', 'seat', 'aisle', 'seat', 'seat', 'seat', 'seat']);
+  assert.equal(result.stats.regularSeatCount, 48);
+  assert.equal(result.unassigned.length, 0);
+});
+
+test('AI prompt teaches physical rows capacity policy and mixed column patterns', async () => {
+  const roster = Array.from({ length: 12 }, (_, index) => ({
+    id: `s${String(index + 1).padStart(2, '0')}`,
+    name: `Student ${index + 1}`,
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '两边一人一组，中间两人一组，组间留过道',
+    students: roster,
+  });
+  let systemPrompt = '';
+  let aiPayload = null;
+  const fetchImpl = async (url, options) => {
+    const body = JSON.parse(options.body);
+    systemPrompt = body.messages[0].content;
+    aiPayload = JSON.parse(body.messages.at(-1).content);
+    return jsonResponse({
+      groupSize: 2,
+      columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
+      capacityPolicy: 'auto_expand',
+      layoutMode: 'grouped',
+    });
+  };
+
+  await runAiDrivenArrangement({
+    request,
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.match(systemPrompt, /physicalRows/);
+  assert.match(systemPrompt, /capacityPolicy/);
+  assert.match(systemPrompt, /columnPattern/);
+  assert.match(systemPrompt, /两人一桌/);
+  assert.match(systemPrompt, /每列6人/);
+  assert.match(systemPrompt, /边上.*一人|两边.*一人/);
+  assert.deepEqual(aiPayload.outputSchema.columnPattern, [1, 'aisle', 2, 'aisle', 2, 'aisle', 1]);
+  assert.equal(aiPayload.outputSchema.physicalRows, 6);
+  assert.equal(aiPayload.outputSchema.capacityPolicy, 'auto_expand');
+});
+
+test('AI columnPattern builds mixed single and pair groups and auto-expands rows', async () => {
+  const roster = Array.from({ length: 18 }, (_, index) => ({
+    id: `s${String(index + 1).padStart(2, '0')}`,
+    name: `Student ${index + 1}`,
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '两边一人一组，中间两人一组，组间留过道',
+    students: roster,
+  });
+  const fetchImpl = async () => jsonResponse({
+    groupSize: 2,
+    columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
+    capacityPolicy: 'auto_expand',
+    layoutMode: 'grouped',
+    notes: '两边1人组，中间2人组，组间过道',
+  });
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.deepEqual(result.arrangementSpec.columnPattern, [1, 'aisle', 2, 'aisle', 2, 'aisle', 1]);
+  assert.equal(result.arrangementSpec.capacityPolicy, 'auto_expand');
+  assert.equal(result.classroomLayout.rows, 3);
+  assert.equal(result.classroomLayout.cols, 9);
+  assert.deepEqual(result.classroomLayout.cells[0], ['seat', 'aisle', 'seat', 'seat', 'aisle', 'seat', 'seat', 'aisle', 'seat']);
+  assert.deepEqual(result.classroomLayout.groups[0], [1, null, 2, 2, null, 3, 3, null, 4]);
+  assert.deepEqual(result.classroomLayout.groups[1], [5, null, 6, 6, null, 7, 7, null, 8]);
+  assert.equal(result.stats.regularSeatCount, 18);
+  assert.equal(result.unassigned.length, 0);
+  assert.equal(result.interpretation.layoutFacts.mixedColumnPattern, true);
+  assert.match(result.interpretation.summary, /两边1人组，中间2人组/);
+});
+
+test('fixed capacity columnPattern can leave students unassigned with a warning', async () => {
+  const roster = Array.from({ length: 20 }, (_, index) => ({
+    id: `s${String(index + 1).padStart(2, '0')}`,
+    name: `Student ${index + 1}`,
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '固定两行，两边一人一组，中间两人一组，组间留过道',
+    students: roster,
+  });
+  const fetchImpl = async () => jsonResponse({
+    groupSize: 2,
+    physicalRows: 2,
+    columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
+    capacityPolicy: 'fixed',
+    layoutMode: 'grouped',
+  });
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.equal(result.arrangementSpec.capacityPolicy, 'fixed');
+  assert.equal(result.classroomLayout.rows, 2);
+  assert.equal(result.stats.regularSeatCount, 12);
+  assert.equal(result.assignments.length, 12);
+  assert.equal(result.unassigned.length, 8);
+  assert.ok(result.warnings.some(warning => warning.includes('未安排')));
 });
 
 test('height care and grade priority both apply within the same arrangement', async () => {

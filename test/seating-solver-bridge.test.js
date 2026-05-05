@@ -119,6 +119,37 @@ test('buildTimefoldProblem preserves rich constraint semantics for Timefold', ()
   assert.equal(problem.config.middleColEnd, 2);
 });
 
+test('buildTimefoldProblem does not turn soft hard-capable needs into hard solver fields', () => {
+  const problem = buildTimefoldProblem({
+    request: {
+      students,
+      constraints: [
+        { type: 'front_row', target: 'A', priority: 'soft' },
+        { type: 'front_row', target: 'B', priority: 'hard' },
+        { type: 'not_adjacent', target: 'A', related: 'C', priority: 'soft' },
+        { type: 'avoid_behind', target: 'A', related: 'B', priority: 'soft' },
+        { type: 'prefer', target: 'A', related: 'B', priority: 'soft' },
+      ],
+    },
+    layout,
+    spec: { placementPolicy: {} },
+    guardians: {},
+  });
+
+  const a = problem.students.find(student => student.id === 's01');
+  const b = problem.students.find(student => student.id === 's02');
+  assert.equal(a.mustFrontRow, false);
+  assert.equal(b.mustFrontRow, true);
+  assert.deepEqual(a.mustAvoidAdjacent, []);
+  assert.deepEqual(a.mustAvoidBehind, []);
+  assert.deepEqual(a.preferAdjacent, ['s02']);
+  assert.deepEqual(problem.localOnlyConstraints.map(item => item.type), [
+    'front_row',
+    'not_adjacent',
+    'avoid_behind',
+  ]);
+});
+
 test('buildTimefoldProblem skips Timefold when regular students exceed grid capacity', () => {
   assert.throws(() => buildTimefoldProblem({
     request: {

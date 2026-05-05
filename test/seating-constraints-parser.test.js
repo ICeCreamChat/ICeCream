@@ -167,3 +167,58 @@ test('AI normalization converts blocked-view descriptors to front row and reject
     item.type === 'avoid_behind' && ['高个子', '胖子'].includes(item.related)
   ));
 });
+
+test('local parser infers hard and soft priorities from student need wording', () => {
+  const constraints = parseSeatingConstraintsLocally({
+    text: [
+      '王妍兰晓想坐前排。',
+      '卫黛宜近视看不清，想坐前排。',
+      '卢宁倩荔不想坐在鲜于振后面。',
+      '能志飞保视力不好，不能坐在邵元后面。',
+      '米寒琳和邰丽不能同桌。',
+      '胡进乐最好和计纯不要坐一起。',
+    ].join('\n'),
+    students: [{ name: '王妍兰晓' }, ...exampleStudents],
+  });
+
+  assert.ok(constraints.some(item =>
+    item.type === 'front_row' && item.target === '王妍兰晓' && item.priority === 'soft'
+  ));
+  assert.ok(constraints.some(item =>
+    item.type === 'front_row' && item.target === '卫黛宜' && item.priority === 'hard'
+  ));
+  assert.ok(constraints.some(item =>
+    item.type === 'avoid_behind' && item.target === '卢宁倩荔' && item.related === '鲜于振' && item.priority === 'soft'
+  ));
+  assert.ok(constraints.some(item =>
+    item.type === 'avoid_behind' && item.target === '能志飞保' && item.related === '邵元' && item.priority === 'hard'
+  ));
+  assert.ok(constraints.some(item =>
+    item.type === 'not_adjacent' && item.target === '米寒琳' && item.related === '邰丽' && item.priority === 'hard'
+  ));
+  assert.ok(constraints.some(item =>
+    item.type === 'not_adjacent' && item.target === '胡进乐' && item.related === '计纯' && item.priority === 'soft'
+  ));
+});
+
+test('AI normalization corrects obvious priority mismatches with rule guardrails', () => {
+  const constraints = normalizeConstraintItems([
+    { type: 'front_row', target: '王妍兰晓', reason: '想坐前排', priority: 'hard' },
+    { type: 'front_row', target: '卫黛宜', reason: '近视看不清，想坐前排', priority: 'soft' },
+    { type: 'avoid', target: '米寒琳', related: '邰丽', reason: '不能同桌', priority: 'soft' },
+    { type: 'avoid', target: '卢宁倩荔', related: '鲜于振', reason: '不想坐在鲜于振后面', priority: 'hard' },
+  ], { students: [{ name: '王妍兰晓' }, ...exampleStudents] });
+
+  assert.ok(constraints.some(item =>
+    item.type === 'front_row' && item.target === '王妍兰晓' && item.priority === 'soft'
+  ));
+  assert.ok(constraints.some(item =>
+    item.type === 'front_row' && item.target === '卫黛宜' && item.priority === 'hard'
+  ));
+  assert.ok(constraints.some(item =>
+    item.type === 'not_adjacent' && item.target === '米寒琳' && item.related === '邰丽' && item.priority === 'hard'
+  ));
+  assert.ok(constraints.some(item =>
+    item.type === 'avoid_behind' && item.target === '卢宁倩荔' && item.related === '鲜于振' && item.priority === 'soft'
+  ));
+});

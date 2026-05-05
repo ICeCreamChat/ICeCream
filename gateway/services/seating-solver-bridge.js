@@ -23,6 +23,19 @@ const TIMEFOLD_SUPPORTED_CONSTRAINT_TYPES = new Set([
     'prefer_front_middle',
     'prefer_front_mid_rows',
 ]);
+const TIMEFOLD_HARD_ONLY_CONSTRAINT_TYPES = new Set([
+    'front_row',
+    'back_row',
+    'avoid',
+    'not_adjacent',
+    'pair',
+    'must_adjacent',
+    'avoid_first_row',
+    'avoid_last_row',
+    'avoid_front_row',
+    'avoid_back_row',
+    'avoid_behind',
+]);
 
 export class TimefoldUnavailableError extends Error {
     constructor(message, reason = 'unavailable') {
@@ -116,6 +129,16 @@ function constraintRelated(constraint) {
         ?? constraint?.mate
         ?? constraint?.with
         ?? constraint?.other;
+}
+
+function isSoftPriority(constraint) {
+    return asText(constraint?.priority).toLowerCase() === 'soft';
+}
+
+function isSupportedByTimefold(constraint) {
+    const type = constraint?.type;
+    if (!TIMEFOLD_SUPPORTED_CONSTRAINT_TYPES.has(type)) return false;
+    return !(TIMEFOLD_HARD_ONLY_CONSTRAINT_TYPES.has(type) && isSoftPriority(constraint));
 }
 
 function buildSeatQualityMap(layout) {
@@ -322,9 +345,8 @@ function partitionConstraints(constraints = []) {
     const supported = [];
     const localOnlyConstraints = [];
     for (const constraint of constraints) {
-        const type = constraint?.type;
-        if (!type) continue;
-        if (TIMEFOLD_SUPPORTED_CONSTRAINT_TYPES.has(type)) {
+        if (!constraint?.type) continue;
+        if (isSupportedByTimefold(constraint)) {
             supported.push(constraint);
         } else {
             localOnlyConstraints.push(constraint);

@@ -57,3 +57,17 @@ test('seating planner keeps touch interactions and draggable floating assistant 
   assert.match(seatingStyles, /@media \(max-width: 520px\)/);
   assert.match(seatingStyles, /@media \(max-width: 768px\)/);
 });
+
+test('seating planner status bar stays compact and wraps on narrow screens', async () => {
+  const seatingStyles = await readFile(seatingStylePath, 'utf8');
+  const statusStart = seatingStyles.indexOf('@media (max-width: 768px)', seatingStyles.indexOf('.sp-status-warning-chip'));
+  const statusEnd = seatingStyles.indexOf('.sp-arrangement-explain', statusStart);
+  const statusMedia = seatingStyles.slice(statusStart, statusEnd);
+
+  assert.match(statusMedia, /@media \(max-width: 768px\)/);
+  assert.match(statusMedia, /\.sp-status\s*{[^}]*flex-wrap:\s*wrap/s);
+  assert.match(statusMedia, /\.sp-status-left\s*{[^}]*flex:\s*1 1 100%/s);
+  assert.match(statusMedia, /\.sp-status-middle\s*{[^}]*flex:\s*1 1 auto/s);
+  assert.match(statusMedia, /\.sp-status-right\s*{[^}]*margin-left:\s*auto/s);
+  assert.doesNotMatch(statusMedia, /grid-template-areas/);
+});

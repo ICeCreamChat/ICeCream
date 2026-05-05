@@ -33,6 +33,29 @@ test('seating planner has a large-grid virtual rendering guard', async () => {
   assert.match(source, /sp-grid--virtual/);
 });
 
+test('seating planner auto-fits wide grids horizontally without clipping seats', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+  const gridRule = styles.match(/\.sp-grid\s*{[^}]*}/s)?.[0] || '';
+
+  assert.match(source, /fitGridToClassroomView\(\)\s*{/);
+  assert.match(source, /this\.fitGridToClassroomView\(\);\s*this\.syncPodiumSeatWidth\(\);\s*this\.renderAisleGapHandles\(\);/s);
+  assert.match(source, /this\._resizeHandler = \(\) => \{\s*this\.fitGridToClassroomView\(\);/s);
+  assert.match(gridRule, /--sp-grid-fit-scale:\s*1/);
+  assert.match(gridRule, /transform:\s*scale\(var\(--sp-grid-fit-scale,\s*1\)\)/);
+  assert.match(gridRule, /transform-origin:\s*top left/);
+});
+
+test('seating planner positions aisle handles from scaled visible seat bounds', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  assert.match(source, /getVisibleGridSeatBounds\(\)/);
+  assert.match(source, /const visualGridBounds = this\.getVisibleGridSeatBounds\(\)/);
+  assert.match(source, /handle\.style\.left = `\$\{toLayerLeft\(visualGridBounds\.left\)\}px`/);
+  assert.match(source, /handle\.style\.width = `\$\{visualGridBounds\.width\}px`/);
+  assert.doesNotMatch(source, /handle\.style\.width = `\$\{gridRect\.width\}px`/);
+});
+
 test('seating planner shows clearer strategy labels and applied strategy status', async () => {
   const source = await readFile(sourcePath, 'utf8');
 
@@ -70,6 +93,8 @@ test('seating planner exposes a feedback entry before the tool theme toggle', as
   assert.ok(feedbackIndex < themeIndex, 'feedback button should be rendered before the theme toggle');
   assert.match(launcherSource, /tool\.id === 'seating'/);
   assert.match(launcherSource, /openFeedbackDialog/);
+  assert.match(launcherSource, /const moduleVersion = encodeURIComponent\(window\.ICeCream\?\.assetVersion \|\| Date\.now\(\)\)/);
+  assert.match(launcherSource, /import\(`\.\/\$\{tool\.module\}\.js\?v=\$\{moduleVersion\}`\)/);
 
   assert.match(plannerSource, /openFeedbackDialog/);
   assert.match(plannerSource, /buildFeedbackSnapshot/);
@@ -146,6 +171,24 @@ test('seating planner frames constraints as student seating needs in the UI', as
   assert.doesNotMatch(source, /描述座位约束/);
 });
 
+test('seating planner lets teachers adjust extracted needs before arranging', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(source, /renderConstraintsList\(\)/);
+  assert.match(source, /toggleConstraintPriority\(index\)/);
+  assert.match(source, /deleteConstraint\(index\)/);
+  assert.match(source, /constraintPriorityTitle/);
+  assert.match(source, /data-constraint-priority/);
+  assert.match(source, /data-delete-constraint/);
+  assert.match(source, /this\.constraints\[index\]\.priority = current === 'hard' \? 'soft' : 'hard'/);
+  assert.match(source, /this\.constraints\.splice\(index,\s*1\)/);
+  assert.match(source, /this\.refreshConstraintStatus\(\);\s*this\.updateStatus\(\);/s);
+  assert.match(styles, /\.sp-constraint-actions/);
+  assert.match(styles, /\.sp-constraint-priority\s*{[^}]*cursor:\s*pointer/s);
+  assert.match(styles, /\.sp-constraint-delete/);
+});
+
 test('seating planner can show and hide seat grade and height details', async () => {
   const source = await readFile(sourcePath, 'utf8');
 
@@ -153,6 +196,108 @@ test('seating planner can show and hide seat grade and height details', async ()
   assert.match(source, /sp-toggle-seat-details/);
   assert.match(source, /sp-seat-meta/);
   assert.match(source, /renderSeatMeta/);
+});
+
+test('seating planner disables the old hover personal-info tooltip', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.doesNotMatch(source, /tooltip\.className = 'sp-seat-tooltip'/);
+  assert.doesNotMatch(source, /const tooltip = document\.createElement\('div'\);[\s\S]{0,240}sp-seat-tooltip/);
+  assert.doesNotMatch(styles, /\.sp-seat--filled:hover\s+\.sp-seat-tooltip\s*{/);
+  assert.match(source, /bindSeatDetailPopover\(cell,\s*student\.id\)/);
+  assert.match(source, /showSeatDetailPopover\(event,\s*studentId\)/);
+});
+
+test('seating planner stacks desk status icons in the lower right corner', async () => {
+  const styles = await readFile(stylePath, 'utf8');
+  const deskItemsRule = styles.match(/\.sp-desk-items\s*{[^}]*}/s)?.[0] || '';
+  const booksRule = styles.match(/\.sp-desk-item--books\s*{[^}]*}/s)?.[0] || '';
+
+  assert.match(deskItemsRule, /bottom:\s*4px/);
+  assert.match(deskItemsRule, /right:\s*4px/);
+  assert.match(deskItemsRule, /flex-direction:\s*column/);
+  assert.match(deskItemsRule, /align-items:\s*flex-end/);
+  assert.doesNotMatch(deskItemsRule, /left:/);
+  assert.doesNotMatch(deskItemsRule, /justify-content:\s*space-between/);
+  assert.doesNotMatch(booksRule, /margin-left:\s*auto/);
+});
+
+test('seating planner renders desk icons through one helper for normal virtual and guardian seats', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  assert.match(source, /renderDeskItems\(student\)/);
+  assert.match(source, /createVirtualSeatCell\(r,\s*c\)[\s\S]*renderDeskItems\(student\)/);
+  assert.match(source, /renderGrid\(\)[\s\S]*renderDeskItems\(student\)/);
+  assert.match(source, /renderPodiumSeats\(\)[\s\S]*renderDeskItems\(student\)/);
+  assert.match(source, /studentHasUnmetNeed\(student\.id\)/);
+  assert.match(source, /studentHasSatisfiedNeed\(student\.id\)/);
+  assert.match(source, /近视\|戴眼镜\|视力\|看不清\|看不见\|看不到\|黑板/);
+  assert.doesNotMatch(source, /indicators\.some\(i => i\.reason\?\.includes\('视力'\)\)/);
+});
+
+test('seating planner opens a detailed popover when clicking assigned seats', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+  const popoverRule = styles.match(/\.sp-seat-detail-popover\s*{[^}]*}/s)?.[0] || '';
+  const lightPopoverRule = styles.match(/body\.light-mode\s+\.sp-seat-detail-popover\s*{[^}]*}/s)?.[0] || '';
+
+  assert.match(source, /buildSeatDetail\(studentId\)\s*{/);
+  assert.match(source, /showSeatDetailPopover\(event,\s*studentId\)\s*{/);
+  assert.match(source, /hideSeatDetailPopover\(\)\s*{/);
+  assert.match(source, /syncSeatDetailPopoverPosition\(\)\s*{/);
+  assert.match(source, /findSeatDetailAnchor\(studentId\)\s*{/);
+  assert.match(source, /scheduleSeatDetailPopoverSync\(\)\s*{/);
+  assert.match(source, /bindSeatDetailPopover\(cell,\s*studentId\)\s*{/);
+  assert.match(source, /unbindSeatDetailPopover\(cell\)\s*{/);
+  assert.match(source, /this\._seatDetailAnchor = null/);
+  assert.match(source, /this\._seatDetailStudentId = null/);
+  assert.match(source, /delete seat\.dataset\.studentId/);
+  assert.match(source, /createVirtualSeatCell\(r,\s*c\)[\s\S]*bindSeatDetailPopover\(cell,\s*studentId\)/);
+  assert.match(source, /renderGrid\(\)[\s\S]*bindSeatDetailPopover\(cell,\s*student\.id\)/);
+  assert.match(source, /renderPodiumSeats\(\)[\s\S]*bindSeatDetailPopover\(seat,\s*student\.id\)/);
+  assert.match(source, /this\._justDragged = true/);
+  assert.match(source, /if \(this\._justDragged\) return/);
+  assert.match(source, /addEventListener\('pointerup', cell\._seatDetailPointerUpHandler\)/);
+  assert.match(source, /this\._seatDetailSuppressClickUntil = Date\.now\(\) \+ 220/);
+  assert.match(source, /dx > 5 \|\| dy > 5 \|\| this\._justDragged/);
+  assert.match(source, /studentHasVisionNeed\(student\.id\)/);
+  assert.match(source, /isTopGradeStudent\(student\)/);
+  assert.match(source, /studentHasSatisfiedNeed\(student\.id\)/);
+  assert.match(source, /studentHasUnmetNeed\(student\.id\)/);
+  assert.match(source, /keydown[\s\S]*Escape[\s\S]*hideSeatDetailPopover/);
+  assert.match(source, /document\.addEventListener\('click', this\._seatDetailOutsideClickHandler\)/);
+  assert.match(source, /document\.removeEventListener\('click', this\._seatDetailOutsideClickHandler\)/);
+  assert.match(source, /anchor\.classList\.add\('sp-seat--detail-open'\)/);
+  assert.match(source, /classList\.remove\('sp-seat--detail-open'\)/);
+  assert.match(source, /document\.querySelectorAll\('\.sp-seat--filled\[data-student-id\]'\)/);
+  assert.match(source, /requestAnimationFrame\(\(\) => this\.syncSeatDetailPopoverPosition\(\)\)/);
+  assert.match(source, /addEventListener\('scroll', this\._seatDetailScrollHandler/);
+  assert.match(source, /removeEventListener\('scroll', this\._seatDetailScrollHandler/);
+  assert.match(source, /window\.addEventListener\('resize', this\._seatDetailResizeHandler\)/);
+  assert.match(source, /window\.removeEventListener\('resize', this\._seatDetailResizeHandler\)/);
+  assert.match(source, /popover\.style\.left = `\$\{left\}px`/);
+  assert.match(source, /popover\.style\.top = `\$\{Math\.max\(8,\s*top\)\}px`/);
+  assert.doesNotMatch(source, /window\.scrollX/);
+  assert.doesNotMatch(source, /window\.scrollY/);
+
+  assert.match(styles, /\.sp-seat-detail-popover/);
+  assert.match(popoverRule, /position:\s*fixed/);
+  assert.match(popoverRule, /z-index:\s*10020/);
+  assert.match(popoverRule, /--sp-seat-detail-bg:/);
+  assert.match(popoverRule, /--sp-seat-detail-text:/);
+  assert.match(popoverRule, /background:\s*var\(--sp-seat-detail-bg\)/);
+  assert.match(popoverRule, /color:\s*var\(--sp-seat-detail-text\)/);
+  assert.match(lightPopoverRule, /--sp-seat-detail-bg:\s*rgba\(255,\s*255,\s*255/);
+  assert.match(lightPopoverRule, /--sp-seat-detail-text:\s*#0f172a/);
+  assert.match(styles, /\.sp-seat-detail-header/);
+  assert.match(styles, /\.sp-seat-detail-icons/);
+  assert.match(styles, /\.sp-seat-detail-icon-row/);
+  assert.match(styles, /\.sp-seat-detail-constraints/);
+  assert.match(styles, /\.sp-seat-detail-popover--above/);
+  assert.match(styles, /\.sp-seat-detail-popover--below/);
+  assert.match(styles, /\.sp-seat--filled:hover,\s*\.sp-seat--detail-open\s*{[^}]*transform:\s*translateY\(-8px\)/s);
+  assert.match(styles, /@keyframes spSeatDetailIn/);
 });
 
 test('seating planner marks books by top 20 percent grades instead of fixed score', async () => {
@@ -473,7 +618,11 @@ test('seating planner shows score summary and expandable score analysis in the s
   assert.match(source, /renderScoreAnalysisPanel/);
   assert.match(source, /评分 \$\{quality\.percent\} · \$\{quality\.feasible \? '可行' : '需调整'\}/);
   assert.match(source, /highlightScoreIssue/);
+  assert.match(source, /highlightSingleMatch/);
   assert.match(source, /formatScoreMatchDetail/);
+  assert.match(source, /aria-expanded/);
+  assert.match(source, /sp-score-analysis-legend/);
+  assert.match(source, /matchButton\.addEventListener\('click', event => \{\s*event\.stopPropagation\(\);\s*this\.highlightSingleMatch\(match\);/s);
   assert.match(source, /sp-score-analysis-match/);
   assert.match(source, /issue\.matches\.forEach/);
   assert.doesNotMatch(source, /shownMatches/);
@@ -486,6 +635,50 @@ test('seating planner shows score summary and expandable score analysis in the s
   assert.match(styles, /\.sp-score-analysis-detail\s*{[^}]*white-space: normal/s);
   assert.match(styles, /\.sp-score-analysis-match\s*{[^}]*overflow-wrap: anywhere/s);
   assert.match(styles, /\.sp-score-analysis-item/);
+  assert.match(styles, /\.sp-score-analysis-item-header/);
+  assert.match(styles, /\.sp-score-analysis-legend/);
+});
+
+test('seating planner renders a compact horizontal status bar with warning chip', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(source, /sp-status-left/);
+  assert.match(source, /sp-status-middle/);
+  assert.match(source, /sp-status-right/);
+  assert.match(source, /sp-status-warning-chip/);
+  assert.match(source, /buildCompactStatusWarning\(unplacedCount\)/);
+  assert.match(source, /activateStatusWarningChip\(warning\)/);
+  assert.match(source, /statusWarningChip\.addEventListener\('click'/);
+  assert.match(source, /this\.showScoreAnalysis = true/);
+  assert.match(source, /评分 \$\{quality\.percent\} · \$\{quality\.feasible \? '可行' : '需调整'\}/);
+  assert.match(source, /满足 \$\{evaluation\.satisfied\}\/\$\{evaluation\.total\} 需求/);
+  assert.match(source, /this\.renderSeatDetailsToggle\(\)/);
+  assert.match(source, /querySelector\('#sp-status \.sp-status-right'\)/);
+  assert.doesNotMatch(source, /sp-status-primary/);
+  assert.doesNotMatch(source, /sp-status-needs-bar/);
+  assert.doesNotMatch(source, /sp-status-warnings/);
+  assert.doesNotMatch(source, /sp-status-needs-fill/);
+
+  assert.match(styles, /\.sp-status\s*{[^}]*display:\s*flex/s);
+  assert.match(styles, /\.sp-status-left/);
+  assert.match(styles, /\.sp-status-middle/);
+  assert.match(styles, /\.sp-status-right/);
+  assert.match(styles, /\.sp-status-chip/);
+  assert.match(styles, /\.sp-status-warning-chip/);
+  assert.doesNotMatch(styles, /grid-template-areas:\s*[\s\S]*warnings warnings warnings/);
+  assert.doesNotMatch(styles, /\.sp-status-warnings/);
+  assert.doesNotMatch(styles, /\.sp-status-needs-bar/);
+});
+
+test('seating planner explains parsed physical rows and mixed column layouts', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+
+  assert.match(source, /layoutFacts\.physicalRows/);
+  assert.match(source, /layoutFacts\.columnPattern/);
+  assert.match(source, /layoutFacts\.capacityPolicy/);
+  assert.match(source, /mixedColumnPattern/);
+  assert.match(source, /两边1人组，中间2人组/);
 });
 
 test('collapsed AI seating assistant icon can be dragged without opening the panel', async () => {

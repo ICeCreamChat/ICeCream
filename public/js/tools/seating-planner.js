@@ -54,6 +54,18 @@ class SeatingPlanner {
         this.contextTarget = null;
         this.guardians = [null, null];
         this.unassigned = [];
+        this._seatDetailPopover = null;
+        this._seatDetailOutsideClickHandler = null;
+        this._seatDetailKeyHandler = null;
+        this._seatDetailAnchor = null;
+        this._seatDetailStudentId = null;
+        this._seatDetailScrollTargets = [];
+        this._seatDetailScrollHandler = null;
+        this._seatDetailResizeHandler = null;
+        this._seatDetailSyncFrame = null;
+        this._justDragged = false;
+        this._dragResetTimer = null;
+        this._seatDetailSuppressClickUntil = 0;
         // Loading guard
         this._isGenerating = false;
         // Undo/Redo
@@ -209,6 +221,11 @@ class SeatingPlanner {
         if (this._seatDetailsToggleHandler) {
             document.removeEventListener('click', this._seatDetailsToggleHandler);
             this._seatDetailsToggleHandler = null;
+        }
+        this.hideSeatDetailPopover();
+        if (this._dragResetTimer) {
+            clearTimeout(this._dragResetTimer);
+            this._dragResetTimer = null;
         }
         this.clearSuggestionState('arrange');
         this.stopChatDrag();
@@ -697,6 +714,8 @@ class SeatingPlanner {
             seat.innerHTML = '';
             // Reset classes
             seat.className = 'sp-seat sp-seat--guardian';
+            delete seat.dataset.studentId;
+            this.unbindSeatDetailPopover(seat);
             if (studentId) {
                 const student = this.studentMap.get(studentId);
                 if (student) {
@@ -714,17 +733,14 @@ class SeatingPlanner {
                     desk.appendChild(nameTag);
                     const meta = this.renderSeatMeta(student);
                     if (meta) desk.appendChild(meta);
+                    desk.appendChild(this.renderDeskItems(student));
                     seat.appendChild(desk);
                     // === The Chair Back ===
                     const chair = document.createElement('div');
                     chair.className = `sp-chair sp-chair--${student.gender === 'M' ? 'male' : 'female'}`;
                     seat.appendChild(chair);
 
-                    // === Tooltip ===
-                    const tooltip = document.createElement('div');
-                    tooltip.className = 'sp-seat-tooltip';
-                    tooltip.textContent = `${student.name} (左右护法)`;
-                    seat.appendChild(tooltip);
+                    this.bindSeatDetailPopover(seat, student.id);
 
                 } else {
                     // Invalid ID? Treat as empty
@@ -748,6 +764,12 @@ class SeatingPlanner {
 
     // ========== Drag & Drop ==========
     handleDragStart(e, row, col) {
+        this._justDragged = true;
+        if (this._dragResetTimer) {
+            clearTimeout(this._dragResetTimer);
+            this._dragResetTimer = null;
+        }
+        this.hideSeatDetailPopover();
         this.dragSource = { row, col };
         e.target.classList.add('sp-seat--dragging');
         e.dataTransfer.effectAllowed = 'move';
@@ -760,6 +782,11 @@ class SeatingPlanner {
         e.target.style.opacity = '1';
         this.dragSource = null;
         document.querySelectorAll('.sp-seat--drag-over').forEach(c => c.classList.remove('sp-seat--drag-over'));
+        if (this._dragResetTimer) clearTimeout(this._dragResetTimer);
+        this._dragResetTimer = setTimeout(() => {
+            this._justDragged = false;
+            this._dragResetTimer = null;
+        }, 180);
     }
 
     handleDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
@@ -1022,6 +1049,7 @@ class SeatingPlanner {
                                     点击右键设置过道
                                 </span>
                             </div>
+                            <div class="sp-status-middle"></div>
                             <div class="sp-status-right"></div>
                         </div>
                         <div class="sp-arrangement-explain sp-hidden" id="sp-arrangement-explain" aria-live="polite"></div>
@@ -1973,6 +2001,425 @@ class SeatingPlanner {
         return meta;
     }
 
+    needReferencesStudent(need, studentId) {
+        const student = this.studentMap.get(studentId);
+        const studentName = student?.name;
+        return [need?.target, need?.related, need?.studentId, need?.student, need?.id]
+            .filter(Boolean)
+            .some(value => value === studentId || value === studentName);
+    }
+
+    studentHasUnmetNeed(studentId) {
+        return this.unsatisfied.some(need => this.needReferencesStudent(need, studentId));
+    }
+
+    studentHasAnyNeed(studentId) {
+        return this.constraints.some(need => this.needReferencesStudent(need, studentId));
+    }
+
+    studentHasSatisfiedNeed(studentId) {
+        return this.studentHasAnyNeed(studentId) && !this.studentHasUnmetNeed(studentId);
+    }
+
+    studentHasVisionNeed(studentId) {
+        const visionPattern = /近视|戴眼镜|视力|看不清|看不见|看不到|黑板/;
+        return this.constraints.some(need => {
+            if (!this.needReferencesStudent(need, studentId)) return false;
+            return visionPattern.test(`${need.type || ''} ${need.reason || ''} ${need.related || ''}`);
+        });
+    }
+
+    createDeskItem(className, text, title) {
+        const item = document.createElement('span');
+        item.className = `sp-desk-item ${className}`;
+        item.textContent = text;
+        item.title = title;
+        return item;
+    }
+
+    renderDeskItems(student) {
+        const itemsContainer = document.createElement('div');
+        itemsContainer.className = 'sp-desk-items';
+        if (!student?.id) return itemsContainer;
+
+        if (this.studentHasVisionNeed(student.id)) {
+            itemsContainer.appendChild(this.createDeskItem('sp-desk-item--glasses', '👓', '近视或看清需求'));
+        }
+        if (this.isTopGradeStudent(student)) {
+            itemsContainer.appendChild(this.createDeskItem('sp-desk-item--books', '📚', `成绩: ${student.grade}分`));
+        }
+        if (this.studentHasSatisfiedNeed(student.id)) {
+            itemsContainer.appendChild(this.createDeskItem('sp-desk-item--candy', '🍬', '心愿已满足'));
+        }
+        if (this.studentHasUnmetNeed(student.id)) {
+            const warning = this.unsatisfied.find(need => this.needReferencesStudent(need, student.id));
+            itemsContainer.appendChild(this.createDeskItem('sp-desk-item--quiet', '⚠️', warning?.reason || '需求未满足'));
+        }
+
+        return itemsContainer;
+    }
+
+    createSeatDetailMeta(label, value) {
+        const item = document.createElement('span');
+        item.className = 'sp-seat-detail-meta-item';
+        item.textContent = `${label}: ${value ?? '-'}`;
+        return item;
+    }
+
+    createSeatDetailIconRow(icon, title, description, modifier = '') {
+        const row = document.createElement('div');
+        row.className = `sp-seat-detail-icon-row ${modifier}`.trim();
+        const iconEl = document.createElement('span');
+        iconEl.className = 'sp-seat-detail-icon';
+        iconEl.textContent = icon;
+        const text = document.createElement('span');
+        const label = document.createElement('strong');
+        label.textContent = title;
+        const detail = document.createElement('small');
+        detail.textContent = description;
+        text.append(label, detail);
+        row.append(iconEl, text);
+        return row;
+    }
+
+    getStudentRelatedNeeds(studentId) {
+        return this.constraints.filter(need => this.needReferencesStudent(need, studentId));
+    }
+
+    needMatchesUnsatisfied(need, unsatisfied) {
+        if (!need || !unsatisfied) return false;
+        const sameType = (need.type || '') === (unsatisfied.type || '');
+        const sameTarget = String(need.target || '') === String(unsatisfied.target || '');
+        const sameRelated = String(need.related || '') === String(unsatisfied.related || '');
+        return sameType && sameTarget && sameRelated;
+    }
+
+    isNeedCurrentlyUnsatisfied(need, studentId) {
+        return this.unsatisfied.some(item =>
+            this.needReferencesStudent(item, studentId) && this.needMatchesUnsatisfied(need, item)
+        );
+    }
+
+    formatSeatDetailConstraintType(type) {
+        const labels = {
+            front_row: '前排',
+            back_row: '后排',
+            avoid_first_row: '避开第一排',
+            avoid_last_row: '避开最后一排',
+            avoid_front_row: '避开前排',
+            avoid_back_row: '避开后排',
+            avoid_behind: '不要坐后面',
+            avoid_near: '不要太近',
+            avoid_low_grade_deskmate: '避开低分同桌',
+            prefer_front_middle: '前排中间',
+            prefer_front_mid_rows: '前中排',
+            prefer_aisle: '靠过道',
+            prefer_high_grade_neighbor: '高分同伴',
+            prefer_near: '尽量靠近',
+            avoid: '不要相邻',
+            not_adjacent: '不能相邻',
+            prefer: '偏好相邻',
+            pair: '安排同桌',
+            must_adjacent: '必须相邻',
+        };
+        return labels[type] || type || '座位需求';
+    }
+
+    buildSeatDetail(studentId) {
+        const student = this.studentMap.get(studentId);
+        if (!student) return null;
+
+        const panel = document.createElement('div');
+        panel.className = 'sp-seat-detail-content';
+
+        const header = document.createElement('div');
+        header.className = 'sp-seat-detail-header';
+        const title = document.createElement('strong');
+        title.className = 'sp-seat-detail-name';
+        title.textContent = student.name || student.id;
+        const meta = document.createElement('div');
+        meta.className = 'sp-seat-detail-meta';
+        meta.append(
+            this.createSeatDetailMeta('性别', student.gender === 'M' ? '男' : (student.gender === 'F' ? '女' : '-')),
+            this.createSeatDetailMeta('成绩', student.grade ?? '-'),
+            this.createSeatDetailMeta('身高', student.height ?? '-')
+        );
+        header.append(title, meta);
+        panel.appendChild(header);
+
+        const icons = document.createElement('div');
+        icons.className = 'sp-seat-detail-icons';
+        const iconRows = [];
+        if (this.studentHasVisionNeed(student.id)) {
+            iconRows.push(this.createSeatDetailIconRow('👓', '视力/看清需求', '有近视、戴眼镜、看清黑板或前排相关需求。'));
+        }
+        if (this.isTopGradeStudent(student)) {
+            iconRows.push(this.createSeatDetailIconRow('📚', '成绩前 20%', '当前成绩属于班级前 20%，会在成绩策略中被优先照顾。'));
+        }
+        if (this.studentHasSatisfiedNeed(student.id)) {
+            iconRows.push(this.createSeatDetailIconRow('🍬', '需求已满足', '该学生相关需求当前没有未满足项。', 'sp-seat-detail-icon-row--success'));
+        }
+        if (this.studentHasUnmetNeed(student.id)) {
+            const warning = this.unsatisfied.find(need => this.needReferencesStudent(need, student.id));
+            iconRows.push(this.createSeatDetailIconRow('⚠️', '需求未满足', warning?.reason || '该学生仍有需求未满足。', 'sp-seat-detail-icon-row--warning'));
+        }
+        if (!iconRows.length) {
+            iconRows.push(this.createSeatDetailIconRow('•', '暂无特殊图标', '当前座位没有额外桌面标记。'));
+        }
+        icons.append(...iconRows);
+        panel.appendChild(icons);
+
+        const constraints = document.createElement('div');
+        constraints.className = 'sp-seat-detail-constraints';
+        const constraintsTitle = document.createElement('strong');
+        constraintsTitle.textContent = '相关需求';
+        constraints.appendChild(constraintsTitle);
+
+        const relatedNeeds = this.getStudentRelatedNeeds(student.id);
+        if (!relatedNeeds.length) {
+            const empty = document.createElement('div');
+            empty.className = 'sp-seat-detail-empty';
+            empty.textContent = '暂无相关需求。';
+            constraints.appendChild(empty);
+        } else {
+            relatedNeeds.forEach(need => {
+                const unmet = this.isNeedCurrentlyUnsatisfied(need, student.id);
+                const row = document.createElement('div');
+                row.className = `sp-seat-detail-constraint ${unmet ? 'is-unmet' : 'is-met'}`;
+
+                const main = document.createElement('span');
+                main.className = 'sp-seat-detail-constraint-text';
+                const priority = need.priority === 'hard' ? '必须' : '尽量';
+                const relation = need.related ? ` -> ${need.related}` : '';
+                main.textContent = `${priority} · ${this.formatSeatDetailConstraintType(need.type)} · ${need.target || student.name}${relation}`;
+                if (need.reason) {
+                    const reason = document.createElement('small');
+                    reason.textContent = need.reason;
+                    main.appendChild(reason);
+                }
+
+                const status = document.createElement('span');
+                status.className = `sp-seat-detail-status ${unmet ? 'is-unmet' : 'is-met'}`;
+                status.textContent = unmet ? '未满足' : '已满足';
+                row.append(main, status);
+                constraints.appendChild(row);
+            });
+        }
+        panel.appendChild(constraints);
+        return panel;
+    }
+
+    positionSeatDetailPopover(popover, anchor) {
+        if (!popover || !anchor) return;
+        const rect = anchor.getBoundingClientRect();
+        const width = popover.offsetWidth || 320;
+        const height = popover.offsetHeight || 220;
+        const margin = 12;
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || width;
+        const left = Math.min(
+            Math.max(8, rect.left + rect.width / 2 - width / 2),
+            Math.max(8, viewportWidth - width - 8)
+        );
+        const placeAbove = rect.top >= height + margin + 8;
+        const top = placeAbove
+            ? rect.top - height - margin
+            : rect.bottom + margin;
+        popover.classList.toggle('sp-seat-detail-popover--above', placeAbove);
+        popover.classList.toggle('sp-seat-detail-popover--below', !placeAbove);
+        popover.style.left = `${left}px`;
+        popover.style.top = `${Math.max(8, top)}px`;
+    }
+
+    findSeatDetailAnchor(studentId) {
+        if (!studentId) return null;
+        return Array.from(document.querySelectorAll('.sp-seat--filled[data-student-id]'))
+            .find(seat => seat.dataset.studentId === studentId) || null;
+    }
+
+    scheduleSeatDetailPopoverSync() {
+        if (!this._seatDetailPopover || this._seatDetailSyncFrame) return;
+        this._seatDetailSyncFrame = requestAnimationFrame(() => this.syncSeatDetailPopoverPosition());
+    }
+
+    syncSeatDetailPopoverPosition() {
+        this._seatDetailSyncFrame = null;
+        if (!this._seatDetailPopover || !this._seatDetailStudentId) return;
+
+        let anchor = this._seatDetailAnchor;
+        if (!anchor?.isConnected || anchor.dataset.studentId !== this._seatDetailStudentId) {
+            anchor?.classList?.remove('sp-seat--detail-open');
+            anchor = this.findSeatDetailAnchor(this._seatDetailStudentId);
+            this._seatDetailAnchor = anchor;
+            if (anchor) anchor.classList.add('sp-seat--detail-open');
+        }
+
+        if (!anchor) {
+            this.hideSeatDetailPopover();
+            return;
+        }
+
+        const rect = anchor.getBoundingClientRect();
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        const isVisible = rect.width > 0
+            && rect.height > 0
+            && rect.right > 0
+            && rect.bottom > 0
+            && rect.left < viewportWidth
+            && rect.top < viewportHeight;
+
+        if (!isVisible) {
+            this.hideSeatDetailPopover();
+            return;
+        }
+
+        this.positionSeatDetailPopover(this._seatDetailPopover, anchor);
+    }
+
+    bindSeatDetailPositionSync(anchor) {
+        this.unbindSeatDetailPositionSync();
+        this._seatDetailScrollHandler = () => this.scheduleSeatDetailPopoverSync();
+        this._seatDetailResizeHandler = () => this.scheduleSeatDetailPopoverSync();
+
+        const scrollTargets = [
+            anchor?.closest('.sp-classroom-view'),
+            this.container?.closest('.tool-body'),
+        ].filter(Boolean);
+        this._seatDetailScrollTargets = Array.from(new Set(scrollTargets));
+        this._seatDetailScrollTargets.forEach(target => {
+            target.addEventListener('scroll', this._seatDetailScrollHandler, { passive: true });
+        });
+        window.addEventListener('resize', this._seatDetailResizeHandler);
+    }
+
+    unbindSeatDetailPositionSync() {
+        if (this._seatDetailScrollHandler) {
+            this._seatDetailScrollTargets.forEach(target => {
+                target.removeEventListener('scroll', this._seatDetailScrollHandler);
+            });
+        }
+        if (this._seatDetailResizeHandler) {
+            window.removeEventListener('resize', this._seatDetailResizeHandler);
+        }
+        if (this._seatDetailSyncFrame) {
+            cancelAnimationFrame(this._seatDetailSyncFrame);
+            this._seatDetailSyncFrame = null;
+        }
+        this._seatDetailScrollTargets = [];
+        this._seatDetailScrollHandler = null;
+        this._seatDetailResizeHandler = null;
+    }
+
+    showSeatDetailPopover(event, studentId) {
+        const detail = this.buildSeatDetail(studentId);
+        if (!detail) return;
+
+        this.hideSeatDetailPopover();
+        const anchor = event.currentTarget;
+        this._seatDetailAnchor = anchor;
+        this._seatDetailStudentId = studentId;
+        anchor.classList.add('sp-seat--detail-open');
+        const popover = document.createElement('div');
+        popover.className = 'sp-seat-detail-popover';
+        popover.setAttribute('role', 'dialog');
+        popover.setAttribute('aria-label', '座位详情');
+        popover.appendChild(detail);
+        document.body.appendChild(popover);
+        this._seatDetailPopover = popover;
+        this.positionSeatDetailPopover(popover, anchor);
+        this.bindSeatDetailPositionSync(anchor);
+
+        this._seatDetailOutsideClickHandler = clickEvent => {
+            const currentAnchor = this._seatDetailAnchor;
+            if (popover.contains(clickEvent.target) || currentAnchor?.contains(clickEvent.target)) return;
+            this.hideSeatDetailPopover();
+        };
+        this._seatDetailKeyHandler = keyEvent => {
+            if (keyEvent.key === 'Escape') this.hideSeatDetailPopover();
+        };
+        document.addEventListener('keydown', this._seatDetailKeyHandler);
+        setTimeout(() => {
+            if (this._seatDetailPopover === popover) {
+                document.addEventListener('click', this._seatDetailOutsideClickHandler);
+            }
+        }, 0);
+    }
+
+    hideSeatDetailPopover() {
+        if (this._seatDetailAnchor) {
+            this._seatDetailAnchor.classList.remove('sp-seat--detail-open');
+            this._seatDetailAnchor = null;
+        }
+        this._seatDetailStudentId = null;
+        this.unbindSeatDetailPositionSync();
+        if (this._seatDetailOutsideClickHandler) {
+            document.removeEventListener('click', this._seatDetailOutsideClickHandler);
+            this._seatDetailOutsideClickHandler = null;
+        }
+        if (this._seatDetailKeyHandler) {
+            document.removeEventListener('keydown', this._seatDetailKeyHandler);
+            this._seatDetailKeyHandler = null;
+        }
+        if (this._seatDetailPopover) {
+            this._seatDetailPopover.remove();
+            this._seatDetailPopover = null;
+        }
+    }
+
+    bindSeatDetailPopover(cell, studentId) {
+        if (!cell || !studentId) return;
+        this.unbindSeatDetailPopover(cell);
+        cell._seatDetailPointerDownHandler = event => {
+            if (event.pointerType === 'mouse' && event.button !== 0) return;
+            cell._seatDetailPointerStart = {
+                x: event.clientX,
+                y: event.clientY,
+                at: Date.now(),
+            };
+        };
+        cell._seatDetailPointerUpHandler = event => {
+            const start = cell._seatDetailPointerStart;
+            cell._seatDetailPointerStart = null;
+            if (!start) return;
+            if (event.pointerType === 'mouse' && event.button !== 0) return;
+            const dx = Math.abs(event.clientX - start.x);
+            const dy = Math.abs(event.clientY - start.y);
+            if (dx > 5 || dy > 5 || this._justDragged) return;
+            event.stopPropagation();
+            this._seatDetailSuppressClickUntil = Date.now() + 220;
+            this.showSeatDetailPopover(event, studentId);
+        };
+        cell._seatDetailClickHandler = event => {
+            if (Date.now() < this._seatDetailSuppressClickUntil) {
+                event.stopPropagation();
+                return;
+            }
+            if (this._justDragged) return;
+            event.stopPropagation();
+            this.showSeatDetailPopover(event, studentId);
+        };
+        cell.addEventListener('pointerdown', cell._seatDetailPointerDownHandler);
+        cell.addEventListener('pointerup', cell._seatDetailPointerUpHandler);
+        cell.addEventListener('click', cell._seatDetailClickHandler);
+    }
+
+    unbindSeatDetailPopover(cell) {
+        if (!cell) return;
+        if (cell._seatDetailPointerDownHandler) {
+            cell.removeEventListener('pointerdown', cell._seatDetailPointerDownHandler);
+            cell._seatDetailPointerDownHandler = null;
+        }
+        if (cell._seatDetailPointerUpHandler) {
+            cell.removeEventListener('pointerup', cell._seatDetailPointerUpHandler);
+            cell._seatDetailPointerUpHandler = null;
+        }
+        if (cell._seatDetailClickHandler) {
+            cell.removeEventListener('click', cell._seatDetailClickHandler);
+            cell._seatDetailClickHandler = null;
+        }
+        cell._seatDetailPointerStart = null;
+    }
+
     createVirtualSeatCell(r, c) {
         const cell = document.createElement('div');
         cell.className = 'sp-seat';
@@ -2004,6 +2451,7 @@ class SeatingPlanner {
             desk.appendChild(nameTag);
             const meta = this.renderSeatMeta(student);
             if (meta) desk.appendChild(meta);
+            desk.appendChild(this.renderDeskItems(student));
             const chair = document.createElement('div');
             chair.className = `sp-chair sp-chair--${student?.gender === 'M' ? 'male' : 'female'}`;
             cell.appendChild(desk);
@@ -2011,6 +2459,7 @@ class SeatingPlanner {
             cell.setAttribute('draggable', 'true');
             cell.addEventListener('dragstart', e => this.handleDragStart(e, r, c));
             cell.addEventListener('dragend', e => this.handleDragEnd(e));
+            if (student) this.bindSeatDetailPopover(cell, studentId);
         } else {
             cell.classList.add('sp-seat--empty');
             cell.appendChild(desk);
@@ -2028,11 +2477,13 @@ class SeatingPlanner {
         if (!grid) return;
         const scroller = grid.closest('.sp-classroom-view');
         const rowHeight = SeatingPlanner.VIRTUAL_GRID_ROW_HEIGHT;
+        const fitScale = Number.parseFloat(grid.style.getPropertyValue('--sp-grid-fit-scale')) || 1;
+        const visibleRowHeight = Math.max(1, rowHeight * fitScale);
         const overscan = SeatingPlanner.VIRTUAL_GRID_ROW_OVERSCAN;
         const viewportHeight = scroller?.clientHeight || 720;
         const scrollTop = Math.max(0, (scroller?.scrollTop || 0) - (grid.offsetTop || 0));
-        const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
-        const visibleRows = Math.ceil(viewportHeight / rowHeight) + overscan * 2;
+        const startRow = Math.max(0, Math.floor(scrollTop / visibleRowHeight) - overscan);
+        const visibleRows = Math.ceil(viewportHeight / visibleRowHeight) + overscan * 2;
         const endRow = Math.min(this.rows, startRow + visibleRows);
 
         this._virtualGridActive = true;
@@ -2063,6 +2514,7 @@ class SeatingPlanner {
             scroller.addEventListener('scroll', this._virtualGridScrollHandler);
         }
         requestAnimationFrame(() => {
+            this.fitGridToClassroomView();
             this.syncPodiumSeatWidth();
             this.renderAisleGapHandles();
         });
@@ -2082,8 +2534,6 @@ class SeatingPlanner {
         grid.style.height = '';
         grid.innerHTML = '';
         grid.style.gridTemplateColumns = `repeat(${this.cols}, 1fr)`;
-        const topGradeIds = this.getTopGradeStudentIds();
-
         for (let r = 0; r < this.rows; r++) {
             for (let c = 0; c < this.cols; c++) {
                 const cell = document.createElement('div');
@@ -2129,65 +2579,13 @@ class SeatingPlanner {
                         const meta = this.renderSeatMeta(student);
                         if (meta) desk.appendChild(meta);
 
-                        // Desk Items Container
-                        const itemsContainer = document.createElement('div');
-                        itemsContainer.className = 'sp-desk-items';
-
-                        // Status items based on student data (returns array for multi-constraint support)
-                        const indicators = this.getConstraintIndicators(student.id);
-                        // Glasses - for vision constraint (近视)
-                        if (indicators.some(i => i.reason?.includes('视力'))) {
-                            const glasses = document.createElement('span');
-                            glasses.className = 'sp-desk-item sp-desk-item--glasses';
-                            glasses.textContent = '👓';
-                            glasses.title = '近视需要关照';
-                            itemsContainer.appendChild(glasses);
-                        }
-
-                        // Books - for top-ranked grades
-                        if (this.isTopGradeStudent(student, topGradeIds)) {
-                            const books = document.createElement('span');
-                            books.className = 'sp-desk-item sp-desk-item--books';
-                            books.textContent = '📚';
-                            books.title = `成绩: ${student.grade}分`;
-                            itemsContainer.appendChild(books);
-                        }
-
-                        // Candy - wish fulfilled (心愿达成)
-                        if (indicators.some(i => i.type === 'success')) {
-                            const candy = document.createElement('span');
-                            candy.className = 'sp-desk-item sp-desk-item--candy';
-                            candy.textContent = '🍬';
-                            candy.title = '心愿已满足';
-                            itemsContainer.appendChild(candy);
-                        }
-
-                        // Warning indicator
-                        const warningIndicator = indicators.find(i => i.type === 'warning');
-                        if (warningIndicator) {
-                            const warning = document.createElement('span');
-                            warning.className = 'sp-desk-item sp-desk-item--quiet';
-                            warning.textContent = '⚠️';
-                            warning.title = warningIndicator.reason;
-                            itemsContainer.appendChild(warning);
-                        }
-
-                        desk.appendChild(itemsContainer);
+                        desk.appendChild(this.renderDeskItems(student));
                         cell.appendChild(desk);
 
                         // === The Chair Back ===
                         const chair = document.createElement('div');
                         chair.className = `sp-chair sp-chair--${student.gender === 'M' ? 'male' : 'female'}`;
                         cell.appendChild(chair);
-
-                        // === Tooltip ===
-                        const tooltip = document.createElement('div');
-                        tooltip.className = 'sp-seat-tooltip';
-                        const gradeText = student.grade ? ` | 成绩: ${student.grade}` : '';
-                        const heightText = student.height ? ` | 身高: ${student.height}` : '';
-                        const genderText = student.gender === 'M' ? '男' : '女';
-                        tooltip.textContent = `${student.name} (${genderText})${gradeText}${heightText}`;
-                        cell.appendChild(tooltip);
 
                         // Hover interaction
                         cell.addEventListener('mouseenter', () => this.highlightRelationships(student.id));
@@ -2197,6 +2595,7 @@ class SeatingPlanner {
                         cell.setAttribute('draggable', 'true');
                         cell.addEventListener('dragstart', e => this.handleDragStart(e, r, c));
                         cell.addEventListener('dragend', e => this.handleDragEnd(e));
+                        this.bindSeatDetailPopover(cell, student.id);
                     }
                 } else {
                     cell.classList.add('sp-seat--empty');
@@ -2223,12 +2622,14 @@ class SeatingPlanner {
 
         // Sync podium seat width with grid seats
         requestAnimationFrame(() => {
+            this.fitGridToClassroomView();
             this.syncPodiumSeatWidth();
             this.renderAisleGapHandles();
         });
         // Add resize listener if not already added
         if (!this._resizeHandler) {
             this._resizeHandler = () => {
+                this.fitGridToClassroomView();
                 this.syncPodiumSeatWidth();
                 this.renderAisleGapHandles();
                 this.syncChatPosition();
@@ -2308,6 +2709,41 @@ class SeatingPlanner {
     }
 
     // ========== Layout Sync ==========
+    fitGridToClassroomView() {
+        const grid = document.getElementById('sp-grid');
+        const view = grid?.closest('.sp-classroom-view');
+        if (!grid || !view) return 1;
+
+        grid.style.setProperty('--sp-grid-fit-scale', '1');
+        grid.style.marginBottom = '';
+
+        const viewStyle = window.getComputedStyle(view);
+        if (view.clientWidth <= 0) return 1;
+        const horizontalPadding = (Number.parseFloat(viewStyle.paddingLeft) || 0)
+            + (Number.parseFloat(viewStyle.paddingRight) || 0);
+        const availableWidth = Math.max(1, view.clientWidth - horizontalPadding);
+        const gridWindow = grid.querySelector('.sp-grid-window');
+        const gridStyle = window.getComputedStyle(grid);
+        const gridPadding = (Number.parseFloat(gridStyle.paddingLeft) || 0)
+            + (Number.parseFloat(gridStyle.paddingRight) || 0);
+        const naturalWidth = Math.max(
+            grid.scrollWidth,
+            gridWindow ? gridWindow.scrollWidth + gridPadding : 0
+        );
+        const scale = naturalWidth > availableWidth
+            ? Math.max(0.25, Math.min(1, availableWidth / naturalWidth))
+            : 1;
+        const roundedScale = Number(scale.toFixed(4));
+
+        grid.style.setProperty('--sp-grid-fit-scale', String(roundedScale));
+
+        const naturalHeight = Math.max(grid.scrollHeight, grid.offsetHeight);
+        const collapsedHeight = naturalHeight * (1 - roundedScale);
+        grid.style.marginBottom = collapsedHeight > 1 ? `-${collapsedHeight}px` : '';
+
+        return roundedScale;
+    }
+
     syncPodiumSeatWidth() {
         const gridSeat = document.querySelector('.sp-grid .sp-seat');
         const podiumSeats = document.querySelectorAll('.sp-podium-row .sp-seat');
@@ -2318,6 +2754,28 @@ class SeatingPlanner {
                 seat.style.minWidth = `${width}px`;
             });
         }
+    }
+
+    getVisibleGridSeatBounds() {
+        const grid = document.getElementById('sp-grid');
+        if (!grid) return null;
+        const rects = [...grid.querySelectorAll('.sp-seat[data-row]')]
+            .map(seat => seat.getBoundingClientRect())
+            .filter(rect => rect.width > 0 && rect.height > 0);
+        if (!rects.length) return grid.getBoundingClientRect();
+
+        const left = Math.min(...rects.map(rect => rect.left));
+        const right = Math.max(...rects.map(rect => rect.right));
+        const top = Math.min(...rects.map(rect => rect.top));
+        const bottom = Math.max(...rects.map(rect => rect.bottom));
+        return {
+            left,
+            right,
+            top,
+            bottom,
+            width: right - left,
+            height: bottom - top,
+        };
     }
 
     getGridSeatElement(row, col) {
@@ -2373,7 +2831,8 @@ class SeatingPlanner {
         if (!this.rows || !this.cols) return;
 
         const viewRect = view.getBoundingClientRect();
-        const gridRect = grid.getBoundingClientRect();
+        const visualGridBounds = this.getVisibleGridSeatBounds();
+        if (!visualGridBounds) return;
         const toLayerLeft = value => value - viewRect.left + view.scrollLeft;
         const toLayerTop = value => value - viewRect.top + view.scrollTop;
         const firstVisibleRow = Number(grid.querySelector('.sp-seat[data-row]')?.dataset.row ?? 0);
@@ -2391,9 +2850,9 @@ class SeatingPlanner {
             handle.title = '点击插入横过道';
             handle.setAttribute('aria-label', `在第 ${row} 排和第 ${row + 1} 排之间插入横过道`);
             handle.dataset.insertRow = String(row);
-            handle.style.left = `${toLayerLeft(gridRect.left)}px`;
+            handle.style.left = `${toLayerLeft(visualGridBounds.left)}px`;
             handle.style.top = `${toLayerTop((upperRect.bottom + lowerRect.top) / 2) - 7}px`;
-            handle.style.width = `${gridRect.width}px`;
+            handle.style.width = `${visualGridBounds.width}px`;
             handle.style.height = '14px';
             handle.addEventListener('click', event => {
                 event.stopPropagation();
@@ -3252,7 +3711,7 @@ class SeatingPlanner {
             const result = await res.json();
             if (!result.success) throw new Error(result.error);
 
-            this.constraints = result.data.constraints;
+            this.constraints = Array.isArray(result.data.constraints) ? result.data.constraints : [];
             const warnings = Array.isArray(result.data.warnings) ? result.data.warnings.filter(Boolean) : [];
             const list = document.getElementById('sp-constraints-list');
             if (this.constraints.length === 0) {
@@ -3329,6 +3788,7 @@ class SeatingPlanner {
                 });
             }
 
+            this.renderConstraintsList(warnings);
             if (window.lucide) window.lucide.createIcons();
             this.refreshConstraintStatus();
             this.updateStatus();
@@ -3342,6 +3802,136 @@ class SeatingPlanner {
             btn.innerHTML = '<i data-lucide="sparkles"></i> 提取需求';
             if (window.lucide) window.lucide.createIcons();
         }
+    }
+
+    renderConstraintsList(warnings = []) {
+        const list = document.getElementById('sp-constraints-list');
+        if (!list) return;
+
+        const cleanWarnings = Array.isArray(warnings) ? warnings.filter(Boolean) : [];
+        list.innerHTML = '';
+        if (!this.constraints.length) {
+            const message = cleanWarnings.length
+                ? `解析未得到可执行需求：${cleanWarnings.join('；')}`
+                : '未识别到学生需求';
+            const empty = document.createElement('div');
+            empty.style.cssText = 'text-align:center;color:var(--sp-text-muted);font-size:0.85rem;padding:16px;';
+            empty.textContent = message;
+            list.appendChild(empty);
+            return;
+        }
+
+        const iconMap = {
+            front_row: 'eye',
+            back_row: 'arrow-down',
+            avoid_first_row: 'arrow-down',
+            avoid_last_row: 'arrow-up',
+            avoid_front_row: 'arrow-down',
+            avoid_back_row: 'arrow-up',
+            avoid_behind: 'move-up',
+            avoid_near: 'x-circle',
+            avoid_low_grade_deskmate: 'shield-alert',
+            prefer_front_middle: 'crosshair',
+            prefer_front_mid_rows: 'panel-top',
+            prefer_aisle: 'footprints',
+            prefer_high_grade_neighbor: 'graduation-cap',
+            prefer_near: 'heart',
+            avoid: 'x-circle',
+            not_adjacent: 'x-circle',
+            prefer: 'heart',
+            pair: 'link',
+            must_adjacent: 'link',
+        };
+        const typeMap = {
+            front_row: 'front',
+            back_row: 'front',
+            avoid_first_row: 'avoid',
+            avoid_last_row: 'avoid',
+            avoid_front_row: 'avoid',
+            avoid_back_row: 'avoid',
+            avoid_behind: 'avoid',
+            avoid_near: 'avoid',
+            avoid_low_grade_deskmate: 'avoid',
+            prefer_front_middle: 'prefer',
+            prefer_front_mid_rows: 'prefer',
+            prefer_aisle: 'prefer',
+            prefer_high_grade_neighbor: 'prefer',
+            prefer_near: 'prefer',
+            avoid: 'avoid',
+            not_adjacent: 'avoid',
+            prefer: 'prefer',
+            pair: 'prefer',
+            must_adjacent: 'prefer',
+        };
+
+        this.constraints.forEach((constraint, index) => {
+            const priority = constraint.priority === 'hard' ? 'hard' : 'soft';
+            const row = document.createElement('div');
+            row.className = 'sp-constraint';
+
+            const iconSpan = document.createElement('span');
+            iconSpan.className = `sp-constraint-icon sp-constraint-icon--${typeMap[constraint.type] || 'front'}`;
+            iconSpan.innerHTML = `<i data-lucide="${iconMap[constraint.type] || 'circle'}"></i>`;
+            row.appendChild(iconSpan);
+
+            const textSpan = document.createElement('span');
+            textSpan.className = 'sp-constraint-text';
+            textSpan.textContent = `${constraint.target}${constraint.related ? ` -> ${constraint.related}` : ''}: ${constraint.reason}`;
+            row.appendChild(textSpan);
+
+            const actions = document.createElement('span');
+            actions.className = 'sp-constraint-actions';
+
+            const priorityButton = document.createElement('button');
+            priorityButton.type = 'button';
+            priorityButton.className = `sp-constraint-priority sp-constraint-priority--${priority}`;
+            priorityButton.textContent = priority === 'hard' ? '必须' : '尽量';
+            priorityButton.title = this.constraintPriorityTitle(priority);
+            priorityButton.setAttribute('aria-label', `切换为${priority === 'hard' ? '尽量' : '必须'}`);
+            priorityButton.setAttribute('data-constraint-priority', String(index));
+            priorityButton.addEventListener('click', () => this.toggleConstraintPriority(index));
+            actions.appendChild(priorityButton);
+
+            const deleteButton = document.createElement('button');
+            deleteButton.type = 'button';
+            deleteButton.className = 'sp-constraint-delete';
+            deleteButton.title = '删除这条需求';
+            deleteButton.setAttribute('aria-label', '删除这条需求');
+            deleteButton.setAttribute('data-delete-constraint', String(index));
+            deleteButton.innerHTML = '<i data-lucide="trash-2"></i>';
+            deleteButton.addEventListener('click', () => this.deleteConstraint(index));
+            actions.appendChild(deleteButton);
+
+            row.appendChild(actions);
+            list.appendChild(row);
+        });
+
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    constraintPriorityTitle(priority) {
+        return priority === 'hard'
+            ? '必须：未满足会导致“需调整”。点击切换为尽量。'
+            : '尽量：影响评分，但不影响可行性。点击切换为必须。';
+    }
+
+    toggleConstraintPriority(index) {
+        if (!Number.isInteger(index) || !this.constraints[index]) return;
+        const current = this.constraints[index].priority === 'hard' ? 'hard' : 'soft';
+        this.constraints[index].priority = current === 'hard' ? 'soft' : 'hard';
+        this.renderConstraintsList();
+        this.refreshConstraintStatus();
+        this.updateStatus();
+        this.renderScoreAnalysisPanel();
+    }
+
+    deleteConstraint(index) {
+        if (!Number.isInteger(index) || !this.constraints[index]) return;
+        this.constraints.splice(index, 1);
+        this.renderConstraintsList();
+        this.refreshConstraintStatus();
+        this.updateStatus();
+        this.renderScoreAnalysisPanel();
     }
 
     async generateSeating() {
@@ -4781,11 +5371,15 @@ class SeatingPlanner {
 
         const grid = document.createElement('div');
         grid.className = 'sp-arrangement-explain-grid';
+        const mixedLayoutText = layoutFacts.mixedColumnPattern || layoutFacts.columnPattern?.length
+            ? `两边1人组，中间2人组 · ${layoutFacts.physicalRows || layoutFacts.rows || this.rows} 排`
+            : '';
         const rows = [
-            ['布局', layoutFacts.groupsPerRow
+            ['布局', mixedLayoutText || (layoutFacts.groupsPerRow
                 ? `${Math.ceil((stats.studentCount || this.students.length || 0) / Math.max(1, (layoutFacts.groupsPerRow || 1) * (layoutFacts.groupSize || 1)))} 排 × ${layoutFacts.groupsPerRow} 组 × ${layoutFacts.groupSize} 座`
-                : `${layoutFacts.rows || this.rows} 排 × ${layoutFacts.physicalCols || layoutFacts.cols || this.cols} 列`],
+                : `${layoutFacts.physicalRows || layoutFacts.rows || this.rows} 排 × ${layoutFacts.physicalCols || layoutFacts.cols || this.cols} 列`)],
             ['过道', layoutFacts.verticalBetweenGroups ? '组间竖过道' : '无组间竖过道'],
+            ['容量', layoutFacts.capacityPolicy === 'fixed' ? '固定容量' : '自动扩容'],
             ['优化', solverFacts.used ? 'Timefold Solver' : '本地排座'],
             ['说明', 'Timefold 负责学生分配，不改变布局列数'],
         ];
@@ -4796,6 +5390,12 @@ class SeatingPlanner {
             }
         } else if (stats.fallbackReason || solverFacts.fallbackReason) {
             rows.push(['回退', stats.fallbackReason || solverFacts.fallbackReason]);
+        }
+        if (stats.scoreOptimizationApplied || Number.isFinite(Number(stats.scoreBeforePercent))) {
+            const before = Number.isFinite(Number(stats.scoreBeforePercent)) ? stats.scoreBeforePercent : '-';
+            const after = Number.isFinite(Number(stats.scoreAfterPercent)) ? stats.scoreAfterPercent : before;
+            const rounds = stats.scoreOptimizationRounds || 0;
+            rows.push(['高分优化', stats.scoreOptimizationApplied ? `${before} → ${after}（${rounds} 轮）` : '未找到更高分交换']);
         }
         for (const [label, value] of rows) {
             const item = document.createElement('div');
@@ -4846,6 +5446,15 @@ class SeatingPlanner {
         header.append(title, meta);
         panel.appendChild(header);
 
+        const legend = document.createElement('div');
+        legend.className = 'sp-score-analysis-legend';
+        const hardLegend = document.createElement('span');
+        hardLegend.textContent = '必须：未满足会导致需调整';
+        const softLegend = document.createElement('span');
+        softLegend.textContent = '尽量：影响评分，不影响可行性';
+        legend.append(hardLegend, softLegend);
+        panel.appendChild(legend);
+
         if (!issues.length) {
             const empty = document.createElement('div');
             empty.className = 'sp-score-analysis-empty';
@@ -4857,10 +5466,13 @@ class SeatingPlanner {
         const list = document.createElement('div');
         list.className = 'sp-score-analysis-list';
         issues.forEach((issue, index) => {
-            const item = document.createElement('button');
-            item.type = 'button';
+            const item = document.createElement('div');
             item.className = `sp-score-analysis-item sp-score-analysis-item--${issue.level === 'hard' ? 'hard' : 'soft'}`;
-            item.addEventListener('click', () => this.highlightScoreIssue(index));
+
+            const headerButton = document.createElement('button');
+            headerButton.type = 'button';
+            headerButton.className = 'sp-score-analysis-item-header';
+            headerButton.setAttribute('aria-expanded', 'false');
 
             const main = document.createElement('span');
             main.className = 'sp-score-analysis-main';
@@ -4872,16 +5484,29 @@ class SeatingPlanner {
             score.className = 'sp-score-analysis-score';
             score.textContent = String(issue.score);
 
-            const matchList = document.createElement('span');
-            matchList.className = 'sp-score-analysis-matches';
+            const matchList = document.createElement('div');
+            matchList.className = 'sp-score-analysis-matches sp-hidden';
             issue.matches.forEach(match => {
-                const matchLine = document.createElement('span');
-                matchLine.className = 'sp-score-analysis-match';
-                matchLine.textContent = this.formatScoreMatchDetail(issue, match);
-                matchList.appendChild(matchLine);
+                const matchButton = document.createElement('button');
+                matchButton.type = 'button';
+                matchButton.className = 'sp-score-analysis-match';
+                matchButton.textContent = this.formatScoreMatchDetail(issue, match);
+                matchButton.addEventListener('click', event => {
+                    event.stopPropagation();
+                    this.highlightSingleMatch(match);
+                });
+                matchList.appendChild(matchButton);
             });
 
-            item.append(main, detail, matchList, score);
+            headerButton.addEventListener('click', () => {
+                const expanded = headerButton.getAttribute('aria-expanded') === 'true';
+                headerButton.setAttribute('aria-expanded', String(!expanded));
+                matchList.classList.toggle('sp-hidden', expanded);
+                this.highlightScoreIssue(index);
+            });
+
+            headerButton.append(main, detail, score);
+            item.append(headerButton, matchList);
             list.appendChild(item);
         });
         panel.appendChild(list);
@@ -4898,6 +5523,83 @@ class SeatingPlanner {
             return;
         }
         this.highlightCells(cells);
+    }
+
+    highlightSingleMatch(match) {
+        const rawCells = match?.cells?.length
+            ? match.cells
+            : (match?.studentIds || []).map(id => this._findPos(id)).filter(Boolean);
+        const cells = rawCells.filter(cell => Number.isInteger(cell?.r) && Number.isInteger(cell?.c));
+        if (!cells.length) {
+            this.showToast('这条评分明细没有可高亮的座位', 'info');
+            return;
+        }
+        const seen = new Set();
+        const uniqueCells = cells.filter(cell => {
+            const key = `${cell.r},${cell.c}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+        this.highlightCells(uniqueCells);
+    }
+
+    resolveStatusStudentId(value) {
+        const text = String(value || '').trim();
+        if (!text) return '';
+        if (this.studentMap.has(text)) return text;
+        return this.students.find(student => student.id === text || student.name === text)?.id || text;
+    }
+
+    highlightStatusWarning(warning) {
+        if (!warning) return;
+        const cells = warning.cells?.length
+            ? warning.cells
+            : (warning.studentIds?.length
+                ? warning.studentIds
+                : [warning.target, warning.related].map(value => this.resolveStatusStudentId(value)))
+                .filter(Boolean)
+                .map(id => this._findPos(id))
+                .filter(Boolean);
+        if (!cells.length) {
+            this.showToast('这条警告没有可高亮的座位', 'info');
+            return;
+        }
+        this.highlightCells(cells);
+    }
+
+    buildCompactStatusWarning(unplacedCount) {
+        const quality = this._qualityEvaluation || {};
+        const parts = [];
+        if ((quality.hardViolationCount || 0) > 0) parts.push(`${quality.hardViolationCount} 条需调整`);
+        else if (this.unsatisfied.length > 0) parts.push(`${this.unsatisfied.length} 条未满足`);
+        if (unplacedCount > 0) parts.push(`${unplacedCount} 名未安排`);
+        if (!parts.length) return null;
+
+        const firstUnsatisfied = this.unsatisfied[0];
+        if (firstUnsatisfied) {
+            return {
+                label: parts.join(' / '),
+                target: firstUnsatisfied.target,
+                related: firstUnsatisfied.related,
+            };
+        }
+
+        const firstHardIssue = (quality.constraints || [])
+            .find(issue => issue.level === 'hard' && issue.matches?.length);
+        const firstMatch = firstHardIssue?.matches?.[0];
+        return {
+            label: parts.join(' / '),
+            cells: firstMatch?.cells || [],
+            studentIds: firstMatch?.studentIds || firstHardIssue?.involvedStudentIds || [],
+        };
+    }
+
+    activateStatusWarningChip(warning) {
+        this.showScoreAnalysis = true;
+        this.updateStatus();
+        const canHighlight = warning?.cells?.length || warning?.studentIds?.length || warning?.target || warning?.related;
+        if (canHighlight) this.highlightStatusWarning(warning);
     }
 
     updateStatus() {
@@ -4918,7 +5620,7 @@ class SeatingPlanner {
         }).length + guardianPlacedCount;
         const unplacedCount = Math.max(this.unassigned.length, this.students.length - placedCount, 0);
         const layoutName = this.layoutTemplateLabel(this.classroomLayout?.template || 'standard');
-        const guardianText = this.classroomLayout?.guardians?.enabled ? '护法已启用' : '护法关闭';
+        const guardianText = this.classroomLayout?.guardians?.enabled ? '护法开' : '护法关';
         const appliedStrategies = Array.isArray(this.arrangementStats?.appliedStrategies)
             ? this.arrangementStats.appliedStrategies.filter(Boolean)
             : [];
@@ -4926,64 +5628,45 @@ class SeatingPlanner {
             ? 'Timefold 优化'
             : (this.arrangementSource ? '本地排座' : '');
         const sourceIcon = this.arrangementSource === 'timefold_solver' ? 'cpu' : 'shuffle';
+        const scoreSummary = `评分 ${quality.percent} · ${quality.feasible ? '可行' : '需调整'}`;
+        const compactWarning = this.buildCompactStatusWarning(unplacedCount);
+        this._statusWarning = compactWarning;
+
         let html = `
             <div class="sp-status-left">
-                <span class="sp-status-item ${quality.feasible ? 'sp-status-item--success' : 'sp-status-item--warning'}">
+                <span class="sp-status-item ${quality.feasible ? 'sp-status-item--success' : 'sp-status-item--warning'}" title="${scoreSummary}">
                     <i data-lucide="${quality.feasible ? 'badge-check' : 'alert-triangle'}"></i>
-                    评分 ${quality.percent} · ${quality.feasible ? '可行' : '需调整'}
+                    ${scoreSummary}
                 </span>
-                ${sourceLabel ? `
-                <span class="sp-status-item sp-status-item--solver">
-                    <i data-lucide="${sourceIcon}"></i>
-                    ${sourceLabel}
-                </span>` : ''}
                 <span class="sp-status-item sp-status-item--success">
                     <i data-lucide="check-circle"></i>
                     满足 ${evaluation.satisfied}/${evaluation.total} 需求
                 </span>
-                <span class="sp-status-item">
+                ${sourceLabel ? `
+                    <span class="sp-status-chip sp-status-chip--solver sp-status-item--solver">
+                        <i data-lucide="${sourceIcon}"></i>
+                        ${sourceLabel}
+                    </span>` : ''}
+            </div>
+            <div class="sp-status-middle">
+                <span class="sp-status-chip">
                     <i data-lucide="layout-grid"></i>
-                    ${layoutName} · 可用 ${capacity}/${this.students.length || 0} · ${guardianText}
+                    ${layoutName} · ${capacity} 席 · ${guardianText}
                 </span>
+                ${appliedStrategies.length ? `
+                    <span class="sp-status-chip">
+                        <i data-lucide="sliders-horizontal"></i>
+                        已应用：${appliedStrategies.join('、')}
+                    </span>` : ''}
+                ${compactWarning ? `
+                    <span class="sp-status-chip sp-status-warning-chip">
+                        <i data-lucide="alert-triangle"></i>
+                        ${compactWarning.label}
+                    </span>` : ''}
+            </div>
+            <div class="sp-status-right"></div>
         `;
 
-        if (!quality.feasible && quality.hardViolationCount > 0) {
-            html += `
-                <span class="sp-status-item sp-status-item--warning">
-                    <i data-lucide="shield-alert"></i>
-                    硬约束 ${quality.hardViolationCount} 项
-                </span>
-            `;
-        }
-
-        if (appliedStrategies.length) {
-            html += `
-                <span class="sp-status-item">
-                    <i data-lucide="sliders-horizontal"></i>
-                    已应用：${appliedStrategies.join('、')}
-                </span>
-            `;
-        }
-
-        if (this.unsatisfied.length > 0) {
-            html += `
-                <span class="sp-status-item sp-status-item--warning">
-                    <i data-lucide="alert-triangle"></i>
-                    ${this.unsatisfied[0].target}: ${this.unsatisfied[0].reason}
-                </span>
-            `;
-        }
-
-        if (unplacedCount > 0) {
-            html += `
-                <span class="sp-status-item sp-status-item--warning">
-                    <i data-lucide="users"></i>
-                    ${unplacedCount} 名学生未安排（可用座位 ${capacity} 个）
-                </span>
-            `;
-        }
-
-        html += '</div><div class="sp-status-right"></div>';
         status.innerHTML = sanitizeHtml(html);
         const solverStatus = status.querySelector('.sp-status-item--solver');
         if (solverStatus) {
@@ -4999,6 +5682,19 @@ class SeatingPlanner {
                     event.preventDefault();
                     this.showArrangementExplain = !this.showArrangementExplain;
                     this.updateStatus();
+                }
+            });
+        }
+        const statusWarningChip = status.querySelector('.sp-status-warning-chip');
+        if (statusWarningChip) {
+            statusWarningChip.setAttribute('role', 'button');
+            statusWarningChip.setAttribute('tabindex', '0');
+            statusWarningChip.setAttribute('title', '打开评分分析并定位相关座位');
+            statusWarningChip.addEventListener('click', () => this.activateStatusWarningChip(this._statusWarning));
+            statusWarningChip.addEventListener('keydown', event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    this.activateStatusWarningChip(this._statusWarning);
                 }
             });
         }

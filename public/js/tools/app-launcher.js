@@ -205,7 +205,8 @@ class AppLauncher {
 
         // Dynamically load tool module
         try {
-            const module = await import(`./${tool.module}.js`);
+            const moduleVersion = encodeURIComponent(window.ICeCream?.assetVersion || Date.now());
+            const module = await import(`./${tool.module}.js?v=${moduleVersion}`);
             if (module.default && typeof module.default.init === 'function') {
                 module.default.init(document.getElementById('tool-body'));
                 this.currentToolInstance = module.default;
