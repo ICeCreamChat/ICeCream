@@ -1,10 +1,12 @@
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { gatewayPaths } from '../config/paths.js';
 import { redactSensitiveText, sanitizeDiagnosticValue } from './diagnostic-redaction.js';
 
 const FEEDBACK_FILE = 'seating-feedback.jsonl';
+const FEEDBACK_ASSET_DIR = 'seating-feedback-assets';
+const MAX_SCREENSHOT_DATA_URL_LENGTH = 1_500_000;
 const CATEGORY_LABELS = {
     understand: '排座要求没听懂',
     result: '座位结果不对',
@@ -30,6 +32,7 @@ export function normalizeSeatingFeedbackRequest(body = {}) {
 
     const category = CATEGORY_LABELS[body.category] ? body.category : 'other';
     const severity = SEVERITY_LABELS[body.severity] ? body.severity : 'workaround';
+    const screenshot = normalizeFeedbackScreenshot(body.screenshot);
 
     return {
         message,
@@ -38,11 +41,60 @@ export function normalizeSeatingFeedbackRequest(body = {}) {
         severity,
         snapshot: sanitizeJsonValue(body.snapshot, 220000),
         client: sanitizeJsonValue(body.client, 12000),
+        screenshot: screenshot?.metadata || null,
+        screenshotUpload: screenshot?.upload || null,
     };
 }
 
 function sanitizeJsonValue(value, maxLength) {
     return sanitizeDiagnosticValue(value, { maxLength, maxTextLength: 1000 });
+}
+
+function normalizeScreenshotDimension(value) {
+    const number = Math.round(Number(value));
+    if (!Number.isFinite(number) || number <= 0 || number > 20000) return null;
+    return number;
+}
+
+function isValidBase64(value) {
+    if (typeof value !== 'string' || !value || value.length % 4 !== 0) return false;
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false;
+    try {
+        const normalized = Buffer.from(value, 'base64').toString('base64');
+        return normalized.replace(/=+$/, '') === value.replace(/=+$/, '');
+    } catch {
+        return false;
+    }
+}
+
+function normalizeFeedbackScreenshot(input) {
+    if (!input || typeof input !== 'object') return null;
+    const dataUrl = String(input.dataUrl || '');
+    if (!dataUrl || dataUrl.length > MAX_SCREENSHOT_DATA_URL_LENGTH) return null;
+
+    const match = dataUrl.match(/^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/=]+)$/);
+    if (!match || !isValidBase64(match[2])) return null;
+
+    const mimeType = match[1];
+    const declaredMimeType = String(input.mimeType || '').toLowerCase();
+    if (declaredMimeType && declaredMimeType !== mimeType) return null;
+
+    const buffer = Buffer.from(match[2], 'base64');
+    if (!buffer.length) return null;
+
+    const extension = mimeType === 'image/png' ? 'png' : 'jpg';
+    return {
+        metadata: {
+            included: true,
+            privacyMode: input.privacyMode === 'full' ? 'full' : 'redacted',
+            mimeType,
+            width: normalizeScreenshotDimension(input.width),
+            height: normalizeScreenshotDimension(input.height),
+            capturedAt: clipText(input.capturedAt || new Date().toISOString(), 80),
+            target: 'seating-tool',
+        },
+        upload: { buffer, extension },
+    };
 }
 
 export function createFeedbackId(now = new Date()) {
@@ -93,6 +145,24 @@ function inferSuspectedArea(feedback) {
 export function getFeedbackLogPath(env = process.env) {
     const logDir = env.FEEDBACK_LOG_DIR || path.join(gatewayPaths.projectRoot, 'logs');
     return path.join(logDir, FEEDBACK_FILE);
+}
+
+function getFeedbackAssetPath(fileName, env = process.env) {
+    const safeName = path.basename(String(fileName || '').replace(/\\/g, '/'));
+    return path.join(path.dirname(getFeedbackLogPath(env)), FEEDBACK_ASSET_DIR, safeName);
+}
+
+async function saveFeedbackScreenshotAsset(id, upload, env = process.env) {
+    if (!upload?.buffer?.length || !upload.extension) return null;
+    const safeId = String(id).replace(/[^A-Za-z0-9-]/g, '_');
+    const fileName = `${FEEDBACK_ASSET_DIR}/${safeId}.${upload.extension}`;
+    const fullPath = getFeedbackAssetPath(fileName, env);
+    await mkdir(path.dirname(fullPath), { recursive: true });
+    await writeFile(fullPath, upload.buffer);
+    return {
+        fileName,
+        byteLength: upload.buffer.length,
+    };
 }
 
 export function buildFeedbackEmail(record, env = process.env) {
@@ -147,12 +217,21 @@ export function buildFeedbackEmail(record, env = process.env) {
             client: record.client,
         }, { maxLength: 180000, maxTextLength: 1000 }), null, 2),
     ].join('\n');
+    const screenshot = record.raw?.screenshot || null;
+    const attachments = screenshot?.fileName
+        ? [{
+            filename: `${String(record.id).replace(/[^A-Za-z0-9-]/g, '_')}.${screenshot.mimeType === 'image/png' ? 'png' : 'jpg'}`,
+            path: getFeedbackAssetPath(screenshot.fileName, env),
+            contentType: screenshot.mimeType || 'image/jpeg',
+        }]
+        : [];
 
     return {
         from,
         to,
         subject: `ICeCream 座位反馈 ${record.id} - ${record.summary.categoryLabel}`,
         text,
+        attachments,
     };
 }
 
@@ -201,6 +280,16 @@ export async function submitSeatingFeedback(options = {}) {
     const now = options.now || new Date();
     const raw = normalizeSeatingFeedbackRequest(options.body || {});
     const id = options.id || createFeedbackId(now);
+    const screenshotUpload = raw.screenshotUpload || null;
+    delete raw.screenshotUpload;
+    if (raw.screenshot && screenshotUpload) {
+        try {
+            const asset = await saveFeedbackScreenshotAsset(id, screenshotUpload, env);
+            raw.screenshot = asset ? { ...raw.screenshot, ...asset } : null;
+        } catch {
+            raw.screenshot = null;
+        }
+    }
     const summary = buildLocalFeedbackSummary(raw);
     const record = {
         id,

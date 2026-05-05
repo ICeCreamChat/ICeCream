@@ -92,6 +92,60 @@ test('POST /api/tools/seating/feedback saves anonymized feedback without email c
   }
 });
 
+test('POST /api/tools/seating/feedback saves screenshot asset without storing base64 in jsonl', async () => {
+  const originalLogDir = process.env.FEEDBACK_LOG_DIR;
+  const originalTo = process.env.FEEDBACK_TO_EMAIL;
+  const logDir = await mkdtemp(path.join(tmpdir(), 'icecream-feedback-shot-'));
+  process.env.FEEDBACK_LOG_DIR = logDir;
+  delete process.env.FEEDBACK_TO_EMAIL;
+
+  const appServer = createServer(createGatewayApp({ isDev: false }));
+  const appBase = await listen(appServer);
+
+  try {
+    const response = await fetch(`${appBase}/api/tools/seating/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: 'frontend screenshot issue',
+        category: 'ui',
+        severity: 'workaround',
+        screenshot: {
+          included: true,
+          privacyMode: 'redacted',
+          mimeType: 'image/jpeg',
+          dataUrl: 'data:image/jpeg;base64,aGVsbG8=',
+          width: 320,
+          height: 180,
+          capturedAt: '2026-05-05T00:00:00.000Z',
+          target: 'seating-tool',
+        },
+      }),
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.success, true);
+
+    const content = await readFile(path.join(logDir, 'seating-feedback.jsonl'), 'utf8');
+    const record = JSON.parse(content.trim());
+    assert.equal(record.raw.screenshot.included, true);
+    assert.equal(record.raw.screenshot.privacyMode, 'redacted');
+    assert.equal(record.raw.screenshot.mimeType, 'image/jpeg');
+    assert.equal(record.raw.screenshot.fileName, `seating-feedback-assets/${record.id}.jpg`);
+    assert.equal(record.raw.screenshot.byteLength, 5);
+    assert.equal(record.raw.screenshot.dataUrl, undefined);
+    assert.doesNotMatch(content, /data:image/);
+
+    const asset = await readFile(path.join(logDir, record.raw.screenshot.fileName));
+    assert.equal(asset.toString('utf8'), 'hello');
+  } finally {
+    await close(appServer);
+    restoreEnv('FEEDBACK_LOG_DIR', originalLogDir);
+    restoreEnv('FEEDBACK_TO_EMAIL', originalTo);
+  }
+});
+
 test('GET /api/tools/seating/diagnostics returns redacted service state and recent logs', async () => {
   const originalLogDir = process.env.DIAGNOSTIC_LOG_DIR;
   const originalFeedbackLogDir = process.env.FEEDBACK_LOG_DIR;
@@ -191,6 +245,16 @@ test('submitSeatingFeedback sends email when SMTP config is available', async ()
         arrangementSource: 'timefold_solver',
         arrangementStats: { solverUsed: true, hardScore: 0, softScore: 12, fallbackReason: null },
       },
+      screenshot: {
+        included: true,
+        privacyMode: 'full',
+        mimeType: 'image/png',
+        dataUrl: 'data:image/png;base64,aGVsbG8=',
+        width: 200,
+        height: 120,
+        capturedAt: '2026-05-05T00:00:00.000Z',
+        target: 'seating-tool',
+      },
       client: { theme: 'light', auth: 'Bearer live-secret-token' },
     },
     env: {
@@ -216,10 +280,46 @@ test('submitSeatingFeedback sends email when SMTP config is available', async ()
   assert.match(sent[0].text, /diagnosticEvents/);
   assert.doesNotMatch(sent[0].text, /secret/);
   assert.doesNotMatch(sent[0].text, /live-secret-token/);
+  assert.equal(sent[0].attachments.length, 1);
+  assert.equal(sent[0].attachments[0].filename, `${result.id}.png`);
+  assert.equal(sent[0].attachments[0].contentType, 'image/png');
 
   const content = await readFile(path.join(logDir, 'seating-feedback.jsonl'), 'utf8');
   assert.match(content, /"diagnosticsVersion":2/);
   assert.match(content, /backendDiagnostics/);
+  assert.match(content, /"screenshot"/);
+  assert.match(content, /seating-feedback-assets/);
   assert.doesNotMatch(content, /live-secret-token/);
   assert.doesNotMatch(content, /SMTP_PASS=secret/);
+  assert.doesNotMatch(content, /data:image/);
+});
+
+test('submitSeatingFeedback ignores invalid screenshots while saving feedback', async () => {
+  const logDir = await mkdtemp(path.join(tmpdir(), 'icecream-feedback-invalid-shot-'));
+
+  const result = await submitSeatingFeedback({
+    body: {
+      message: 'feedback body is still valid',
+      category: 'ui',
+      severity: 'suggestion',
+      screenshot: {
+        included: true,
+        privacyMode: 'redacted',
+        mimeType: 'image/gif',
+        dataUrl: 'data:text/plain;base64,aGVsbG8=',
+        width: 10,
+        height: 10,
+        capturedAt: '2026-05-05T00:00:00.000Z',
+        target: 'seating-tool',
+      },
+    },
+    env: { FEEDBACK_LOG_DIR: logDir },
+  });
+
+  assert.match(result.id, /^FB-/);
+  assert.equal(result.record.raw.screenshot, null);
+
+  const content = await readFile(path.join(logDir, 'seating-feedback.jsonl'), 'utf8');
+  assert.match(content, /feedback body is still valid/);
+  assert.doesNotMatch(content, /data:text/);
 });

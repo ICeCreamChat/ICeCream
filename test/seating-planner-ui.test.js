@@ -60,10 +60,13 @@ test('seating planner renders an editable visual-only layout preview', async () 
   assert.match(source, /deleteLocalAisle/);
   assert.match(source, /pendingLayoutPreview\.classroomLayout = layout/);
   assert.match(source, /localAisles: normalizeLocalAisles\(source\.localAisles, rows, cols\)/);
-  assert.match(styles, /\.sp-layout-preview-mini\s*{[^}]*justify-content: center/s);
+  assert.match(styles, /\.sp-layout-preview-mini\s*{[^}]*overflow-x: auto/s);
+  assert.match(styles, /\.sp-layout-preview-mini\s*{[^}]*scrollbar-width: thin/s);
   assert.match(styles, /\.sp-layout-preview-local-gap/);
   assert.match(styles, /\.sp-layout-preview-full-row-handle/);
-  assert.match(styles, /\.sp-layout-preview-full-col-handle/);
+  assert.doesNotMatch(source, /sp-layout-preview-col-controls/);
+  assert.doesNotMatch(source, /sp-layout-preview-full-col-handle/);
+  assert.doesNotMatch(styles, /\.sp-layout-preview-full-col-handle/);
 });
 
 test('seating planner preview colors adapt to day and night themes with group classes', async () => {
@@ -89,6 +92,66 @@ test('seating planner preview colors adapt to day and night themes with group cl
   assert.match(source, /sp-layout-preview-cell--group-odd/);
 });
 
+test('seating planner renders a complete figurative layout preview without clipped controls', async () => {
+  const source = await readFile(sourcePath, 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(source, /measureLayoutPreview/);
+  assert.match(source, /clientWidth|getBoundingClientRect/);
+  assert.match(source, /--sp-preview-canvas-width/);
+  assert.doesNotMatch(source, /236\s*\/\s*Math\.max\(layout\.cols/);
+  assert.match(source, /sp-layout-preview-title/);
+  assert.match(source, /座位预览/);
+  assert.match(source, /sp-layout-preview-subtitle/);
+  assert.match(source, /已生成布局，请确认后排学生/);
+  assert.doesNotMatch(source, /AI 已生成布局，请确认后排学生/);
+  assert.match(source, /const previewCellTarget/);
+  assert.match(source, /const maxCell = 28/);
+  assert.match(source, /canvasWidth = cols \* cellSize \+ gapCount \* gapSize/);
+  assert.doesNotMatch(source, /while \(canvasWidth > availableWidth/);
+  assert.match(source, /renderLayoutPreviewStudent/);
+  assert.match(source, /sp-layout-preview-student/);
+  assert.match(source, /sp-layout-preview-student-head/);
+  assert.match(source, /sp-layout-preview-student-body/);
+  assert.match(source, /sp-layout-preview-student-desk/);
+  assert.match(source, /sp-layout-preview-student-badge/);
+  assert.match(source, /renderLayoutPreviewGuardianSeat/);
+  assert.match(source, /renderLayoutPreviewGuardianSeat\(side\)\s*{[^}]*this\.renderLayoutPreviewStudent\(\)/s);
+  assert.match(source, /sp-layout-preview-guardian-seat/);
+  assert.match(source, /sp-layout-preview-guardian-seat--left/);
+  assert.match(source, /sp-layout-preview-guardian-seat--right/);
+  assert.doesNotMatch(source, /sp-layout-preview-guardian-slot/);
+  assert.match(source, /sp-layout-preview-local-gap--group-link/);
+  assert.match(source, /dataset\.groupLink = String\(groupId\)/);
+  assert.doesNotMatch(source, /sp-layout-preview-cell--same-right/);
+  assert.doesNotMatch(source, /sp-layout-preview-cell--same-down/);
+  assert.match(source, /sp-layout-preview-podium-band/);
+
+  assert.match(styles, /--sp-preview-student-head:/);
+  assert.match(styles, /--sp-preview-student-body-top:/);
+  assert.match(styles, /--sp-preview-desk-top:/);
+  assert.match(styles, /\.sp-layout-preview-student-head/);
+  assert.match(styles, /\.sp-layout-preview-student-body/);
+  assert.match(styles, /\.sp-layout-preview-student-desk/);
+  assert.match(styles, /\.sp-layout-preview-student-badge/);
+  assert.match(styles, /\.sp-layout-preview-guardian-seat/);
+  assert.match(styles, /\.sp-layout-preview-guardian-seat--left/);
+  assert.match(styles, /\.sp-layout-preview-guardian-seat--right/);
+  assert.doesNotMatch(styles, /\.sp-layout-preview-guardian-slot/);
+  assert.doesNotMatch(styles, /\.sp-layout-preview-cell--same-right::after/);
+  assert.doesNotMatch(styles, /\.sp-layout-preview-cell--same-down::before/);
+  assert.match(styles, /\.sp-layout-preview-title/);
+  assert.match(styles, /\.sp-layout-preview-stage\s*{[^}]*width:\s*var\(--sp-preview-canvas-width\)/s);
+  assert.match(styles, /\.sp-layout-preview-local-gap--group-link::after/);
+  assert.match(styles, /\.sp-layout-preview-legend-icon--seat/);
+  assert.match(styles, /\.sp-layout-preview-legend-icon--group/);
+  assert.match(styles, /\.sp-layout-preview-legend-icon--aisle/);
+  assert.match(styles, /\.sp-layout-preview-mini--normal/);
+  assert.match(styles, /\.sp-layout-preview-mini--compact/);
+  assert.match(styles, /\.sp-layout-preview-mini--micro/);
+  assert.match(styles, /\.sp-layout-preview-podium-band/);
+});
+
 test('seating planner localizes preview editing hints and keeps confirmed preview readonly', async () => {
   const source = await readFile(sourcePath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
@@ -96,7 +159,6 @@ test('seating planner localizes preview editing hints and keeps confirmed previe
   assert.doesNotMatch(source, /Add local aisle|Remove local aisle|Insert full|Remove full/);
   assert.match(source, /添加局部过道/);
   assert.match(source, /删除局部过道/);
-  assert.match(source, /插入整列过道/);
   assert.match(source, /删除整行过道/);
   assert.match(source, /删除整列过道/);
   assert.match(source, /插入整行过道/);
@@ -201,6 +263,17 @@ test('seating planner exposes a feedback entry before the tool theme toggle', as
   assert.match(plannerSource, /loadBackendDiagnostics/);
   assert.match(plannerSource, /\/api\/tools\/seating\/feedback/);
   assert.match(plannerSource, /\/api\/tools\/seating\/diagnostics/);
+  assert.match(plannerSource, /sp-feedback-screenshot/);
+  assert.match(plannerSource, /sp-feedback-screenshot-preview/);
+  assert.match(plannerSource, /sp-feedback-screenshot-status/);
+  assert.match(plannerSource, /sp-feedback-screenshot-recapture/);
+  assert.match(plannerSource, /sp-feedback-screenshot-redact/);
+  assert.match(plannerSource, /captureFeedbackScreenshot/);
+  assert.match(plannerSource, /this\.ensureHtml2Canvas\(\)/);
+  assert.match(plannerSource, /document\.querySelector\('\.sp-app'\)/);
+  assert.match(plannerSource, /sp-feedback-capture--redacted/);
+  assert.match(plannerSource, /screenshot:\s*this\._feedbackScreenshot/);
+  assert.match(plannerSource, /await this\._feedbackScreenshotPromise/);
   assert.match(plannerSource, /diagnostics_request_failed/);
   assert.match(plannerSource, /反馈座位安排问题/);
   assert.match(plannerSource, /直接写您觉得哪里不对/);
@@ -210,6 +283,9 @@ test('seating planner exposes a feedback entry before the tool theme toggle', as
   assert.match(plannerSource, /会附带脱敏座位快照，帮助我们复现问题/);
   assert.match(plannerStyles, /\.sp-feedback/);
   assert.match(plannerStyles, /\.sp-feedback-chip/);
+  assert.match(plannerStyles, /\.sp-feedback-screenshot/);
+  assert.match(plannerStyles, /\.sp-feedback-screenshot-preview/);
+  assert.match(plannerStyles, /\.sp-feedback-capture--redacted/);
 });
 
 test('seating feedback snapshot anonymizes names and keeps useful seating context', () => {

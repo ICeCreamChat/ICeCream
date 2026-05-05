@@ -100,6 +100,9 @@ class SeatingPlanner {
         this.pendingLayoutPreview = null;
         this._diagnosticEvents = [];
         this._lastErrors = [];
+        this._feedbackScreenshot = null;
+        this._feedbackScreenshotPromise = null;
+        this._feedbackScreenshotCaptureId = 0;
         this.showSeatDetails = true;
         this.showScoreAnalysis = false;
         this.showArrangementExplain = false;
@@ -1104,18 +1107,28 @@ class SeatingPlanner {
                             生成座位表
                         </button>
                         <div id="sp-layout-preview-confirm" class="sp-layout-preview sp-hidden" aria-live="polite" aria-label="布局预览待确认">
+                            <div class="sp-layout-preview-titlebar">
+                                <strong class="sp-layout-preview-title">座位预览</strong>
+                                <span class="sp-layout-preview-subtitle">已生成布局，请确认后排学生</span>
+                            </div>
                             <div id="sp-layout-preview-mini" class="sp-layout-preview-mini"></div>
-                            <div class="sp-layout-preview-legend" aria-label="布局颜色说明">
+                            <div class="sp-layout-preview-legend" aria-label="布局图例说明">
                                 <span class="sp-layout-preview-legend-item">
-                                    <span class="sp-layout-preview-legend-dot sp-layout-preview-legend-dot--seat-even"></span>
+                                    <span class="sp-layout-preview-legend-icon sp-layout-preview-legend-icon--seat" aria-hidden="true">
+                                        <span class="sp-layout-preview-legend-student"></span>
+                                        <span class="sp-layout-preview-legend-desk"></span>
+                                    </span>
                                     座位
                                 </span>
                                 <span class="sp-layout-preview-legend-item">
-                                    <span class="sp-layout-preview-legend-dot sp-layout-preview-legend-dot--seat-odd"></span>
-                                    分组
+                                    <span class="sp-layout-preview-legend-icon sp-layout-preview-legend-icon--group" aria-hidden="true">
+                                        <span class="sp-layout-preview-legend-badge"></span>
+                                        <span class="sp-layout-preview-legend-link"></span>
+                                    </span>
+                                    同组
                                 </span>
                                 <span class="sp-layout-preview-legend-item">
-                                    <span class="sp-layout-preview-legend-dot sp-layout-preview-legend-dot--aisle"></span>
+                                    <span class="sp-layout-preview-legend-icon sp-layout-preview-legend-icon--aisle" aria-hidden="true"></span>
                                     过道
                                 </span>
                             </div>
@@ -1317,6 +1330,25 @@ class SeatingPlanner {
                         <div class="sp-feedback-body">
                             <div class="sp-feedback-note">
                                 会附带脱敏座位快照，帮助我们复现问题
+                            </div>
+                            <div class="sp-feedback-field sp-feedback-screenshot">
+                                <div class="sp-feedback-screenshot-head">
+                                    <span class="sp-feedback-label">前端截图</span>
+                                    <label class="sp-feedback-screenshot-toggle" for="sp-feedback-screenshot-redact">
+                                        <input type="checkbox" id="sp-feedback-screenshot-redact" checked>
+                                        <span>遮挡学生姓名和详情</span>
+                                    </label>
+                                </div>
+                                <div class="sp-feedback-screenshot-preview" id="sp-feedback-screenshot-preview" aria-live="polite">
+                                    <span class="sp-feedback-screenshot-placeholder">打开反馈后会自动截图</span>
+                                </div>
+                                <div class="sp-feedback-screenshot-actions">
+                                    <span class="sp-feedback-screenshot-status" id="sp-feedback-screenshot-status">等待截图</span>
+                                    <button type="button" class="sp-btn sp-btn--sm" id="sp-feedback-screenshot-recapture">
+                                        <i data-lucide="camera"></i>
+                                        重新截图
+                                    </button>
+                                </div>
                             </div>
                             <div class="sp-feedback-field">
                                 <span class="sp-feedback-label">问题类型</span>
@@ -1961,6 +1993,12 @@ class SeatingPlanner {
         $('sp-feedback-cancel')?.addEventListener('click', () => this.closeFeedbackDialog());
         $('sp-feedback-cancel-secondary')?.addEventListener('click', () => this.closeFeedbackDialog());
         $('sp-feedback-submit')?.addEventListener('click', () => this.submitFeedback());
+        $('sp-feedback-screenshot-recapture')?.addEventListener('click', () => this.captureFeedbackScreenshot({
+            privacyMode: this.getFeedbackScreenshotPrivacyMode(),
+        }));
+        $('sp-feedback-screenshot-redact')?.addEventListener('change', () => this.captureFeedbackScreenshot({
+            privacyMode: this.getFeedbackScreenshotPrivacyMode(),
+        }));
         $('sp-feedback-dialog')?.addEventListener('click', e => {
             if (e.target?.id === 'sp-feedback-dialog') this.closeFeedbackDialog();
         });
@@ -4155,6 +4193,43 @@ class SeatingPlanner {
         )).join(' ');
     }
 
+    measureLayoutPreview(layout, target) {
+        const cols = Math.max(1, Number(layout?.cols) || 1);
+        const rows = Math.max(1, Number(layout?.rows) || 1);
+        const bounds = target?.getBoundingClientRect?.();
+        const panelBounds = target?.closest?.('.sp-layout-preview')?.getBoundingClientRect?.();
+        const measuredWidth = Math.floor(
+            target?.clientWidth
+            || bounds?.width
+            || panelBounds?.width
+            || 288
+        );
+        const availableWidth = Math.max(120, measuredWidth - 16);
+        const gapCount = Math.max(0, cols - 1);
+        const totalCells = rows * cols;
+        const previewCellTarget = totalCells > 220 || cols >= 16
+            ? 16
+            : totalCells > 160 || cols >= 13
+                ? 18
+                : cols >= 11
+                    ? 22
+                    : 26;
+        const minCell = 16;
+        const maxCell = 28;
+        const fillCell = Math.floor((availableWidth - gapCount * 4) / cols);
+        const cellSize = Math.max(minCell, Math.min(maxCell, Math.max(previewCellTarget, fillCell)));
+        const gapSize = gapCount > 0 ? Math.max(3, Math.min(5, Math.round(cellSize * 0.18))) : 0;
+        const canvasWidth = cols * cellSize + gapCount * gapSize;
+
+        const density = totalCells > 220 || cellSize <= 16
+            ? 'micro'
+            : totalCells > 160 || cellSize <= 18
+                ? 'compact'
+                : 'normal';
+
+        return { cellSize, gapSize, canvasWidth, density };
+    }
+
     applyPreviewClassroomLayout(layout) {
         if (!this.pendingLayoutPreview) return;
         this.pendingLayoutPreview = {
@@ -4170,17 +4245,37 @@ class SeatingPlanner {
 
     renderPreviewLocalGap({ orientation, row, col, layout, localAisles, readOnly = false }) {
         const active = hasLocalAisle(localAisles, orientation, row, col);
-        const allowed = active || this.isSeatPairForLocalAisle(layout, orientation, row, col);
+        const groupId = this.previewGapGroupId(layout, orientation, row, col, localAisles);
+        const canEdit = !readOnly && (active || this.isSeatPairForLocalAisle(layout, orientation, row, col));
+        const allowed = active || canEdit || groupId !== null;
         if (!allowed || (readOnly && !active)) {
             const spacer = document.createElement('span');
             spacer.className = `sp-layout-preview-local-gap sp-layout-preview-local-gap--${orientation} sp-layout-preview-local-gap--disabled`;
+            if (groupId !== null) {
+                spacer.classList.add(
+                    'sp-layout-preview-local-gap--group-link',
+                    Number(groupId) % 2 === 0
+                        ? 'sp-layout-preview-local-gap--group-even'
+                        : 'sp-layout-preview-local-gap--group-odd',
+                );
+                spacer.dataset.groupLink = String(groupId);
+            }
             return spacer;
         }
-        const control = document.createElement(readOnly ? 'span' : 'button');
-        if (!readOnly) control.type = 'button';
+        const control = document.createElement(canEdit ? 'button' : 'span');
+        if (canEdit) control.type = 'button';
         control.className = `sp-layout-preview-local-gap sp-layout-preview-local-gap--${orientation}`;
         if (active) control.classList.add('is-active');
-        if (!readOnly) {
+        if (groupId !== null) {
+            control.classList.add(
+                'sp-layout-preview-local-gap--group-link',
+                Number(groupId) % 2 === 0
+                    ? 'sp-layout-preview-local-gap--group-even'
+                    : 'sp-layout-preview-local-gap--group-odd',
+            );
+            control.dataset.groupLink = String(groupId);
+        }
+        if (canEdit) {
             control.dataset.previewAction = 'toggle-local';
             control.dataset.orientation = orientation;
             control.dataset.row = String(row);
@@ -4191,6 +4286,61 @@ class SeatingPlanner {
         return control;
     }
 
+    renderLayoutPreviewStudent() {
+        const student = document.createElement('span');
+        student.className = 'sp-layout-preview-student';
+
+        const head = document.createElement('span');
+        head.className = 'sp-layout-preview-student-head';
+        student.appendChild(head);
+
+        const body = document.createElement('span');
+        body.className = 'sp-layout-preview-student-body';
+        student.appendChild(body);
+
+        const desk = document.createElement('span');
+        desk.className = 'sp-layout-preview-student-desk';
+        student.appendChild(desk);
+
+        const badge = document.createElement('span');
+        badge.className = 'sp-layout-preview-student-badge';
+        student.appendChild(badge);
+
+        return student;
+    }
+
+    renderLayoutPreviewGuardianSeat(side) {
+        const seat = document.createElement('span');
+        const sideClass = side === 'left'
+            ? 'sp-layout-preview-guardian-seat--left'
+            : 'sp-layout-preview-guardian-seat--right';
+        seat.className = 'sp-layout-preview-guardian-seat ' + sideClass;
+        seat.setAttribute('aria-hidden', 'true');
+        seat.appendChild(this.renderLayoutPreviewStudent());
+        return seat;
+    }
+
+    previewCellHasSameGroup(layout, groupId, row, col) {
+        if (groupId === null || groupId === undefined) return false;
+        return layout.cells?.[row]?.[col] === 'seat'
+            && String(layout.groups?.[row]?.[col]) === String(groupId);
+    }
+
+    previewGapGroupId(layout, orientation, row, col, localAisles) {
+        if (hasLocalAisle(localAisles, orientation, row, col)) return null;
+        const first = { row, col };
+        const second = orientation === 'vertical'
+            ? { row, col: col + 1 }
+            : { row: row + 1, col };
+        if (layout.cells?.[first.row]?.[first.col] !== 'seat') return null;
+        if (layout.cells?.[second.row]?.[second.col] !== 'seat') return null;
+        const groupId = layout.groups?.[first.row]?.[first.col];
+        if (groupId === null || groupId === undefined) return null;
+        return this.previewCellHasSameGroup(layout, groupId, second.row, second.col)
+            ? groupId
+            : null;
+    }
+
     renderEditableLayoutPreviewGrid(preview = this.pendingLayoutPreview) {
         const target = document.getElementById('sp-layout-preview-mini');
         if (!target || !preview?.classroomLayout) return;
@@ -4199,41 +4349,31 @@ class SeatingPlanner {
         const { rowAisles, colAisles } = layoutToLegacyAisles(layout);
         const localAisles = normalizeLocalAisles(layout.localAisles, layout.rows, layout.cols);
         const template = this.gridTemplateForPreview(layout.cols);
-        const cellSize = Math.max(10, Math.min(22, Math.floor(236 / Math.max(layout.cols, 1))));
+        const measurement = this.measureLayoutPreview(layout, target);
         const readOnly = Boolean(preview.readOnly || preview.confirmed);
 
         target.innerHTML = '';
-        target.style.setProperty('--sp-preview-cell', `${cellSize}px`);
-        target.style.setProperty('--sp-preview-gap', `${Math.max(6, Math.round(cellSize * 0.36))}px`);
-        target.classList.toggle('sp-layout-preview-mini--dense', layout.rows * layout.cols > 180);
+        target.style.setProperty('--sp-preview-cell', `${measurement.cellSize}px`);
+        target.style.setProperty('--sp-preview-gap', `${measurement.gapSize}px`);
+        target.style.setProperty('--sp-preview-canvas-width', `${measurement.canvasWidth}px`);
+        target.classList.remove('sp-layout-preview-mini--normal', 'sp-layout-preview-mini--compact', 'sp-layout-preview-mini--micro');
+        target.classList.add(`sp-layout-preview-mini--${measurement.density}`);
+        target.classList.toggle('sp-layout-preview-mini--dense', measurement.density !== 'normal');
         target.classList.toggle('sp-layout-preview-mini--readonly', readOnly);
 
         const stage = document.createElement('div');
         stage.className = 'sp-layout-preview-stage';
 
-        if (!readOnly) {
-            const colControls = document.createElement('div');
-            colControls.className = 'sp-layout-preview-col-controls';
-            colControls.style.gridTemplateColumns = template;
-            for (let c = 0; c < layout.cols; c++) {
-                const spacer = document.createElement('span');
-                spacer.className = 'sp-layout-preview-col-spacer';
-                colControls.appendChild(spacer);
-                if (c < layout.cols - 1) {
-                    const allowed = !colAisles.includes(c) && !colAisles.includes(c + 1);
-                    const control = document.createElement(allowed ? 'button' : 'span');
-                    control.className = 'sp-layout-preview-full-col-handle';
-                    if (allowed) {
-                        control.type = 'button';
-                        control.dataset.previewAction = 'insert-col';
-                        control.dataset.col = String(c + 1);
-                        control.title = '插入整列过道';
-                        control.setAttribute('aria-label', '插入整列过道');
-                    }
-                    colControls.appendChild(control);
-                }
-            }
-            stage.appendChild(colControls);
+        if (layout.guardians?.enabled) {
+            const podiumBand = document.createElement('div');
+            podiumBand.className = 'sp-layout-preview-podium-band';
+            podiumBand.appendChild(this.renderLayoutPreviewGuardianSeat('left'));
+            const podium = document.createElement('span');
+            podium.className = 'sp-layout-preview-podium';
+            podium.textContent = '讲台';
+            podiumBand.appendChild(podium);
+            podiumBand.appendChild(this.renderLayoutPreviewGuardianSeat('right'));
+            stage.appendChild(podiumBand);
         }
 
         const matrix = document.createElement('div');
@@ -4260,6 +4400,7 @@ class SeatingPlanner {
                             ? 'sp-layout-preview-cell--group-even'
                             : 'sp-layout-preview-cell--group-odd');
                     }
+                    cell.appendChild(this.renderLayoutPreviewStudent());
                 }
                 if (removable && !readOnly) {
                     cell.type = 'button';
@@ -4408,8 +4549,8 @@ class SeatingPlanner {
             confirmed: false,
         };
         const panel = document.getElementById('sp-layout-preview-confirm');
-        this.renderEditableLayoutPreviewGrid();
         panel?.classList.remove('sp-hidden');
+        this.renderEditableLayoutPreviewGrid();
         if (window.lucide) window.lucide.createIcons();
     }
 
@@ -4423,8 +4564,8 @@ class SeatingPlanner {
             source: preview.source || 'confirmed_layout',
         };
         const panel = document.getElementById('sp-layout-preview-confirm');
-        this.renderEditableLayoutPreviewGrid();
         panel?.classList.remove('sp-hidden');
+        this.renderEditableLayoutPreviewGrid();
         if (window.lucide) window.lucide.createIcons();
     }
 
@@ -6427,10 +6568,155 @@ class SeatingPlanner {
         };
     }
 
+    getFeedbackScreenshotPrivacyMode() {
+        const redactToggle = document.getElementById('sp-feedback-screenshot-redact');
+        return redactToggle?.checked === false ? 'full' : 'redacted';
+    }
+
+    setFeedbackScreenshotStatus(message, tone = 'muted') {
+        const status = document.getElementById('sp-feedback-screenshot-status');
+        if (!status) return;
+        status.textContent = message;
+        status.dataset.tone = tone;
+    }
+
+    renderFeedbackScreenshotPreview(screenshot = null, message = '暂无截图') {
+        const preview = document.getElementById('sp-feedback-screenshot-preview');
+        if (!preview) return;
+        preview.classList.toggle('is-loading', false);
+        preview.replaceChildren();
+        if (screenshot?.dataUrl) {
+            const image = document.createElement('img');
+            image.src = screenshot.dataUrl;
+            image.alt = '前端截图预览';
+            preview.appendChild(image);
+            return;
+        }
+        const placeholder = document.createElement('span');
+        placeholder.className = 'sp-feedback-screenshot-placeholder';
+        placeholder.textContent = message;
+        preview.appendChild(placeholder);
+    }
+
+    setFeedbackScreenshotLoading(message) {
+        const preview = document.getElementById('sp-feedback-screenshot-preview');
+        if (!preview) return;
+        preview.classList.add('is-loading');
+        preview.replaceChildren();
+        const placeholder = document.createElement('span');
+        placeholder.className = 'sp-feedback-screenshot-placeholder';
+        placeholder.innerHTML = '<i data-lucide="loader-2" class="sp-spin"></i><span></span>';
+        placeholder.querySelector('span').textContent = message;
+        preview.appendChild(placeholder);
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    setFeedbackCaptureMode(active, privacyMode = 'redacted') {
+        const app = document.querySelector('.sp-app');
+        app?.classList.toggle('sp-feedback-capture--active', Boolean(active));
+        app?.classList.toggle('sp-feedback-capture--redacted', Boolean(active && privacyMode === 'redacted'));
+        document.getElementById('sp-feedback-dialog')?.classList.toggle('sp-feedback--capture-hidden', Boolean(active));
+        document.body?.classList.toggle('sp-feedback-capture-body', Boolean(active));
+    }
+
+    waitForFeedbackCaptureFrame() {
+        const raf = typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame
+            : callback => setTimeout(callback, 16);
+        return new Promise(resolve => raf(() => raf(resolve)));
+    }
+
+    createFeedbackScreenshotPayload(canvas, privacyMode) {
+        const maxWidth = 1280;
+        const ratio = canvas.width > maxWidth ? maxWidth / canvas.width : 1;
+        const width = Math.max(1, Math.round(canvas.width * ratio));
+        const height = Math.max(1, Math.round(canvas.height * ratio));
+        const output = document.createElement('canvas');
+        output.width = width;
+        output.height = height;
+        const context = output.getContext('2d');
+        if (context) {
+            const isLightMode = document.body?.classList?.contains('light-mode');
+            context.fillStyle = isLightMode ? '#f8fafc' : '#0f172a';
+            context.fillRect(0, 0, width, height);
+            context.drawImage(canvas, 0, 0, width, height);
+        }
+        return {
+            included: true,
+            privacyMode,
+            mimeType: 'image/jpeg',
+            dataUrl: output.toDataURL('image/jpeg', 0.72),
+            width,
+            height,
+            capturedAt: new Date().toISOString(),
+            target: 'seating-tool',
+        };
+    }
+
+    captureFeedbackScreenshot({ privacyMode = this.getFeedbackScreenshotPrivacyMode() } = {}) {
+        const captureId = this._feedbackScreenshotCaptureId + 1;
+        this._feedbackScreenshotCaptureId = captureId;
+        this._feedbackScreenshot = null;
+        this.setFeedbackScreenshotLoading('正在截取座位工具区域...');
+        this.setFeedbackScreenshotStatus('正在生成截图...', 'loading');
+
+        const promise = (async () => {
+            const target = document.querySelector('.sp-app');
+            if (!target) throw new Error('找不到座位工具区域');
+            const html2canvas = await this.ensureHtml2Canvas();
+            const isLightMode = document.body?.classList?.contains('light-mode');
+            this.setExportMode(true);
+            this.setFeedbackCaptureMode(true, privacyMode);
+            try {
+                await this.waitForFeedbackCaptureFrame();
+                const canvas = await html2canvas(target, {
+                    backgroundColor: isLightMode ? '#f8fafc' : '#0f172a',
+                    scale: Math.min(2, Math.max(1, window.devicePixelRatio || 1.5)),
+                    useCORS: true,
+                    logging: false,
+                    ignoreElements: element => Boolean(element?.closest?.(
+                        '.sp-feedback, .sp-chat, .sp-context-menu, .sp-seat-tooltip, .sp-autocomplete'
+                    )),
+                });
+                const screenshot = this.createFeedbackScreenshotPayload(canvas, privacyMode);
+                if (captureId !== this._feedbackScreenshotCaptureId) return null;
+                this._feedbackScreenshot = screenshot;
+                this.renderFeedbackScreenshotPreview(screenshot);
+                this.setFeedbackScreenshotStatus(
+                    privacyMode === 'redacted' ? '已生成截图（已遮挡姓名）' : '已生成截图（保留真实画面）',
+                    'success'
+                );
+                return screenshot;
+            } finally {
+                this.setFeedbackCaptureMode(false, privacyMode);
+                this.setExportMode(false);
+            }
+        })().catch(error => {
+            if (captureId === this._feedbackScreenshotCaptureId) {
+                this._feedbackScreenshot = null;
+                this.renderFeedbackScreenshotPreview(null, '截图失败，可重新截图或直接提交');
+                this.setFeedbackScreenshotStatus('截图失败，可重新截图或直接提交', 'error');
+            }
+            this.recordDiagnosticEvent('feedback_screenshot_failed', {
+                error: error.message || 'feedback_screenshot_failed',
+            });
+            return null;
+        }).finally(() => {
+            if (captureId === this._feedbackScreenshotCaptureId) {
+                this._feedbackScreenshotPromise = null;
+            }
+        });
+
+        this._feedbackScreenshotPromise = promise;
+        return promise;
+    }
+
     openFeedbackDialog() {
         const dialog = document.getElementById('sp-feedback-dialog');
         if (!dialog) return;
         dialog.classList.remove('sp-hidden');
+        this.renderFeedbackScreenshotPreview(null, '准备截图...');
+        this.captureFeedbackScreenshot({ privacyMode: this.getFeedbackScreenshotPrivacyMode() });
         document.getElementById('sp-feedback-message')?.focus();
         if (window.lucide) window.lucide.createIcons();
     }
@@ -6655,6 +6941,7 @@ class SeatingPlanner {
             category: this.getFeedbackSelection('category', 'other'),
             severity: this.getFeedbackSelection('severity', 'workaround'),
             snapshot: safeSnapshot,
+            screenshot: this._feedbackScreenshot,
             client: {
                 url: win?.location?.href || '',
                 width: win?.innerWidth || 0,
@@ -6681,6 +6968,10 @@ class SeatingPlanner {
         }
 
         try {
+            if (this._feedbackScreenshotPromise) {
+                this.setFeedbackScreenshotStatus('正在完成截图...', 'loading');
+                await this._feedbackScreenshotPromise;
+            }
             const response = await fetch('/api/tools/seating/feedback', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
