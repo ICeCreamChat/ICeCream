@@ -26,7 +26,10 @@ if errorlevel 1 (
 )
 
 set "PYTHON_CMD="
-where python >nul 2>&1 && set "PYTHON_CMD=python"
+py -3.12 --version >nul 2>&1 && set "PYTHON_CMD=py -3.12"
+if not defined PYTHON_CMD (
+    where python >nul 2>&1 && set "PYTHON_CMD=python"
+)
 
 set "JAVA_OK=0"
 where java >nul 2>&1 && set "JAVA_OK=1"
