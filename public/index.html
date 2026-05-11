@@ -163,6 +163,26 @@
                         </div>
                     </div>
 
+                    <!-- Mode Switcher -->
+                    <div class="mode-switcher" id="mode-switcher">
+                        <button class="mode-tab active" data-mode="auto" title="自动识别意图">
+                            <i data-lucide="sparkles"></i>
+                            <span>自动</span>
+                        </button>
+                        <button class="mode-tab" data-mode="chat" title="普通对话">
+                            <i data-lucide="message-circle"></i>
+                            <span>聊天</span>
+                        </button>
+                        <button class="mode-tab" data-mode="manim" title="生成动画">
+                            <i data-lucide="clapperboard"></i>
+                            <span>动画</span>
+                        </button>
+                        <button class="mode-tab" data-mode="solver" title="智能解题">
+                            <i data-lucide="calculator"></i>
+                            <span>解题</span>
+                        </button>
+                    </div>
+
                     <div class="header-right">
                         <button class="icon-btn apps-btn" id="apps-btn" title="课堂工具箱">
                             <i data-lucide="layout-grid"></i>
@@ -234,80 +254,33 @@
 
                 <!-- 输入区域 -->
                 <div class="input-area">
-                    <div class="composer-shell">
-                        <div class="composer-topbar">
-                            <div class="mode-switcher" id="mode-switcher" role="tablist" aria-label="选择 AI 工作模式">
-                                <button class="mode-tab active" data-mode="auto" title="自动识别意图" role="tab"
-                                    aria-selected="true">
-                                    <i data-lucide="sparkles"></i>
-                                    <span>自动</span>
-                                </button>
-                                <button class="mode-tab" data-mode="chat" title="普通对话" role="tab" aria-selected="false">
-                                    <i data-lucide="message-circle"></i>
-                                    <span>聊天</span>
-                                </button>
-                                <button class="mode-tab" data-mode="manim" title="生成动画" role="tab"
-                                    aria-selected="false">
-                                    <i data-lucide="clapperboard"></i>
-                                    <span>动画</span>
-                                </button>
-                                <button class="mode-tab" data-mode="solver" title="智能解题" role="tab"
-                                    aria-selected="false">
-                                    <i data-lucide="calculator"></i>
-                                    <span>解题</span>
-                                </button>
-                            </div>
-                            <span id="mode-hint" class="mode-hint">自动模式 · 智能识别意图</span>
+                    <div class="input-container">
+                        <button id="upload-btn" class="icon-btn upload-btn" title="上传图片" aria-label="上传图片"><i
+                                data-lucide="paperclip"></i></button>
+
+                        <div class="input-wrapper">
+                            <input id="chat-input" type="text" placeholder="输入消息，或上传图片..." autocomplete="off"
+                                aria-label="输入框" />
+                            <div id="ghost-input"></div>
                         </div>
 
-                        <div id="attachment-preview" class="attachment-preview" hidden>
-                            <img id="attachment-preview-image" alt="已附加的图片预览">
-                            <div class="attachment-meta">
-                                <span class="attachment-title">图片已附加</span>
-                                <span class="attachment-subtitle">可继续补充文字说明后发送</span>
-                            </div>
-                            <button id="attachment-remove" class="icon-btn attachment-remove" type="button"
-                                aria-label="移除图片">
-                                <i data-lucide="x"></i>
-                            </button>
-                        </div>
+                        <button id="send-btn" class="icon-btn send-btn" title="发送" aria-label="发送消息"><i
+                                data-lucide="send"></i></button>
+                    </div>
 
-                        <div class="composer-body">
-                            <button id="upload-btn" class="icon-btn upload-btn" title="上传图片" aria-label="上传图片"
-                                type="button">
-                                <i data-lucide="paperclip"></i>
-                            </button>
-
-                            <div class="input-wrapper">
-                                <textarea id="chat-input" rows="1" placeholder="输入消息，或上传图片..."
-                                    autocomplete="off" aria-label="输入消息"></textarea>
-                                <div id="ghost-input" aria-hidden="true"></div>
+                    <div class="toolbar">
+                        <button class="icon-btn more-btn" id="more-btn" aria-label="更多选项"><i
+                                data-lucide="settings"></i></button>
+                        <div class="dropdown-content" id="dropdownMenu">
+                            <div class="dropdown-item" id="btn-tts">
+                                <span id="tts-label" style="display: flex; align-items: center; gap: 8px;">
+                                    <i data-lucide="volume-x" style="width: 16px;"></i> 朗读: 关
+                                </span>
                             </div>
 
-                            <button id="send-btn" class="icon-btn send-btn" title="发送" aria-label="发送消息"
-                                type="button">
-                                <i data-lucide="send"></i>
-                            </button>
-                        </div>
-
-                        <div class="composer-footer">
-                            <span class="composer-shortcut">Enter 发送 · Shift+Enter 换行</span>
-                            <div class="composer-actions">
-                                <button class="icon-btn more-btn" id="more-btn" aria-label="更多选项" type="button">
-                                    <i data-lucide="settings"></i>
-                                </button>
-                                <div class="dropdown-content" id="dropdownMenu">
-                                    <div class="dropdown-item" id="btn-tts">
-                                        <span id="tts-label" style="display: flex; align-items: center; gap: 8px;">
-                                            <i data-lucide="volume-x" style="width: 16px;"></i> 朗读: 关
-                                        </span>
-                                    </div>
-
-                                    <div class="dropdown-item" id="btn-clear"
-                                        style="color:#ff5252; display: flex; align-items: center; gap: 8px;">
-                                        <i data-lucide="trash-2" style="width: 16px;"></i> 清空对话
-                                    </div>
-                                </div>
+                            <div class="dropdown-item" id="btn-clear"
+                                style="color:#ff5252; display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="trash-2" style="width: 16px;"></i> 清空对话
                             </div>
                         </div>
                     </div>

@@ -651,11 +651,25 @@ body.light-mode .tool-theme-toggle .icon-dark {
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
     border: 2px solid transparent;
     transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: breath 4s ease-in-out infinite;
 }
 
 .message-avatar:hover {
+    transform: scale(1.5);
     z-index: 50;
     border-color: var(--accent-color);
+}
+
+@keyframes breath {
+
+    0%,
+    100% {
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    }
+
+    50% {
+        box-shadow: 0 4px 20px rgba(0, 240, 255, 0.4);
+    }
 }
 
 .message-avatar img {
@@ -1737,258 +1751,6 @@ body.light-mode .input-container {
 body.light-mode .message.bot .message-content {
     border-color: rgba(15, 23, 42, 0.08);
     box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
-}
-
-/* ================================
-   Workbench Composer Redesign
-   ================================ */
-.input-area {
-    padding: 16px 32px 18px;
-    padding-inline: max(32px, calc((100% - var(--chat-rail-width)) / 2));
-    display: block;
-    border-top: 1px solid rgba(148, 163, 184, 0.14);
-    background: linear-gradient(to top, rgba(2, 6, 23, 0.78), rgba(2, 6, 23, 0.34));
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    flex-shrink: 0;
-}
-
-.composer-shell {
-    width: 100%;
-    max-width: var(--chat-rail-width);
-    margin: 0 auto;
-    border: 1px solid rgba(148, 163, 184, 0.18);
-    border-radius: 18px;
-    background: rgba(15, 23, 42, 0.82);
-    box-shadow: 0 18px 48px rgba(2, 6, 23, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-    overflow: visible;
-}
-
-.composer-topbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    padding: 10px 12px 8px;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
-}
-
-.composer-topbar .mode-switcher {
-    background: rgba(2, 6, 23, 0.44);
-    border-color: rgba(148, 163, 184, 0.18);
-    border-radius: 12px;
-    padding: 3px;
-}
-
-.composer-topbar .mode-tab {
-    min-height: 34px;
-    padding: 7px 12px;
-    border-radius: 9px;
-}
-
-.composer-topbar .mode-tab.active {
-    box-shadow: none;
-}
-
-.mode-hint {
-    min-width: 0;
-    color: var(--text-secondary);
-    font-size: 13px;
-    line-height: 1.4;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-#attachment-preview {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 10px 12px 0;
-    padding: 10px;
-    border: 1px solid rgba(14, 165, 233, 0.28);
-    border-radius: 12px;
-    background: rgba(14, 165, 233, 0.08);
-}
-
-#attachment-preview[hidden] {
-    display: none;
-}
-
-#attachment-preview img {
-    width: 52px;
-    height: 52px;
-    border-radius: 10px;
-    object-fit: cover;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-}
-
-.attachment-meta {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.attachment-title {
-    color: var(--text-primary);
-    font-size: 14px;
-    font-weight: 600;
-}
-
-.attachment-subtitle {
-    color: var(--text-secondary);
-    font-size: 12px;
-}
-
-.attachment-remove {
-    margin-left: auto;
-}
-
-.composer-body {
-    display: flex;
-    align-items: flex-end;
-    gap: 10px;
-    padding: 12px;
-}
-
-.composer-body .input-wrapper {
-    align-items: stretch;
-    min-height: 44px;
-}
-
-#chat-input {
-    width: 100%;
-    min-height: 44px;
-    max-height: 160px;
-    resize: none;
-    padding: 11px 2px;
-    border: none;
-    background: transparent;
-    color: var(--text-primary);
-    font-size: 15px;
-    line-height: 1.5;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    outline: none;
-    overflow-y: hidden;
-}
-
-#chat-input::placeholder {
-    color: var(--text-secondary);
-    opacity: 0.72;
-}
-
-#ghost-input {
-    display: none;
-}
-
-.composer-body .icon-btn {
-    width: 44px;
-    height: 44px;
-    min-width: 44px;
-    min-height: 44px;
-    border-radius: 12px;
-}
-
-.composer-body .send-btn {
-    color: #ffffff;
-    background: var(--accent-color);
-}
-
-.composer-body .send-btn:hover {
-    color: #ffffff;
-    transform: translateY(-1px);
-    box-shadow: 0 10px 24px rgba(14, 165, 233, 0.25);
-}
-
-.composer-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 0 12px 12px;
-}
-
-.composer-shortcut {
-    color: var(--text-secondary);
-    font-size: 12px;
-    opacity: 0.82;
-}
-
-.composer-actions {
-    position: relative;
-    display: flex;
-    align-items: center;
-}
-
-.composer-actions .more-btn {
-    width: 36px;
-    height: 36px;
-}
-
-.composer-actions .dropdown-content {
-    bottom: 44px;
-}
-
-.message {
-    max-width: min(100%, var(--chat-bubble-max));
-    margin-bottom: 10px;
-}
-
-.message.bot {
-    width: min(100%, var(--chat-bubble-max));
-}
-
-.message.user {
-    max-width: min(80%, var(--chat-user-bubble-max));
-}
-
-.message-avatar {
-    width: 36px;
-    height: 36px;
-    border-radius: 11px;
-    box-shadow: none;
-    border-color: rgba(148, 163, 184, 0.18);
-}
-
-.message-avatar:hover {
-    border-color: rgba(14, 165, 233, 0.55);
-}
-
-.message.bot .message-content {
-    width: 100%;
-    border-radius: 14px;
-    border-bottom-left-radius: 14px;
-    background: rgba(15, 23, 42, 0.58);
-    border-color: rgba(148, 163, 184, 0.14);
-    box-shadow: none;
-}
-
-.message.user .message-content {
-    border-radius: 14px;
-    border-bottom-right-radius: 6px;
-}
-
-body.light-mode .input-area {
-    background: linear-gradient(to top, rgba(248, 250, 252, 0.96), rgba(248, 250, 252, 0.72));
-}
-
-body.light-mode .composer-shell {
-    background: rgba(255, 255, 255, 0.92);
-    border-color: rgba(15, 23, 42, 0.12);
-    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.95);
-}
-
-body.light-mode .composer-topbar {
-    border-bottom-color: rgba(15, 23, 42, 0.08);
-}
-
-body.light-mode .composer-topbar .mode-switcher {
-    background: rgba(15, 23, 42, 0.04);
-}
-
-body.light-mode .message.bot .message-content {
-    background: rgba(255, 255, 255, 0.86);
 }
 
 /* ================================

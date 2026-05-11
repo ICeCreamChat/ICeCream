@@ -19,10 +19,7 @@ class MessageHandler {
             loading: null,
             loadingText: null,
             chatInput: null,
-            sendBtn: null,
-            attachmentPreview: null,
-            attachmentPreviewImage: null,
-            attachmentRemove: null
+            sendBtn: null
         };
         this.isLoading = false;
         this.pendingImage = null;
@@ -47,16 +44,11 @@ class MessageHandler {
         this.elements.loadingText = document.getElementById('loading-text');
         this.elements.chatInput = document.getElementById('chat-input');
         this.elements.sendBtn = document.getElementById('send-btn');
-        this.elements.attachmentPreview = document.getElementById('attachment-preview');
-        this.elements.attachmentPreviewImage = document.getElementById('attachment-preview-image');
-        this.elements.attachmentRemove = document.getElementById('attachment-remove');
 
         this.onMessageAdded = options.onMessageAdded || null;
         this.codePanel = options.codePanel || null;
 
         this._bindEvents();
-        this._autoResizeInput();
-        this._renderAttachmentPreview();
     }
 
 
@@ -180,53 +172,41 @@ class MessageHandler {
                 this.handleSend();
             }
         });
-
-        this.elements.chatInput?.addEventListener('input', () => {
-            this._autoResizeInput();
-        });
-
-        this.elements.attachmentRemove?.addEventListener('click', () => {
-            this.setPendingImage(null);
-            this.elements.chatInput?.focus();
-        });
     }
 
     /**
      * 处理发送消息
      */
     async handleSend() {
-        const typedMessage = this.elements.chatInput?.value.trim() || '';
-        const imageToSend = this.pendingImage;
-        const message = typedMessage || (imageToSend ? '请帮我解答这道题' : '');
+        const message = this.elements.chatInput?.value.trim() || '';
 
-        if (!message && !imageToSend) {
+        if (!message && !this.pendingImage) {
             return;
         }
 
         // 清空输入框
         if (this.elements.chatInput) {
             this.elements.chatInput.value = '';
-            this._autoResizeInput();
         }
 
         // 隐藏欢迎屏幕
         this.hideWelcomeScreen();
 
         // 添加用户消息
-        this.addMessage('user', message, imageToSend);
+        this.addMessage('user', message, this.pendingImage);
 
         // 显示加载状态
         this.setLoading(true);
 
         try {
-            const response = await this.sendToServer(message, imageToSend);
+            const response = await this.sendToServer(message, this.pendingImage);
 
             if (response.needConfirmation) {
                 // Attach the pending image to the data passed to intentConfirm so it can be re-sent
-                response.originalImage = imageToSend;
+                response.originalImage = this.pendingImage;
                 intentConfirm.show(response);
             } else {
-                this.handleResponse(response, imageToSend);
+                this.handleResponse(response, this.pendingImage);
             }
         } catch (error) {
             console.error('Send error:', error);
@@ -234,7 +214,7 @@ class MessageHandler {
             showToast(error.message, 'error');
         } finally {
             this.setLoading(false);
-            this.setPendingImage(null);
+            this.pendingImage = null;
         }
     }
 
@@ -508,7 +488,6 @@ class MessageHandler {
      */
     setPendingImage(imageBase64) {
         this.pendingImage = imageBase64;
-        this._renderAttachmentPreview();
     }
 
     /**
@@ -517,54 +496,6 @@ class MessageHandler {
      */
     getPendingImage() {
         return this.pendingImage;
-    }
-
-    /**
-     * 渲染 composer 附件预览
-     */
-    renderAttachmentPreview() {
-        this._renderAttachmentPreview();
-    }
-
-    /**
-     * 自适应 textarea 高度
-     * @private
-     */
-    _autoResizeInput() {
-        const input = this.elements.chatInput;
-        if (!input || input.tagName !== 'TEXTAREA') return;
-
-        const maxHeight = 160;
-        input.style.height = 'auto';
-        const nextHeight = Math.min(input.scrollHeight, maxHeight);
-        input.style.height = `${nextHeight}px`;
-        input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
-    }
-
-    /**
-     * 更新附件预览状态
-     * @private
-     */
-    _renderAttachmentPreview() {
-        const preview = this.elements.attachmentPreview;
-        const image = this.elements.attachmentPreviewImage;
-        if (!preview) return;
-
-        const hasImage = !!this.pendingImage;
-        preview.hidden = !hasImage;
-        preview.classList.toggle('is-visible', hasImage);
-
-        if (image) {
-            if (hasImage) {
-                image.src = this.pendingImage;
-            } else {
-                image.removeAttribute('src');
-            }
-        }
-
-        if (window.lucide) {
-            window.lucide.createIcons();
-        }
     }
 }
 
