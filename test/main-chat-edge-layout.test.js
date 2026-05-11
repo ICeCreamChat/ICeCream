@@ -15,6 +15,11 @@ test('main chat messages and input use an edge-aligned rail instead of centered 
   const mobileStyles = await readFile(mobileCssPath, 'utf8');
   const messageBlocks = getBlocks(mainStyles, '.messages');
   const inputBlocks = getBlocks(mainStyles, '.input-area');
+  const userMessageBlocks = [
+    ...getBlocks(mainStyles, '.message.user'),
+    ...getBlocks(mobileStyles, '.message.user'),
+  ];
+  const combinedStyles = `${mainStyles}\n${mobileStyles}`;
 
   assert.match(mainStyles, /--chat-edge-gutter:\s*clamp\(28px,\s*4vw,\s*72px\)/);
   assert.match(mainStyles, /--chat-edge-gutter:\s*clamp\(12px,\s*4vw,\s*20px\)/);
@@ -28,9 +33,21 @@ test('main chat messages and input use an edge-aligned rail instead of centered 
   assert.match(inputBlocks.at(-1), /padding-inline:\s*var\(--chat-edge-gutter\)/);
   assert.ok(mainStyles.lastIndexOf('.messages') > mainStyles.lastIndexOf('@media (min-width: 1440px)'));
   assert.ok(mainStyles.lastIndexOf('.input-area') > mainStyles.lastIndexOf('@media (min-width: 1440px)'));
+  assert.doesNotMatch(mobileStyles, /\.messages\s*{[^}]*padding:\s*[^;}]*(?:6%|10%|12%)/s);
+
+  assert.match(mainStyles, /\.message\s*{[^}]*width:\s*100%[^}]*max-width:\s*none/s);
+  assert.match(mainStyles, /\.message\.bot\s*{[^}]*justify-content:\s*flex-start/s);
+  assert.ok(userMessageBlocks.length > 0);
+  const userDirectionBlocks = userMessageBlocks.filter(block => /flex-direction:\s*row-reverse/.test(block));
+  assert.equal(userDirectionBlocks.length, 2);
+  assert.ok(userDirectionBlocks.every(block => /justify-content:\s*flex-start/.test(block)));
+  assert.doesNotMatch(combinedStyles, /\.message(?:\.[a-z-]+)?(?:\s*,\s*\.message(?:\.[a-z-]+)?)*\s*{[^}]*max-width:\s*(?:\d+%|min\(100%,\s*var\(--chat-(?:user-)?bubble-max\)\))/s);
 
   assert.match(mainStyles, /\.message\.bot\s*{[^}]*margin-right:\s*auto/s);
   assert.match(mainStyles, /\.message\.user\s*{[^}]*margin-left:\s*auto/s);
+  assert.match(mainStyles, /\.message-content\s*{[^}]*min-width:\s*0/s);
+  assert.match(mainStyles, /\.message\.bot \.message-content\s*{[^}]*max-width:\s*min\(100%,\s*var\(--chat-bubble-max\)\)/s);
+  assert.match(mainStyles, /\.message\.user \.message-content\s*{[^}]*max-width:\s*min\(100%,\s*var\(--chat-user-bubble-max\)\)/s);
   assert.match(mobileStyles, /\.input-area\s*{[^}]*padding-bottom: calc\(12px \+ env\(safe-area-inset-bottom, 0\)\)/s);
   assert.match(mobileStyles, /\.messages\s*{[^}]*overflow-x:\s*hidden/s);
 });

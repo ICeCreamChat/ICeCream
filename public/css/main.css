@@ -621,22 +621,23 @@ body.light-mode .tool-theme-toggle .icon-dark {
     display: flex;
     align-items: flex-start;
     gap: 14px;
-    max-width: 85%;
+    width: 100%;
+    max-width: none;
     margin-bottom: 16px;
     animation: fadeIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .message.bot {
     margin-right: auto;
+    justify-content: flex-start;
     padding-right: 0;
-    max-width: min(100%, var(--chat-bubble-max));
 }
 
 .message.user {
     margin-left: auto;
     flex-direction: row-reverse;
+    justify-content: flex-start;
     padding-left: 0;
-    max-width: min(100%, var(--chat-user-bubble-max));
 }
 
 .message-avatar {
@@ -693,6 +694,7 @@ body.light-mode .tool-theme-toggle .icon-dark {
     border-radius: 18px;
     font-size: 16px;
     line-height: 1.7;
+    min-width: 0;
     max-width: 100%;
     word-wrap: break-word;
     /* Legacy support */
@@ -730,6 +732,7 @@ body.light-mode .tool-theme-toggle .icon-dark {
     color: var(--text-primary);
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-bottom-left-radius: 6px;
+    max-width: min(100%, var(--chat-bubble-max));
 }
 
 .message.user .message-content {
@@ -738,6 +741,7 @@ body.light-mode .tool-theme-toggle .icon-dark {
     min-width: 96px;
     border-bottom-right-radius: 6px;
     box-shadow: 0 16px 32px rgba(0, 97, 255, 0.22);
+    max-width: min(100%, var(--chat-user-bubble-max));
 }
 
 /* Error message styling */
@@ -2003,12 +2007,13 @@ body.light-mode .message.bot .message-content {
 
     .message {
         gap: 12px;
-        max-width: 94%;
+        width: 100%;
+        max-width: none;
     }
 
     .message.bot,
     .message.user {
-        max-width: 94%;
+        max-width: none;
     }
 
     .message-avatar {
@@ -2106,7 +2111,7 @@ body.light-mode .message.bot .message-content {
     .message,
     .message.bot,
     .message.user {
-        max-width: 95%;
+        max-width: none;
     }
 
     .message-content {
