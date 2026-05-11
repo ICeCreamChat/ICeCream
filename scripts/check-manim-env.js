@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,7 @@ const requirementsPath = path.join(manimRoot, 'requirements.txt');
 const venvDir = path.join(manimRoot, '.venv');
 const depsHashFile = path.join(venvDir, '.requirements.sha256');
 
-function runCommand(command, args, options = {}) {
+export function runCommand(command, args, options = {}) {
   const result = spawnSync(command, args, {
     stdio: 'pipe',
     encoding: 'utf8',
@@ -33,10 +33,24 @@ function runCommand(command, args, options = {}) {
   return result;
 }
 
-function resolveSystemPython() {
+function splitCommandSpec(value) {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  const parts = value.trim().match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  const [cmd, ...args] = parts.map(part => part.replace(/^"|"$/g, ''));
+  return cmd ? { cmd, args } : null;
+}
+
+export function resolveSystemPython(env = process.env) {
+  const configuredPython = splitCommandSpec(env.PYTHON_CMD) || splitCommandSpec(env.PYTHON);
   const candidates = [
-    { cmd: 'python', args: ['--version'] },
+    ...(configuredPython ? [{ cmd: configuredPython.cmd, args: [...configuredPython.args, '--version'] }] : []),
+    { cmd: 'py', args: ['-3.12', '--version'] },
     { cmd: 'py', args: ['-3', '--version'] },
+    { cmd: 'python', args: ['--version'] },
+    { cmd: 'python3', args: ['--version'] },
   ];
 
   for (const candidate of candidates) {
@@ -52,18 +66,18 @@ function resolveSystemPython() {
   throw new Error('Python 3 was not found in PATH.');
 }
 
-function resolveVenvPython() {
+export function resolveVenvPython() {
   const windowsPath = path.join(venvDir, 'Scripts', 'python.exe');
   const posixPath = path.join(venvDir, 'bin', 'python');
   return existsSync(windowsPath) ? windowsPath : posixPath;
 }
 
-function sha256OfFile(filePath) {
+export function sha256OfFile(filePath) {
   const content = readFileSync(filePath);
   return createHash('sha256').update(content).digest('hex');
 }
 
-function ensureVenv(systemPython) {
+export function ensureVenv(systemPython) {
   if (!existsSync(resolveVenvPython())) {
     console.log('[manim-check] Creating virtual environment...');
     runCommand(systemPython.cmd, [...systemPython.args.slice(0, -1), '-m', 'venv', '.venv'], {
@@ -73,45 +87,61 @@ function ensureVenv(systemPython) {
   }
 }
 
-function ensureDependencies(venvPython, requirementsHash) {
-  const previousHash = existsSync(depsHashFile)
-    ? readFileSync(depsHashFile, 'utf8').trim()
-    : '';
+export function rebuildVenv(systemPython) {
+  const resolvedVenvDir = path.resolve(venvDir);
+  const resolvedManimRoot = path.resolve(manimRoot);
 
-  if (previousHash === requirementsHash) {
-    console.log('[manim-check] Dependencies are up to date.');
-    return;
+  if (!resolvedVenvDir.startsWith(`${resolvedManimRoot}${path.sep}`)) {
+    throw new Error(`Refusing to remove unexpected virtualenv path: ${resolvedVenvDir}`);
   }
 
-  console.log('[manim-check] Installing/updating Manim dependencies...');
-  runCommand(venvPython, ['-m', 'pip', 'install', '-r', 'requirements.txt'], {
+  if (existsSync(resolvedVenvDir)) {
+    console.log('[manim-check] Removing broken Manim virtual environment...');
+    rmSync(resolvedVenvDir, { recursive: true, force: true });
+  }
+
+  ensureVenv(systemPython);
+}
+
+export function buildPipInstallArgs({ force = false } = {}) {
+  const args = ['-m', 'pip', 'install'];
+  if (force) {
+    args.push('--no-cache-dir', '--force-reinstall');
+  }
+  args.push('-r', 'requirements.txt');
+  return args;
+}
+
+export function installDependencies(venvPython, { force = false } = {}) {
+  runCommand(venvPython, buildPipInstallArgs({ force }), {
     cwd: manimRoot,
     stdio: 'inherit',
   });
-  writeFileSync(depsHashFile, `${requirementsHash}\n`, 'utf8');
 }
 
-function runImportProbe(venvPython) {
-  const probeScript = `
+export function buildImportProbeScript() {
+  return `
 import importlib
 import sys
 
-modules = [
-    "fastapi",
-    "uvicorn",
-    "jinja2",
-    "websockets",
-    "openai",
-    "google.generativeai",
-    "manim",
-    "pydantic",
-    "dotenv",
+checks = [
+    ("fastapi", "import fastapi"),
+    ("uvicorn", "import uvicorn"),
+    ("jinja2", "import jinja2"),
+    ("websockets", "import websockets"),
+    ("openai", "import openai"),
+    ("openai.AsyncOpenAI", "from openai import AsyncOpenAI"),
+    ("openai.types.shared.OAuthErrorCode", "from openai.types.shared import OAuthErrorCode"),
+    ("google.generativeai", "import google.generativeai"),
+    ("manim", "import manim"),
+    ("pydantic", "import pydantic"),
+    ("dotenv", "import dotenv"),
 ]
 
 missing = []
-for module_name in modules:
+for module_name, statement in checks:
     try:
-        importlib.import_module(module_name)
+        exec(statement, {})
     except Exception as exc:
         missing.append((module_name, str(exc)))
 
@@ -123,14 +153,78 @@ if missing:
 
 print("ALL_IMPORTS_OK")
 `;
+}
 
+export function runImportProbe(venvPython) {
+  const probeScript = buildImportProbeScript();
   runCommand(venvPython, ['-c', probeScript], {
     cwd: manimRoot,
     stdio: 'inherit',
   });
 }
 
-function main() {
+export function createDependencyEnsurer({
+  readPreviousHash,
+  installDependencies: install,
+  runImportProbe: probe,
+  rebuildEnvironment,
+  writeCurrentHash,
+  log = console.log,
+  warn = console.warn,
+}) {
+  return function ensureDependenciesForHash(requirementsHash) {
+    const previousHash = readPreviousHash();
+    const rebuildAndInstall = repairError => {
+      if (!rebuildEnvironment) {
+        throw repairError;
+      }
+
+      warn(`[manim-check] Dependency install failed (${repairError.message}). Rebuilding Manim virtual environment...`);
+      rebuildEnvironment();
+      install({ force: true });
+    };
+
+    if (previousHash === requirementsHash) {
+      log('[manim-check] Dependencies are up to date.');
+    } else {
+      log('[manim-check] Installing/updating Manim dependencies...');
+      try {
+        install({ force: false });
+      } catch (installError) {
+        rebuildAndInstall(installError);
+      }
+    }
+
+    try {
+      probe();
+    } catch (error) {
+      warn(`[manim-check] Import probe failed (${error.message}). Reinstalling Manim dependencies without cache...`);
+      try {
+        install({ force: true });
+      } catch (repairError) {
+        rebuildAndInstall(repairError);
+      }
+      probe();
+    }
+
+    writeCurrentHash(requirementsHash);
+  };
+}
+
+export function ensureDependencies(venvPython, requirementsHash, systemPython = resolveSystemPython()) {
+  const getVenvPython = () => existsSync(venvPython) ? venvPython : resolveVenvPython();
+  const ensureDependenciesForHash = createDependencyEnsurer({
+    readPreviousHash: () => existsSync(depsHashFile) ? readFileSync(depsHashFile, 'utf8').trim() : '',
+    installDependencies: options => installDependencies(getVenvPython(), options),
+    runImportProbe: () => runImportProbe(getVenvPython()),
+    rebuildEnvironment: () => rebuildVenv(systemPython),
+    writeCurrentHash: hash => writeFileSync(depsHashFile, `${hash}\n`, 'utf8'),
+  });
+
+  ensureDependenciesForHash(requirementsHash);
+}
+
+export function main() {
   if (!existsSync(requirementsPath)) {
     throw new Error(`Missing requirements file: ${requirementsPath}`);
   }
@@ -139,14 +233,15 @@ function main() {
   ensureVenv(systemPython);
   const venvPython = resolveVenvPython();
   const requirementsHash = sha256OfFile(requirementsPath);
-  ensureDependencies(venvPython, requirementsHash);
-  runImportProbe(venvPython);
+  ensureDependencies(venvPython, requirementsHash, systemPython);
   console.log('[manim-check] Environment check passed.');
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(`[manim-check] ${error.message}`);
-  process.exit(1);
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  try {
+    main();
+  } catch (error) {
+    console.error(`[manim-check] ${error.message}`);
+    process.exit(1);
+  }
 }
