@@ -1719,7 +1719,6 @@ body.light-mode .sp-image-review {
     color: var(--sp-primary);
 }
 
-.sp-feedback--capture-hidden,
 .sp-feedback-capture--active .sp-feedback,
 .sp-feedback-capture--active .sp-chat,
 .sp-feedback-capture--active .sp-context-menu,
@@ -1750,6 +1749,12 @@ body.light-mode .sp-image-review {
 
 body.light-mode .sp-feedback-screenshot {
     background: rgba(241, 245, 249, 0.78);
+}
+
+.sp-feedback-screenshot-recapture:disabled,
+.sp-feedback-screenshot-fallback:disabled {
+    opacity: 0.62;
+    cursor: wait;
 }
 
 .sp-feedback-field {

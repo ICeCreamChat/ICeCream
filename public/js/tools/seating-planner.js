@@ -103,6 +103,9 @@ class SeatingPlanner {
         this._feedbackScreenshot = null;
         this._feedbackScreenshotPromise = null;
         this._feedbackScreenshotCaptureId = 0;
+        this._feedbackScreenshotState = 'idle';
+        this._feedbackScreenshotQueuedPrivacyMode = null;
+        this._feedbackScreenshotRunning = false;
         this.showSeatDetails = true;
         this.showScoreAnalysis = false;
         this.showArrangementExplain = false;
@@ -1344,9 +1347,13 @@ class SeatingPlanner {
                                 </div>
                                 <div class="sp-feedback-screenshot-actions">
                                     <span class="sp-feedback-screenshot-status" id="sp-feedback-screenshot-status">等待截图</span>
-                                    <button type="button" class="sp-btn sp-btn--sm" id="sp-feedback-screenshot-recapture">
+                                    <button type="button" class="sp-btn sp-btn--sm sp-feedback-screenshot-recapture" id="sp-feedback-screenshot-recapture">
                                         <i data-lucide="camera"></i>
                                         重新截图
+                                    </button>
+                                    <button type="button" class="sp-btn sp-btn--sm sp-feedback-screenshot-fallback" id="sp-feedback-screenshot-fallback" title="自动快照可能不完全一致">
+                                        <i data-lucide="image"></i>
+                                        自动快照（可能不完全一致）
                                     </button>
                                 </div>
                             </div>
@@ -1995,9 +2002,18 @@ class SeatingPlanner {
         $('sp-feedback-submit')?.addEventListener('click', () => this.submitFeedback());
         $('sp-feedback-screenshot-recapture')?.addEventListener('click', () => this.captureFeedbackScreenshot({
             privacyMode: this.getFeedbackScreenshotPrivacyMode(),
+            mode: 'screen',
+            hideDialog: true,
+        }));
+        $('sp-feedback-screenshot-fallback')?.addEventListener('click', () => this.captureFeedbackScreenshot({
+            privacyMode: this.getFeedbackScreenshotPrivacyMode(),
+            mode: 'dom-fallback',
+            hideDialog: false,
         }));
         $('sp-feedback-screenshot-redact')?.addEventListener('change', () => this.captureFeedbackScreenshot({
             privacyMode: this.getFeedbackScreenshotPrivacyMode(),
+            mode: 'screen',
+            hideDialog: true,
         }));
         $('sp-feedback-dialog')?.addEventListener('click', e => {
             if (e.target?.id === 'sp-feedback-dialog') this.closeFeedbackDialog();
@@ -6580,6 +6596,16 @@ class SeatingPlanner {
         status.dataset.tone = tone;
     }
 
+    setFeedbackScreenshotControlsBusy(active) {
+        const recapture = document.getElementById('sp-feedback-screenshot-recapture');
+        const fallback = document.getElementById('sp-feedback-screenshot-fallback');
+        [recapture, fallback].forEach(button => {
+            if (!button) return;
+            button.disabled = Boolean(active);
+            button.toggleAttribute('aria-busy', Boolean(active));
+        });
+    }
+
     renderFeedbackScreenshotPreview(screenshot = null, message = '暂无截图') {
         const preview = document.getElementById('sp-feedback-screenshot-preview');
         if (!preview) return;
@@ -6598,10 +6624,11 @@ class SeatingPlanner {
         preview.appendChild(placeholder);
     }
 
-    setFeedbackScreenshotLoading(message) {
+    setFeedbackScreenshotLoading(message, { preservePreview = false } = {}) {
         const preview = document.getElementById('sp-feedback-screenshot-preview');
         if (!preview) return;
         preview.classList.add('is-loading');
+        if (preservePreview && this._feedbackScreenshot?.dataUrl) return;
         preview.replaceChildren();
         const placeholder = document.createElement('span');
         placeholder.className = 'sp-feedback-screenshot-placeholder';
@@ -6611,12 +6638,24 @@ class SeatingPlanner {
         if (window.lucide) window.lucide.createIcons();
     }
 
-    setFeedbackCaptureMode(active, privacyMode = 'redacted') {
-        const app = document.querySelector('.sp-app');
-        app?.classList.toggle('sp-feedback-capture--active', Boolean(active));
-        app?.classList.toggle('sp-feedback-capture--redacted', Boolean(active && privacyMode === 'redacted'));
-        document.getElementById('sp-feedback-dialog')?.classList.toggle('sp-feedback--capture-hidden', Boolean(active));
-        document.body?.classList.toggle('sp-feedback-capture-body', Boolean(active));
+    getFeedbackScreenshotTarget() {
+        return document.querySelector('.sp-main') || document.querySelector('.sp-app');
+    }
+
+    prepareFeedbackScreenshotClone(clonedDocument, privacyMode) {
+        const app = clonedDocument.querySelector('.sp-app');
+        app?.classList.add('sp-feedback-capture--active');
+        app?.classList.toggle('sp-feedback-capture--redacted', privacyMode === 'redacted');
+        clonedDocument.querySelectorAll('.sp-feedback, .sp-chat, .sp-context-menu, .sp-seat-tooltip, .sp-autocomplete')
+            .forEach(element => {
+                element.style.display = 'none';
+                element.style.visibility = 'hidden';
+                element.style.pointerEvents = 'none';
+            });
+        clonedDocument.querySelectorAll('.sp-guide, .sp-guide-transition')
+            .forEach(element => {
+                element.style.display = 'none';
+            });
     }
 
     waitForFeedbackCaptureFrame() {
@@ -6653,57 +6692,281 @@ class SeatingPlanner {
         };
     }
 
-    captureFeedbackScreenshot({ privacyMode = this.getFeedbackScreenshotPrivacyMode() } = {}) {
+    getFeedbackScreenshotCropRect(target, frame = {}) {
+        const rect = target?.getBoundingClientRect?.();
+        if (!rect) throw new Error('找不到座位工具区域');
+        const viewport = window.visualViewport || {};
+        const viewportWidth = Math.max(1, viewport.width || window.innerWidth || document.documentElement?.clientWidth || frame.width || rect.width);
+        const viewportHeight = Math.max(1, viewport.height || window.innerHeight || document.documentElement?.clientHeight || frame.height || rect.height);
+        const frameWidth = Math.max(1, Math.round(frame.width || viewportWidth));
+        const frameHeight = Math.max(1, Math.round(frame.height || viewportHeight));
+        const scaleX = frameWidth / viewportWidth;
+        const scaleY = frameHeight / viewportHeight;
+        const x = Math.max(0, Math.round(rect.left * scaleX));
+        const y = Math.max(0, Math.round(rect.top * scaleY));
+        const right = Math.min(frameWidth, Math.round((rect.left + rect.width) * scaleX));
+        const bottom = Math.min(frameHeight, Math.round((rect.top + rect.height) * scaleY));
+        return {
+            x,
+            y,
+            width: Math.max(1, right - x),
+            height: Math.max(1, bottom - y),
+            scaleX,
+            scaleY,
+            viewportWidth,
+            viewportHeight,
+        };
+    }
+
+    drawScreenCaptureFrameToCanvas(video, cropRect) {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(cropRect.width));
+        canvas.height = Math.max(1, Math.round(cropRect.height));
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('无法创建截图画布');
+        context.drawImage(
+            video,
+            Math.round(cropRect.x),
+            Math.round(cropRect.y),
+            Math.round(cropRect.width),
+            Math.round(cropRect.height),
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+        return canvas;
+    }
+
+    getFeedbackScreenshotRedactionElements() {
+        return Array.from(document.querySelectorAll([
+            '.sp-name-tag',
+            '.sp-seat-detail-name',
+            '.sp-seat-detail-constraint-text',
+            '.sp-seat-meta-item',
+            '.sp-tags',
+            '#sp-students-preview',
+            '#sp-students-input',
+            '#sp-arrange-prompt',
+            '#sp-chat-messages',
+        ].join(','))).filter(element => !element.closest?.('#sp-feedback-dialog'));
+    }
+
+    applyFeedbackScreenshotRedactionMasks(canvas, cropRect, elements = this.getFeedbackScreenshotRedactionElements()) {
+        const context = canvas?.getContext?.('2d');
+        if (!context || !cropRect) return canvas;
+        context.save?.();
+        context.fillStyle = 'rgba(148, 163, 184, 0.82)';
+        context.strokeStyle = 'rgba(255, 255, 255, 0.48)';
+        context.lineWidth = 1;
+        elements.forEach(element => {
+            const rect = element?.getBoundingClientRect?.();
+            if (!rect || rect.width <= 0 || rect.height <= 0) return;
+            const rawX = Math.round((rect.left * cropRect.scaleX) - cropRect.x);
+            const rawY = Math.round((rect.top * cropRect.scaleY) - cropRect.y);
+            const rawRight = Math.round(((rect.left + rect.width) * cropRect.scaleX) - cropRect.x);
+            const rawBottom = Math.round(((rect.top + rect.height) * cropRect.scaleY) - cropRect.y);
+            const x = Math.max(0, rawX);
+            const y = Math.max(0, rawY);
+            const width = Math.min(canvas.width, rawRight) - x;
+            const height = Math.min(canvas.height, rawBottom) - y;
+            if (width <= 0 || height <= 0) return;
+            context.beginPath?.();
+            if (typeof context.roundRect === 'function') {
+                context.roundRect(x, y, width, height, 6);
+                context.fill?.();
+                context.stroke?.();
+            } else {
+                context.fillRect(x, y, width, height);
+            }
+        });
+        context.restore?.();
+        return canvas;
+    }
+
+    async withFeedbackScreenshotHiddenOverlays(callback) {
+        const elements = Array.from(document.querySelectorAll([
+            '#sp-feedback-dialog',
+            '.sp-chat',
+            '.sp-context-menu',
+            '.sp-seat-tooltip',
+            '.sp-autocomplete',
+        ].join(',')));
+        const previous = elements.map(element => ({
+            element,
+            opacity: element.style.opacity,
+            visibility: element.style.visibility,
+            pointerEvents: element.style.pointerEvents,
+        }));
+        elements.forEach(element => {
+            element.style.opacity = '0';
+            element.style.visibility = 'hidden';
+            element.style.pointerEvents = 'none';
+        });
+        try {
+            await this.waitForFeedbackCaptureFrame();
+            return await callback();
+        } finally {
+            previous.forEach(({ element, opacity, visibility, pointerEvents }) => {
+                element.style.opacity = opacity;
+                element.style.visibility = visibility;
+                element.style.pointerEvents = pointerEvents;
+            });
+        }
+    }
+
+    async waitForScreenCaptureVideo(video) {
+        await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('真实截图视频加载超时')), 5000);
+            video.onloadedmetadata = () => {
+                clearTimeout(timeout);
+                const playResult = video.play?.();
+                if (playResult?.then) {
+                    playResult.then(resolve).catch(resolve);
+                } else {
+                    resolve();
+                }
+            };
+            video.onerror = () => {
+                clearTimeout(timeout);
+                reject(new Error('真实截图视频加载失败'));
+            };
+        });
+        await this.waitForFeedbackCaptureFrame();
+    }
+
+    async captureFeedbackScreenScreenshot({ privacyMode = this.getFeedbackScreenshotPrivacyMode(), hideDialog = true } = {}) {
+        const target = this.getFeedbackScreenshotTarget();
+        if (!target) throw new Error('找不到座位工具区域');
+        if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) throw new Error('浏览器不支持真实截图');
+        let stream = null;
+        try {
+            stream = await navigator.mediaDevices.getDisplayMedia({
+                video: {
+                    displaySurface: 'browser',
+                    width: { ideal: Math.round((window.innerWidth || 1280) * (window.devicePixelRatio || 1)) },
+                    height: { ideal: Math.round((window.innerHeight || 720) * (window.devicePixelRatio || 1)) },
+                },
+                audio: false,
+                preferCurrentTab: true,
+                selfBrowserSurface: 'include',
+                surfaceSwitching: 'exclude',
+                systemAudio: 'exclude',
+            });
+            const video = document.createElement('video');
+            video.muted = true;
+            video.playsInline = true;
+            video.srcObject = stream;
+            await this.waitForScreenCaptureVideo(video);
+            const settings = stream.getVideoTracks?.()[0]?.getSettings?.() || {};
+            const frame = {
+                width: video.videoWidth || settings.width || window.innerWidth || 1280,
+                height: video.videoHeight || settings.height || window.innerHeight || 720,
+            };
+            const cropRect = this.getFeedbackScreenshotCropRect(target, frame);
+            const drawFrame = () => {
+                const canvas = this.drawScreenCaptureFrameToCanvas(video, cropRect);
+                if (privacyMode === 'redacted') {
+                    this.applyFeedbackScreenshotRedactionMasks(canvas, cropRect);
+                }
+                return canvas;
+            };
+            return hideDialog
+                ? await this.withFeedbackScreenshotHiddenOverlays(drawFrame)
+                : drawFrame();
+        } finally {
+            if (stream) stream.getTracks().forEach(track => track.stop());
+        }
+    }
+
+    async captureFeedbackDomFallbackScreenshot({ privacyMode = this.getFeedbackScreenshotPrivacyMode() } = {}) {
+        const target = this.getFeedbackScreenshotTarget();
+        if (!target) throw new Error('找不到座位工具区域');
+        const html2canvas = await this.ensureHtml2Canvas();
+        const isLightMode = document.body?.classList?.contains('light-mode');
+        await this.waitForFeedbackCaptureFrame();
+        return html2canvas(target, {
+            backgroundColor: isLightMode ? '#f8fafc' : '#0f172a',
+            scale: Math.min(1.5, Math.max(1, window.devicePixelRatio || 1.25)),
+            useCORS: true,
+            logging: false,
+            onclone: clonedDocument => this.prepareFeedbackScreenshotClone(clonedDocument, privacyMode),
+        });
+    }
+
+    captureFeedbackScreenshot({
+        privacyMode = this.getFeedbackScreenshotPrivacyMode(),
+        mode = 'screen',
+        hideDialog = true,
+    } = {}) {
+        if (this._feedbackScreenshotRunning) {
+            this._feedbackScreenshotQueuedPrivacyMode = privacyMode;
+            this.setFeedbackScreenshotStatus('当前截图生成中，稍后自动重新截图...', 'loading');
+            return this._feedbackScreenshotPromise;
+        }
         const captureId = this._feedbackScreenshotCaptureId + 1;
         this._feedbackScreenshotCaptureId = captureId;
-        this._feedbackScreenshot = null;
-        this.setFeedbackScreenshotLoading('正在截取座位工具区域...');
-        this.setFeedbackScreenshotStatus('正在生成截图...', 'loading');
+        const previousScreenshot = this._feedbackScreenshot;
+        this._feedbackScreenshotRunning = true;
+        this._feedbackScreenshotState = 'loading';
+        this.setFeedbackScreenshotControlsBusy(true);
+        const isFallback = mode === 'dom-fallback';
+        const loadingText = isFallback
+            ? '正在生成自动快照（可能不完全一致）...'
+            : (previousScreenshot ? '正在获取真实截图...' : '正在请求真实截图授权...');
+        this.setFeedbackScreenshotLoading(
+            loadingText,
+            { preservePreview: Boolean(previousScreenshot) }
+        );
+        this.setFeedbackScreenshotStatus(loadingText, 'loading');
 
         const promise = (async () => {
-            const target = document.querySelector('.sp-app');
-            if (!target) throw new Error('找不到座位工具区域');
-            const html2canvas = await this.ensureHtml2Canvas();
-            const isLightMode = document.body?.classList?.contains('light-mode');
-            this.setExportMode(true);
-            this.setFeedbackCaptureMode(true, privacyMode);
-            try {
-                await this.waitForFeedbackCaptureFrame();
-                const canvas = await html2canvas(target, {
-                    backgroundColor: isLightMode ? '#f8fafc' : '#0f172a',
-                    scale: Math.min(2, Math.max(1, window.devicePixelRatio || 1.5)),
-                    useCORS: true,
-                    logging: false,
-                    ignoreElements: element => Boolean(element?.closest?.(
-                        '.sp-feedback, .sp-chat, .sp-context-menu, .sp-seat-tooltip, .sp-autocomplete'
-                    )),
-                });
-                const screenshot = this.createFeedbackScreenshotPayload(canvas, privacyMode);
-                if (captureId !== this._feedbackScreenshotCaptureId) return null;
-                this._feedbackScreenshot = screenshot;
-                this.renderFeedbackScreenshotPreview(screenshot);
-                this.setFeedbackScreenshotStatus(
-                    privacyMode === 'redacted' ? '已生成截图（已遮挡姓名）' : '已生成截图（保留真实画面）',
-                    'success'
-                );
-                return screenshot;
-            } finally {
-                this.setFeedbackCaptureMode(false, privacyMode);
-                this.setExportMode(false);
-            }
+            const canvas = isFallback
+                ? await this.captureFeedbackDomFallbackScreenshot({ privacyMode })
+                : await this.captureFeedbackScreenScreenshot({ privacyMode, hideDialog });
+            const screenshot = this.createFeedbackScreenshotPayload(canvas, privacyMode);
+            if (captureId !== this._feedbackScreenshotCaptureId) return null;
+            this._feedbackScreenshot = screenshot;
+            this._feedbackScreenshotState = 'success';
+            this.renderFeedbackScreenshotPreview(screenshot);
+            this.setFeedbackScreenshotStatus(
+                isFallback
+                    ? '已生成自动快照（可能不完全一致）'
+                    : (privacyMode === 'redacted' ? '已生成截图（已遮挡姓名）' : '已生成截图（保留真实画面）'),
+                'success'
+            );
+            return screenshot;
         })().catch(error => {
             if (captureId === this._feedbackScreenshotCaptureId) {
-                this._feedbackScreenshot = null;
-                this.renderFeedbackScreenshotPreview(null, '截图失败，可重新截图或直接提交');
-                this.setFeedbackScreenshotStatus('截图失败，可重新截图或直接提交', 'error');
+                this._feedbackScreenshot = previousScreenshot;
+                this._feedbackScreenshotState = 'error';
+                if (previousScreenshot?.dataUrl) {
+                    this.renderFeedbackScreenshotPreview(previousScreenshot);
+                    this.setFeedbackScreenshotStatus('重新截图失败，已保留上一张，可再次尝试或直接提交', 'error');
+                } else {
+                    this.renderFeedbackScreenshotPreview(null, '未获取真实截图，可直接提交或使用自动快照');
+                    this.setFeedbackScreenshotStatus('未获取真实截图，可直接提交或使用自动快照', 'error');
+                }
             }
             this.recordDiagnosticEvent('feedback_screenshot_failed', {
                 error: error.message || 'feedback_screenshot_failed',
+                mode,
             });
             return null;
         }).finally(() => {
             if (captureId === this._feedbackScreenshotCaptureId) {
+                this._feedbackScreenshotRunning = false;
+                this.setFeedbackScreenshotControlsBusy(false);
                 this._feedbackScreenshotPromise = null;
+                const queuedPrivacyMode = this._feedbackScreenshotQueuedPrivacyMode;
+                if (queuedPrivacyMode) {
+                    this._feedbackScreenshotQueuedPrivacyMode = null;
+                    this.captureFeedbackScreenshot({
+                        privacyMode: queuedPrivacyMode,
+                        mode,
+                        hideDialog,
+                    });
+                }
             }
         });
 
@@ -6711,12 +6974,25 @@ class SeatingPlanner {
         return promise;
     }
 
-    openFeedbackDialog() {
+    async openFeedbackDialog() {
         const dialog = document.getElementById('sp-feedback-dialog');
         if (!dialog) return;
+        await this.captureFeedbackScreenshot({
+            privacyMode: this.getFeedbackScreenshotPrivacyMode(),
+            mode: 'screen',
+            hideDialog: true,
+        });
         dialog.classList.remove('sp-hidden');
-        this.renderFeedbackScreenshotPreview(null, '准备截图...');
-        this.captureFeedbackScreenshot({ privacyMode: this.getFeedbackScreenshotPrivacyMode() });
+        if (this._feedbackScreenshot?.dataUrl) {
+            this.renderFeedbackScreenshotPreview(this._feedbackScreenshot);
+            this.setFeedbackScreenshotStatus(
+                this._feedbackScreenshot.privacyMode === 'redacted' ? '已生成截图（已遮挡姓名）' : '已生成截图（保留真实画面）',
+                'success'
+            );
+        } else {
+            this.renderFeedbackScreenshotPreview(null, '未获取真实截图，可直接提交或使用自动快照');
+            this.setFeedbackScreenshotStatus('未获取真实截图，可直接提交或使用自动快照', 'error');
+        }
         document.getElementById('sp-feedback-message')?.focus();
         if (window.lucide) window.lucide.createIcons();
     }

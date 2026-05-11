@@ -268,10 +268,22 @@ test('seating planner exposes a feedback entry before the tool theme toggle', as
   assert.match(plannerSource, /sp-feedback-screenshot-status/);
   assert.match(plannerSource, /sp-feedback-screenshot-recapture/);
   assert.match(plannerSource, /sp-feedback-screenshot-redact/);
+  assert.match(plannerSource, /sp-feedback-screenshot-fallback/);
   assert.match(plannerSource, /captureFeedbackScreenshot/);
+  assert.match(plannerSource, /getFeedbackScreenshotTarget/);
+  assert.match(plannerSource, /captureFeedbackScreenScreenshot/);
+  assert.match(plannerSource, /drawScreenCaptureFrameToCanvas/);
+  assert.match(plannerSource, /getFeedbackScreenshotCropRect/);
+  assert.match(plannerSource, /applyFeedbackScreenshotRedactionMasks/);
+  assert.match(plannerSource, /prepareFeedbackScreenshotClone/);
+  assert.match(plannerSource, /navigator\.mediaDevices\.getDisplayMedia/);
   assert.match(plannerSource, /this\.ensureHtml2Canvas\(\)/);
-  assert.match(plannerSource, /document\.querySelector\('\.sp-app'\)/);
+  assert.match(plannerSource, /document\.querySelector\('\.sp-main'\)/);
+  assert.match(plannerSource, /onclone:\s*clonedDocument => this\.prepareFeedbackScreenshotClone\(clonedDocument,\s*privacyMode\)/);
   assert.match(plannerSource, /sp-feedback-capture--redacted/);
+  assert.match(plannerSource, /_feedbackScreenshotState/);
+  assert.match(plannerSource, /_feedbackScreenshotQueuedPrivacyMode/);
+  assert.match(plannerSource, /_feedbackScreenshotRunning/);
   assert.match(plannerSource, /screenshot:\s*this\._feedbackScreenshot/);
   assert.match(plannerSource, /await this\._feedbackScreenshotPromise/);
   assert.match(plannerSource, /diagnostics_request_failed/);
@@ -286,6 +298,94 @@ test('seating planner exposes a feedback entry before the tool theme toggle', as
   assert.match(plannerStyles, /\.sp-feedback-screenshot/);
   assert.match(plannerStyles, /\.sp-feedback-screenshot-preview/);
   assert.match(plannerStyles, /\.sp-feedback-capture--redacted/);
+});
+
+test('seating feedback screenshots use real screen capture with stable fallback', async () => {
+  const plannerSource = await readFile(sourcePath, 'utf8');
+  const plannerStyles = await readFile(stylePath, 'utf8');
+
+  const openBody = plannerSource.match(/openFeedbackDialog\(\)\s*{([\s\S]*?)\n    }\n\n    closeFeedbackDialog/)?.[1] || '';
+  assert.match(openBody, /captureFeedbackScreenshot/);
+  assert.match(openBody, /dialog\.classList\.remove\('sp-hidden'\)/);
+
+  const captureBody = plannerSource.match(/captureFeedbackScreenshot\(\{[\s\S]*?mode = 'screen'[\s\S]*?\n    }\n\n    async openFeedbackDialog/)?.[0] || '';
+  assert.match(captureBody, /const previousScreenshot = this\._feedbackScreenshot/);
+  assert.doesNotMatch(captureBody, /this\._feedbackScreenshot = null;\s*this\.setFeedbackScreenshotLoading/);
+  assert.match(captureBody, /this\._feedbackScreenshot = previousScreenshot/);
+  assert.match(captureBody, /重新截图失败，已保留上一张/);
+  assert.match(captureBody, /this\._feedbackScreenshotRunning/);
+  assert.match(captureBody, /this\._feedbackScreenshotQueuedPrivacyMode/);
+  assert.match(captureBody, /captureFeedbackScreenScreenshot/);
+  assert.match(captureBody, /captureFeedbackDomFallbackScreenshot/);
+
+  assert.match(plannerSource, /navigator\.mediaDevices\.getDisplayMedia/);
+  assert.match(plannerSource, /preferCurrentTab:\s*true/);
+  assert.match(plannerSource, /getFeedbackScreenshotCropRect\(target,\s*frame/);
+  assert.match(plannerSource, /drawScreenCaptureFrameToCanvas\(video,\s*cropRect\)/);
+  assert.match(plannerSource, /applyFeedbackScreenshotRedactionMasks\(canvas,\s*cropRect/);
+  assert.match(plannerSource, /stream\.getTracks\(\)\.forEach\(track => track\.stop\(\)\)/);
+  assert.match(plannerSource, /prepareFeedbackScreenshotClone\(clonedDocument,\s*privacyMode\)/);
+  assert.match(plannerSource, /clonedDocument\.querySelectorAll\('\.sp-feedback,\s*\.sp-chat,\s*\.sp-context-menu,\s*\.sp-seat-tooltip,\s*\.sp-autocomplete'\)/);
+  assert.doesNotMatch(plannerSource, /setFeedbackCaptureMode/);
+  assert.doesNotMatch(plannerStyles, /\.sp-feedback--capture-hidden/);
+  assert.doesNotMatch(plannerStyles, /\.sp-feedback-capture--active\s+\.sp-blackboard/);
+  assert.doesNotMatch(plannerStyles, /\.sp-feedback-capture--active\s+\.sp-blackboard-scene/);
+  assert.doesNotMatch(plannerStyles, /\.sp-feedback-capture--active\s+:is\(\.sp-blackboard-frame,\s*\.sp-chalk-tray\)/);
+  assert.match(plannerStyles, /\.sp-feedback-screenshot-recapture/);
+  assert.match(plannerStyles, /\.sp-feedback-screenshot-recapture:disabled/);
+  assert.doesNotMatch(plannerStyles, /\.sp-feedback-screenshot-recapture\.is-loading\s+\.lucide/);
+  assert.doesNotMatch(plannerSource, /recapture\.classList\.toggle\('is-loading'/);
+});
+
+test('feedback screen capture crop rect scales viewport coordinates to video pixels', () => {
+  const originalWindow = global.window;
+  const originalDocument = global.document;
+  global.window = {
+    visualViewport: { width: 800, height: 600 },
+    innerWidth: 800,
+    innerHeight: 600,
+  };
+  global.document = { documentElement: { clientWidth: 800, clientHeight: 600 } };
+
+  try {
+    const target = {
+      getBoundingClientRect: () => ({ left: 100, top: 50, width: 400, height: 300 }),
+    };
+    const rect = seatingPlanner.getFeedbackScreenshotCropRect(target, { width: 1600, height: 1200 });
+    assert.deepEqual(
+      { x: rect.x, y: rect.y, width: rect.width, height: rect.height, scaleX: rect.scaleX, scaleY: rect.scaleY },
+      { x: 200, y: 100, width: 800, height: 600, scaleX: 2, scaleY: 2 }
+    );
+  } finally {
+    global.window = originalWindow;
+    global.document = originalDocument;
+  }
+});
+
+test('feedback screenshot redaction masks only scaled sensitive rectangles', () => {
+  const calls = [];
+  const context = {
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 0,
+    beginPath: () => calls.push(['beginPath']),
+    roundRect: (...args) => calls.push(['roundRect', ...args]),
+    fill: () => calls.push(['fill']),
+    stroke: () => calls.push(['stroke']),
+    save: () => calls.push(['save']),
+    restore: () => calls.push(['restore']),
+  };
+  const canvas = { width: 500, height: 300, getContext: () => context };
+  const cropRect = { x: 20, y: 10, width: 500, height: 300, scaleX: 2, scaleY: 2 };
+  const elements = [
+    { getBoundingClientRect: () => ({ left: 30, top: 20, width: 60, height: 15 }) },
+    { getBoundingClientRect: () => ({ left: 250, top: 140, width: 20, height: 20 }) },
+  ];
+
+  seatingPlanner.applyFeedbackScreenshotRedactionMasks(canvas, cropRect, elements);
+
+  assert.deepEqual(calls.filter(call => call[0] === 'roundRect')[0], ['roundRect', 40, 30, 120, 30, 6]);
+  assert.deepEqual(calls.filter(call => call[0] === 'roundRect')[1], ['roundRect', 480, 270, 20, 30, 6]);
 });
 
 test('seating feedback snapshot anonymizes names and keeps useful seating context', () => {
