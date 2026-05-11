@@ -37,7 +37,7 @@
     --bot-bubble: rgba(30, 41, 59, 0.5);
     --user-bubble: linear-gradient(135deg, #0061ff 0%, #60efff 100%);
     --user-text: #ffffff;
-    --chat-rail-width: 1120px;
+    --chat-edge-gutter: clamp(28px, 4vw, 72px);
     --chat-bubble-max: 860px;
     --chat-user-bubble-max: 720px;
 
@@ -507,7 +507,7 @@ body.light-mode .tool-theme-toggle .icon-dark {
     flex: 1;
     overflow-y: auto;
     padding: 28px 32px 32px;
-    padding-inline: max(32px, calc((100% - var(--chat-rail-width)) / 2));
+    padding-inline: var(--chat-edge-gutter);
     display: flex;
     flex-direction: column;
     gap: 22px;
@@ -1592,7 +1592,7 @@ body.light-mode .video-info {
    ================================ */
 .input-area {
     padding: 14px 32px 16px;
-    padding-inline: max(32px, calc((100% - var(--chat-rail-width)) / 2));
+    padding-inline: var(--chat-edge-gutter);
     display: flex;
     align-items: center;
     gap: 14px;
@@ -2232,7 +2232,7 @@ body.light-mode .message.bot .message-content {
 
     .messages {
         padding: 32px 32px 36px;
-        padding-inline: max(32px, calc((100% - var(--chat-rail-width)) / 2));
+        padding-inline: var(--chat-edge-gutter);
     }
 
     .welcome-title {
@@ -3603,5 +3603,30 @@ body #code-panel #ai-modify-btn.btn-stop,
         flex: 1;
         height: 100%;
         width: 100%;
+    }
+}
+
+/* ================================
+   Main Chat Edge-Aligned Rail
+   ================================ */
+.messages {
+    padding-inline: var(--chat-edge-gutter);
+}
+
+.input-area {
+    padding-inline: var(--chat-edge-gutter);
+}
+
+@media (max-width: 768px) {
+    :root {
+        --chat-edge-gutter: clamp(12px, 4vw, 20px);
+    }
+
+    .messages {
+        padding-inline: var(--chat-edge-gutter);
+    }
+
+    .input-area {
+        padding-inline: var(--chat-edge-gutter);
     }
 }
