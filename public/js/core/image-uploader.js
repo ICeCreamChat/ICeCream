@@ -20,6 +20,7 @@ class ImageUploader {
             previewCancelBtn: null
         };
         this.cropper = null;
+        this.originalImageBase64 = null;
     }
 
     /**
@@ -97,6 +98,7 @@ class ImageUploader {
      */
     showPreview(imageBase64) {
         if (this.elements.previewImage && this.elements.previewModal) {
+            this.originalImageBase64 = imageBase64;
             this.elements.previewImage.src = imageBase64;
             this.elements.previewModal.classList.remove('hidden');
 
@@ -155,16 +157,21 @@ class ImageUploader {
 
         const croppedBase64 = canvas.toDataURL('image/jpeg', 0.9);
 
-        // Update handler with the CROPPED image
+        // Attach the cropped image to the composer. The user can add context before sending.
         messageHandler.setPendingImage(croppedBase64);
+        messageHandler.renderAttachmentPreview();
 
         this.hidePreview();
-        this.sendInternal();
+        document.getElementById('chat-input')?.focus();
     }
 
     sendWithOriginalImage() {
-        // Fallback or original logic
-        this.sendInternal();
+        if (this.originalImageBase64) {
+            messageHandler.setPendingImage(this.originalImageBase64);
+            messageHandler.renderAttachmentPreview();
+        }
+        this.hidePreview();
+        document.getElementById('chat-input')?.focus();
     }
 
     sendInternal() {

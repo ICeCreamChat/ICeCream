@@ -70,7 +70,9 @@ class ModeSwitcher {
 
         // 更新 Tab 激活状态
         this.elements.modeTabs.forEach(tab => {
-            tab.classList.toggle('active', tab.dataset.mode === mode);
+            const isActive = tab.dataset.mode === mode;
+            tab.classList.toggle('active', isActive);
+            tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
         });
 
         // 更新提示文字

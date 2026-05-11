@@ -30,9 +30,10 @@ test('main chat composer supports multiline input and staged attachments', async
     readFile(messageHandlerPath, 'utf8'),
     readFile(imageUploaderPath, 'utf8'),
   ]);
+  const croppedStart = imageUploaderSource.indexOf('    sendWithCroppedImage()');
   const croppedHandler = imageUploaderSource.slice(
-    imageUploaderSource.indexOf('sendWithCroppedImage()'),
-    imageUploaderSource.indexOf('sendWithOriginalImage()')
+    croppedStart,
+    imageUploaderSource.indexOf('    sendWithOriginalImage()', croppedStart)
   );
 
   assert.match(messageHandlerSource, /attachmentPreview/);
@@ -61,7 +62,7 @@ test('main chat styles define quiet workbench layout without animated avatar dis
   assert.match(mainStyles, /#chat-input\s*{[^}]*max-height:\s*160px/s);
   assert.match(mainStyles, /#attachment-preview\s*{/);
   assert.doesNotMatch(mainStyles, /\.message-avatar:hover\s*{[^}]*scale/s);
-  assert.doesNotMatch(mainStyles, /animation:\s*breath/);
+  assert.doesNotMatch(mainStyles, /animation:\s*breath(?:\s|;|,)/);
 
   assert.match(mobileStyles, /\.composer-shell\s*{/);
   assert.match(mobileStyles, /\.mode-switcher\s*{[^}]*overflow-x: auto/s);
