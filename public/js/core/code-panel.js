@@ -178,18 +178,7 @@ export class CodePanel {
         try {
             const currentCode = this.monacoEditor ? this.monacoEditor.getValue() : this.currentCode;
 
-            const response = await fetch('/api/manim', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message: prompt,
-                    code: currentCode,
-                    type: 'modification'
-                }),
-                signal: signal
-            });
-
-            const data = await response.json();
+            const data = await this.runManimAgentModification(prompt, currentCode, signal);
 
             if (data.success && data.code) {
                 // [Fix] Strip Markdown
@@ -203,6 +192,11 @@ export class CodePanel {
 
                 this.pendingHistoryDescription = prompt;
                 this.renderCode(cleanCode);
+            } else if (data.clarification) {
+                const options = Array.isArray(data.clarification.options)
+                    ? `\n\n可选方向：${data.clarification.options.join(' / ')}`
+                    : '';
+                alert(`${data.clarification.question || '请补充动画修改目标'}${options}`);
             } else {
                 console.error('AI Mod Failed:', data);
                 alert('AI 生成失败: ' + (data.error || 'Unknown error'));
@@ -234,6 +228,80 @@ export class CodePanel {
                 lucide.createIcons();
             }
             input.focus();
+        }
+    }
+
+    async runManimAgentModification(prompt, currentCode, signal) {
+        const clientId = localStorage.getItem('icecream_client_id') || 'code_panel';
+        const response = await fetch('/api/manim/agent/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: prompt,
+                mode: 'modify',
+                currentCode,
+                clientId
+            }),
+            signal
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error || 'Manim Agent 修改失败');
+        }
+
+        let latestCode = '';
+        let result = null;
+
+        await this.readAgentNdjson(response, (event) => {
+            if (event.type === 'code') {
+                latestCode = event.code || latestCode;
+            } else if (event.type === 'result' || event.type === 'clarification') {
+                result = event;
+            } else if (event.type === 'error') {
+                throw new Error(event.error || 'Manim Agent 修改失败');
+            }
+        });
+
+        if (result && !result.code && latestCode) {
+            result.code = latestCode;
+        }
+
+        return result || { success: false, error: 'Manim Agent 没有返回修改结果' };
+    }
+
+    async readAgentNdjson(response, onEvent) {
+        if (!response.body || !response.body.getReader) {
+            const text = await response.text();
+            text.split('\n').map(line => line.trim()).filter(Boolean).forEach(line => {
+                onEvent(JSON.parse(line));
+            });
+            return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed) {
+                    onEvent(JSON.parse(trimmed));
+                }
+            }
+        }
+
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+            onEvent(JSON.parse(buffer.trim()));
         }
     }
 

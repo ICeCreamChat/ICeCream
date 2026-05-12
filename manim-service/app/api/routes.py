@@ -10,5 +10,6 @@ ROUTES = {
     "suggestions": "/api/suggestions",
     "health": "/health",
     "websocket_chat": "/ws/chat",
+    "agent_run": "/agent/run",
+    "agent_stream": "/agent/stream",
 }
-

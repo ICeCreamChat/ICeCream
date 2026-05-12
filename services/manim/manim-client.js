@@ -1,6 +1,6 @@
 /**
  * Manim Client Service
- * 处理动画生成请求，调用 Python Manim 服务
+ * Bridges the Node gateway to the Python Manim service.
  */
 
 import fetch from 'node-fetch';
@@ -10,27 +10,36 @@ export function getManimServiceUrl() {
     return process.env.MANIM_SERVICE_URL || `http://localhost:${process.env.MANIM_SERVICE_PORT || 8001}`;
 }
 
-const MANIM_SYSTEM_PROMPT = `你是一个 Manim 动画代码生成专家。用户会告诉你想要可视化什么数学概念，你需要生成对应的 Manim 代码。
+const MANIM_SYSTEM_PROMPT = `You are a Manim Community code generator.
+Return one complete Python file only.
+Rules:
+1. Use Manim Community APIs.
+2. The scene class must be MainScene(Scene).
+3. The scene must implement construct(self).
+4. Use Text for Chinese text and MathTex only for formulas.
+5. Keep code concise and safe. Do not use filesystem, network, subprocess, eval, exec, or dynamic imports.`;
 
-规则：
-1. 只生成 Manim Community 版本兼容的代码
-2. 类名必须是 MainScene，继承自 Scene
-3. 主方法是 construct(self)
-4. 代码要简洁、运行效率高
-5. 注释用中文
-
-示例输出格式：
-\`\`\`python
-from manim import *
-
-class MainScene(Scene):
-    def construct(self):
-        # 创建正弦函数图像
-        axes = Axes(x_range=[-3, 3], y_range=[-2, 2])
-        graph = axes.plot(lambda x: np.sin(x), color=BLUE)
-        self.play(Create(axes), Create(graph))
-        self.wait()
-\`\`\``;
+const MANIM_INTENT_KEYWORDS = [
+    'manim',
+    '动画',
+    '可视化',
+    '演示',
+    '展示',
+    '函数',
+    '公式',
+    '图像',
+    '坐标',
+    '几何',
+    '圆',
+    '三角形',
+    '柱状图',
+    '折线图',
+    '流程',
+    '牛顿',
+    '运动',
+    '速度',
+    '加速度',
+];
 
 function getManimHeaders() {
     const headers = { 'Content-Type': 'application/json' };
@@ -40,10 +49,84 @@ function getManimHeaders() {
     return headers;
 }
 
+function timeoutSignal(ms) {
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        return AbortSignal.timeout(ms);
+    }
+
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), ms);
+    return controller.signal;
+}
+
+function extractGeneratedCode(content = '') {
+    const codeMatch = String(content).match(/```(?:python)?\r?\n([\s\S]*?)```/i);
+    return (codeMatch ? codeMatch[1] : content).trim();
+}
+
+function normalizeAgentMode(body = {}) {
+    const requestedMode = String(body.mode || '').toLowerCase();
+    if (['create', 'modify', 'render'].includes(requestedMode)) {
+        return requestedMode;
+    }
+    if (body.type === 'modification' || body.currentCode || body.code) {
+        return 'modify';
+    }
+    return 'create';
+}
+
+function hasDeepSeekConfig(env = process.env) {
+    return Boolean(env.DEEPSEEK_API_BASE && env.DEEPSEEK_API_KEY);
+}
+
+function buildAgentUnavailableResponse(reason) {
+    const detail = reason ? String(reason) : 'Agent unavailable';
+    return {
+        success: true,
+        intent: 'manim',
+        rendered: false,
+        code: '',
+        warning: `Manim Agent 暂时不可用：${detail}`,
+        agentTrace: {
+            skills: [],
+            retries: 0,
+            failureReason: detail,
+        },
+    };
+}
+
+function normalizeAgentResult(data = {}) {
+    return {
+        success: data.success !== false,
+        intent: 'manim',
+        rendered: Boolean(data.rendered),
+        code: data.code || '',
+        videoUrl: data.videoUrl,
+        videoBase64: data.videoBase64,
+        warning: data.warning,
+        clarification: data.clarification,
+        agentTrace: data.agentTrace,
+    };
+}
+
+export function isManimAgentEnabled(env = process.env) {
+    const value = String(env.MANIM_AGENT_ENABLED ?? 'true').trim().toLowerCase();
+    return !['0', 'false', 'off', 'no'].includes(value);
+}
+
+export function buildAgentPayload(body = {}) {
+    return {
+        message: String(body.message || ''),
+        mode: normalizeAgentMode(body),
+        currentCode: String(body.currentCode ?? body.code ?? ''),
+        clientId: normalizeClientId(body.clientId || body.client_id, 'gateway'),
+    };
+}
+
 export function buildRenderPayload(body = {}) {
     return {
         code: body.code,
-        client_id: normalizeClientId(body.client_id)
+        client_id: normalizeClientId(body.client_id),
     };
 }
 
@@ -51,18 +134,120 @@ export function buildSuggestionsPayload(body = {}) {
     const count = Number(body.count);
     return {
         code: String(body.code || ''),
-        count: Number.isInteger(count) ? Math.min(Math.max(count, 1), 8) : 5
+        count: Number.isInteger(count) ? Math.min(Math.max(count, 1), 8) : 5,
     };
 }
 
+async function runAgent(payload) {
+    const response = await fetch(`${getManimServiceUrl()}/agent/run`, {
+        method: 'POST',
+        headers: getManimHeaders(),
+        body: JSON.stringify(payload),
+        signal: timeoutSignal(180000),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data.error || `Manim Agent HTTP ${response.status}`);
+    }
+
+    return normalizeAgentResult(data);
+}
+
 /**
- * 处理 Manim 动画生成请求
+ * Legacy direct DeepSeek generation path. Used when MANIM_AGENT_ENABLED=false.
+ */
+async function handleManimLegacy(req, res) {
+    const { message, code } = req.body;
+
+    if (!message) {
+        return res.status(400).json({
+            success: false,
+            error: '请描述您想要的动画效果',
+        });
+    }
+
+    if (!hasDeepSeekConfig()) {
+        return res.status(500).json({
+            success: false,
+            error: 'DeepSeek 配置缺失，无法使用旧版 Manim 生成路径',
+        });
+    }
+
+    let promptContent = message;
+    if (code) {
+        promptContent = `用户指令: ${message}\n\n当前代码，请基于此修改:\n\`\`\`python\n${code}\n\`\`\``;
+    }
+
+    const codeResponse = await fetch(`${process.env.DEEPSEEK_API_BASE}/chat/completions`, {
+        method: 'POST',
+        signal: timeoutSignal(60000),
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        },
+        body: JSON.stringify({
+            model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+            messages: [
+                { role: 'system', content: MANIM_SYSTEM_PROMPT },
+                { role: 'user', content: promptContent },
+            ],
+            temperature: 0.3,
+            max_tokens: 2048,
+        }),
+    });
+
+    if (!codeResponse.ok) {
+        throw new Error('代码生成失败');
+    }
+
+    const codeData = await codeResponse.json();
+    const generatedContent = codeData.choices?.[0]?.message?.content || '';
+    const extractedCode = extractGeneratedCode(generatedContent);
+    const validation = validateManimCode(extractedCode);
+    if (!validation.valid) {
+        throw new Error(validation.reason);
+    }
+
+    const renderResponse = await fetch(`${getManimServiceUrl()}/render`, {
+        method: 'POST',
+        headers: getManimHeaders(),
+        body: JSON.stringify({
+            code: extractedCode,
+            client_id: normalizeClientId(req.body.client_id),
+        }),
+        signal: timeoutSignal(180000),
+    });
+
+    if (!renderResponse.ok) {
+        const errorData = await renderResponse.json().catch(() => ({}));
+        return res.json({
+            success: true,
+            intent: 'manim',
+            code: extractedCode,
+            rendered: false,
+            warning: errorData.error || 'Manim 服务渲染失败，已为您载入代码',
+        });
+    }
+
+    const renderData = await renderResponse.json();
+    return res.json({
+        success: true,
+        intent: 'manim',
+        code: extractedCode,
+        rendered: true,
+        videoUrl: renderData.videoUrl,
+        videoBase64: renderData.videoBase64,
+    });
+}
+
+/**
+ * Handle Manim animation generation requests.
  */
 export async function handleManim(req, res) {
     try {
         const { message, code } = req.body;
 
-        // 如果直接提供了代码，且没有指令，则视为纯渲染
         if (code && !message) {
             return renderCode(req, res);
         }
@@ -70,107 +255,97 @@ export async function handleManim(req, res) {
         if (!message) {
             return res.status(400).json({
                 success: false,
-                error: '请描述您想要的动画效果'
+                error: '请描述您想要的动画效果',
             });
         }
 
-        // 1. 使用 DeepSeek 生成 Manim 代码
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
-
-        let promptContent = message;
-        if (code) {
-            promptContent = `用户指令: ${message}\n\n当前代码 (请基于此修改):\n\`\`\`python\n${code}\n\`\`\``;
+        if (!isManimAgentEnabled()) {
+            return handleManimLegacy(req, res);
         }
 
-        const codeResponse = await fetch(`${process.env.DEEPSEEK_API_BASE}/chat/completions`, {
-            method: 'POST',
-            signal: controller.signal,
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-                messages: [
-                    { role: 'system', content: MANIM_SYSTEM_PROMPT },
-                    { role: 'user', content: promptContent }
-                ],
-                temperature: 0.3,
-                max_tokens: 2048
-            })
-        }).finally(() => clearTimeout(timeoutId));
-
-        if (!codeResponse.ok) {
-            throw new Error('代码生成失败');
+        try {
+            const payload = buildAgentPayload(req.body);
+            const data = await runAgent(payload);
+            return res.json(data);
+        } catch (agentError) {
+            console.error('[Manim Client] Agent Error:', agentError);
+            return res.json(buildAgentUnavailableResponse(agentError.message));
         }
-
-        const codeData = await codeResponse.json();
-        const generatedContent = codeData.choices?.[0]?.message?.content || '';
-
-        // 提取代码块
-        const codeMatch = generatedContent.match(/```python\r?\n([\s\S]*?)```/);
-        const extractedCode = codeMatch ? codeMatch[1].trim() : generatedContent;
-        const validation = validateManimCode(extractedCode);
-        if (!validation.valid) {
-            throw new Error(validation.reason);
-        }
-
-        // 2. 调用 Manim 服务渲染
-        const manimServiceUrl = getManimServiceUrl();
-        console.log('[Manim Client] Calling render service:', manimServiceUrl);
-        console.log('[Manim Client] Code length:', extractedCode.length);
-
-        const renderResponse = await fetch(`${manimServiceUrl}/render`, {
-            method: 'POST',
-            headers: getManimHeaders(),
-            body: JSON.stringify({
-                code: extractedCode,
-                client_id: normalizeClientId(req.body.client_id)
-            })
-        });
-
-        console.log('[Manim Client] Render response status:', renderResponse.status);
-
-        if (!renderResponse.ok) {
-            const errorData = await renderResponse.json().catch(() => ({}));
-            console.log('[Manim Client] Render failed:', errorData);
-            // Return code even if render failed, so user can edit it
-            return res.json({
-                success: true,
-                intent: 'manim',
-                code: extractedCode,
-                rendered: false,
-                warning: errorData.error || 'Manim 服务渲染超时，已为您载入代码'
-            });
-        }
-
-        const renderData = await renderResponse.json();
-        console.log('[Manim Client] Render success:', {
-            hasVideoUrl: !!renderData.videoUrl,
-            hasBase64: !!renderData.videoBase64
-        });
-
-        return res.json({
-            success: true,
-            intent: 'manim',
-            code: extractedCode,
-            rendered: true,
-            videoUrl: renderData.videoUrl, // Flattened
-            videoBase64: renderData.videoBase64
-        });
-
     } catch (error) {
         console.error('[Manim Client] Error:', error);
         return res.status(500).json({
             success: false,
-            error: error.message
+            error: error.message,
         });
     }
 }
 
 /**
- * 直接渲染 Manim 代码
+ * Proxy the Manim Agent event stream as NDJSON.
+ */
+export async function streamAgent(req, res) {
+    try {
+        const payload = buildAgentPayload(req.body);
+        const response = await fetch(`${getManimServiceUrl()}/agent/stream`, {
+            method: 'POST',
+            headers: getManimHeaders(),
+            body: JSON.stringify(payload),
+            signal: timeoutSignal(180000),
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            return res.status(response.status).json({
+                success: false,
+                error: errorData.error || `Manim Agent HTTP ${response.status}`,
+            });
+        }
+
+        res.status(200);
+        res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('X-Accel-Buffering', 'no');
+
+        for await (const chunk of response.body) {
+            res.write(chunk);
+        }
+        return res.end();
+    } catch (error) {
+        console.error('[Manim Client] Agent Stream Error:', error);
+        if (!res.headersSent) {
+            return res.status(500).json({ success: false, error: error.message });
+        }
+        res.write(JSON.stringify({ type: 'error', success: false, error: error.message }) + '\n');
+        return res.end();
+    }
+}
+
+/**
+ * Lightweight local intent classification for auto mode.
+ */
+export async function classifyManimIntent(req, res) {
+    const message = String(req.body?.message || '').trim();
+    const lower = message.toLowerCase();
+    const matched = MANIM_INTENT_KEYWORDS.some(keyword => lower.includes(keyword.toLowerCase()));
+    const vague = /^(做个动画|画个动画|生成动画|随便.*动画)$/.test(message);
+    const confidence = matched ? (vague ? 0.45 : 0.82) : 0.2;
+
+    return res.json({
+        success: true,
+        intent: matched ? 'manim' : 'chat',
+        confidence,
+        clarification: matched && confidence < 0.6
+            ? {
+                question: '你想让这个动画重点展示什么？',
+                options: ['分步骤讲解', '对比变化过程', '简洁概念示意'],
+                originalMessage: message,
+            }
+            : null,
+    });
+}
+
+/**
+ * Directly render Manim code.
  */
 export async function renderCode(req, res) {
     try {
@@ -179,7 +354,7 @@ export async function renderCode(req, res) {
         if (!code) {
             return res.status(400).json({
                 success: false,
-                error: '代码不能为空'
+                error: '代码不能为空',
             });
         }
 
@@ -187,7 +362,7 @@ export async function renderCode(req, res) {
         if (!validation.valid) {
             return res.status(400).json({
                 success: false,
-                error: validation.reason
+                error: validation.reason,
             });
         }
 
@@ -195,7 +370,8 @@ export async function renderCode(req, res) {
         const response = await fetch(`${getManimServiceUrl()}/render`, {
             method: 'POST',
             headers: getManimHeaders(),
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: timeoutSignal(180000),
         });
 
         if (!response.ok) {
@@ -204,25 +380,23 @@ export async function renderCode(req, res) {
         }
 
         const data = await response.json();
-
         return res.json({
             success: true,
             rendered: true,
             videoUrl: data.videoUrl,
-            videoBase64: data.videoBase64
+            videoBase64: data.videoBase64,
         });
-
     } catch (error) {
         console.error('[Manim Client] Render Error:', error);
         return res.status(500).json({
             success: false,
-            error: error.message
+            error: error.message,
         });
     }
 }
 
 /**
- * 获取 AI 修改建议
+ * Get AI modification suggestions from the Manim service.
  */
 export async function getSuggestions(req, res) {
     try {
@@ -230,7 +404,7 @@ export async function getSuggestions(req, res) {
         if (!payload.code.trim()) {
             return res.status(400).json({
                 success: false,
-                error: '代码不能为空'
+                error: '代码不能为空',
             });
         }
 
@@ -238,7 +412,7 @@ export async function getSuggestions(req, res) {
             method: 'POST',
             headers: getManimHeaders(),
             body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(15000)
+            signal: timeoutSignal(15000),
         });
 
         if (!response.ok) {
@@ -256,47 +430,50 @@ export async function getSuggestions(req, res) {
 
         return res.json({
             success: true,
-            data: { suggestions }
+            data: { suggestions },
         });
     } catch (error) {
         console.error('[Manim Client] Suggestions Error:', error);
         return res.status(500).json({
             success: false,
-            error: error.message
+            error: error.message,
         });
     }
 }
 
 /**
- * 获取 Manim 服务状态
+ * Get Manim service status.
  */
 export async function getStatus(req, res) {
     try {
-        const manimServiceUrl = getManimServiceUrl();
-        const response = await fetch(`${manimServiceUrl}/health`, {
+        const response = await fetch(`${getManimServiceUrl()}/health`, {
             method: 'GET',
-            signal: AbortSignal.timeout(3000)
+            signal: timeoutSignal(3000),
         });
-
-        const available = response.ok;
 
         return res.json({
             success: true,
             data: {
-                available: available,
-                url: manimServiceUrl
-            }
+                available: response.ok,
+                url: getManimServiceUrl(),
+            },
         });
-
     } catch (error) {
         return res.json({
             success: true,
             data: {
                 available: false,
-                error: error.message
-            }
+                error: error.message,
+            },
         });
     }
 }
 
-export default { handleManim, renderCode, getSuggestions, getStatus };
+export default {
+    handleManim,
+    streamAgent,
+    classifyManimIntent,
+    renderCode,
+    getSuggestions,
+    getStatus,
+};

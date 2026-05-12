@@ -12,6 +12,26 @@ router.post('/', async (req, res) => {
     }
 });
 
+router.post('/agent/stream', async (req, res) => {
+    try {
+        const manimClient = await import('../../services/manim/manim-client.js');
+        return manimClient.streamAgent(req, res);
+    } catch (error) {
+        console.error('[Manim Route] Agent Stream Error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.post('/intent', async (req, res) => {
+    try {
+        const manimClient = await import('../../services/manim/manim-client.js');
+        return manimClient.classifyManimIntent(req, res);
+    } catch (error) {
+        console.error('[Manim Route] Intent Error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 router.post('/render', async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');

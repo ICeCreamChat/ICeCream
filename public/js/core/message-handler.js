@@ -199,6 +199,19 @@ class MessageHandler {
         this.setLoading(true);
 
         try {
+            const mode = modeSwitcher.getMode();
+            const shouldUseAgent = !this.pendingImage && (
+                mode === 'manim' || (mode === 'auto' && await this.shouldUseManimAgent(message))
+            );
+
+            if (shouldUseAgent) {
+                if (mode === 'auto') {
+                    modeSwitcher.setMode('manim', false);
+                }
+                await this.sendManimAgentStream({ message, mode: 'create' });
+                return;
+            }
+
             const response = await this.sendToServer(message, this.pendingImage);
 
             if (response.needConfirmation) {
@@ -252,6 +265,168 @@ class MessageHandler {
         }
 
         return response.json();
+    }
+
+    /**
+     * Auto 模式下的轻量 Manim 意图识别。
+     * @param {string} message
+     * @returns {Promise<boolean>}
+     */
+    async shouldUseManimAgent(message) {
+        try {
+            const response = await fetch('/api/manim/intent', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message })
+            });
+
+            if (!response.ok) return false;
+            const data = await response.json();
+            return data.success && data.intent === 'manim' && (data.confidence >= 0.6 || !!data.clarification);
+        } catch (error) {
+            console.warn('[Manim Agent] intent check failed:', error);
+            return false;
+        }
+    }
+
+    /**
+     * 调用 Manim Agent 流式接口。
+     * @param {Object} payload
+     */
+    async sendManimAgentStream(payload) {
+        const clientId = localStorage.getItem('icecream_client_id') || 'main_chat';
+        const response = await fetch('/api/manim/agent/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: payload.message,
+                mode: payload.mode || 'create',
+                currentCode: payload.currentCode || '',
+                clientId
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error || 'Manim Agent 请求失败');
+        }
+
+        let finalResult = null;
+        await this.readNdjsonStream(response, (event) => {
+            if (event.type === 'progress') {
+                this.updateManimAgentProgress(event);
+            } else if (event.type === 'clarification') {
+                this.showManimClarification(event.clarification);
+            } else if (event.type === 'code') {
+                this.latestManimAgentCode = event.code || this.latestManimAgentCode;
+            } else if (event.type === 'result') {
+                finalResult = event;
+            } else if (event.type === 'error') {
+                throw new Error(event.error || 'Manim Agent 处理失败');
+            }
+        });
+
+        if (finalResult) {
+            this._handleManimResponse(finalResult);
+        }
+    }
+
+    /**
+     * 读取 NDJSON 流。
+     */
+    async readNdjsonStream(response, onEvent) {
+        if (!response.body || !response.body.getReader) {
+            const text = await response.text();
+            text.split('\n').map(line => line.trim()).filter(Boolean).forEach(line => {
+                onEvent(JSON.parse(line));
+            });
+            return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed) {
+                    onEvent(JSON.parse(trimmed));
+                }
+            }
+        }
+
+        buffer += decoder.decode();
+        if (buffer.trim()) {
+            onEvent(JSON.parse(buffer.trim()));
+        }
+    }
+
+    updateManimAgentProgress(event) {
+        const labels = {
+            planner: '正在理解动画需求...',
+            skills: '正在选择 Manim 技能...',
+            coder: '正在生成 Manim 代码...',
+            critic: '正在检查代码和布局...',
+            repair: '正在自动修复问题...',
+            render: '正在渲染动画...'
+        };
+        if (this.elements.loadingText) {
+            this.elements.loadingText.textContent = labels[event.step] || event.message || '正在处理动画...';
+        }
+    }
+
+    showManimClarification(clarification = {}) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message bot';
+
+        const avatarDiv = document.createElement('div');
+        avatarDiv.className = 'message-avatar';
+        avatarDiv.innerHTML = '<img src="/images/bot-avatar.jpg" alt="AI">';
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        const question = clarification.question || '你想让这个动画重点展示什么？';
+        contentDiv.innerHTML = renderMarkdown(question);
+
+        const options = Array.isArray(clarification.options) ? clarification.options : [];
+        if (options.length) {
+            const optionWrap = document.createElement('div');
+            optionWrap.className = 'manim-clarification-options';
+            optionWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';
+
+            options.forEach(option => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'intent-option-btn';
+                btn.textContent = option;
+                btn.addEventListener('click', () => {
+                    const base = clarification.originalMessage || '';
+                    if (this.elements.chatInput) {
+                        this.elements.chatInput.value = `${base}，${option}`.replace(/^，/, '');
+                    }
+                    this.handleSend();
+                });
+                optionWrap.appendChild(btn);
+            });
+
+            contentDiv.appendChild(optionWrap);
+        }
+
+        messageDiv.appendChild(avatarDiv);
+        messageDiv.appendChild(contentDiv);
+        this.elements.messages?.appendChild(messageDiv);
+
+        if (this.elements.messages) {
+            this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
+        }
     }
 
     /**

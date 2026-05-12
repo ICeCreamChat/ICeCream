@@ -138,12 +138,18 @@ test('Manim import probe covers the OpenAI client and shared OAuth export', () =
 });
 
 test('Manim startup entry points run the environment checker before service launch', async () => {
-  const [devBatch, runManim] = await Promise.all([
+  const [devBatch, runManim, rootMain, agentRoutes] = await Promise.all([
     readFile(new URL('../dev.bat', import.meta.url), 'utf8'),
     readFile(new URL('../scripts/run-manim.js', import.meta.url), 'utf8'),
+    readFile(new URL('../manim-service/main.py', import.meta.url), 'utf8'),
+    readFile(new URL('../manim-service/app/agent/routes.py', import.meta.url), 'utf8'),
   ]);
 
   assert.match(devBatch, /node scripts\\check-manim-env\.js/);
   assert.match(runManim, /check-manim-env\.js/);
   assert.match(runManim, /spawnSync/);
+  assert.match(devBatch, /python\.exe main\.py/);
+  assert.match(runManim, /\['main\.py'\]/);
+  assert.match(rootMain, /register_agent_routes/);
+  assert.match(agentRoutes, /\/agent\/stream/);
 });

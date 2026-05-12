@@ -1599,6 +1599,15 @@ async def health_check():
     }
 
 # ================= 📊 智能监控面板 =================
+from .agent.routes import register_agent_routes
+
+register_agent_routes(
+    app,
+    ai_client=client,
+    model_name=MODEL_NAME,
+    service_token=MANIM_SERVICE_TOKEN,
+)
+
 @app.get("/monitor", response_class=HTMLResponse)
 async def smart_monitor():
     """智能监控面板"""
