@@ -11,8 +11,35 @@ from .critic import critique_code
 Fixer = Callable[[str, dict[str, Any]], str]
 
 
+def _needs_zoned_function_graph_template(observation: dict[str, Any]) -> bool:
+    brief = observation.get("brief") or {}
+    if brief.get("spec", {}).get("kind") != "function_graph":
+        return False
+    report = observation.get("critic") or {}
+    messages = " ".join(
+        str(issue.get("message", ""))
+        for issue in report.get("issues", [])
+    ).lower()
+    return any(
+        marker in messages
+        for marker in (
+            "overlap risk",
+            "bounded header",
+            "step banner",
+            "graph area",
+            "layout zone",
+            "title width",
+        )
+    )
+
+
 def static_repair_once(code: str, observation: dict[str, Any]) -> str:
     """Apply small deterministic repairs for common Manim generation mistakes."""
+    if _needs_zoned_function_graph_template(observation):
+        from .coder import _template_for_domain
+
+        return _template_for_domain(observation["brief"])
+
     repaired = code or ""
 
     if "from manim import" not in repaired:
@@ -46,6 +73,7 @@ def repair_code(
     stderr: str = "",
     max_attempts: int = 2,
     fixer: Fixer | None = None,
+    brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Repair code until critique passes or the maximum attempt count is reached."""
     current = code
@@ -59,6 +87,7 @@ def repair_code(
             "critic": last_report,
             "stderr": stderr,
             "attempt": attempts,
+            "brief": brief or {},
         }
         next_code = repair_fn(current, observation)
         current = next_code

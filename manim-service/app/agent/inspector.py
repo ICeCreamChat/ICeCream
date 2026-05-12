@@ -42,6 +42,33 @@ def inspect_code_quality(code: str, brief: dict[str, Any] | None = None) -> dict
         ))
 
     if (brief or {}).get("spec", {}).get("kind") == "function_graph":
+        has_top_header = ".to_edge(UP" in source
+        has_corner_step = ".to_corner(UL" in source and "step" in source
+        if has_top_header and has_corner_step:
+            findings.append(_finding(
+                "error",
+                "Function graph header and step label overlap risk detected.",
+                "Use separate header and step banner layout zones.",
+            ))
+        required_helpers = {
+            "make_header": "Function graph is missing a bounded header layout helper.",
+            "make_step_banner": "Function graph is missing a dedicated step banner helper.",
+            "place_graph_area": "Function graph is missing an isolated graph area helper.",
+            "assert_layout_zones": "Function graph is missing explicit layout zone placement.",
+        }
+        for helper_name, message in required_helpers.items():
+            if f"def {helper_name}" not in source:
+                findings.append(_finding(
+                    "error",
+                    message,
+                    "Use the zoned function graph teaching template.",
+                ))
+        if "scale_to_fit_width" not in source:
+            findings.append(_finding(
+                "error",
+                "Function graph title width is not constrained.",
+                "Clamp or scale long titles before placing the header.",
+            ))
         if "symbolic_ticks" not in source:
             findings.append(_finding(
                 "error",

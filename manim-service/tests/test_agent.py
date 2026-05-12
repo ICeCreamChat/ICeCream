@@ -109,9 +109,16 @@ class MainScene(Scene):
         self.assertIn("class MainScene(SafeScene, Scene)", code)
         self.assertIn('self.camera.background_color = "#F7FBFF"', code)
         self.assertNotIn('self.camera.background_color = "#0B1020"', code)
+        self.assertIn("def make_header", code)
+        self.assertIn("def make_step_banner", code)
+        self.assertIn("def place_graph_area", code)
+        self.assertIn("def assert_layout_zones", code)
+        self.assertIn("header, title, formula = make_header", code)
+        self.assertIn("step_banner = make_step_banner", code)
+        self.assertNotIn("to_corner(UL", code)
         self.assertIn("def symbolic_ticks", code)
-        self.assertIn('MathTex("-\\\\pi")', code)
-        self.assertIn('MathTex("\\\\pi")', code)
+        self.assertIn('MathTex("-\\\\pi", color="#475569")', code)
+        self.assertIn('MathTex("\\\\pi", color="#475569")', code)
         self.assertNotRegex(code, r"3\.1415\d+")
         self.assertNotRegex(code, r"1\.5707\d+")
 
@@ -152,6 +159,51 @@ class MainScene(Scene):
         self.assertIn("Long decimal coordinate labels", joined)
         self.assertIn("text objects", quality["summary"])
         self.assertNotEqual(quality["status"], "pass")
+
+    def test_inspector_catches_function_graph_header_step_overlap_risk(self):
+        brief = plan_animation("\u753b\u4e00\u4e2a\u6b63\u5f26\u51fd\u6570\uff0c\u505a\u5206\u6b65\u9aa4\u8bb2\u89e3\u52a8\u753b")
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title = Text("画一个正弦函数，做一个分步骤讲解动画").to_edge(UP)
+        formula = MathTex("y=\\sin(x)").next_to(title, DOWN)
+        step_label = Text("步骤 2：绘制函数曲线").to_corner(UL)
+        self.add(title, formula, step_label)
+"""
+
+        quality = inspect_code_quality(code, brief)
+        joined = "\n".join(item["message"] for item in quality["findings"])
+
+        self.assertEqual(quality["status"], "error")
+        self.assertIn("header and step label overlap", joined)
+
+    def test_repair_converts_legacy_function_graph_overlap_to_zoned_template(self):
+        brief = plan_animation("\u753b\u4e00\u4e2a\u6b63\u5f26\u51fd\u6570\uff0c\u505a\u5206\u6b65\u9aa4\u8bb2\u89e3\u52a8\u753b")
+        legacy_code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title = Text("画一个正弦函数，做一个分步骤讲解动画").to_edge(UP)
+        formula = MathTex("y=\\sin(x)").next_to(title, DOWN)
+        step_label = Text("步骤 2：绘制函数曲线").to_corner(UL)
+        self.add(title, formula, step_label)
+"""
+        quality = inspect_code_quality(legacy_code, brief)
+        result = repair_code(
+            legacy_code,
+            {"status": "error", "issues": quality["findings"], "summary": quality["summary"]},
+            max_attempts=2,
+            brief=brief,
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertIn("make_header", result["code"])
+        self.assertIn("make_step_banner", result["code"])
+        self.assertNotIn("to_corner(UL", result["code"])
+        self.assertEqual(inspect_code_quality(result["code"], brief)["status"], "pass")
 
     def test_agent_stream_emits_inspection_and_quality_report_before_result(self):
         async def collect():

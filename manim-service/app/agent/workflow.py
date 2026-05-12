@@ -87,7 +87,7 @@ async def stream_agent_events(
     repair_attempts = 0
     if critic_report["status"] == "error":
         yield {"type": "progress", "step": "repair", "message": "Repairing static code issues"}
-        repaired = repair_code(code, critic_report, max_attempts=2)
+        repaired = repair_code(code, critic_report, max_attempts=2, brief=brief)
         code = repaired["code"]
         critic_report = repaired["critic"]
         repair_attempts = repaired["attempts"]
@@ -123,6 +123,53 @@ async def stream_agent_events(
         "type": "quality_report",
         "quality": quality_report,
     }
+
+    if quality_report["status"] == "error":
+        yield {"type": "progress", "step": "repair", "message": "Repairing visual layout issues"}
+        repaired = repair_code(
+            code,
+            {
+                "status": "error",
+                "issues": quality_report.get("findings", []),
+                "summary": quality_report.get("summary", ""),
+            },
+            max_attempts=2,
+            brief=brief,
+        )
+        code = repaired["code"]
+        critic_report = repaired["critic"]
+        repair_attempts += repaired["attempts"]
+        yield {
+            "type": "code",
+            "code": code,
+            "source": "repair",
+            "warning": None if repaired["status"] == "success" else repaired["summary"],
+        }
+
+        if critic_report["status"] == "error":
+            trace = _trace(
+                brief,
+                skills,
+                retries=repair_attempts,
+                failure_reason=critic_report["summary"],
+            )
+            trace["quality"] = {"status": "error", "summary": critic_report["summary"]}
+            yield {
+                "type": "result",
+                "success": True,
+                "intent": "manim",
+                "rendered": False,
+                "code": code,
+                "warning": "Manim Agent generated code but repaired code still needs attention.",
+                "agentTrace": trace,
+            }
+            return
+
+        quality_report = inspect_code_quality(code, brief)
+        yield {
+            "type": "quality_report",
+            "quality": quality_report,
+        }
 
     trace = _trace(
         brief,

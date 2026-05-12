@@ -186,17 +186,63 @@ def fit_to_frame(mobject, max_width=12.0, max_height=6.6):
     return mobject
 
 
+def limit_width(mobject, max_width):
+    if mobject.width > max_width:
+        mobject.scale_to_fit_width(max_width)
+    return mobject
+
+
+def make_header(title_text, formula_text):
+    title = limit_width(SafeText(title_text, font_size=32, color="#0E7490"), 8.4)
+    formula = limit_width(SafeMathTex(formula_text, font_size=34, color="#C2410C"), 4.2)
+    header = VGroup(title, formula).arrange(DOWN, buff=0.10)
+    header.to_edge(UP, buff=0.25)
+    return header, title, formula
+
+
+def make_step_banner(text):
+    label = limit_width(SafeText(text, font_size=23, color="#334155"), 4.6)
+    background = RoundedRectangle(
+        corner_radius=0.10,
+        width=5.1,
+        height=0.48,
+        stroke_width=1,
+        stroke_color="#BAE6FD",
+        fill_color="#E0F2FE",
+        fill_opacity=0.92,
+    )
+    label.move_to(background.get_center())
+    banner = VGroup(background, label)
+    banner.move_to(LEFT * 3.15 + UP * 2.15)
+    return banner
+
+
+def place_graph_area(axes, ticks, graph, dots, point_labels):
+    graph_area = VGroup(axes, ticks, graph, dots, point_labels)
+    fit_to_frame(graph_area, max_width=9.2, max_height=4.35)
+    graph_area.move_to(DOWN * 0.35)
+    return graph_area
+
+
+def assert_layout_zones(header, step_banner, graph_area, summary):
+    header.to_edge(UP, buff=0.25)
+    step_banner.move_to(LEFT * 3.15 + UP * 2.15)
+    graph_area.move_to(DOWN * 0.35)
+    summary.to_edge(DOWN, buff=0.35)
+    return VGroup(header, step_banner, graph_area, summary)
+
+
 def symbolic_ticks(axes):
     x_labels = VGroup(
-        MathTex("-\\\\pi").scale(0.65).next_to(axes.c2p(-PI, 0), DOWN, buff=0.18),
-        MathTex("-\\\\pi/2").scale(0.65).next_to(axes.c2p(-PI / 2, 0), DOWN, buff=0.18),
-        MathTex("0").scale(0.65).next_to(axes.c2p(0, 0), DOWN + LEFT, buff=0.14),
-        MathTex("\\\\pi/2").scale(0.65).next_to(axes.c2p(PI / 2, 0), DOWN, buff=0.18),
-        MathTex("\\\\pi").scale(0.65).next_to(axes.c2p(PI, 0), DOWN, buff=0.18),
+        MathTex("-\\\\pi", color="#475569").scale(0.65).next_to(axes.c2p(-PI, 0), DOWN, buff=0.18),
+        MathTex("-\\\\pi/2", color="#475569").scale(0.65).next_to(axes.c2p(-PI / 2, 0), DOWN, buff=0.18),
+        MathTex("0", color="#475569").scale(0.65).next_to(axes.c2p(0, 0), DOWN + LEFT, buff=0.14),
+        MathTex("\\\\pi/2", color="#475569").scale(0.65).next_to(axes.c2p(PI / 2, 0), DOWN, buff=0.18),
+        MathTex("\\\\pi", color="#475569").scale(0.65).next_to(axes.c2p(PI, 0), DOWN, buff=0.18),
     )
     y_labels = VGroup(
-        MathTex("-1").scale(0.65).next_to(axes.c2p(0, -1), LEFT, buff=0.18),
-        MathTex("1").scale(0.65).next_to(axes.c2p(0, 1), LEFT, buff=0.18),
+        MathTex("-1", color="#475569").scale(0.65).next_to(axes.c2p(0, -1), LEFT, buff=0.18),
+        MathTex("1", color="#475569").scale(0.65).next_to(axes.c2p(0, 1), LEFT, buff=0.18),
     )
     return VGroup(x_labels, y_labels)
 
@@ -210,7 +256,6 @@ def make_axes():
         axis_config={{"include_numbers": False, "include_tip": True, "color": "#475569"}},
         tips=True,
     )
-    axes.shift(DOWN * 0.15)
     ticks = symbolic_ticks(axes)
     return axes, ticks
 
@@ -218,9 +263,8 @@ def make_axes():
 class MainScene(SafeScene, Scene):
     def construct(self):
         self.camera.background_color = "#F7FBFF"
-        title = SafeText({title_literal}, font_size=34, color="#0E7490").to_edge(UP, buff=0.35)
-        formula = SafeMathTex({formula_literal}, font_size=36, color="#C2410C").next_to(title, DOWN, buff=0.18)
-        step_label = SafeText("步骤 1：建立坐标系", font_size=25, color="#475569").to_corner(UL, buff=0.55)
+        header, title, formula = make_header({title_literal}, {formula_literal})
+        step_banner = make_step_banner("步骤 1：建立坐标系")
 
         axes, ticks = make_axes()
         graph = axes.plot(lambda x: {graph_expr}, x_range=[-PI, PI], color="#0284C7", stroke_width=5)
@@ -237,16 +281,18 @@ class MainScene(SafeScene, Scene):
             SafeText("周期：2π", font_size=25, color="#1D2530"),
             SafeText("振幅：1", font_size=25, color="#1D2530"),
             SafeText("取值范围：[-1, 1]", font_size=25, color="#1D2530"),
-        ).arrange(RIGHT, buff=0.7).to_edge(DOWN, buff=0.45)
-        fit_to_frame(VGroup(title, formula, axes, ticks, graph, dots, point_labels, summary))
+        ).arrange(RIGHT, buff=0.7)
+        graph_area = place_graph_area(axes, ticks, graph, dots, point_labels)
+        layout = assert_layout_zones(header, step_banner, graph_area, summary)
+        fit_to_frame(layout, max_width=12.0, max_height=7.2)
 
         self.safe_play(Write(title), Write(formula))
-        self.safe_play(Create(axes), FadeIn(ticks))
-        self.safe_play(Transform(step_label, SafeText("步骤 2：绘制函数曲线", font_size=25, color="#475569").to_corner(UL, buff=0.55)))
+        self.safe_play(FadeIn(step_banner), Create(axes), FadeIn(ticks))
+        self.safe_play(Transform(step_banner, make_step_banner("步骤 2：绘制函数曲线")))
         self.safe_play(Create(graph), run_time=1.8)
-        self.safe_play(Transform(step_label, SafeText("步骤 3：标注关键点", font_size=25, color="#475569").to_corner(UL, buff=0.55)))
+        self.safe_play(Transform(step_banner, make_step_banner("步骤 3：标注关键点")))
         self.safe_play(LaggedStart(FadeIn(dots), Write(point_labels), lag_ratio=0.18))
-        self.safe_play(Transform(step_label, SafeText("步骤 4：总结图像规律", font_size=25, color="#475569").to_corner(UL, buff=0.55)))
+        self.safe_play(Transform(step_banner, make_step_banner("步骤 4：总结图像规律")))
         self.safe_play(FadeIn(summary, shift=UP * 0.2))
         self.wait(1)
 '''
