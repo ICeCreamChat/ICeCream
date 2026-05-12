@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .spec import default_spec, function_graph_spec
+
 
 LOW_CONFIDENCE_PATTERNS = (
     r"^做个动画$",
@@ -25,10 +27,21 @@ DOMAIN_KEYWORDS = {
 
 def _classify_domain(message: str) -> str:
     lowered = message.lower()
+    if any(keyword in lowered or keyword in message for keyword in ("sin", "cos", "正弦", "余弦", "函数", "公式", "坐标")):
+        return "math"
     for domain, keywords in DOMAIN_KEYWORDS.items():
         if any(keyword in lowered or keyword in message for keyword in keywords):
             return domain
     return "concept"
+
+
+def _classify_function(message: str) -> str:
+    lowered = message.lower()
+    if "cos" in lowered or "余弦" in message:
+        return "cos"
+    if "sin" in lowered or "正弦" in message:
+        return "sin"
+    return ""
 
 
 def _classify_intent(message: str, mode: str, current_code: str) -> str:
@@ -79,8 +92,13 @@ def plan_animation(
     """Convert a user prompt into a deterministic animation brief."""
     text = (message or "").strip()
     domain = _classify_domain(text)
+    function_name = _classify_function(text)
     confidence = _confidence_for(text, domain)
     intent = _classify_intent(text, mode, current_code)
+    if domain == "math" and function_name:
+        spec = function_graph_spec(text, function_name).to_dict()
+    else:
+        spec = default_spec(text).to_dict()
     storyboard = [
         "Introduce the topic with a concise title.",
         "Build the main visual object step by step.",
@@ -116,6 +134,7 @@ def plan_animation(
             "safe_margin": 0.7,
             "text_policy": "Use Text for Chinese and MathTex only for formulas.",
         },
+        "spec": spec,
         "risks": [
             "Text overlap",
             "MathTex Chinese characters",
@@ -124,4 +143,3 @@ def plan_animation(
         "confidence": confidence,
         "clarification": _clarification_for(text, domain) if confidence < 0.6 else None,
     }
-

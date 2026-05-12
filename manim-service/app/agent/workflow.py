@@ -6,6 +6,7 @@ from typing import Any, AsyncIterator
 
 from .coder import generate_code
 from .critic import critique_code
+from .inspector import inspect_code_quality
 from .planner import plan_animation
 from .repair import repair_code
 from .renderer import render_code_for_agent
@@ -25,7 +26,13 @@ def _trace(
             "confidence": brief.get("confidence"),
             "storyboard": brief.get("storyboard", [])[:3],
         },
+        "spec": brief.get("spec", {}),
         "skills": [skill["id"] for skill in skills],
+        "quality": {},
+        "repairs": {
+            "count": retries,
+            "reason": failure_reason,
+        },
         "retries": retries,
         "failureReason": failure_reason,
     }
@@ -91,14 +98,14 @@ async def stream_agent_events(
             "warning": None if repaired["status"] == "success" else repaired["summary"],
         }
 
-    trace = _trace(
-        brief,
-        skills,
-        retries=repair_attempts,
-        failure_reason="" if critic_report["status"] != "error" else critic_report["summary"],
-    )
-
     if critic_report["status"] == "error":
+        trace = _trace(
+            brief,
+            skills,
+            retries=repair_attempts,
+            failure_reason=critic_report["summary"],
+        )
+        trace["quality"] = {"status": "error", "summary": critic_report["summary"]}
         yield {
             "type": "result",
             "success": True,
@@ -106,6 +113,33 @@ async def stream_agent_events(
             "rendered": False,
             "code": code,
             "warning": "Manim Agent generated code but static checks still need attention.",
+            "agentTrace": trace,
+        }
+        return
+
+    yield {"type": "inspect", "step": "inspect", "message": "Inspecting visual readability"}
+    quality_report = inspect_code_quality(code, brief)
+    yield {
+        "type": "quality_report",
+        "quality": quality_report,
+    }
+
+    trace = _trace(
+        brief,
+        skills,
+        retries=repair_attempts,
+        failure_reason="" if quality_report["status"] != "error" else quality_report["summary"],
+    )
+    trace["quality"] = quality_report
+
+    if quality_report["status"] == "error":
+        yield {
+            "type": "result",
+            "success": True,
+            "intent": "manim",
+            "rendered": False,
+            "code": code,
+            "warning": "Manim Agent generated code but visual quality checks still need attention.",
             "agentTrace": trace,
         }
         return
@@ -174,4 +208,3 @@ async def run_agent(
         "rendered": False,
         "error": "Agent stopped before producing a result.",
     }
-

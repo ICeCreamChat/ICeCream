@@ -154,6 +154,14 @@ test('POST /api/manim/agent/stream proxies NDJSON agent events', async () => {
   });
 });
 
+test('frontend shows Manim agent inspection progress and quality reports', async () => {
+  const messageHandlerSource = await readFile(messageHandlerPath, 'utf8');
+
+  assert.match(messageHandlerSource, /event\.type === 'inspect'/);
+  assert.match(messageHandlerSource, /event\.type === 'quality_report'/);
+  assert.match(messageHandlerSource, /正在预览检查动画/);
+});
+
 test('Manim agent unavailable returns a compatible non-rendered warning', async () => {
   await withGatewayAndManim((req, res) => {
     res.statusCode = 503;

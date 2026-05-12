@@ -25,6 +25,10 @@ def static_repair_once(code: str, observation: dict[str, Any]) -> str:
 
     repaired = re.sub(r"^\s*import\s+(os|subprocess)\b.*$", "", repaired, flags=re.MULTILINE)
     repaired = re.sub(r"(?:eval|exec|__import__)\s*\([^)]*\)", "None", repaired)
+    repaired = re.sub(r"3\.141592653589793\d*", r"PI", repaired)
+    repaired = re.sub(r"1\.5707963267948966\d*", r"PI / 2", repaired)
+    repaired = re.sub(r"-3\.141592653589793\d*", r"-PI", repaired)
+    repaired = re.sub(r"-1\.5707963267948966\d*", r"-PI / 2", repaired)
 
     def replace_chinese_mathtex(match: re.Match[str]) -> str:
         content = match.group(1)
@@ -77,4 +81,3 @@ def repair_code(
         "root_cause_hint": stderr or "; ".join(issue["message"] for issue in last_report.get("issues", [])),
         "safe_retry": "Ask for a simpler animation or provide a more specific prompt.",
     }
-

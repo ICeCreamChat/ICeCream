@@ -315,6 +315,10 @@ class MessageHandler {
         await this.readNdjsonStream(response, (event) => {
             if (event.type === 'progress') {
                 this.updateManimAgentProgress(event);
+            } else if (event.type === 'inspect') {
+                this.updateManimAgentProgress(event);
+            } else if (event.type === 'quality_report') {
+                this.latestManimQualityReport = event.quality;
             } else if (event.type === 'clarification') {
                 this.showManimClarification(event.clarification);
             } else if (event.type === 'code') {
@@ -375,6 +379,7 @@ class MessageHandler {
             skills: '正在选择 Manim 技能...',
             coder: '正在生成 Manim 代码...',
             critic: '正在检查代码和布局...',
+            inspect: '正在预览检查动画...',
             repair: '正在自动修复问题...',
             render: '正在渲染动画...'
         };

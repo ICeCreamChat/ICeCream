@@ -2,6 +2,7 @@ import sys
 import unittest
 import ast
 import asyncio
+import re
 from pathlib import Path
 
 
@@ -10,9 +11,11 @@ sys.path.insert(0, str(SERVICE_ROOT))
 
 from app.agent.coder import generate_code
 from app.agent.critic import critique_code
+from app.agent.inspector import inspect_code_quality
 from app.agent.planner import plan_animation
 from app.agent.repair import repair_code
 from app.agent.skill_loader import select_skills
+from app.agent.workflow import stream_agent_events
 
 
 class ManimAgentTests(unittest.TestCase):
@@ -77,6 +80,96 @@ class MainScene(Scene):
 
         ast.parse(result["code"])
         self.assertIn('\\"斜率\\"', result["code"])
+
+    def test_planner_builds_function_graph_spec_for_stepwise_sine(self):
+        brief = plan_animation("画一个正弦函数，做分步骤讲解动画")
+        spec = brief["spec"]
+
+        self.assertEqual(spec["kind"], "function_graph")
+        self.assertEqual(spec["function"], "sin")
+        self.assertEqual(spec["tick_policy"], "symbolic_pi")
+        self.assertGreaterEqual(len(spec["teaching_steps"]), 3)
+        self.assertGreaterEqual(brief["confidence"], 0.6)
+
+    def test_skill_loader_selects_function_graph_coordinate_and_text_skills(self):
+        brief = plan_animation("画一个正弦函数，做分步骤讲解动画")
+        skills = select_skills(brief)
+        skill_ids = [skill["id"] for skill in skills]
+
+        self.assertLessEqual(len(skills), 3)
+        self.assertEqual(skill_ids[:3], ["function_graph", "coordinate_system", "text_formula_layout"])
+
+    def test_sine_template_uses_symbolic_pi_ticks_without_long_decimals(self):
+        brief = plan_animation("画一个正弦函数，做分步骤讲解动画")
+        result = asyncio.run(generate_code(brief, select_skills(brief)))
+        code = result["code"]
+
+        ast.parse(code)
+        self.assertIn("class SafeScene:", code)
+        self.assertIn("class MainScene(SafeScene, Scene)", code)
+        self.assertIn('self.camera.background_color = "#F7FBFF"', code)
+        self.assertNotIn('self.camera.background_color = "#0B1020"', code)
+        self.assertIn("def symbolic_ticks", code)
+        self.assertIn('MathTex("-\\\\pi")', code)
+        self.assertIn('MathTex("\\\\pi")', code)
+        self.assertNotRegex(code, r"3\.1415\d+")
+        self.assertNotRegex(code, r"1\.5707\d+")
+
+    def test_sine_template_scene_detection_renders_main_scene_not_helper(self):
+        brief = plan_animation("画一个正弦函数，做分步骤讲解动画")
+        result = asyncio.run(generate_code(brief, select_skills(brief)))
+        tree = ast.parse(result["code"])
+        direct_scene_classes = [
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef)
+            and any(getattr(base, "id", "") == "Scene" for base in node.bases)
+        ]
+
+        self.assertEqual(direct_scene_classes, ["MainScene"])
+
+    def test_critic_and_inspector_catch_long_decimal_ticks_and_text_density(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        labels = VGroup(*[
+            Text("3.141592653589793"),
+            Text("1.5707963267948966"),
+            Text("说明1"), Text("说明2"), Text("说明3"), Text("说明4"),
+            Text("说明5"), Text("说明6"), Text("说明7"), Text("说明8"),
+            Text("说明9"), Text("说明10"), Text("说明11"), Text("说明12"),
+            Text("说明13"), Text("说明14"), Text("说明15"), Text("说明16"),
+            Text("说明17"), Text("说明18"), Text("说明19"),
+        ])
+        self.add(labels)
+"""
+        report = critique_code(code, {"intent": "CREATE"})
+        quality = inspect_code_quality(code)
+        joined = "\n".join(issue["message"] for issue in report["issues"])
+
+        self.assertIn("Long decimal coordinate labels", joined)
+        self.assertIn("text objects", quality["summary"])
+        self.assertNotEqual(quality["status"], "pass")
+
+    def test_agent_stream_emits_inspection_and_quality_report_before_result(self):
+        async def collect():
+            events = []
+            async for event in stream_agent_events(
+                {"message": "画一个正弦函数，做分步骤讲解动画", "mode": "create"},
+                render=False,
+            ):
+                events.append(event)
+            return events
+
+        events = asyncio.run(collect())
+        event_types = [event["type"] for event in events]
+
+        self.assertIn("inspect", event_types)
+        self.assertIn("quality_report", event_types)
+        self.assertEqual(events[-1]["type"], "result")
+        self.assertEqual(events[-1]["agentTrace"]["quality"]["status"], "pass")
 
 
 if __name__ == "__main__":

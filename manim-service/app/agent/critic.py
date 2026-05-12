@@ -15,6 +15,7 @@ DANGEROUS_PATTERNS = (
 
 CHINESE_RE = r"[\u4e00-\u9fff]"
 MATHTEX_CHINESE_RE = re.compile(r"(?:MathTex|Tex)\s*\([^)]*" + CHINESE_RE)
+LONG_DECIMAL_RE = re.compile(r"\b-?\d+\.\d{6,}\b")
 
 
 def _issue(severity: str, message: str, hint: str) -> dict[str, str]:
@@ -45,6 +46,13 @@ def critique_code(code: str, brief: dict[str, Any] | None = None) -> dict[str, A
             "error",
             "MathTex/Tex contains Chinese characters.",
             "Move Chinese text into Text() and keep MathTex for formulas only.",
+        ))
+
+    if LONG_DECIMAL_RE.search(source):
+        issues.append(_issue(
+            "error",
+            "Long decimal coordinate labels make axes unreadable.",
+            "Use symbolic tick labels such as -\\pi, -\\pi/2, 0, \\pi/2, \\pi.",
         ))
 
     for pattern, message in DANGEROUS_PATTERNS:
@@ -83,4 +91,3 @@ def critique_code(code: str, brief: dict[str, Any] | None = None) -> dict[str, A
         "next_actions": [issue["hint"] for issue in issues],
         "briefIntent": (brief or {}).get("intent"),
     }
-

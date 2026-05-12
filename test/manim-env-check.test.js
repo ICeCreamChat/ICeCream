@@ -150,6 +150,8 @@ test('Manim startup entry points run the environment checker before service laun
   assert.match(runManim, /spawnSync/);
   assert.match(devBatch, /python\.exe main\.py/);
   assert.match(runManim, /\['main\.py'\]/);
-  assert.match(rootMain, /register_agent_routes/);
+  assert.match(rootMain, /from app\.main import app, run/);
+  assert.doesNotMatch(rootMain, /FastAPI/);
+  assert.doesNotMatch(rootMain, /register_agent_routes/);
   assert.match(agentRoutes, /\/agent\/stream/);
 });

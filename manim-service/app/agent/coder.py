@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import json
+import os
 from typing import Any
 
 
@@ -51,6 +52,10 @@ Current code, if modifying:
 
 
 def _template_for_domain(brief: dict[str, Any]) -> str:
+    spec = brief.get("spec") or {}
+    if spec.get("kind") == "function_graph":
+        return _function_graph_template(brief)
+
     title = brief.get("message") or "Manim Visualization"
     title_literal = json.dumps(title[:28], ensure_ascii=False)
     domain = brief.get("domain")
@@ -138,6 +143,115 @@ class MainScene(Scene):
 '''
 
 
+def _function_graph_template(brief: dict[str, Any]) -> str:
+    spec = brief.get("spec") or {}
+    title = spec.get("topic") or brief.get("message") or "函数图像分步讲解"
+    title_literal = json.dumps(str(title)[:28], ensure_ascii=False)
+    function_name = spec.get("function") or "sin"
+    formula = r"y=\sin(x)" if function_name == "sin" else r"y=\cos(x)"
+    formula_literal = json.dumps(formula)
+    graph_expr = "math.sin(x)" if function_name == "sin" else "math.cos(x)"
+    key_points = (
+        "[(-PI, 0, \"-\\\\pi\"), (-PI/2, -1, \"-\\\\pi/2\"), (0, 0, \"0\"), (PI/2, 1, \"\\\\pi/2\"), (PI, 0, \"\\\\pi\")]"
+        if function_name == "sin"
+        else "[(-PI, -1, \"-\\\\pi\"), (-PI/2, 0, \"-\\\\pi/2\"), (0, 1, \"0\"), (PI/2, 0, \"\\\\pi/2\"), (PI, -1, \"\\\\pi\")]"
+    )
+
+    return f'''from manim import *
+import math
+import numpy as np
+
+
+class SafeScene:
+    def safe_play(self, *animations, **kwargs):
+        kwargs.setdefault("run_time", 1.2)
+        return self.play(*animations, **kwargs)
+
+
+def SafeText(content, font_size=28, color="#1D2530", **kwargs):
+    text = Text(str(content), font_size=font_size, color=color, **kwargs)
+    return text
+
+
+def SafeMathTex(content, font_size=34, color="#1D2530", **kwargs):
+    formula = MathTex(content, font_size=font_size, color=color, **kwargs)
+    return formula
+
+
+def fit_to_frame(mobject, max_width=12.0, max_height=6.6):
+    if mobject.width > max_width:
+        mobject.scale_to_fit_width(max_width)
+    if mobject.height > max_height:
+        mobject.scale_to_fit_height(max_height)
+    return mobject
+
+
+def symbolic_ticks(axes):
+    x_labels = VGroup(
+        MathTex("-\\\\pi").scale(0.65).next_to(axes.c2p(-PI, 0), DOWN, buff=0.18),
+        MathTex("-\\\\pi/2").scale(0.65).next_to(axes.c2p(-PI / 2, 0), DOWN, buff=0.18),
+        MathTex("0").scale(0.65).next_to(axes.c2p(0, 0), DOWN + LEFT, buff=0.14),
+        MathTex("\\\\pi/2").scale(0.65).next_to(axes.c2p(PI / 2, 0), DOWN, buff=0.18),
+        MathTex("\\\\pi").scale(0.65).next_to(axes.c2p(PI, 0), DOWN, buff=0.18),
+    )
+    y_labels = VGroup(
+        MathTex("-1").scale(0.65).next_to(axes.c2p(0, -1), LEFT, buff=0.18),
+        MathTex("1").scale(0.65).next_to(axes.c2p(0, 1), LEFT, buff=0.18),
+    )
+    return VGroup(x_labels, y_labels)
+
+
+def make_axes():
+    axes = Axes(
+        x_range=[-PI, PI, PI / 2],
+        y_range=[-1.3, 1.3, 1],
+        x_length=8.6,
+        y_length=3.9,
+        axis_config={{"include_numbers": False, "include_tip": True, "color": "#475569"}},
+        tips=True,
+    )
+    axes.shift(DOWN * 0.15)
+    ticks = symbolic_ticks(axes)
+    return axes, ticks
+
+
+class MainScene(SafeScene, Scene):
+    def construct(self):
+        self.camera.background_color = "#F7FBFF"
+        title = SafeText({title_literal}, font_size=34, color="#0E7490").to_edge(UP, buff=0.35)
+        formula = SafeMathTex({formula_literal}, font_size=36, color="#C2410C").next_to(title, DOWN, buff=0.18)
+        step_label = SafeText("步骤 1：建立坐标系", font_size=25, color="#475569").to_corner(UL, buff=0.55)
+
+        axes, ticks = make_axes()
+        graph = axes.plot(lambda x: {graph_expr}, x_range=[-PI, PI], color="#0284C7", stroke_width=5)
+        points = {key_points}
+        dots = VGroup(*[
+            Dot(axes.c2p(x, y), radius=0.045, color="#F59E0B")
+            for x, y, _ in points
+        ])
+        point_labels = VGroup(*[
+            MathTex(label, font_size=22, color="#B45309").next_to(axes.c2p(x, y), UP if y >= 0 else DOWN, buff=0.16)
+            for x, y, label in points
+        ])
+        summary = VGroup(
+            SafeText("周期：2π", font_size=25, color="#1D2530"),
+            SafeText("振幅：1", font_size=25, color="#1D2530"),
+            SafeText("取值范围：[-1, 1]", font_size=25, color="#1D2530"),
+        ).arrange(RIGHT, buff=0.7).to_edge(DOWN, buff=0.45)
+        fit_to_frame(VGroup(title, formula, axes, ticks, graph, dots, point_labels, summary))
+
+        self.safe_play(Write(title), Write(formula))
+        self.safe_play(Create(axes), FadeIn(ticks))
+        self.safe_play(Transform(step_label, SafeText("步骤 2：绘制函数曲线", font_size=25, color="#475569").to_corner(UL, buff=0.55)))
+        self.safe_play(Create(graph), run_time=1.8)
+        self.safe_play(Transform(step_label, SafeText("步骤 3：标注关键点", font_size=25, color="#475569").to_corner(UL, buff=0.55)))
+        self.safe_play(LaggedStart(FadeIn(dots), Write(point_labels), lag_ratio=0.18))
+        self.safe_play(Transform(step_label, SafeText("步骤 4：总结图像规律", font_size=25, color="#475569").to_corner(UL, buff=0.55)))
+        self.safe_play(FadeIn(summary, shift=UP * 0.2))
+        self.wait(1)
+'''
+
+
 async def generate_code(
     brief: dict[str, Any],
     skills: list[dict[str, str]],
@@ -146,6 +260,11 @@ async def generate_code(
     model_name: str | None = None,
 ) -> dict[str, Any]:
     """Generate code with an AI client when available, otherwise use a safe template."""
+    spec = brief.get("spec") or {}
+    if os.environ.get("MANIM_AGENT_V2_ENABLED", "true").lower() not in {"0", "false", "off", "no"}:
+        if spec.get("kind") == "function_graph":
+            return {"code": _template_for_domain(brief), "source": "template_v2"}
+
     if ai_client is not None and model_name:
         try:
             response = await ai_client.chat.completions.create(
