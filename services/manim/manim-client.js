@@ -59,6 +59,52 @@ function timeoutSignal(ms) {
     return controller.signal;
 }
 
+export function getManimAgentStreamTimeoutMs(env = process.env) {
+    const configured = env.MANIM_AGENT_STREAM_TIMEOUT_MS ?? env.MANIM_AGENT_TIMEOUT_MS;
+    const parsed = Number(configured);
+    const fallback = 360000;
+    const minimum = 300000;
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return fallback;
+    }
+
+    const milliseconds = parsed < 1000 ? parsed * 1000 : parsed;
+    return Math.max(milliseconds, minimum);
+}
+
+function isAbortLikeError(error) {
+    const name = String(error?.name || '').toLowerCase();
+    const message = String(error?.message || '').toLowerCase();
+    return name.includes('abort')
+        || name.includes('timeout')
+        || message.includes('aborted')
+        || message.includes('abort')
+        || message.includes('timeout')
+        || message.includes('timed out');
+}
+
+export function formatManimStreamError(error) {
+    if (isAbortLikeError(error)) {
+        return '生成超时，Manim 服务仍可能在后台渲染，请稍后重试';
+    }
+    return String(error?.message || error || 'Manim Agent 流式处理失败');
+}
+
+function writeManimStreamError(res, message) {
+    res.status(200);
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.write(JSON.stringify({
+        type: 'error',
+        success: false,
+        error: message,
+        recoverable: false,
+    }) + '\n');
+    return res.end();
+}
+
 function extractGeneratedCode(content = '') {
     const codeMatch = String(content).match(/```(?:python)?\r?\n([\s\S]*?)```/i);
     return (codeMatch ? codeMatch[1] : content).trim();
@@ -143,7 +189,7 @@ async function runAgent(payload) {
         method: 'POST',
         headers: getManimHeaders(),
         body: JSON.stringify(payload),
-        signal: timeoutSignal(180000),
+        signal: timeoutSignal(getManimAgentStreamTimeoutMs()),
     });
 
     const data = await response.json().catch(() => ({}));
@@ -290,7 +336,7 @@ export async function streamAgent(req, res) {
             method: 'POST',
             headers: getManimHeaders(),
             body: JSON.stringify(payload),
-            signal: timeoutSignal(180000),
+            signal: timeoutSignal(getManimAgentStreamTimeoutMs()),
         });
 
         if (!response.ok) {
@@ -312,10 +358,14 @@ export async function streamAgent(req, res) {
         return res.end();
     } catch (error) {
         console.error('[Manim Client] Agent Stream Error:', error);
+        const message = formatManimStreamError(error);
         if (!res.headersSent) {
-            return res.status(500).json({ success: false, error: error.message });
+            if (isAbortLikeError(error)) {
+                return writeManimStreamError(res, message);
+            }
+            return res.status(500).json({ success: false, error: message });
         }
-        res.write(JSON.stringify({ type: 'error', success: false, error: error.message }) + '\n');
+        res.write(JSON.stringify({ type: 'error', success: false, error: message, recoverable: false }) + '\n');
         return res.end();
     }
 }

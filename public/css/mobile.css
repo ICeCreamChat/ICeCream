@@ -891,6 +891,47 @@
         }
     }
 
+    .message.bot .message-content.manim-process-message {
+        max-width: 100%;
+    }
+
+    .manim-process-card {
+        width: 100%;
+        border-radius: 14px;
+    }
+
+    .manim-process-header {
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 8px;
+        padding: 10px 12px;
+    }
+
+    .manim-process-current {
+        font-size: 13px;
+    }
+
+    .manim-process-body {
+        padding: 10px 12px 12px;
+    }
+
+    .manim-process-timeline {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px;
+    }
+
+    .manim-process-step {
+        padding: 6px 7px;
+        font-size: 11px;
+    }
+
+    .manim-process-details {
+        max-height: 34vh;
+    }
+
+    .manim-process-detail {
+        padding: 9px 10px;
+    }
+
     /* ==========================================================================
        Intent Confirm Modal
        ========================================================================== */

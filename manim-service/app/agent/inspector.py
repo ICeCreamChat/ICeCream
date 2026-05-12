@@ -7,6 +7,7 @@ from typing import Any
 
 
 LONG_DECIMAL_RE = re.compile(r"\b-?\d+\.\d{6,}\b")
+MOJIBAKE_RE = re.compile(r"(?:\u934b|\u9422|\u951b|\u7efe|\u20ac|\ufffd)")
 
 
 def _finding(severity: str, message: str, hint: str) -> dict[str, str]:
@@ -27,6 +28,13 @@ def inspect_code_quality(code: str, brief: dict[str, Any] | None = None) -> dict
             "Use symbolic ticks or short rounded labels.",
         ))
 
+    if MOJIBAKE_RE.search(source):
+        findings.append(_finding(
+            "error",
+            "Mojibake Chinese text detected.",
+            "Use valid UTF-8 strings in generated code and tests.",
+        ))
+
     if text_count > 18:
         findings.append(_finding(
             "warning",
@@ -41,7 +49,31 @@ def inspect_code_quality(code: str, brief: dict[str, Any] | None = None) -> dict
             "Disable include_numbers and add curated labels manually.",
         ))
 
-    if (brief or {}).get("spec", {}).get("kind") == "function_graph":
+    spec = (brief or {}).get("storyboardSpec") or (brief or {}).get("spec", {})
+    if spec.get("kind") == "geometry_circle" or spec.get("animation_type") == "geometry_circle":
+        if "Circle(" not in source:
+            findings.append(_finding(
+                "error",
+                "Circle request did not generate a Circle object.",
+                "Preserve the requested object semantics with Circle(), radius, and diameter labels.",
+            ))
+        if "Polygon(" in source or "triangle" in source.lower():
+            findings.append(_finding(
+                "error",
+                "Circle request generated triangle geometry.",
+                "Do not satisfy a circle prompt with triangle geometry.",
+            ))
+
+    if spec.get("version") in {"v3", "v4"}:
+        for helper_name in ("make_header", "make_step_banner"):
+            if f"def {helper_name}" not in source:
+                findings.append(_finding(
+                    "error",
+                    f"Animation is missing layout helper {helper_name}.",
+                    "Use the generic scene runtime helpers.",
+                ))
+
+    if spec.get("kind") == "function_graph" and spec.get("version") == "v3":
         has_top_header = ".to_edge(UP" in source
         has_corner_step = ".to_corner(UL" in source and "step" in source
         if has_top_header and has_corner_step:
@@ -61,7 +93,7 @@ def inspect_code_quality(code: str, brief: dict[str, Any] | None = None) -> dict
                 findings.append(_finding(
                     "error",
                     message,
-                    "Use the zoned function graph teaching template.",
+                    "Use generic layout helpers and keep graph, header, step text, and summary in separate zones.",
                 ))
         if "scale_to_fit_width" not in source:
             findings.append(_finding(
@@ -80,6 +112,13 @@ def inspect_code_quality(code: str, brief: dict[str, Any] | None = None) -> dict
                 "warning",
                 "Function graph lacks key point annotations.",
                 "Mark zero, peak, and trough points.",
+            ))
+    elif spec.get("kind") == "function_graph" or spec.get("animation_type") == "function_graph":
+        if "\\pi" not in source and "PI" not in source:
+            findings.append(_finding(
+                "warning",
+                "Function graph does not appear to use symbolic pi markers.",
+                "Use symbolic labels such as -\\pi, 0, and \\pi for trigonometric graphs.",
             ))
 
     if any(item["severity"] == "error" for item in findings):

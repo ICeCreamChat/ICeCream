@@ -259,7 +259,9 @@ export class CodePanel {
             } else if (event.type === 'result' || event.type === 'clarification') {
                 result = event;
             } else if (event.type === 'error') {
-                throw new Error(event.error || 'Manim Agent 修改失败');
+                if (!event.recoverable) {
+                    throw new Error(event.error || 'Manim Agent 修改失败');
+                }
             }
         });
 

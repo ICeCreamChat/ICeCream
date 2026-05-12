@@ -24,6 +24,7 @@ class MessageHandler {
         this.isLoading = false;
         this.pendingImage = null;
         this.onMessageAdded = null;
+        this.manimProcess = null;
     }
 
     /**
@@ -223,7 +224,9 @@ class MessageHandler {
             }
         } catch (error) {
             console.error('Send error:', error);
-            this.addMessage('bot', `抱歉，发生了错误：${error.message}`);
+            if (!error.manimProcessHandled) {
+                this.addMessage('bot', `抱歉，发生了错误：${error.message}`);
+            }
             showToast(error.message, 'error');
         } finally {
             this.setLoading(false);
@@ -295,43 +298,637 @@ class MessageHandler {
      */
     async sendManimAgentStream(payload) {
         const clientId = localStorage.getItem('icecream_client_id') || 'main_chat';
-        const response = await fetch('/api/manim/agent/stream', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                message: payload.message,
-                mode: payload.mode || 'create',
-                currentCode: payload.currentCode || '',
-                clientId
-            })
-        });
+        this.createManimProcessBubble(payload.message || '');
+        this.setManimBottomLoadingVisible(false);
+
+        let response;
+        try {
+            response = await fetch('/api/manim/agent/stream', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: payload.message,
+                    mode: payload.mode || 'create',
+                    currentCode: payload.currentCode || '',
+                    clientId
+                })
+            });
+        } catch (error) {
+            const message = this.localizeManimError(error);
+            this.updateManimProcessFromEvent({
+                type: 'error',
+                error: message,
+            });
+            const connectionError = new Error(message);
+            connectionError.manimProcessHandled = true;
+            throw connectionError;
+        }
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({}));
-            throw new Error(error.error || 'Manim Agent 请求失败');
+            this.updateManimProcessFromEvent({
+                type: 'error',
+                error: this.localizeManimError(error.error || 'Manim Agent 请求失败'),
+            });
+            const requestError = new Error(this.localizeManimError(error.error || 'Manim Agent 请求失败'));
+            requestError.manimProcessHandled = true;
+            throw requestError;
         }
 
         let finalResult = null;
-        await this.readNdjsonStream(response, (event) => {
-            if (event.type === 'progress') {
-                this.updateManimAgentProgress(event);
-            } else if (event.type === 'inspect') {
-                this.updateManimAgentProgress(event);
-            } else if (event.type === 'quality_report') {
-                this.latestManimQualityReport = event.quality;
-            } else if (event.type === 'clarification') {
-                this.showManimClarification(event.clarification);
-            } else if (event.type === 'code') {
-                this.latestManimAgentCode = event.code || this.latestManimAgentCode;
-            } else if (event.type === 'result') {
-                finalResult = event;
-            } else if (event.type === 'error') {
-                throw new Error(event.error || 'Manim Agent 处理失败');
-            }
-        });
+        try {
+            await this.readNdjsonStream(response, (event) => {
+                this.updateManimProcessFromEvent(event);
+
+                if (event.type === 'progress') {
+                    return;
+                } else if (event.type === 'plan') {
+                    this.latestManimPlan = event.brief;
+                } else if (event.type === 'design') {
+                    this.latestManimDesign = event.design;
+                } else if (event.type === 'storyboard') {
+                    this.latestManimStoryboard = event.storyboard || [];
+                } else if (event.type === 'style') {
+                    this.latestManimStyle = event.style;
+                } else if (event.type === 'skills') {
+                    this.latestManimSkills = event.skills || [];
+                } else if (event.type === 'inspect') {
+                    return;
+                } else if (event.type === 'quality_report') {
+                    this.latestManimQualityReport = event.quality;
+                } else if (event.type === 'preview') {
+                    this.latestManimPreviewReport = event.preview;
+                } else if (event.type === 'visual_check') {
+                    this.latestManimVisualReport = event.visual;
+                } else if (event.type === 'repair') {
+                    return;
+                } else if (event.type === 'clarification') {
+                    this.showManimClarification(event.clarification);
+                } else if (event.type === 'code') {
+                    this.latestManimAgentCode = event.code || this.latestManimAgentCode;
+                } else if (event.type === 'result') {
+                    finalResult = event;
+                } else if (event.type === 'error') {
+                    if (!event.recoverable) {
+                        const streamError = new Error(this.localizeManimError(event.error || 'Manim Agent 处理失败'));
+                        streamError.manimProcessHandled = true;
+                        throw streamError;
+                    }
+                }
+            });
+        } catch (error) {
+            const message = this.localizeManimError(error);
+            this.updateManimProcessFromEvent({
+                type: 'error',
+                error: message,
+            });
+            const streamError = new Error(message);
+            streamError.manimProcessHandled = true;
+            throw streamError;
+        }
 
         if (finalResult) {
             this._handleManimResponse(finalResult);
+        }
+    }
+
+    getManimProcessSteps() {
+        return [
+            { id: 'planner', label: '理解需求' },
+            { id: 'storyboard', label: '设计分镜' },
+            { id: 'style', label: '教学风格' },
+            { id: 'skills', label: '选择技能' },
+            { id: 'coder', label: '生成代码' },
+            { id: 'critic', label: '静态检查' },
+            { id: 'inspect', label: '布局检查' },
+            { id: 'visual_check', label: '视觉检查' },
+            { id: 'repair', label: '自动修复' },
+            { id: 'render', label: '最终渲染' },
+        ].map(step => ({
+            ...step,
+            status: 'pending',
+            summary: '等待开始',
+            details: [],
+            updatedAt: null,
+        }));
+    }
+
+    createManimProcessBubble(prompt = '') {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message bot manim-process-message-row';
+
+        const avatarDiv = document.createElement('div');
+        avatarDiv.className = 'message-avatar';
+        avatarDiv.innerHTML = '<img src="/images/bot-avatar.jpg" alt="AI">';
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content manim-process-message';
+
+        const card = document.createElement('div');
+        card.className = 'manim-process-card';
+        card.innerHTML = `
+            <button type="button" class="manim-process-header" aria-expanded="true">
+                <span class="manim-process-status">制作中</span>
+                <span class="manim-process-current">正在理解动画需求...</span>
+                <span class="manim-process-toggle">收起</span>
+            </button>
+            <div class="manim-process-body">
+                <div class="manim-process-timeline" aria-label="Manim 制作过程"></div>
+                <div class="manim-process-details"></div>
+            </div>
+        `;
+
+        contentDiv.appendChild(card);
+        messageDiv.appendChild(avatarDiv);
+        messageDiv.appendChild(contentDiv);
+        this.elements.messages?.appendChild(messageDiv);
+
+        const process = {
+            prompt,
+            messageDiv,
+            card,
+            header: card.querySelector('.manim-process-header'),
+            body: card.querySelector('.manim-process-body'),
+            statusEl: card.querySelector('.manim-process-status'),
+            currentEl: card.querySelector('.manim-process-current'),
+            toggleEl: card.querySelector('.manim-process-toggle'),
+            timelineEl: card.querySelector('.manim-process-timeline'),
+            detailsEl: card.querySelector('.manim-process-details'),
+            steps: this.getManimProcessSteps(),
+            currentStep: 'planner',
+            collapsed: false,
+            terminalStatus: null,
+        };
+
+        process.header?.addEventListener('click', () => {
+            this.toggleManimProcessBubble(null, process);
+        });
+
+        this.manimProcess = process;
+        this.setManimProcessStep('planner', 'active', '正在理解你的动画需求', prompt ? [`用户需求：${prompt}`] : []);
+        this.renderManimProcessBubble(process);
+        this.scrollMessagesToBottom();
+    }
+
+    toggleManimProcessBubble(forceCollapsed = null, process = this.manimProcess) {
+        if (!process) return;
+        process.collapsed = forceCollapsed === null
+            ? !process.collapsed
+            : Boolean(forceCollapsed);
+        this.renderManimProcessBubble(process);
+    }
+
+    setManimProcessStep(stepId, status, summary = '', details = []) {
+        if (!this.manimProcess) return;
+        const step = this.manimProcess.steps.find(item => item.id === stepId);
+        if (!step) return;
+
+        if (status === 'active') {
+            this.manimProcess.steps.forEach(item => {
+                if (item.id !== stepId && item.status === 'active') {
+                    item.status = 'pass';
+                }
+            });
+        }
+        step.status = status;
+        if (summary) step.summary = this.localizeManimText(summary);
+        if (details.length) {
+            step.details = details
+                .filter(Boolean)
+                .map(item => this.localizeManimText(item));
+        }
+        step.updatedAt = new Date();
+        this.manimProcess.currentStep = stepId;
+    }
+
+    completePreviousActiveManimStep(nextStepId) {
+        if (!this.manimProcess) return;
+        this.manimProcess.steps.forEach(step => {
+            if (step.id !== nextStepId && step.status === 'active') {
+                step.status = 'pass';
+            }
+        });
+    }
+
+    mapManimProgressStep(step = '') {
+        const map = {
+            plan: 'planner',
+            design: 'storyboard',
+            storyboard: 'storyboard',
+            skills: 'skills',
+            coder: 'coder',
+            critic: 'critic',
+            inspect: 'inspect',
+            preview: 'visual_check',
+            visual_check: 'visual_check',
+            repair: 'repair',
+            render: 'render',
+        };
+        return map[step] || step || 'planner';
+    }
+
+    mapManimReportStatus(status = '') {
+        if (status === 'pass' || status === 'success' || status === 'skipped') return 'pass';
+        if (status === 'warning') return 'warning';
+        if (status === 'error' || status === 'failed') return 'error';
+        return 'active';
+    }
+
+    updateManimProcessFromEvent(event = {}) {
+        if (!this.manimProcess) return;
+
+        if (event.type === 'progress') {
+            const stepId = this.mapManimProgressStep(event.step);
+            this.completePreviousActiveManimStep(stepId);
+            this.setManimProcessStep(stepId, 'active', this.manimProcessLabelForStep(stepId), []);
+        } else if (event.type === 'plan') {
+            const brief = event.brief || {};
+            this.setManimProcessStep('planner', 'pass', '已识别动画需求', this.formatManimPlanDetails(brief));
+        } else if (event.type === 'design') {
+            const design = event.design || {};
+            this.setManimProcessStep('storyboard', 'active', design.summary || '正在设计教学分镜', this.formatManimDesignDetails(design));
+        } else if (event.type === 'storyboard') {
+            this.setManimProcessStep('storyboard', 'pass', '分镜设计完成', this.formatManimStoryboardDetails(event.storyboard || []));
+        } else if (event.type === 'style') {
+            this.setManimProcessStep('style', 'pass', '已确定教学风格', this.formatManimStyleDetails(event.style || {}));
+        } else if (event.type === 'skills') {
+            this.setManimProcessStep('skills', 'pass', '已选择运行时技能', this.formatManimSkillsDetails(event.skills || []));
+        } else if (event.type === 'code') {
+            if (event.source === 'repair') {
+                this.setManimProcessStep('repair', event.warning ? 'warning' : 'active', event.warning || '已生成修复版代码，正在重新检查', [event.warning].filter(Boolean));
+            } else {
+                this.setManimProcessStep('coder', 'pass', '场景代码生成完成', this.formatManimCodeDetails(event));
+            }
+        } else if (event.type === 'inspect') {
+            this.setManimProcessStep('inspect', 'active', '正在检查布局和语义', [event.message].filter(Boolean));
+        } else if (event.type === 'quality_report') {
+            const report = event.quality || {};
+            this.setManimProcessStep('inspect', this.mapManimReportStatus(report.status), report.summary || '布局检查完成', this.formatManimQualityDetails(report));
+        } else if (event.type === 'preview') {
+            const preview = event.preview || {};
+            const status = preview.status === 'skipped' ? 'pass' : this.mapManimReportStatus(preview.status);
+            this.setManimProcessStep('visual_check', status, preview.summary || '预览检查完成', this.formatManimVisualDetails(preview));
+        } else if (event.type === 'visual_check') {
+            const visual = event.visual || {};
+            this.setManimProcessStep('visual_check', this.mapManimReportStatus(visual.status), visual.summary || '视觉检查完成', this.formatManimVisualDetails(visual));
+        } else if (event.type === 'repair') {
+            this.setManimProcessStep('repair', 'active', event.message || '正在自动修复问题', [event.message].filter(Boolean));
+        } else if (event.type === 'result') {
+            const repairs = event.agentTrace?.repairs;
+            if (event.rendered && repairs && typeof repairs.count === 'number' && repairs.count > 0) {
+                const repairStep = this.manimProcess.steps.find(step => step.id === 'repair');
+                if (repairStep && repairStep.status === 'active') {
+                    repairStep.status = 'repaired';
+                    repairStep.summary = '自动修复已通过最终渲染验证';
+                }
+            }
+            const hasProblem = event.success === false || !event.rendered || Boolean(event.warning);
+            this.setManimProcessStep('render', hasProblem ? 'warning' : 'pass', hasProblem ? (event.warning || '生成完成，但需要注意') : '最终动画已生成', this.formatManimResultDetails(event));
+            this.manimProcess.terminalStatus = hasProblem ? 'warning' : 'pass';
+            this.toggleManimProcessBubble(!hasProblem);
+        } else if (event.type === 'clarification') {
+            this.setManimProcessStep('planner', 'warning', '需要补充动画目标', this.formatManimClarificationDetails(event.clarification || {}));
+            this.manimProcess.terminalStatus = 'warning';
+        } else if (event.type === 'error') {
+            const stepId = this.manimProcess.currentStep || 'planner';
+            this.setManimProcessStep(stepId, 'error', this.localizeManimError(event.error || 'Manim Agent 处理失败'), [event.error].filter(Boolean));
+            this.manimProcess.terminalStatus = 'error';
+        }
+
+        this.renderManimProcessBubble();
+        this.scrollMessagesToBottom();
+    }
+
+    manimProcessLabelForStep(stepId) {
+        const labels = {
+            planner: '正在理解动画需求',
+            storyboard: '正在设计教学分镜',
+            style: '正在确定教学风格',
+            skills: '正在选择 Manim 技能',
+            coder: '正在生成场景代码',
+            critic: '正在做静态安全检查',
+            inspect: '正在检查布局和语义',
+            visual_check: '正在抽帧检查视觉质量',
+            repair: '正在自动修复问题',
+            render: '正在渲染最终动画',
+        };
+        return labels[stepId] || '正在处理动画';
+    }
+
+    renderManimProcessBubble(process = this.manimProcess) {
+        if (!process) return;
+        const activeStep = process.steps.find(step => step.id === process.currentStep) || process.steps[0];
+        const terminalStatus = process.terminalStatus;
+
+        process.card.classList.toggle('collapsed', process.collapsed);
+        process.card.dataset.status = terminalStatus || activeStep.status || 'active';
+        process.header?.setAttribute('aria-expanded', String(!process.collapsed));
+        if (process.statusEl) {
+            process.statusEl.textContent = terminalStatus === 'pass'
+                ? '已完成'
+                : terminalStatus === 'error'
+                    ? '失败'
+                    : terminalStatus === 'warning'
+                        ? '需注意'
+                        : '制作中';
+        }
+        if (process.currentEl) {
+            process.currentEl.textContent = terminalStatus === 'pass'
+                ? '制作过程已完成，点击展开详情'
+                : this.localizeManimText(activeStep.summary || this.manimProcessLabelForStep(activeStep.id));
+        }
+        if (process.toggleEl) {
+            process.toggleEl.textContent = process.collapsed ? '展开' : '收起';
+        }
+        if (process.timelineEl) {
+            process.timelineEl.innerHTML = process.steps.map(step => `
+                <div class="manim-process-step ${escapeHtml(step.status)}" title="${escapeHtml(this.localizeManimText(step.summary))}">
+                    <span class="manim-process-dot"></span>
+                    <span class="manim-process-step-label">${escapeHtml(this.localizeManimText(step.label))}</span>
+                </div>
+            `).join('');
+        }
+        if (process.detailsEl) {
+            const visibleSteps = process.steps.filter(step => step.status !== 'pending' || step.details.length);
+            process.detailsEl.innerHTML = visibleSteps.map(step => this.renderManimProcessDetail(step)).join('');
+        }
+    }
+
+    renderManimProcessDetail(step) {
+        const detailItems = (step.details || []).filter(Boolean).slice(0, 6);
+        const detailsHtml = detailItems.length
+            ? `<ul>${detailItems.map(item => `<li>${escapeHtml(this.localizeManimText(item))}</li>`).join('')}</ul>`
+            : '';
+        return `
+            <section class="manim-process-detail ${escapeHtml(step.status)}">
+                <div class="manim-process-detail-title">
+                    <span>${escapeHtml(this.localizeManimText(step.label))}</span>
+                    <strong>${escapeHtml(this.formatManimStepStatus(step.status))}</strong>
+                </div>
+                <p>${escapeHtml(this.localizeManimText(step.summary || '等待处理'))}</p>
+                ${detailsHtml}
+            </section>
+        `;
+    }
+
+    formatManimStepStatus(status) {
+        const map = {
+            pending: '等待',
+            active: '进行中',
+            pass: '完成',
+            warning: '注意',
+            error: '失败',
+            repaired: '已修复',
+        };
+        return map[status] || status;
+    }
+
+    localizeManimStatus(status = '') {
+        const map = {
+            pass: '通过',
+            success: '成功',
+            skipped: '已跳过',
+            warning: '注意',
+            error: '失败',
+            failed: '失败',
+            info: '提示',
+            active: '进行中',
+            repaired: '已修复',
+        };
+        return map[String(status || '').toLowerCase()] || status;
+    }
+
+    localizeManimDomain(domain = '') {
+        const map = {
+            math: '数学',
+            geometry: '几何',
+            data: '数据可视化',
+            physics: '物理运动',
+            flow: '流程解释',
+            concept: '概念讲解',
+            code: '代码修改',
+        };
+        return map[String(domain || '').toLowerCase()] || domain;
+    }
+
+    localizeManimAnimationType(type = '') {
+        const map = {
+            function_graph: '函数图像',
+            formula_derivation: '公式推导',
+            geometry_proof: '几何证明',
+            geometry_circle: '圆形几何',
+            bar_chart: '柱状图',
+            line_chart: '折线图',
+            motion_path: '运动轨迹',
+            process_flow: '流程图',
+            code_modify: '代码修改',
+            concept_explanation: '概念讲解',
+        };
+        return map[String(type || '').toLowerCase()] || type;
+    }
+
+    localizeManimStrategy(strategy = '') {
+        const map = {
+            v4_director_pipeline: 'V4 智能导演流程',
+            llm_v4: 'V4 智能生成',
+        };
+        return map[String(strategy || '').toLowerCase()] || strategy;
+    }
+
+    localizeManimSkill(skill = {}) {
+        const id = String(skill.id || '').toLowerCase();
+        const name = String(skill.name || '').toLowerCase();
+        const key = id || name;
+        const map = {
+            function_graph: '函数图像教学：使用符号刻度、分阶段绘制曲线，并标出关键点。',
+            'function graph teaching animation': '函数图像教学：使用符号刻度、分阶段绘制曲线，并标出关键点。',
+            formula_derivation: '公式推导：逐步展示等式变化，中文讲解与公式分开排版。',
+            'formula derivation': '公式推导：逐步展示等式变化，中文讲解与公式分开排版。',
+            coordinate_system: '可读坐标系：控制刻度密度，优先使用 π 等符号标签。',
+            'readable coordinate systems': '可读坐标系：控制刻度密度，优先使用 π 等符号标签。',
+            geometry: '几何图形：使用清晰线条、角标和标签，避免文字重叠。',
+            'geometry diagrams': '几何图形：使用清晰线条、角标和标签，避免文字重叠。',
+            data_visualization: '数据可视化：按顺序展示数值和趋势，标签保持简洁。',
+            'data visualization': '数据可视化：按顺序展示数值和趋势，标签保持简洁。',
+            physics_motion: '物理运动：突出轨迹、向量和关键受力说明。',
+            'physics and motion': '物理运动：突出轨迹、向量和关键受力说明。',
+            flow_explanation: '流程解释：节点和箭头分步出现，保持间距稳定。',
+            'flow and process explanation': '流程解释：节点和箭头分步出现，保持间距稳定。',
+            code_modify: '代码修改：在保留原场景结构的基础上做最小可运行修改。',
+            'codepanel ai modification': '代码修改：在保留原场景结构的基础上做最小可运行修改。',
+            text_formula_layout: '文字与公式布局：中文使用 Text，公式使用 MathTex，并分区放置。',
+            'text and formula layout': '文字与公式布局：中文使用 Text，公式使用 MathTex，并分区放置。',
+        };
+        return map[key] || map[name] || this.localizeManimText(skill.name || skill.id || '运行时技能');
+    }
+
+    localizeManimError(error) {
+        const raw = typeof error === 'string'
+            ? error
+            : (error?.message || String(error || ''));
+        if (error?.name === 'AbortError' || /abort|aborted|timeout|timed out/i.test(raw)) {
+            return '生成时间过长，连接已中断。可以重试，或减少动画复杂度。';
+        }
+        return this.localizeManimText(raw || 'Manim Agent 处理失败');
+    }
+
+    localizeManimText(value = '') {
+        const text = String(value || '').trim();
+        if (!text) return '';
+
+        const exact = {
+            'Quality inspection passed.': '质量检查通过。',
+            'Visual inspection passed.': '视觉检查通过。',
+            'Visual frame inspection passed.': '预览帧检查通过。',
+            'Frame extraction skipped.': '未执行抽帧检查。',
+            'No preview frames extracted.': '未抽取到预览帧。',
+            'Preview render failed.': '预览渲染失败。',
+            'Preview render did not return a video URL.': '预览渲染没有返回可播放视频。',
+            'Preview video is too small.': '预览视频过小，可能画面为空或内容过少。',
+            'Preview video artifact is unusually small.': '预览视频文件偏小，请确认画面内容是否完整。',
+            'Animation has no final reading pause.': '动画结尾缺少阅读停顿。',
+            'Selected premium teaching style.': '已选择精品教学风格。',
+            'Generate code using the selected teaching style.': '将按精品教学风格生成场景代码。',
+            'Repairing visual quality issues': '正在修复视觉质量问题。',
+            'Rendering preview for visual inspection': '正在渲染低清预览并抽帧检查。',
+            'Rendering final Manim video': '正在渲染最终视频。',
+            'Manim Agent v4 visual checks failed.': '视觉检查未通过，已保留可编辑代码。',
+            'Manim Agent v4 render failed.': '最终渲染失败，已保留可编辑代码。',
+            'The operation was aborted.': '生成时间过长，连接已中断。可以重试，或减少动画复杂度。',
+            'This operation was aborted.': '生成时间过长，连接已中断。可以重试，或减少动画复杂度。',
+            'Repair code before final render.': '请先修复代码后再进行最终渲染。',
+            'Render output must include a playable video artifact.': '渲染结果必须包含可播放的视频文件。',
+            'Regenerate with visible objects and animations.': '请重新生成包含可见对象和动画的场景。',
+            'Check for blank frames or too-short animation.': '请检查是否存在空白帧或动画时长过短。',
+            'Add self.wait(1) at the end.': '请在结尾添加至少 1 秒停顿，方便观看。',
+            'Install ffmpeg or inspect render output manually.': '请安装 ffmpeg，或手动检查渲染输出。',
+        };
+        if (exact[text]) return exact[text];
+
+        const includes = [
+            [/Quality inspection passed/i, '质量检查通过。'],
+            [/Visual inspection passed/i, '视觉检查通过。'],
+            [/Preview render failed/i, '预览渲染失败。'],
+            [/operation was aborted|aborterror|aborted/i, '生成时间过长，连接已中断。可以重试，或减少动画复杂度。'],
+            [/Repairing visual quality issues/i, '正在修复视觉质量问题。'],
+            [/visual checks failed/i, '视觉检查未通过，已保留可编辑代码。'],
+            [/render failed/i, '渲染失败，已保留可编辑代码。'],
+            [/no final reading pause/i, '动画结尾缺少阅读停顿。'],
+            [/video artifact is unusually small/i, '预览视频文件偏小，请确认画面内容是否完整。'],
+        ];
+        const matched = includes.find(([pattern]) => pattern.test(text));
+        return matched ? matched[1] : text;
+    }
+
+    formatManimPlanDetails(brief = {}) {
+        const details = [];
+        if (brief.domain) details.push(`领域：${this.localizeManimDomain(brief.domain)}`);
+        if (brief.animationType) details.push(`动画类型：${this.localizeManimAnimationType(brief.animationType)}`);
+        if (typeof brief.confidence === 'number') details.push(`置信度：${Math.round(brief.confidence * 100)}%`);
+        if (brief.strategy) details.push(`策略：${this.localizeManimStrategy(brief.strategy)}`);
+        return details;
+    }
+
+    formatManimDesignDetails(design = {}) {
+        const details = [];
+        if (design.summary) details.push(this.localizeManimText(design.summary));
+        const spec = design.storyboardSpec || {};
+        if (spec.teaching_goal) details.push(`教学目标：${this.localizeManimText(spec.teaching_goal)}`);
+        if (Array.isArray(spec.visual_objects) && spec.visual_objects.length) {
+            details.push(`视觉对象：${spec.visual_objects.slice(0, 5).map(item => this.localizeManimText(item)).join('、')}`);
+        }
+        return details;
+    }
+
+    formatManimStoryboardDetails(storyboard = []) {
+        return storyboard.slice(0, 5).map((shot, index) => {
+            const title = this.localizeManimText(shot.title || `步骤 ${index + 1}`);
+            const narration = shot.narration ? `：${this.localizeManimText(shot.narration)}` : '';
+            return `${index + 1}. ${title}${narration}`;
+        });
+    }
+
+    formatManimStyleDetails(style = {}) {
+        const details = [];
+        if (style.id || style.name) {
+            const styleName = String(style.id || style.name) === 'teaching_premium'
+                ? '精品教学风格'
+                : this.localizeManimText(style.id || style.name);
+            details.push(`风格：${styleName}`);
+        }
+        if (style.background) details.push(`背景：浅色教学背景（${style.background}）`);
+        if (style.primary) details.push(`强调色：教学蓝（${style.primary}）`);
+        if (style.motionPolicy) details.push('动效：分阶段呈现、适当停顿，避免过度镜头运动。');
+        if (style.layoutPolicy) details.push('布局：标题、步骤、主体图像和总结分区放置。');
+        return details;
+    }
+
+    formatManimSkillsDetails(skills = []) {
+        return skills.slice(0, 4).map(skill => this.localizeManimSkill(skill));
+    }
+
+    formatManimCodeDetails(event = {}) {
+        const details = [];
+        const sourceMap = {
+            llm_v4: 'V4 智能生成',
+            repair: '自动修复生成',
+        };
+        if (event.source) details.push(`来源：${sourceMap[event.source] || this.localizeManimText(event.source)}`);
+        if (event.template) details.push(`模板：${event.template === 'none' ? '未使用固定整段模板' : this.localizeManimText(event.template)}`);
+        if (event.warning) details.push(`警告：${this.localizeManimText(event.warning)}`);
+        return details;
+    }
+
+    formatManimQualityDetails(report = {}) {
+        const details = [];
+        if (report.status) details.push(`状态：${this.localizeManimStatus(report.status)}`);
+        if (report.summary) details.push(this.localizeManimText(report.summary));
+        if (report.error) details.push(`错误：${this.localizeManimError(report.error)}`);
+        if (Array.isArray(report.findings)) {
+            report.findings.slice(0, 3).forEach(item => {
+                const severity = this.localizeManimStatus(item.severity || 'info');
+                const message = this.localizeManimText(item.message || item.hint || '');
+                if (message) details.push(`${severity}：${message}`);
+            });
+        }
+        return details;
+    }
+
+    formatManimVisualDetails(report = {}) {
+        const details = this.formatManimQualityDetails(report);
+        const metrics = report.metrics || {};
+        if (metrics.artifactSize) details.push(`视频大小：${Math.round(metrics.artifactSize / 1024)} KB`);
+        const frame = metrics.frame || {};
+        if (frame.nonBackgroundRatio) details.push(`主体面积：${Math.round(frame.nonBackgroundRatio * 100)}%`);
+        if (frame.contrast) details.push(`对比度：${frame.contrast}`);
+        return details;
+    }
+
+    formatManimResultDetails(result = {}) {
+        const details = [];
+        details.push(result.rendered ? '渲染结果：已生成视频' : '渲染结果：未生成视频');
+        if (result.videoUrl) details.push(`视频地址：${result.videoUrl}`);
+        if (result.warning) details.push(`提示：${this.localizeManimText(result.warning)}`);
+        const trace = result.agentTrace || {};
+        if (trace.codeSource) details.push(`代码来源：${this.localizeManimStrategy(trace.codeSource)}`);
+        if (trace.repairs && typeof trace.repairs.count === 'number') details.push(`修复次数：${trace.repairs.count}`);
+        return details;
+    }
+
+    formatManimClarificationDetails(clarification = {}) {
+        const details = [];
+        if (clarification.question) details.push(this.localizeManimText(clarification.question));
+        if (Array.isArray(clarification.options)) details.push(`建议：${clarification.options.map(item => this.localizeManimText(item)).join(' / ')}`);
+        return details;
+    }
+
+    setManimBottomLoadingVisible(visible) {
+        this.elements.loading?.classList.toggle('hidden', !visible);
+    }
+
+    scrollMessagesToBottom() {
+        if (this.elements.messages) {
+            this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
         }
     }
 
@@ -374,14 +971,24 @@ class MessageHandler {
     }
 
     updateManimAgentProgress(event) {
+        if (this.manimProcess) {
+            this.updateManimProcessFromEvent({ type: 'progress', ...event });
+            return;
+        }
         const labels = {
             planner: '正在理解动画需求...',
+            plan: '正在制定动画分镜...',
+            design: '正在设计教学表达...',
+            storyboard: '正在细化镜头顺序...',
+            style: '正在确定教学风格...',
             skills: '正在选择 Manim 技能...',
-            coder: '正在生成 Manim 代码...',
-            critic: '正在检查代码和布局...',
-            inspect: '正在预览检查动画...',
+            coder: '正在生成 Manim 场景代码...',
+            critic: '正在检查代码安全和结构...',
+            inspect: '正在检查布局和可读性...',
+            preview: '正在检查预览画面...',
+            visual_check: '正在抽帧检查视觉质量...',
             repair: '正在自动修复问题...',
-            render: '正在渲染动画...'
+            render: '正在渲染最终动画...'
         };
         if (this.elements.loadingText) {
             this.elements.loadingText.textContent = labels[event.step] || event.message || '正在处理动画...';
