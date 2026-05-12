@@ -190,6 +190,7 @@ test('frontend shows Manim agent v4 production progress in a chat bubble', async
   assert.match(messageHandlerSource, /event\.type === 'style'/);
   assert.match(messageHandlerSource, /event\.type === 'skills'/);
   assert.match(messageHandlerSource, /event\.type === 'inspect'/);
+  assert.match(messageHandlerSource, /event\.type === 'critic_report'/);
   assert.match(messageHandlerSource, /event\.type === 'preview'/);
   assert.match(messageHandlerSource, /event\.type === 'visual_check'/);
   assert.match(messageHandlerSource, /event\.type === 'repair'/);
@@ -198,6 +199,7 @@ test('frontend shows Manim agent v4 production progress in a chat bubble', async
   assert.match(messageHandlerSource, /updateManimProcessFromEvent/);
   assert.match(messageHandlerSource, /formatManimQualityDetails/);
   assert.match(messageHandlerSource, /formatManimVisualDetails/);
+  assert.match(messageHandlerSource, /formatManimCriticDetails/);
   assert.match(messageHandlerSource, /localizeManimText/);
   assert.match(messageHandlerSource, /localizeManimSkill/);
   assert.match(messageHandlerSource, /localizeManimError/);
@@ -210,6 +212,9 @@ test('frontend shows Manim agent v4 production progress in a chat bubble', async
   assert.match(messageHandlerSource, /Draw Cosine Curve/);
   assert.match(messageHandlerSource, /绘制余弦曲线/);
   assert.match(messageHandlerSource, /预览渲染失败：/);
+  assert.match(messageHandlerSource, /代码必须只有一个可渲染 Scene 类/);
+  assert.doesNotMatch(messageHandlerSource, /动画渲染服务未响应/);
+  assert.doesNotMatch(messageHandlerSource, /请确保 Manim 服务正在运行/);
   assert.match(messageHandlerSource, /const hasProblem = event\.success === false \|\| !event\.rendered \|\| Boolean\(event\.warning\)/);
   assert.match(messageHandlerSource, /setManimProcessStep\('repair', event\.warning \? 'warning' : 'active'/);
   assert.match(messageHandlerSource, /localizeManimText\(report\.summary\)/);

@@ -241,6 +241,7 @@ async def stream_agent_events(
 
     yield {"type": "progress", "step": "critic", "message": "正在检查代码质量和安全性"}
     critic_report = critique_code(code, brief)
+    yield {"type": "critic_report", "critic": critic_report}
     repair_attempts = 0
     if critic_report["status"] == "error":
         yield {"type": "repair", "step": "repair", "message": "正在修复静态代码问题"}
@@ -255,6 +256,7 @@ async def stream_agent_events(
             style_preset=style_preset,
         )
         yield {"type": "code", "code": code, "source": "repair", "warning": None if repaired["status"] == "success" else repaired["summary"]}
+        yield {"type": "critic_report", "critic": critic_report}
 
     if critic_report["status"] == "error":
         trace = _trace(

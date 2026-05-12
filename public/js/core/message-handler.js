@@ -127,9 +127,25 @@ class MessageHandler {
             errorDiv.innerHTML = renderMarkdown(`\n⚠️ **渲染提示：** ${data.error}\n\n> 💡 动画功能需要启动 Manim Python 服务。\n> 运行命令：\`cd manim-service && python main.py\``);
             contentDiv.appendChild(errorDiv);
         } else if (data.code) {
-            // Case: Code generated but not rendered (Manim service may be down)
+            // Case: Code generated but not rendered; show the real agent warning if available.
+            const warning = this.localizeManimText(data.warning || data.agentTrace?.failureReason || '代码已生成，但尚未生成视频。');
+            const trace = data.agentTrace || {};
+            const staticQuality = trace.quality?.static || {};
+            const issueLines = Array.isArray(staticQuality.issues)
+                ? staticQuality.issues.slice(0, 3).map(item => {
+                    const message = this.localizeManimText(item.message || '');
+                    const hint = this.localizeManimText(item.hint || '');
+                    return message ? `- ${message}${hint ? `（建议：${hint}）` : ''}` : '';
+                }).filter(Boolean)
+                : [];
+            const repairCount = trace.repairs && typeof trace.repairs.count === 'number'
+                ? `\n\n修复次数：${trace.repairs.count}`
+                : '';
+            const issueBlock = issueLines.length
+                ? `\n\n静态检查发现：\n${issueLines.join('\n')}`
+                : '';
             const codeDiv = document.createElement('div');
-            codeDiv.innerHTML = renderMarkdown(`✨ **已生成代码**\n\n代码已生成，但动画渲染服务未响应。\n\n\`\`\`python\n${data.code.substring(0, 500)}${data.code.length > 500 ? '...' : ''}\n\`\`\`\n\n> 💡 请确保 Manim 服务正在运行。`);
+            codeDiv.innerHTML = renderMarkdown(`✨ **已生成代码**\n\n${warning}${issueBlock}${repairCount}\n\n\`\`\`python\n${data.code.substring(0, 500)}${data.code.length > 500 ? '...' : ''}\n\`\`\`\n\n> 💡 可以点击“查看代码”或在代码面板里继续修改后重新渲染。`);
             contentDiv.appendChild(codeDiv);
             console.log('[Manim] Code generated without render:', data);
         } else {
@@ -354,6 +370,8 @@ class MessageHandler {
                     this.latestManimSkills = event.skills || [];
                 } else if (event.type === 'inspect') {
                     return;
+                } else if (event.type === 'critic_report') {
+                    this.latestManimCriticReport = event.critic;
                 } else if (event.type === 'quality_report') {
                     this.latestManimQualityReport = event.quality;
                 } else if (event.type === 'preview') {
@@ -559,6 +577,9 @@ class MessageHandler {
             } else {
                 this.setManimProcessStep('coder', 'pass', '场景代码生成完成', this.formatManimCodeDetails(event));
             }
+        } else if (event.type === 'critic_report') {
+            const report = event.critic || {};
+            this.setManimProcessStep('critic', this.mapManimReportStatus(report.status), report.summary || '静态检查完成', this.formatManimCriticDetails(report));
         } else if (event.type === 'inspect') {
             this.setManimProcessStep('inspect', 'active', '正在检查布局和语义', [event.message].filter(Boolean));
         } else if (event.type === 'quality_report') {
@@ -807,6 +828,18 @@ class MessageHandler {
             'Static critique completed.': '静态检查完成。',
             'Code repaired.': '代码已自动修复。',
             'Stopped after maximum repair attempts.': '已达到最大自动修复次数。',
+            'Static critique completed.': '静态检查完成。',
+            'Missing from manim import * import.': '缺少 Manim 导入。',
+            'Missing Scene class or construct method.': '缺少 Scene 类或 construct 方法。',
+            'Generated code must expose exactly one renderable Scene class.': '代码必须只有一个可渲染 Scene 类。',
+            'Renderable Scene class must be named MainScene.': '可渲染场景类必须命名为 MainScene。',
+            'MainScene must inherit Scene directly.': 'MainScene 必须直接继承 Scene。',
+            'Scene construct method appears empty.': 'Scene 的 construct 方法看起来是空的。',
+            'MathTex/Tex contains Chinese characters.': 'MathTex/Tex 中包含中文。',
+            'Generated code contains mojibake Chinese text.': '生成代码里包含乱码中文。',
+            'Long decimal coordinate labels make axes unreadable.': '坐标标签里有过长小数，会影响可读性。',
+            'Generated code is very long.': '生成代码过长。',
+            'Many text objects may overlap.': '文字对象过多，可能发生重叠。',
             'Setup Axes': '建立坐标系',
             'Draw Cosine Curve': '绘制余弦曲线',
             'Draw Sine Curve': '绘制正弦曲线',
@@ -835,6 +868,11 @@ class MessageHandler {
             [/render failed/i, '渲染失败，已保留可编辑代码。'],
             [/no final reading pause/i, '动画结尾缺少阅读停顿。'],
             [/video artifact is unusually small/i, '预览视频文件偏小，请确认画面内容是否完整。'],
+            [/system or network module access is not allowed/i, '不允许访问系统或网络模块。'],
+            [/dynamic execution or introspection is not allowed/i, '不允许动态执行或反射调用。'],
+            [/double-underscore attribute access is not allowed/i, '不允许访问双下划线内部属性。'],
+            [/Keep helper classes from inheriting Scene and render only MainScene/i, '辅助类不要继承 Scene，只保留 MainScene 作为可渲染场景。'],
+            [/Use class MainScene\(SafeScene, Scene\)/i, '请使用 class MainScene(SafeScene, Scene):。'],
         ];
         const matched = includes.find(([pattern]) => pattern.test(text));
         return matched ? matched[1] : text;
@@ -899,6 +937,25 @@ class MessageHandler {
         return details;
     }
 
+    formatManimCriticDetails(report = {}) {
+        const details = [];
+        if (report.status) details.push(`状态：${this.localizeManimStatus(report.status)}`);
+        if (report.summary) details.push(this.localizeManimText(report.summary));
+        if (Array.isArray(report.issues)) {
+            report.issues.slice(0, 5).forEach(item => {
+                const severity = this.localizeManimStatus(item.severity || 'info');
+                const message = this.localizeManimText(item.message || '');
+                const hint = this.localizeManimText(item.hint || '');
+                if (message && hint) {
+                    details.push(`${severity}：${message} 建议：${hint}`);
+                } else if (message) {
+                    details.push(`${severity}：${message}`);
+                }
+            });
+        }
+        return details;
+    }
+
     formatManimQualityDetails(report = {}) {
         const details = [];
         if (report.status) details.push(`状态：${this.localizeManimStatus(report.status)}`);
@@ -930,6 +987,12 @@ class MessageHandler {
         if (result.videoUrl) details.push(`视频地址：${result.videoUrl}`);
         if (result.warning) details.push(`提示：${this.localizeManimText(result.warning)}`);
         const trace = result.agentTrace || {};
+        const staticQuality = trace.quality?.static || {};
+        if (Array.isArray(staticQuality.issues) && staticQuality.issues.length) {
+            const firstIssue = staticQuality.issues[0];
+            details.push(`静态检查：${this.localizeManimText(firstIssue.message || '')}`);
+            if (firstIssue.hint) details.push(`修复建议：${this.localizeManimText(firstIssue.hint)}`);
+        }
         if (trace.codeSource) details.push(`代码来源：${this.localizeManimStrategy(trace.codeSource)}`);
         if (trace.repairs && typeof trace.repairs.count === 'number') details.push(`修复次数：${trace.repairs.count}`);
         return details;

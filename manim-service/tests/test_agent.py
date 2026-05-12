@@ -18,7 +18,7 @@ from app.agent.critic import critique_code
 from app.agent.director import design_storyboard
 from app.agent.inspector import inspect_code_quality
 from app.agent.planner import plan_animation
-from app.agent.repair import repair_code, repair_code_async
+from app.agent.repair import repair_code, repair_code_async, static_repair_once
 from app.agent.scene_runtime import SCENE_RUNTIME_CODE
 from app.agent.skill_loader import select_skills
 from app.agent.visual_judge import inspect_frame_quality, inspect_visual_quality
@@ -312,6 +312,38 @@ class MainScene(SafeScene):
         self.assertEqual(report["status"], "error")
         self.assertIn("MainScene must inherit Scene directly", joined)
 
+    def test_static_repair_fixes_common_scene_contract_drift(self):
+        main_missing_scene = """
+from manim import *
+
+class SafeScene:
+    pass
+
+class MainScene(SafeScene):
+    def construct(self):
+        self.add(Circle())
+"""
+        helper_inherits_scene = """
+from manim import *
+
+class SafeScene(Scene):
+    def safe_play(self, *animations, **kwargs):
+        return self.play(*animations, **kwargs)
+
+class CosineScene(SafeScene, Scene):
+    def construct(self):
+        self.add(Circle())
+"""
+
+        repaired_main = static_repair_once(main_missing_scene, {})
+        repaired_helper = static_repair_once(helper_inherits_scene, {})
+
+        self.assertIn("class MainScene(SafeScene, Scene):", repaired_main)
+        self.assertNotIn("class SafeScene(Scene):", repaired_helper)
+        self.assertIn("class MainScene(SafeScene, Scene):", repaired_helper)
+        self.assertNotEqual(critique_code(repaired_main, {})["status"], "error")
+        self.assertNotEqual(critique_code(repaired_helper, {})["status"], "error")
+
     def test_inspector_catches_circle_prompt_with_triangle_geometry(self):
         brief = plan_animation("画一个圆形")
         brief["storyboardSpec"] = json.loads(director_json())
@@ -446,7 +478,7 @@ class MainScene(Scene):
         event_types = [event["type"] for event in events]
         final = events[-1]
 
-        for event_type in ("plan", "design", "storyboard", "style", "skills", "code", "inspect", "quality_report", "preview", "result"):
+        for event_type in ("plan", "design", "storyboard", "style", "skills", "code", "critic_report", "inspect", "quality_report", "preview", "result"):
             self.assertIn(event_type, event_types)
         self.assertEqual(final["type"], "result")
         self.assertEqual(final["agentTrace"]["template"], "none")

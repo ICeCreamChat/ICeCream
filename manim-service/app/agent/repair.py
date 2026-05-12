@@ -58,6 +58,35 @@ def static_repair_once(code: str, observation: dict[str, Any]) -> str:
     repaired = re.sub(r"1\.5707963267948966\d*", "PI / 2", repaired)
     repaired = re.sub(r"-3\.141592653589793\d*", "-PI", repaired)
     repaired = re.sub(r"-1\.5707963267948966\d*", "-PI / 2", repaired)
+
+    # Common LLM contract drift: helper classes must not be renderable scenes,
+    # and the only renderable class must be MainScene(SafeScene, Scene).
+    repaired = re.sub(
+        r"class\s+SafeScene\s*\(\s*(?:Scene|SafeScene\s*,\s*Scene|Scene\s*,\s*SafeScene)\s*\)\s*:",
+        "class SafeScene:",
+        repaired,
+    )
+    repaired = re.sub(
+        r"class\s+MainScene\s*\(\s*SafeScene\s*\)\s*:",
+        "class MainScene(SafeScene, Scene):",
+        repaired,
+    )
+    repaired = re.sub(
+        r"class\s+MainScene\s*\(\s*Scene\s*\)\s*:",
+        "class MainScene(SafeScene, Scene):",
+        repaired,
+    )
+    if "class MainScene" not in repaired:
+        match = re.search(
+            r"class\s+([A-Za-z_]\w*)\s*\(\s*(?:SafeScene\s*,\s*)?Scene\s*\)\s*:",
+            repaired,
+        )
+        if match:
+            repaired = (
+                repaired[: match.start()]
+                + "class MainScene(SafeScene, Scene):"
+                + repaired[match.end() :]
+            )
     return repaired
 
 
@@ -72,9 +101,9 @@ async def llm_repair_once(
         return static_repair_once(code, observation)
 
     system = (
-        "You repair Manim Community Python files. Return one complete Python file "
-        "inside a python code block. Do not introduce filesystem, network, subprocess, "
-        "dynamic execution, or extra renderable Scene classes."
+        "你负责修复 Manim Community Python 文件。只返回一个完整 Python 文件，"
+        "并放在 python 代码块里。不要引入文件、网络、子进程、动态执行，"
+        "也不要引入额外可渲染 Scene 类。"
     )
     user = {
         "observation": observation,
