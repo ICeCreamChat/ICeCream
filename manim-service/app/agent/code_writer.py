@@ -33,11 +33,12 @@ def build_code_writer_messages(
 ) -> list[dict[str, str]]:
     skill_guidance = "\n".join(f"- {skill['name']}: {skill['guidance']}" for skill in skills)
     system = (
-        "You are a senior Manim Community engineer and educational motion designer. "
-        "Return one complete Python file only, inside a python code block. "
-        "Do not use file, network, subprocess, dynamic execution, or imports outside "
-        "manim/math/numpy. The renderable class must be MainScene(SafeScene, Scene). "
-        "Use Text/SafeText for Chinese and MathTex/SafeMathTex only for formulas."
+        "你是资深 Manim Community 工程师和教学动画设计师。"
+        "只返回一个完整 Python 文件，并放在 python 代码块里。"
+        "不要使用文件、网络、子进程、动态执行，也不要导入 manim/math/numpy 之外的库。"
+        "唯一可渲染类必须是 MainScene(SafeScene, Scene)。"
+        "画面中的所有讲解文字、标题、步骤提示和总结默认使用简体中文。"
+        "中文必须用 Text/SafeText，MathTex/SafeMathTex 只能包含公式。"
     )
     user = {
         "request": brief.get("message", ""),
@@ -52,6 +53,7 @@ def build_code_writer_messages(
             "Do not return a domain-specific canned template.",
             "Keep all major objects inside frame.",
             "Use at least two staged animations and a final self.wait(1).",
+            "All visible non-formula text must be Simplified Chinese unless the user explicitly asks for another language.",
             "If the request asks for a circle, create a Circle object.",
             "If the request asks for sine/cosine axes, use symbolic pi tick labels, not long decimals.",
         ],
@@ -75,12 +77,12 @@ async def write_scene_code(
     if ai_client is None or not model_name:
         return {
             "status": "error",
-            "summary": "Manim Agent v4 requires an AI client to write scene code.",
+            "summary": "Manim Agent v4 需要配置 AI 客户端后才能生成场景代码。",
             "code": "",
             "source": "unavailable",
             "codeSource": "none",
             "analysis": analyze_current_code(current_code) if current_code else {},
-            "next_actions": ["Configure DEEPSEEK_API_KEY and restart the Manim service."],
+            "next_actions": ["请配置 DEEPSEEK_API_KEY 并重启 Manim 服务。"],
         }
 
     try:
@@ -95,21 +97,20 @@ async def write_scene_code(
             raise ValueError("model returned no code")
         return {
             "status": "success",
-            "summary": "Scene code written.",
+            "summary": "场景代码生成完成。",
             "code": code,
             "source": "llm_v4",
             "codeSource": "llm_v4",
             "analysis": analyze_current_code(current_code) if current_code else {},
-            "next_actions": ["Run static critique and visual checks."],
+            "next_actions": ["进行静态检查和视觉检查。"],
         }
     except Exception as exc:
         return {
             "status": "error",
-            "summary": f"Scene code generation failed: {exc}",
+            "summary": f"场景代码生成失败：{exc}",
             "code": "",
             "source": "llm_v4",
             "codeSource": "llm_v4",
             "analysis": analyze_current_code(current_code) if current_code else {},
-            "next_actions": ["Retry generation or simplify the prompt."],
+            "next_actions": ["请重试生成，或降低动画复杂度。"],
         }
-

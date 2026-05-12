@@ -802,8 +802,28 @@ class MessageHandler {
             'Check for blank frames or too-short animation.': '请检查是否存在空白帧或动画时长过短。',
             'Add self.wait(1) at the end.': '请在结尾添加至少 1 秒停顿，方便观看。',
             'Install ffmpeg or inspect render output manually.': '请安装 ffmpeg，或手动检查渲染输出。',
+            'Storyboard designed.': '分镜设计完成。',
+            'Scene code written.': '场景代码生成完成。',
+            'Static critique completed.': '静态检查完成。',
+            'Code repaired.': '代码已自动修复。',
+            'Stopped after maximum repair attempts.': '已达到最大自动修复次数。',
+            'Setup Axes': '建立坐标系',
+            'Draw Cosine Curve': '绘制余弦曲线',
+            'Draw Sine Curve': '绘制正弦曲线',
+            'Mark Key Points': '标记关键点',
+            'Highlight Properties': '强调函数性质',
+            'We start with a coordinate system for the cosine function.': '先建立余弦函数的平面直角坐标系。',
+            'The cosine curve starts at (0,1) and oscillates between 1 and -1.': '余弦曲线从 (0,1) 开始，在 1 和 -1 之间周期变化。',
+            'Key points: (0,1), (π/2,0), (π,-1), (3π/2,0), (2π,1).': '关键点包括 (0,1)、(π/2,0)、(π,-1)、(3π/2,0)、(2π,1)。',
+            'The cosine function is even and periodic with period 2π.': '余弦函数是偶函数，周期为 2π。',
         };
         if (exact[text]) return exact[text];
+
+        const previewFailure = text.match(/^Preview render failed\.?\s*[:：]?\s*(.*)$/i);
+        if (previewFailure) {
+            const reason = previewFailure[1]?.trim();
+            return reason ? `预览渲染失败：${reason}` : '预览渲染失败。';
+        }
 
         const includes = [
             [/Quality inspection passed/i, '质量检查通过。'],

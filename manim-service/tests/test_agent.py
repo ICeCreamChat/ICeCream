@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +103,53 @@ def director_json() -> str:
     )
 
 
+def english_cosine_director_json() -> str:
+    return json.dumps(
+        {
+            "version": "v4",
+            "topic": "Draw a cosine function",
+            "audience": "students",
+            "teaching_goal": "Explain the cosine function graph.",
+            "domain": "math",
+            "animation_type": "function_graph",
+            "visual_objects": ["axes", "cosine curve", "key points"],
+            "layout_zones": ["header", "step", "visual", "summary"],
+            "shots": [
+                {
+                    "id": 1,
+                    "title": "Setup Axes",
+                    "narration": "We start with a coordinate system for the cosine function.",
+                    "visual": "Coordinate axes",
+                    "animation": "Create axes",
+                },
+                {
+                    "id": 2,
+                    "title": "Draw Cosine Curve",
+                    "narration": "The cosine curve starts at (0,1) and oscillates between 1 and -1.",
+                    "visual": "Cosine curve",
+                    "animation": "Create graph",
+                },
+                {
+                    "id": 3,
+                    "title": "Mark Key Points",
+                    "narration": "Key points: (0,1), (π/2,0), (π,-1), (3π/2,0), (2π,1).",
+                    "visual": "Five key points",
+                    "animation": "Fade in dots",
+                },
+                {
+                    "id": 4,
+                    "title": "Highlight Properties",
+                    "narration": "The cosine function is even and periodic with period 2π.",
+                    "visual": "Property summary",
+                    "animation": "Write summary",
+                },
+            ],
+            "risks": ["semantic mismatch", "text overlap"],
+        },
+        ensure_ascii=False,
+    )
+
+
 class _FakeMessage:
     def __init__(self, content: str):
         self.content = content
@@ -169,6 +217,23 @@ class ManimAgentV4Tests(unittest.TestCase):
         self.assertIn("Circle", spec["visual_objects"])
         self.assertGreaterEqual(len(spec["shots"]), 2)
 
+    def test_director_prompt_and_fallback_keep_user_visible_storyboard_chinese(self):
+        brief = plan_animation("画一个余弦函数")
+        ai = _FakeAI([english_cosine_director_json()])
+
+        result = asyncio.run(design_storyboard(brief, ai_client=ai, model_name="fake-model"))
+        spec = result["storyboardSpec"]
+        sent_messages = ai.chat.completions.calls[0]["messages"]
+
+        self.assertIn("所有用户可见字段必须使用简体中文", sent_messages[0]["content"])
+        self.assertEqual(result["status"], "success")
+        self.assertIn("余弦函数", spec["topic"])
+        self.assertIn("余弦函数", spec["teaching_goal"])
+        self.assertEqual(spec["audience"], "学生")
+        self.assertEqual(spec["shots"][0]["title"], "建立坐标系")
+        self.assertIn("余弦函数", spec["shots"][0]["narration"])
+        self.assertNotIn("Setup Axes", json.dumps(spec["shots"], ensure_ascii=False))
+
     def test_code_writer_requires_ai_and_does_not_fallback_to_templates(self):
         brief = plan_animation("画一个圆形")
         spec = json.loads(director_json())
@@ -230,6 +295,23 @@ class MainScene(Scene):
         self.assertIn("dynamic execution or introspection", joined)
         self.assertIn("double-underscore", joined)
 
+    def test_critic_rejects_mainscene_without_direct_scene_base(self):
+        code = """
+from manim import *
+
+class SafeScene:
+    pass
+
+class MainScene(SafeScene):
+    def construct(self):
+        self.add(Circle())
+"""
+        report = critique_code(code, {"intent": "CREATE"})
+        joined = "\n".join(issue["message"] for issue in report["issues"])
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("MainScene must inherit Scene directly", joined)
+
     def test_inspector_catches_circle_prompt_with_triangle_geometry(self):
         brief = plan_animation("画一个圆形")
         brief["storyboardSpec"] = json.loads(director_json())
@@ -286,7 +368,12 @@ class MainScene(Scene):
         self.assertGreater(visible_report["metrics"]["nonBackgroundRatio"], 0.04)
 
     def test_visual_judge_reports_failed_or_tiny_preview(self):
-        failed = inspect_visual_quality("from manim import *", {}, {"success": False, "error": "boom"})
+        failed = inspect_visual_quality("from manim import *", {}, {
+            "success": False,
+            "error": "NameError: name 'Axes' is not defined",
+            "details": "NameError: name 'Axes' is not defined",
+            "errorType": "manim_render_failed",
+        })
         tiny = inspect_visual_quality(
             "from manim import *\nclass MainScene(Scene):\n    def construct(self):\n        self.wait(1)\n",
             {},
@@ -294,6 +381,8 @@ class MainScene(Scene):
         )
 
         self.assertEqual(failed["status"], "error")
+        self.assertIn("预览渲染失败", failed["summary"])
+        self.assertIn("名称未定义", failed["summary"])
         self.assertEqual(tiny["status"], "error")
 
     def test_repair_stops_after_max_attempts_with_observations(self):
@@ -364,6 +453,53 @@ class MainScene(Scene):
         self.assertEqual(final["agentTrace"]["codeSource"], "llm_v4")
         self.assertEqual(final["agentTrace"]["storyboardSpec"]["version"], "v4")
         self.assertEqual(final["agentTrace"]["preview"]["status"], "skipped")
+
+    def test_agent_stream_passes_preview_render_stderr_to_repair(self):
+        captured_stderr = []
+        render_calls = []
+
+        async def fake_render(code, client_id="agent", stage="render"):
+            render_calls.append((client_id, stage))
+            if len(render_calls) == 1:
+                return {
+                    "success": False,
+                    "error": "NameError: name 'Axes' is not defined",
+                    "details": "NameError: name 'Axes' is not defined",
+                    "stderr": "NameError: name 'Axes' is not defined",
+                    "errorType": "manim_render_failed",
+                }
+            return {"success": True, "videoUrl": "/static/fake.mp4", "videoBase64": ""}
+
+        async def fake_repair(code, brief, report, repair_attempts, **kwargs):
+            captured_stderr.append(kwargs.get("stderr", ""))
+            return code, {"status": "pass", "summary": "ok", "issues": []}, repair_attempts + 1, {
+                "status": "success",
+                "summary": "ok",
+                "attempts": 1,
+            }
+
+        async def collect():
+            events = []
+            ai = _FakeAI([director_json(), f"```python\n{circle_scene_code()}\n```"])
+            with patch("app.agent.workflow.render_code_for_agent", fake_render), patch(
+                "app.agent.workflow._repair_from_report", fake_repair
+            ):
+                async for event in stream_agent_events(
+                    {"message": "画一个圆形", "mode": "create"},
+                    ai_client=ai,
+                    model_name="fake-model",
+                    render=True,
+                ):
+                    events.append(event)
+            return events
+
+        events = asyncio.run(collect())
+
+        self.assertTrue(any(event["type"] == "visual_check" for event in events))
+        self.assertTrue(captured_stderr)
+        self.assertIn("NameError", captured_stderr[0])
+        self.assertEqual(render_calls[0][1], "preview_render")
+        self.assertEqual(render_calls[-1][1], "final_render")
 
     def test_v4_disabled_returns_warning_without_template_fallback(self):
         original = os.environ.get("MANIM_AGENT_V4_ENABLED")

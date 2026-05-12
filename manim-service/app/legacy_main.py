@@ -115,12 +115,44 @@ def get_cached_video(prompt, current_code=""):
     return cache.get(key)
 
 # ================= 🔍 代码分析器 (静态AST) =================
+RENDERABLE_SCENE_BASES = {
+    "Scene",
+    "ThreeDScene",
+    "MovingCameraScene",
+    "ZoomedScene",
+    "LinearTransformationScene",
+}
+
+
+def _class_base_name(base):
+    if isinstance(base, ast.Name):
+        return base.id
+    if isinstance(base, ast.Attribute):
+        return base.attr
+    if isinstance(base, ast.Subscript):
+        return _class_base_name(base.value)
+    return ""
+
+
+def sanitize_render_error(text: str, max_length: int = 1200) -> str:
+    """Return a user-safe render error without local paths or secrets."""
+    value = str(text or "").replace("\r\n", "\n").strip()
+    if not value:
+        return "未知渲染错误"
+    value = re.sub(r"[A-Za-z]:\\[^\s\n]+", "<本地路径>", value)
+    value = re.sub(r"/(?:[^/\s]+/)+[^/\s]+", "<本地路径>", value)
+    value = re.sub(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s]+", r"\1=<已隐藏>", value)
+    value = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "<已隐藏密钥>", value)
+    return value[-max_length:]
+
+
 def analyze_code_structure(code: str):
     """分析代码结构，提取重要信息（类名、方法、变量等）"""
     try:
         tree = ast.parse(code)
         analysis = {
             "scene_class": None,
+            "scene_classes": [],
             "methods": [],
             "variables": [],
             "animations": [],
@@ -131,10 +163,9 @@ def analyze_code_structure(code: str):
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 # 智能识别继承自 Scene 的类
-                base_ids = [base.id for base in node.bases if hasattr(base, 'id')]
-                # 只要继承链里有 Scene 相关的都算
-                if any(b in ['Scene', 'ThreeDScene', 'MovingCameraScene', 'ZoomedScene', 'LinearTransformationScene'] for b in base_ids):
-                    analysis["scene_class"] = node.name
+                base_ids = [_class_base_name(base) for base in node.bases]
+                if any(b in RENDERABLE_SCENE_BASES for b in base_ids):
+                    analysis["scene_classes"].append(node.name)
             elif isinstance(node, ast.FunctionDef):
                 analysis["methods"].append(node.name)
             elif isinstance(node, ast.Assign):
@@ -148,9 +179,15 @@ def analyze_code_structure(code: str):
                 if hasattr(node.func, 'id'):
                     if node.func.id in ['Axes', 'ThreeDAxes', 'NumberPlane']:
                         analysis["has_axes"] = True
+        if "MainScene" in analysis["scene_classes"]:
+            analysis["scene_class"] = "MainScene"
+        elif len(analysis["scene_classes"]) == 1:
+            analysis["scene_class"] = analysis["scene_classes"][0]
+        elif analysis["scene_classes"]:
+            analysis["scene_class"] = analysis["scene_classes"][-1]
         return analysis
-    except:
-        return {"error": "代码解析失败"}
+    except Exception as exc:
+        return {"error": f"代码解析失败：{exc}"}
 
 def extract_objects_from_code(code: str):
     """静态提取已定义的图形对象（作为动态侦探的备份方案）"""
@@ -1456,7 +1493,25 @@ async def http_render_code(
         
         # 1. 分析代码结构
         code_analysis = analyze_code_structure(code)
-        scene_name = code_analysis.get("scene_class") or DEFAULT_SCENE_NAME
+        if code_analysis.get("error"):
+            return JSONResponse({
+                "success": False,
+                "error": code_analysis["error"],
+                "details": code_analysis["error"],
+                "errorType": "scene_analysis_failed",
+                "requestId": request_id,
+            }, status_code=400)
+        scene_name = code_analysis.get("scene_class")
+        if not scene_name:
+            message = "未找到可渲染 Scene 类。请使用 class MainScene(SafeScene, Scene):"
+            return JSONResponse({
+                "success": False,
+                "error": message,
+                "details": message,
+                "errorType": "scene_class_missing",
+                "requestId": request_id,
+                "sceneName": None,
+            }, status_code=400)
         
         # 2. 创建隔离的临时目录
         request_dir = os.path.join(TEMP_DIR, f"req_{request_id}")
@@ -1507,7 +1562,9 @@ async def http_render_code(
                 return JSONResponse({
                     "success": True,
                     "videoUrl": video_url,
-                    "videoBase64": video_base64
+                    "videoBase64": video_base64,
+                    "requestId": request_id,
+                    "sceneName": scene_name,
                 })
             else:
                 # 尝试查找图片 (如果 Manim 因为是静态场景只生成了图片)
@@ -1552,7 +1609,9 @@ async def http_render_code(
                             "success": True,
                             "videoUrl": video_url,
                             "videoBase64": video_base64,
-                            "warning": "这是一个静态场景"
+                            "warning": "这是一个静态场景",
+                            "requestId": request_id,
+                            "sceneName": scene_name,
                         })
                 
                 # Debug logging if still failing
@@ -1565,10 +1624,14 @@ async def http_render_code(
                 
                 return JSONResponse({
                     "success": False,
-                    "error": "渲染完成但未找到任何输出文件"
+                    "error": "渲染完成但未找到任何输出文件",
+                    "details": sanitize_render_error(stderr or stdout or ""),
+                    "errorType": "render_output_missing",
+                    "requestId": request_id,
+                    "sceneName": scene_name,
                 }, status_code=500)
         else:
-            error_details = stderr[-500:] if stderr else "未知错误"
+            error_details = sanitize_render_error(stderr or stdout or "未知错误")
             print(f"[{request_id}] ❌ 渲染失败: {error_details[:100]}...")
             
             # 清理
@@ -1579,14 +1642,23 @@ async def http_render_code(
                 
             return JSONResponse({
                 "success": False,
-                "error": error_details
+                "error": error_details,
+                "details": error_details,
+                "stderr": error_details,
+                "errorType": "manim_render_failed",
+                "requestId": request_id,
+                "sceneName": scene_name,
             }, status_code=500)
             
     except Exception as e:
-        print(f"[{request_id}] 💥 HTTP 渲染异常: {str(e)}")
+        error_details = sanitize_render_error(str(e))
+        print(f"[{request_id}] 💥 HTTP 渲染异常: {error_details}")
         return JSONResponse({
             "success": False,
-            "error": str(e)
+            "error": error_details,
+            "details": error_details,
+            "errorType": "render_exception",
+            "requestId": request_id,
         }, status_code=500)
 
 @app.get("/health")

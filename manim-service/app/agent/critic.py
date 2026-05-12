@@ -35,10 +35,27 @@ CHINESE_RE = r"[\u4e00-\u9fff]"
 MATHTEX_CHINESE_RE = re.compile(r"(?:MathTex|Tex)\s*\([^)]*" + CHINESE_RE)
 LONG_DECIMAL_RE = re.compile(r"\b-?\d+\.\d{6,}\b")
 MOJIBAKE_RE = re.compile(r"(?:\u934b|\u9422|\u951b|\u7efe|\u20ac|\ufffd)")
+RENDERABLE_SCENE_BASES = {
+    "Scene",
+    "ThreeDScene",
+    "MovingCameraScene",
+    "ZoomedScene",
+    "LinearTransformationScene",
+}
 
 
 def _issue(severity: str, message: str, hint: str) -> dict[str, str]:
     return {"severity": severity, "message": message, "hint": hint}
+
+
+def _base_name(base: ast.expr) -> str:
+    if isinstance(base, ast.Name):
+        return base.id
+    if isinstance(base, ast.Attribute):
+        return base.attr
+    if isinstance(base, ast.Subscript):
+        return _base_name(base.value)
+    return ""
 
 
 def critique_code(code: str, brief: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -62,17 +79,32 @@ def critique_code(code: str, brief: dict[str, Any] | None = None) -> dict[str, A
     else:
         try:
             tree = ast.parse(source)
-            scene_classes = [
-                node.name
-                for node in ast.walk(tree)
-                if isinstance(node, ast.ClassDef)
-                and any(getattr(base, "id", "") == "Scene" for base in node.bases)
-            ]
+            class_nodes = [node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+            scene_classes = []
+            main_scene_missing_scene_base = False
+            for node in class_nodes:
+                base_names = {_base_name(base) for base in node.bases}
+                if node.name == "MainScene" and "SafeScene" in base_names and base_names.isdisjoint(RENDERABLE_SCENE_BASES):
+                    main_scene_missing_scene_base = True
+                if not base_names.isdisjoint(RENDERABLE_SCENE_BASES):
+                    scene_classes.append(node.name)
             if len(scene_classes) != 1:
                 issues.append(_issue(
                     "error",
                     "Generated code must expose exactly one renderable Scene class.",
                     "Keep helper classes from inheriting Scene and render only MainScene.",
+                ))
+            elif scene_classes[0] != "MainScene":
+                issues.append(_issue(
+                    "error",
+                    "Renderable Scene class must be named MainScene.",
+                    "Rename the single renderable scene to MainScene(SafeScene, Scene).",
+                ))
+            if main_scene_missing_scene_base:
+                issues.append(_issue(
+                    "error",
+                    "MainScene must inherit Scene directly.",
+                    "Use class MainScene(SafeScene, Scene): so Manim can render the scene.",
                 ))
             construct_methods = [
                 node for node in ast.walk(tree)

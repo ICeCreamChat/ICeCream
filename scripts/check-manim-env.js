@@ -11,6 +11,8 @@ const manimRoot = path.join(repoRoot, 'manim-service');
 const requirementsPath = path.join(manimRoot, 'requirements.txt');
 const venvDir = path.join(manimRoot, '.venv');
 const depsHashFile = path.join(venvDir, '.requirements.sha256');
+const pythonVersionFile = path.join(venvDir, '.python-version');
+const requiredPythonVersion = '3.12';
 
 export function runCommand(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -46,24 +48,25 @@ function splitCommandSpec(value) {
 export function resolveSystemPython(env = process.env) {
   const configuredPython = splitCommandSpec(env.PYTHON_CMD) || splitCommandSpec(env.PYTHON);
   const candidates = [
-    ...(configuredPython ? [{ cmd: configuredPython.cmd, args: [...configuredPython.args, '--version'] }] : []),
-    { cmd: 'py', args: ['-3.12', '--version'] },
-    { cmd: 'py', args: ['-3', '--version'] },
-    { cmd: 'python', args: ['--version'] },
-    { cmd: 'python3', args: ['--version'] },
+    ...(configuredPython ? [{ cmd: configuredPython.cmd, args: [...configuredPython.args] }] : []),
+    { cmd: 'py', args: ['-3.12'] },
+    { cmd: 'py', args: ['-3'] },
+    { cmd: 'python', args: [] },
+    { cmd: 'python3', args: [] },
   ];
 
   for (const candidate of candidates) {
-    const result = spawnSync(candidate.cmd, candidate.args, {
-      stdio: 'pipe',
-      encoding: 'utf8',
-    });
-    if (result.status === 0) {
-      return candidate;
+    try {
+      const version = getPythonMajorMinor(candidate.cmd, candidate.args);
+      if (version === requiredPythonVersion) {
+        return { ...candidate, args: [...candidate.args, '--version'], version };
+      }
+    } catch {
+      // Try the next candidate.
     }
   }
 
-  throw new Error('Python 3 was not found in PATH.');
+  throw new Error(`Python ${requiredPythonVersion} was not found in PATH. Install it or set PYTHON_CMD="py -3.12".`);
 }
 
 export function resolveVenvPython() {
@@ -77,14 +80,73 @@ export function sha256OfFile(filePath) {
   return createHash('sha256').update(content).digest('hex');
 }
 
-export function ensureVenv(systemPython) {
-  if (!existsSync(resolveVenvPython())) {
-    console.log('[manim-check] Creating virtual environment...');
-    runCommand(systemPython.cmd, [...systemPython.args.slice(0, -1), '-m', 'venv', '.venv'], {
-      cwd: manimRoot,
-      stdio: 'inherit',
-    });
+function pythonBaseArgs(systemPython) {
+  return systemPython.args.at(-1) === '--version'
+    ? systemPython.args.slice(0, -1)
+    : systemPython.args;
+}
+
+export function getPythonMajorMinor(command, args = []) {
+  const result = spawnSync(command, [
+    ...args,
+    '-c',
+    'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")',
+  ], {
+    stdio: 'pipe',
+    encoding: 'utf8',
+  });
+
+  if (result.error) {
+    throw result.error;
   }
+  if (result.status !== 0) {
+    const details = result.stderr?.trim() || result.stdout?.trim() || `Exit code ${result.status}`;
+    throw new Error(`${command} ${args.join(' ')} version probe failed: ${details}`);
+  }
+  return result.stdout.trim();
+}
+
+function writePythonVersionMarker(venvPython) {
+  const version = getPythonMajorMinor(venvPython);
+  writeFileSync(pythonVersionFile, `${version}\n`, 'utf8');
+}
+
+function createVenv(systemPython) {
+  console.log('[manim-check] Creating virtual environment with Python 3.12...');
+  runCommand(systemPython.cmd, [...pythonBaseArgs(systemPython), '-m', 'venv', '.venv'], {
+    cwd: manimRoot,
+    stdio: 'inherit',
+  });
+  writePythonVersionMarker(resolveVenvPython());
+}
+
+export function ensureVenv(systemPython) {
+  const venvPython = resolveVenvPython();
+  if (!existsSync(venvPython)) {
+    createVenv(systemPython);
+    return;
+  }
+
+  let venvVersion = '';
+  try {
+    venvVersion = getPythonMajorMinor(venvPython);
+  } catch {
+    venvVersion = 'unknown';
+  }
+
+  const markerVersion = existsSync(pythonVersionFile)
+    ? readFileSync(pythonVersionFile, 'utf8').trim()
+    : '';
+  if (venvVersion !== requiredPythonVersion) {
+    console.log(`[manim-check] Existing Manim virtual environment uses Python ${venvVersion || 'unknown'}; rebuilding with Python ${requiredPythonVersion}...`);
+    rebuildVenv(systemPython);
+    return;
+  }
+
+  if (markerVersion !== requiredPythonVersion) {
+    console.log(`[manim-check] Recording Manim virtual environment Python ${requiredPythonVersion} marker...`);
+  }
+  writePythonVersionMarker(venvPython);
 }
 
 export function rebuildVenv(systemPython) {
@@ -100,7 +162,7 @@ export function rebuildVenv(systemPython) {
     rmSync(resolvedVenvDir, { recursive: true, force: true });
   }
 
-  ensureVenv(systemPython);
+  createVenv(systemPython);
 }
 
 export function buildPipInstallArgs({ force = false } = {}) {
@@ -123,6 +185,10 @@ export function buildImportProbeScript() {
   return `
 import importlib
 import sys
+
+if sys.version_info[:2] != (3, 12):
+    print(f"PYTHON_VERSION_MISMATCH: expected 3.12, got {sys.version_info.major}.{sys.version_info.minor}")
+    sys.exit(1)
 
 checks = [
     ("fastapi", "import fastapi"),

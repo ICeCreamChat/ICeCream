@@ -20,6 +20,35 @@ def _finding(severity: str, message: str, hint: str) -> dict[str, str]:
     return {"severity": severity, "message": message, "hint": hint}
 
 
+def _short_reason(value: Any, fallback: str = "未知渲染错误") -> str:
+    text = str(value or "").replace("\r\n", "\n").strip()
+    if not text:
+        return fallback
+    text = " ".join(line.strip() for line in text.splitlines() if line.strip())
+    return text[-360:]
+
+
+def _render_failure_reason(render_result: dict[str, Any]) -> str:
+    reason = _short_reason(
+        render_result.get("details")
+        or render_result.get("stderr")
+        or render_result.get("error")
+        or render_result.get("errorType")
+    )
+    lower = reason.lower()
+    if render_result.get("errorType") == "scene_class_missing":
+        return "未找到可渲染 Scene 类。请使用 class MainScene(SafeScene, Scene):"
+    if "latex" in lower or "tex" in lower:
+        return f"LaTeX/公式渲染失败：{reason}"
+    if "nameerror" in lower:
+        return f"名称未定义：{reason}"
+    if "syntaxerror" in lower:
+        return f"Python 语法错误：{reason}"
+    if "module named manim" in lower:
+        return "当前 Python 环境没有安装 Manim，请使用 py3.12 创建的 manim-service\\.venv。"
+    return reason
+
+
 def _video_path_from_url(video_url: str | None) -> Path | None:
     if not video_url or not video_url.startswith("/static/"):
         return None
@@ -65,8 +94,8 @@ def inspect_frame_quality(frame_paths: list[Path]) -> dict[str, Any]:
     if not frame_paths:
         return {
             "status": "warning",
-            "summary": "No preview frames were available for pixel inspection.",
-            "findings": [_finding("warning", "No preview frames extracted.", "Install ffmpeg or inspect render output manually.")],
+            "summary": "未能抽取预览帧，已跳过像素级检查。",
+            "findings": [_finding("warning", "未抽取到预览帧。", "请安装 ffmpeg，或手动检查渲染输出。")],
             "metrics": metrics,
         }
 
@@ -106,28 +135,28 @@ def inspect_frame_quality(frame_paths: list[Path]) -> dict[str, Any]:
     if metrics["nonBackgroundRatio"] < 0.015:
         findings.append(_finding(
             "error",
-            "Preview frames appear blank or nearly blank.",
-            "Ensure visible Manim objects are added and animated.",
+            "预览画面为空或接近空白。",
+            "请确保场景中添加了可见 Manim 对象和动画。",
         ))
     elif metrics["nonBackgroundRatio"] < 0.04:
         findings.append(_finding(
             "warning",
-            "Main visual content is very small.",
-            "Scale the central visual group larger and reduce empty space.",
+            "主体画面占比过小。",
+            "请放大中心视觉组，并减少无意义留白。",
         ))
 
     if metrics["contrast"] < 8:
         findings.append(_finding(
             "error",
-            "Preview contrast is too low.",
-            "Use a high-contrast teaching palette.",
+            "预览画面对比度过低。",
+            "请使用高对比度教学配色。",
         ))
 
     if metrics["edgeContentRatio"] > 0.18:
         findings.append(_finding(
             "warning",
-            "Significant content is close to the frame edge.",
-            "Move or scale objects into the safe layout area.",
+            "重要内容过于靠近画面边缘。",
+            "请把对象移动或缩放到安全布局区域内。",
         ))
 
     if any(item["severity"] == "error" for item in findings):
@@ -139,7 +168,7 @@ def inspect_frame_quality(frame_paths: list[Path]) -> dict[str, Any]:
 
     return {
         "status": status,
-        "summary": "Visual frame inspection passed." if not findings else "; ".join(item["message"] for item in findings[:2]),
+        "summary": "预览帧检查通过。" if not findings else "；".join(item["message"] for item in findings[:2]),
         "findings": findings,
         "metrics": metrics,
     }
@@ -155,16 +184,17 @@ def inspect_visual_quality(
 
     if render_result:
         if not render_result.get("success"):
+            reason = _render_failure_reason(render_result)
             findings.append(_finding(
                 "error",
-                "Preview render failed.",
-                render_result.get("error") or render_result.get("details") or "Repair code before final render.",
+                f"预览渲染失败：{reason}",
+                "请根据错误原因修复代码后再进行最终渲染。",
             ))
         if render_result.get("success") and not render_result.get("videoUrl"):
             findings.append(_finding(
                 "error",
-                "Preview render did not return a video URL.",
-                "Render output must include a playable video artifact.",
+                "预览渲染没有返回可播放视频。",
+                "渲染结果必须包含可播放的视频文件。",
             ))
 
     video_path = _video_path_from_url(render_result.get("videoUrl"))
@@ -172,13 +202,13 @@ def inspect_visual_quality(
     artifact_size = max(file_size, _base64_size(render_result.get("videoBase64")))
 
     if render_result.get("success") and artifact_size and artifact_size < 4096:
-        findings.append(_finding("error", "Preview video is too small.", "Regenerate with visible objects and animations."))
+        findings.append(_finding("error", "预览视频过小，可能为空。", "请重新生成包含可见对象和动画的场景。"))
     elif render_result.get("success") and artifact_size and artifact_size < 40_000:
-        findings.append(_finding("warning", "Preview video artifact is unusually small.", "Check for blank frames or too-short animation."))
+        findings.append(_finding("warning", "预览视频文件偏小。", "请检查是否存在空白帧或动画时长过短。"))
 
     frame_report: dict[str, Any] = {
         "status": "skipped",
-        "summary": "Frame extraction skipped.",
+        "summary": "未执行抽帧检查。",
         "findings": [],
         "metrics": {},
     }
@@ -189,7 +219,7 @@ def inspect_visual_quality(
             findings.extend(frame_report.get("findings", []))
 
     if "self.wait" not in (code or ""):
-        findings.append(_finding("warning", "Animation has no final reading pause.", "Add self.wait(1) at the end."))
+        findings.append(_finding("warning", "动画结尾缺少阅读停顿。", "请在结尾添加 self.wait(1)。"))
 
     if any(item["severity"] == "error" for item in findings):
         status = "error"
@@ -200,7 +230,7 @@ def inspect_visual_quality(
 
     return {
         "status": status,
-        "summary": "Visual inspection passed." if not findings else "; ".join(item["message"] for item in findings[:2]),
+        "summary": "视觉检查通过。" if not findings else "；".join(item["message"] for item in findings[:2]),
         "findings": findings,
         "metrics": {
             "artifactSize": artifact_size,
@@ -210,4 +240,3 @@ def inspect_visual_quality(
             "frame": frame_report.get("metrics", {}),
         },
     }
-

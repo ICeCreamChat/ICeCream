@@ -138,7 +138,7 @@ async def stream_agent_events(
     current_code = str(payload.get("currentCode") or "")
     client_id = str(payload.get("clientId") or "agent")
 
-    yield {"type": "progress", "step": "planner", "message": "Understanding animation request"}
+    yield {"type": "progress", "step": "planner", "message": "正在理解动画需求"}
     brief = plan_animation(message, mode=mode, current_code=current_code)
     yield {
         "type": "plan",
@@ -161,7 +161,7 @@ async def stream_agent_events(
         return
 
     if not _v4_enabled():
-        warning = "Manim Agent v4 is disabled by MANIM_AGENT_V4_ENABLED=false."
+        warning = "Manim Agent v4 已被 MANIM_AGENT_V4_ENABLED=false 关闭。"
         yield {"type": "error", "success": False, "error": warning, "recoverable": True}
         yield _result(
             code="",
@@ -172,7 +172,7 @@ async def stream_agent_events(
         return
 
     if ai_client is None or not model_name:
-        warning = "Manim Agent v4 requires AI configuration and will not fall back to templates."
+        warning = "Manim Agent v4 需要 AI 配置，不会回退到固定模板。"
         yield {"type": "error", "success": False, "error": warning, "recoverable": True}
         yield _result(
             code="",
@@ -182,7 +182,7 @@ async def stream_agent_events(
         )
         return
 
-    yield {"type": "progress", "step": "design", "message": "Designing teaching storyboard"}
+    yield {"type": "progress", "step": "design", "message": "正在设计教学分镜"}
     design = await design_storyboard(brief, ai_client=ai_client, model_name=model_name, current_code=current_code)
     if design["status"] != "success":
         yield _result(
@@ -200,11 +200,11 @@ async def stream_agent_events(
     style_preset = style_result["stylePreset"]
     yield {"type": "style", "style": style_preset}
 
-    yield {"type": "progress", "step": "skills", "message": "Selecting Manim runtime skills"}
+    yield {"type": "progress", "step": "skills", "message": "正在选择 Manim 运行时技能"}
     skills = select_skills(brief)
     yield {"type": "skills", "skills": skills}
 
-    yield {"type": "progress", "step": "coder", "message": "Writing Manim scene code"}
+    yield {"type": "progress", "step": "coder", "message": "正在生成 Manim 场景代码"}
     generated = await generate_code(
         brief,
         skills,
@@ -235,15 +235,15 @@ async def stream_agent_events(
                 style_preset=style_preset,
                 code_source=code_source,
             ),
-            warning=generated.get("summary") or "Manim Agent v4 could not generate code.",
+            warning=generated.get("summary") or "Manim Agent v4 未能生成代码。",
         )
         return
 
-    yield {"type": "progress", "step": "critic", "message": "Checking code quality and safety"}
+    yield {"type": "progress", "step": "critic", "message": "正在检查代码质量和安全性"}
     critic_report = critique_code(code, brief)
     repair_attempts = 0
     if critic_report["status"] == "error":
-        yield {"type": "repair", "step": "repair", "message": "Repairing static code issues"}
+        yield {"type": "repair", "step": "repair", "message": "正在修复静态代码问题"}
         code, critic_report, repair_attempts, repaired = await _repair_from_report(
             code,
             brief,
@@ -267,15 +267,15 @@ async def stream_agent_events(
             style_preset=style_preset,
             code_source=code_source,
         )
-        yield _result(code=code, trace=trace, warning="Manim Agent v4 generated code but static checks still need attention.")
+        yield _result(code=code, trace=trace, warning="Manim Agent v4 已生成代码，但静态检查仍需处理。")
         return
 
-    yield {"type": "inspect", "step": "inspect", "message": "Inspecting code readability and semantic guards"}
+    yield {"type": "inspect", "step": "inspect", "message": "正在检查布局、可读性和语义一致性"}
     quality_report = inspect_code_quality(code, brief)
     yield {"type": "quality_report", "quality": quality_report}
 
     if quality_report["status"] == "error":
-        yield {"type": "repair", "step": "repair", "message": "Repairing layout and semantic issues"}
+        yield {"type": "repair", "step": "repair", "message": "正在修复布局和语义问题"}
         code, critic_report, repair_attempts, repaired = await _repair_from_report(
             code,
             brief,
@@ -304,12 +304,12 @@ async def stream_agent_events(
                 style_preset=style_preset,
                 code_source=code_source,
             )
-            yield _result(code=code, trace=trace, warning="Manim Agent v4 repaired code but quality checks still need attention.")
+            yield _result(code=code, trace=trace, warning="Manim Agent v4 已尝试修复代码，但质量检查仍需处理。")
             return
 
     visual_report: dict[str, Any] = {
         "status": "skipped",
-        "summary": "Visual inspection skipped because render=false.",
+        "summary": "render=false，已跳过视觉检查。",
         "findings": [],
         "metrics": {"previewCheckEnabled": _preview_enabled()},
     }
@@ -332,8 +332,8 @@ async def stream_agent_events(
     if _preview_enabled():
         preview_render: dict[str, Any] | None = None
         for attempt in range(2):
-            yield {"type": "progress", "step": "preview", "message": "Rendering preview for visual inspection"}
-            preview_render = await render_code_for_agent(code, client_id=f"{client_id}_preview")
+            yield {"type": "progress", "step": "preview", "message": "正在渲染预览并抽帧检查视觉质量"}
+            preview_render = await render_code_for_agent(code, client_id=f"{client_id}_preview", stage="preview_render")
             visual_report = inspect_visual_quality(code, brief, preview_render)
             yield {"type": "visual_check", "visual": visual_report, "videoUrl": preview_render.get("videoUrl")}
             yield {"type": "preview", "preview": visual_report, "videoUrl": preview_render.get("videoUrl")}
@@ -351,9 +351,9 @@ async def stream_agent_events(
                     style_preset=style_preset,
                     code_source=code_source,
                 )
-                yield _result(code=code, trace=trace, warning="Manim Agent v4 visual checks failed.", render_result=preview_render or {})
+                yield _result(code=code, trace=trace, warning="视觉检查未通过，已保留可编辑代码。", render_result=preview_render or {})
                 return
-            yield {"type": "repair", "step": "repair", "message": "Repairing visual quality issues"}
+            yield {"type": "repair", "step": "repair", "message": "正在修复视觉质量或预览渲染问题"}
             code, critic_report, repair_attempts, repaired = await _repair_from_report(
                 code,
                 brief,
@@ -367,13 +367,14 @@ async def stream_agent_events(
                 model_name=model_name,
                 storyboard_spec=storyboard_spec,
                 style_preset=style_preset,
+                stderr=(preview_render or {}).get("stderr") or (preview_render or {}).get("details") or (preview_render or {}).get("error") or "",
             )
             yield {"type": "code", "code": code, "source": "repair", "warning": None if repaired["status"] == "success" else repaired["summary"]}
             quality_report = inspect_code_quality(code, brief)
             yield {"type": "quality_report", "quality": quality_report}
 
-    yield {"type": "progress", "step": "render", "message": "Rendering final Manim video"}
-    render_result = await render_code_for_agent(code, client_id=client_id)
+    yield {"type": "progress", "step": "render", "message": "正在渲染最终 Manim 视频"}
+    render_result = await render_code_for_agent(code, client_id=client_id, stage="final_render")
     final_visual = inspect_visual_quality(code, brief, render_result)
     trace = _trace(
         brief,
@@ -390,7 +391,7 @@ async def stream_agent_events(
         code=code,
         trace=trace,
         rendered=bool(render_result.get("success")) and final_visual["status"] != "error",
-        warning=None if render_result.get("success") and final_visual["status"] != "error" else render_result.get("error") or final_visual.get("summary") or "Manim Agent v4 render failed.",
+        warning=None if render_result.get("success") and final_visual["status"] != "error" else render_result.get("error") or final_visual.get("summary") or "Manim Agent v4 渲染失败。",
         render_result=render_result,
     )
 

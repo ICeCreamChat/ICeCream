@@ -205,6 +205,11 @@ test('frontend shows Manim agent v4 production progress in a chat bubble', async
   assert.match(messageHandlerSource, /质量检查通过/);
   assert.match(messageHandlerSource, /正在修复视觉质量问题/);
   assert.match(messageHandlerSource, /生成时间过长，连接已中断/);
+  assert.match(messageHandlerSource, /Setup Axes/);
+  assert.match(messageHandlerSource, /建立坐标系/);
+  assert.match(messageHandlerSource, /Draw Cosine Curve/);
+  assert.match(messageHandlerSource, /绘制余弦曲线/);
+  assert.match(messageHandlerSource, /预览渲染失败：/);
   assert.match(messageHandlerSource, /const hasProblem = event\.success === false \|\| !event\.rendered \|\| Boolean\(event\.warning\)/);
   assert.match(messageHandlerSource, /setManimProcessStep\('repair', event\.warning \? 'warning' : 'active'/);
   assert.match(messageHandlerSource, /localizeManimText\(report\.summary\)/);

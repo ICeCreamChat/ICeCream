@@ -133,8 +133,19 @@ test('Manim dependency checker validates new installs before writing hash marker
 test('Manim import probe covers the OpenAI client and shared OAuth export', () => {
   const probeScript = buildImportProbeScript();
 
+  assert.match(probeScript, /sys\.version_info\[:2\] != \(3, 12\)/);
+  assert.match(probeScript, /PYTHON_VERSION_MISMATCH/);
   assert.match(probeScript, /from openai import AsyncOpenAI/);
   assert.match(probeScript, /from openai\.types\.shared import OAuthErrorCode/);
+});
+
+test('Manim environment checker is pinned to Python 3.12 virtualenvs', async () => {
+  const checker = await readFile(new URL('../scripts/check-manim-env.js', import.meta.url), 'utf8');
+
+  assert.match(checker, /requiredPythonVersion = '3\.12'/);
+  assert.match(checker, /py', args: \['-3\.12'\]/);
+  assert.match(checker, /\.python-version/);
+  assert.match(checker, /rebuilding with Python/);
 });
 
 test('Manim startup entry points run the environment checker before service launch', async () => {

@@ -20,6 +20,20 @@ REQUIRED_FIELDS = (
     "risks",
 )
 
+CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+COMMON_TEXT_TRANSLATIONS = {
+    "Setup Axes": "建立坐标系",
+    "Draw Cosine Curve": "绘制余弦曲线",
+    "Draw Sine Curve": "绘制正弦曲线",
+    "Mark Key Points": "标记关键点",
+    "Highlight Properties": "强调函数性质",
+    "We start with a coordinate system for the cosine function.": "先建立余弦函数的平面直角坐标系。",
+    "The cosine curve starts at (0,1) and oscillates between 1 and -1.": "余弦曲线从 (0,1) 开始，在 1 和 -1 之间周期变化。",
+    "Key points: (0,1), (π/2,0), (π,-1), (3π/2,0), (2π,1).": "关键点包括 (0,1)、(π/2,0)、(π,-1)、(3π/2,0)、(2π,1)。",
+    "The cosine function is even and periodic with period 2π.": "余弦函数是偶函数，周期为 2π。",
+}
+
 
 def _extract_json(text: str) -> dict[str, Any]:
     if not text:
@@ -33,28 +47,70 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(raw[start : end + 1])
 
 
+def _contains_cjk(text: str) -> bool:
+    return bool(CJK_RE.search(text or ""))
+
+
+def _localize_common_text(text: str) -> str:
+    value = str(text or "").strip()
+    if not value:
+        return ""
+    if value in COMMON_TEXT_TRANSLATIONS:
+        return COMMON_TEXT_TRANSLATIONS[value]
+    for english, chinese in COMMON_TEXT_TRANSLATIONS.items():
+        if value.startswith(f"{english}:") or value.startswith(f"{english}："):
+            suffix = value[len(english) + 1 :].strip()
+            return f"{chinese}：{COMMON_TEXT_TRANSLATIONS.get(suffix, suffix)}" if suffix else chinese
+    return value
+
+
+def _user_visible_text(value: Any, fallback: str, limit: int, *, require_chinese: bool) -> str:
+    text = _localize_common_text(str(value or ""))
+    if require_chinese and text and not _contains_cjk(text) and fallback:
+        text = fallback
+    if not text:
+        text = fallback
+    return str(text or "")[:limit]
+
+
 def _coerce_spec(data: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
     shots = data.get("shots")
     if not isinstance(shots, list) or len(shots) < 2:
         raise ValueError("storyboard requires at least two shots")
 
+    require_chinese = _contains_cjk(str(brief.get("message") or ""))
+    fallback_storyboard = brief.get("storyboard") or brief.get("spec", {}).get("storyboard") or []
+    fallback_topic = str(brief.get("spec", {}).get("topic") or brief.get("message") or "教学动画")
+    fallback_goal = str(brief.get("spec", {}).get("teaching_goal") or "用分步骤画面清楚讲解这个概念。")
+
     normalized_shots: list[dict[str, Any]] = []
     for index, shot in enumerate(shots[:5], start=1):
         if not isinstance(shot, dict):
             raise ValueError("each shot must be an object")
+        fallback_title = str(
+            fallback_storyboard[index - 1]
+            if index - 1 < len(fallback_storyboard)
+            else f"步骤 {index}"
+        )
+        title = _user_visible_text(
+            shot.get("title"),
+            fallback_title,
+            60,
+            require_chinese=require_chinese,
+        )
         normalized_shots.append({
             "id": int(shot.get("id") or index),
-            "title": str(shot.get("title") or f"Step {index}")[:60],
-            "narration": str(shot.get("narration") or shot.get("title") or "")[:120],
-            "visual": str(shot.get("visual") or "")[:160],
+            "title": title,
+            "narration": _user_visible_text(shot.get("narration"), title, 120, require_chinese=require_chinese),
+            "visual": _user_visible_text(shot.get("visual"), title, 160, require_chinese=require_chinese),
             "animation": str(shot.get("animation") or "reveal")[:80],
         })
 
     spec = {
         "version": "v4",
-        "topic": str(data.get("topic") or brief.get("message") or "Manim animation")[:80],
-        "audience": str(data.get("audience") or "students"),
-        "teaching_goal": str(data.get("teaching_goal") or "Explain the idea clearly with staged visuals."),
+        "topic": _user_visible_text(data.get("topic"), fallback_topic, 80, require_chinese=require_chinese),
+        "audience": _user_visible_text(data.get("audience"), "学生", 40, require_chinese=require_chinese),
+        "teaching_goal": _user_visible_text(data.get("teaching_goal"), fallback_goal, 160, require_chinese=require_chinese),
         "domain": str(data.get("domain") or brief.get("domain") or "concept"),
         "animation_type": str(data.get("animation_type") or brief.get("animation_type") or "concept_explanation"),
         "visual_objects": [str(item) for item in data.get("visual_objects", [])][:10],
@@ -62,9 +118,9 @@ def _coerce_spec(data: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
         "shots": normalized_shots,
         "risks": [str(item) for item in data.get("risks", [])][:8],
         "constraints": [
-            "Use Text for Chinese and MathTex only for formulas.",
-            "Keep title, step banner, visual area, and summary separated.",
-            "Prefer simple high-contrast teaching visuals over decorative complexity.",
+            "中文说明必须使用 Text，MathTex 只用于公式。",
+            "标题、步骤提示、主体图像和总结必须分区放置。",
+            "优先生成清晰、高对比度的教学画面，不追求装饰复杂度。",
         ],
     }
     for field in REQUIRED_FIELDS:
@@ -75,9 +131,11 @@ def _coerce_spec(data: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
 
 def build_director_messages(brief: dict[str, Any], current_code: str = "") -> list[dict[str, str]]:
     system = (
-        "You are an expert educational animation director for Manim. "
-        "Return strict JSON only. Do not return code. Design a concise premium "
-        "teaching storyboard that can be rendered in a 16:9 Manim scene."
+        "你是 Manim 精品教学动画导演。只返回严格 JSON，不要返回代码。"
+        "请设计能在 16:9 Manim 场景中渲染的简洁高级教学分镜。"
+        "所有用户可见字段必须使用简体中文，包括 topic、audience、"
+        "teaching_goal、visual_objects、shots.title、shots.narration、"
+        "shots.visual 和 risks。公式、函数名、协议名可以保留数学或英文缩写。"
     )
     user = {
         "request": brief.get("message", ""),
@@ -88,23 +146,23 @@ def build_director_messages(brief: dict[str, Any], current_code: str = "") -> li
         "current_code_summary": brief.get("currentCodeSummary", {}),
         "required_json_shape": {
             "version": "v4",
-            "topic": "short title",
-            "audience": "students",
-            "teaching_goal": "one sentence",
+            "topic": "简短中文标题",
+            "audience": "学生",
+            "teaching_goal": "一句中文教学目标",
             "domain": "math|geometry|data|physics|flow|concept|code",
             "animation_type": "specific animation type",
-            "visual_objects": ["objects that must appear"],
+            "visual_objects": ["必须出现的视觉对象"],
             "layout_zones": ["header", "step", "visual", "summary"],
             "shots": [
                 {
                     "id": 1,
-                    "title": "short step label",
-                    "narration": "what the learner should understand",
-                    "visual": "what appears on screen",
+                    "title": "简短中文步骤名",
+                    "narration": "这一幕要让学习者理解什么",
+                    "visual": "画面中出现什么",
                     "animation": "how it appears",
                 }
             ],
-            "risks": ["semantic mismatch", "text overlap"],
+            "risks": ["语义错配", "文字重叠"],
         },
     }
     return [
@@ -124,9 +182,9 @@ async def design_storyboard(
     if ai_client is None or not model_name:
         return {
             "status": "error",
-            "summary": "Manim Agent v4 requires an AI client to design the storyboard.",
+            "summary": "Manim Agent v4 需要配置 AI 客户端后才能设计分镜。",
             "storyboardSpec": None,
-            "next_actions": ["Configure DEEPSEEK_API_KEY and restart the Manim service."],
+            "next_actions": ["请配置 DEEPSEEK_API_KEY 并重启 Manim 服务。"],
         }
 
     try:
@@ -140,15 +198,14 @@ async def design_storyboard(
         spec = _coerce_spec(_extract_json(content), brief)
         return {
             "status": "success",
-            "summary": "Storyboard designed.",
+            "summary": "分镜设计完成。",
             "storyboardSpec": spec,
-            "next_actions": ["Select style and write Manim code."],
+            "next_actions": ["选择教学风格并生成 Manim 代码。"],
         }
     except Exception as exc:
         return {
             "status": "error",
-            "summary": f"Storyboard design failed: {exc}",
+            "summary": f"分镜设计失败：{exc}",
             "storyboardSpec": None,
-            "next_actions": ["Retry with a clearer prompt or check the model response format."],
+            "next_actions": ["请用更清晰的提示重试，或检查模型返回格式。"],
         }
-
