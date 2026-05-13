@@ -1,19 +1,39 @@
-"""LLM code writer for Manim Agent v4."""
+"""LLM code writer for Manim Agent v5."""
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, Iterable
 
+from .manim_knowledge import manim_rules_prompt
 from .scene_runtime import runtime_prompt
 
 
 def extract_code_from_text(text: str) -> str:
+    """Extract a Python code block or return the raw text."""
     if not text:
         return ""
     match = re.search(r"```(?:python)?\s*([\s\S]*?)```", text, re.IGNORECASE)
     return (match.group(1) if match else text).strip()
+
+
+def extract_partial_code_from_text(text: str) -> str:
+    """Extract progressively streamed Python code from an unfinished response."""
+    if not text:
+        return ""
+    fence = re.search(r"```(?:python)?\s*", text, re.IGNORECASE)
+    if fence:
+        partial = text[fence.end():]
+        end = partial.find("```")
+        if end >= 0:
+            partial = partial[:end]
+        return partial.lstrip("\r\n")
+
+    starts = [idx for idx in (text.find("from manim"), text.find("import "), text.find("class ")) if idx >= 0]
+    if not starts:
+        return ""
+    return text[min(starts):]
 
 
 def analyze_current_code(code: str) -> dict[str, Any]:
@@ -24,6 +44,69 @@ def analyze_current_code(code: str) -> dict[str, Any]:
     }
 
 
+def iter_code_deltas(code: str, chunk_size: int = 900) -> Iterable[dict[str, Any]]:
+    """Yield deterministic chunks for non-streaming fallback progress."""
+    if not code:
+        return
+    total = len(code)
+    for start in range(0, total, chunk_size):
+        end = min(start + chunk_size, total)
+        yield {
+            "type": "code_delta",
+            "delta": code[start:end],
+            "code": code[:end],
+            "index": start // chunk_size,
+            "done": end >= total,
+        }
+
+
+def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any]) -> list[str]:
+    kind = str(storyboard_spec.get("animation_type") or storyboard_spec.get("kind") or brief.get("animation_type") or "")
+    request_text = str(brief.get("message") or "")
+    requirements: list[str] = []
+
+    if kind == "geometry_circle" or "圆" in request_text:
+        requirements.extend([
+            "Circle must be the dominant visible object, centered and large enough to read.",
+            "Do not use Triangle/Polygon as the primary object for a circle request.",
+            "Avoid rounded panels or circular badges that could be mistaken for the main circle.",
+        ])
+
+    if kind in {"geometry_proof", "triangle"} or "三角" in request_text:
+        requirements.extend([
+            "Triangle or Polygon with exactly three vertices must be the dominant visible object.",
+            "The triangle should occupy roughly 45%-65% of the visual width with straight high-contrast edges.",
+            "Do not create circles, rounded badges, or circular frames as the primary visible subject.",
+        ])
+
+    if kind == "function_graph" or any(token in request_text for token in ("正弦", "余弦", "函数", "sin", "cos")):
+        requirements.extend([
+            "Function graph requests must contain a large Axes/NumberPlane and a clearly visible curve with stroke_width >= 5.",
+            "Use symbolic pi labels such as -π, -π/2, 0, π/2, π; never show long decimal tick labels.",
+            "Prefer SafeText/Text for simple visible formulas like 'y = sin(x)' to avoid unnecessary LaTeX failures.",
+            "Do not use MathTex/SafeMathTex in function graph scenes; use SafeText/Text with Unicode π for tick labels and formulas.",
+            "For a simple sine/cosine graph request, do not add a unit circle; make the coordinate system and curve the dominant subject.",
+        ])
+
+    if kind in {"data_chart", "bar_chart", "line_chart"} or any(token in request_text for token in ("柱状图", "销量", "数据")):
+        requirements.extend([
+            "Bars must be large, high contrast, and occupy the central teaching area; avoid tiny bars with excessive whitespace.",
+            "Use 3-5 sparse labels only and keep axes/ticks readable.",
+            "Do not use MathTex/SafeMathTex for data charts; months, numbers, titles, and summaries must use SafeText/Text.",
+            "Do not call set_x/set_y/set_z with aligned_edge; position bars with move_to, next_to, align_to, or center coordinates.",
+        ])
+
+    if kind == "motion_path" or any(token in request_text for token in ("小球", "抛物", "运动", "轨迹")):
+        requirements.extend([
+            "Physical motion must show trajectory, current object position, velocity/direction arrow, and gravity/acceleration cue.",
+            "For projectile motion use a visible parabola/ParametricFunction/TracedPath and at least one arrow label for velocity or gravity.",
+            "Prefer a simple ParametricFunction trajectory plus MoveAlongPath; avoid custom VMobject internals, manual submobjects mutation, or fragile updaters.",
+            "Do not produce a static ball-only scene.",
+        ])
+
+    return requirements
+
+
 def build_code_writer_messages(
     brief: dict[str, Any],
     storyboard_spec: dict[str, Any],
@@ -31,37 +114,64 @@ def build_code_writer_messages(
     skills: list[dict[str, str]],
     current_code: str = "",
 ) -> list[dict[str, str]]:
-    skill_guidance = "\n".join(f"- {skill['name']}: {skill['guidance']}" for skill in skills)
+    skill_guidance = "\n".join(f"- {skill['name']}：{skill['guidance']}" for skill in skills)
     system = (
-        "你是资深 Manim Community 工程师和教学动画设计师。"
+        "你是资深 Manim Community 工程师和教学动画导演。"
         "只返回一个完整 Python 文件，并放在 python 代码块里。"
         "不要使用文件、网络、子进程、动态执行，也不要导入 manim/math/numpy 之外的库。"
         "唯一可渲染类必须是 MainScene(SafeScene, Scene)。"
         "画面中的所有讲解文字、标题、步骤提示和总结默认使用简体中文。"
-        "中文必须用 Text/SafeText，MathTex/SafeMathTex 只能包含公式。"
+        "中文必须使用 Text/SafeText；MathTex/SafeMathTex 只能包含纯公式。"
+        "不要使用固定题目整段模板，但必须使用通用 runtime helpers 和 Manim API 规则。"
+        "质量优先：主体要足够大、对比明确、避免黑边、避免内嵌白卡片、避免文字重叠。"
     )
+    hard_requirements = [
+        "Include the generic runtime helper code exactly once before MainScene.",
+        "Do not return a domain-specific canned full-scene template.",
+        "Keep all major objects inside the frame and use the full 16:9 canvas.",
+        "Use a light teaching canvas: set self.camera.background_color = '#F7FBFF' or rely on SafeScene.setup.",
+        "Do not leave the default black camera background, black letterboxes, or black margins.",
+        "Do not place the scene inside a smaller white card or inner presentation frame.",
+        "Only use make_panel() as a full-frame background helper, not as a smaller boxed container.",
+        "Use at least two staged animations and a final self.wait(1).",
+        "Use self only for Scene control methods: add, remove, play, wait, clear, safe_play, bring_to_front, bring_to_back, foreground mobject helpers.",
+        "Never call Mobject methods on self. Use line.get_angle(), dot.get_center(), mobject.next_to(...), Angle(line1, line2), or vector math instead of self.get_angle/self.get_center/self.next_to.",
+        "All visible non-formula text must be Simplified Chinese unless the user explicitly asks for another language.",
+        "If the request asks for a circle, create a Circle object and avoid triangle-only geometry.",
+        "If the request asks for a triangle, create a Triangle or Polygon object and avoid circle-only geometry.",
+        "If the request asks for sine/cosine axes, use symbolic pi tick labels, not long decimals.",
+        "For projectile or physical motion, show trajectory, velocity/direction, and gravity/acceleration cues instead of a static object.",
+        "The final rendered frame must visually match the requested primary object, not merely mention it in labels.",
+        *_domain_requirements(brief, storyboard_spec),
+    ]
     user = {
         "request": brief.get("message", ""),
         "mode": "modify" if current_code.strip() else "create",
         "storyboardSpec": storyboard_spec,
         "stylePreset": style_preset,
         "runtimeHelpers": runtime_prompt(),
+        "manimRules": manim_rules_prompt(),
         "skills": skill_guidance,
         "currentCode": current_code,
-        "hardRequirements": [
-            "Include the generic runtime helper code exactly once before MainScene.",
-            "Do not return a domain-specific canned template.",
-            "Keep all major objects inside frame.",
-            "Use at least two staged animations and a final self.wait(1).",
-            "All visible non-formula text must be Simplified Chinese unless the user explicitly asks for another language.",
-            "If the request asks for a circle, create a Circle object.",
-            "If the request asks for sine/cosine axes, use symbolic pi tick labels, not long decimals.",
-        ],
+        "hardRequirements": hard_requirements,
     }
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
     ]
+
+
+def _response_content(response: Any) -> str:
+    choices = getattr(response, "choices", []) or []
+    if not choices:
+        return ""
+    choice = choices[0]
+    message = getattr(choice, "message", None)
+    if message is None and isinstance(choice, dict):
+        message = choice.get("message")
+    if isinstance(message, dict):
+        return str(message.get("content") or "")
+    return str(getattr(message, "content", "") or "")
 
 
 async def write_scene_code(
@@ -77,7 +187,7 @@ async def write_scene_code(
     if ai_client is None or not model_name:
         return {
             "status": "error",
-            "summary": "Manim Agent v4 需要配置 AI 客户端后才能生成场景代码。",
+            "summary": "Manim Agent v5 需要配置 AI 客户端后才能生成场景代码。",
             "code": "",
             "source": "unavailable",
             "codeSource": "none",
@@ -89,28 +199,28 @@ async def write_scene_code(
         response = await ai_client.chat.completions.create(
             model=model_name,
             messages=build_code_writer_messages(brief, storyboard_spec, style_preset, skills, current_code),
-            temperature=0.18,
+            temperature=0.05,
             stream=False,
         )
-        code = extract_code_from_text(response.choices[0].message.content)
+        code = extract_code_from_text(_response_content(response))
         if not code:
-            raise ValueError("model returned no code")
+            raise ValueError("模型没有返回可执行代码")
         return {
             "status": "success",
             "summary": "场景代码生成完成。",
             "code": code,
-            "source": "llm_v4",
-            "codeSource": "llm_v4",
+            "source": "llm_v5",
+            "codeSource": "llm_v5",
             "analysis": analyze_current_code(current_code) if current_code else {},
-            "next_actions": ["进行静态检查和视觉检查。"],
+            "next_actions": ["进行静态检查、语义检查和视觉检查。"],
         }
     except Exception as exc:
         return {
             "status": "error",
             "summary": f"场景代码生成失败：{exc}",
             "code": "",
-            "source": "llm_v4",
-            "codeSource": "llm_v4",
+            "source": "llm_v5",
+            "codeSource": "llm_v5",
             "analysis": analyze_current_code(current_code) if current_code else {},
             "next_actions": ["请重试生成，或降低动画复杂度。"],
         }

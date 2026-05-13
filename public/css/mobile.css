@@ -892,12 +892,34 @@
     }
 
     .message.bot .message-content.manim-process-message {
+        width: 100%;
+        max-width: 100%;
+    }
+
+    .message.bot.manim-process-message-row.has-result .message-content.manim-process-message {
+        width: 100%;
         max-width: 100%;
     }
 
     .manim-process-card {
         width: 100%;
+        max-width: 100%;
         border-radius: 14px;
+    }
+
+    .manim-process-result {
+        width: 100%;
+        padding: 10px;
+        border-radius: 14px;
+    }
+
+    .manim-result-heading {
+        display: grid;
+        gap: 3px;
+    }
+
+    .manim-result-heading span {
+        white-space: normal;
     }
 
     .manim-process-header {
@@ -915,7 +937,6 @@
     }
 
     .manim-process-timeline {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 7px;
     }
 
@@ -926,6 +947,8 @@
 
     .manim-process-details {
         max-height: 34vh;
+        overflow-y: auto;
+        overflow-x: hidden;
     }
 
     .manim-process-detail {

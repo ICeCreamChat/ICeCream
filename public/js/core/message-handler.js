@@ -25,6 +25,7 @@ class MessageHandler {
         this.pendingImage = null;
         this.onMessageAdded = null;
         this.manimProcess = null;
+        this.manimAutoScrollLockedUntil = 0;
     }
 
     /**
@@ -58,7 +59,16 @@ class MessageHandler {
      * 处理 Manim 动画响应
      * @private
      */
-    _handleManimResponse(data) {
+    _handleManimResponse(data, mount = null) {
+        if (mount?.contentDiv && mount?.messageDiv) {
+            this.renderManimResultContent(data, mount.contentDiv, mount.messageDiv);
+            mount.messageDiv.classList.add('has-result');
+            if (!mount.preserveScroll) {
+                this.scrollMessagesToBottom({ force: Boolean(mount.forceScroll) });
+            }
+            return;
+        }
+
         // 创建消息容器
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message bot';
@@ -71,6 +81,23 @@ class MessageHandler {
         const contentDiv = document.createElement('div');
         contentDiv.className = 'message-content';
 
+        this.renderManimResultContent(data, contentDiv, messageDiv);
+
+        messageDiv.appendChild(avatarDiv);
+        messageDiv.appendChild(contentDiv);
+        this.elements.messages?.appendChild(messageDiv);
+
+        this.scrollMessagesToBottom({ force: true });
+    }
+
+    renderManimResultContent(data, contentDiv, messageDiv) {
+        const ensureMessageId = () => {
+            if (!messageDiv.id) {
+                messageDiv.id = 'msg-' + Date.now();
+            }
+            return messageDiv.id;
+        };
+
         // 添加视频或错误提示
         if (data.rendered && (data.videoUrl || data.videoBase64)) {
             const videoId = 'vid_' + Date.now();
@@ -78,20 +105,19 @@ class MessageHandler {
 
             // 注册到 CodePanel
             if (this.codePanel) {
-                this.codePanel.registerVideo(videoId, data.code, videoUrl);
+                this.codePanel.registerVideo(videoId, data.code || '', videoUrl);
             }
 
-            const videoLabel = document.createElement('p');
-            videoLabel.innerHTML = '<strong>渲染结果：</strong>';
-            videoLabel.style.marginTop = '12px';
+            const videoLabel = document.createElement('div');
+            videoLabel.className = 'manim-result-heading';
+            videoLabel.innerHTML = '<strong>作品预览</strong><span>渲染完成，可查看代码继续打磨</span>';
             contentDiv.appendChild(videoLabel);
 
             // 使用 video-container 包装视频 (匹配 MathSpace_Version 样式)
-            const msgId = 'msg-' + Date.now();
-            messageDiv.id = msgId;
+            const msgId = ensureMessageId();
 
             const videoContainer = document.createElement('div');
-            videoContainer.className = 'video-container';
+            videoContainer.className = 'video-container manim-result-video';
             videoContainer.dataset.videoId = videoId;
 
             const video = document.createElement('video');
@@ -109,7 +135,7 @@ class MessageHandler {
 
             const videoActions = document.createElement('div');
             videoActions.className = 'video-actions';
-            videoActions.innerHTML = `<button class="video-action-btn view-code-btn" data-video-id="${videoId}">📝 查看代码</button>`;
+            videoActions.innerHTML = `<button class="video-action-btn view-code-btn" data-video-id="${videoId}">查看代码</button>`;
             videoContainer.appendChild(videoActions);
 
             contentDiv.appendChild(videoContainer);
@@ -124,7 +150,8 @@ class MessageHandler {
 
         } else if (data.error) {
             const errorDiv = document.createElement('div');
-            errorDiv.innerHTML = renderMarkdown(`\n⚠️ **渲染提示：** ${data.error}\n\n> 💡 动画功能需要启动 Manim Python 服务。\n> 运行命令：\`cd manim-service && python main.py\``);
+            errorDiv.className = 'manim-result-error';
+            errorDiv.innerHTML = renderMarkdown(`**渲染提示：** ${this.localizeManimError(data.error)}`);
             contentDiv.appendChild(errorDiv);
         } else if (data.code) {
             // Case: Code generated but not rendered; show the real agent warning if available.
@@ -145,12 +172,14 @@ class MessageHandler {
                 ? `\n\n静态检查发现：\n${issueLines.join('\n')}`
                 : '';
             const codeDiv = document.createElement('div');
-            codeDiv.innerHTML = renderMarkdown(`✨ **已生成代码**\n\n${warning}${issueBlock}${repairCount}\n\n\`\`\`python\n${data.code.substring(0, 500)}${data.code.length > 500 ? '...' : ''}\n\`\`\`\n\n> 💡 可以点击“查看代码”或在代码面板里继续修改后重新渲染。`);
+            codeDiv.className = 'manim-result-code';
+            codeDiv.innerHTML = renderMarkdown(`**已生成代码**\n\n${warning}${issueBlock}${repairCount}\n\n\`\`\`python\n${data.code.substring(0, 500)}${data.code.length > 500 ? '...' : ''}\n\`\`\`\n\n> 可以点击“查看代码”或在代码面板里继续修改后重新渲染。`);
             contentDiv.appendChild(codeDiv);
             console.log('[Manim] Code generated without render:', data);
         } else {
             // Fallback: Unknown response structure
             const fallbackDiv = document.createElement('div');
+            fallbackDiv.className = 'manim-result-error';
             fallbackDiv.innerHTML = renderMarkdown(`⚠️ 收到响应但格式异常，请检查控制台日志。`);
             contentDiv.appendChild(fallbackDiv);
             console.error('[Manim] Unexpected response structure:', data);
@@ -159,18 +188,9 @@ class MessageHandler {
         // 渲染数学公式
         setTimeout(() => renderMath(contentDiv), 0);
 
-        messageDiv.appendChild(avatarDiv);
-        messageDiv.appendChild(contentDiv);
-        this.elements.messages?.appendChild(messageDiv);
-
-        // 滚动到底部
-        if (this.elements.messages) {
-            this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
-        }
-
         // 刷新图标
         if (window.lucide) {
-            window.lucide.createIcons();
+            setTimeout(() => window.lucide.createIcons(), 0);
         }
     }
 
@@ -189,6 +209,23 @@ class MessageHandler {
                 this.handleSend();
             }
         });
+
+        this.bindMessagesUserScrollGuard();
+    }
+
+    bindMessagesUserScrollGuard() {
+        const messages = this.elements.messages;
+        if (!messages) return;
+
+        const lock = () => this.lockManimAutoScroll();
+        messages.addEventListener('wheel', lock, { passive: true });
+        messages.addEventListener('touchmove', lock, { passive: true });
+        messages.addEventListener('pointerdown', lock, { passive: true });
+        messages.addEventListener('scroll', () => {
+            if (this.isMessagesNearBottom(24)) {
+                this.manimAutoScrollLockedUntil = 0;
+            }
+        }, { passive: true });
     }
 
     /**
@@ -382,6 +419,8 @@ class MessageHandler {
                     return;
                 } else if (event.type === 'clarification') {
                     this.showManimClarification(event.clarification);
+                } else if (event.type === 'code_delta') {
+                    this.latestManimAgentCode = event.code || `${this.latestManimAgentCode || ''}${event.delta || ''}`;
                 } else if (event.type === 'code') {
                     this.latestManimAgentCode = event.code || this.latestManimAgentCode;
                 } else if (event.type === 'result') {
@@ -406,8 +445,32 @@ class MessageHandler {
         }
 
         if (finalResult) {
-            this._handleManimResponse(finalResult);
+            this.attachManimResultToProcess(finalResult);
         }
+    }
+
+    attachManimResultToProcess(result) {
+        const process = this.manimProcess;
+        if (!process?.resultEl || !process.messageDiv) {
+            this._handleManimResponse(result);
+            return;
+        }
+        const shouldStickToBottom = this.isMessagesNearBottom();
+
+        process.resultEl.innerHTML = '';
+        process.resultEl.classList.remove('hidden');
+        process.messageDiv.classList.add('has-result');
+        process.contentDiv?.classList.add('has-result');
+
+        this._handleManimResponse(result, {
+            contentDiv: process.resultEl,
+            messageDiv: process.messageDiv,
+            preserveScroll: true,
+        });
+
+        const hasProblem = result.success === false || !result.rendered || Boolean(result.warning) || Boolean(result.error);
+        this.toggleManimProcessBubble(!hasProblem, process);
+        this.scrollMessagesToBottom({ force: shouldStickToBottom, respectUserScroll: true });
     }
 
     getManimProcessSteps() {
@@ -425,7 +488,7 @@ class MessageHandler {
         ].map(step => ({
             ...step,
             status: 'pending',
-            summary: '等待开始',
+            summary: '暂未开始，等待前序步骤完成',
             details: [],
             updatedAt: null,
         }));
@@ -443,20 +506,24 @@ class MessageHandler {
         contentDiv.className = 'message-content manim-process-message';
 
         const card = document.createElement('div');
-        card.className = 'manim-process-card';
+        card.className = 'manim-process-card manim-studio-card';
         card.innerHTML = `
-            <button type="button" class="manim-process-header" aria-expanded="true">
+            <button type="button" class="manim-process-header manim-studio-header" aria-expanded="true">
                 <span class="manim-process-status">制作中</span>
                 <span class="manim-process-current">正在理解动画需求...</span>
                 <span class="manim-process-toggle">收起</span>
             </button>
             <div class="manim-process-body">
-                <div class="manim-process-timeline" aria-label="Manim 制作过程"></div>
-                <div class="manim-process-details"></div>
+                <div class="manim-process-timeline manim-studio-track" aria-label="Manim 制作过程"></div>
+                <div class="manim-process-details manim-studio-details"></div>
             </div>
         `;
 
+        const resultEl = document.createElement('div');
+        resultEl.className = 'manim-process-result manim-studio-result hidden';
+
         contentDiv.appendChild(card);
+        contentDiv.appendChild(resultEl);
         messageDiv.appendChild(avatarDiv);
         messageDiv.appendChild(contentDiv);
         this.elements.messages?.appendChild(messageDiv);
@@ -464,7 +531,9 @@ class MessageHandler {
         const process = {
             prompt,
             messageDiv,
+            contentDiv,
             card,
+            resultEl,
             header: card.querySelector('.manim-process-header'),
             body: card.querySelector('.manim-process-body'),
             statusEl: card.querySelector('.manim-process-status'),
@@ -476,16 +545,23 @@ class MessageHandler {
             currentStep: 'planner',
             collapsed: false,
             terminalStatus: null,
+            detailsScrollTop: 0,
         };
 
         process.header?.addEventListener('click', () => {
             this.toggleManimProcessBubble(null, process);
         });
+        process.detailsEl?.addEventListener('scroll', () => {
+            process.detailsScrollTop = process.detailsEl.scrollTop;
+            this.lockManimAutoScroll();
+        }, { passive: true });
+        process.detailsEl?.addEventListener('wheel', () => this.lockManimAutoScroll(), { passive: true });
+        process.detailsEl?.addEventListener('touchmove', () => this.lockManimAutoScroll(), { passive: true });
 
         this.manimProcess = process;
         this.setManimProcessStep('planner', 'active', '正在理解你的动画需求', prompt ? [`用户需求：${prompt}`] : []);
         this.renderManimProcessBubble(process);
-        this.scrollMessagesToBottom();
+        this.scrollMessagesToBottom({ force: true });
     }
 
     toggleManimProcessBubble(forceCollapsed = null, process = this.manimProcess) {
@@ -554,6 +630,7 @@ class MessageHandler {
 
     updateManimProcessFromEvent(event = {}) {
         if (!this.manimProcess) return;
+        const shouldStickToBottom = this.isMessagesNearBottom();
 
         if (event.type === 'progress') {
             const stepId = this.mapManimProgressStep(event.step);
@@ -571,6 +648,9 @@ class MessageHandler {
             this.setManimProcessStep('style', 'pass', '已确定教学风格', this.formatManimStyleDetails(event.style || {}));
         } else if (event.type === 'skills') {
             this.setManimProcessStep('skills', 'pass', '已选择运行时技能', this.formatManimSkillsDetails(event.skills || []));
+        } else if (event.type === 'code_delta') {
+            const received = event.code ? event.code.length : (event.delta || '').length;
+            this.setManimProcessStep('coder', 'active', '正在接收场景代码', [`已接收 ${received} 个字符`, event.done ? '代码增量接收完成' : '代码仍在生成中']);
         } else if (event.type === 'code') {
             if (event.source === 'repair') {
                 this.setManimProcessStep('repair', event.warning ? 'warning' : 'active', event.warning || '已生成修复版代码，正在重新检查', [event.warning].filter(Boolean));
@@ -617,7 +697,7 @@ class MessageHandler {
         }
 
         this.renderManimProcessBubble();
-        this.scrollMessagesToBottom();
+        this.scrollMessagesToBottom({ force: shouldStickToBottom, respectUserScroll: true });
     }
 
     manimProcessLabelForStep(stepId) {
@@ -663,25 +743,35 @@ class MessageHandler {
         }
         if (process.timelineEl) {
             process.timelineEl.innerHTML = process.steps.map(step => `
-                <div class="manim-process-step ${escapeHtml(step.status)}" title="${escapeHtml(this.localizeManimText(step.summary))}">
+                <div class="manim-process-step ${escapeHtml(step.status)} ${step.id === process.currentStep && step.status === 'active' ? 'is-current' : ''}" ${step.id === process.currentStep ? 'aria-current="step"' : ''} title="${escapeHtml(this.localizeManimText(step.summary))}">
                     <span class="manim-process-dot"></span>
                     <span class="manim-process-step-label">${escapeHtml(this.localizeManimText(step.label))}</span>
                 </div>
             `).join('');
         }
         if (process.detailsEl) {
-            const visibleSteps = process.steps.filter(step => step.status !== 'pending' || step.details.length);
-            process.detailsEl.innerHTML = visibleSteps.map(step => this.renderManimProcessDetail(step)).join('');
+            const previousScrollTop = process.detailsEl.scrollTop || process.detailsScrollTop || 0;
+            const visibleSteps = this.getVisibleManimDetailSteps(process, activeStep);
+            process.detailsEl.innerHTML = visibleSteps.map(step => this.renderManimProcessDetail(step, process)).join('');
+            if (previousScrollTop > 0) {
+                process.detailsEl.scrollTop = Math.min(previousScrollTop, process.detailsEl.scrollHeight);
+                process.detailsScrollTop = process.detailsEl.scrollTop;
+            }
         }
     }
 
-    renderManimProcessDetail(step) {
+    getVisibleManimDetailSteps(process) {
+        return process.steps;
+    }
+
+    renderManimProcessDetail(step, process = this.manimProcess) {
         const detailItems = (step.details || []).filter(Boolean).slice(0, 6);
         const detailsHtml = detailItems.length
             ? `<ul>${detailItems.map(item => `<li>${escapeHtml(this.localizeManimText(item))}</li>`).join('')}</ul>`
             : '';
+        const focusClass = process && step.id === process.currentStep ? 'is-focus' : 'is-history';
         return `
-            <section class="manim-process-detail ${escapeHtml(step.status)}">
+            <section class="manim-process-detail ${escapeHtml(step.status)} ${focusClass}">
                 <div class="manim-process-detail-title">
                     <span>${escapeHtml(this.localizeManimText(step.label))}</span>
                     <strong>${escapeHtml(this.formatManimStepStatus(step.status))}</strong>
@@ -694,7 +784,7 @@ class MessageHandler {
 
     formatManimStepStatus(status) {
         const map = {
-            pending: '等待',
+            pending: '暂未开始',
             active: '进行中',
             pass: '完成',
             warning: '注意',
@@ -752,6 +842,8 @@ class MessageHandler {
         const map = {
             v4_director_pipeline: 'V4 智能导演流程',
             llm_v4: 'V4 智能生成',
+            v5_director_pipeline: 'V5 智能导演流程',
+            llm_v5: 'V5 智能生成',
         };
         return map[String(strategy || '').toLowerCase()] || strategy;
     }
@@ -929,6 +1021,7 @@ class MessageHandler {
         const details = [];
         const sourceMap = {
             llm_v4: 'V4 智能生成',
+            llm_v5: 'V5 智能生成',
             repair: '自动修复生成',
         };
         if (event.source) details.push(`来源：${sourceMap[event.source] || this.localizeManimText(event.source)}`);
@@ -1009,9 +1102,30 @@ class MessageHandler {
         this.elements.loading?.classList.toggle('hidden', !visible);
     }
 
-    scrollMessagesToBottom() {
-        if (this.elements.messages) {
-            this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
+    isMessagesNearBottom(threshold = 96) {
+        const messages = this.elements.messages;
+        if (!messages) return true;
+        const distance = messages.scrollHeight - messages.scrollTop - messages.clientHeight;
+        return distance <= threshold;
+    }
+
+    lockManimAutoScroll(durationMs = 5000) {
+        this.manimAutoScrollLockedUntil = Date.now() + durationMs;
+    }
+
+    isManimAutoScrollLocked() {
+        return Date.now() < this.manimAutoScrollLockedUntil;
+    }
+
+    scrollMessagesToBottom(options = {}) {
+        const messages = this.elements.messages;
+        if (!messages) return;
+        const force = Boolean(options.force);
+        if (options.respectUserScroll && this.isManimAutoScrollLocked()) {
+            return;
+        }
+        if (force || this.isMessagesNearBottom()) {
+            messages.scrollTop = messages.scrollHeight;
         }
     }
 
@@ -1119,9 +1233,7 @@ class MessageHandler {
         messageDiv.appendChild(contentDiv);
         this.elements.messages?.appendChild(messageDiv);
 
-        if (this.elements.messages) {
-            this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
-        }
+        this.scrollMessagesToBottom({ force: true });
     }
 
     /**
@@ -1243,9 +1355,7 @@ class MessageHandler {
         this.elements.messages?.appendChild(messageDiv);
 
         // 滚动到底部
-        if (this.elements.messages) {
-            this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
-        }
+        this.scrollMessagesToBottom({ force: true });
 
         // 刷新图标
         if (window.lucide) {
@@ -1296,9 +1406,7 @@ class MessageHandler {
         messageDiv.appendChild(contentDiv);
         this.elements.messages?.appendChild(messageDiv);
 
-        if (this.elements.messages) {
-            this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
-        }
+        this.scrollMessagesToBottom({ force: true });
 
         if (window.lucide) {
             window.lucide.createIcons();

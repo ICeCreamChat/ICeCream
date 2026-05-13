@@ -1,4 +1,4 @@
-"""Storyboard director for Manim Agent v4."""
+"""Storyboard director for Manim Agent v5."""
 
 from __future__ import annotations
 
@@ -79,9 +79,10 @@ def _coerce_spec(data: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("storyboard requires at least two shots")
 
     require_chinese = _contains_cjk(str(brief.get("message") or ""))
-    fallback_storyboard = brief.get("storyboard") or brief.get("spec", {}).get("storyboard") or []
-    fallback_topic = str(brief.get("spec", {}).get("topic") or brief.get("message") or "教学动画")
-    fallback_goal = str(brief.get("spec", {}).get("teaching_goal") or "用分步骤画面清楚讲解这个概念。")
+    fallback_spec = brief.get("spec", {})
+    fallback_storyboard = brief.get("storyboard") or fallback_spec.get("storyboard") or []
+    fallback_topic = str(fallback_spec.get("topic") or brief.get("message") or "教学动画")
+    fallback_goal = str(fallback_spec.get("teaching_goal") or "用分步骤画面清晰讲解这个概念。")
 
     normalized_shots: list[dict[str, Any]] = []
     for index, shot in enumerate(shots[:5], start=1):
@@ -101,26 +102,28 @@ def _coerce_spec(data: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
         normalized_shots.append({
             "id": int(shot.get("id") or index),
             "title": title,
-            "narration": _user_visible_text(shot.get("narration"), title, 120, require_chinese=require_chinese),
+            "narration": _user_visible_text(shot.get("narration"), title, 140, require_chinese=require_chinese),
             "visual": _user_visible_text(shot.get("visual"), title, 160, require_chinese=require_chinese),
             "animation": str(shot.get("animation") or "reveal")[:80],
         })
 
     spec = {
-        "version": "v4",
+        "version": "v5",
+        "kind": fallback_spec.get("kind") or brief.get("animation_type") or "concept",
         "topic": _user_visible_text(data.get("topic"), fallback_topic, 80, require_chinese=require_chinese),
         "audience": _user_visible_text(data.get("audience"), "学生", 40, require_chinese=require_chinese),
         "teaching_goal": _user_visible_text(data.get("teaching_goal"), fallback_goal, 160, require_chinese=require_chinese),
         "domain": str(data.get("domain") or brief.get("domain") or "concept"),
         "animation_type": str(data.get("animation_type") or brief.get("animation_type") or "concept_explanation"),
-        "visual_objects": [str(item) for item in data.get("visual_objects", [])][:10],
+        "visual_objects": [str(item) for item in data.get("visual_objects", fallback_spec.get("objects", []))][:10],
         "layout_zones": [str(item) for item in data.get("layout_zones", ["header", "step", "visual", "summary"])][:6],
         "shots": normalized_shots,
-        "risks": [str(item) for item in data.get("risks", [])][:8],
+        "risks": [str(item) for item in data.get("risks", fallback_spec.get("risk_flags", []))][:8],
         "constraints": [
             "中文说明必须使用 Text，MathTex 只用于公式。",
             "标题、步骤提示、主体图像和总结必须分区放置。",
             "优先生成清晰、高对比度的教学画面，不追求装饰复杂度。",
+            "画面必须铺满浅色 16:9 画布，不要黑边和内嵌白色卡片。",
         ],
     }
     for field in REQUIRED_FIELDS:
@@ -133,9 +136,9 @@ def build_director_messages(brief: dict[str, Any], current_code: str = "") -> li
     system = (
         "你是 Manim 精品教学动画导演。只返回严格 JSON，不要返回代码。"
         "请设计能在 16:9 Manim 场景中渲染的简洁高级教学分镜。"
-        "所有用户可见字段必须使用简体中文，包括 topic、audience、"
-        "teaching_goal、visual_objects、shots.title、shots.narration、"
-        "shots.visual 和 risks。公式、函数名、协议名可以保留数学或英文缩写。"
+        "所有用户可见字段必须使用简体中文，包括 topic、audience、teaching_goal、visual_objects、"
+        "shots.title、shots.narration、shots.visual 和 risks。公式、函数名、协议名可以保留数学或英文缩写。"
+        "必须明确用户请求的核心对象，避免把圆形画成三角形这类语义错配。"
     )
     user = {
         "request": brief.get("message", ""),
@@ -143,9 +146,10 @@ def build_director_messages(brief: dict[str, Any], current_code: str = "") -> li
         "intent": brief.get("intent"),
         "domain": brief.get("domain"),
         "animation_type": brief.get("animation_type"),
+        "required_objects": brief.get("target_objects", []),
         "current_code_summary": brief.get("currentCodeSummary", {}),
         "required_json_shape": {
-            "version": "v4",
+            "version": "v5",
             "topic": "简短中文标题",
             "audience": "学生",
             "teaching_goal": "一句中文教学目标",
@@ -178,11 +182,11 @@ async def design_storyboard(
     model_name: str | None,
     current_code: str = "",
 ) -> dict[str, Any]:
-    """Ask the model for a v4 StoryboardSpec and validate it."""
+    """Ask the model for a v5 StoryboardSpec and validate it."""
     if ai_client is None or not model_name:
         return {
             "status": "error",
-            "summary": "Manim Agent v4 需要配置 AI 客户端后才能设计分镜。",
+            "summary": "Manim Agent v5 需要配置 AI 客户端后才能设计分镜。",
             "storyboardSpec": None,
             "next_actions": ["请配置 DEEPSEEK_API_KEY 并重启 Manim 服务。"],
         }
@@ -191,7 +195,7 @@ async def design_storyboard(
         response = await ai_client.chat.completions.create(
             model=model_name,
             messages=build_director_messages(brief, current_code=current_code),
-            temperature=0.25,
+            temperature=0.22,
             stream=False,
         )
         content = response.choices[0].message.content

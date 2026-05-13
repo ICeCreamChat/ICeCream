@@ -14,6 +14,10 @@ import numpy as np
 
 
 class SafeScene:
+    def setup(self):
+        Scene.setup(self)
+        self.camera.background_color = "#F7FBFF"
+
     def safe_play(self, *animations, **kwargs):
         kwargs.setdefault("run_time", 1.0)
         return self.play(*animations, **kwargs)
@@ -41,17 +45,18 @@ def fit_to_frame(mobject, max_width=12.0, max_height=6.7):
     return mobject
 
 
-def make_panel(width=11.6, height=6.7):
-    panel = RoundedRectangle(
+def make_panel(width=None, height=None):
+    width = max(float(width or 0), float(config.frame_width) + 0.2)
+    height = max(float(height or 0), float(config.frame_height) + 0.2)
+    panel = Rectangle(
         width=width,
         height=height,
-        corner_radius=0.18,
-        stroke_color="#D8E4EF",
-        stroke_width=1,
+        stroke_width=0,
         fill_color="#F7FBFF",
         fill_opacity=1.0,
     )
     panel.move_to(ORIGIN)
+    panel.set_z_index(-20)
     return panel
 
 
@@ -105,4 +110,3 @@ def runtime_prompt() -> str:
         "They are generic helpers, not topic templates:\n\n"
         f"```python\n{SCENE_RUNTIME_CODE}\n```"
     )
-

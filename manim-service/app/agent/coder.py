@@ -1,4 +1,4 @@
-"""Compatibility adapter for Manim Agent v4 code generation."""
+"""Compatibility adapter for Manim Agent v5 code generation."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ async def generate_code(
     storyboard_spec: dict[str, Any] | None = None,
     style_preset: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Generate Manim code through the v4 LLM writer.
+    """Generate Manim code through the v5 LLM writer.
 
     This function intentionally does not fall back to full-scene templates.
     """
@@ -34,8 +34,8 @@ async def generate_code(
     )
     return {
         "code": result.get("code", ""),
-        "source": result.get("source", "llm_v4"),
-        "codeSource": result.get("codeSource", "llm_v4"),
+        "source": result.get("source", "llm_v5"),
+        "codeSource": result.get("codeSource", "llm_v5"),
         "template": "none",
         "status": result.get("status", "error"),
         "warning": None if result.get("status") == "success" else result.get("summary"),

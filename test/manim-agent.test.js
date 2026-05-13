@@ -91,9 +91,10 @@ test('Manim agent payload normalizes create and modify requests', () => {
 });
 
 test('Manim agent stream timeout and abort errors are user-facing Chinese', () => {
-  assert.equal(getManimAgentStreamTimeoutMs({}), 360000);
-  assert.equal(getManimAgentStreamTimeoutMs({ MANIM_AGENT_STREAM_TIMEOUT_MS: '120000' }), 300000);
-  assert.equal(getManimAgentStreamTimeoutMs({ MANIM_AGENT_STREAM_TIMEOUT_MS: '420' }), 420000);
+  assert.equal(getManimAgentStreamTimeoutMs({}), 1200000);
+  assert.equal(getManimAgentStreamTimeoutMs({ MANIM_AGENT_STREAM_TIMEOUT_MS: '120000' }), 600000);
+  assert.equal(getManimAgentStreamTimeoutMs({ MANIM_AGENT_STREAM_TIMEOUT_MS: '420' }), 600000);
+  assert.equal(getManimAgentStreamTimeoutMs({ MANIM_AGENT_STREAM_TIMEOUT_MS: '900' }), 900000);
 
   const message = formatManimStreamError({ name: 'AbortError', message: 'The operation was aborted.' });
   assert.equal(message, '生成超时，Manim 服务仍可能在后台渲染，请稍后重试');
@@ -119,7 +120,7 @@ test('POST /api/manim uses Manim agent run endpoint', async () => {
         rendered: true,
         code: 'from manim import *',
         videoUrl: '/static/video.mp4',
-        agentTrace: { codeSource: 'llm_v4', template: 'none', skills: ['flow_explanation'], retries: 0 },
+        agentTrace: { codeSource: 'llm_v5', template: 'none', skills: ['flow_explanation'], retries: 0 },
       }));
     });
   }, async appBase => {
@@ -136,12 +137,12 @@ test('POST /api/manim uses Manim agent run endpoint', async () => {
     assert.equal(observedRequest.body.mode, 'create');
     assert.equal(observedRequest.body.message, '画一个流程图');
     assert.equal(payload.rendered, true);
-    assert.equal(payload.agentTrace.codeSource, 'llm_v4');
+    assert.equal(payload.agentTrace.codeSource, 'llm_v5');
     assert.equal(payload.agentTrace.template, 'none');
   });
 });
 
-test('POST /api/manim/agent/stream proxies v4 NDJSON agent events', async () => {
+test('POST /api/manim/agent/stream proxies v5 NDJSON agent events', async () => {
   let observedRequest;
 
   await withGatewayAndManim((req, res) => {
@@ -154,6 +155,7 @@ test('POST /api/manim/agent/stream proxies v4 NDJSON agent events', async () => 
       res.write(JSON.stringify({ type: 'design', design: { status: 'success' } }) + '\n');
       res.write(JSON.stringify({ type: 'storyboard', storyboard: [{ title: 'step' }] }) + '\n');
       res.write(JSON.stringify({ type: 'style', style: { name: 'teaching_premium' } }) + '\n');
+      res.write(JSON.stringify({ type: 'code_delta', delta: 'from manim import *', code: 'from manim import *', source: 'llm_v5' }) + '\n');
       res.write(JSON.stringify({ type: 'visual_check', visual: { status: 'pass' } }) + '\n');
       res.end(JSON.stringify({ type: 'result', success: true, intent: 'manim', rendered: false, code: 'from manim import *' }) + '\n');
     });
@@ -172,12 +174,13 @@ test('POST /api/manim/agent/stream proxies v4 NDJSON agent events', async () => 
     assert.match(text, /"type":"design"/);
     assert.match(text, /"type":"storyboard"/);
     assert.match(text, /"type":"style"/);
+    assert.match(text, /"type":"code_delta"/);
     assert.match(text, /"type":"visual_check"/);
     assert.match(text, /"type":"result"/);
   });
 });
 
-test('frontend shows Manim agent v4 production progress in a chat bubble', async () => {
+test('frontend shows Manim agent v5 production progress in a chat bubble', async () => {
   const [messageHandlerSource, mainCssSource, mobileCssSource] = await Promise.all([
     readFile(messageHandlerPath, 'utf8'),
     readFile(mainCssPath, 'utf8'),
@@ -195,6 +198,8 @@ test('frontend shows Manim agent v4 production progress in a chat bubble', async
   assert.match(messageHandlerSource, /event\.type === 'visual_check'/);
   assert.match(messageHandlerSource, /event\.type === 'repair'/);
   assert.match(messageHandlerSource, /event\.type === 'quality_report'/);
+  assert.match(messageHandlerSource, /event\.type === 'code_delta'/);
+  assert.match(messageHandlerSource, /latestManimAgentCode/);
   assert.match(messageHandlerSource, /createManimProcessBubble/);
   assert.match(messageHandlerSource, /updateManimProcessFromEvent/);
   assert.match(messageHandlerSource, /formatManimQualityDetails/);
@@ -222,18 +227,81 @@ test('frontend shows Manim agent v4 production progress in a chat bubble', async
   assert.doesNotMatch(messageHandlerSource, /details\.push\(report\.summary\)/);
   assert.match(messageHandlerSource, /setManimBottomLoadingVisible\(false\)/);
   assert.match(messageHandlerSource, /manim-process-card/);
+  assert.match(messageHandlerSource, /manim-studio-card/);
+  assert.match(messageHandlerSource, /manim-studio-result/);
+  assert.match(messageHandlerSource, /is-current/);
+  assert.match(messageHandlerSource, /getVisibleManimDetailSteps/);
+  assert.match(messageHandlerSource, /getVisibleManimDetailSteps\(process\) \{\s*return process\.steps;/);
+  assert.doesNotMatch(messageHandlerSource, /getPinnedManimDetailStepIds/);
+  assert.doesNotMatch(messageHandlerSource, /pinnedIds\.has\(step\.id\)/);
+  assert.match(messageHandlerSource, /暂未开始，等待前序步骤完成/);
+  assert.match(messageHandlerSource, /pending:\s*'暂未开始'/);
+  assert.match(messageHandlerSource, /is-focus/);
+  assert.match(messageHandlerSource, /作品预览/);
+  assert.match(messageHandlerSource, /isMessagesNearBottom/);
+  assert.match(messageHandlerSource, /bindMessagesUserScrollGuard/);
+  assert.match(messageHandlerSource, /lockManimAutoScroll/);
+  assert.match(messageHandlerSource, /isManimAutoScrollLocked/);
+  assert.match(messageHandlerSource, /respectUserScroll/);
+  assert.match(messageHandlerSource, /detailsScrollTop/);
+  assert.match(messageHandlerSource, /const shouldStickToBottom = this\.isMessagesNearBottom\(\)/);
+  assert.match(messageHandlerSource, /scrollMessagesToBottom\(\{ force: shouldStickToBottom, respectUserScroll: true \}\)/);
+  assert.doesNotMatch(messageHandlerSource, /this\.elements\.messages\.scrollTop = this\.elements\.messages\.scrollHeight/);
+  assert.match(messageHandlerSource, /renderManimResultContent/);
+  assert.match(messageHandlerSource, /attachManimResultToProcess\(finalResult\)/);
+  assert.match(messageHandlerSource, /manim-process-result manim-studio-result hidden/);
+  assert.match(messageHandlerSource, /process\.messageDiv\.classList\.add\('has-result'\)/);
   assert.match(messageHandlerSource, /制作过程已完成/);
   assert.match(messageHandlerSource, /toggleManimProcessBubble\(!hasProblem\)/);
+  assert.doesNotMatch(messageHandlerSource, /this\._handleManimResponse\(finalResult\)/);
   assert.doesNotMatch(messageHandlerSource, /updateManimAgentProgress\(\{ step: 'plan'/);
 
   assert.match(mainCssSource, /\.manim-process-card/);
+  assert.match(mainCssSource, /@keyframes manim-card-breathe/);
+  assert.match(mainCssSource, /@keyframes manim-dot-pulse/);
+  assert.match(mainCssSource, /\.manim-process-card\[data-status="active"\]/);
+  assert.match(mainCssSource, /\.manim-process-step\.active/);
+  assert.match(mainCssSource, /\.manim-process-detail\.is-focus/);
+  assert.match(mainCssSource, /prefers-reduced-motion: reduce/);
+  assert.match(mainCssSource, /\.manim-result-heading/);
+  assert.match(mainCssSource, /\.manim-studio-result \.video-container/);
   assert.match(mainCssSource, /\.manim-process-timeline/);
+  assert.match(mainCssSource, /flex-wrap: wrap/);
+  assert.match(mainCssSource, /\.manim-process-step-label/);
+  assert.match(mainCssSource, /text-overflow: clip/);
   assert.match(mainCssSource, /\.manim-process-details/);
+  assert.match(mainCssSource, /max-height: clamp\(260px, 38vh, 420px\)/);
+  assert.match(mainCssSource, /overflow-y: auto/);
+  assert.match(mainCssSource, /overflow-x: hidden/);
+  assert.match(mainCssSource, /overscroll-behavior: contain/);
+  assert.match(mainCssSource, /-webkit-overflow-scrolling: touch/);
+  assert.match(mainCssSource, /\.manim-process-detail\.pending/);
+  assert.match(mainCssSource, /width: min\(640px, 100%\)/);
+  assert.match(mainCssSource, /\.manim-process-result/);
+  assert.match(mainCssSource, /\.message\.bot\.manim-process-message-row\.has-result/);
   assert.match(mainCssSource, /\.manim-process-card\.collapsed/);
   assert.match(mainCssSource, /\.message\.bot\.manim-process-message-row/);
   assert.match(mainCssSource, /body\.light-mode \.message\.bot \.message-content\.manim-process-message/);
+  assert.match(mainCssSource, /--manim-process-card-bg/);
+  assert.match(mainCssSource, /--manim-process-result-bg/);
+  assert.match(mainCssSource, /--manim-process-stage-active-bg/);
+  assert.match(mainCssSource, /body\.light-mode[\s\S]*--manim-process-card-bg/);
+  assert.match(mainCssSource, /body:not\(\.light-mode\) \.manim-process-status/);
+  assert.match(mainCssSource, /body:not\(\.light-mode\) \.manim-process-current/);
+  assert.match(mainCssSource, /background: var\(--manim-process-card-bg\)/);
+  assert.match(mainCssSource, /background: var\(--manim-process-result-bg\)/);
+  assert.match(mainCssSource, /background: var\(--manim-process-video-meta-bg\)/);
+  assert.match(mainCssSource, /--manim-process-panel-border/);
+  assert.match(mainCssSource, /\.manim-process-detail::before/);
+  assert.match(mainCssSource, /body\.light-mode \.manim-process-card/);
+  assert.match(mainCssSource, /body\.light-mode \.manim-process-current/);
   assert.match(mainCssSource, /box-shadow: none !important/);
   assert.match(mobileCssSource, /\.manim-process-details/);
+  assert.match(mobileCssSource, /max-height: 34vh/);
+  assert.match(mobileCssSource, /overflow-y: auto/);
+  assert.match(mobileCssSource, /overflow-x: hidden/);
+  assert.match(mobileCssSource, /\.manim-process-result/);
+  assert.match(mobileCssSource, /\.manim-result-heading/);
 });
 
 test('Manim agent unavailable returns a compatible non-rendered warning', async () => {

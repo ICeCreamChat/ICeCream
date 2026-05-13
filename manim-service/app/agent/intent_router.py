@@ -1,4 +1,4 @@
-"""Rule-first intent routing for Manim Agent v4."""
+"""Rule-first intent routing for Manim Agent v5."""
 
 from __future__ import annotations
 
@@ -16,10 +16,10 @@ LOW_CONFIDENCE_PATTERNS = (
 
 DOMAIN_KEYWORDS = {
     "data": ("柱状图", "折线图", "饼图", "数据", "销量", "趋势", "bar", "chart", "data"),
-    "geometry": ("三角形", "圆", "圆形", "正方形", "几何", "角", "面积", "证明", "geometry", "circle", "triangle"),
-    "physics": ("速度", "加速度", "力", "牛顿", "抛物", "运动", "小球", "physics", "force", "motion"),
+    "geometry": ("三角形", "圆", "圆形", "正方形", "矩形", "几何", "角", "面积", "证明", "geometry", "circle", "triangle"),
+    "physics": ("速度", "加速度", "力", "牛顿", "抛物", "运动", "小球", "轨迹", "physics", "force", "motion"),
     "flow": ("流程", "步骤", "握手", "关系", "结构", "因果", "tcp", "flow", "process"),
-    "math": ("函数", "公式", "坐标", "正弦", "余弦", "积分", "导数", "矩阵", "function", "equation"),
+    "math": ("函数", "公式", "坐标", "正弦", "余弦", "积分", "导数", "矩阵", "function", "equation", "sine", "cosine", "sin", "cos"),
 }
 
 
@@ -39,9 +39,9 @@ def classify_domain(message: str, mode: str = "create", current_code: str = "") 
 
 def classify_function(message: str) -> str:
     lowered = message.lower()
-    if "cos" in lowered or "余弦" in message:
+    if "cos" in lowered or "余弦" in message or "cosine" in lowered:
         return "cos"
-    if "sin" in lowered or "正弦" in message:
+    if "sin" in lowered or "正弦" in message or "sine" in lowered:
         return "sin"
     return ""
 
@@ -54,6 +54,8 @@ def classify_animation_type(message: str, domain: str, function_name: str = "") 
         return "formula_derivation"
     if domain == "geometry" and _contains_any(message, ("圆形", "圆", "circle")):
         return "geometry_circle"
+    if domain == "geometry" and _contains_any(message, ("三角形", "triangle")):
+        return "triangle"
     if domain == "geometry":
         return "geometry_proof"
     if domain == "data":
@@ -85,7 +87,7 @@ def confidence_for(message: str, domain: str, animation_type: str) -> float:
     normalized = message.strip()
     if not normalized:
         return 0.0
-    if len(normalized) < 4:
+    if len(normalized) < 2:
         return 0.35
     if any(re.search(pattern, normalized, re.IGNORECASE) for pattern in LOW_CONFIDENCE_PATTERNS):
         return 0.4
@@ -93,6 +95,7 @@ def confidence_for(message: str, domain: str, animation_type: str) -> float:
         "function_graph",
         "geometry_circle",
         "geometry_proof",
+        "triangle",
         "bar_chart",
         "line_chart",
         "motion_path",

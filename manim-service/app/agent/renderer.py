@@ -18,7 +18,7 @@ def _render_module():
 
 
 def sanitize_render_error(text: Any, max_length: int = 1200) -> str:
-    """Return a short user-safe render error."""
+    """Return a short user-safe render error while preserving the root cause."""
     value = str(text or "").replace("\r\n", "\n").strip()
     if not value:
         return ""
@@ -26,6 +26,15 @@ def sanitize_render_error(text: Any, max_length: int = 1200) -> str:
     value = re.sub(r"/(?:[^/\s]+/)+[^/\s]+", "<本地路径>", value)
     value = re.sub(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s]+", r"\1=<已隐藏>", value)
     value = re.sub(r"sk-[A-Za-z0-9_-]{8,}", "<已隐藏密钥>", value)
+
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    important_re = re.compile(
+        r"(Traceback|Error|Exception|AttributeError|TypeError|ValueError|NameError|SyntaxError|LaTeX|TeX|File\s+)",
+        re.IGNORECASE,
+    )
+    important = [line for line in lines if important_re.search(line)]
+    if important:
+        value = "\n".join(important[-24:])
     return value[-max_length:]
 
 

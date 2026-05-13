@@ -35,7 +35,7 @@ const MANIM_INTENT_KEYWORDS = [
     '柱状图',
     '折线图',
     '流程',
-    '牛顿',
+    '轨迹',
     '运动',
     '速度',
     '加速度',
@@ -53,7 +53,6 @@ function timeoutSignal(ms) {
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
         return AbortSignal.timeout(ms);
     }
-
     const controller = new AbortController();
     setTimeout(() => controller.abort(), ms);
     return controller.signal;
@@ -62,8 +61,8 @@ function timeoutSignal(ms) {
 export function getManimAgentStreamTimeoutMs(env = process.env) {
     const configured = env.MANIM_AGENT_STREAM_TIMEOUT_MS ?? env.MANIM_AGENT_TIMEOUT_MS;
     const parsed = Number(configured);
-    const fallback = 360000;
-    const minimum = 300000;
+    const fallback = 1200000;
+    const minimum = 600000;
 
     if (!Number.isFinite(parsed) || parsed <= 0) {
         return fallback;
@@ -200,24 +199,15 @@ async function runAgent(payload) {
     return normalizeAgentResult(data);
 }
 
-/**
- * Legacy direct DeepSeek generation path. Used when MANIM_AGENT_ENABLED=false.
- */
 async function handleManimLegacy(req, res) {
     const { message, code } = req.body;
 
     if (!message) {
-        return res.status(400).json({
-            success: false,
-            error: '请描述您想要的动画效果',
-        });
+        return res.status(400).json({ success: false, error: '请描述您想要的动画效果' });
     }
 
     if (!hasDeepSeekConfig()) {
-        return res.status(500).json({
-            success: false,
-            error: 'DeepSeek 配置缺失，无法使用旧版 Manim 生成路径',
-        });
+        return res.status(500).json({ success: false, error: 'DeepSeek 配置缺失，无法使用旧版 Manim 生成路径' });
     }
 
     let promptContent = message;
@@ -287,9 +277,6 @@ async function handleManimLegacy(req, res) {
     });
 }
 
-/**
- * Handle Manim animation generation requests.
- */
 export async function handleManim(req, res) {
     try {
         const { message, code } = req.body;
@@ -299,10 +286,7 @@ export async function handleManim(req, res) {
         }
 
         if (!message) {
-            return res.status(400).json({
-                success: false,
-                error: '请描述您想要的动画效果',
-            });
+            return res.status(400).json({ success: false, error: '请描述您想要的动画效果' });
         }
 
         if (!isManimAgentEnabled()) {
@@ -319,16 +303,10 @@ export async function handleManim(req, res) {
         }
     } catch (error) {
         console.error('[Manim Client] Error:', error);
-        return res.status(500).json({
-            success: false,
-            error: error.message,
-        });
+        return res.status(500).json({ success: false, error: error.message });
     }
 }
 
-/**
- * Proxy the Manim Agent event stream as NDJSON.
- */
 export async function streamAgent(req, res) {
     try {
         const payload = buildAgentPayload(req.body);
@@ -357,8 +335,12 @@ export async function streamAgent(req, res) {
         }
         return res.end();
     } catch (error) {
-        console.error('[Manim Client] Agent Stream Error:', error);
         const message = formatManimStreamError(error);
+        if (isAbortLikeError(error)) {
+            console.warn('[Manim Client] Agent Stream Timeout:', message);
+        } else {
+            console.error('[Manim Client] Agent Stream Error:', error);
+        }
         if (!res.headersSent) {
             if (isAbortLikeError(error)) {
                 return writeManimStreamError(res, message);
@@ -370,9 +352,6 @@ export async function streamAgent(req, res) {
     }
 }
 
-/**
- * Lightweight local intent classification for auto mode.
- */
 export async function classifyManimIntent(req, res) {
     const message = String(req.body?.message || '').trim();
     const lower = message.toLowerCase();
@@ -394,26 +373,17 @@ export async function classifyManimIntent(req, res) {
     });
 }
 
-/**
- * Directly render Manim code.
- */
 export async function renderCode(req, res) {
     try {
         const { code } = req.body;
 
         if (!code) {
-            return res.status(400).json({
-                success: false,
-                error: '代码不能为空',
-            });
+            return res.status(400).json({ success: false, error: '代码不能为空' });
         }
 
         const validation = validateManimCode(code);
         if (!validation.valid) {
-            return res.status(400).json({
-                success: false,
-                error: validation.reason,
-            });
+            return res.status(400).json({ success: false, error: validation.reason });
         }
 
         const payload = buildRenderPayload(req.body);
@@ -438,24 +408,15 @@ export async function renderCode(req, res) {
         });
     } catch (error) {
         console.error('[Manim Client] Render Error:', error);
-        return res.status(500).json({
-            success: false,
-            error: error.message,
-        });
+        return res.status(500).json({ success: false, error: error.message });
     }
 }
 
-/**
- * Get AI modification suggestions from the Manim service.
- */
 export async function getSuggestions(req, res) {
     try {
         const payload = buildSuggestionsPayload(req.body);
         if (!payload.code.trim()) {
-            return res.status(400).json({
-                success: false,
-                error: '代码不能为空',
-            });
+            return res.status(400).json({ success: false, error: '代码不能为空' });
         }
 
         const response = await fetch(`${getManimServiceUrl()}/api/suggestions`, {
@@ -478,22 +439,13 @@ export async function getSuggestions(req, res) {
                 : [];
         const suggestions = rawSuggestions.map(item => String(item).trim()).filter(Boolean);
 
-        return res.json({
-            success: true,
-            data: { suggestions },
-        });
+        return res.json({ success: true, data: { suggestions } });
     } catch (error) {
         console.error('[Manim Client] Suggestions Error:', error);
-        return res.status(500).json({
-            success: false,
-            error: error.message,
-        });
+        return res.status(500).json({ success: false, error: error.message });
     }
 }
 
-/**
- * Get Manim service status.
- */
 export async function getStatus(req, res) {
     try {
         const response = await fetch(`${getManimServiceUrl()}/health`, {

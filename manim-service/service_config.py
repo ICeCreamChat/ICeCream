@@ -69,6 +69,22 @@ MAX_RETRIES = 2
 MAX_HISTORY_ENTRIES = 15
 REQUEST_TIMEOUT = 120.0
 MANIM_TIMEOUT = 300
+MANIM_AGENT_REPAIR_ATTEMPTS_DEFAULT = 4
+
+
+def _bounded_int_env(name, default, minimum, maximum):
+    try:
+        value = int(os.environ.get(name, ""))
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
+
+
+def get_manim_agent_repair_attempts():
+    return _bounded_int_env("MANIM_AGENT_REPAIR_ATTEMPTS", MANIM_AGENT_REPAIR_ATTEMPTS_DEFAULT, 1, 6)
+
+
+MANIM_AGENT_REPAIR_ATTEMPTS = get_manim_agent_repair_attempts()
 
 # ================= 🎯 默认值 =================
 DEFAULT_SCENE_NAME = "MathScene"

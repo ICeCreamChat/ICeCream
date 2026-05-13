@@ -1,4 +1,4 @@
-"""Repair helpers for Manim Agent v4."""
+"""Repair helpers for Manim Agent v5."""
 
 from __future__ import annotations
 
@@ -8,9 +8,26 @@ from typing import Any, Callable
 
 from .code_writer import extract_code_from_text
 from .critic import critique_code
+from .manim_knowledge import manim_rules_prompt
 
 
 Fixer = Callable[[str, dict[str, Any]], str]
+
+
+def _failure_category(report: dict[str, Any], stderr: str = "") -> str:
+    codes = {str(item.get("code", "")) for item in report.get("issues", []) + report.get("findings", [])}
+    text = f"{report.get('summary', '')} {stderr}".lower()
+    if any(code.startswith("semantic_") or code.startswith("visual_") for code in codes):
+        return "语义或视觉错配"
+    if "latex" in text or "tex" in text:
+        return "LaTeX/公式渲染问题"
+    if "attributeerror" in text or "syntax" in text or "nameerror" in text or "unknown_scene_method" in codes:
+        return "Manim API 或代码错误"
+    if "black" in text or "contrast" in text or "视觉" in text or "预览" in text:
+        return "视觉质量问题"
+    if "安全" in text or "system" in text or "security" in codes:
+        return "安全规则问题"
+    return "静态质量问题"
 
 
 def build_repair_observation(
@@ -24,18 +41,22 @@ def build_repair_observation(
     style_preset: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     issues = report.get("issues") or report.get("findings") or []
+    root = "; ".join(str(item.get("message", "")) for item in issues[:5]) or stderr[-500:] or report.get("summary", "")
     return {
         "status": report.get("status", "error"),
         "summary": report.get("summary", ""),
+        "failureCategory": _failure_category(report, stderr),
         "issues": issues,
-        "stderr": stderr[-1200:] if stderr else "",
+        "stderr": stderr[-1600:] if stderr else "",
         "attempt": attempt,
-        "root_cause_hint": "; ".join(str(item.get("message", "")) for item in issues[:5]) or stderr[-300:],
-        "safe_retry": "Return a complete safer Manim file with the same MainScene contract.",
+        "root_cause_hint": root,
+        "safe_retry": "返回一个完整、更安全的 Manim 文件，保持同一个 MainScene 合约。",
         "brief": brief or {},
         "storyboardSpec": storyboard_spec or {},
         "stylePreset": style_preset or {},
+        "currentCodeLength": len(code or ""),
     }
+
 
 def static_repair_once(code: str, observation: dict[str, Any]) -> str:
     """Small non-template repairs for common safety/import issues."""
@@ -58,9 +79,9 @@ def static_repair_once(code: str, observation: dict[str, Any]) -> str:
     repaired = re.sub(r"1\.5707963267948966\d*", "PI / 2", repaired)
     repaired = re.sub(r"-3\.141592653589793\d*", "-PI", repaired)
     repaired = re.sub(r"-1\.5707963267948966\d*", "-PI / 2", repaired)
+    repaired = re.sub(r"background_color\s*=\s*BLACK", "background_color = '#F7FBFF'", repaired)
+    repaired = re.sub(r"fill_color\s*=\s*BLACK", "fill_color = '#F7FBFF'", repaired)
 
-    # Common LLM contract drift: helper classes must not be renderable scenes,
-    # and the only renderable class must be MainScene(SafeScene, Scene).
     repaired = re.sub(
         r"class\s+SafeScene\s*\(\s*(?:Scene|SafeScene\s*,\s*Scene|Scene\s*,\s*SafeScene)\s*\)\s*:",
         "class SafeScene:",
@@ -77,16 +98,9 @@ def static_repair_once(code: str, observation: dict[str, Any]) -> str:
         repaired,
     )
     if "class MainScene" not in repaired:
-        match = re.search(
-            r"class\s+([A-Za-z_]\w*)\s*\(\s*(?:SafeScene\s*,\s*)?Scene\s*\)\s*:",
-            repaired,
-        )
+        match = re.search(r"class\s+([A-Za-z_]\w*)\s*\(\s*(?:SafeScene\s*,\s*)?Scene\s*\)\s*:", repaired)
         if match:
-            repaired = (
-                repaired[: match.start()]
-                + "class MainScene(SafeScene, Scene):"
-                + repaired[match.end() :]
-            )
+            repaired = repaired[: match.start()] + "class MainScene(SafeScene, Scene):" + repaired[match.end():]
     return repaired
 
 
@@ -101,18 +115,30 @@ async def llm_repair_once(
         return static_repair_once(code, observation)
 
     system = (
-        "你负责修复 Manim Community Python 文件。只返回一个完整 Python 文件，"
-        "并放在 python 代码块里。不要引入文件、网络、子进程、动态执行，"
-        "也不要引入额外可渲染 Scene 类。"
+        "你负责修复 Manim Community Python 文件。"
+        "只返回一个完整 Python 文件，并放在 python 代码块里。"
+        "不要引入文件、网络、子进程、动态执行，也不要引入额外可渲染 Scene 类。"
+        "修复必须保持用户语义：圆形就是圆形，三角形就是三角形，函数图像必须有清晰坐标系和曲线。"
+        "如果是视觉质量问题，要放大主体、加粗线条、提高对比度，并移除黑边或内嵌白卡。"
+        "如果是 LaTeX/公式渲染失败，优先把简单可见公式改为 Text/SafeText，例如 y = sin(x)。"
     )
     user = {
         "observation": observation,
         "currentCode": code,
+        "manimRules": manim_rules_prompt(),
         "requirements": [
             "Keep MainScene(SafeScene, Scene) as the only renderable Scene.",
             "Use Text/SafeText for Chinese and MathTex only for formulas.",
             "Keep the storyboard semantics unchanged.",
-            "Fix the reported static, visual, or render issue.",
+            "Fix the reported static, visual, semantic, or render issue.",
+            "If the observation contains AttributeError for self.<method>(), remove that call.",
+            "Use legal Manim object methods such as line.get_angle(), dot.get_center(), mobject.next_to(...), Angle(line1, line2), or explicit vector math.",
+            "Remove black borders, default black backgrounds, and inner white presentation cards.",
+            "For triangle requests, keep a large three-vertex Triangle/Polygon as the central subject and avoid circular primary shapes.",
+            "For function graph requests, make the graph dominate the visual area; use stroke_width >= 5, sparse symbolic pi labels, remove unit-circle distractors unless explicitly requested, and replace visible MathTex/SafeMathTex labels with SafeText/Text using Unicode π.",
+            "For data charts, remove MathTex/SafeMathTex from visible labels; months, numbers, titles, and summaries must use SafeText/Text.",
+            "If code uses set_x/set_y/set_z with aligned_edge, remove that keyword and reposition with move_to, next_to, align_to, or explicit center coordinates.",
+            "For projectile motion, include a visible trajectory, moving ball, velocity/direction arrow, and gravity/acceleration cue; prefer ParametricFunction plus MoveAlongPath over custom VMobject internals or fragile updaters.",
         ],
     }
     response = await ai_client.chat.completions.create(
@@ -121,7 +147,7 @@ async def llm_repair_once(
             {"role": "system", "content": system},
             {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
         ],
-        temperature=0.12,
+        temperature=0.05,
         stream=False,
     )
     fixed = extract_code_from_text(response.choices[0].message.content)
@@ -133,7 +159,7 @@ async def repair_code_async(
     report: dict[str, Any],
     *,
     stderr: str = "",
-    max_attempts: int = 2,
+    max_attempts: int = 4,
     brief: dict[str, Any] | None = None,
     storyboard_spec: dict[str, Any] | None = None,
     style_preset: dict[str, Any] | None = None,
@@ -160,7 +186,7 @@ async def repair_code_async(
         if last_report["status"] != "error":
             return {
                 "status": "success",
-                "summary": "Code repaired.",
+                "summary": "代码已完成自动修复。",
                 "attempts": attempt,
                 "code": current,
                 "critic": last_report,
@@ -169,13 +195,13 @@ async def repair_code_async(
 
     return {
         "status": "error",
-        "summary": "Stopped after maximum repair attempts.",
+        "summary": f"已达到最大自动修复次数 {max_attempts} 次。",
         "attempts": max_attempts,
         "code": current,
         "critic": last_report,
         "observations": observations,
         "root_cause_hint": observations[-1].get("root_cause_hint", "") if observations else "",
-        "safe_retry": "Ask for a simpler animation or provide a more specific prompt.",
+        "safe_retry": "请尝试更简单的动画，或提供更具体的对象和分镜要求。",
     }
 
 
@@ -183,11 +209,11 @@ def repair_code(
     code: str,
     report: dict[str, Any],
     stderr: str = "",
-    max_attempts: int = 2,
+    max_attempts: int = 4,
     fixer: Fixer | None = None,
     brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Synchronous compatibility helper used by older tests."""
+    """Synchronous compatibility helper used by tests."""
     current = code
     repair_fn = fixer or static_repair_once
     attempts = 0
@@ -201,7 +227,7 @@ def repair_code(
         if last_report["status"] != "error":
             return {
                 "status": "success",
-                "summary": "Code repaired.",
+                "summary": "代码已完成自动修复。",
                 "attempts": attempts,
                 "code": current,
                 "critic": last_report,
@@ -209,10 +235,10 @@ def repair_code(
 
     return {
         "status": "error",
-        "summary": "Stopped after maximum repair attempts.",
+        "summary": f"已达到最大自动修复次数 {attempts} 次。",
         "attempts": attempts,
         "code": current,
         "critic": last_report,
         "root_cause_hint": stderr or "; ".join(issue["message"] for issue in last_report.get("issues", [])),
-        "safe_retry": "Ask for a simpler animation or provide a more specific prompt.",
+        "safe_retry": "请尝试更简单的动画，或提供更具体的对象和分镜要求。",
     }
