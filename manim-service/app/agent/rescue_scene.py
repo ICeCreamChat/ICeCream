@@ -29,6 +29,8 @@ def rescue_scene_code(brief: dict[str, Any] | None, reason: str = "") -> str:
     message = _message(brief)
     if kind == "geometry_circle" or "圆" in message:
         return _circle_scene()
+    if kind == "square" or "正方形" in message or "方形" in message:
+        return _square_scene()
     if kind == "triangle" or "三角" in message:
         return _triangle_scene()
     if kind == "function_graph" or "正弦" in message or "余弦" in message:
@@ -85,6 +87,30 @@ def _triangle_scene() -> str:
         self.add(header, banner, visual, summary)
         self.safe_play(Create(triangle), FadeIn(vertices), Write(labels))
         self.safe_play(Write(side_labels), FadeIn(summary))
+        self.wait(1.2)
+''')
+
+
+def _square_scene() -> str:
+    return _wrap(r'''        self.add(make_panel())
+        header, title, subtitle = make_header("正方形的基本构成", "四条边相等，四个角都是直角")
+        banner = make_step_banner("步骤 1：绘制正方形主体")
+        square = Square(side_length=3.2, color="#0284C7", stroke_width=8)
+        vertices = VGroup(*[Dot(point, color="#F97316", radius=0.07) for point in square.get_vertices()])
+        side_label = SafeText("边长 a", font_size=27, color="#15803D").next_to(square, DOWN, buff=0.20)
+        right_angle = RightAngle(
+            Line(square.get_vertices()[0], square.get_vertices()[1]),
+            Line(square.get_vertices()[0], square.get_vertices()[3]),
+            length=0.34,
+            color="#F97316",
+            stroke_width=4,
+        )
+        formula = SafeText("面积 = a × a", font_size=30, color="#B45309").next_to(square, UP, buff=0.24)
+        visual = place_visual(VGroup(square, vertices, side_label, right_angle, formula))
+        summary = make_summary("正方形的四条边相等，四个角都是直角。")
+        self.add(header, banner, visual, summary)
+        self.safe_play(Create(square), FadeIn(vertices))
+        self.safe_play(Write(side_label), Create(right_angle), Write(formula), FadeIn(summary))
         self.wait(1.2)
 ''')
 

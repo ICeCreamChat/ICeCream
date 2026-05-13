@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from .code_writer import extract_code_from_text
 from .critic import critique_code
-from .manim_knowledge import manim_rules_prompt
+from .manim_knowledge import RULE_PACK_VERSION, manim_rules_prompt, rule_hint, semantic_target_from_brief
 
 
 Fixer = Callable[[str, dict[str, Any]], str]
@@ -42,6 +42,11 @@ def build_repair_observation(
 ) -> dict[str, Any]:
     issues = report.get("issues") or report.get("findings") or []
     root = "; ".join(str(item.get("message", "")) for item in issues[:5]) or stderr[-500:] or report.get("summary", "")
+    rule_codes = [str(item.get("code", "")) for item in issues if item.get("code")]
+    repair_rules = [
+        {"id": code, "hint": rule_hint(code, str(item.get("hint", "")))}
+        for code, item in zip(rule_codes, [item for item in issues if item.get("code")])
+    ]
     return {
         "status": report.get("status", "error"),
         "summary": report.get("summary", ""),
@@ -51,6 +56,9 @@ def build_repair_observation(
         "attempt": attempt,
         "root_cause_hint": root,
         "safe_retry": "返回一个完整、更安全的 Manim 文件，保持同一个 MainScene 合约。",
+        "rulePackVersion": RULE_PACK_VERSION,
+        "repairRules": repair_rules,
+        "semanticTarget": semantic_target_from_brief(brief),
         "brief": brief or {},
         "storyboardSpec": storyboard_spec or {},
         "stylePreset": style_preset or {},
@@ -125,8 +133,9 @@ async def llm_repair_once(
     user = {
         "observation": observation,
         "currentCode": code,
-        "manimRules": manim_rules_prompt(),
-        "requirements": [
+            "manimRules": manim_rules_prompt(),
+            "rulePackVersion": RULE_PACK_VERSION,
+            "requirements": [
             "Keep MainScene(SafeScene, Scene) as the only renderable Scene.",
             "Use Text/SafeText for Chinese and MathTex only for formulas.",
             "Keep the storyboard semantics unchanged.",

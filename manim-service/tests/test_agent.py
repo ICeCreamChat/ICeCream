@@ -18,6 +18,7 @@ from app.agent.coder import generate_code
 from app.agent.critic import critique_code
 from app.agent.director import design_storyboard
 from app.agent.inspector import inspect_code_quality
+from app.agent.manim_knowledge import RULE_PACK_VERSION, manim_rules_prompt, rule_ids
 from app.agent.planner import plan_animation
 from app.agent.repair import repair_code, repair_code_async, static_repair_once
 from app.agent.renderer import sanitize_render_error
@@ -225,6 +226,40 @@ class _FakeAI:
 
 
 class ManimAgentV4Tests(unittest.TestCase):
+    def test_manimcat_rule_pack_is_available_to_generation_and_tests(self):
+        ids = set(rule_ids())
+        prompt = manim_rules_prompt()
+
+        self.assertEqual(RULE_PACK_VERSION, "manimcat-foundation-v1")
+        for required in {
+            "scene_contract",
+            "scene_self_methods",
+            "text_formula_split",
+            "legacy_api_forbidden",
+            "axis_config",
+            "canvas_quality",
+            "semantic_object_match",
+        }:
+            self.assertIn(required, ids)
+            self.assertIn(required, prompt)
+        self.assertIn("ManimCat", prompt)
+
+    def test_core_manim_agent_files_do_not_contain_mojibake_literals(self):
+        checked = [
+            SERVICE_ROOT / "app" / "agent" / "critic.py",
+            SERVICE_ROOT / "app" / "agent" / "director.py",
+            SERVICE_ROOT / "app" / "agent" / "code_writer.py",
+            SERVICE_ROOT / "app" / "agent" / "repair.py",
+            SERVICE_ROOT / "app" / "agent" / "workflow.py",
+            SERVICE_ROOT / "app" / "agent" / "inspector.py",
+        ]
+        forbidden = ("\u9422", "\u6d93", "\u9366", "\u8930", "\ufffd")
+
+        for path in checked:
+            text = path.read_text(encoding="utf-8")
+            for marker in forbidden:
+                self.assertNotIn(marker, text, f"{path} contains mojibake marker {marker!r}")
+
     def test_planner_still_returns_clarification_for_low_confidence_prompt(self):
         brief = plan_animation("做个动画")
 
@@ -245,6 +280,7 @@ class ManimAgentV4Tests(unittest.TestCase):
         cases = {
             "\u753b\u4e00\u4e2a\u4e09\u89d2\u5f62": ("geometry", "triangle"),
             "\u753b\u4e00\u4e2a\u5706\u5f62": ("geometry", "geometry_circle"),
+            "\u753b\u4e00\u4e2a\u6b63\u65b9\u5f62": ("geometry", "square"),
             "\u753b\u4e00\u4e2a\u6b63\u5f26\u51fd\u6570": ("math", "function_graph"),
             "\u753b\u4e00\u4e2a\u5c0f\u7403\u629b\u7269\u7ebf\u8fd0\u52a8": ("physics", "motion_path"),
         }
@@ -314,6 +350,11 @@ class ManimAgentV4Tests(unittest.TestCase):
         self.assertIn("Circle(", generated["code"])
         self.assertNotIn("_circle_template", generated["code"])
 
+        payload = json.loads(ai.chat.completions.calls[0]["messages"][1]["content"])
+        self.assertEqual(payload["rulePackVersion"], RULE_PACK_VERSION)
+        self.assertIn("manimRules", payload)
+        self.assertIn("scene_contract", payload["manimRules"])
+
     def test_skill_loader_selects_core_skills_without_old_versions(self):
         brief = plan_animation("画一个正弦函数，做分步骤讲解动画")
         skills = select_skills(brief)
@@ -366,6 +407,23 @@ class MainScene(SafeScene, Scene):
         self.assertIn("self.get_angle()", joined)
         self.assertIn("self.get_center()", joined)
         self.assertIn("self.next_to()", joined)
+
+    def test_critic_rejects_legacy_api_and_black_background(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        self.camera.background_color = BLACK
+        old = TextMobject("old api")
+        self.play(ShowCreation(old))
+"""
+        report = critique_code(code, {"intent": "CREATE"})
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("legacy_api_forbidden", codes)
+        self.assertIn("black_background", codes)
 
     def test_critic_flags_invalid_mobject_method_keywords(self):
         code = """
@@ -503,6 +561,28 @@ class MainScene(Scene):
         self.assertEqual(report["status"], "error")
         self.assertIn("semantic_triangle_missing", codes)
 
+    def test_square_prompt_requires_square_object_before_preview(self):
+        brief = plan_animation("\u753b\u4e00\u4e2a\u6b63\u65b9\u5f62")
+        wrong_code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        circle = Circle()
+        self.add(circle)
+        self.wait(1)
+"""
+        critic = critique_code(wrong_code, brief)
+        quality = inspect_code_quality(wrong_code, brief)
+        critic_codes = {item.get("code") for item in critic["issues"]}
+        quality_codes = {item.get("code") for item in quality["findings"]}
+
+        self.assertEqual(brief["animation_type"], "square")
+        self.assertEqual(critic["status"], "error")
+        self.assertEqual(quality["status"], "error")
+        self.assertIn("semantic_square_missing", critic_codes)
+        self.assertIn("semantic_square_missing", quality_codes)
+
     def test_inspector_blocks_unit_circle_distractor_for_simple_function_graph(self):
         brief = plan_animation("\u753b\u4e00\u4e2a\u6b63\u5f26\u51fd\u6570")
         distracting_code = """
@@ -566,6 +646,7 @@ class MainScene(Scene):
     def test_rescue_scene_satisfies_core_semantic_contracts(self):
         cases = [
             ("\u753b\u4e00\u4e2a\u4e09\u89d2\u5f62", "Polygon"),
+            ("\u753b\u4e00\u4e2a\u6b63\u65b9\u5f62", "Square"),
             ("\u753b\u4e00\u4e2a\u6b63\u5f26\u51fd\u6570", "Axes"),
             ("\u753b\u4e00\u4e2a\u4e09\u4e2a\u6708\u9500\u91cf\u67f1\u72b6\u56fe", "Rectangle"),
         ]
@@ -750,6 +831,33 @@ class MainScene(Scene):
         self.assertIn("最大自动修复次数", result["summary"])
         self.assertEqual(len(attempts), 2)
         self.assertIn("root_cause_hint", result)
+
+    def test_repair_observation_includes_rule_pack_and_rule_hints(self):
+        report = {
+            "status": "error",
+            "summary": "静态检查失败",
+            "issues": [
+                {"severity": "error", "message": "MathTex/Tex 中包含中文。", "hint": "中文放进 Text/SafeText。", "code": "mathtex_chinese"},
+            ],
+        }
+        attempts = []
+
+        def unchanged_fixer(code, observation):
+            attempts.append(observation)
+            return code
+
+        repair_code(
+            "from manim import *\nclass MainScene(Scene):\n    def construct(self):\n        self.add(MathTex('中文'))\n",
+            report,
+            stderr="",
+            max_attempts=1,
+            fixer=unchanged_fixer,
+            brief=plan_animation("画一个正方形"),
+        )
+
+        self.assertEqual(attempts[0]["rulePackVersion"], RULE_PACK_VERSION)
+        self.assertEqual(attempts[0]["semanticTarget"], "square")
+        self.assertEqual(attempts[0]["repairRules"][0]["id"], "mathtex_chinese")
 
     def test_repair_attempt_config_defaults_to_four_and_clamps(self):
         with patch.dict(os.environ, {"MANIM_AGENT_REPAIR_ATTEMPTS": ""}, clear=False):

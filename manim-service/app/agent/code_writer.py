@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any, Iterable
 
-from .manim_knowledge import manim_rules_prompt
+from .manim_knowledge import CORE_MANIM_RULES, RULE_PACK_VERSION, manim_rules_prompt, semantic_target_from_brief
 from .scene_runtime import runtime_prompt
 
 
@@ -79,6 +79,13 @@ def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any])
             "Do not create circles, rounded badges, or circular frames as the primary visible subject.",
         ])
 
+    if kind == "square" or "正方形" in request_text or "square" in request_text.lower():
+        requirements.extend([
+            "Square must be the dominant visible object, centered and large enough to read.",
+            "Do not use Circle/Triangle/Polygon as the primary object for a square request.",
+            "Show equal sides and right angles only if they do not crowd the main square.",
+        ])
+
     if kind == "function_graph" or any(token in request_text for token in ("正弦", "余弦", "函数", "sin", "cos")):
         requirements.extend([
             "Function graph requests must contain a large Axes/NumberPlane and a clearly visible curve with stroke_width >= 5.",
@@ -126,6 +133,7 @@ def build_code_writer_messages(
         "质量优先：主体要足够大、对比明确、避免黑边、避免内嵌白卡片、避免文字重叠。"
     )
     hard_requirements = [
+        *CORE_MANIM_RULES,
         "Include the generic runtime helper code exactly once before MainScene.",
         "Do not return a domain-specific canned full-scene template.",
         "Keep all major objects inside the frame and use the full 16:9 canvas.",
@@ -138,6 +146,7 @@ def build_code_writer_messages(
         "Never call Mobject methods on self. Use line.get_angle(), dot.get_center(), mobject.next_to(...), Angle(line1, line2), or vector math instead of self.get_angle/self.get_center/self.next_to.",
         "All visible non-formula text must be Simplified Chinese unless the user explicitly asks for another language.",
         "If the request asks for a circle, create a Circle object and avoid triangle-only geometry.",
+        "If the request asks for a square, create a Square object and avoid circle-only or triangle-only geometry.",
         "If the request asks for a triangle, create a Triangle or Polygon object and avoid circle-only geometry.",
         "If the request asks for sine/cosine axes, use symbolic pi tick labels, not long decimals.",
         "For projectile or physical motion, show trajectory, velocity/direction, and gravity/acceleration cues instead of a static object.",
@@ -148,12 +157,14 @@ def build_code_writer_messages(
         "request": brief.get("message", ""),
         "mode": "modify" if current_code.strip() else "create",
         "storyboardSpec": storyboard_spec,
+        "semanticTarget": semantic_target_from_brief(brief),
         "stylePreset": style_preset,
         "runtimeHelpers": runtime_prompt(),
         "manimRules": manim_rules_prompt(),
         "skills": skill_guidance,
         "currentCode": current_code,
         "hardRequirements": hard_requirements,
+        "rulePackVersion": RULE_PACK_VERSION,
     }
     return [
         {"role": "system", "content": system},

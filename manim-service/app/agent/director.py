@@ -6,6 +6,8 @@ import json
 import re
 from typing import Any
 
+from .manim_knowledge import RULE_PACK_VERSION, semantic_target_from_brief
+
 
 REQUIRED_FIELDS = (
     "version",
@@ -110,6 +112,7 @@ def _coerce_spec(data: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
     spec = {
         "version": "v5",
         "kind": fallback_spec.get("kind") or brief.get("animation_type") or "concept",
+        "semantic_target": semantic_target_from_brief(brief),
         "topic": _user_visible_text(data.get("topic"), fallback_topic, 80, require_chinese=require_chinese),
         "audience": _user_visible_text(data.get("audience"), "学生", 40, require_chinese=require_chinese),
         "teaching_goal": _user_visible_text(data.get("teaching_goal"), fallback_goal, 160, require_chinese=require_chinese),
@@ -125,6 +128,7 @@ def _coerce_spec(data: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
             "优先生成清晰、高对比度的教学画面，不追求装饰复杂度。",
             "画面必须铺满浅色 16:9 画布，不要黑边和内嵌白色卡片。",
         ],
+        "rulePackVersion": RULE_PACK_VERSION,
     }
     for field in REQUIRED_FIELDS:
         if field not in spec:
@@ -147,6 +151,7 @@ def build_director_messages(brief: dict[str, Any], current_code: str = "") -> li
         "domain": brief.get("domain"),
         "animation_type": brief.get("animation_type"),
         "required_objects": brief.get("target_objects", []),
+        "semantic_target": semantic_target_from_brief(brief),
         "current_code_summary": brief.get("currentCodeSummary", {}),
         "required_json_shape": {
             "version": "v5",
@@ -156,6 +161,7 @@ def build_director_messages(brief: dict[str, Any], current_code: str = "") -> li
             "domain": "math|geometry|data|physics|flow|concept|code",
             "animation_type": "specific animation type",
             "visual_objects": ["必须出现的视觉对象"],
+            "semantic_target": "circle|square|triangle|function_graph|data_chart|motion_path|flow|concept",
             "layout_zones": ["header", "step", "visual", "summary"],
             "shots": [
                 {

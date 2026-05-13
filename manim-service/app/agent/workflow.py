@@ -12,6 +12,7 @@ from .code_writer import iter_code_deltas
 from .critic import critique_code
 from .director import design_storyboard
 from .inspector import inspect_code_quality
+from .manim_knowledge import RULE_PACK_VERSION, semantic_target_from_brief
 from .planner import plan_animation
 from .repair import repair_code_async
 from .renderer import render_code_for_agent
@@ -72,6 +73,9 @@ def _trace(
             or brief.get("storyboard", [])[:4],
         },
         "spec": spec,
+        "rulePackVersion": RULE_PACK_VERSION,
+        "semanticTarget": semantic_target_from_brief({**brief, "storyboardSpec": spec}),
+        "staticFindings": (quality or {}).get("issues") or (quality or {}).get("findings") or [],
         "storyboardSpec": spec,
         "stylePreset": style_preset or {},
         "skills": [skill["id"] for skill in skills],
@@ -84,7 +88,20 @@ def _trace(
             "summary": overall_summary,
         },
         "preview": visual,
-        "repairs": {"count": retries, "reason": failure_reason},
+        "repairs": {
+            "count": retries,
+            "reason": failure_reason,
+            "rules": [
+                item.get("code")
+                for item in ((quality or {}).get("issues") or (quality or {}).get("findings") or [])
+                if item.get("code")
+            ],
+        },
+        "repairRules": [
+            item.get("code")
+            for item in ((quality or {}).get("issues") or (quality or {}).get("findings") or [])
+            if item.get("code")
+        ],
         "decisionLog": brief.get("decisionLog", []),
         "retries": retries,
         "failureReason": failure_reason,

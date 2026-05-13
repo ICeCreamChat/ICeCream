@@ -67,6 +67,7 @@ TYPE_TO_SKILLS = {
     "formula_derivation": ["formula_derivation", "text_formula_layout", "coordinate_system"],
     "geometry_proof": ["geometry", "text_formula_layout", "formula_derivation"],
     "geometry_circle": ["geometry", "text_formula_layout", "coordinate_system"],
+    "square": ["geometry", "text_formula_layout", "formula_derivation"],
     "bar_chart": ["data_visualization", "coordinate_system", "text_formula_layout"],
     "line_chart": ["data_visualization", "coordinate_system", "text_formula_layout"],
     "motion_path": ["physics_motion", "coordinate_system", "text_formula_layout"],

@@ -12,6 +12,7 @@ from .spec import (
     flow_process_spec,
     formula_derivation_spec,
     geometry_circle_spec,
+    geometry_square_spec,
     function_graph_spec,
     geometry_proof_spec,
     physics_motion_spec,
@@ -30,6 +31,8 @@ def _spec_for_route(route: dict[str, Any], current_code: str = "") -> dict[str, 
         return formula_derivation_spec(message).to_dict()
     if animation_type == "geometry_circle":
         return geometry_circle_spec(message).to_dict()
+    if animation_type == "square":
+        return geometry_square_spec(message).to_dict()
     if animation_type == "triangle":
         return triangle_spec(message).to_dict()
     if domain == "geometry":

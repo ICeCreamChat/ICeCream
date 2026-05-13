@@ -212,6 +212,10 @@ test('frontend shows Manim agent v5 production progress in a chat bubble', async
   assert.match(messageHandlerSource, /质量检查通过/);
   assert.match(messageHandlerSource, /正在修复视觉质量问题/);
   assert.match(messageHandlerSource, /生成时间过长，连接已中断/);
+  assert.match(messageHandlerSource, /Simplify the animation or split it into fewer steps/);
+  assert.match(messageHandlerSource, /简化动画，或减少分镜步骤/);
+  assert.match(messageHandlerSource, /Use VGroup\(\.\.\.\)\.arrange\(\) and scale the group to fit the frame/);
+  assert.match(messageHandlerSource, /缩放到安全画幅内/);
   assert.match(messageHandlerSource, /Setup Axes/);
   assert.match(messageHandlerSource, /建立坐标系/);
   assert.match(messageHandlerSource, /Draw Cosine Curve/);
@@ -302,6 +306,20 @@ test('frontend shows Manim agent v5 production progress in a chat bubble', async
   assert.match(mobileCssSource, /overflow-x: hidden/);
   assert.match(mobileCssSource, /\.manim-process-result/);
   assert.match(mobileCssSource, /\.manim-result-heading/);
+});
+
+test('Manim frontend and gateway user-facing files do not contain mojibake literals', async () => {
+  const sources = await Promise.all([
+    readFile(messageHandlerPath, 'utf8'),
+    readFile(new URL('../services/manim/manim-client.js', import.meta.url), 'utf8'),
+  ]);
+  const forbidden = ['\u9422', '\u6d93', '\u9366', '\u8930', '\ufffd'];
+
+  for (const source of sources) {
+    for (const marker of forbidden) {
+      assert.equal(source.includes(marker), false, `user-facing Manim source contains mojibake marker ${marker}`);
+    }
+  }
 });
 
 test('Manim agent unavailable returns a compatible non-rendered warning', async () => {

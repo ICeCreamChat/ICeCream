@@ -155,6 +155,19 @@ def triangle_spec(topic: str) -> AnimationSpec:
     )
 
 
+def geometry_square_spec(topic: str) -> AnimationSpec:
+    return _base_spec(
+        kind="square",
+        topic=topic or "正方形讲解",
+        domain="geometry",
+        animation_type="square",
+        teaching_goal="用清晰的正方形主体说明四条边相等、四个角都是直角以及面积公式。",
+        storyboard=["绘制正方形主体", "标注四条相等边和四个直角", "总结边长与面积关系"],
+        objects=["square", "vertices", "equal_sides", "right_angles", "area_formula", "summary"],
+        risk_flags=["语义图形错配", "标签重叠", "对象越界"],
+    )
+
+
 def geometry_circle_spec(topic: str) -> AnimationSpec:
     return _base_spec(
         kind="geometry_circle",

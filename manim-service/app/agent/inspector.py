@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .manim_knowledge import MOJIBAKE_MARKERS, RULE_PACK_VERSION, semantic_target_from_brief
+
 
 LONG_DECIMAL_RE = re.compile(r"\b-?\d+\.\d{6,}\b")
-MOJIBAKE_RE = re.compile(r"(?:\u934b|\u9422|\u951b|\u7efe|\u20ac|\ufffd|鐢|涓|鍦|褰)")
+MOJIBAKE_RE = re.compile("|".join(re.escape(marker) for marker in MOJIBAKE_MARKERS))
 BLACK_BACKGROUND_RE = re.compile(
     r"(background_color\s*=\s*(?:BLACK|['\"]#000|['\"]#000000)|fill_color\s*=\s*(?:BLACK|['\"]#000|['\"]#000000))"
 )
@@ -43,6 +45,10 @@ def _contains_circle_object(source: str) -> bool:
     return bool(re.search(r"\bCircle\s*\(", source))
 
 
+def _contains_square_object(source: str) -> bool:
+    return bool(re.search(r"\bSquare\s*\(", source))
+
+
 def _contains_function_curve(source: str) -> bool:
     return any(marker in source for marker in ("axes.plot", ".plot(", "ParametricFunction", "FunctionGraph", "plot_parametric_curve"))
 
@@ -74,9 +80,12 @@ def inspect_code_quality(code: str, brief: dict[str, Any] | None = None) -> dict
     if INNER_CARD_RE.search(source) and "make_panel" not in source:
         findings.append(_finding("warning", "代码疑似把内容放进内嵌卡片或小画框。", "用全画布布局，不要在视频内再套展示卡。", "inner_card"))
 
-    wants_circle = kind == "geometry_circle" or ("圆" in prompt and kind != "function_graph")
-    wants_triangle = kind in {"geometry_proof", "triangle"} or "三角" in prompt
+    semantic_target = semantic_target_from_brief(brief)
+    wants_circle = semantic_target == "circle"
+    wants_square = semantic_target == "square"
+    wants_triangle = semantic_target == "triangle"
     has_circle = _contains_circle_object(source)
+    has_square = _contains_square_object(source)
     has_triangle = _contains_triangle_object(source)
 
     if wants_circle:
@@ -84,6 +93,12 @@ def inspect_code_quality(code: str, brief: dict[str, Any] | None = None) -> dict
             findings.append(_finding("error", "圆形请求没有生成 Circle 对象。", "保留用户语义，使用 Circle() 绘制圆形。", "semantic_circle_missing"))
         if has_triangle and not has_circle:
             findings.append(_finding("error", "圆形请求生成了三角形几何。", "不要用三角形满足圆形提示。", "semantic_circle_triangle_mismatch"))
+
+    if wants_square:
+        if not has_square:
+            findings.append(_finding("error", "正方形请求没有生成 Square 对象。", "保留用户语义，使用 Square() 绘制正方形主体。", "semantic_square_missing"))
+        if (has_circle or has_triangle) and not has_square:
+            findings.append(_finding("error", "正方形请求生成了错误的几何主体。", "不要用圆形或三角形满足正方形提示。", "semantic_square_mismatch"))
 
     if wants_triangle:
         if not has_triangle:
@@ -149,5 +164,7 @@ def inspect_code_quality(code: str, brief: dict[str, Any] | None = None) -> dict
             "mathTexObjects": mathtex_count,
             "longDecimalLabels": len(LONG_DECIMAL_RE.findall(source)),
             "semanticKind": kind,
+            "semanticTarget": semantic_target,
+            "rulePackVersion": RULE_PACK_VERSION,
         },
     }

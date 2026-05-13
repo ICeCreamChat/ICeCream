@@ -6,7 +6,7 @@ import ast
 import re
 from typing import Any
 
-from .manim_knowledge import ALLOWED_SCENE_SELF_METHODS
+from .manim_knowledge import ALLOWED_SCENE_SELF_METHODS, MOJIBAKE_MARKERS, RULE_PACK_VERSION, semantic_target_from_brief
 
 
 BLOCKED_MODULES = (
@@ -36,7 +36,12 @@ DANGEROUS_PATTERNS = (
 CHINESE_RE = r"[\u4e00-\u9fff]"
 MATHTEX_CHINESE_RE = re.compile(r"(?:MathTex|Tex|SafeMathTex)\s*\([^)]*" + CHINESE_RE)
 LONG_DECIMAL_RE = re.compile(r"\b-?\d+\.\d{6,}\b")
-MOJIBAKE_RE = re.compile(r"(?:\u934b|\u9422|\u951b|\u7efe|\u20ac|\ufffd)")
+MOJIBAKE_RE = re.compile("|".join(re.escape(marker) for marker in MOJIBAKE_MARKERS))
+LEGACY_API_RE = re.compile(r"\b(?:ShowCreation|TextMobject|TexMobject|number_scale_val)\b")
+BLACK_BACKGROUND_RE = re.compile(
+    r"(?:background_color|fill_color)\s*=\s*(?:BLACK|['\"]#000(?:000)?['\"])",
+    re.IGNORECASE,
+)
 RENDERABLE_SCENE_BASES = {
     "Scene",
     "ThreeDScene",
@@ -117,8 +122,17 @@ def critique_code(code: str, brief: dict[str, Any] | None = None) -> dict[str, A
                 issues.append(_issue("error", "construct 方法看起来是空场景。", "添加可见对象和动画。", "empty_scene"))
             issues.extend(_unsupported_scene_method_issues(tree))
             issues.extend(_invalid_mobject_keyword_issues(tree))
+            issues.extend(_semantic_object_issues(source, brief or {}))
         except SyntaxError as exc:
             issues.append(_issue("error", "生成代码存在 Python 语法错误。", f"先修复语法：{exc.msg}", "syntax_error"))
+
+    if LEGACY_API_RE.search(source):
+        issues.append(_issue(
+            "error",
+            "生成代码使用了旧版 Manim API。",
+            "改用 Manim Community API，例如 Create、Text、MathTex，不要使用 ShowCreation/TextMobject/TexMobject/number_scale_val。",
+            "legacy_api_forbidden",
+        ))
 
     if MATHTEX_CHINESE_RE.search(source):
         issues.append(_issue("error", "MathTex/Tex 中包含中文。", "中文放进 Text/SafeText，MathTex 只保留公式。", "mathtex_chinese"))
@@ -129,6 +143,9 @@ def critique_code(code: str, brief: dict[str, Any] | None = None) -> dict[str, A
     if LONG_DECIMAL_RE.search(source):
         issues.append(_issue("error", "坐标标签出现长小数，影响可读性。", "使用 -\\pi、-\\pi/2、0、\\pi/2、\\pi 等符号刻度。", "long_decimal_ticks"))
 
+    if BLACK_BACKGROUND_RE.search(source):
+        issues.append(_issue("error", "生成代码设置了黑色背景或黑色外框。", "使用浅色全画布教学背景，避免黑边和黑底留白。", "black_background"))
+
     for pattern, message in DANGEROUS_PATTERNS:
         if pattern.search(source):
             issues.append(_issue("error", message, "移除系统访问，保持 Manim 代码在沙箱内可运行。", "security"))
@@ -136,7 +153,14 @@ def critique_code(code: str, brief: dict[str, Any] | None = None) -> dict[str, A
     if len(source.splitlines()) > 350:
         issues.append(_issue("warning", "生成代码过长。", "减少分镜数量或把重复对象整理成函数。", "long_code"))
 
-    if source.count("Text(") + source.count("SafeText(") + source.count("MathTex(") + source.count("SafeMathTex(") > 22:
+    scene_source = _main_scene_source(source)
+    if (
+        scene_source.count("Text(")
+        + scene_source.count("SafeText(")
+        + scene_source.count("MathTex(")
+        + scene_source.count("SafeMathTex(")
+        > 22
+    ):
         issues.append(_issue("warning", "文字对象过多，可能发生重叠。", "使用 VGroup(...).arrange() 并分阶段显示文本。", "text_density"))
 
     if any(issue["severity"] == "error" for issue in issues):
@@ -152,6 +176,7 @@ def critique_code(code: str, brief: dict[str, Any] | None = None) -> dict[str, A
         "issues": issues,
         "next_actions": [issue["hint"] for issue in issues],
         "briefIntent": (brief or {}).get("intent"),
+        "rulePackVersion": RULE_PACK_VERSION,
     }
 
 
@@ -191,6 +216,12 @@ def _unsupported_scene_method_issues(tree: ast.AST) -> list[dict[str, str]]:
     return issues
 
 
+def _main_scene_source(source: str) -> str:
+    marker = "class MainScene"
+    index = source.find(marker)
+    return source[index:] if index >= 0 else source
+
+
 def _invalid_mobject_keyword_issues(tree: ast.AST) -> list[dict[str, str]]:
     """Catch common hallucinated keyword arguments on Manim mobject methods."""
     issues: list[dict[str, str]] = []
@@ -216,6 +247,44 @@ def _invalid_mobject_keyword_issues(tree: ast.AST) -> list[dict[str, str]]:
                     "set_x/set_y/set_z 不支持 aligned_edge；请用 move_to、next_to、align_to，或先设置高度后移动到目标中心。",
                     "invalid_mobject_keyword",
                 ))
+    return issues
+
+
+def _semantic_object_issues(source: str, brief: dict[str, Any]) -> list[dict[str, str]]:
+    target = semantic_target_from_brief(brief)
+    if not target:
+        return []
+
+    has_circle = bool(re.search(r"\bCircle\s*\(", source))
+    has_square = bool(re.search(r"\bSquare\s*\(", source))
+    has_triangle = bool(re.search(r"\b(?:Triangle|Polygon)\s*\(", source)) or bool(
+        re.search(r"\bRegularPolygon\s*\(\s*(?:n\s*=\s*)?3\b", source)
+    )
+    has_axes = "Axes(" in source or "NumberPlane(" in source
+    has_curve = any(marker in source for marker in ("axes.plot", ".plot(", "ParametricFunction", "FunctionGraph", "plot_parametric_curve"))
+
+    issues: list[dict[str, str]] = []
+    if target == "circle":
+        if not has_circle:
+            issues.append(_issue("error", "圆形请求没有生成 Circle 对象。", "使用 Circle() 绘制圆形主体。", "semantic_circle_missing"))
+        if has_triangle and not has_circle:
+            issues.append(_issue("error", "圆形请求生成了三角形主体。", "不要用三角形满足圆形提示。", "semantic_circle_triangle_mismatch"))
+    elif target == "square":
+        if not has_square:
+            issues.append(_issue("error", "正方形请求没有生成 Square 对象。", "使用 Square() 绘制正方形主体。", "semantic_square_missing"))
+        if (has_circle or has_triangle) and not has_square:
+            issues.append(_issue("error", "正方形请求生成了错误的几何主体。", "正方形请求应以 Square() 为主体，不要用圆形或三角形替代。", "semantic_square_mismatch"))
+    elif target == "triangle":
+        if not has_triangle:
+            issues.append(_issue("error", "三角形请求没有生成三角形对象。", "使用 Triangle()、Polygon() 或 RegularPolygon(n=3) 绘制三角形主体。", "semantic_triangle_missing"))
+        if has_circle and not has_triangle:
+            issues.append(_issue("error", "三角形请求生成了圆形主体。", "不要用圆形满足三角形提示。", "semantic_triangle_circle_mismatch"))
+    elif target == "function_graph":
+        if not has_axes:
+            issues.append(_issue("error", "函数图像缺少坐标系。", "使用 Axes 或 NumberPlane 绘制函数坐标系。", "function_axes_missing"))
+        if not has_curve:
+            issues.append(_issue("error", "函数图像缺少可见函数曲线。", "使用 axes.plot(...)、ParametricFunction 或 FunctionGraph 绘制主曲线。", "function_curve_missing"))
+
     return issues
 
 
