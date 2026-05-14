@@ -112,6 +112,57 @@ def static_repair_once(code: str, observation: dict[str, Any]) -> str:
     return repaired
 
 
+def _replace_chinese_mathtex(match: re.Match[str]) -> str:
+    func = match.group("func")
+    quote = match.group("quote")
+    text = match.group("text")
+    if not re.search(r"[\u4e00-\u9fff]", text):
+        return match.group(0)
+    return f"SafeText({quote}{text}{quote}"
+
+
+def patch_first_repair(code: str, report: dict[str, Any]) -> dict[str, Any]:
+    """Apply deterministic small patches before asking the LLM.
+
+    These patches are deliberately narrow: they only address errors that are
+    clear from static analysis and should not change the requested animation.
+    """
+    repaired = static_repair_once(code, {})
+    patches: list[dict[str, str]] = []
+
+    before = repaired
+    repaired = re.sub(
+        r"\b(?P<func>MathTex|Tex|SafeMathTex)\(\s*(?P<quote>['\"])(?P<text>[^'\"]*[\u4e00-\u9fff][^'\"]*)(?P=quote)",
+        _replace_chinese_mathtex,
+        repaired,
+    )
+    if repaired != before:
+        patches.append({
+            "id": "mathtex_chinese_to_safetext",
+            "summary": "已把包含中文的 MathTex/Tex 调用改为 SafeText。",
+        })
+
+    before = repaired
+    repaired = re.sub(r"\bShowCreation\s*\(", "Create(", repaired)
+    repaired = re.sub(r"\bTextMobject\s*\(", "Text(", repaired)
+    repaired = re.sub(r"\bTexMobject\s*\(", "MathTex(", repaired)
+    if repaired != before:
+        patches.append({
+            "id": "legacy_api_to_community_api",
+            "summary": "已把旧版 Manim API 改为 Community API。",
+        })
+
+    before = repaired
+    repaired = re.sub(r",\s*aligned_edge\s*=\s*[^,)]+", "", repaired)
+    if repaired != before:
+        patches.append({
+            "id": "remove_invalid_aligned_edge",
+            "summary": "已移除 set_x/set_y/set_z 不支持的 aligned_edge 参数。",
+        })
+
+    return {"code": repaired, "patches": patches}
+
+
 async def llm_repair_once(
     code: str,
     observation: dict[str, Any],
@@ -189,6 +240,23 @@ async def repair_code_async(
             storyboard_spec=storyboard_spec,
             style_preset=style_preset,
         )
+        patched = patch_first_repair(current, last_report)
+        if patched["patches"]:
+            current = patched["code"]
+            observation["patches"] = patched["patches"]
+            patched_report = critique_code(current, brief or {})
+            if patched_report["status"] != "error":
+                observations.append(observation)
+                return {
+                    "status": "success",
+                    "summary": "代码已通过确定性补丁完成自动修复。",
+                    "attempts": attempt,
+                    "code": current,
+                    "critic": patched_report,
+                    "observations": observations,
+                }
+            last_report = patched_report
+            observation["postPatchReport"] = patched_report
         observations.append(observation)
         current = await llm_repair_once(current, observation, ai_client=ai_client, model_name=model_name)
         last_report = critique_code(current, brief or {})
@@ -231,6 +299,21 @@ def repair_code(
     while attempts < max_attempts:
         attempts += 1
         observation = build_repair_observation(current, last_report, stderr=stderr, attempt=attempts, brief=brief)
+        patched = patch_first_repair(current, last_report)
+        if patched["patches"]:
+            current = patched["code"]
+            patched_report = critique_code(current, brief or {})
+            if patched_report["status"] != "error":
+                return {
+                    "status": "success",
+                    "summary": "代码已通过确定性补丁完成自动修复。",
+                    "attempts": attempts,
+                    "code": current,
+                    "critic": patched_report,
+                }
+            last_report = patched_report
+            observation["patches"] = patched["patches"]
+            observation["postPatchReport"] = patched_report
         current = repair_fn(current, observation)
         last_report = critique_code(current, brief or {})
         if last_report["status"] != "error":

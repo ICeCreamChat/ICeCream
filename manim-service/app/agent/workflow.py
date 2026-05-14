@@ -11,6 +11,7 @@ from .code_streamer import stream_scene_code_events
 from .code_writer import iter_code_deltas
 from .critic import critique_code
 from .director import design_storyboard
+from .failure_events import record_failure_event
 from .inspector import inspect_code_quality
 from .manim_knowledge import RULE_PACK_VERSION, semantic_target_from_brief
 from .planner import plan_animation
@@ -18,6 +19,7 @@ from .repair import repair_code_async
 from .renderer import render_code_for_agent
 from .rescue_scene import rescue_scene_code
 from .skill_loader import select_skills
+from .static_guard import run_static_guard
 from .style_director import select_style
 from .visual_judge import inspect_visual_quality
 
@@ -117,7 +119,7 @@ def _result(
     render_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     render_result = render_result or {}
-    return {
+    payload = {
         "type": "result",
         "success": True,
         "intent": "manim",
@@ -128,6 +130,11 @@ def _result(
         "warning": warning or render_result.get("warning"),
         "agentTrace": trace,
     }
+    if warning or render_result.get("success") is False:
+        event_id = record_failure_event(payload, code=code)
+        if event_id:
+            payload.setdefault("agentTrace", {})["failureEventId"] = event_id
+    return payload
 
 
 async def _repair_from_report(
@@ -283,10 +290,62 @@ async def stream_agent_events(
         )
         return
 
+    repair_attempts = 0
+    yield {"type": "progress", "step": "critic", "message": "正在运行 Python 静态守卫"}
+    static_guard_report = run_static_guard(code, brief)
+    yield {"type": "static_guard", "guard": static_guard_report}
+    if static_guard_report["status"] == "error":
+        yield {"type": "repair", "step": "repair", "message": "正在修复 Python 编译问题"}
+        code, _critic_after_static, repair_attempts, repaired = await _repair_from_report(
+            code,
+            brief,
+            static_guard_report,
+            repair_attempts,
+            ai_client=ai_client,
+            model_name=model_name,
+            storyboard_spec=storyboard_spec,
+            style_preset=style_preset,
+            stderr="; ".join(issue.get("details") or issue.get("message", "") for issue in static_guard_report.get("issues", [])),
+        )
+        code_source = "repair"
+        async for event in _emit_code_events(code, source="repair", warning=None if repaired["status"] == "success" else repaired["summary"]):
+            yield event
+        static_guard_report = run_static_guard(code, brief)
+        yield {"type": "static_guard", "guard": static_guard_report}
+
+    if static_guard_report["status"] == "error":
+        rescue_code, rescue_critic, rescue_quality = await _emit_rescue_code(brief, static_guard_report.get("summary", "Python 静态守卫失败"))
+        rescue_guard = run_static_guard(rescue_code, brief) if rescue_code else static_guard_report
+        if rescue_code and rescue_guard["status"] != "error" and rescue_critic["status"] != "error" and rescue_quality["status"] != "error":
+            code = rescue_code
+            code_source = "rescue"
+            static_guard_report = rescue_guard
+            critic_report = rescue_critic
+            quality_report = rescue_quality
+            repair_attempts += 1
+            async for event in _emit_code_events(code, source="rescue", warning="已切换到质量兜底场景。"):
+                yield event
+            yield {"type": "static_guard", "guard": static_guard_report}
+            yield {"type": "critic_report", "critic": critic_report}
+            yield {"type": "quality_report", "quality": quality_report}
+
+    if static_guard_report["status"] == "error":
+        trace = _trace(
+            brief,
+            skills,
+            retries=repair_attempts,
+            failure_reason=static_guard_report["summary"],
+            quality=static_guard_report,
+            storyboard_spec=storyboard_spec,
+            style_preset=style_preset,
+            code_source=code_source,
+        )
+        yield _result(code=code, trace=trace, warning="Manim Agent v5 已生成代码，但 Python 静态守卫仍需处理。")
+        return
+
     yield {"type": "progress", "step": "critic", "message": "正在检查代码质量和安全性"}
     critic_report = critique_code(code, brief)
     yield {"type": "critic_report", "critic": critic_report}
-    repair_attempts = 0
     if critic_report["status"] == "error":
         yield {"type": "repair", "step": "repair", "message": "正在修复静态代码问题"}
         code, critic_report, repair_attempts, repaired = await _repair_from_report(
@@ -299,6 +358,7 @@ async def stream_agent_events(
             storyboard_spec=storyboard_spec,
             style_preset=style_preset,
         )
+        code_source = "repair"
         async for event in _emit_code_events(code, source="repair", warning=None if repaired["status"] == "success" else repaired["summary"]):
             yield event
         yield {"type": "critic_report", "critic": critic_report}
@@ -307,6 +367,7 @@ async def stream_agent_events(
         rescue_code, rescue_critic, rescue_quality = await _emit_rescue_code(brief, critic_report.get("summary", "静态检查失败"))
         if rescue_code and rescue_critic["status"] != "error" and rescue_quality["status"] != "error":
             code = rescue_code
+            code_source = "rescue"
             critic_report = rescue_critic
             quality_report = rescue_quality
             repair_attempts += 1
@@ -345,6 +406,7 @@ async def stream_agent_events(
             storyboard_spec=storyboard_spec,
             style_preset=style_preset,
         )
+        code_source = "repair"
         async for event in _emit_code_events(code, source="repair", warning=None if repaired["status"] == "success" else repaired["summary"]):
             yield event
         quality_report = inspect_code_quality(code, brief)
@@ -353,6 +415,7 @@ async def stream_agent_events(
             rescue_code, rescue_critic, rescue_quality = await _emit_rescue_code(brief, quality_report.get("summary", critic_report.get("summary", "")))
             if rescue_code and rescue_critic["status"] != "error" and rescue_quality["status"] != "error":
                 code = rescue_code
+                code_source = "rescue"
                 critic_report = rescue_critic
                 quality_report = rescue_quality
                 repair_attempts += 1
@@ -409,6 +472,7 @@ async def stream_agent_events(
                 rescue_code, rescue_critic, rescue_quality = await _emit_rescue_code(brief, visual_report.get("summary", "视觉质量警告"))
                 if rescue_code and rescue_critic["status"] != "error" and rescue_quality["status"] != "error":
                     code = rescue_code
+                    code_source = "rescue"
                     critic_report = rescue_critic
                     quality_report = rescue_quality
                     repair_attempts += 1
@@ -426,6 +490,7 @@ async def stream_agent_events(
                 rescue_code, rescue_critic, rescue_quality = await _emit_rescue_code(brief, visual_report.get("summary", "视觉检查失败"))
                 if rescue_code and rescue_critic["status"] != "error" and rescue_quality["status"] != "error":
                     code = rescue_code
+                    code_source = "rescue"
                     critic_report = rescue_critic
                     quality_report = rescue_quality
                     repair_attempts += 1
@@ -464,6 +529,7 @@ async def stream_agent_events(
                 style_preset=style_preset,
                 stderr=(preview_render or {}).get("stderr") or (preview_render or {}).get("details") or (preview_render or {}).get("error") or "",
             )
+            code_source = "repair"
             async for event in _emit_code_events(code, source="repair", warning=None if repaired["status"] == "success" else repaired["summary"]):
                 yield event
             quality_report = inspect_code_quality(code, brief)

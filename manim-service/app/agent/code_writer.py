@@ -64,6 +64,7 @@ def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any])
     kind = str(storyboard_spec.get("animation_type") or storyboard_spec.get("kind") or brief.get("animation_type") or "")
     request_text = str(brief.get("message") or "")
     requirements: list[str] = []
+    is_simple_shape = not any(token in request_text for token in ("证明", "推导", "内角", "面积", "对角线", "讲解", "性质", "公式"))
 
     if kind == "geometry_circle" or "圆" in request_text:
         requirements.extend([
@@ -78,6 +79,8 @@ def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any])
             "The triangle should occupy roughly 45%-65% of the visual width with straight high-contrast edges.",
             "Do not create circles, rounded badges, or circular frames as the primary visible subject.",
         ])
+        if is_simple_shape:
+            requirements.append("For a simple triangle prompt, do not create a proof scene; avoid angle-sum derivations, dense angle arcs, and formula-heavy layouts.")
 
     if kind == "square" or "正方形" in request_text or "square" in request_text.lower():
         requirements.extend([
@@ -85,6 +88,8 @@ def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any])
             "Do not use Circle/Triangle/Polygon as the primary object for a square request.",
             "Show equal sides and right angles only if they do not crowd the main square.",
         ])
+        if is_simple_shape:
+            requirements.append("For a simple square prompt, do not create a proof scene; avoid diagonal/property derivations and formula-heavy layouts.")
 
     if kind == "function_graph" or any(token in request_text for token in ("正弦", "余弦", "函数", "sin", "cos")):
         requirements.extend([
@@ -98,9 +103,20 @@ def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any])
     if kind in {"data_chart", "bar_chart", "line_chart"} or any(token in request_text for token in ("柱状图", "销量", "数据")):
         requirements.extend([
             "Bars must be large, high contrast, and occupy the central teaching area; avoid tiny bars with excessive whitespace.",
+            "For a three-month bar chart, draw exactly three large Rectangle bars; make the tallest bar at least 3.1 scene units high and each bar 1.0-1.25 units wide.",
+            "The bar group should occupy roughly 65%-75% of the visual zone width and 40%-55% of the visual zone height.",
+            "Avoid a large empty coordinate grid; use a compact baseline, sparse month labels, and prominent value labels.",
             "Use 3-5 sparse labels only and keep axes/ticks readable.",
             "Do not use MathTex/SafeMathTex for data charts; months, numbers, titles, and summaries must use SafeText/Text.",
             "Do not call set_x/set_y/set_z with aligned_edge; position bars with move_to, next_to, align_to, or center coordinates.",
+            "Do not use bars.index(bar), VGroup.index(...), or mobject index lookup for data values; use enumerate(zip(months, values, bars)) or store labels when constructing bars.",
+        ])
+
+    if kind in {"flow_process", "process_flow"} or any(token in request_text.lower() for token in ("流程", "握手", "tcp", "flow", "process")):
+        requirements.extend([
+            "Flow diagrams should use 2-4 main nodes, 2-4 arrows, and one reusable step banner; avoid creating a separate paragraph for every state.",
+            "Keep visible text compact: prefer short Chinese labels such as '客户端', '服务器', 'SYN', 'SYN-ACK', 'ACK'.",
+            "Use VGroup(...).arrange() for nodes and arrows, and reuse or transform labels instead of adding many independent Text objects.",
         ])
 
     if kind == "motion_path" or any(token in request_text for token in ("小球", "抛物", "运动", "轨迹")):
@@ -144,6 +160,7 @@ def build_code_writer_messages(
         "Use at least two staged animations and a final self.wait(1).",
         "Use self only for Scene control methods: add, remove, play, wait, clear, safe_play, bring_to_front, bring_to_back, foreground mobject helpers.",
         "Never call Mobject methods on self. Use line.get_angle(), dot.get_center(), mobject.next_to(...), Angle(line1, line2), or vector math instead of self.get_angle/self.get_center/self.next_to.",
+        "Angle() must receive existing Line/Arrow mobjects, for example Angle(side_a, side_b). Never pass raw points, get_corner/get_center results, or vector arithmetic into Angle().",
         "All visible non-formula text must be Simplified Chinese unless the user explicitly asks for another language.",
         "If the request asks for a circle, create a Circle object and avoid triangle-only geometry.",
         "If the request asks for a square, create a Square object and avoid circle-only or triangle-only geometry.",

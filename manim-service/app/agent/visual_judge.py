@@ -116,6 +116,13 @@ def _wants_triangle(brief: dict[str, Any] | None) -> bool:
     return kind in {"geometry_proof", "triangle"} or "\u4e09\u89d2" in message or "triangle" in message
 
 
+def _wants_square(brief: dict[str, Any] | None) -> bool:
+    spec = (brief or {}).get("storyboardSpec") or (brief or {}).get("spec") or {}
+    kind = str(spec.get("kind") or spec.get("animation_type") or (brief or {}).get("animation_type") or "")
+    message = str((brief or {}).get("message") or "").lower()
+    return kind == "square" or "\u6b63\u65b9\u5f62" in message or "square" in message
+
+
 def _shape_metrics_from_image(image: Image.Image) -> dict[str, Any]:
     """Estimate whether the dominant central subject looks circular/triangular.
 
@@ -285,6 +292,7 @@ def _semantic_findings(code: str, brief: dict[str, Any] | None) -> list[dict[str
     message = str((brief or {}).get("message") or "").lower()
     findings: list[dict[str, str]] = []
     has_circle = bool(re.search(r"\bCircle\s*\(", source))
+    has_square = bool(re.search(r"\bSquare\s*\(", source))
     has_triangle = bool(re.search(r"\b(Triangle|Polygon)\s*\(", source))
 
     if _wants_circle(brief):
@@ -296,6 +304,12 @@ def _semantic_findings(code: str, brief: dict[str, Any] | None) -> list[dict[str
     if _wants_triangle(brief):
         if not has_triangle:
             findings.append(_finding("error", "语义检查失败：三角形请求没有生成三角形主体。", "使用 Triangle() 或 Polygon() 绘制三角形。", "semantic_triangle_missing"))
+
+    if _wants_square(brief):
+        if not has_square:
+            findings.append(_finding("error", "语义检查失败：正方形请求没有生成正方形主体。", "使用 Square() 作为主体对象。", "semantic_square_missing"))
+        if (has_circle or has_triangle) and not has_square:
+            findings.append(_finding("error", "语义检查失败：正方形请求被其他几何图形替代。", "不要把正方形提示改成圆形或三角形动画。", "semantic_square_mismatch"))
 
     return findings
 
@@ -310,6 +324,7 @@ def inspect_visual_quality(
     findings.extend(_semantic_findings(code, brief))
     source = code or ""
     code_has_circle = bool(re.search(r"\bCircle\s*\(", source))
+    code_has_square = bool(re.search(r"\bSquare\s*\(", source))
     code_has_triangle = bool(re.search(r"\b(Triangle|Polygon)\s*\(", source))
 
     if render_result:
@@ -364,6 +379,17 @@ def inspect_visual_quality(
                         "视觉语义检查失败：主体画面更像圆形，不像三角形。",
                         "重新生成时必须让 Triangle 或 Polygon 三角形成为主要可见对象。",
                         "visual_triangle_mismatch",
+                    ))
+                if (
+                    _wants_square(brief)
+                    and not code_has_square
+                    and (code_has_circle or code_has_triangle)
+                ):
+                    findings.append(_finding(
+                        "error",
+                        "视觉语义检查失败：正方形请求没有以正方形为主体。",
+                        "重新生成时必须让 Square 成为主要可见对象。",
+                        "visual_square_mismatch",
                     ))
 
     if "self.wait" not in (code or ""):

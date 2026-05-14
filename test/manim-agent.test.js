@@ -156,6 +156,7 @@ test('POST /api/manim/agent/stream proxies v5 NDJSON agent events', async () => 
       res.write(JSON.stringify({ type: 'storyboard', storyboard: [{ title: 'step' }] }) + '\n');
       res.write(JSON.stringify({ type: 'style', style: { name: 'teaching_premium' } }) + '\n');
       res.write(JSON.stringify({ type: 'code_delta', delta: 'from manim import *', code: 'from manim import *', source: 'llm_v5' }) + '\n');
+      res.write(JSON.stringify({ type: 'static_guard', guard: { status: 'pass', summary: 'Python 静态守卫通过。' } }) + '\n');
       res.write(JSON.stringify({ type: 'visual_check', visual: { status: 'pass' } }) + '\n');
       res.end(JSON.stringify({ type: 'result', success: true, intent: 'manim', rendered: false, code: 'from manim import *' }) + '\n');
     });
@@ -175,6 +176,7 @@ test('POST /api/manim/agent/stream proxies v5 NDJSON agent events', async () => 
     assert.match(text, /"type":"storyboard"/);
     assert.match(text, /"type":"style"/);
     assert.match(text, /"type":"code_delta"/);
+    assert.match(text, /"type":"static_guard"/);
     assert.match(text, /"type":"visual_check"/);
     assert.match(text, /"type":"result"/);
   });
@@ -193,6 +195,8 @@ test('frontend shows Manim agent v5 production progress in a chat bubble', async
   assert.match(messageHandlerSource, /event\.type === 'style'/);
   assert.match(messageHandlerSource, /event\.type === 'skills'/);
   assert.match(messageHandlerSource, /event\.type === 'inspect'/);
+  assert.match(messageHandlerSource, /event\.type === 'static_guard'/);
+  assert.match(messageHandlerSource, /latestManimStaticGuard/);
   assert.match(messageHandlerSource, /event\.type === 'critic_report'/);
   assert.match(messageHandlerSource, /event\.type === 'preview'/);
   assert.match(messageHandlerSource, /event\.type === 'visual_check'/);
@@ -222,6 +226,7 @@ test('frontend shows Manim agent v5 production progress in a chat bubble', async
   assert.match(messageHandlerSource, /绘制余弦曲线/);
   assert.match(messageHandlerSource, /预览渲染失败：/);
   assert.match(messageHandlerSource, /代码必须只有一个可渲染 Scene 类/);
+  assert.match(messageHandlerSource, /Python 静态守卫完成/);
   assert.doesNotMatch(messageHandlerSource, /动画渲染服务未响应/);
   assert.doesNotMatch(messageHandlerSource, /请确保 Manim 服务正在运行/);
   assert.match(messageHandlerSource, /const hasProblem = event\.success === false \|\| !event\.rendered \|\| Boolean\(event\.warning\)/);

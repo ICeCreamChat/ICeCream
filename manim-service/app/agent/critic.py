@@ -38,6 +38,7 @@ MATHTEX_CHINESE_RE = re.compile(r"(?:MathTex|Tex|SafeMathTex)\s*\([^)]*" + CHINE
 LONG_DECIMAL_RE = re.compile(r"\b-?\d+\.\d{6,}\b")
 MOJIBAKE_RE = re.compile("|".join(re.escape(marker) for marker in MOJIBAKE_MARKERS))
 LEGACY_API_RE = re.compile(r"\b(?:ShowCreation|TextMobject|TexMobject|number_scale_val)\b")
+FRAGILE_VGROUP_INDEX_RE = re.compile(r"\b(?:bars|bar_group|barGroup|columns|nodes|node_group)\.index\s*\(")
 BLACK_BACKGROUND_RE = re.compile(
     r"(?:background_color|fill_color)\s*=\s*(?:BLACK|['\"]#000(?:000)?['\"])",
     re.IGNORECASE,
@@ -122,6 +123,7 @@ def critique_code(code: str, brief: dict[str, Any] | None = None) -> dict[str, A
                 issues.append(_issue("error", "construct 方法看起来是空场景。", "添加可见对象和动画。", "empty_scene"))
             issues.extend(_unsupported_scene_method_issues(tree))
             issues.extend(_invalid_mobject_keyword_issues(tree))
+            issues.extend(_invalid_angle_usage_issues(tree))
             issues.extend(_semantic_object_issues(source, brief or {}))
         except SyntaxError as exc:
             issues.append(_issue("error", "生成代码存在 Python 语法错误。", f"先修复语法：{exc.msg}", "syntax_error"))
@@ -143,6 +145,14 @@ def critique_code(code: str, brief: dict[str, Any] | None = None) -> dict[str, A
     if LONG_DECIMAL_RE.search(source):
         issues.append(_issue("error", "坐标标签出现长小数，影响可读性。", "使用 -\\pi、-\\pi/2、0、\\pi/2、\\pi 等符号刻度。", "long_decimal_ticks"))
 
+    if FRAGILE_VGROUP_INDEX_RE.search(source):
+        issues.append(_issue(
+            "error",
+            "生成代码使用了脆弱的 VGroup.index(...) 数据查找。",
+            "柱状图或流程图请用 enumerate(zip(...)) 在创建对象时绑定数据，不要在渲染时反查 mobject 索引。",
+            "fragile_vgroup_index",
+        ))
+
     if BLACK_BACKGROUND_RE.search(source):
         issues.append(_issue("error", "生成代码设置了黑色背景或黑色外框。", "使用浅色全画布教学背景，避免黑边和黑底留白。", "black_background"))
 
@@ -153,13 +163,16 @@ def critique_code(code: str, brief: dict[str, Any] | None = None) -> dict[str, A
     if len(source.splitlines()) > 350:
         issues.append(_issue("warning", "生成代码过长。", "减少分镜数量或把重复对象整理成函数。", "long_code"))
 
+    brief_kind = str(((brief or {}).get("storyboardSpec") or (brief or {}).get("spec") or {}).get("kind") or (brief or {}).get("animation_type") or "")
+    brief_message = str((brief or {}).get("message") or "").lower()
+    text_density_limit = 30 if brief_kind in {"flow_process", "process_flow"} or any(term in brief_message for term in ("流程", "握手", "tcp")) else 22
     scene_source = _main_scene_source(source)
     if (
         scene_source.count("Text(")
         + scene_source.count("SafeText(")
         + scene_source.count("MathTex(")
         + scene_source.count("SafeMathTex(")
-        > 22
+        > text_density_limit
     ):
         issues.append(_issue("warning", "文字对象过多，可能发生重叠。", "使用 VGroup(...).arrange() 并分阶段显示文本。", "text_density"))
 
@@ -247,6 +260,48 @@ def _invalid_mobject_keyword_issues(tree: ast.AST) -> list[dict[str, str]]:
                     "set_x/set_y/set_z 不支持 aligned_edge；请用 move_to、next_to、align_to，或先设置高度后移动到目标中心。",
                     "invalid_mobject_keyword",
                 ))
+    return issues
+
+
+def _call_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return ""
+
+
+def _angle_arg_is_safe(arg: ast.AST) -> bool:
+    if isinstance(arg, (ast.Name, ast.Attribute)):
+        return True
+    if isinstance(arg, ast.Call):
+        name = _call_name(arg.func)
+        return name in {"Line", "Arrow", "Vector"}
+    return False
+
+
+def _invalid_angle_usage_issues(tree: ast.AST) -> list[dict[str, str]]:
+    """Catch Angle(point, point) hallucinations before Manim render fails."""
+    issues: list[dict[str, str]] = []
+    reported = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if _call_name(node.func) != "Angle":
+            continue
+        if len(node.args) < 2:
+            continue
+        if _angle_arg_is_safe(node.args[0]) and _angle_arg_is_safe(node.args[1]):
+            continue
+        if reported:
+            continue
+        reported = True
+        issues.append(_issue(
+            "error",
+            "Angle 调用传入了坐标点或表达式，而不是线段对象。",
+            "先创建 Line/Arrow 对象，再使用 Angle(line1, line2)；不要把 get_corner/get_center 或向量加法结果直接传给 Angle。",
+            "invalid_angle_arguments",
+        ))
     return issues
 
 

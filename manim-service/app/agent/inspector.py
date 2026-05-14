@@ -68,7 +68,8 @@ def inspect_code_quality(code: str, brief: dict[str, Any] | None = None) -> dict
     if MOJIBAKE_RE.search(source):
         findings.append(_finding("error", "代码中出现乱码中文。", "使用有效 UTF-8 中文字符串。", "mojibake"))
 
-    if text_count > 22:
+    text_limit = 30 if kind in {"flow_process", "process_flow"} or any(term in prompt for term in ("流程", "握手", "tcp")) else 22
+    if text_count > text_limit:
         findings.append(_finding("warning", f"文字对象数量较多（{text_count} 个）。", "合并文字组，并分阶段显示，避免重叠。", "text_density"))
 
     if "include_numbers': True" in source or '"include_numbers": True' in source:

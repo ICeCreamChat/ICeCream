@@ -407,6 +407,8 @@ class MessageHandler {
                     this.latestManimSkills = event.skills || [];
                 } else if (event.type === 'inspect') {
                     return;
+                } else if (event.type === 'static_guard') {
+                    this.latestManimStaticGuard = event.guard;
                 } else if (event.type === 'critic_report') {
                     this.latestManimCriticReport = event.critic;
                 } else if (event.type === 'quality_report') {
@@ -657,6 +659,9 @@ class MessageHandler {
             } else {
                 this.setManimProcessStep('coder', 'pass', '场景代码生成完成', this.formatManimCodeDetails(event));
             }
+        } else if (event.type === 'static_guard') {
+            const guard = event.guard || {};
+            this.setManimProcessStep('critic', this.mapManimReportStatus(guard.status), guard.summary || 'Python 静态守卫完成', this.formatManimCriticDetails(guard));
         } else if (event.type === 'critic_report') {
             const report = event.critic || {};
             this.setManimProcessStep('critic', this.mapManimReportStatus(report.status), report.summary || '静态检查完成', this.formatManimCriticDetails(report));

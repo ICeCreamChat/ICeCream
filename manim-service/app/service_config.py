@@ -73,6 +73,7 @@ MAX_HISTORY_ENTRIES = 15
 REQUEST_TIMEOUT = 120.0
 MANIM_TIMEOUT = 300
 MANIM_AGENT_REPAIR_ATTEMPTS_DEFAULT = 4
+MANIM_AGENT_FAILURE_LOG_DEFAULT = os.path.join(PROJECT_ROOT, "logs", "manim-agent-failures.jsonl")
 
 
 def _bounded_int_env(name, default, minimum, maximum):
@@ -85,6 +86,14 @@ def _bounded_int_env(name, default, minimum, maximum):
 
 def get_manim_agent_repair_attempts():
     return _bounded_int_env("MANIM_AGENT_REPAIR_ATTEMPTS", MANIM_AGENT_REPAIR_ATTEMPTS_DEFAULT, 1, 6)
+
+
+def get_manim_agent_failure_log_path():
+    return os.environ.get("MANIM_AGENT_FAILURE_LOG", MANIM_AGENT_FAILURE_LOG_DEFAULT)
+
+
+def is_manim_agent_failure_log_enabled():
+    return os.environ.get("MANIM_AGENT_FAILURE_LOG_ENABLED", "true").lower() not in {"0", "false", "off", "no"}
 
 
 MANIM_AGENT_REPAIR_ATTEMPTS = get_manim_agent_repair_attempts()

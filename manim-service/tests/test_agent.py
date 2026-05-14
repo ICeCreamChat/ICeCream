@@ -17,14 +17,19 @@ from app.agent.code_writer import write_scene_code
 from app.agent.coder import generate_code
 from app.agent.critic import critique_code
 from app.agent.director import design_storyboard
+from app.agent.failure_events import record_failure_event
+from app.agent.failure_replay import replay_failure_events
 from app.agent.inspector import inspect_code_quality
 from app.agent.manim_knowledge import RULE_PACK_VERSION, manim_rules_prompt, rule_ids
 from app.agent.planner import plan_animation
-from app.agent.repair import repair_code, repair_code_async, static_repair_once
+from app.agent.repair import patch_first_repair, repair_code, repair_code_async, static_repair_once
 from app.agent.renderer import sanitize_render_error
 from app.agent.rescue_scene import rescue_scene_code
+from app.agent.real_smoke import run_real_smoke_suite
 from app.agent.scene_runtime import SCENE_RUNTIME_CODE
 from app.agent.skill_loader import select_skills
+from app.agent.smoke_suite import SMOKE_CASES, evaluate_smoke_result
+from app.agent.static_guard import run_static_guard
 from app.agent.visual_judge import inspect_frame_quality, inspect_visual_quality
 from app.agent.workflow import stream_agent_events
 
@@ -318,6 +323,101 @@ class ManimAgentV4Tests(unittest.TestCase):
         self.assertIn("余弦函数", spec["shots"][0]["narration"])
         self.assertNotIn("Setup Axes", json.dumps(spec["shots"], ensure_ascii=False))
 
+    def test_director_keeps_simple_trig_graphs_focused_on_axes_and_curve(self):
+        brief = plan_animation("画一个正弦函数，做分步骤讲解动画")
+        noisy_spec = json.loads(english_cosine_director_json())
+        noisy_spec.update({
+            "topic": "画一个正弦函数",
+            "teaching_goal": "讲解正弦函数图像。",
+            "animation_type": "function_graph",
+            "shots": [
+                {
+                    "id": 1,
+                    "title": "单位圆与角度",
+                    "narration": "先画单位圆解释角度。",
+                    "visual": "单位圆和角度射线",
+                    "animation": "Create unit circle",
+                },
+                {
+                    "id": 2,
+                    "title": "映射到坐标平面",
+                    "narration": "把单位圆映射到函数曲线。",
+                    "visual": "单位圆和坐标系",
+                    "animation": "Transform",
+                },
+            ],
+        })
+        ai = _FakeAI([json.dumps(noisy_spec, ensure_ascii=False)])
+
+        result = asyncio.run(design_storyboard(brief, ai_client=ai, model_name="fake-model"))
+        spec = result["storyboardSpec"]
+        text = json.dumps(spec, ensure_ascii=False)
+
+        self.assertEqual(result["status"], "success")
+        self.assertIn("绘制函数曲线", [shot["title"] for shot in spec["shots"]])
+        self.assertNotIn("单位圆与角度", text)
+        self.assertIn("简单正弦/余弦图像不要加入单位圆", text)
+
+    def test_director_keeps_simple_shape_prompts_out_of_proof_mode(self):
+        brief = plan_animation("画一个三角形")
+        noisy_spec = json.loads(director_json())
+        noisy_spec.update({
+            "topic": "三角形内角和证明",
+            "domain": "geometry",
+            "animation_type": "triangle",
+            "visual_objects": ["Triangle", "angle labels", "formula"],
+            "shots": [
+                {
+                    "id": 1,
+                    "title": "绘制三角形",
+                    "narration": "画一个三角形。",
+                    "visual": "Triangle",
+                    "animation": "Create",
+                },
+                {
+                    "id": 2,
+                    "title": "推导内角和",
+                    "narration": "展示 ∠A + ∠B + ∠C = 180°。",
+                    "visual": "公式和角标",
+                    "animation": "Write formula",
+                },
+            ],
+        })
+        ai = _FakeAI([json.dumps(noisy_spec, ensure_ascii=False)])
+
+        result = asyncio.run(design_storyboard(brief, ai_client=ai, model_name="fake-model"))
+        spec = result["storyboardSpec"]
+        text = json.dumps(spec, ensure_ascii=False)
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(spec["topic"], "画一个三角形")
+        self.assertIn("简单图形请求只画主体和少量标签", text)
+        self.assertNotIn("推导内角和", text)
+
+    def test_director_normalizes_bar_chart_for_large_subject(self):
+        brief = plan_animation("画一个三个月销量柱状图")
+        noisy_spec = json.loads(director_json())
+        noisy_spec.update({
+            "topic": "销售数据",
+            "domain": "data",
+            "animation_type": "bar_chart",
+            "visual_objects": ["axes", "tiny bars", "many labels"],
+            "shots": [
+                {"id": 1, "title": "准备数据", "narration": "整理数据。", "visual": "表格", "animation": "FadeIn"},
+                {"id": 2, "title": "绘制图表", "narration": "画柱状图。", "visual": "柱状图", "animation": "Create"},
+            ],
+        })
+        ai = _FakeAI([json.dumps(noisy_spec, ensure_ascii=False)])
+
+        result = asyncio.run(design_storyboard(brief, ai_client=ai, model_name="fake-model"))
+        spec = result["storyboardSpec"]
+        text = json.dumps(spec, ensure_ascii=False)
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(spec["topic"], "三个月销量柱状图")
+        self.assertIn("三根大号柱子", spec["visual_objects"])
+        self.assertIn("柱组应占视觉区宽度 65%-75%", text)
+
     def test_code_writer_requires_ai_and_does_not_fallback_to_templates(self):
         brief = plan_animation("画一个圆形")
         spec = json.loads(director_json())
@@ -440,6 +540,59 @@ class MainScene(Scene):
 
         self.assertEqual(report["status"], "error")
         self.assertIn("invalid_mobject_keyword", codes)
+
+    def test_critic_rejects_fragile_vgroup_index_lookup(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        bars = VGroup(Rectangle(), Rectangle(), Rectangle())
+        values = [120, 180, 240]
+        for bar in bars:
+            label = Text(str(values[bars.index(bar)]))
+            self.add(bar, label)
+"""
+        report = critique_code(code, plan_animation("画一个三个月销量柱状图"))
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("fragile_vgroup_index", codes)
+
+    def test_critic_rejects_angle_with_coordinate_expressions(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        square = Square()
+        right_angle = Angle(
+            square.get_corner(UR) + LEFT * 0.3,
+            square.get_corner(UR) + DOWN * 0.3,
+        )
+        self.add(square, right_angle)
+"""
+        report = critique_code(code, {"intent": "CREATE", "target_objects": ["square"]})
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("invalid_angle_arguments", codes)
+
+    def test_critic_allows_angle_with_line_mobjects(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        side_a = Line(ORIGIN, RIGHT)
+        side_b = Line(ORIGIN, UP)
+        right_angle = Angle(side_a, side_b)
+        self.add(side_a, side_b, right_angle)
+"""
+        report = critique_code(code, {"intent": "CREATE"})
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertNotIn("invalid_angle_arguments", codes)
 
     def test_critic_allows_scene_control_self_methods(self):
         code = """
@@ -643,6 +796,52 @@ class MainScene(Scene):
         self.assertEqual(report["status"], "error")
         self.assertIn("data_chart_mathtex", codes)
 
+    def test_inspector_allows_compact_flow_text_density(self):
+        brief = plan_animation("解释 TCP 三次握手流程")
+        text_lines = "\n".join(
+            f"        label_{index} = Text('步骤{index}')\n        self.add(label_{index})"
+            for index in range(24)
+        )
+        flow_code = f"""
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        client = Text("客户端")
+        server = Text("服务器")
+        arrow = Arrow(LEFT, RIGHT)
+        self.add(client, server, arrow)
+{text_lines}
+        self.wait(1)
+"""
+        report = inspect_code_quality(flow_code, brief)
+        codes = {item.get("code") for item in report["findings"]}
+
+        self.assertNotIn("text_density", codes)
+
+    def test_critic_allows_compact_flow_text_density(self):
+        brief = plan_animation("解释 TCP 三次握手流程")
+        text_lines = "\n".join(
+            f"        label_{index} = Text('步骤{index}')\n        self.add(label_{index})"
+            for index in range(24)
+        )
+        flow_code = f"""
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        client = Text("客户端")
+        server = Text("服务器")
+        arrow = Arrow(LEFT, RIGHT)
+        self.add(client, server, arrow)
+{text_lines}
+        self.wait(1)
+"""
+        report = critique_code(flow_code, brief)
+        codes = {item.get("code") for item in report["issues"]}
+
+        self.assertNotIn("text_density", codes)
+
     def test_rescue_scene_satisfies_core_semantic_contracts(self):
         cases = [
             ("\u753b\u4e00\u4e2a\u4e09\u89d2\u5f62", "Polygon"),
@@ -778,6 +977,22 @@ class MainScene(Scene):
         self.assertNotEqual(report["status"], "error")
         self.assertNotIn("不像三角形", messages)
 
+    def test_visual_judge_catches_square_semantic_mismatch(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        self.add(Circle())
+        self.wait(1)
+"""
+        report = inspect_visual_quality(code, plan_animation("画一个正方形"), {})
+        codes = {item.get("code") for item in report["findings"]}
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("semantic_square_missing", codes)
+        self.assertIn("semantic_square_mismatch", codes)
+
     def test_runtime_helpers_avoid_black_letterbox_and_inner_panel(self):
         self.assertIn('self.camera.background_color = "#F7FBFF"', SCENE_RUNTIME_CODE)
         self.assertIn("config.frame_width", SCENE_RUNTIME_CODE)
@@ -868,6 +1083,272 @@ class MainScene(Scene):
             self.assertEqual(service_config.get_manim_agent_repair_attempts(), 6)
         with patch.dict(os.environ, {"MANIM_AGENT_REPAIR_ATTEMPTS": "not-a-number"}, clear=False):
             self.assertEqual(service_config.get_manim_agent_repair_attempts(), 4)
+
+    def test_static_guard_catches_python_compile_errors_without_local_paths(self):
+        bad_code = "from manim import *\n\nclass MainScene(Scene):\n    def construct(self):\n        self.add(\n"
+        report = run_static_guard(bad_code, plan_animation("画一个圆形"))
+
+        self.assertEqual(report["status"], "error")
+        self.assertEqual(report["issues"][0]["code"], "py_compile_error")
+        self.assertIn("Python 编译失败", report["issues"][0]["message"])
+        self.assertNotIn(str(SERVICE_ROOT), report["issues"][0].get("details", ""))
+        self.assertEqual(report["rulePackVersion"], RULE_PACK_VERSION)
+
+    def test_static_guard_passes_valid_scene_code(self):
+        report = run_static_guard(circle_scene_code(), plan_animation("画一个圆形"))
+
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["issues"], [])
+        self.assertEqual(report["metrics"]["compiler"], "py_compile")
+
+    def test_failure_event_log_records_sanitized_regression_sample(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "failures.jsonl"
+            result = {
+                "rendered": False,
+                "warning": r"失败：D:\secret\project\scene.py token=sk-testsecret",
+                "agentTrace": {
+                    "rulePackVersion": RULE_PACK_VERSION,
+                    "semanticTarget": "circle",
+                    "failureReason": r"D:\secret\project\scene.py",
+                    "quality": {"status": "error", "summary": "静态检查失败"},
+                    "repairs": {"count": 2, "rules": ["py_compile_error"]},
+                },
+            }
+            with patch.dict(os.environ, {"MANIM_AGENT_FAILURE_LOG": str(log_path), "MANIM_AGENT_FAILURE_LOG_ENABLED": "true"}, clear=False):
+                event_id = record_failure_event(result, code="from manim import *\n")
+
+            payload = json.loads(log_path.read_text(encoding="utf-8").splitlines()[0])
+            self.assertEqual(payload["id"], event_id)
+            self.assertEqual(payload["semanticTarget"], "circle")
+            self.assertEqual(payload["repairRules"], ["py_compile_error"])
+            self.assertNotIn("D:\\secret", json.dumps(payload, ensure_ascii=False))
+            self.assertNotIn("sk-testsecret", json.dumps(payload, ensure_ascii=False))
+
+    def test_failure_replay_evaluates_logged_samples_without_rendering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "failures.jsonl"
+            samples = [
+                {
+                    "id": "syntax",
+                    "semanticTarget": "circle",
+                    "repairRules": ["py_compile_error"],
+                    "codeSnippet": "from manim import *\nclass MainScene(Scene):\n    def construct(self):\n        self.add(\n",
+                },
+                {
+                    "id": "circle-mismatch",
+                    "semanticTarget": "circle",
+                    "repairRules": ["semantic_circle_missing"],
+                    "codeSnippet": "from manim import *\nclass MainScene(Scene):\n    def construct(self):\n        self.add(Triangle())\n",
+                },
+            ]
+            log_path.write_text("\n".join(json.dumps(item, ensure_ascii=False) for item in samples), encoding="utf-8")
+
+            report = replay_failure_events(path=log_path)
+
+            self.assertEqual(report["total"], 2)
+            self.assertEqual(report["caught"], 2)
+            self.assertEqual(report["missed"], 0)
+            self.assertTrue(all(sample["caught"] for sample in report["samples"]))
+
+    def test_smoke_suite_has_six_prompts_and_checks_semantic_markers(self):
+        self.assertEqual([case["id"] for case in SMOKE_CASES], [
+            "circle",
+            "square",
+            "triangle",
+            "sine",
+            "bar-chart",
+            "tcp-flow",
+        ])
+        result = {
+            "rendered": True,
+            "videoUrl": "/static/fake.mp4",
+            "code": "from manim import *\nclass MainScene(Scene):\n    def construct(self):\n        self.add(Triangle())\n",
+        }
+
+        report = evaluate_smoke_result(SMOKE_CASES[0], result)
+
+        self.assertFalse(report["passed"])
+        self.assertIn("Circle(", report["missingMarkers"])
+        self.assertEqual(report["semanticTarget"], "circle")
+
+        triangle_result = {
+            "rendered": True,
+            "videoUrl": "/static/fake.mp4",
+            "code": "from manim import *\nclass MainScene(Scene):\n    def construct(self):\n        self.add(Polygon(LEFT, RIGHT, UP))\n",
+        }
+        triangle_report = evaluate_smoke_result(SMOKE_CASES[2], triangle_result)
+        self.assertTrue(triangle_report["passed"])
+        self.assertIn("qualityScore", triangle_report)
+        self.assertIn("qualityGrade", triangle_report)
+
+    def test_smoke_quality_score_tracks_visual_metrics_and_repairs(self):
+        good_result = {
+            "rendered": True,
+            "videoUrl": "/static/fake.mp4",
+            "code": "from manim import *\nclass MainScene(Scene):\n    def construct(self):\n        self.add(Circle())\n        self.wait(1)\n",
+            "agentTrace": {
+                "repairs": {"count": 0},
+                "quality": {
+                    "visual": {
+                        "status": "pass",
+                        "metrics": {
+                            "artifactSize": 120_000,
+                            "frame": {
+                                "nonBackgroundRatio": 0.12,
+                                "contrast": 16.0,
+                                "darkEdgeRatio": 0.01,
+                                "edgeContentRatio": 0.04,
+                            },
+                        },
+                    }
+                },
+            },
+        }
+
+        good_report = evaluate_smoke_result(SMOKE_CASES[0], good_result)
+
+        self.assertTrue(good_report["qualityPassed"])
+        self.assertTrue(good_report["strictQualityPassed"])
+        self.assertGreaterEqual(good_report["qualityScore"], 90)
+
+        weak_result = {
+            **good_result,
+            "agentTrace": {
+                "repairs": {"count": 5},
+                "quality": {
+                    "visual": {
+                        "status": "warning",
+                        "metrics": {
+                            "artifactSize": 12_000,
+                            "frame": {
+                                "nonBackgroundRatio": 0.012,
+                                "contrast": 6.5,
+                                "darkEdgeRatio": 0.22,
+                                "edgeContentRatio": 0.24,
+                            },
+                        },
+                    }
+                },
+            },
+        }
+
+        weak_report = evaluate_smoke_result(SMOKE_CASES[0], weak_result)
+
+        self.assertFalse(weak_report["qualityPassed"])
+        self.assertFalse(weak_report["strictQualityPassed"])
+        self.assertLess(weak_report["qualityScore"], 72)
+        self.assertIn("自动修复次数偏多：5", weak_report["qualityFindings"])
+        self.assertIn("质量分低于严格门槛 95", weak_report["strictQualityFindings"])
+
+        rescue_result = {
+            **good_result,
+            "agentTrace": {
+                **good_result["agentTrace"],
+                "codeSource": "rescue",
+            },
+        }
+        rescue_report = evaluate_smoke_result(SMOKE_CASES[0], rescue_result)
+
+        self.assertIn("使用了质量兜底场景", rescue_report["qualityFindings"])
+        self.assertFalse(rescue_report["strictQualityPassed"])
+        self.assertIn("使用了质量兜底场景", rescue_report["strictQualityFindings"])
+        self.assertEqual(rescue_report["qualityMetrics"]["codeSource"], "rescue")
+
+        repair_heavy_result = {
+            **good_result,
+            "agentTrace": {
+                **good_result["agentTrace"],
+                "repairs": {"count": 2},
+            },
+        }
+        repair_heavy_report = evaluate_smoke_result(SMOKE_CASES[0], repair_heavy_result)
+
+        self.assertTrue(repair_heavy_report["qualityPassed"])
+        self.assertFalse(repair_heavy_report["strictQualityPassed"])
+        self.assertIn("自动修复次数超过严格门槛 1", repair_heavy_report["strictQualityFindings"])
+
+    def test_real_smoke_summary_counts_code_sources(self):
+        async def fake_run_agent(payload, **kwargs):
+            del kwargs
+            code = "Circle()" if "circle" in payload["clientId"] else "Square()"
+            source = "rescue" if "square" in payload["clientId"] else "llm_v5"
+            return {
+                "rendered": True,
+                "videoUrl": "/static/fake.mp4",
+                "code": f"from manim import *\nclass MainScene(Scene):\n    def construct(self):\n        self.add({code})\n        self.wait(1)\n",
+                "agentTrace": {
+                    "codeSource": source,
+                    "repairs": {"count": 0},
+                    "rulePackVersion": RULE_PACK_VERSION,
+                    "quality": {
+                        "visual": {
+                            "status": "pass",
+                            "metrics": {
+                                "artifactSize": 120_000,
+                                "frame": {
+                                    "nonBackgroundRatio": 0.12,
+                                    "contrast": 16.0,
+                                    "darkEdgeRatio": 0.01,
+                                    "edgeContentRatio": 0.04,
+                                },
+                            },
+                        }
+                    },
+                },
+            }
+
+        async def collect():
+            with patch("app.agent.real_smoke.run_agent", fake_run_agent):
+                return await run_real_smoke_suite(
+                    ai_client=object(),
+                    model_name="fake-model",
+                    render=True,
+                    case_ids={"circle", "square"},
+                )
+
+        report = asyncio.run(collect())
+
+        self.assertEqual(report["codeSourceCounts"], {"llm_v5": 1, "rescue": 1})
+        self.assertEqual(report["rescueCount"], 1)
+        self.assertEqual(report["strictQualityPassed"], 1)
+        self.assertEqual(report["strictQualityFailed"], 1)
+
+    def test_patch_first_repair_converts_mathtex_chinese(self):
+        code = """
+from manim import *
+
+class MainScene(SafeScene, Scene):
+    def construct(self):
+        self.add(Square(), MathTex("面积等于边长平方"))
+"""
+        patched = patch_first_repair(code, critique_code(code, plan_animation("画一个正方形")))
+
+        self.assertIn("SafeText(\"面积等于边长平方\")", patched["code"])
+        self.assertIn("mathtex_chinese_to_safetext", [item["id"] for item in patched["patches"]])
+
+    def test_async_repair_uses_patch_first_before_llm(self):
+        code = """
+from manim import *
+
+class MainScene(SafeScene, Scene):
+    def construct(self):
+        self.add(Square(), MathTex("面积等于边长平方"))
+"""
+        ai = _FakeAI(["```python\nraise RuntimeError('should not be used')\n```"])
+
+        result = asyncio.run(repair_code_async(
+            code,
+            critique_code(code, plan_animation("画一个正方形")),
+            max_attempts=4,
+            brief=plan_animation("画一个正方形"),
+            ai_client=ai,
+            model_name="fake-model",
+        ))
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(len(ai.chat.completions.calls), 0)
+        self.assertIn("确定性补丁", result["summary"])
 
     def test_workflow_uses_configured_repair_attempt_limit(self):
         captured_attempt_limits = []
@@ -970,16 +1451,56 @@ class MainScene(Scene):
         event_types = [event["type"] for event in events]
         final = events[-1]
 
-        for event_type in ("plan", "design", "storyboard", "style", "skills", "code", "critic_report", "inspect", "quality_report", "preview", "result"):
+        for event_type in ("plan", "design", "storyboard", "style", "skills", "code", "static_guard", "critic_report", "inspect", "quality_report", "preview", "result"):
             self.assertIn(event_type, event_types)
         self.assertIn("code_delta", event_types)
         self.assertLess(event_types.index("code_delta"), event_types.index("code"))
+        self.assertLess(event_types.index("static_guard"), event_types.index("critic_report"))
         self.assertTrue(any(call.get("stream") is True for call in calls))
         self.assertEqual(final["type"], "result")
         self.assertEqual(final["agentTrace"]["template"], "none")
         self.assertEqual(final["agentTrace"]["codeSource"], "llm_v5")
         self.assertEqual(final["agentTrace"]["storyboardSpec"]["version"], "v5")
         self.assertEqual(final["agentTrace"]["preview"]["status"], "skipped")
+
+    def test_agent_stream_stops_at_static_guard_when_code_cannot_compile(self):
+        bad_code = "from manim import *\n\nclass MainScene(Scene):\n    def construct(self):\n        self.add(\n"
+
+        async def fake_repair(code, brief, report, repair_attempts, **kwargs):
+            return code, report, repair_attempts + 1, {
+                "status": "error",
+                "summary": "still broken",
+                "attempts": 1,
+            }
+
+        async def fake_rescue(brief, reason):
+            return "", {"status": "error", "issues": [], "summary": reason}, {"status": "error", "findings": [], "summary": reason}
+
+        async def collect():
+            events = []
+            ai = _FakeAI([director_json(), f"```python\n{bad_code}\n```"])
+            with patch("app.agent.workflow._repair_from_report", fake_repair), patch(
+                "app.agent.workflow._emit_rescue_code",
+                fake_rescue,
+            ):
+                async for event in stream_agent_events(
+                    {"message": "画一个圆形", "mode": "create"},
+                    ai_client=ai,
+                    model_name="fake-model",
+                    render=True,
+                ):
+                    events.append(event)
+            return events
+
+        events = asyncio.run(collect())
+        event_types = [event["type"] for event in events]
+
+        self.assertIn("static_guard", event_types)
+        self.assertNotIn("visual_check", event_types)
+        self.assertEqual(events[-1]["type"], "result")
+        self.assertFalse(events[-1]["rendered"])
+        self.assertIn("Python 静态守卫", events[-1]["warning"])
+        self.assertEqual(events[-1]["agentTrace"]["quality"]["static"]["issues"][0]["code"], "py_compile_error")
 
     def test_agent_stream_passes_preview_render_stderr_to_repair(self):
         captured_stderr = []
@@ -1021,11 +1542,13 @@ class MainScene(Scene):
             return events
 
         events = asyncio.run(collect())
+        final = events[-1]
 
         self.assertTrue(any(event["type"] == "visual_check" for event in events))
         self.assertTrue(captured_stderr)
         self.assertIn("NameError", captured_stderr[0])
         self.assertEqual(render_calls[0][1], "preview_render")
+        self.assertEqual(final["agentTrace"]["codeSource"], "repair")
         self.assertEqual(render_calls[-1][1], "final_render")
 
     def test_v4_disabled_returns_warning_without_template_fallback(self):
