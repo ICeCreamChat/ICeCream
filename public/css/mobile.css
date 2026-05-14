@@ -1498,6 +1498,22 @@
         min-height: 0;
     }
 
+    .code-panel .mobile-code-tab .code-panel-studio-report,
+    #code-panel .mobile-code-tab .code-panel-studio-report {
+        margin: 8px 10px 0;
+        max-height: 30vh;
+    }
+
+    #code-panel.studio-report-visible .mobile-code-tab #monaco-container {
+        height: auto;
+        min-height: 180px;
+    }
+
+    .code-panel .mobile-code-tab .studio-report-grid,
+    #code-panel .mobile-code-tab .studio-report-grid {
+        grid-template-columns: 1fr;
+    }
+
     /* Hide mobile footers inside code tab (no longer used) */
     .code-panel .mobile-code-tab .panel-footer.mobile-footer {
         display: none !important;

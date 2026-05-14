@@ -432,9 +432,11 @@ test('Manim agent unavailable returns a compatible non-rendered warning', async 
 });
 
 test('frontend routes main chat and code panel Manim work through the streaming agent', async () => {
-  const [messageHandlerSource, codePanelSource] = await Promise.all([
+  const [messageHandlerSource, codePanelSource, mainCssSource, mobileCssSource] = await Promise.all([
     readFile(messageHandlerPath, 'utf8'),
     readFile(codePanelPath, 'utf8'),
+    readFile(mainCssPath, 'utf8'),
+    readFile(mobileCssPath, 'utf8'),
   ]);
 
   assert.match(messageHandlerSource, /\/api\/manim\/intent/);
@@ -447,4 +449,17 @@ test('frontend routes main chat and code panel Manim work through the streaming 
   assert.match(codePanelSource, /mode:\s*'modify'/);
   assert.match(codePanelSource, /currentCode/);
   assert.match(codePanelSource, /!event\.recoverable/);
+  assert.match(codePanelSource, /patch_plan/);
+  assert.match(codePanelSource, /renderStudioPatchReport/);
+  assert.match(codePanelSource, /studio-report-revert/);
+  assert.match(codePanelSource, /studio-report-visible/);
+
+  assert.match(mainCssSource, /\.code-panel-studio-report/);
+  assert.match(mainCssSource, /#code-panel\.studio-report-visible #monaco-container/);
+  assert.match(mainCssSource, /\.studio-report-status\.success/);
+  assert.match(mainCssSource, /\.studio-report-status\.warning/);
+  assert.match(mainCssSource, /\.studio-report-status\.error/);
+  assert.match(mainCssSource, /body\.light-mode \.code-panel-studio-report/);
+  assert.match(mobileCssSource, /\.code-panel \.mobile-code-tab \.code-panel-studio-report/);
+  assert.match(mobileCssSource, /#code-panel\.studio-report-visible \.mobile-code-tab #monaco-container/);
 });

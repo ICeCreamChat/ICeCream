@@ -3980,6 +3980,164 @@ body.light-mode .panel-btn-primary:hover {
     height: calc(100% - 40px);
 }
 
+#code-panel.studio-report-visible #monaco-container {
+    height: calc(100% - 220px);
+    min-height: 220px;
+}
+
+.code-panel-studio-report {
+    flex: none;
+    margin: 10px 12px 0;
+    padding: 12px;
+    max-height: 190px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border: 1px solid rgba(125, 211, 252, 0.18);
+    border-radius: 12px;
+    background:
+        linear-gradient(135deg, rgba(14, 165, 233, 0.14), transparent 42%),
+        rgba(15, 23, 42, 0.72);
+    color: var(--manim-text);
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.18);
+}
+
+.code-panel-studio-report.hidden {
+    display: none;
+}
+
+.studio-report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.studio-report-header strong {
+    display: block;
+    margin-top: 2px;
+    font-size: 14px;
+    line-height: 1.35;
+    color: var(--manim-text);
+}
+
+.studio-report-kicker {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(14, 165, 233, 0.16);
+    color: var(--manim-primary);
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.studio-report-status {
+    flex: none;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 800;
+    border: 1px solid currentColor;
+}
+
+.studio-report-status.success {
+    color: #22c55e;
+    background: rgba(34, 197, 94, 0.12);
+}
+
+.studio-report-status.warning {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+}
+
+.studio-report-status.error {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.12);
+}
+
+.studio-report-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.studio-report-grid>div,
+.studio-report-section {
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.36);
+    padding: 9px 10px;
+}
+
+.studio-report-grid span,
+.studio-report-section>span {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--manim-text-muted);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.studio-report-grid strong {
+    color: var(--manim-text);
+    font-size: 14px;
+}
+
+.studio-report-section {
+    margin-top: 8px;
+}
+
+.studio-report-section ul {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--manim-text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.studio-report-revert {
+    margin-top: 10px;
+    padding: 8px 12px;
+    border: 1px solid rgba(14, 165, 233, 0.36);
+    border-radius: 9px;
+    background: rgba(14, 165, 233, 0.10);
+    color: var(--manim-primary);
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.studio-report-revert:hover {
+    background: rgba(14, 165, 233, 0.18);
+}
+
+body.light-mode .code-panel-studio-report {
+    background:
+        linear-gradient(135deg, rgba(14, 165, 233, 0.10), transparent 44%),
+        rgba(255, 255, 255, 0.94);
+    border-color: rgba(14, 165, 233, 0.18);
+    color: #1e293b;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+}
+
+body.light-mode .studio-report-header strong,
+body.light-mode .studio-report-grid strong {
+    color: #0f172a;
+}
+
+body.light-mode .studio-report-grid>div,
+body.light-mode .studio-report-section {
+    background: rgba(248, 250, 252, 0.84);
+    border-color: rgba(148, 163, 184, 0.22);
+}
+
+body.light-mode .studio-report-grid span,
+body.light-mode .studio-report-section>span,
+body.light-mode .studio-report-section ul {
+    color: #64748b;
+}
+
 /* Stop Button Breathing Animation (UI/UX Pro Max) */
 @keyframes breathing-red {
     0% {
