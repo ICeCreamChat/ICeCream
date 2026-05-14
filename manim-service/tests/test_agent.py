@@ -10,6 +10,9 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SERVICE_ROOT))
@@ -31,10 +34,11 @@ from app.agent.reference_store import save_reference_image
 from app.agent.render_cache import get_cached_render, save_cached_render
 from app.agent.repair import patch_first_repair, repair_code, repair_code_async, static_repair_once
 from app.agent.renderer import sanitize_render_error
+from app.agent.routes import register_agent_routes
 from app.agent.rescue_scene import rescue_scene_code
 from app.agent.real_smoke import run_real_smoke_suite
 from app.agent.scene_runtime import SCENE_RUNTIME_CODE
-from app.agent.skill_loader import select_skills
+from app.agent.skill_loader import SKILL_CATALOG_VERSION, select_skills, skill_catalog
 from app.agent.smoke_suite import SMOKE_CASES, evaluate_smoke_result
 from app.agent.static_guard import run_static_guard
 from app.agent.visual_judge import inspect_frame_quality, inspect_visual_quality
@@ -542,6 +546,28 @@ class ManimAgentV4Tests(unittest.TestCase):
         self.assertIn("function_graph", skill_ids)
         self.assertIn("text_formula_layout", skill_ids)
         self.assertTrue(all(skill["version"] == "v6" for skill in skills))
+
+    def test_agent_skills_route_returns_safe_catalog_metadata(self):
+        app = FastAPI()
+        register_agent_routes(app)
+        response = TestClient(app).get("/agent/skills")
+        payload = response.json()
+        direct_catalog = skill_catalog()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["version"], SKILL_CATALOG_VERSION)
+        self.assertGreaterEqual(len(payload["skills"]), 6)
+        ids = {skill["id"] for skill in payload["skills"]}
+        self.assertIn("function_graph", ids)
+        self.assertIn("geometry", ids)
+        self.assertIn("text_formula_layout", ids)
+        self.assertIn("function_graph", direct_catalog)
+        for skill in payload["skills"]:
+            self.assertNotIn("path", skill)
+            self.assertIn(skill["source"], {"builtin", "project"})
+            self.assertTrue(skill["name"])
+            self.assertTrue(skill["guidance"])
 
     def test_critic_blocks_gateway_aligned_security_risks(self):
         code = """

@@ -12,6 +12,7 @@ import { intentConfirm } from './core/intent-confirm.js';
 import { messageHandler } from './core/message-handler.js';
 import { sessionManager } from './core/session-manager.js';
 import { imageUploader } from './core/image-uploader.js';
+import { manimWorkbench } from './core/manim-workbench.js';
 import { CodePanel } from './core/code-panel.js';
 import { showToast, devLog, dataURLtoBlob } from './utils/helpers.js';
 import appLauncher from './tools/app-launcher.js';
@@ -36,6 +37,7 @@ class ICeCreamApp {
             aiStatusLabel: null
         };
         this.codePanel = null;
+        this.manimWorkbench = null;
     }
 
     /**
@@ -140,13 +142,17 @@ class ICeCreamApp {
     _initCoreModules() {
         //代码面板
         this.codePanel = new CodePanel();
+        this.manimWorkbench = manimWorkbench;
 
         // 模态切换器
         modeSwitcher.init({
             onModeChange: (mode) => {
                 devLog.log('Mode changed to', mode);
+                this.manimWorkbench?.setMode(mode);
             }
         });
+
+        this.manimWorkbench.init({ modeSwitcher });
 
         // 意图确认
         intentConfirm.init({
@@ -160,7 +166,8 @@ class ICeCreamApp {
             onMessageAdded: (message) => {
                 sessionManager.addMessage(message);
             },
-            codePanel: this.codePanel
+            codePanel: this.codePanel,
+            manimWorkbench: this.manimWorkbench
         });
 
         // 会话管理器

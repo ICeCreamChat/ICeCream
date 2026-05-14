@@ -106,6 +106,11 @@
     --manim-process-stage-warning-text: #fbbf24;
     --manim-process-stage-error-bg: rgba(248, 113, 113, 0.13);
     --manim-process-stage-error-text: #fca5a5;
+    --manim-workbench-bg: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(8, 13, 26, 0.93));
+    --manim-workbench-border: rgba(125, 211, 252, 0.18);
+    --manim-workbench-panel-bg: rgba(15, 23, 42, 0.55);
+    --manim-workbench-hover-bg: rgba(14, 165, 233, 0.13);
+    --manim-workbench-shadow: 0 24px 70px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.035) inset;
 }
 
 /* ================================
@@ -161,6 +166,11 @@ body.light-mode {
     --manim-process-stage-warning-text: #92400e;
     --manim-process-stage-error-bg: rgba(220, 38, 38, 0.10);
     --manim-process-stage-error-text: #991b1b;
+    --manim-workbench-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(248, 252, 255, 0.94));
+    --manim-workbench-border: rgba(14, 165, 233, 0.18);
+    --manim-workbench-panel-bg: rgba(255, 255, 255, 0.74);
+    --manim-workbench-hover-bg: rgba(14, 165, 233, 0.10);
+    --manim-workbench-shadow: 0 24px 70px rgba(15, 23, 42, 0.13), 0 0 0 1px rgba(255, 255, 255, 0.72) inset;
 }
 
 /* ================================
@@ -455,6 +465,386 @@ body {
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.manim-workbench-btn {
+    display: none;
+    color: var(--text-secondary);
+}
+
+.manim-workbench-btn.is-visible {
+    display: flex;
+}
+
+.manim-workbench-btn.active,
+.manim-workbench-btn:hover {
+    color: var(--accent-color);
+    background: rgba(14, 165, 233, 0.12);
+    box-shadow: 0 0 18px rgba(14, 165, 233, 0.22);
+}
+
+.manim-workbench-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: flex;
+    justify-content: flex-end;
+    padding: 18px;
+    background: rgba(2, 6, 23, 0.20);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+}
+
+.manim-workbench-overlay.hidden {
+    display: none;
+}
+
+.manim-workbench-panel {
+    width: min(420px, calc(100vw - 32px));
+    height: min(860px, calc(100vh - 36px));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--manim-workbench-border);
+    border-radius: 22px;
+    background: var(--manim-workbench-bg);
+    color: var(--text-primary);
+    box-shadow: var(--manim-workbench-shadow);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+}
+
+body.light-mode .manim-workbench-panel {
+    background: var(--manim-workbench-bg);
+    border-color: var(--manim-workbench-border);
+    box-shadow: var(--manim-workbench-shadow);
+}
+
+.manim-workbench-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid var(--manim-workbench-border);
+}
+
+.manim-workbench-header strong {
+    display: block;
+    font-size: 18px;
+    font-weight: 850;
+}
+
+.manim-workbench-header span {
+    display: block;
+    margin-top: 3px;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.manim-workbench-close,
+.manim-workbench-link,
+.manim-workbench-secondary,
+.manim-reference-remove {
+    border: 0;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.manim-workbench-close {
+    width: 36px;
+    height: 36px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--text-secondary);
+    background: var(--manim-process-stage-idle-bg);
+}
+
+.manim-workbench-close:hover {
+    color: var(--accent-color);
+    background: var(--manim-workbench-hover-bg);
+}
+
+.manim-workbench-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    padding: 14px;
+}
+
+.manim-workbench-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.manim-workbench-body::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.30);
+}
+
+.manim-workbench-section {
+    padding: 14px;
+    margin-bottom: 12px;
+    border: 1px solid var(--manim-process-panel-border);
+    border-radius: 16px;
+    background: var(--manim-workbench-panel-bg);
+}
+
+.manim-workbench-section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.manim-workbench-section-head strong,
+.manim-workbench-diagnostics summary strong {
+    font-size: 14px;
+    font-weight: 850;
+}
+
+.manim-workbench-section-head span,
+.manim-workbench-diagnostics summary span {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.manim-workbench-link {
+    padding: 0;
+    color: var(--accent-color);
+    background: transparent;
+    font-size: 12px;
+    font-weight: 750;
+    white-space: nowrap;
+}
+
+.manim-workbench-subtitle {
+    margin: 12px 0 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.manim-style-grid,
+.manim-skill-grid {
+    display: grid;
+    gap: 8px;
+}
+
+.manim-style-grid {
+    grid-template-columns: 1fr;
+}
+
+.manim-style-option,
+.manim-skill-chip {
+    width: 100%;
+    min-width: 0;
+    text-align: left;
+    border: 1px solid var(--manim-process-panel-border);
+    border-radius: 14px;
+    color: var(--text-primary);
+    background: var(--manim-process-stage-idle-bg);
+    cursor: pointer;
+    transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.manim-style-option {
+    padding: 10px 12px;
+}
+
+.manim-style-option span {
+    display: block;
+    font-weight: 820;
+}
+
+.manim-style-option small {
+    display: block;
+    margin-top: 4px;
+    color: var(--text-secondary);
+    line-height: 1.45;
+}
+
+.manim-style-option.active,
+.manim-skill-chip.active {
+    border-color: rgba(14, 165, 233, 0.34);
+    background: var(--manim-process-stage-active-bg);
+    color: var(--manim-process-stage-active-text);
+}
+
+.manim-style-option:hover,
+.manim-skill-chip:hover {
+    transform: translateY(-1px);
+    background: var(--manim-workbench-hover-bg);
+}
+
+.manim-skill-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.manim-skill-chip {
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 780;
+}
+
+.manim-reference-list,
+.manim-job-list,
+.manim-failure-list {
+    display: grid;
+    gap: 8px;
+}
+
+.manim-reference-item,
+.manim-current-job,
+.manim-job-row,
+.manim-failure-row,
+.manim-diagnostic-note,
+.manim-workbench-empty {
+    border: 1px solid var(--manim-process-panel-border);
+    border-radius: 14px;
+    background: var(--manim-process-panel-bg);
+}
+
+.manim-reference-item {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+}
+
+.manim-reference-item img {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: 12px;
+    background: var(--manim-process-code-bg);
+}
+
+.manim-reference-item strong,
+.manim-reference-item span,
+.manim-current-job strong,
+.manim-current-job span,
+.manim-job-row span,
+.manim-failure-row strong,
+.manim-failure-row span {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.manim-reference-item strong,
+.manim-current-job strong,
+.manim-failure-row strong {
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.manim-reference-item span,
+.manim-current-job span,
+.manim-failure-row span {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.manim-reference-remove {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--text-secondary);
+    background: transparent;
+}
+
+.manim-reference-remove:hover {
+    color: #ef4444;
+    background: var(--manim-process-stage-error-bg);
+}
+
+.manim-current-job {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 10px;
+}
+
+.manim-current-job p {
+    grid-column: 1 / -1;
+    margin: 2px 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.manim-workbench-secondary {
+    padding: 6px 10px;
+    border-radius: 999px;
+    color: var(--accent-color);
+    background: var(--manim-process-stage-active-bg);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.manim-job-row,
+.manim-failure-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+}
+
+.manim-job-row strong {
+    color: var(--manim-process-stage-active-text);
+    font-size: 12px;
+}
+
+.manim-workbench-empty {
+    padding: 12px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.manim-workbench-empty.compact {
+    padding: 9px 10px;
+}
+
+.manim-workbench-diagnostics {
+    margin-bottom: 0;
+}
+
+.manim-workbench-diagnostics summary {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    cursor: pointer;
+    list-style: none;
+}
+
+.manim-workbench-diagnostics summary::-webkit-details-marker {
+    display: none;
+}
+
+.manim-workbench-diagnostics[open] summary {
+    margin-bottom: 12px;
+}
+
+.manim-diagnostic-note {
+    margin-bottom: 8px;
+    padding: 10px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
 }
 
 /* ================================

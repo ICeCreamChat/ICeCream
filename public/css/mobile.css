@@ -955,6 +955,52 @@
         padding: 9px 10px;
     }
 
+    .manim-workbench-overlay {
+        align-items: flex-end;
+        justify-content: center;
+        padding: 0;
+        background: rgba(2, 6, 23, 0.34);
+    }
+
+    .manim-workbench-panel {
+        width: 100%;
+        max-width: 100%;
+        height: auto;
+        max-height: 80vh;
+        border-radius: 22px 22px 0 0;
+        border-bottom: 0;
+    }
+
+    .manim-workbench-header {
+        padding: 15px 16px 12px;
+    }
+
+    .manim-workbench-body {
+        max-height: calc(80vh - 70px);
+        padding: 12px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .manim-workbench-section {
+        padding: 12px;
+        border-radius: 14px;
+    }
+
+    .manim-skill-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .manim-reference-item {
+        grid-template-columns: 44px minmax(0, 1fr) auto;
+    }
+
+    .manim-reference-item img {
+        width: 44px;
+        height: 44px;
+    }
+
     /* ==========================================================================
        Intent Confirm Modal
        ========================================================================== */

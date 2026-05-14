@@ -24,6 +24,7 @@ class MessageHandler {
         this.isLoading = false;
         this.pendingImage = null;
         this.onMessageAdded = null;
+        this.manimWorkbench = null;
         this.manimProcess = null;
         this.manimAutoScrollLockedUntil = 0;
     }
@@ -49,6 +50,7 @@ class MessageHandler {
 
         this.onMessageAdded = options.onMessageAdded || null;
         this.codePanel = options.codePanel || null;
+        this.manimWorkbench = options.manimWorkbench || null;
 
         this._bindEvents();
     }
@@ -261,8 +263,10 @@ class MessageHandler {
             if (shouldUseAgent) {
                 if (mode === 'auto') {
                     modeSwitcher.setMode('manim', false);
+                    this.manimWorkbench?.setMode?.('manim');
                 }
-                await this.sendManimAgentStream({ message, mode: 'create' });
+                const workbenchOptions = this.manimWorkbench?.getAgentOptions?.() || {};
+                await this.sendManimAgentStream({ message, mode: 'create', ...workbenchOptions });
                 return;
             }
 
@@ -395,6 +399,7 @@ class MessageHandler {
         try {
             await this.readNdjsonStream(response, (event) => {
                 this.updateManimProcessFromEvent(event);
+                this.manimWorkbench?.handleAgentEvent?.(event);
 
                 if (event.type === 'job') {
                     this.latestManimJob = event.job;
@@ -460,6 +465,7 @@ class MessageHandler {
         }
 
         if (finalResult) {
+            this.manimWorkbench?.handleAgentResult?.(finalResult);
             this.attachManimResultToProcess(finalResult);
         }
     }

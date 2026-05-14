@@ -62,6 +62,15 @@ router.get('/status', async (req, res) => {
     }
 });
 
+router.get('/skills', async (req, res) => {
+    try {
+        const manimClient = await import('../../services/manim/manim-client.js');
+        return manimClient.listSkills(req, res);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 router.get('/jobs', async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');

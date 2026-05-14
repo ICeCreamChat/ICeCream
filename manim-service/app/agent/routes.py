@@ -13,6 +13,7 @@ from .failure_events import load_failure_events
 from .failure_replay import replay_failure_events
 from .job_registry import cancel_job, get_job, list_jobs
 from .reference_store import save_reference_image
+from .skill_loader import SKILL_CATALOG_VERSION, skill_catalog
 from .workflow import run_agent, stream_agent_events
 
 
@@ -138,3 +139,31 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
             data_base64=request.dataBase64,
         )
         return JSONResponse(result, status_code=200 if result.get("success") else 400)
+
+    @app.get("/agent/skills")
+    async def agent_skills(
+        x_manim_service_token: Optional[str] = Header(default=None, alias="X-Manim-Service-Token"),
+    ):
+        if _forbidden(x_manim_service_token):
+            return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
+
+        skills = []
+        for skill in skill_catalog().values():
+            version = str(skill.get("version") or "")
+            skills.append(
+                {
+                    "id": str(skill.get("id") or "")[:80],
+                    "name": str(skill.get("name") or "")[:80],
+                    "guidance": str(skill.get("guidance") or "")[:1200],
+                    "version": version[:40],
+                    "source": "project" if version == "project" else "builtin",
+                }
+            )
+        skills.sort(key=lambda item: item["id"])
+        return JSONResponse(
+            {
+                "success": True,
+                "version": SKILL_CATALOG_VERSION,
+                "skills": skills,
+            }
+        )

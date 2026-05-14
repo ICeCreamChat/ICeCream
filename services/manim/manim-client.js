@@ -490,6 +490,15 @@ export async function listJobs(req, res) {
     }
 }
 
+export async function listSkills(req, res) {
+    try {
+        const data = await proxyManimJson('/agent/skills', { timeoutMs: 15000 });
+        return res.json(data);
+    } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+    }
+}
+
 export async function getJob(req, res) {
     try {
         const jobId = encodeURIComponent(String(req.params.jobId || ''));
@@ -568,6 +577,7 @@ export default {
     renderCode,
     getSuggestions,
     getStatus,
+    listSkills,
     listJobs,
     getJob,
     cancelJob,

@@ -13,6 +13,8 @@ import {
 
 const codePanelPath = new URL('../public/js/core/code-panel.js', import.meta.url);
 const messageHandlerPath = new URL('../public/js/core/message-handler.js', import.meta.url);
+const manimWorkbenchPath = new URL('../public/js/core/manim-workbench.js', import.meta.url);
+const appPath = new URL('../public/js/app.js', import.meta.url);
 const mainCssPath = new URL('../public/css/main.css', import.meta.url);
 const mobileCssPath = new URL('../public/css/mobile.css', import.meta.url);
 
@@ -214,6 +216,8 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
 
       if (req.url.startsWith('/agent/jobs?')) {
         res.end(JSON.stringify({ success: true, jobs: [{ jobId: 'job-1' }] }));
+      } else if (req.url === '/agent/skills') {
+        res.end(JSON.stringify({ success: true, version: 'manim-v6-skills', skills: [{ id: 'geometry', name: '几何图形', guidance: '清晰线条' }] }));
       } else if (req.url === '/agent/jobs/job-1') {
         res.end(JSON.stringify({ success: true, job: { jobId: 'job-1', status: 'running' } }));
       } else if (req.url === '/agent/jobs/job-1/cancel') {
@@ -230,6 +234,7 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
       }
     });
   }, async appBase => {
+    const skills = await (await fetch(`${appBase}/api/manim/skills`)).json();
     const jobs = await (await fetch(`${appBase}/api/manim/jobs?limit=2`)).json();
     const job = await (await fetch(`${appBase}/api/manim/jobs/job-1`)).json();
     const cancel = await (await fetch(`${appBase}/api/manim/jobs/job-1/cancel`, { method: 'POST' })).json();
@@ -241,6 +246,7 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
       body: JSON.stringify({ filename: 'sketch.png', mimeType: 'image/png', dataBase64: 'abc' }),
     })).json();
 
+    assert.equal(skills.skills[0].id, 'geometry');
     assert.equal(jobs.jobs[0].jobId, 'job-1');
     assert.equal(job.job.status, 'running');
     assert.equal(cancel.job.status, 'cancelled');
@@ -250,6 +256,7 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
   });
 
   assert.deepEqual(observed.map(item => `${item.method} ${item.url}`), [
+    'GET /agent/skills',
     'GET /agent/jobs?limit=2',
     'GET /agent/jobs/job-1',
     'POST /agent/jobs/job-1/cancel',
@@ -261,11 +268,42 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
 });
 
 test('frontend shows Manim agent v6 production progress in a chat bubble', async () => {
-  const [messageHandlerSource, mainCssSource, mobileCssSource] = await Promise.all([
+  const [messageHandlerSource, manimWorkbenchSource, appSource, mainCssSource, mobileCssSource] = await Promise.all([
     readFile(messageHandlerPath, 'utf8'),
+    readFile(manimWorkbenchPath, 'utf8'),
+    readFile(appPath, 'utf8'),
     readFile(mainCssPath, 'utf8'),
     readFile(mobileCssPath, 'utf8'),
   ]);
+
+  assert.match(appSource, /manimWorkbench/);
+  assert.match(appSource, /messageHandler\.init\(\{[\s\S]*manimWorkbench: this\.manimWorkbench/);
+  assert.match(appSource, /this\.manimWorkbench\?\.setMode\(mode\)/);
+  assert.match(messageHandlerSource, /manimWorkbench/);
+  assert.match(messageHandlerSource, /getAgentOptions/);
+  assert.match(messageHandlerSource, /handleAgentEvent/);
+  assert.match(messageHandlerSource, /handleAgentResult/);
+  assert.match(messageHandlerSource, /skillIds:\s*payload\.skillIds/);
+  assert.match(messageHandlerSource, /referenceImageIds:\s*payload\.referenceImageIds/);
+
+  assert.match(manimWorkbenchSource, /class ManimWorkbench/);
+  assert.match(manimWorkbenchSource, /manim-workbench-btn/);
+  assert.match(manimWorkbenchSource, /manim-workbench-panel/);
+  assert.match(manimWorkbenchSource, /\/api\/manim\/skills/);
+  assert.match(manimWorkbenchSource, /\/api\/manim\/reference-images/);
+  assert.match(manimWorkbenchSource, /\/api\/manim\/jobs/);
+  assert.match(manimWorkbenchSource, /\/api\/manim\/failures/);
+  assert.match(manimWorkbenchSource, /getAgentOptions/);
+  assert.match(manimWorkbenchSource, /skillIds/);
+  assert.match(manimWorkbenchSource, /referenceImageIds/);
+  assert.match(manimWorkbenchSource, /cancelCurrentJob/);
+  assert.match(manimWorkbenchSource, /replayFailure/);
+  assert.match(manimWorkbenchSource, /setMode\(mode\)/);
+  assert.match(manimWorkbenchSource, /动画工作台/);
+  assert.match(manimWorkbenchSource, /生成设置/);
+  assert.match(manimWorkbenchSource, /参考素材/);
+  assert.match(manimWorkbenchSource, /任务状态/);
+  assert.match(manimWorkbenchSource, /高级诊断/);
 
   assert.match(messageHandlerSource, /event\.type === 'plan'/);
   assert.match(messageHandlerSource, /event\.type === 'job'/);
@@ -388,12 +426,24 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(mainCssSource, /body\.light-mode \.manim-process-card/);
   assert.match(mainCssSource, /body\.light-mode \.manim-process-current/);
   assert.match(mainCssSource, /box-shadow: none !important/);
+  assert.match(mainCssSource, /\.manim-workbench-btn/);
+  assert.match(mainCssSource, /\.manim-workbench-overlay/);
+  assert.match(mainCssSource, /\.manim-workbench-panel/);
+  assert.match(mainCssSource, /body\.light-mode \.manim-workbench-panel/);
+  assert.match(mainCssSource, /\.manim-style-option/);
+  assert.match(mainCssSource, /\.manim-skill-chip/);
+  assert.match(mainCssSource, /\.manim-reference-item/);
+  assert.match(mainCssSource, /\.manim-current-job/);
+  assert.match(mainCssSource, /\.manim-failure-row/);
   assert.match(mobileCssSource, /\.manim-process-details/);
   assert.match(mobileCssSource, /max-height: 34vh/);
   assert.match(mobileCssSource, /overflow-y: auto/);
   assert.match(mobileCssSource, /overflow-x: hidden/);
   assert.match(mobileCssSource, /\.manim-process-result/);
   assert.match(mobileCssSource, /\.manim-result-heading/);
+  assert.match(mobileCssSource, /\.manim-workbench-panel/);
+  assert.match(mobileCssSource, /max-height: 80vh/);
+  assert.match(mobileCssSource, /\.manim-workbench-body/);
 });
 
 test('Manim frontend and gateway user-facing files do not contain mojibake literals', async () => {
