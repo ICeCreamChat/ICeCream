@@ -70,11 +70,17 @@ test('Manim agent payload normalizes create and modify requests', () => {
   assert.deepEqual(buildAgentPayload({
     message: '画一个流程图',
     client_id: 'classroom/1',
+    skillIds: ['flow_explanation'],
+    referenceImageIds: ['ref-1'],
+    jobId: 'job-1',
   }), {
     message: '画一个流程图',
     mode: 'create',
     currentCode: '',
     clientId: 'classroom_1',
+    skillIds: ['flow_explanation'],
+    referenceImageIds: ['ref-1'],
+    jobId: 'job-1',
   });
 
   assert.deepEqual(buildAgentPayload({
@@ -87,6 +93,9 @@ test('Manim agent payload normalizes create and modify requests', () => {
     mode: 'modify',
     currentCode: 'Circle()',
     clientId: 'panel',
+    skillIds: [],
+    referenceImageIds: [],
+    jobId: '',
   });
 });
 
@@ -120,7 +129,7 @@ test('POST /api/manim uses Manim agent run endpoint', async () => {
         rendered: true,
         code: 'from manim import *',
         videoUrl: '/static/video.mp4',
-        agentTrace: { codeSource: 'llm_v5', template: 'none', skills: ['flow_explanation'], retries: 0 },
+        agentTrace: { codeSource: 'llm_v6', template: 'none', skills: ['flow_explanation'], retries: 0 },
       }));
     });
   }, async appBase => {
@@ -137,12 +146,12 @@ test('POST /api/manim uses Manim agent run endpoint', async () => {
     assert.equal(observedRequest.body.mode, 'create');
     assert.equal(observedRequest.body.message, '画一个流程图');
     assert.equal(payload.rendered, true);
-    assert.equal(payload.agentTrace.codeSource, 'llm_v5');
+    assert.equal(payload.agentTrace.codeSource, 'llm_v6');
     assert.equal(payload.agentTrace.template, 'none');
   });
 });
 
-test('POST /api/manim/agent/stream proxies v5 NDJSON agent events', async () => {
+test('POST /api/manim/agent/stream proxies v6 NDJSON agent events', async () => {
   let observedRequest;
 
   await withGatewayAndManim((req, res) => {
@@ -151,13 +160,18 @@ test('POST /api/manim/agent/stream proxies v5 NDJSON agent events', async () => 
     req.on('end', () => {
       observedRequest = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+      res.write(JSON.stringify({ type: 'job', job: { jobId: 'job-123', status: 'running', currentStage: 'planner' } }) + '\n');
       res.write(JSON.stringify({ type: 'progress', step: 'planner', message: 'planning' }) + '\n');
+      res.write(JSON.stringify({ type: 'reference', references: [{ referenceId: 'ref-1', filename: 'sketch.png' }] }) + '\n');
       res.write(JSON.stringify({ type: 'design', design: { status: 'success' } }) + '\n');
       res.write(JSON.stringify({ type: 'storyboard', storyboard: [{ title: 'step' }] }) + '\n');
       res.write(JSON.stringify({ type: 'style', style: { name: 'teaching_premium' } }) + '\n');
-      res.write(JSON.stringify({ type: 'code_delta', delta: 'from manim import *', code: 'from manim import *', source: 'llm_v5' }) + '\n');
+      res.write(JSON.stringify({ type: 'patch_plan', patchPlan: { summary: '保持主体，修改颜色', operations: ['update color'] } }) + '\n');
+      res.write(JSON.stringify({ type: 'skill_activation', skills: [{ id: 'flow_explanation', name: '流程解释' }] }) + '\n');
+      res.write(JSON.stringify({ type: 'code_delta', delta: 'from manim import *', code: 'from manim import *', source: 'llm_v6' }) + '\n');
       res.write(JSON.stringify({ type: 'static_guard', guard: { status: 'pass', summary: 'Python 静态守卫通过。' } }) + '\n');
       res.write(JSON.stringify({ type: 'visual_check', visual: { status: 'pass' } }) + '\n');
+      res.write(JSON.stringify({ type: 'cache', status: 'miss', summary: '未命中渲染缓存' }) + '\n');
       res.end(JSON.stringify({ type: 'result', success: true, intent: 'manim', rendered: false, code: 'from manim import *' }) + '\n');
     });
   }, async appBase => {
@@ -172,17 +186,81 @@ test('POST /api/manim/agent/stream proxies v5 NDJSON agent events', async () => 
     assert.equal(observedRequest.message, '解释牛顿第二定律');
     assert.equal(observedRequest.mode, 'create');
     assert.match(text, /"type":"progress"/);
+    assert.match(text, /"type":"job"/);
+    assert.match(text, /"type":"reference"/);
     assert.match(text, /"type":"design"/);
     assert.match(text, /"type":"storyboard"/);
     assert.match(text, /"type":"style"/);
+    assert.match(text, /"type":"patch_plan"/);
+    assert.match(text, /"type":"skill_activation"/);
     assert.match(text, /"type":"code_delta"/);
     assert.match(text, /"type":"static_guard"/);
     assert.match(text, /"type":"visual_check"/);
+    assert.match(text, /"type":"cache"/);
     assert.match(text, /"type":"result"/);
   });
 });
 
-test('frontend shows Manim agent v5 production progress in a chat bubble', async () => {
+test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs', async () => {
+  const observed = [];
+
+  await withGatewayAndManim((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      const bodyText = Buffer.concat(chunks).toString('utf8');
+      observed.push({ method: req.method, url: req.url, body: bodyText ? JSON.parse(bodyText) : null });
+      res.setHeader('Content-Type', 'application/json');
+
+      if (req.url.startsWith('/agent/jobs?')) {
+        res.end(JSON.stringify({ success: true, jobs: [{ jobId: 'job-1' }] }));
+      } else if (req.url === '/agent/jobs/job-1') {
+        res.end(JSON.stringify({ success: true, job: { jobId: 'job-1', status: 'running' } }));
+      } else if (req.url === '/agent/jobs/job-1/cancel') {
+        res.end(JSON.stringify({ success: true, job: { jobId: 'job-1', status: 'cancelled' } }));
+      } else if (req.url.startsWith('/agent/failures?')) {
+        res.end(JSON.stringify({ success: true, failures: [{ eventId: 'fail-1' }] }));
+      } else if (req.url === '/agent/failures/fail-1/replay') {
+        res.end(JSON.stringify({ success: true, replay: { eventId: 'fail-1', status: 'pass' } }));
+      } else if (req.url === '/agent/reference-images') {
+        res.end(JSON.stringify({ success: true, reference: { referenceId: 'ref-1', filename: 'sketch.png' } }));
+      } else {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ success: false, error: req.url }));
+      }
+    });
+  }, async appBase => {
+    const jobs = await (await fetch(`${appBase}/api/manim/jobs?limit=2`)).json();
+    const job = await (await fetch(`${appBase}/api/manim/jobs/job-1`)).json();
+    const cancel = await (await fetch(`${appBase}/api/manim/jobs/job-1/cancel`, { method: 'POST' })).json();
+    const failures = await (await fetch(`${appBase}/api/manim/failures?limit=3`)).json();
+    const replay = await (await fetch(`${appBase}/api/manim/failures/fail-1/replay`, { method: 'POST' })).json();
+    const reference = await (await fetch(`${appBase}/api/manim/reference-images`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: 'sketch.png', mimeType: 'image/png', dataBase64: 'abc' }),
+    })).json();
+
+    assert.equal(jobs.jobs[0].jobId, 'job-1');
+    assert.equal(job.job.status, 'running');
+    assert.equal(cancel.job.status, 'cancelled');
+    assert.equal(failures.failures[0].eventId, 'fail-1');
+    assert.equal(replay.replay.status, 'pass');
+    assert.equal(reference.reference.referenceId, 'ref-1');
+  });
+
+  assert.deepEqual(observed.map(item => `${item.method} ${item.url}`), [
+    'GET /agent/jobs?limit=2',
+    'GET /agent/jobs/job-1',
+    'POST /agent/jobs/job-1/cancel',
+    'GET /agent/failures?limit=3',
+    'POST /agent/failures/fail-1/replay',
+    'POST /agent/reference-images',
+  ]);
+  assert.equal(observed.at(-1).body.filename, 'sketch.png');
+});
+
+test('frontend shows Manim agent v6 production progress in a chat bubble', async () => {
   const [messageHandlerSource, mainCssSource, mobileCssSource] = await Promise.all([
     readFile(messageHandlerPath, 'utf8'),
     readFile(mainCssPath, 'utf8'),
@@ -190,10 +268,15 @@ test('frontend shows Manim agent v5 production progress in a chat bubble', async
   ]);
 
   assert.match(messageHandlerSource, /event\.type === 'plan'/);
+  assert.match(messageHandlerSource, /event\.type === 'job'/);
+  assert.match(messageHandlerSource, /event\.type === 'reference'/);
   assert.match(messageHandlerSource, /event\.type === 'design'/);
   assert.match(messageHandlerSource, /event\.type === 'storyboard'/);
   assert.match(messageHandlerSource, /event\.type === 'style'/);
   assert.match(messageHandlerSource, /event\.type === 'skills'/);
+  assert.match(messageHandlerSource, /event\.type === 'skill_activation'/);
+  assert.match(messageHandlerSource, /event\.type === 'patch_plan'/);
+  assert.match(messageHandlerSource, /event\.type === 'cache'/);
   assert.match(messageHandlerSource, /event\.type === 'inspect'/);
   assert.match(messageHandlerSource, /event\.type === 'static_guard'/);
   assert.match(messageHandlerSource, /latestManimStaticGuard/);

@@ -4,6 +4,7 @@
  */
 
 import fetch from 'node-fetch';
+import { readFile, unlink } from 'node:fs/promises';
 import { normalizeClientId, validateManimCode } from '../../gateway/security.js';
 
 export function getManimServiceUrl() {
@@ -21,24 +22,9 @@ Rules:
 
 const MANIM_INTENT_KEYWORDS = [
     'manim',
-    '动画',
-    '可视化',
-    '演示',
-    '展示',
-    '函数',
-    '公式',
-    '图像',
-    '坐标',
-    '几何',
-    '圆',
-    '三角形',
-    '柱状图',
-    '折线图',
-    '流程',
-    '轨迹',
-    '运动',
-    '速度',
-    '加速度',
+    '动画', '可视化', '演示', '展示', '函数', '公式', '图像', '坐标',
+    '几何', '圆', '圆形', '正方形', '三角形', '柱状图', '折线图',
+    '流程', '轨迹', '运动', '速度', '加速度',
 ];
 
 function getManimHeaders() {
@@ -160,11 +146,16 @@ export function isManimAgentEnabled(env = process.env) {
 }
 
 export function buildAgentPayload(body = {}) {
+    const skillIds = Array.isArray(body.skillIds) ? body.skillIds.map(String).filter(Boolean).slice(0, 12) : [];
+    const referenceImageIds = Array.isArray(body.referenceImageIds) ? body.referenceImageIds.map(String).filter(Boolean).slice(0, 12) : [];
     return {
         message: String(body.message || ''),
         mode: normalizeAgentMode(body),
         currentCode: String(body.currentCode ?? body.code ?? ''),
         clientId: normalizeClientId(body.clientId || body.client_id, 'gateway'),
+        skillIds,
+        referenceImageIds,
+        jobId: String(body.jobId || ''),
     };
 }
 
@@ -197,6 +188,24 @@ async function runAgent(payload) {
     }
 
     return normalizeAgentResult(data);
+}
+
+async function proxyManimJson(path, { method = 'GET', body, timeoutMs = 15000 } = {}) {
+    const response = await fetch(`${getManimServiceUrl()}${path}`, {
+        method,
+        headers: getManimHeaders(),
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: timeoutSignal(timeoutMs),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const error = data.error || `Manim Service HTTP ${response.status}`;
+        const wrapped = new Error(error);
+        wrapped.status = response.status;
+        wrapped.data = data;
+        throw wrapped;
+    }
+    return data;
 }
 
 async function handleManimLegacy(req, res) {
@@ -471,6 +480,87 @@ export async function getStatus(req, res) {
     }
 }
 
+export async function listJobs(req, res) {
+    try {
+        const limit = Number(req.query.limit || 30);
+        const data = await proxyManimJson(`/agent/jobs?limit=${Number.isFinite(limit) ? Math.max(1, Math.min(limit, 100)) : 30}`);
+        return res.json(data);
+    } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+    }
+}
+
+export async function getJob(req, res) {
+    try {
+        const jobId = encodeURIComponent(String(req.params.jobId || ''));
+        const data = await proxyManimJson(`/agent/jobs/${jobId}`);
+        return res.json(data);
+    } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+    }
+}
+
+export async function cancelJob(req, res) {
+    try {
+        const jobId = encodeURIComponent(String(req.params.jobId || ''));
+        const data = await proxyManimJson(`/agent/jobs/${jobId}/cancel`, { method: 'POST' });
+        return res.json(data);
+    } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+    }
+}
+
+export async function listFailures(req, res) {
+    try {
+        const limit = Number(req.query.limit || 50);
+        const data = await proxyManimJson(`/agent/failures?limit=${Number.isFinite(limit) ? Math.max(1, Math.min(limit, 200)) : 50}`);
+        return res.json(data);
+    } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+    }
+}
+
+export async function replayFailure(req, res) {
+    try {
+        const eventId = encodeURIComponent(String(req.params.eventId || ''));
+        const data = await proxyManimJson(`/agent/failures/${eventId}/replay`, { method: 'POST', timeoutMs: 30000 });
+        return res.json(data);
+    } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+    }
+}
+
+export async function uploadReferenceImage(req, res) {
+    let tempPath = req.file?.path;
+    try {
+        let filename = req.file?.originalname || req.body?.filename || 'reference.png';
+        let mimeType = req.file?.mimetype || req.body?.mimeType || 'image/png';
+        let dataBase64 = req.body?.dataBase64 || '';
+
+        if (req.file?.path) {
+            const buffer = await readFile(req.file.path);
+            dataBase64 = buffer.toString('base64');
+        }
+
+        if (!dataBase64) {
+            return res.status(400).json({ success: false, error: '请上传参考图片' });
+        }
+
+        const data = await proxyManimJson('/agent/reference-images', {
+            method: 'POST',
+            body: { filename, mimeType, dataBase64 },
+            timeoutMs: 30000,
+        });
+        return res.json(data);
+    } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+    } finally {
+        if (tempPath) {
+            unlink(tempPath).catch(() => {});
+        }
+    }
+}
+
 export default {
     handleManim,
     streamAgent,
@@ -478,4 +568,10 @@ export default {
     renderCode,
     getSuggestions,
     getStatus,
+    listJobs,
+    getJob,
+    cancelJob,
+    listFailures,
+    replayFailure,
+    uploadReferenceImage,
 };

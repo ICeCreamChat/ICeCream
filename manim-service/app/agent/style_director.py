@@ -1,4 +1,4 @@
-"""Style selection for Manim Agent v5."""
+"""Style selection for Manim Agent v6."""
 
 from __future__ import annotations
 

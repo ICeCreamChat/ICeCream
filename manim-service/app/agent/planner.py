@@ -53,7 +53,7 @@ def plan_animation(
     mode: str = "create",
     current_code: str = "",
 ) -> dict[str, Any]:
-    """Convert a user prompt into a deterministic Manim Agent v5 routing brief."""
+    """Convert a user prompt into a deterministic Manim Agent v6 routing brief."""
     route = route_intent(message, mode=mode, current_code=current_code)
     spec = _spec_for_route(route, current_code=current_code)
     storyboard = spec.get("storyboard") or spec.get("teaching_steps") or []
@@ -75,7 +75,7 @@ def plan_animation(
         "risks": spec.get("risk_flags", []),
         "confidence": route["confidence"],
         "clarification": route["clarification"],
-        "plannerStrategy": "rule_first_v5",
+        "plannerStrategy": "rule_first_v6",
         "decisionLog": route["decision_log"],
         "currentCodeSummary": {
             "hasCode": bool(current_code.strip()),

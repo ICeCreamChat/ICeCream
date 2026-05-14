@@ -1,4 +1,4 @@
-"""Rendered-frame visual quality checks for Manim Agent v5."""
+"""Rendered-frame visual quality checks for Manim Agent v6."""
 
 from __future__ import annotations
 

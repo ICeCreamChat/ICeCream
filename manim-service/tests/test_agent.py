@@ -1,10 +1,12 @@
 import ast
 import asyncio
+import base64
 import json
 import os
 import sys
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,8 +22,13 @@ from app.agent.director import design_storyboard
 from app.agent.failure_events import record_failure_event
 from app.agent.failure_replay import replay_failure_events
 from app.agent.inspector import inspect_code_quality
+from app.agent import job_registry
+from app.agent.job_registry import cancel_job, create_job, get_job, update_job
 from app.agent.manim_knowledge import RULE_PACK_VERSION, manim_rules_prompt, rule_ids
 from app.agent.planner import plan_animation
+from app.agent.prompt_loader import API_INDEX_VERSION, PROMPT_PACK_VERSION, build_generation_prompt_pack
+from app.agent.reference_store import save_reference_image
+from app.agent.render_cache import get_cached_render, save_cached_render
 from app.agent.repair import patch_first_repair, repair_code, repair_code_async, static_repair_once
 from app.agent.renderer import sanitize_render_error
 from app.agent.rescue_scene import rescue_scene_code
@@ -32,6 +39,7 @@ from app.agent.smoke_suite import SMOKE_CASES, evaluate_smoke_result
 from app.agent.static_guard import run_static_guard
 from app.agent.visual_judge import inspect_frame_quality, inspect_visual_quality
 from app.agent.workflow import stream_agent_events
+from PIL import Image
 
 
 def renderable_scene_classes(code: str) -> list[str]:
@@ -235,7 +243,7 @@ class ManimAgentV4Tests(unittest.TestCase):
         ids = set(rule_ids())
         prompt = manim_rules_prompt()
 
-        self.assertEqual(RULE_PACK_VERSION, "manimcat-foundation-v1")
+        self.assertEqual(RULE_PACK_VERSION, "manimcat-foundation-v6")
         for required in {
             "scene_contract",
             "scene_self_methods",
@@ -265,12 +273,82 @@ class ManimAgentV4Tests(unittest.TestCase):
             for marker in forbidden:
                 self.assertNotIn(marker, text, f"{path} contains mojibake marker {marker!r}")
 
+    def test_v6_prompt_pack_is_loaded_from_versioned_modules(self):
+        prompt = build_generation_prompt_pack()
+
+        self.assertIn(PROMPT_PACK_VERSION, prompt)
+        self.assertIn(API_INDEX_VERSION, prompt)
+        self.assertIn("Scene", prompt)
+        self.assertIn("Text", prompt)
+        self.assertIn("MathTex", prompt)
+        self.assertIn("黑边", prompt)
+
+    def test_job_registry_tracks_status_and_cancel_state(self):
+        original = os.environ.get("MANIM_AGENT_JOBS_FILE")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["MANIM_AGENT_JOBS_FILE"] = str(Path(temp_dir) / "jobs.json")
+            job_registry._JOBS = None
+            job = create_job({"message": "画一个圆形", "jobId": "unit-job"})
+            updated = update_job(job["jobId"], status="running", current_stage="coder", summary="正在生成代码")
+            cancelled = cancel_job(job["jobId"])
+
+            self.assertEqual(job["jobId"], "unit-job")
+            self.assertEqual(updated["currentStage"], "coder")
+            self.assertTrue(cancelled["success"])
+            self.assertTrue(get_job(job["jobId"])["cancelRequested"])
+        if original is None:
+            os.environ.pop("MANIM_AGENT_JOBS_FILE", None)
+        else:
+            os.environ["MANIM_AGENT_JOBS_FILE"] = original
+        job_registry._JOBS = None
+
+    def test_render_cache_round_trips_successful_video_metadata(self):
+        original = os.environ.get("MANIM_AGENT_RENDER_CACHE")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["MANIM_AGENT_RENDER_CACHE"] = str(Path(temp_dir) / "render-cache.json")
+            code = "from manim import *\nclass MainScene(Scene):\n    def construct(self):\n        self.add(Circle())\n"
+            self.assertIsNone(get_cached_render(code))
+            saved = save_cached_render(code, {"videoUrl": "/static/video.mp4"}, trace={"codeSource": "llm_v6"})
+            cached = get_cached_render(code)
+
+            self.assertEqual(cached["cacheKey"], saved["cacheKey"])
+            self.assertEqual(cached["videoUrl"], "/static/video.mp4")
+            self.assertTrue(cached["cached"])
+        if original is None:
+            os.environ.pop("MANIM_AGENT_RENDER_CACHE", None)
+        else:
+            os.environ["MANIM_AGENT_RENDER_CACHE"] = original
+
+    def test_reference_image_store_validates_and_returns_safe_metadata(self):
+        original_dir = os.environ.get("MANIM_AGENT_REFERENCE_DIR")
+        buffer = BytesIO()
+        Image.new("RGB", (1, 1), color=(255, 255, 255)).save(buffer, format="PNG")
+        one_pixel_png = base64.b64encode(buffer.getvalue()).decode("ascii")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["MANIM_AGENT_REFERENCE_DIR"] = temp_dir
+            result = save_reference_image(
+                filename="../sketch.png",
+                mime_type="image/png",
+                data_base64=one_pixel_png,
+            )
+            rejected = save_reference_image(filename="bad.txt", mime_type="text/plain", data_base64=one_pixel_png)
+
+            self.assertTrue(result["success"])
+            self.assertNotIn("path", result["reference"])
+            self.assertEqual(result["reference"]["width"], 1)
+            self.assertEqual(result["reference"]["height"], 1)
+            self.assertFalse(rejected["success"])
+        if original_dir is None:
+            os.environ.pop("MANIM_AGENT_REFERENCE_DIR", None)
+        else:
+            os.environ["MANIM_AGENT_REFERENCE_DIR"] = original_dir
+
     def test_planner_still_returns_clarification_for_low_confidence_prompt(self):
         brief = plan_animation("做个动画")
 
         self.assertLess(brief["confidence"], 0.6)
         self.assertIsNotNone(brief["clarification"])
-        self.assertEqual(brief["plannerStrategy"], "rule_first_v5")
+        self.assertEqual(brief["plannerStrategy"], "rule_first_v6")
 
     def test_planner_recognizes_clear_circle_prompt_without_clarification(self):
         brief = plan_animation("画一个圆形")
@@ -293,7 +371,7 @@ class ManimAgentV4Tests(unittest.TestCase):
             brief = plan_animation(prompt)
             self.assertEqual((brief["domain"], brief["animation_type"]), expected)
 
-    def test_director_outputs_storyboard_spec_v5(self):
+    def test_director_outputs_storyboard_spec_v6(self):
         brief = plan_animation("画一个圆形")
         ai = _FakeAI([director_json()])
 
@@ -301,7 +379,7 @@ class ManimAgentV4Tests(unittest.TestCase):
         spec = result["storyboardSpec"]
 
         self.assertEqual(result["status"], "success")
-        self.assertEqual(spec["version"], "v5")
+        self.assertEqual(spec["version"], "v6")
         self.assertEqual(spec["animation_type"], "geometry_circle")
         self.assertIn("Circle", spec["visual_objects"])
         self.assertGreaterEqual(len(spec["shots"]), 2)
@@ -445,7 +523,7 @@ class ManimAgentV4Tests(unittest.TestCase):
         ))
 
         self.assertEqual(generated["status"], "success")
-        self.assertEqual(generated["codeSource"], "llm_v5")
+        self.assertEqual(generated["codeSource"], "llm_v6")
         self.assertEqual(renderable_scene_classes(generated["code"]), ["MainScene"])
         self.assertIn("Circle(", generated["code"])
         self.assertNotIn("_circle_template", generated["code"])
@@ -463,7 +541,7 @@ class ManimAgentV4Tests(unittest.TestCase):
         self.assertLessEqual(len(skills), 3)
         self.assertIn("function_graph", skill_ids)
         self.assertIn("text_formula_layout", skill_ids)
-        self.assertTrue(all(skill["version"] == "v5" for skill in skills))
+        self.assertTrue(all(skill["version"] == "v6" for skill in skills))
 
     def test_critic_blocks_gateway_aligned_security_risks(self):
         code = """
@@ -1272,7 +1350,7 @@ class MainScene(Scene):
         async def fake_run_agent(payload, **kwargs):
             del kwargs
             code = "Circle()" if "circle" in payload["clientId"] else "Square()"
-            source = "rescue" if "square" in payload["clientId"] else "llm_v5"
+            source = "rescue" if "square" in payload["clientId"] else "llm_v6"
             return {
                 "rendered": True,
                 "videoUrl": "/static/fake.mp4",
@@ -1309,7 +1387,7 @@ class MainScene(Scene):
 
         report = asyncio.run(collect())
 
-        self.assertEqual(report["codeSourceCounts"], {"llm_v5": 1, "rescue": 1})
+        self.assertEqual(report["codeSourceCounts"], {"llm_v6": 1, "rescue": 1})
         self.assertEqual(report["rescueCount"], 1)
         self.assertEqual(report["strictQualityPassed"], 1)
         self.assertEqual(report["strictQualityFailed"], 1)
@@ -1434,7 +1512,7 @@ class MainScene(Scene):
         self.assertIn("observation", payload)
         self.assertIn("root_cause_hint", payload["observation"])
 
-    def test_agent_stream_emits_v5_design_style_visual_trace_without_render(self):
+    def test_agent_stream_emits_v6_job_design_style_visual_trace_without_render(self):
         async def collect():
             events = []
             ai = _FakeAI([director_json(), f"```python\n{circle_scene_code()}\n```"])
@@ -1451,7 +1529,7 @@ class MainScene(Scene):
         event_types = [event["type"] for event in events]
         final = events[-1]
 
-        for event_type in ("plan", "design", "storyboard", "style", "skills", "code", "static_guard", "critic_report", "inspect", "quality_report", "preview", "result"):
+        for event_type in ("job", "plan", "design", "storyboard", "style", "skill_activation", "skills", "code", "static_guard", "critic_report", "inspect", "quality_report", "preview", "result"):
             self.assertIn(event_type, event_types)
         self.assertIn("code_delta", event_types)
         self.assertLess(event_types.index("code_delta"), event_types.index("code"))
@@ -1459,8 +1537,10 @@ class MainScene(Scene):
         self.assertTrue(any(call.get("stream") is True for call in calls))
         self.assertEqual(final["type"], "result")
         self.assertEqual(final["agentTrace"]["template"], "none")
-        self.assertEqual(final["agentTrace"]["codeSource"], "llm_v5")
-        self.assertEqual(final["agentTrace"]["storyboardSpec"]["version"], "v5")
+        self.assertEqual(final["agentTrace"]["codeSource"], "llm_v6")
+        self.assertEqual(final["agentTrace"]["storyboardSpec"]["version"], "v6")
+        self.assertIn("promptPackVersion", final["agentTrace"])
+        self.assertEqual(final["agentTrace"]["promptPackVersion"], PROMPT_PACK_VERSION)
         self.assertEqual(final["agentTrace"]["preview"]["status"], "skipped")
 
     def test_agent_stream_stops_at_static_guard_when_code_cannot_compile(self):
@@ -1541,7 +1621,14 @@ class MainScene(Scene):
                     events.append(event)
             return events
 
-        events = asyncio.run(collect())
+        original_cache = os.environ.get("MANIM_AGENT_RENDER_CACHE")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["MANIM_AGENT_RENDER_CACHE"] = str(Path(temp_dir) / "render-cache.json")
+            events = asyncio.run(collect())
+        if original_cache is None:
+            os.environ.pop("MANIM_AGENT_RENDER_CACHE", None)
+        else:
+            os.environ["MANIM_AGENT_RENDER_CACHE"] = original_cache
         final = events[-1]
 
         self.assertTrue(any(event["type"] == "visual_check" for event in events))
@@ -1551,9 +1638,9 @@ class MainScene(Scene):
         self.assertEqual(final["agentTrace"]["codeSource"], "repair")
         self.assertEqual(render_calls[-1][1], "final_render")
 
-    def test_v4_disabled_returns_warning_without_template_fallback(self):
-        original = os.environ.get("MANIM_AGENT_V4_ENABLED")
-        os.environ["MANIM_AGENT_V4_ENABLED"] = "false"
+    def test_v6_disabled_returns_warning_without_template_fallback(self):
+        original = os.environ.get("MANIM_AGENT_V6_ENABLED")
+        os.environ["MANIM_AGENT_V6_ENABLED"] = "false"
         try:
             async def collect():
                 events = []
@@ -1569,15 +1656,15 @@ class MainScene(Scene):
             events = asyncio.run(collect())
         finally:
             if original is None:
-                os.environ.pop("MANIM_AGENT_V4_ENABLED", None)
+                os.environ.pop("MANIM_AGENT_V6_ENABLED", None)
             else:
-                os.environ["MANIM_AGENT_V4_ENABLED"] = original
+                os.environ["MANIM_AGENT_V6_ENABLED"] = original
 
         self.assertEqual(events[-1]["type"], "result")
         self.assertFalse(events[-1]["rendered"])
         self.assertEqual(events[-1]["code"], "")
         self.assertEqual(events[-1]["agentTrace"]["template"], "none")
-        self.assertIn("Manim Agent v5", events[-1]["warning"])
+        self.assertIn("Manim Agent v6", events[-1]["warning"])
 
 
 if __name__ == "__main__":

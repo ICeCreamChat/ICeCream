@@ -1,4 +1,4 @@
-"""LLM code writer for Manim Agent v5."""
+"""LLM code writer for Manim Agent v6."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import re
 from typing import Any, Iterable
 
 from .manim_knowledge import CORE_MANIM_RULES, RULE_PACK_VERSION, manim_rules_prompt, semantic_target_from_brief
+from .prompt_loader import API_INDEX_VERSION, PROMPT_PACK_VERSION, build_generation_prompt_pack
 from .scene_runtime import runtime_prompt
 
 
@@ -178,10 +179,13 @@ def build_code_writer_messages(
         "stylePreset": style_preset,
         "runtimeHelpers": runtime_prompt(),
         "manimRules": manim_rules_prompt(),
+        "promptPack": build_generation_prompt_pack(),
         "skills": skill_guidance,
         "currentCode": current_code,
         "hardRequirements": hard_requirements,
         "rulePackVersion": RULE_PACK_VERSION,
+        "promptPackVersion": PROMPT_PACK_VERSION,
+        "apiIndexVersion": API_INDEX_VERSION,
     }
     return [
         {"role": "system", "content": system},
@@ -215,7 +219,7 @@ async def write_scene_code(
     if ai_client is None or not model_name:
         return {
             "status": "error",
-            "summary": "Manim Agent v5 需要配置 AI 客户端后才能生成场景代码。",
+            "summary": "Manim Agent v6 需要配置 AI 客户端后才能生成场景代码。",
             "code": "",
             "source": "unavailable",
             "codeSource": "none",
@@ -237,8 +241,8 @@ async def write_scene_code(
             "status": "success",
             "summary": "场景代码生成完成。",
             "code": code,
-            "source": "llm_v5",
-            "codeSource": "llm_v5",
+            "source": "llm_v6",
+            "codeSource": "llm_v6",
             "analysis": analyze_current_code(current_code) if current_code else {},
             "next_actions": ["进行静态检查、语义检查和视觉检查。"],
         }
@@ -247,8 +251,8 @@ async def write_scene_code(
             "status": "error",
             "summary": f"场景代码生成失败：{exc}",
             "code": "",
-            "source": "llm_v5",
-            "codeSource": "llm_v5",
+            "source": "llm_v6",
+            "codeSource": "llm_v6",
             "analysis": analyze_current_code(current_code) if current_code else {},
             "next_actions": ["请重试生成，或降低动画复杂度。"],
         }

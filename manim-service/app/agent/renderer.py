@@ -17,6 +17,21 @@ def _render_module():
     return importlib.import_module("app.legacy_main")
 
 
+def cancel_render_client(client_id: str) -> bool:
+    """Best-effort cancellation for an active legacy Manim subprocess."""
+    if not client_id:
+        return False
+    try:
+        legacy_main = _render_module()
+        manager = getattr(legacy_main, "render_manager", None)
+        if manager and hasattr(manager, "kill_process_for_client"):
+            manager.kill_process_for_client(client_id)
+            return True
+    except Exception:
+        return False
+    return False
+
+
 def sanitize_render_error(text: Any, max_length: int = 1200) -> str:
     """Return a short user-safe render error while preserving the root cause."""
     value = str(text or "").replace("\r\n", "\n").strip()

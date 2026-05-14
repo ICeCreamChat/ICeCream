@@ -1,4 +1,4 @@
-"""Storyboard director for Manim Agent v5."""
+"""Storyboard director for Manim Agent v6."""
 
 from __future__ import annotations
 
@@ -295,7 +295,7 @@ def _coerce_spec(data: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
         })
 
     spec = {
-        "version": "v5",
+        "version": "v6",
         "kind": fallback_spec.get("kind") or brief.get("animation_type") or "concept",
         "semantic_target": semantic_target_from_brief(brief),
         "topic": _user_visible_text(data.get("topic"), fallback_topic, 80, require_chinese=require_chinese),
@@ -347,7 +347,7 @@ def build_director_messages(brief: dict[str, Any], current_code: str = "") -> li
         ],
         "current_code_summary": brief.get("currentCodeSummary", {}),
         "required_json_shape": {
-            "version": "v5",
+            "version": "v6",
             "topic": "简短中文标题",
             "audience": "学生",
             "teaching_goal": "一句中文教学目标",
@@ -381,11 +381,11 @@ async def design_storyboard(
     model_name: str | None,
     current_code: str = "",
 ) -> dict[str, Any]:
-    """Ask the model for a v5 StoryboardSpec and validate it."""
+    """Ask the model for a v6 StoryboardSpec and validate it."""
     if ai_client is None or not model_name:
         return {
             "status": "error",
-            "summary": "Manim Agent v5 需要配置 AI 客户端后才能设计分镜。",
+            "summary": "Manim Agent v6 需要配置 AI 客户端后才能设计分镜。",
             "storyboardSpec": None,
             "next_actions": ["请配置 DEEPSEEK_API_KEY 并重启 Manim 服务。"],
         }

@@ -1,4 +1,4 @@
-"""Backward-compatible wrapper around the v5 visual judge."""
+"""Backward-compatible wrapper around the v6 visual judge."""
 
 from __future__ import annotations
 

@@ -1,4 +1,5 @@
 import express from 'express';
+import { upload } from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -56,6 +57,60 @@ router.get('/status', async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');
         return manimClient.getStatus(req, res);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.get('/jobs', async (req, res) => {
+    try {
+        const manimClient = await import('../../services/manim/manim-client.js');
+        return manimClient.listJobs(req, res);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.get('/jobs/:jobId', async (req, res) => {
+    try {
+        const manimClient = await import('../../services/manim/manim-client.js');
+        return manimClient.getJob(req, res);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.post('/jobs/:jobId/cancel', async (req, res) => {
+    try {
+        const manimClient = await import('../../services/manim/manim-client.js');
+        return manimClient.cancelJob(req, res);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.get('/failures', async (req, res) => {
+    try {
+        const manimClient = await import('../../services/manim/manim-client.js');
+        return manimClient.listFailures(req, res);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.post('/failures/:eventId/replay', async (req, res) => {
+    try {
+        const manimClient = await import('../../services/manim/manim-client.js');
+        return manimClient.replayFailure(req, res);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.post('/reference-images', upload.single('image'), async (req, res) => {
+    try {
+        const manimClient = await import('../../services/manim/manim-client.js');
+        return manimClient.uploadReferenceImage(req, res);
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

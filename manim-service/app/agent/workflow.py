@@ -1,4 +1,4 @@
-"""Agent v5 orchestration workflow for Manim generation."""
+"""Agent v6 orchestration workflow for Manim generation."""
 
 from __future__ import annotations
 
@@ -13,13 +13,18 @@ from .critic import critique_code
 from .director import design_storyboard
 from .failure_events import record_failure_event
 from .inspector import inspect_code_quality
+from .job_registry import create_job, is_cancelled, register_render_client, update_job
 from .manim_knowledge import RULE_PACK_VERSION, semantic_target_from_brief
 from .planner import plan_animation
+from .prompt_loader import API_INDEX_VERSION, PROMPT_PACK_VERSION
+from .reference_store import resolve_references
+from .render_cache import get_cached_render, save_cached_render
 from .repair import repair_code_async
 from .renderer import render_code_for_agent
 from .rescue_scene import rescue_scene_code
 from .skill_loader import select_skills
 from .static_guard import run_static_guard
+from .studio_patch import build_patch_plan
 from .style_director import select_style
 from .visual_judge import inspect_visual_quality
 
@@ -30,6 +35,15 @@ def _preview_enabled() -> bool:
 
 def _v5_enabled() -> bool:
     value = os.environ.get("MANIM_AGENT_V5_ENABLED")
+    if value is None:
+        value = os.environ.get("MANIM_AGENT_V4_ENABLED", "true")
+    return str(value).lower() not in {"0", "false", "off", "no"}
+
+
+def _v6_enabled() -> bool:
+    value = os.environ.get("MANIM_AGENT_V6_ENABLED")
+    if value is None:
+        value = os.environ.get("MANIM_AGENT_V5_ENABLED")
     if value is None:
         value = os.environ.get("MANIM_AGENT_V4_ENABLED", "true")
     return str(value).lower() not in {"0", "false", "off", "no"}
@@ -56,7 +70,7 @@ def _trace(
     visual: dict[str, Any] | None = None,
     storyboard_spec: dict[str, Any] | None = None,
     style_preset: dict[str, Any] | None = None,
-    code_source: str = "llm_v5",
+    code_source: str = "llm_v6",
 ) -> dict[str, Any]:
     quality = quality or {}
     visual = visual or {}
@@ -71,10 +85,12 @@ def _trace(
             "domain": brief.get("domain"),
             "animationType": brief.get("animation_type"),
             "confidence": brief.get("confidence"),
+            "message": brief.get("message"),
             "storyboard": [shot.get("title", "") for shot in spec.get("shots", [])[:5]]
             or brief.get("storyboard", [])[:4],
         },
         "spec": spec,
+        "jobId": brief.get("jobId"),
         "rulePackVersion": RULE_PACK_VERSION,
         "semanticTarget": semantic_target_from_brief({**brief, "storyboardSpec": spec}),
         "staticFindings": (quality or {}).get("issues") or (quality or {}).get("findings") or [],
@@ -83,6 +99,8 @@ def _trace(
         "skills": [skill["id"] for skill in skills],
         "template": "none",
         "codeSource": code_source,
+        "promptPackVersion": PROMPT_PACK_VERSION,
+        "apiIndexVersion": API_INDEX_VERSION,
         "quality": {
             "static": quality,
             "visual": visual,
@@ -195,19 +213,38 @@ async def stream_agent_events(
     mode = str(payload.get("mode") or "create")
     current_code = str(payload.get("currentCode") or "")
     client_id = str(payload.get("clientId") or "agent")
+    job = create_job(payload)
+    job_id = job["jobId"]
+    reference_ids = [str(item) for item in (payload.get("referenceImageIds") or []) if str(item).strip()]
+    requested_skill_ids = [str(item) for item in (payload.get("skillIds") or []) if str(item).strip()]
+
+    yield {"type": "job", "job": job}
+
+    def _stop_if_cancelled() -> dict[str, Any] | None:
+        if not is_cancelled(job_id):
+            return None
+        warning = "Manim 任务已取消。"
+        update_job(job_id, status="cancelled", current_stage="cancelled", summary=warning)
+        return _result(code="", trace={"jobId": job_id, "failureReason": warning}, rendered=False, warning=warning)
 
     yield {"type": "progress", "step": "planner", "message": "正在理解动画需求"}
+    update_job(job_id, status="running", current_stage="planner", summary="正在理解动画需求", event={"type": "progress", "step": "planner", "message": "正在理解动画需求"})
     brief = plan_animation(message, mode=mode, current_code=current_code)
+    brief["jobId"] = job_id
+    brief["requestedSkillIds"] = requested_skill_ids
+    brief["referenceImageIds"] = reference_ids
     yield {
         "type": "plan",
         "brief": {
             "domain": brief.get("domain"),
             "animationType": brief.get("animation_type"),
             "confidence": brief.get("confidence"),
-            "strategy": "v5_director_pipeline",
+            "strategy": "v6_director_pipeline",
+            "jobId": job_id,
         },
     }
     if brief.get("clarification"):
+        update_job(job_id, status="waiting", current_stage="clarification", summary="需要补充动画目标")
         yield {
             "type": "clarification",
             "success": True,
@@ -218,22 +255,40 @@ async def stream_agent_events(
         }
         return
 
-    if not _v5_enabled():
-        warning = "Manim Agent v5 已被配置关闭。"
+    if not _v6_enabled():
+        warning = "Manim Agent v6 已被配置关闭。"
         yield {"type": "error", "success": False, "error": warning, "recoverable": True}
+        update_job(job_id, status="failed", current_stage="disabled", summary=warning)
         yield _result(code="", trace=_trace(brief, [], failure_reason=warning, code_source="none"), rendered=False, warning=warning)
         return
 
     if ai_client is None or not model_name:
-        warning = "Manim Agent v5 需要 AI 配置，不会回退到固定整段模板。"
+        warning = "Manim Agent v6 需要 AI 配置，不会回退到固定整段模板。"
         yield {"type": "error", "success": False, "error": warning, "recoverable": True}
+        update_job(job_id, status="failed", current_stage="ai_config", summary=warning)
         yield _result(code="", trace=_trace(brief, [], failure_reason=warning, code_source="none"), rendered=False, warning=warning)
         return
 
+    references = resolve_references(reference_ids)
+    if references:
+        brief["references"] = references
+        yield {"type": "reference", "references": references, "summary": "已加载参考素材"}
+
+    if mode == "modify":
+        patch_plan = build_patch_plan(message, current_code)
+        brief["patchPlan"] = patch_plan
+        yield {"type": "patch_plan", "patchPlan": patch_plan}
+
     yield {"type": "progress", "step": "design", "message": "正在设计教学分镜"}
+    update_job(job_id, current_stage="design", summary="正在设计教学分镜", event={"type": "progress", "step": "design"})
     design = await design_storyboard(brief, ai_client=ai_client, model_name=model_name, current_code=current_code)
     if design["status"] != "success":
+        update_job(job_id, status="failed", current_stage="design", summary=design["summary"])
         yield _result(code="", trace=_trace(brief, [], failure_reason=design["summary"], code_source="none"), warning=design["summary"])
+        return
+    cancelled = _stop_if_cancelled()
+    if cancelled:
+        yield cancelled
         return
     storyboard_spec = design["storyboardSpec"]
     brief["storyboardSpec"] = storyboard_spec
@@ -246,15 +301,17 @@ async def stream_agent_events(
 
     yield {"type": "progress", "step": "skills", "message": "正在选择 Manim 运行时技能"}
     skills = select_skills(brief)
+    yield {"type": "skill_activation", "skills": skills, "catalogVersion": "manim-v6-skills"}
     yield {"type": "skills", "skills": skills}
 
     yield {"type": "progress", "step": "coder", "message": "正在生成 Manim 场景代码"}
+    update_job(job_id, current_stage="coder", summary="正在生成 Manim 场景代码", event={"type": "progress", "step": "coder"})
     generated: dict[str, Any] = {
         "status": "error",
-        "summary": "Manim Agent v5 未能生成代码。",
+        "summary": "Manim Agent v6 未能生成代码。",
         "code": "",
-        "source": "llm_v5",
-        "codeSource": "llm_v5",
+        "source": "llm_v6",
+        "codeSource": "llm_v6",
         "analysis": {},
     }
     async for event in stream_scene_code_events(
@@ -272,12 +329,12 @@ async def stream_agent_events(
         event.setdefault("analysis", {})
         yield event
     code = generated.get("code", "")
-    code_source = generated.get("codeSource") or generated.get("source") or "llm_v5"
+    code_source = generated.get("codeSource") or generated.get("source") or "llm_v6"
     if code:
         yield {
             "type": "code",
             "code": code,
-            "source": generated.get("source", "llm_v5"),
+            "source": generated.get("source", "llm_v6"),
             "template": "none",
             "warning": generated.get("warning"),
             "analysis": generated.get("analysis", {}),
@@ -286,7 +343,7 @@ async def stream_agent_events(
         yield _result(
             code=code,
             trace=_trace(brief, skills, failure_reason=generated.get("summary", ""), storyboard_spec=storyboard_spec, style_preset=style_preset, code_source=code_source),
-            warning=generated.get("summary") or "Manim Agent v5 未能生成代码。",
+            warning=generated.get("summary") or "Manim Agent v6 未能生成代码。",
         )
         return
 
@@ -340,7 +397,7 @@ async def stream_agent_events(
             style_preset=style_preset,
             code_source=code_source,
         )
-        yield _result(code=code, trace=trace, warning="Manim Agent v5 已生成代码，但 Python 静态守卫仍需处理。")
+        yield _result(code=code, trace=trace, warning="Manim Agent v6 已生成代码，但 Python 静态守卫仍需处理。")
         return
 
     yield {"type": "progress", "step": "critic", "message": "正在检查代码质量和安全性"}
@@ -387,7 +444,7 @@ async def stream_agent_events(
             style_preset=style_preset,
             code_source=code_source,
         )
-        yield _result(code=code, trace=trace, warning="Manim Agent v5 已生成代码，但静态检查仍需处理。")
+        yield _result(code=code, trace=trace, warning="Manim Agent v6 已生成代码，但静态检查仍需处理。")
         return
 
     yield {"type": "inspect", "step": "inspect", "message": "正在检查布局、可读性和语义一致性"}
@@ -435,7 +492,7 @@ async def stream_agent_events(
                 style_preset=style_preset,
                 code_source=code_source,
             )
-            yield _result(code=code, trace=trace, warning="Manim Agent v5 已尝试修复代码，但质量检查仍需处理。")
+            yield _result(code=code, trace=trace, warning="Manim Agent v6 已尝试修复代码，但质量检查仍需处理。")
             return
 
     visual_report: dict[str, Any] = {
@@ -464,7 +521,9 @@ async def stream_agent_events(
         preview_render: dict[str, Any] | None = None
         for attempt in range(2):
             yield {"type": "progress", "step": "preview", "message": "正在渲染预览并抽帧检查视觉质量"}
-            preview_render = await render_code_for_agent(code, client_id=f"{client_id}_preview", stage="preview_render")
+            preview_client_id = f"{client_id}_{job_id}_preview"
+            register_render_client(job_id, preview_client_id)
+            preview_render = await render_code_for_agent(code, client_id=preview_client_id, stage="preview_render")
             visual_report = inspect_visual_quality(code, brief, preview_render)
             yield {"type": "visual_check", "visual": visual_report, "videoUrl": preview_render.get("videoUrl")}
             yield {"type": "preview", "preview": visual_report, "videoUrl": preview_render.get("videoUrl")}
@@ -480,7 +539,9 @@ async def stream_agent_events(
                         yield event
                     yield {"type": "critic_report", "critic": critic_report}
                     yield {"type": "quality_report", "quality": quality_report}
-                    preview_render = await render_code_for_agent(code, client_id=f"{client_id}_preview_rescue", stage="preview_render")
+                    preview_client_id = f"{client_id}_{job_id}_preview_rescue"
+                    register_render_client(job_id, preview_client_id)
+                    preview_render = await render_code_for_agent(code, client_id=preview_client_id, stage="preview_render")
                     visual_report = inspect_visual_quality(code, brief, preview_render)
                     yield {"type": "visual_check", "visual": visual_report, "videoUrl": preview_render.get("videoUrl")}
                     yield {"type": "preview", "preview": visual_report, "videoUrl": preview_render.get("videoUrl")}
@@ -498,7 +559,9 @@ async def stream_agent_events(
                         yield event
                     yield {"type": "critic_report", "critic": critic_report}
                     yield {"type": "quality_report", "quality": quality_report}
-                    preview_render = await render_code_for_agent(code, client_id=f"{client_id}_preview_rescue", stage="preview_render")
+                    preview_client_id = f"{client_id}_{job_id}_preview_rescue"
+                    register_render_client(job_id, preview_client_id)
+                    preview_render = await render_code_for_agent(code, client_id=preview_client_id, stage="preview_render")
                     visual_report = inspect_visual_quality(code, brief, preview_render)
                     yield {"type": "visual_check", "visual": visual_report, "videoUrl": preview_render.get("videoUrl")}
                     yield {"type": "preview", "preview": visual_report, "videoUrl": preview_render.get("videoUrl")}
@@ -535,8 +598,22 @@ async def stream_agent_events(
             quality_report = inspect_code_quality(code, brief)
             yield {"type": "quality_report", "quality": quality_report}
 
+    cancelled = _stop_if_cancelled()
+    if cancelled:
+        yield cancelled
+        return
+
     yield {"type": "progress", "step": "render", "message": "正在渲染最终 Manim 视频"}
-    render_result = await render_code_for_agent(code, client_id=client_id, stage="final_render")
+    update_job(job_id, current_stage="render", summary="正在渲染最终 Manim 视频", event={"type": "progress", "step": "render"})
+    cached_render = get_cached_render(code)
+    if cached_render:
+        yield {"type": "cache", "status": "hit", "cacheKey": cached_render.get("cacheKey"), "videoUrl": cached_render.get("videoUrl"), "summary": "命中渲染缓存，已复用视频"}
+        render_result = {"success": True, **cached_render}
+    else:
+        yield {"type": "cache", "status": "miss", "summary": "未命中渲染缓存，开始正式渲染"}
+        final_client_id = f"{client_id}_{job_id}_final"
+        register_render_client(job_id, final_client_id)
+        render_result = await render_code_for_agent(code, client_id=final_client_id, stage="final_render")
     final_visual = inspect_visual_quality(code, brief, render_result)
     trace = _trace(
         brief,
@@ -550,11 +627,20 @@ async def stream_agent_events(
         code_source=code_source,
     )
     rendered = bool(render_result.get("success")) and final_visual["status"] != "error"
+    if rendered and not cached_render:
+        save_cached_render(code, render_result, trace=trace)
+    update_job(
+        job_id,
+        status="completed" if rendered else "failed",
+        current_stage="render",
+        summary="最终动画已生成" if rendered else (render_result.get("error") or final_visual.get("summary") or "渲染失败"),
+        event={"type": "result", "stage": "render", "summary": "最终动画已生成" if rendered else "渲染失败"},
+    )
     yield _result(
         code=code,
         trace=trace,
         rendered=rendered,
-        warning=None if rendered else render_result.get("error") or final_visual.get("summary") or "Manim Agent v5 渲染失败。",
+        warning=None if rendered else render_result.get("error") or final_visual.get("summary") or "Manim Agent v6 渲染失败。",
         render_result=render_result,
     )
 

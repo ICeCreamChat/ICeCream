@@ -1,4 +1,4 @@
-"""Rule-first intent routing for Manim Agent v5."""
+"""Rule-first intent routing for Manim Agent v6."""
 
 from __future__ import annotations
 

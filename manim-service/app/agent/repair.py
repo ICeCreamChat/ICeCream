@@ -1,4 +1,4 @@
-"""Repair helpers for Manim Agent v5."""
+"""Repair helpers for Manim Agent v6."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import Any, Callable
 from .code_writer import extract_code_from_text
 from .critic import critique_code
 from .manim_knowledge import RULE_PACK_VERSION, manim_rules_prompt, rule_hint, semantic_target_from_brief
+from .prompt_loader import build_repair_prompt_pack
 
 
 Fixer = Callable[[str, dict[str, Any]], str]
@@ -185,6 +186,7 @@ async def llm_repair_once(
         "observation": observation,
         "currentCode": code,
             "manimRules": manim_rules_prompt(),
+            "promptPack": build_repair_prompt_pack(),
             "rulePackVersion": RULE_PACK_VERSION,
             "requirements": [
             "Keep MainScene(SafeScene, Scene) as the only renderable Scene.",

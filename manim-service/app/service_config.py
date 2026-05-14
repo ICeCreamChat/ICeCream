@@ -74,6 +74,12 @@ REQUEST_TIMEOUT = 120.0
 MANIM_TIMEOUT = 300
 MANIM_AGENT_REPAIR_ATTEMPTS_DEFAULT = 4
 MANIM_AGENT_FAILURE_LOG_DEFAULT = os.path.join(PROJECT_ROOT, "logs", "manim-agent-failures.jsonl")
+MANIM_AGENT_JOBS_FILE_DEFAULT = os.path.join(PROJECT_ROOT, "logs", "manim-agent-jobs.json")
+MANIM_AGENT_RENDER_CACHE_DEFAULT = os.path.join(PROJECT_ROOT, "logs", "manim-render-cache.json")
+MANIM_AGENT_REFERENCE_DIR_DEFAULT = os.path.join(PROJECT_ROOT, "uploads", "manim-references")
+MANIM_AGENT_PROMPT_DIR_DEFAULT = os.path.join(APP_DIR, "agent", "prompts")
+MANIM_AGENT_PROJECT_SKILLS_DIR_DEFAULT = os.path.join(PROJECT_ROOT, ".manim", "skills")
+MANIM_AGENT_REFERENCE_MAX_BYTES_DEFAULT = 8 * 1024 * 1024
 
 
 def _bounded_int_env(name, default, minimum, maximum):
@@ -94,6 +100,35 @@ def get_manim_agent_failure_log_path():
 
 def is_manim_agent_failure_log_enabled():
     return os.environ.get("MANIM_AGENT_FAILURE_LOG_ENABLED", "true").lower() not in {"0", "false", "off", "no"}
+
+
+def get_manim_agent_jobs_file():
+    return os.environ.get("MANIM_AGENT_JOBS_FILE", MANIM_AGENT_JOBS_FILE_DEFAULT)
+
+
+def get_manim_agent_render_cache_path():
+    return os.environ.get("MANIM_AGENT_RENDER_CACHE", MANIM_AGENT_RENDER_CACHE_DEFAULT)
+
+
+def get_manim_reference_dir():
+    return os.environ.get("MANIM_AGENT_REFERENCE_DIR", MANIM_AGENT_REFERENCE_DIR_DEFAULT)
+
+
+def get_manim_prompt_dir():
+    return os.environ.get("MANIM_AGENT_PROMPT_DIR", MANIM_AGENT_PROMPT_DIR_DEFAULT)
+
+
+def get_manim_project_skills_dir():
+    return os.environ.get("MANIM_AGENT_PROJECT_SKILLS_DIR", MANIM_AGENT_PROJECT_SKILLS_DIR_DEFAULT)
+
+
+def get_manim_reference_max_bytes():
+    return _bounded_int_env(
+        "MANIM_AGENT_REFERENCE_MAX_BYTES",
+        MANIM_AGENT_REFERENCE_MAX_BYTES_DEFAULT,
+        128 * 1024,
+        20 * 1024 * 1024,
+    )
 
 
 MANIM_AGENT_REPAIR_ATTEMPTS = get_manim_agent_repair_attempts()

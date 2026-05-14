@@ -12,6 +12,7 @@ export class CodePanel {
         this.currentVideoId = null; // Track current video
         this.abortController = null; // [Stop Button] Track active request
         this.suggestionController = null;
+        this.studioReportEl = null;
         this.elements = {
             panel: document.getElementById('code-panel'),
             overlay: document.getElementById('code-panel-overlay'),
@@ -186,6 +187,8 @@ export class CodePanel {
                 cleanCode = cleanCode.replace(/^```(?:python)?\s*/i, "");
                 cleanCode = cleanCode.replace(/\s*```$/, "");
 
+                this.renderStudioPatchReport(data, currentCode, cleanCode);
+
                 if (this.monacoEditor) {
                     this.monacoEditor.setValue(cleanCode);
                 }
@@ -199,6 +202,7 @@ export class CodePanel {
                 alert(`${data.clarification.question || '请补充动画修改目标'}${options}`);
             } else {
                 console.error('AI Mod Failed:', data);
+                this.renderStudioPatchReport(data, currentCode, currentCode, true);
                 alert('AI 生成失败: ' + (data.error || 'Unknown error'));
             }
 
@@ -252,10 +256,15 @@ export class CodePanel {
 
         let latestCode = '';
         let result = null;
+        let patchPlan = null;
 
         await this.readAgentNdjson(response, (event) => {
             if (event.type === 'code') {
                 latestCode = event.code || latestCode;
+            } else if (event.type === 'code_delta') {
+                latestCode = event.code || `${latestCode}${event.delta || ''}`;
+            } else if (event.type === 'patch_plan') {
+                patchPlan = event.patchPlan;
             } else if (event.type === 'result' || event.type === 'clarification') {
                 result = event;
             } else if (event.type === 'error') {
@@ -268,8 +277,103 @@ export class CodePanel {
         if (result && !result.code && latestCode) {
             result.code = latestCode;
         }
+        if (result && patchPlan) {
+            result.agentTrace = {
+                ...(result.agentTrace || {}),
+                patchPlan,
+            };
+        }
 
         return result || { success: false, error: 'Manim Agent 没有返回修改结果' };
+    }
+
+    ensureStudioReport() {
+        if (this.studioReportEl && document.body.contains(this.studioReportEl)) {
+            return this.studioReportEl;
+        }
+        const editorPane = this.elements.panel?.querySelector('.panel-editor') || this.elements.panel?.querySelector('.code-panel-body');
+        if (!editorPane) return null;
+        this.studioReportEl = document.createElement('div');
+        this.studioReportEl.className = 'code-panel-studio-report hidden';
+        editorPane.prepend(this.studioReportEl);
+        return this.studioReportEl;
+    }
+
+    renderStudioPatchReport(result, beforeCode, afterCode, failed = false) {
+        const report = this.ensureStudioReport();
+        if (!report) return;
+
+        const trace = result?.agentTrace || {};
+        const patchPlan = trace.patchPlan || {};
+        const operations = Array.isArray(patchPlan.operations) ? patchPlan.operations : [];
+        const beforeLines = String(beforeCode || '').split('\n');
+        const afterLines = String(afterCode || '').split('\n');
+        const changed = beforeCode !== afterCode;
+        const lineDelta = afterLines.length - beforeLines.length;
+        const statusText = failed ? '修改未应用' : changed ? '已应用到编辑器' : '无需改动';
+        const statusClass = failed ? 'error' : changed ? 'success' : 'warning';
+        const checks = [
+            trace.quality?.static?.summary,
+            trace.quality?.visual?.summary,
+            result?.warning,
+        ].filter(Boolean);
+
+        const operationHtml = operations.length
+            ? operations.map(item => `<li>${this.escapeHtml(item)}</li>`).join('')
+            : '<li>Agent 未返回具体操作，已保留生成结果供检查。</li>';
+        const checksHtml = checks.length
+            ? checks.map(item => `<li>${this.escapeHtml(item)}</li>`).join('')
+            : '<li>修改结果已通过现有链路处理。</li>';
+
+        report.classList.remove('hidden');
+        this.elements.panel?.classList.add('studio-report-visible');
+        report.innerHTML = `
+            <div class="studio-report-header">
+                <div>
+                    <span class="studio-report-kicker">Studio 修改</span>
+                    <strong>${this.escapeHtml(patchPlan.summary || 'AI 修改摘要')}</strong>
+                </div>
+                <span class="studio-report-status ${statusClass}">${statusText}</span>
+            </div>
+            <div class="studio-report-grid">
+                <div>
+                    <span>代码变化</span>
+                    <strong>${changed ? `${lineDelta >= 0 ? '+' : ''}${lineDelta} 行` : '0 行'}</strong>
+                </div>
+                <div>
+                    <span>检查状态</span>
+                    <strong>${failed ? '需要处理' : '已完成'}</strong>
+                </div>
+            </div>
+            <div class="studio-report-section">
+                <span>修改计划</span>
+                <ul>${operationHtml}</ul>
+            </div>
+            <div class="studio-report-section">
+                <span>检查结果</span>
+                <ul>${checksHtml}</ul>
+            </div>
+            ${changed ? '<button type="button" class="studio-report-revert">回滚到修改前</button>' : ''}
+        `;
+
+        const revertBtn = report.querySelector('.studio-report-revert');
+        revertBtn?.addEventListener('click', () => {
+            if (this.monacoEditor) {
+                this.monacoEditor.setValue(beforeCode || '');
+            }
+            this.pendingHistoryDescription = '回滚 AI 修改';
+            report.classList.add('hidden');
+            this.elements.panel?.classList.remove('studio-report-visible');
+        }, { once: true });
+    }
+
+    escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
     }
 
     async readAgentNdjson(response, onEvent) {

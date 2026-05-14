@@ -9,6 +9,10 @@ from fastapi import Header
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from .failure_events import load_failure_events
+from .failure_replay import replay_failure_events
+from .job_registry import cancel_job, get_job, list_jobs
+from .reference_store import save_reference_image
 from .workflow import run_agent, stream_agent_events
 
 
@@ -17,6 +21,15 @@ class AgentRequest(BaseModel):
     mode: str = Field(default="create")
     currentCode: str = Field(default="", max_length=60000)
     clientId: str = Field(default="agent", max_length=80)
+    skillIds: list[str] = Field(default_factory=list, max_length=12)
+    referenceImageIds: list[str] = Field(default_factory=list, max_length=12)
+    jobId: str = Field(default="", max_length=80)
+
+
+class ReferenceImageRequest(BaseModel):
+    filename: str = Field(default="reference.png", max_length=180)
+    mimeType: str = Field(default="image/png", max_length=80)
+    dataBase64: str = Field(default="", max_length=30_000_000)
 
 
 def register_agent_routes(app, *, ai_client=None, model_name: str | None = None, service_token: str = "") -> None:
@@ -59,3 +72,69 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
 
         return StreamingResponse(events(), media_type="application/x-ndjson; charset=utf-8")
 
+    @app.get("/agent/jobs")
+    async def agent_jobs(
+        limit: int = 30,
+        x_manim_service_token: Optional[str] = Header(default=None, alias="X-Manim-Service-Token"),
+    ):
+        if _forbidden(x_manim_service_token):
+            return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
+        return JSONResponse({"success": True, "jobs": list_jobs(limit)})
+
+    @app.get("/agent/jobs/{job_id}")
+    async def agent_job(
+        job_id: str,
+        x_manim_service_token: Optional[str] = Header(default=None, alias="X-Manim-Service-Token"),
+    ):
+        if _forbidden(x_manim_service_token):
+            return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
+        job = get_job(job_id)
+        if not job:
+            return JSONResponse({"success": False, "error": "未找到 Manim 任务"}, status_code=404)
+        return JSONResponse({"success": True, "job": job})
+
+    @app.post("/agent/jobs/{job_id}/cancel")
+    async def agent_job_cancel(
+        job_id: str,
+        x_manim_service_token: Optional[str] = Header(default=None, alias="X-Manim-Service-Token"),
+    ):
+        if _forbidden(x_manim_service_token):
+            return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
+        result = cancel_job(job_id)
+        status = 200 if result.get("success") else 404
+        return JSONResponse(result, status_code=status)
+
+    @app.get("/agent/failures")
+    async def agent_failures(
+        limit: int = 50,
+        x_manim_service_token: Optional[str] = Header(default=None, alias="X-Manim-Service-Token"),
+    ):
+        if _forbidden(x_manim_service_token):
+            return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
+        return JSONResponse({"success": True, "failures": load_failure_events(limit=limit)})
+
+    @app.post("/agent/failures/{event_id}/replay")
+    async def agent_failure_replay(
+        event_id: str,
+        x_manim_service_token: Optional[str] = Header(default=None, alias="X-Manim-Service-Token"),
+    ):
+        if _forbidden(x_manim_service_token):
+            return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
+        replay = replay_failure_events(limit=200)
+        samples = replay.get("samples", [])
+        replay["samples"] = [sample for sample in samples if sample.get("id") == event_id] or samples
+        return JSONResponse({"success": True, "replay": replay})
+
+    @app.post("/agent/reference-images")
+    async def agent_reference_images(
+        request: ReferenceImageRequest,
+        x_manim_service_token: Optional[str] = Header(default=None, alias="X-Manim-Service-Token"),
+    ):
+        if _forbidden(x_manim_service_token):
+            return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
+        result = save_reference_image(
+            filename=request.filename,
+            mime_type=request.mimeType,
+            data_base64=request.dataBase64,
+        )
+        return JSONResponse(result, status_code=200 if result.get("success") else 400)

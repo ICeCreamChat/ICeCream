@@ -1,4 +1,4 @@
-"""Real streaming code generation for Manim Agent v5."""
+"""Real streaming code generation for Manim Agent v6."""
 
 from __future__ import annotations
 
@@ -59,12 +59,12 @@ async def stream_scene_code_events(
             "type": "generated",
             "generated": {
                 "status": "error",
-                "summary": "Manim Agent v5 needs an AI client before it can generate scene code.",
+                "summary": "Manim Agent v6 需要 AI 客户端后才能生成场景代码。",
                 "code": "",
                 "source": "unavailable",
                 "codeSource": "none",
                 "analysis": analyze_current_code(current_code) if current_code else {},
-                "next_actions": ["Configure DEEPSEEK_API_KEY and restart the Manim service."],
+                "next_actions": ["请配置 DEEPSEEK_API_KEY 并重启 Manim 服务。"],
             },
         }
         return
@@ -84,16 +84,16 @@ async def stream_scene_code_events(
             raw_text = _response_content(response)
             code = extract_code_from_text(raw_text)
             for delta in iter_code_deltas(code):
-                delta["source"] = "llm_v5"
+                delta["source"] = "llm_v6"
                 yield delta
             yield {
                 "type": "generated",
                 "generated": {
                     "status": "success" if code else "error",
-                    "summary": "Scene code generation completed." if code else "The model did not return executable code.",
+                    "summary": "场景代码生成完成。" if code else "模型没有返回可执行代码。",
                     "code": code,
-                    "source": "llm_v5",
-                    "codeSource": "llm_v5",
+                    "source": "llm_v6",
+                    "codeSource": "llm_v6",
                     "analysis": analyze_current_code(current_code) if current_code else {},
                     "next_actions": ["Run static, semantic, and visual checks."],
                 },
@@ -114,14 +114,14 @@ async def stream_scene_code_events(
                 "code": partial_code,
                 "index": index,
                 "done": False,
-                "source": "llm_v5",
+                "source": "llm_v6",
             }
             emitted_len = len(partial_code)
             index += 1
 
         code = extract_code_from_text(raw_text)
         if not code:
-            raise ValueError("The model did not return executable code.")
+            raise ValueError("模型没有返回可执行代码。")
         if len(code) > emitted_len:
             yield {
                 "type": "code_delta",
@@ -129,18 +129,18 @@ async def stream_scene_code_events(
                 "code": code,
                 "index": index,
                 "done": True,
-                "source": "llm_v5",
+                "source": "llm_v6",
             }
         yield {
             "type": "generated",
             "generated": {
                 "status": "success",
-                "summary": "Scene code generation completed.",
+                "summary": "场景代码生成完成。",
                 "code": code,
-                "source": "llm_v5",
-                "codeSource": "llm_v5",
+                "source": "llm_v6",
+                "codeSource": "llm_v6",
                 "analysis": analyze_current_code(current_code) if current_code else {},
-                "next_actions": ["Run static, semantic, and visual checks."],
+                "next_actions": ["继续执行静态、语义和视觉检查。"],
             },
         }
     except Exception as exc:
@@ -149,11 +149,11 @@ async def stream_scene_code_events(
             "type": "generated",
             "generated": {
                 "status": "error",
-                "summary": f"Scene code generation failed: {exc}",
+                "summary": f"场景代码生成失败：{exc}",
                 "code": partial,
-                "source": "llm_v5",
-                "codeSource": "llm_v5",
+                "source": "llm_v6",
+                "codeSource": "llm_v6",
                 "analysis": analyze_current_code(current_code) if current_code else {},
-                "next_actions": ["Retry generation or reduce animation complexity."],
+                "next_actions": ["请重试生成，或减少动画复杂度。"],
             },
         }

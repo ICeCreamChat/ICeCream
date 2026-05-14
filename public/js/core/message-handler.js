@@ -363,7 +363,10 @@ class MessageHandler {
                     message: payload.message,
                     mode: payload.mode || 'create',
                     currentCode: payload.currentCode || '',
-                    clientId
+                    clientId,
+                    skillIds: payload.skillIds || [],
+                    referenceImageIds: payload.referenceImageIds || [],
+                    jobId: payload.jobId || ''
                 })
             });
         } catch (error) {
@@ -393,18 +396,28 @@ class MessageHandler {
             await this.readNdjsonStream(response, (event) => {
                 this.updateManimProcessFromEvent(event);
 
-                if (event.type === 'progress') {
+                if (event.type === 'job') {
+                    this.latestManimJob = event.job;
+                } else if (event.type === 'progress') {
                     return;
                 } else if (event.type === 'plan') {
                     this.latestManimPlan = event.brief;
+                } else if (event.type === 'reference') {
+                    this.latestManimReferences = event.references || [];
+                } else if (event.type === 'patch_plan') {
+                    this.latestManimPatchPlan = event.patchPlan;
                 } else if (event.type === 'design') {
                     this.latestManimDesign = event.design;
                 } else if (event.type === 'storyboard') {
                     this.latestManimStoryboard = event.storyboard || [];
                 } else if (event.type === 'style') {
                     this.latestManimStyle = event.style;
+                } else if (event.type === 'skill_activation') {
+                    this.latestManimSkills = event.skills || [];
                 } else if (event.type === 'skills') {
                     this.latestManimSkills = event.skills || [];
+                } else if (event.type === 'cache') {
+                    this.latestManimCache = event;
                 } else if (event.type === 'inspect') {
                     return;
                 } else if (event.type === 'static_guard') {
@@ -478,6 +491,7 @@ class MessageHandler {
     getManimProcessSteps() {
         return [
             { id: 'planner', label: '理解需求' },
+            { id: 'reference', label: '参考素材' },
             { id: 'storyboard', label: '设计分镜' },
             { id: 'style', label: '教学风格' },
             { id: 'skills', label: '选择技能' },
@@ -609,6 +623,7 @@ class MessageHandler {
     mapManimProgressStep(step = '') {
         const map = {
             plan: 'planner',
+            reference: 'reference',
             design: 'storyboard',
             storyboard: 'storyboard',
             skills: 'skills',
@@ -619,6 +634,7 @@ class MessageHandler {
             visual_check: 'visual_check',
             repair: 'repair',
             render: 'render',
+            cache: 'render',
         };
         return map[step] || step || 'planner';
     }
@@ -634,13 +650,30 @@ class MessageHandler {
         if (!this.manimProcess) return;
         const shouldStickToBottom = this.isMessagesNearBottom();
 
-        if (event.type === 'progress') {
+        if (event.type === 'job') {
+            const job = event.job || {};
+            this.setManimProcessStep('planner', 'active', '任务已创建，正在准备制作流程', [
+                job.jobId ? `任务编号：${job.jobId}` : '',
+                job.status ? `任务状态：${this.localizeManimText(job.status)}` : '',
+            ].filter(Boolean));
+        } else if (event.type === 'progress') {
             const stepId = this.mapManimProgressStep(event.step);
             this.completePreviousActiveManimStep(stepId);
             this.setManimProcessStep(stepId, 'active', this.manimProcessLabelForStep(stepId), []);
         } else if (event.type === 'plan') {
             const brief = event.brief || {};
             this.setManimProcessStep('planner', 'pass', '已识别动画需求', this.formatManimPlanDetails(brief));
+        } else if (event.type === 'reference') {
+            const refs = event.references || [];
+            this.setManimProcessStep('reference', 'pass', event.summary || '已加载参考素材', refs.length
+                ? refs.map(item => `参考图：${item.filename || item.referenceId}（${item.width || '?'}×${item.height || '?'}）`)
+                : ['未使用参考素材']);
+        } else if (event.type === 'patch_plan') {
+            const plan = event.patchPlan || {};
+            this.setManimProcessStep('coder', 'active', plan.summary || '已生成代码修改计划', [
+                ...(plan.sceneClasses?.length ? [`场景类：${plan.sceneClasses.join('、')}`] : []),
+                ...(plan.steps || []),
+            ]);
         } else if (event.type === 'design') {
             const design = event.design || {};
             this.setManimProcessStep('storyboard', 'active', design.summary || '正在设计教学分镜', this.formatManimDesignDetails(design));
@@ -648,6 +681,8 @@ class MessageHandler {
             this.setManimProcessStep('storyboard', 'pass', '分镜设计完成', this.formatManimStoryboardDetails(event.storyboard || []));
         } else if (event.type === 'style') {
             this.setManimProcessStep('style', 'pass', '已确定教学风格', this.formatManimStyleDetails(event.style || {}));
+        } else if (event.type === 'skill_activation') {
+            this.setManimProcessStep('skills', 'pass', '已激活运行时技能', this.formatManimSkillsDetails(event.skills || []));
         } else if (event.type === 'skills') {
             this.setManimProcessStep('skills', 'pass', '已选择运行时技能', this.formatManimSkillsDetails(event.skills || []));
         } else if (event.type === 'code_delta') {
@@ -679,6 +714,15 @@ class MessageHandler {
             this.setManimProcessStep('visual_check', this.mapManimReportStatus(visual.status), visual.summary || '视觉检查完成', this.formatManimVisualDetails(visual));
         } else if (event.type === 'repair') {
             this.setManimProcessStep('repair', 'active', event.message || '正在自动修复问题', [event.message].filter(Boolean));
+        } else if (event.type === 'cache') {
+            const status = event.status === 'hit' ? 'pass' : 'active';
+            this.setManimProcessStep('render', status, event.summary || '正在检查渲染缓存', [
+                event.cacheKey ? `缓存编号：${event.cacheKey}` : '',
+                event.videoUrl ? `缓存视频：${event.videoUrl}` : '',
+            ].filter(Boolean));
+        } else if (event.type === 'diagnostic') {
+            const stepId = this.mapManimProgressStep(event.step || event.stage || this.manimProcess.currentStep);
+            this.setManimProcessStep(stepId, this.mapManimReportStatus(event.status || 'warning'), event.summary || '诊断信息', event.details || []);
         } else if (event.type === 'result') {
             const repairs = event.agentTrace?.repairs;
             if (event.rendered && repairs && typeof repairs.count === 'number' && repairs.count > 0) {
@@ -708,6 +752,7 @@ class MessageHandler {
     manimProcessLabelForStep(stepId) {
         const labels = {
             planner: '正在理解动画需求',
+            reference: '正在读取参考素材',
             storyboard: '正在设计教学分镜',
             style: '正在确定教学风格',
             skills: '正在选择 Manim 技能',
@@ -847,7 +892,9 @@ class MessageHandler {
         const map = {
             v4_director_pipeline: 'V4 智能导演流程',
             llm_v4: 'V4 智能生成',
+            v6_director_pipeline: 'V6 智能导演流程',
             v5_director_pipeline: 'V5 智能导演流程',
+            llm_v6: 'V6 智能生成',
             llm_v5: 'V5 智能生成',
         };
         return map[String(strategy || '').toLowerCase()] || strategy;
@@ -1032,6 +1079,7 @@ class MessageHandler {
         const details = [];
         const sourceMap = {
             llm_v4: 'V4 智能生成',
+            llm_v6: 'V6 智能生成',
             llm_v5: 'V5 智能生成',
             repair: '自动修复生成',
         };

@@ -1,4 +1,4 @@
-"""Runtime Manim knowledge used by the v5 agent.
+"""Runtime Manim knowledge used by the v6 agent.
 
 The rules here are distilled from the local ManimCat reference project and
 kept as generic API/layout guidance. They are not topic-specific full-scene
@@ -10,8 +10,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from .prompt_loader import API_INDEX_VERSION, PROMPT_PACK_VERSION, build_generation_prompt_pack
 
-RULE_PACK_VERSION = "manimcat-foundation-v1"
+
+RULE_PACK_VERSION = "manimcat-foundation-v6"
 
 
 ALLOWED_SCENE_SELF_METHODS = {
@@ -151,10 +153,13 @@ Mobjects:
 def manim_rules_prompt() -> str:
     return "\n".join(
         [
-            f"Manim v5 runtime rules from ManimCat foundation ({RULE_PACK_VERSION}):",
+            f"Manim v6 runtime rules from ManimCat foundation ({RULE_PACK_VERSION}):",
+            f"Prompt pack: {PROMPT_PACK_VERSION}; API index: {API_INDEX_VERSION}",
             *[f"- [{rule['id']}] {rule['generation']}" for rule in RULES],
             "",
             MANIM_API_GUIDE,
+            "",
+            build_generation_prompt_pack(),
         ]
     )
 
