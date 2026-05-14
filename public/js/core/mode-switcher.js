@@ -1,6 +1,6 @@
 /**
  * ICeCream - 模态切换器模块
- * 管理聊天/动画/解题模式切换
+ * 管理问答/动画/解题任务切换
  */
 
 // 从 window 获取常量 (constants.js 作为普通脚本加载)
@@ -67,10 +67,11 @@ class ModeSwitcher {
      */
     setMode(mode, triggerCallback = true) {
         this.currentMode = mode;
+        const displayMode = mode === 'chat' ? 'auto' : mode;
 
         // 更新 Tab 激活状态
         this.elements.modeTabs.forEach(tab => {
-            tab.classList.toggle('active', tab.dataset.mode === mode);
+            tab.classList.toggle('active', tab.dataset.mode === displayMode);
         });
 
         // 更新提示文字

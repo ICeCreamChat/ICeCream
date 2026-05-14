@@ -15,6 +15,7 @@ const codePanelPath = new URL('../public/js/core/code-panel.js', import.meta.url
 const messageHandlerPath = new URL('../public/js/core/message-handler.js', import.meta.url);
 const manimWorkbenchPath = new URL('../public/js/core/manim-workbench.js', import.meta.url);
 const appPath = new URL('../public/js/app.js', import.meta.url);
+const indexPath = new URL('../public/index.html', import.meta.url);
 const mainCssPath = new URL('../public/css/main.css', import.meta.url);
 const mobileCssPath = new URL('../public/css/mobile.css', import.meta.url);
 
@@ -444,6 +445,55 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(mobileCssSource, /\.manim-workbench-panel/);
   assert.match(mobileCssSource, /max-height: 80vh/);
   assert.match(mobileCssSource, /\.manim-workbench-body/);
+});
+
+test('frontend task switcher uses three visible tasks and guards cross-task routing', async () => {
+  const [indexSource, constantsSource, modeSwitcherSource, messageHandlerSource, manimWorkbenchSource, appSource, mainCssSource, mobileCssSource] = await Promise.all([
+    readFile(indexPath, 'utf8'),
+    readFile(new URL('../public/js/constants.js', import.meta.url), 'utf8'),
+    readFile(new URL('../public/js/core/mode-switcher.js', import.meta.url), 'utf8'),
+    readFile(messageHandlerPath, 'utf8'),
+    readFile(manimWorkbenchPath, 'utf8'),
+    readFile(appPath, 'utf8'),
+    readFile(mainCssPath, 'utf8'),
+    readFile(mobileCssPath, 'utf8'),
+  ]);
+
+  const switcherMarkup = indexSource.match(/<div class="mode-switcher"[\s\S]*?<\/div>/)?.[0] || '';
+  assert.match(switcherMarkup, /data-mode="auto"[\s\S]*问答/);
+  assert.match(switcherMarkup, /data-mode="manim"[\s\S]*动画/);
+  assert.match(switcherMarkup, /data-mode="solver"[\s\S]*解题/);
+  assert.doesNotMatch(switcherMarkup, /data-mode="chat"/);
+  assert.match(indexSource, /data-mode="auto"[\s\S]*智能问答/);
+  assert.match(constantsSource, /问答模式 · 智能识别任务/);
+  assert.match(constantsSource, /问点什么，或描述动画\/上传题目/);
+
+  assert.match(modeSwitcherSource, /const displayMode = mode === 'chat' \? 'auto' : mode/);
+  assert.match(modeSwitcherSource, /tab\.dataset\.mode === displayMode/);
+
+  assert.match(messageHandlerSource, /getCrossTaskTarget/);
+  assert.match(messageHandlerSource, /looksLikeSolverRequest/);
+  assert.match(messageHandlerSource, /looksLikeManimRequest/);
+  assert.match(messageHandlerSource, /showTaskSwitchPrompt/);
+  assert.match(messageHandlerSource, /看起来这是\$\{targetLabel\}请求，要切到\$\{targetLabel\}吗/);
+  assert.match(messageHandlerSource, /切到\$\{targetLabel\}/);
+  assert.match(messageHandlerSource, /仍按\$\{currentLabel\}处理/);
+  assert.match(messageHandlerSource, /作为动画参考图/);
+  assert.match(messageHandlerSource, /作为解题图片/);
+  assert.match(messageHandlerSource, /imagePurpose === 'reference'/);
+  assert.match(messageHandlerSource, /uploadReferenceDataUrl/);
+  assert.match(messageHandlerSource, /routeMode: 'solver'/);
+  assert.match(messageHandlerSource, /skipRouteGuard: true/);
+
+  assert.match(manimWorkbenchSource, /uploadReferenceDataUrl/);
+  assert.match(manimWorkbenchSource, /参考图已加入动画工作台/);
+  assert.match(appSource, /messageHandler\.clearTaskPrompts\?\.\(\)/);
+
+  assert.match(mainCssSource, /\.task-switch-prompt/);
+  assert.match(mainCssSource, /\.task-switch-btn\.primary/);
+  assert.match(mainCssSource, /body\.light-mode \.task-switch-prompt/);
+  assert.match(mobileCssSource, /\.task-switch-prompt/);
+  assert.match(mobileCssSource, /\.task-switch-actions/);
 });
 
 test('Manim frontend and gateway user-facing files do not contain mojibake literals', async () => {

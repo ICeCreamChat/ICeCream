@@ -149,6 +149,7 @@ class ICeCreamApp {
             onModeChange: (mode) => {
                 devLog.log('Mode changed to', mode);
                 this.manimWorkbench?.setMode(mode);
+                messageHandler.clearTaskPrompts?.();
             }
         });
 

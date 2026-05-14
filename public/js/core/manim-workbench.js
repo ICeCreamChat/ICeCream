@@ -367,31 +367,41 @@ class ManimWorkbench {
         });
     }
 
+    async uploadReferenceDataUrl(dataUrl, filename = '参考图.jpg', mimeType = 'image/jpeg') {
+        const dataBase64 = String(dataUrl || '').split(',')[1] || '';
+        if (!dataBase64) {
+            throw new Error('参考图数据为空');
+        }
+
+        const response = await fetch('/api/manim/reference-images', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                filename,
+                mimeType,
+                dataBase64,
+            }),
+        });
+        const data = await response.json();
+        if (!response.ok || data.success === false) {
+            throw new Error(data.error || '参考图上传失败');
+        }
+        const reference = {
+            ...(data.reference || {}),
+            previewDataUrl: dataUrl,
+            filename: data.reference?.filename || filename,
+        };
+        this.referenceImages = [reference, ...this.referenceImages.filter(item => item.referenceId !== reference.referenceId)].slice(0, 6);
+        showToast('参考图已加入动画工作台', 'success');
+        this.renderIfOpen();
+        return reference;
+    }
+
     async uploadReferenceFile(file) {
         try {
             this.validateReferenceFile(file);
             const dataUrl = await this.readFileAsDataUrl(file);
-            const dataBase64 = dataUrl.split(',')[1] || '';
-            const response = await fetch('/api/manim/reference-images', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    filename: file.name,
-                    mimeType: file.type,
-                    dataBase64,
-                }),
-            });
-            const data = await response.json();
-            if (!response.ok || data.success === false) {
-                throw new Error(data.error || '参考图上传失败');
-            }
-            const reference = {
-                ...(data.reference || {}),
-                previewDataUrl: dataUrl,
-                filename: data.reference?.filename || file.name,
-            };
-            this.referenceImages = [reference, ...this.referenceImages.filter(item => item.referenceId !== reference.referenceId)].slice(0, 6);
-            showToast('参考图已加入动画工作台', 'success');
+            await this.uploadReferenceDataUrl(dataUrl, file.name, file.type);
         } catch (error) {
             showToast(error.message || '参考图上传失败', 'error');
         } finally {

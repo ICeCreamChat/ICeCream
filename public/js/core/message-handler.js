@@ -27,6 +27,8 @@ class MessageHandler {
         this.manimWorkbench = null;
         this.manimProcess = null;
         this.manimAutoScrollLockedUntil = 0;
+        this.taskSwitchPrompt = null;
+        this.pendingTaskSwitch = null;
     }
 
     /**
@@ -230,15 +232,181 @@ class MessageHandler {
         }, { passive: true });
     }
 
+    getTaskLabel(mode = '') {
+        const map = {
+            auto: '问答',
+            chat: '问答',
+            manim: '动画',
+            solver: '解题',
+        };
+        return map[mode] || mode || '问答';
+    }
+
+    looksLikeSolverRequest(message = '', hasImage = false) {
+        const text = String(message || '').trim();
+        if (hasImage && /(解|答案|题|作业|证明|求|算|步骤|怎么做|帮我看)/.test(text)) {
+            return true;
+        }
+        return /(解这|解题|这道题|求解|求答案|答案|证明一下|证明题|计算题|选择题|填空题|作业|怎么做|怎么算|化简|方程|应用题|题目)/.test(text);
+    }
+
+    looksLikeManimRequest(message = '') {
+        const text = String(message || '').trim().toLowerCase();
+        return /(动画|manim|可视化|演示|生成.*图|画一个|画个|绘制|展示.*过程|做一个.*动画|分步骤讲解动画|流程图|函数图像|曲线|运动轨迹)/i.test(text);
+    }
+
+    getCrossTaskTarget(currentMode, message, hasImage = false) {
+        if (currentMode === 'manim' && this.looksLikeSolverRequest(message, hasImage)) {
+            return 'solver';
+        }
+        if (currentMode === 'solver' && this.looksLikeManimRequest(message) && !this.looksLikeSolverRequest(message, hasImage)) {
+            return 'manim';
+        }
+        return null;
+    }
+
+    ensureTaskSwitchPrompt() {
+        if (this.taskSwitchPrompt) return this.taskSwitchPrompt;
+
+        const inputArea = document.querySelector('.input-area');
+        if (!inputArea) return null;
+
+        const prompt = document.createElement('div');
+        prompt.className = 'task-switch-prompt hidden';
+        prompt.setAttribute('role', 'status');
+        inputArea.insertBefore(prompt, inputArea.firstChild);
+        this.taskSwitchPrompt = prompt;
+        return prompt;
+    }
+
+    showTaskSwitchPrompt(data = {}) {
+        const prompt = this.ensureTaskSwitchPrompt();
+        if (!prompt) return;
+
+        this.pendingTaskSwitch = data;
+        const isImagePurpose = data.type === 'image-purpose';
+        const targetLabel = this.getTaskLabel(data.targetMode);
+        const currentLabel = this.getTaskLabel(data.currentMode);
+
+        prompt.classList.remove('hidden');
+        prompt.innerHTML = isImagePurpose
+            ? `
+                <div class="task-switch-copy">
+                    <strong>这张图片要怎么使用？</strong>
+                    <span>当前在动画模式，可以作为动画参考图，也可以切到解题处理。</span>
+                </div>
+                <div class="task-switch-actions">
+                    <button type="button" class="task-switch-btn primary" data-action="image-reference">作为动画参考图</button>
+                    <button type="button" class="task-switch-btn" data-action="image-solver">作为解题图片</button>
+                    <button type="button" class="task-switch-btn ghost" data-action="cancel">稍后再说</button>
+                </div>
+            `
+            : `
+                <div class="task-switch-copy">
+                    <strong>看起来这是${targetLabel}请求，要切到${targetLabel}吗？</strong>
+                    <span>当前选择的是${currentLabel}，切换后会在同一个对话里继续处理。</span>
+                </div>
+                <div class="task-switch-actions">
+                    <button type="button" class="task-switch-btn primary" data-action="switch">切到${targetLabel}</button>
+                    <button type="button" class="task-switch-btn" data-action="stay">仍按${currentLabel}处理</button>
+                    <button type="button" class="task-switch-btn ghost" data-action="cancel">取消</button>
+                </div>
+            `;
+
+        prompt.querySelectorAll('[data-action]').forEach(button => {
+            button.addEventListener('click', () => this.handleTaskSwitchAction(button.dataset.action));
+        });
+
+        if (window.lucide) {
+            setTimeout(() => window.lucide.createIcons(), 0);
+        }
+    }
+
+    clearTaskPrompts() {
+        if (this.taskSwitchPrompt) {
+            this.taskSwitchPrompt.classList.add('hidden');
+            this.taskSwitchPrompt.innerHTML = '';
+        }
+        this.pendingTaskSwitch = null;
+    }
+
+    handleTaskSwitchAction(action) {
+        const pending = this.pendingTaskSwitch;
+        if (!pending) return;
+
+        if (action === 'cancel') {
+            this.clearTaskPrompts();
+            return;
+        }
+
+        if (action === 'switch') {
+            modeSwitcher.setMode(pending.targetMode, true);
+            this.clearTaskPrompts();
+            this.handleSend({ routeMode: pending.targetMode, skipRouteGuard: true });
+            return;
+        }
+
+        if (action === 'stay') {
+            const imagePurpose = pending.currentMode === 'manim' && this.pendingImage ? 'reference' : undefined;
+            this.clearTaskPrompts();
+            this.handleSend({ routeMode: pending.currentMode, imagePurpose, skipRouteGuard: true });
+            return;
+        }
+
+        if (action === 'image-reference') {
+            modeSwitcher.setMode('manim', true);
+            this.clearTaskPrompts();
+            this.handleSend({ routeMode: 'manim', imagePurpose: 'reference', skipRouteGuard: true });
+            return;
+        }
+
+        if (action === 'image-solver') {
+            modeSwitcher.setMode('solver', true);
+            this.clearTaskPrompts();
+            this.handleSend({ routeMode: 'solver', imagePurpose: 'solver', skipRouteGuard: true });
+        }
+    }
+
     /**
      * 处理发送消息
      */
-    async handleSend() {
+    async handleSend(options = {}) {
         const message = this.elements.chatInput?.value.trim() || '';
 
         if (!message && !this.pendingImage) {
             return;
         }
+
+        const selectedMode = options.routeMode || modeSwitcher.getMode();
+        const hasImage = Boolean(this.pendingImage);
+
+        if (!options.skipRouteGuard) {
+            const targetMode = this.getCrossTaskTarget(selectedMode, message, hasImage);
+            if (targetMode) {
+                this.showTaskSwitchPrompt({
+                    targetMode,
+                    currentMode: selectedMode,
+                    message,
+                    type: 'task-switch',
+                });
+                return;
+            }
+
+            if (selectedMode === 'manim' && hasImage && !options.imagePurpose) {
+                this.showTaskSwitchPrompt({
+                    targetMode: 'manim',
+                    currentMode: selectedMode,
+                    message,
+                    type: 'image-purpose',
+                });
+                return;
+            }
+        }
+
+        this.clearTaskPrompts();
+        const originalImage = this.pendingImage;
+        let imageForServer = originalImage;
+        let extraManimOptions = {};
 
         // 清空输入框
         if (this.elements.chatInput) {
@@ -249,14 +417,26 @@ class MessageHandler {
         this.hideWelcomeScreen();
 
         // 添加用户消息
-        this.addMessage('user', message, this.pendingImage);
+        this.addMessage('user', message, originalImage);
 
         // 显示加载状态
         this.setLoading(true);
 
         try {
-            const mode = modeSwitcher.getMode();
-            const shouldUseAgent = !this.pendingImage && (
+            const mode = selectedMode;
+            if (mode === 'manim' && options.imagePurpose === 'reference' && originalImage) {
+                const reference = await this.manimWorkbench?.uploadReferenceDataUrl?.(
+                    originalImage,
+                    '输入参考图.jpg',
+                    'image/jpeg'
+                );
+                if (reference?.referenceId) {
+                    extraManimOptions.referenceImageIds = [reference.referenceId];
+                }
+                imageForServer = null;
+            }
+
+            const shouldUseAgent = !imageForServer && (
                 mode === 'manim' || (mode === 'auto' && await this.shouldUseManimAgent(message))
             );
 
@@ -266,18 +446,27 @@ class MessageHandler {
                     this.manimWorkbench?.setMode?.('manim');
                 }
                 const workbenchOptions = this.manimWorkbench?.getAgentOptions?.() || {};
-                await this.sendManimAgentStream({ message, mode: 'create', ...workbenchOptions });
+                const referenceImageIds = Array.from(new Set([
+                    ...(workbenchOptions.referenceImageIds || []),
+                    ...(extraManimOptions.referenceImageIds || []),
+                ].filter(Boolean)));
+                await this.sendManimAgentStream({
+                    message,
+                    mode: 'create',
+                    ...workbenchOptions,
+                    referenceImageIds,
+                });
                 return;
             }
 
-            const response = await this.sendToServer(message, this.pendingImage);
+            const response = await this.sendToServer(message, imageForServer, mode);
 
             if (response.needConfirmation) {
                 // Attach the pending image to the data passed to intentConfirm so it can be re-sent
-                response.originalImage = this.pendingImage;
+                response.originalImage = imageForServer;
                 intentConfirm.show(response);
             } else {
-                this.handleResponse(response, this.pendingImage);
+                this.handleResponse(response, imageForServer);
             }
         } catch (error) {
             console.error('Send error:', error);
@@ -295,10 +484,11 @@ class MessageHandler {
      * 发送消息到服务器
      * @param {string} message - 消息内容
      * @param {string|null} imageBase64 - 图片 Base64 数据
+     * @param {string|null} modeOverride - 本次发送使用的任务模式
      * @returns {Promise<Object>} 服务器响应
      */
-    async sendToServer(message, imageBase64 = null) {
-        const mode = modeSwitcher.getMode();
+    async sendToServer(message, imageBase64 = null, modeOverride = null) {
+        const mode = modeOverride || modeSwitcher.getMode();
         devLog.info('发送消息', { mode, msgLen: message.length, hasImage: !!imageBase64 });
 
         const formData = new FormData();

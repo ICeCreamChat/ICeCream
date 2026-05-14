@@ -689,6 +689,7 @@
     .input-area {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 0;
         /* No gap - toolbar integrated */
         padding: 12px 0;
@@ -699,6 +700,18 @@
         backdrop-filter: var(--glass-blur);
         -webkit-backdrop-filter: var(--glass-blur);
         flex-shrink: 0;
+    }
+
+    .task-switch-prompt {
+        grid-template-columns: 1fr;
+        gap: 10px;
+        margin-bottom: 10px;
+        padding: 10px;
+        border-radius: 14px;
+    }
+
+    .task-switch-actions {
+        justify-content: flex-start;
     }
 
     .input-container {
@@ -1631,6 +1644,7 @@
     .input-area {
         padding: var(--space-md) 0;
         padding-inline: var(--chat-edge-gutter);
+        flex-wrap: wrap;
     }
 
 
