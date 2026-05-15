@@ -391,19 +391,24 @@
     <!-- Code Panel Overlay -->
     <div id="code-panel-overlay" class="code-panel-overlay"></div>
 
-    <!-- Code Editor Panel (Manim Pro Max) -->
-    <div id="code-panel" class="code-panel">
+    <!-- Manim Studio Code Panel -->
+    <div id="code-panel" class="code-panel manim-studio-window">
         <div class="panel-header">
             <div class="panel-title">
-                📝 Manim Studio
+                <span class="studio-status-dot" aria-hidden="true"></span>
+                <span class="studio-title-icon" aria-hidden="true">📝</span>
+                <span class="studio-title-copy">
+                    <span class="studio-title-main">Manim Studio</span>
+                    <span class="studio-title-sub">动画代码与预览工作区</span>
+                </span>
             </div>
             <div class="panel-controls">
                 <!-- Desktop Controls -->
-                <button id="code-render-btn" class="panel-btn panel-btn-primary">
-                    <i data-lucide="play" style="width:16px;"></i> 运行
+                <button id="code-render-btn" class="panel-btn panel-btn-primary" title="运行当前代码">
+                    <i data-lucide="play"></i> 运行
                 </button>
-                <button id="code-close-btn" class="panel-btn panel-btn-close">
-                    <i data-lucide="x" style="width:20px;"></i>
+                <button id="code-close-btn" class="panel-btn panel-btn-close" title="关闭 Manim Studio" aria-label="关闭 Manim Studio">
+                    <i data-lucide="x"></i>
                 </button>
             </div>
         </div>
@@ -421,36 +426,48 @@
         <div class="panel-body">
             <!-- Mobile Preview Tab (Video + History + AI Input) -->
             <div class="mobile-preview-tab" id="mobile-preview-tab">
-                <div id="video-preview-container" class="panel-preview">
+                <section id="video-preview-container" class="panel-preview studio-preview-panel" aria-label="作品预览">
+                    <div class="studio-pane-heading">
+                        <div>
+                            <span class="studio-pane-kicker">Preview</span>
+                            <strong>作品预览</strong>
+                        </div>
+                        <small>运行后显示最新动画</small>
+                    </div>
                     <!-- Video Wrapper (Target for renderCode) -->
-                    <div id="video-inner-container">
+                    <div class="studio-preview-frame">
+                        <div id="video-inner-container" class="studio-video-stage">
                         <!-- Video inserted by JS -->
                         <div class="video-preview-placeholder"
                             style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--manim-text-muted);">
-                            <i data-lucide="clapperboard"
-                                style="width:48px; height:48px; opacity:0.5; margin-bottom:12px;"></i>
+                            <i data-lucide="clapperboard"></i>
                             <p>视频预览区</p>
                         </div>
+                        </div>
                     </div>
-                </div>
-                <!-- History (Inside Preview Tab on Mobile) - Takes 50% of screen -->
-                <div id="manim-history-root" class="history-list-container"></div>
+                </section>
+                <!-- History (Inside Preview Tab on Mobile) -->
+                <section id="manim-history-root" class="history-list-container studio-history-panel" aria-label="修改历史"></section>
                 <!-- AI Footer (Inside Preview Tab on Mobile) -->
-                <div class="panel-footer mobile-preview-footer">
+                <div class="panel-footer mobile-preview-footer studio-command-bar">
                     <div class="ai-input-wrapper">
                         <input type="text" id="ai-instruction-input" class="ai-instruction-input"
-                            placeholder="✨ AI 助手: 把圆改成红色，或者让它旋转..." autocomplete="off">
+                            placeholder="试试：把标题字体调大至 40，或给曲线添加关键点标签" autocomplete="off">
                     </div>
                     <button id="ai-modify-btn" class="panel-btn panel-btn-primary">
-                        <i data-lucide="sparkles" style="width:16px;"></i> 生成
+                        <i data-lucide="sparkles"></i> 生成
                     </button>
                 </div>
             </div>
 
             <!-- Mobile Code Tab (Editor Only) -->
             <div class="mobile-code-tab" id="mobile-code-tab">
-                <div class="panel-editor">
+                <div class="panel-editor studio-editor-panel">
                     <div class="editor-toolbar">
+                        <div class="editor-toolbar-label">
+                            <span class="studio-pane-kicker">Code</span>
+                            <strong>代码编辑</strong>
+                        </div>
                         <div class="editor-tab">MainScene.py</div>
                     </div>
                     <div id="monaco-container"></div>
@@ -459,13 +476,13 @@
         </div>
 
         <!-- Desktop Footer (Only shown on desktop) -->
-        <div class="panel-footer desktop-footer">
+        <div class="panel-footer desktop-footer studio-command-bar">
             <div class="ai-input-wrapper">
                 <input type="text" id="ai-instruction-input-desktop" class="ai-instruction-input"
-                    placeholder="✨ AI 助手: 把圆改成红色，或者让它旋转..." autocomplete="off">
+                    placeholder="试试：把标题字体调大至 40，或给曲线添加关键点标签" autocomplete="off">
             </div>
             <button id="ai-modify-btn-desktop" class="panel-btn panel-btn-primary">
-                <i data-lucide="sparkles" style="width:16px;"></i> 生成
+                <i data-lucide="sparkles"></i> 生成
             </button>
         </div>
 

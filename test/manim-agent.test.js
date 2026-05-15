@@ -14,6 +14,7 @@ import {
 const codePanelPath = new URL('../public/js/core/code-panel.js', import.meta.url);
 const messageHandlerPath = new URL('../public/js/core/message-handler.js', import.meta.url);
 const manimWorkbenchPath = new URL('../public/js/core/manim-workbench.js', import.meta.url);
+const manimSketchPadPath = new URL('../public/js/core/manim-sketch-pad.js', import.meta.url);
 const appPath = new URL('../public/js/app.js', import.meta.url);
 const indexPath = new URL('../public/index.html', import.meta.url);
 const mainCssPath = new URL('../public/css/main.css', import.meta.url);
@@ -165,7 +166,13 @@ test('POST /api/manim/agent/stream proxies v6 NDJSON agent events', async () => 
       res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
       res.write(JSON.stringify({ type: 'job', job: { jobId: 'job-123', status: 'running', currentStage: 'planner' } }) + '\n');
       res.write(JSON.stringify({ type: 'progress', step: 'planner', message: 'planning' }) + '\n');
-      res.write(JSON.stringify({ type: 'reference', references: [{ referenceId: 'ref-1', filename: 'sketch.png' }] }) + '\n');
+      res.write(JSON.stringify({
+        type: 'reference',
+        status: 'pass',
+        summary: '检测到 1 个画面中心的圆形主体，建议用干净的 Manim 图形重绘。',
+        references: [{ referenceId: 'ref-1', filename: 'sketch.png' }],
+        referenceSpecs: [{ referenceId: 'ref-1', status: 'pass', summary: '检测到 1 个画面中心的圆形主体' }],
+      }) + '\n');
       res.write(JSON.stringify({ type: 'design', design: { status: 'success' } }) + '\n');
       res.write(JSON.stringify({ type: 'storyboard', storyboard: [{ title: 'step' }] }) + '\n');
       res.write(JSON.stringify({ type: 'style', style: { name: 'teaching_premium' } }) + '\n');
@@ -191,6 +198,7 @@ test('POST /api/manim/agent/stream proxies v6 NDJSON agent events', async () => 
     assert.match(text, /"type":"progress"/);
     assert.match(text, /"type":"job"/);
     assert.match(text, /"type":"reference"/);
+    assert.match(text, /referenceSpecs/);
     assert.match(text, /"type":"design"/);
     assert.match(text, /"type":"storyboard"/);
     assert.match(text, /"type":"style"/);
@@ -269,9 +277,10 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
 });
 
 test('frontend shows Manim agent v6 production progress in a chat bubble', async () => {
-  const [messageHandlerSource, manimWorkbenchSource, appSource, mainCssSource, mobileCssSource] = await Promise.all([
+  const [messageHandlerSource, manimWorkbenchSource, manimSketchPadSource, appSource, mainCssSource, mobileCssSource] = await Promise.all([
     readFile(messageHandlerPath, 'utf8'),
     readFile(manimWorkbenchPath, 'utf8'),
+    readFile(manimSketchPadPath, 'utf8'),
     readFile(appPath, 'utf8'),
     readFile(mainCssPath, 'utf8'),
     readFile(mobileCssPath, 'utf8'),
@@ -300,15 +309,67 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(manimWorkbenchSource, /cancelCurrentJob/);
   assert.match(manimWorkbenchSource, /replayFailure/);
   assert.match(manimWorkbenchSource, /setMode\(mode\)/);
+  assert.match(manimWorkbenchSource, /captureSessionFailure/);
+  assert.match(manimWorkbenchSource, /mergeReferenceAnalysis/);
+  assert.match(manimWorkbenchSource, /analysisSummary/);
+  assert.match(manimWorkbenchSource, /analysisStatus/);
+  assert.match(manimWorkbenchSource, /renderCurrentDiagnosticsSection/);
+  assert.match(manimWorkbenchSource, /sessionFailures/);
+  assert.match(manimWorkbenchSource, /globalFailuresLoaded/);
+  assert.match(manimWorkbenchSource, /当前会话暂无失败记录/);
+  assert.match(manimWorkbenchSource, /加载全局失败样本/);
+  const initialLoadBody = manimWorkbenchSource.match(/async loadInitialData\(\) \{([\s\S]*?)\n    \}/)?.[1] || '';
+  assert.doesNotMatch(initialLoadBody, /loadFailures/);
+  assert.match(manimWorkbenchSource, /WORKBENCH_POSITION_KEY/);
+  assert.match(manimWorkbenchSource, /initDragControls/);
+  assert.match(manimWorkbenchSource, /handleDragStart/);
+  assert.match(manimWorkbenchSource, /handleDragMove/);
+  assert.match(manimWorkbenchSource, /handleDragEnd/);
+  assert.match(manimWorkbenchSource, /clampWorkbenchPosition/);
+  assert.match(manimWorkbenchSource, /loadWorkbenchPosition/);
+  assert.match(manimWorkbenchSource, /saveWorkbenchPosition/);
+  assert.match(manimWorkbenchSource, /resetWorkbenchPosition/);
+  assert.match(manimWorkbenchSource, /manim-workbench-header/);
+  assert.doesNotMatch(manimWorkbenchSource, /body\.addEventListener\('pointerdown'/);
   assert.match(manimWorkbenchSource, /动画工作台/);
   assert.match(manimWorkbenchSource, /生成设置/);
   assert.match(manimWorkbenchSource, /参考素材/);
   assert.match(manimWorkbenchSource, /任务状态/);
-  assert.match(manimWorkbenchSource, /高级诊断/);
+  assert.match(manimWorkbenchSource, /诊断记录/);
+  assert.match(manimWorkbenchSource, /manim-reference-dropzone/);
+  assert.match(manimWorkbenchSource, /manim-config-summary/);
+  assert.match(manimWorkbenchSource, /manim-workbench-nested/);
+  assert.match(manimWorkbenchSource, /上传参考图/);
+  assert.match(manimWorkbenchSource, /在线手绘/);
+  assert.match(manimWorkbenchSource, /draw-reference/);
+  assert.match(manimWorkbenchSource, /openSketchPad/);
+  assert.match(manimWorkbenchSource, /uploadSketchReferences/);
+  assert.match(manimWorkbenchSource, /ManimSketchPad/);
+  assert.match(manimSketchPadSource, /class ManimSketchPad/);
+  assert.match(manimSketchPadSource, /Pointer Events|pointerdown/);
+  assert.match(manimSketchPadSource, /renderToolButton\('pen'/);
+  assert.match(manimSketchPadSource, /renderToolButton\('eraser'/);
+  assert.match(manimSketchPadSource, /tool-\$\{this\.tool\}/);
+  assert.match(manimSketchPadSource, /Shift 拉直线段 · Ctrl\+Z 撤销/);
+  assert.match(manimSketchPadSource, /handleKeydown/);
+  assert.match(manimSketchPadSource, /ctrlKey \|\| event\.metaKey/);
+  assert.match(manimSketchPadSource, /key === 'z'/);
+  assert.match(manimSketchPadSource, /event\.shiftKey/);
+  assert.match(manimSketchPadSource, /straight: Boolean\(event\.shiftKey\)/);
+  assert.match(manimSketchPadSource, /data-sketch-action="undo"/);
+  assert.match(manimSketchPadSource, /data-sketch-action="redo"/);
+  assert.match(manimSketchPadSource, /data-sketch-action="clear"/);
+  assert.match(manimSketchPadSource, /data-sketch-action="width"/);
+  assert.match(manimSketchPadSource, /加入参考素材/);
+  assert.match(manimSketchPadSource, /请先画一点内容/);
+  assert.match(manimSketchPadSource, /toDataURL\('image\/png'\)/);
+  assert.match(manimSketchPadSource, /手绘参考图-/);
 
   assert.match(messageHandlerSource, /event\.type === 'plan'/);
   assert.match(messageHandlerSource, /event\.type === 'job'/);
   assert.match(messageHandlerSource, /event\.type === 'reference'/);
+  assert.match(messageHandlerSource, /referenceSpecs/);
+  assert.match(messageHandlerSource, /已解析参考素材/);
   assert.match(messageHandlerSource, /event\.type === 'design'/);
   assert.match(messageHandlerSource, /event\.type === 'storyboard'/);
   assert.match(messageHandlerSource, /event\.type === 'style'/);
@@ -397,9 +458,13 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(mainCssSource, /\.manim-result-heading/);
   assert.match(mainCssSource, /\.manim-studio-result \.video-container/);
   assert.match(mainCssSource, /\.manim-process-timeline/);
-  assert.match(mainCssSource, /flex-wrap: wrap/);
+  assert.match(mainCssSource, /grid-template-columns: 172px minmax\(0, 1fr\)/);
+  assert.match(mainCssSource, /--manim-process-pane-height: clamp\(300px, 42vh, 460px\)/);
+  assert.match(mainCssSource, /\.manim-process-timeline[\s\S]*height: var\(--manim-process-pane-height\)/);
+  assert.match(mainCssSource, /\.manim-process-details[\s\S]*height: var\(--manim-process-pane-height\)/);
+  assert.match(mainCssSource, /\.manim-process-timeline[\s\S]*display: grid/);
   assert.match(mainCssSource, /\.manim-process-step-label/);
-  assert.match(mainCssSource, /text-overflow: clip/);
+  assert.match(mainCssSource, /text-overflow: ellipsis/);
   assert.match(mainCssSource, /\.manim-process-details/);
   assert.match(mainCssSource, /max-height: clamp\(260px, 38vh, 420px\)/);
   assert.match(mainCssSource, /overflow-y: auto/);
@@ -407,7 +472,7 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(mainCssSource, /overscroll-behavior: contain/);
   assert.match(mainCssSource, /-webkit-overflow-scrolling: touch/);
   assert.match(mainCssSource, /\.manim-process-detail\.pending/);
-  assert.match(mainCssSource, /width: min\(640px, 100%\)/);
+  assert.match(mainCssSource, /width: min\(720px, 100%\)/);
   assert.match(mainCssSource, /\.manim-process-result/);
   assert.match(mainCssSource, /\.message\.bot\.manim-process-message-row\.has-result/);
   assert.match(mainCssSource, /\.manim-process-card\.collapsed/);
@@ -430,7 +495,27 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(mainCssSource, /\.manim-workbench-btn/);
   assert.match(mainCssSource, /\.manim-workbench-overlay/);
   assert.match(mainCssSource, /\.manim-workbench-panel/);
+  assert.match(mainCssSource, /\.manim-workbench-panel\.is-positioned/);
+  assert.match(mainCssSource, /\.manim-workbench-panel\.is-dragging/);
+  assert.match(mainCssSource, /\.manim-workbench-drag-handle/);
+  assert.match(mainCssSource, /cursor: grab/);
+  assert.match(mainCssSource, /cursor: grabbing/);
   assert.match(mainCssSource, /body\.light-mode \.manim-workbench-panel/);
+  assert.match(mainCssSource, /--manim-studio-surface/);
+  assert.match(mainCssSource, /--manim-studio-border/);
+  assert.match(mainCssSource, /--manim-studio-accent/);
+  assert.match(mainCssSource, /\.manim-reference-dropzone/);
+  assert.match(mainCssSource, /\.manim-reference-actions/);
+  assert.match(mainCssSource, /\.manim-reference-sketch/);
+  assert.match(mainCssSource, /\.manim-sketch-overlay/);
+  assert.match(mainCssSource, /\.manim-sketch-shell/);
+  assert.match(mainCssSource, /\.manim-sketch-canvas/);
+  assert.match(mainCssSource, /\.manim-sketch-canvas\.tool-pen/);
+  assert.match(mainCssSource, /\.manim-sketch-canvas\.tool-eraser/);
+  assert.match(mainCssSource, /cursor: url\("data:image\/svg\+xml/);
+  assert.match(mainCssSource, /touch-action: none/);
+  assert.match(mainCssSource, /\.manim-config-summary/);
+  assert.match(mainCssSource, /\.manim-workbench-nested/);
   assert.match(mainCssSource, /\.manim-style-option/);
   assert.match(mainCssSource, /\.manim-skill-chip/);
   assert.match(mainCssSource, /\.manim-reference-item/);
@@ -442,9 +527,61 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(mobileCssSource, /overflow-x: hidden/);
   assert.match(mobileCssSource, /\.manim-process-result/);
   assert.match(mobileCssSource, /\.manim-result-heading/);
+  assert.match(mobileCssSource, /\.manim-process-timeline[\s\S]*height: auto/);
+  assert.match(mobileCssSource, /\.manim-process-details[\s\S]*max-height: 34vh/);
   assert.match(mobileCssSource, /\.manim-workbench-panel/);
+  assert.match(mobileCssSource, /\.manim-workbench-panel\.is-positioned/);
+  assert.match(mobileCssSource, /position: relative !important/);
+  assert.match(mobileCssSource, /\.manim-workbench-drag-handle/);
+  assert.match(mobileCssSource, /touch-action: auto/);
   assert.match(mobileCssSource, /max-height: 80vh/);
   assert.match(mobileCssSource, /\.manim-workbench-body/);
+  assert.match(mobileCssSource, /\.manim-config-summary/);
+  assert.match(mobileCssSource, /\.manim-sketch-overlay/);
+  assert.match(mobileCssSource, /\.manim-sketch-shell/);
+  assert.match(mobileCssSource, /\.manim-sketch-canvas-wrap/);
+});
+
+test('Manim Studio code panel uses the redesigned workspace shell', async () => {
+  const [indexSource, codePanelSource, mainCssSource, mobileCssSource] = await Promise.all([
+    readFile(indexPath, 'utf8'),
+    readFile(codePanelPath, 'utf8'),
+    readFile(mainCssPath, 'utf8'),
+    readFile(mobileCssPath, 'utf8'),
+  ]);
+
+  assert.match(indexSource, /class="code-panel manim-studio-window"/);
+  assert.match(indexSource, /studio-title-sub">动画代码与预览工作区/);
+  assert.match(indexSource, /studio-preview-frame/);
+  assert.match(indexSource, /id="manim-history-root" class="history-list-container studio-history-panel"/);
+  assert.match(indexSource, /studio-editor-panel/);
+  assert.match(indexSource, /studio-command-bar/);
+  assert.match(indexSource, /试试：把标题字体调大至 40/);
+
+  assert.match(codePanelSource, /studio-preview-video/);
+  assert.match(codePanelSource, /history-list-container studio-history-panel/);
+  assert.match(codePanelSource, /<i data-lucide="play"><\/i> 运行/);
+  assert.doesNotMatch(codePanelSource, /style="width:100%; height:100%; object-fit:contain;"/);
+  assert.doesNotMatch(codePanelSource, /background-color: #ef4444 !important/);
+
+  assert.match(mainCssSource, /#code-panel\.manim-studio-window/);
+  assert.match(mainCssSource, /--studio-bg: var\(--manim-studio-surface\)/);
+  assert.match(mainCssSource, /grid-template-columns: minmax\(380px, 42%\) minmax\(0, 1fr\)/);
+  assert.match(mainCssSource, /aspect-ratio: 16 \/ 9/);
+  assert.match(mainCssSource, /#code-panel\.manim-studio-window #manim-history-root/);
+  assert.match(mainCssSource, /max-height: clamp\(92px, 17vh, 180px\)/);
+  assert.match(mainCssSource, /#code-panel\.manim-studio-window #manim-history-root:not\(\.expanded\)/);
+  assert.match(mainCssSource, /#code-panel\.manim-studio-window #manim-history-root:not\(\.expanded\) \.history-list/);
+  assert.match(mainCssSource, /display: none !important/);
+  assert.match(mainCssSource, /\.studio-preview-video/);
+  assert.match(mainCssSource, /\.desktop-footer/);
+
+  assert.match(mobileCssSource, /Manim Studio Mobile Redesign/);
+  assert.match(mobileCssSource, /height: min\(90vh, 820px\)/);
+  assert.match(mobileCssSource, /#code-panel\.manim-studio-window \.mobile-panel-tabs/);
+  assert.match(mobileCssSource, /max-height: 24vh/);
+  assert.match(mobileCssSource, /#code-panel\.manim-studio-window #manim-history-root:not\(\.expanded\) \.history-list/);
+  assert.match(mobileCssSource, /overscroll-behavior: contain/);
 });
 
 test('frontend task switcher uses three visible tasks and guards cross-task routing', async () => {
@@ -478,27 +615,38 @@ test('frontend task switcher uses three visible tasks and guards cross-task rout
   assert.match(messageHandlerSource, /看起来这是\$\{targetLabel\}请求，要切到\$\{targetLabel\}吗/);
   assert.match(messageHandlerSource, /切到\$\{targetLabel\}/);
   assert.match(messageHandlerSource, /仍按\$\{currentLabel\}处理/);
-  assert.match(messageHandlerSource, /作为动画参考图/);
-  assert.match(messageHandlerSource, /作为解题图片/);
-  assert.match(messageHandlerSource, /imagePurpose === 'reference'/);
-  assert.match(messageHandlerSource, /uploadReferenceDataUrl/);
-  assert.match(messageHandlerSource, /routeMode: 'solver'/);
+  assert.doesNotMatch(messageHandlerSource, /作为动画参考图/);
+  assert.doesNotMatch(messageHandlerSource, /作为解题图片/);
+  assert.doesNotMatch(messageHandlerSource, /imagePurpose === 'reference'/);
+  assert.doesNotMatch(messageHandlerSource, /uploadReferenceDataUrl/);
+  assert.match(messageHandlerSource, /return 'solver';/);
+  assert.match(messageHandlerSource, /modeSwitcher\.setMode\(pending\.targetMode, true\)/);
   assert.match(messageHandlerSource, /skipRouteGuard: true/);
+  assert.match(messageHandlerSource, /currentMode === 'manim' && hasImage/);
 
+  assert.match(manimWorkbenchSource, /querySelector\('\.mode-tab\[data-mode="manim"\]'\)/);
+  assert.match(manimWorkbenchSource, /insertAdjacentElement\('afterend', this\.button\)/);
+  assert.match(manimWorkbenchSource, /manim-workbench-tab/);
   assert.match(manimWorkbenchSource, /uploadReferenceDataUrl/);
   assert.match(manimWorkbenchSource, /参考图已加入动画工作台/);
   assert.match(appSource, /messageHandler\.clearTaskPrompts\?\.\(\)/);
 
   assert.match(mainCssSource, /\.task-switch-prompt/);
   assert.match(mainCssSource, /\.task-switch-btn\.primary/);
+  assert.match(mainCssSource, /\.manim-workbench-tab/);
   assert.match(mainCssSource, /body\.light-mode \.task-switch-prompt/);
   assert.match(mobileCssSource, /\.task-switch-prompt/);
   assert.match(mobileCssSource, /\.task-switch-actions/);
+  assert.match(mobileCssSource, /\.manim-workbench-tab/);
 });
 
 test('Manim frontend and gateway user-facing files do not contain mojibake literals', async () => {
   const sources = await Promise.all([
+    readFile(indexPath, 'utf8'),
+    readFile(codePanelPath, 'utf8'),
     readFile(messageHandlerPath, 'utf8'),
+    readFile(manimWorkbenchPath, 'utf8'),
+    readFile(manimSketchPadPath, 'utf8'),
     readFile(new URL('../services/manim/manim-client.js', import.meta.url), 'utf8'),
   ]);
   const forbidden = ['\u9422', '\u6d93', '\u9366', '\u8930', '\ufffd'];

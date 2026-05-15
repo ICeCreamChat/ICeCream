@@ -202,4 +202,14 @@ def semantic_target_from_brief(brief: dict[str, Any] | None) -> str:
         return "motion_path"
     if kind in {"flow_process", "process_flow"} or any(token in message for token in ("流程", "握手", "tcp")):
         return "flow"
+    reference_target = str(brief.get("referenceSemanticTarget") or "").lower()
+    if reference_target in {"circle", "square", "triangle", "function_graph", "data_chart", "motion_path", "flow"}:
+        return reference_target
+    for reference_spec in brief.get("referenceSpecs") or []:
+        if not isinstance(reference_spec, dict):
+            continue
+        subject = reference_spec.get("subject") or {}
+        likely_shape = str(subject.get("likelyShape") or "").lower()
+        if likely_shape in {"circle", "square", "triangle"}:
+            return likely_shape
     return ""

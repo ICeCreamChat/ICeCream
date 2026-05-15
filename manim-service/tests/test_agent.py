@@ -18,10 +18,10 @@ SERVICE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SERVICE_ROOT))
 
 from app import service_config
-from app.agent.code_writer import write_scene_code
+from app.agent.code_writer import build_code_writer_messages, write_scene_code
 from app.agent.coder import generate_code
 from app.agent.critic import critique_code
-from app.agent.director import design_storyboard
+from app.agent.director import build_director_messages, design_storyboard
 from app.agent.failure_events import record_failure_event
 from app.agent.failure_replay import replay_failure_events
 from app.agent.inspector import inspect_code_quality
@@ -30,9 +30,10 @@ from app.agent.job_registry import cancel_job, create_job, get_job, update_job
 from app.agent.manim_knowledge import RULE_PACK_VERSION, manim_rules_prompt, rule_ids
 from app.agent.planner import plan_animation
 from app.agent.prompt_loader import API_INDEX_VERSION, PROMPT_PACK_VERSION, build_generation_prompt_pack
-from app.agent.reference_store import save_reference_image
+from app.agent.reference_analyzer import analyze_references
+from app.agent.reference_store import resolve_reference_records, save_reference_image
 from app.agent.render_cache import get_cached_render, save_cached_render
-from app.agent.repair import patch_first_repair, repair_code, repair_code_async, static_repair_once
+from app.agent.repair import build_repair_observation, patch_first_repair, repair_code, repair_code_async, static_repair_once
 from app.agent.renderer import sanitize_render_error
 from app.agent.routes import register_agent_routes
 from app.agent.rescue_scene import rescue_scene_code
@@ -43,7 +44,7 @@ from app.agent.smoke_suite import SMOKE_CASES, evaluate_smoke_result
 from app.agent.static_guard import run_static_guard
 from app.agent.visual_judge import inspect_frame_quality, inspect_visual_quality
 from app.agent.workflow import stream_agent_events
-from PIL import Image
+from PIL import Image, ImageDraw
 
 
 def renderable_scene_classes(code: str) -> list[str]:
@@ -347,6 +348,53 @@ class ManimAgentV4Tests(unittest.TestCase):
         else:
             os.environ["MANIM_AGENT_REFERENCE_DIR"] = original_dir
 
+    def test_reference_analyzer_detects_drawn_circle_without_leaking_path(self):
+        original_dir = os.environ.get("MANIM_AGENT_REFERENCE_DIR")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["MANIM_AGENT_REFERENCE_DIR"] = temp_dir
+            image = Image.new("RGB", (320, 180), color=(255, 255, 255))
+            draw = ImageDraw.Draw(image)
+            draw.ellipse((95, 35, 225, 165), outline=(20, 20, 20), width=8)
+            buffer = BytesIO()
+            image.save(buffer, format="PNG")
+            saved = save_reference_image(
+                filename="circle.png",
+                mime_type="image/png",
+                data_base64=base64.b64encode(buffer.getvalue()).decode("ascii"),
+            )
+            records = resolve_reference_records([saved["reference"]["referenceId"]])
+            bundle = analyze_references(records, plan_animation("照这个做一个简单动画"))
+
+            self.assertEqual(bundle["referenceSemanticTarget"], "circle")
+            self.assertEqual(bundle["referenceSpecs"][0]["status"], "pass")
+            self.assertIn("\u5706", bundle["summary"])
+            self.assertNotIn("path", json.dumps(bundle, ensure_ascii=False))
+        if original_dir is None:
+            os.environ.pop("MANIM_AGENT_REFERENCE_DIR", None)
+        else:
+            os.environ["MANIM_AGENT_REFERENCE_DIR"] = original_dir
+
+    def test_reference_analyzer_warns_on_blank_image(self):
+        original_dir = os.environ.get("MANIM_AGENT_REFERENCE_DIR")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["MANIM_AGENT_REFERENCE_DIR"] = temp_dir
+            buffer = BytesIO()
+            Image.new("RGB", (320, 180), color=(255, 255, 255)).save(buffer, format="PNG")
+            saved = save_reference_image(
+                filename="blank.png",
+                mime_type="image/png",
+                data_base64=base64.b64encode(buffer.getvalue()).decode("ascii"),
+            )
+            bundle = analyze_references(resolve_reference_records([saved["reference"]["referenceId"]]), {})
+
+            self.assertEqual(bundle["status"], "warning")
+            self.assertTrue(bundle["warnings"])
+            self.assertIn("\u5185\u5bb9\u8fc7\u5c11", bundle["summary"])
+        if original_dir is None:
+            os.environ.pop("MANIM_AGENT_REFERENCE_DIR", None)
+        else:
+            os.environ["MANIM_AGENT_REFERENCE_DIR"] = original_dir
+
     def test_planner_still_returns_clarification_for_low_confidence_prompt(self):
         brief = plan_animation("做个动画")
 
@@ -536,6 +584,26 @@ class ManimAgentV4Tests(unittest.TestCase):
         self.assertEqual(payload["rulePackVersion"], RULE_PACK_VERSION)
         self.assertIn("manimRules", payload)
         self.assertIn("scene_contract", payload["manimRules"])
+
+    def test_director_and_code_writer_prompts_include_reference_specs(self):
+        brief = plan_animation("照这个做一个简单动画")
+        brief["referenceSpecs"] = [{
+            "referenceId": "ref-1",
+            "status": "pass",
+            "summary": "检测到 1 个画面中心的圆形主体，建议用干净的 Manim 图形重绘。",
+            "subject": {"likelyShape": "circle", "position": "画面中心"},
+            "visualConstraints": ["主体位于画面中心"],
+        }]
+        brief["referenceSummary"] = brief["referenceSpecs"][0]["summary"]
+        brief["referenceSemanticTarget"] = "circle"
+        director_payload = json.loads(build_director_messages(brief)[1]["content"])
+        writer_payload = json.loads(build_code_writer_messages(brief, json.loads(director_json()), {}, [])[1]["content"])
+
+        self.assertEqual(director_payload["referenceSpecs"][0]["referenceId"], "ref-1")
+        self.assertIn("referencePolicy", director_payload)
+        self.assertEqual(writer_payload["referenceSemanticTarget"], "circle")
+        self.assertIn("referenceSpecs", writer_payload)
+        self.assertTrue(any("Reference images are visual constraints" in item for item in writer_payload["hardRequirements"]))
 
     def test_skill_loader_selects_core_skills_without_old_versions(self):
         brief = plan_animation("画一个正弦函数，做分步骤讲解动画")
@@ -1097,6 +1165,30 @@ class MainScene(Scene):
         self.assertIn("semantic_square_missing", codes)
         self.assertIn("semantic_square_mismatch", codes)
 
+    def test_visual_judge_catches_reference_circle_mismatch(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        self.add(Triangle())
+        self.wait(1)
+"""
+        brief = {
+            "message": "照这个做一个简单动画",
+            "referenceSemanticTarget": "circle",
+            "referenceSpecs": [{
+                "referenceId": "ref-1",
+                "status": "pass",
+                "subject": {"likelyShape": "circle"},
+            }],
+        }
+        report = inspect_visual_quality(code, brief, {})
+        codes = {item.get("code") for item in report["findings"]}
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("reference_circle_missing", codes)
+
     def test_runtime_helpers_avoid_black_letterbox_and_inner_panel(self):
         self.assertIn('self.camera.background_color = "#F7FBFF"', SCENE_RUNTIME_CODE)
         self.assertIn("config.frame_width", SCENE_RUNTIME_CODE)
@@ -1177,6 +1269,23 @@ class MainScene(Scene):
         self.assertEqual(attempts[0]["rulePackVersion"], RULE_PACK_VERSION)
         self.assertEqual(attempts[0]["semanticTarget"], "square")
         self.assertEqual(attempts[0]["repairRules"][0]["id"], "mathtex_chinese")
+
+    def test_repair_observation_includes_reference_alignment_context(self):
+        brief = {
+            "message": "照这个做一个简单动画",
+            "referenceSummary": "检测到圆形主体。",
+            "referenceSemanticTarget": "circle",
+            "referenceSpecs": [{"referenceId": "ref-1", "subject": {"likelyShape": "circle"}}],
+        }
+        observation = build_repair_observation(
+            "from manim import *\nclass MainScene(Scene):\n    def construct(self):\n        self.add(Triangle())\n",
+            {"status": "error", "findings": [{"message": "参考图显示圆形主体，但没有 Circle。", "code": "reference_circle_missing"}]},
+            brief=brief,
+        )
+
+        self.assertEqual(observation["referenceSemanticTarget"], "circle")
+        self.assertEqual(observation["referenceSpecs"][0]["referenceId"], "ref-1")
+        self.assertIn("reference_circle_missing", [item["id"] for item in observation["repairRules"]])
 
     def test_repair_attempt_config_defaults_to_four_and_clamps(self):
         with patch.dict(os.environ, {"MANIM_AGENT_REPAIR_ATTEMPTS": ""}, clear=False):

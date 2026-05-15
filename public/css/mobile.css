@@ -367,6 +367,17 @@
         height: 16px;
     }
 
+    .manim-workbench-tab {
+        padding: 8px 10px;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+
+    .manim-workbench-tab .lucide {
+        width: 15px;
+        height: 15px;
+    }
+
     .mode-tab span {
         display: inline-block !important;
         white-space: nowrap;
@@ -376,6 +387,10 @@
     @media (max-width: 380px) {
         .mode-tab span {
             display: none !important;
+        }
+
+        .manim-workbench-tab span {
+            display: none;
         }
 
         .mode-tab {
@@ -946,11 +961,18 @@
     }
 
     .manim-process-body {
+        grid-template-columns: 1fr;
+        gap: 10px;
         padding: 10px 12px 12px;
     }
 
     .manim-process-timeline {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 7px;
+        height: auto;
+        max-height: none;
+        overflow: visible;
+        padding-right: 0;
     }
 
     .manim-process-step {
@@ -959,6 +981,7 @@
     }
 
     .manim-process-details {
+        height: auto;
         max-height: 34vh;
         overflow-y: auto;
         overflow-x: hidden;
@@ -976,6 +999,12 @@
     }
 
     .manim-workbench-panel {
+        position: relative !important;
+        left: auto !important;
+        top: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        transform: none !important;
         width: 100%;
         max-width: 100%;
         height: auto;
@@ -984,8 +1013,21 @@
         border-bottom: 0;
     }
 
+    .manim-workbench-panel.is-positioned,
+    .manim-workbench-panel.is-dragging {
+        position: relative !important;
+        left: auto !important;
+        top: auto !important;
+        transition: none;
+    }
+
     .manim-workbench-header {
         padding: 15px 16px 12px;
+    }
+
+    .manim-workbench-drag-handle {
+        cursor: default;
+        touch-action: auto;
     }
 
     .manim-workbench-body {
@@ -1001,7 +1043,19 @@
         border-radius: 14px;
     }
 
+    .manim-config-summary {
+        grid-template-columns: 1fr;
+    }
+
     .manim-skill-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .manim-reference-dropzone {
+        padding: 12px;
+    }
+
+    .manim-reference-actions {
         grid-template-columns: 1fr;
     }
 
@@ -1012,6 +1066,87 @@
     .manim-reference-item img {
         width: 44px;
         height: 44px;
+    }
+
+    .manim-sketch-overlay {
+        align-items: flex-end !important;
+        justify-items: stretch !important;
+        padding: 0 !important;
+    }
+
+    .manim-sketch-shell {
+        width: 100vw !important;
+        max-height: 94vh !important;
+        border-radius: 20px 20px 0 0 !important;
+    }
+
+    .manim-sketch-header {
+        padding: 13px 14px 11px !important;
+    }
+
+    .manim-sketch-header small {
+        display: none !important;
+    }
+
+    .manim-sketch-toolbar,
+    .manim-sketch-options {
+        padding-left: 12px !important;
+        padding-right: 12px !important;
+        overflow-x: auto !important;
+    }
+
+    .manim-sketch-tool-btn span {
+        display: none !important;
+    }
+
+    .manim-sketch-tool-btn {
+        width: 38px !important;
+        min-width: 38px !important;
+        padding: 0 !important;
+        justify-content: center !important;
+    }
+
+    .manim-sketch-width {
+        min-width: 180px !important;
+    }
+
+    .manim-sketch-width input {
+        width: 96px !important;
+    }
+
+    .manim-sketch-hint {
+        min-width: 100% !important;
+        text-align: left !important;
+    }
+
+    .manim-sketch-stage {
+        padding: 0 12px 12px !important;
+    }
+
+    .manim-sketch-canvas-wrap {
+        max-height: 48vh !important;
+        border-radius: 14px !important;
+    }
+
+    .manim-sketch-footer {
+        align-items: stretch !important;
+        flex-direction: column !important;
+        padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)) !important;
+    }
+
+    .manim-sketch-pages {
+        width: 100% !important;
+    }
+
+    .manim-sketch-actions {
+        width: 100% !important;
+        display: grid !important;
+        grid-template-columns: 1fr 1.4fr !important;
+    }
+
+    .manim-sketch-secondary,
+    .manim-sketch-primary {
+        width: 100% !important;
     }
 
     /* ==========================================================================
@@ -1702,5 +1837,233 @@ input:focus-visible {
     .message {
         width: 100%;
         max-width: none;
+    }
+}
+
+/* ==========================================================================
+   Manim Studio Mobile Redesign
+   ========================================================================== */
+@media (max-width: 768px) {
+    #code-panel.manim-studio-window,
+    .code-panel.manim-studio-window {
+        top: auto !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        min-width: 0 !important;
+        height: min(90vh, 820px) !important;
+        max-height: 90vh !important;
+        border-radius: 22px 22px 0 0 !important;
+        transform: translateY(100%) !important;
+        display: flex !important;
+        opacity: 0;
+    }
+
+    #code-panel.manim-studio-window.open,
+    #code-panel.manim-studio-window.active,
+    .code-panel.manim-studio-window.open,
+    .code-panel.manim-studio-window.active {
+        opacity: 1;
+        transform: translateY(0) !important;
+        animation: none !important;
+    }
+
+    #code-panel.manim-studio-window .panel-header {
+        flex: 0 0 60px !important;
+        height: 60px !important;
+        padding: 0 14px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-title-sub,
+    #code-panel.manim-studio-window .studio-title-icon {
+        display: none;
+    }
+
+    #code-panel.manim-studio-window .panel-btn {
+        height: 36px !important;
+        padding: 0 12px !important;
+        border-radius: 9px !important;
+    }
+
+    #code-panel.manim-studio-window .panel-btn-close {
+        width: 36px !important;
+        padding: 0 !important;
+    }
+
+    #code-panel.manim-studio-window .mobile-panel-tabs {
+        flex: 0 0 auto !important;
+        display: flex !important;
+        gap: 8px !important;
+        padding: 10px 12px !important;
+        border-bottom: 1px solid var(--studio-border) !important;
+        background: var(--studio-panel-raised) !important;
+    }
+
+    #code-panel.manim-studio-window .mobile-panel-tab {
+        height: 38px !important;
+        border: 1px solid var(--studio-border) !important;
+        border-radius: 10px !important;
+        background: var(--studio-panel) !important;
+        color: var(--studio-muted) !important;
+        font-weight: 700 !important;
+    }
+
+    #code-panel.manim-studio-window .mobile-panel-tab.active {
+        border-color: color-mix(in srgb, var(--studio-accent) 42%, transparent) !important;
+        background: color-mix(in srgb, var(--studio-accent) 12%, var(--studio-panel)) !important;
+        color: var(--studio-accent) !important;
+        box-shadow: none !important;
+    }
+
+    #code-panel.manim-studio-window .panel-body {
+        flex: 1 1 auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+    }
+
+    #code-panel.manim-studio-window .mobile-preview-tab {
+        flex: 1 1 auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        min-height: 0 !important;
+        overflow-y: auto !important;
+        overscroll-behavior: contain;
+        border-right: 0 !important;
+    }
+
+    #code-panel.manim-studio-window .mobile-preview-tab.hidden,
+    #mobile-preview-tab.hidden {
+        display: none !important;
+    }
+
+    #code-panel.manim-studio-window .mobile-code-tab {
+        flex: 1 1 auto !important;
+        display: none !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+    }
+
+    #code-panel.manim-studio-window .mobile-code-tab.active,
+    #mobile-code-tab.active {
+        display: flex !important;
+    }
+
+    #code-panel.manim-studio-window .studio-preview-panel,
+    #code-panel.manim-studio-window .mobile-preview-tab .panel-preview,
+    #code-panel.manim-studio-window .mobile-preview-tab #video-preview-container {
+        flex: 0 0 auto !important;
+        height: auto !important;
+        max-height: none !important;
+        padding: 12px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-pane-heading {
+        align-items: flex-start;
+    }
+
+    #code-panel.manim-studio-window .studio-pane-heading small {
+        white-space: normal;
+        text-align: right;
+    }
+
+    #code-panel.manim-studio-window .studio-preview-frame {
+        aspect-ratio: 16 / 9;
+        border-radius: 12px;
+    }
+
+    #code-panel.manim-studio-window #video-inner-container {
+        height: 100% !important;
+        max-height: none !important;
+    }
+
+    #code-panel.manim-studio-window #manim-history-root,
+    #code-panel.manim-studio-window .mobile-preview-tab #manim-history-root,
+    #code-panel.manim-studio-window .mobile-preview-tab #manim-history-root.history-list-container {
+        flex: 0 0 auto !important;
+        width: auto !important;
+        height: auto !important;
+        max-height: 24vh !important;
+        min-height: 42px !important;
+        margin: 0 12px 12px !important;
+    }
+
+    #code-panel.manim-studio-window #manim-history-root:not(.expanded),
+    #code-panel.manim-studio-window .mobile-preview-tab #manim-history-root:not(.expanded) {
+        height: 42px !important;
+        min-height: 42px !important;
+        max-height: 42px !important;
+    }
+
+    #code-panel.manim-studio-window #manim-history-root.expanded,
+    #code-panel.manim-studio-window .mobile-preview-tab #manim-history-root.expanded {
+        height: auto !important;
+        min-height: 92px !important;
+        max-height: 24vh !important;
+    }
+
+    #code-panel.manim-studio-window #manim-history-root .history-list-header {
+        display: flex !important;
+    }
+
+    #code-panel.manim-studio-window #manim-history-root .history-list,
+    #code-panel.manim-studio-window #manim-history-root .history-empty {
+        max-height: none !important;
+    }
+
+    #code-panel.manim-studio-window #manim-history-root:not(.expanded) .history-list,
+    #code-panel.manim-studio-window #manim-history-root:not(.expanded) .history-empty {
+        display: none !important;
+        height: 0 !important;
+        min-height: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+    }
+
+    #code-panel.manim-studio-window .mobile-preview-footer {
+        flex: 0 0 auto !important;
+        display: flex !important;
+        gap: 8px !important;
+        padding: 10px 12px 14px !important;
+        border-top: 1px solid var(--studio-border) !important;
+        background: var(--studio-panel-raised) !important;
+    }
+
+    #code-panel.manim-studio-window .desktop-footer {
+        display: none !important;
+    }
+
+    #code-panel.manim-studio-window .panel-editor {
+        flex: 1 1 auto !important;
+        min-height: 0 !important;
+    }
+
+    #code-panel.manim-studio-window .editor-toolbar {
+        flex: 0 0 48px !important;
+        min-height: 48px !important;
+        padding: 0 12px !important;
+    }
+
+    #code-panel.manim-studio-window .editor-toolbar-label {
+        display: none !important;
+    }
+
+    #code-panel.manim-studio-window .mobile-code-tab .code-panel-studio-report,
+    #code-panel.manim-studio-window .code-panel-studio-report {
+        max-height: 28vh !important;
+        margin: 10px 10px 0 !important;
+    }
+
+    #code-panel.manim-studio-window #monaco-container,
+    #code-panel.manim-studio-window .mobile-code-tab #monaco-container {
+        flex: 1 1 auto !important;
+        height: auto !important;
+        min-height: 0 !important;
+    }
+
+    #code-panel.manim-studio-window.studio-report-visible .mobile-code-tab #monaco-container {
+        min-height: 180px !important;
     }
 }

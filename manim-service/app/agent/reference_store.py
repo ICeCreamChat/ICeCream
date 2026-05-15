@@ -104,10 +104,38 @@ def get_reference(reference_id: str) -> dict[str, Any] | None:
     return public_item
 
 
+def get_reference_record(reference_id: str) -> dict[str, Any] | None:
+    """Return a private reference record for internal agent use only."""
+    item = _load_index().get(reference_id)
+    if not isinstance(item, dict):
+        return None
+
+    root = _root().resolve()
+    try:
+        path = Path(str(item.get("path") or "")).resolve()
+    except OSError:
+        return None
+    if root not in path.parents and path != root:
+        return None
+    if not path.is_file():
+        return None
+    return {**item, "path": str(path)}
+
+
 def resolve_references(reference_ids: list[str] | None) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for reference_id in reference_ids or []:
         item = get_reference(str(reference_id))
+        if item:
+            result.append(item)
+    return result
+
+
+def resolve_reference_records(reference_ids: list[str] | None) -> list[dict[str, Any]]:
+    """Resolve references with private paths for trusted local analysis."""
+    result: list[dict[str, Any]] = []
+    for reference_id in reference_ids or []:
+        item = get_reference_record(str(reference_id))
         if item:
             result.append(item)
     return result

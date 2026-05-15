@@ -164,9 +164,6 @@ export class CodePanel {
                 停止
             `;
             targetBtn.classList.add('btn-stop');
-
-            // "Nuclear" overrides
-            targetBtn.style.cssText = 'background-color: #ef4444 !important; border-color: #ef4444 !important; color: white !important;';
             targetBtn.disabled = false;
         }
 
@@ -223,7 +220,7 @@ export class CodePanel {
             input.placeholder = orgPlaceholder;
             const targetBtn = fromDesktop ? this.elements.aiBtnDesktop : this.elements.aiBtn;
             if (targetBtn) {
-                targetBtn.innerHTML = '<i data-lucide="sparkles" style="width:16px;"></i> 生成';
+                targetBtn.innerHTML = '<i data-lucide="sparkles"></i> 生成';
                 targetBtn.disabled = false;
                 targetBtn.classList.remove('btn-stop');
                 targetBtn.style.cssText = '';
@@ -509,7 +506,8 @@ export class CodePanel {
         const renderBtn = this.elements.renderBtn;
         if (renderBtn) {
             // 注意：不要禁用按钮，允许用户狂按 Ctrl+E 重试
-            renderBtn.innerHTML = '<div class="loading-spinner" style="width:16px;height:16px;"></div> 渲染中...';
+            renderBtn.classList.add('is-rendering');
+            renderBtn.innerHTML = '<div class="loading-spinner"></div> 渲染中...';
         }
 
         try {
@@ -538,7 +536,7 @@ export class CodePanel {
                 this.latestVideoUrl = newUrl;
 
                 this.elements.videoPreview.innerHTML = `
-                    <video controls autoplay loop playsinline style="width:100%; height:100%; object-fit:contain;">
+                    <video class="studio-preview-video" controls autoplay loop playsinline>
                         <source src="${newUrl}?t=${Date.now()}" type="video/mp4">
                     </video>
                 `;
@@ -575,7 +573,8 @@ export class CodePanel {
             // 只有当这是“当前”请求时，才恢复按钮状态
             if (!signal.aborted && renderBtn) {
                 renderBtn.disabled = false;
-                renderBtn.innerHTML = '<i data-lucide="play" style="width:16px;"></i> 运行';
+                renderBtn.classList.remove('is-rendering');
+                renderBtn.innerHTML = '<i data-lucide="play"></i> 运行';
                 if (window.lucide) lucide.createIcons();
             }
         }
@@ -685,7 +684,7 @@ export class CodePanel {
         // this.elements.videoPreview is #video-inner-container
         if (videoUrl && this.elements.videoPreview) {
             this.elements.videoPreview.innerHTML = `
-                <video controls autoplay loop playsinline style="width:100%; height:100%; object-fit:contain;">
+                <video class="studio-preview-video" controls autoplay loop playsinline>
                     <source src="${videoUrl}" type="video/mp4">
                 </video>
             `;
@@ -794,10 +793,10 @@ export class CodePanel {
 
         // Empty state
         if (this.codeHistory.length === 0) {
-            container.className = 'history-list-container';
+            container.className = 'history-list-container studio-history-panel';
             container.innerHTML = `
                 <div class="history-list-header">
-                    <span>📜 修改历史</span>
+                    <span>修改历史</span>
                 </div>
                 <div class="history-empty">使用 AI 修改代码后，记录将显示在此处</div>
             `;
@@ -813,18 +812,18 @@ export class CodePanel {
 
         // DISABLE: className reset breaks toggle
         // container.className = 'history-list-container' + (isExpanded ? ' expanded' : '');
-        container.className = 'history-list-container';
+        container.className = `history-list-container studio-history-panel${isExpanded ? ' expanded' : ''}`;
 
 
 
         // [UI Refinement] Flex layout: Text/Badge (Left) ... Spacer ... Icon (Right)
         container.innerHTML = `
-            <div class="history-list-header"  style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                <span style="display: flex; align-items: center; gap: 8px;">
-                    📜 修改历史
+            <div class="history-list-header">
+                <span>
+                    修改历史
                     <span class="history-count-badge">${this.codeHistory.length}</span>
                 </span>
-                
+                <small>点击展开或收起</small>
             </div>
             <div class="history-list"></div>
         `;

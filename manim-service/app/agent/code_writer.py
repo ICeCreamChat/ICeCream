@@ -139,6 +139,25 @@ def build_code_writer_messages(
     current_code: str = "",
 ) -> list[dict[str, str]]:
     skill_guidance = "\n".join(f"- {skill['name']}：{skill['guidance']}" for skill in skills)
+    reference_specs = brief.get("referenceSpecs") or []
+    reference_target = str(brief.get("referenceSemanticTarget") or "")
+    reference_conflict = str(brief.get("referenceConflict") or "")
+    reference_requirements: list[str] = []
+    if reference_specs:
+        reference_requirements.extend([
+            "Reference images are visual constraints, not assets to embed. Redraw the subject with clean Manim objects.",
+            "Do not ignore referenceSpecs. Use them for dominant object type, relative position, line style, and approximate composition.",
+            "If referenceSpecs say the subject is centered, place the main Manim object near the visual center and make it large enough.",
+            "If the reference and text conflict, text intent wins, but keep the reference as secondary layout/style guidance.",
+        ])
+        if reference_target == "circle":
+            reference_requirements.append("Reference analysis indicates a circle; use Circle() as the dominant object unless text explicitly asks otherwise.")
+        elif reference_target == "square":
+            reference_requirements.append("Reference analysis indicates a square; use Square() as the dominant object unless text explicitly asks otherwise.")
+        elif reference_target == "triangle":
+            reference_requirements.append("Reference analysis indicates a triangle; use Triangle() or Polygon() as the dominant object unless text explicitly asks otherwise.")
+        if reference_conflict:
+            reference_requirements.append(f"Reference conflict note: {reference_conflict}")
     system = (
         "你是资深 Manim Community 工程师和教学动画导演。"
         "只返回一个完整 Python 文件，并放在 python 代码块里。"
@@ -169,6 +188,7 @@ def build_code_writer_messages(
         "If the request asks for sine/cosine axes, use symbolic pi tick labels, not long decimals.",
         "For projectile or physical motion, show trajectory, velocity/direction, and gravity/acceleration cues instead of a static object.",
         "The final rendered frame must visually match the requested primary object, not merely mention it in labels.",
+        *reference_requirements,
         *_domain_requirements(brief, storyboard_spec),
     ]
     user = {
@@ -176,6 +196,11 @@ def build_code_writer_messages(
         "mode": "modify" if current_code.strip() else "create",
         "storyboardSpec": storyboard_spec,
         "semanticTarget": semantic_target_from_brief(brief),
+        "referenceSpecs": reference_specs,
+        "referenceSummary": brief.get("referenceSummary", ""),
+        "referenceSemanticTarget": reference_target,
+        "referenceConflict": reference_conflict,
+        "referencePolicy": "参考图只提供构图和对象约束，最终视频必须用 Manim 原生对象重绘，不能直接贴图。",
         "stylePreset": style_preset,
         "runtimeHelpers": runtime_prompt(),
         "manimRules": manim_rules_prompt(),

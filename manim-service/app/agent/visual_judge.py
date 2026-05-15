@@ -314,6 +314,33 @@ def _semantic_findings(code: str, brief: dict[str, Any] | None) -> list[dict[str
     return findings
 
 
+def _reference_alignment_findings(code: str, brief: dict[str, Any] | None) -> list[dict[str, str]]:
+    data = brief or {}
+    if data.get("referenceConflict"):
+        return []
+    target = str(data.get("referenceSemanticTarget") or "").lower()
+    if not target:
+        for spec in data.get("referenceSpecs") or []:
+            subject = spec.get("subject") if isinstance(spec, dict) else {}
+            target = str((subject or {}).get("likelyShape") or "").lower()
+            if target:
+                break
+    if target not in {"circle", "square", "triangle"}:
+        return []
+
+    source = code or ""
+    has_circle = bool(re.search(r"\bCircle\s*\(", source))
+    has_square = bool(re.search(r"\bSquare\s*\(", source))
+    has_triangle = bool(re.search(r"\b(Triangle|Polygon)\s*\(", source))
+    if target == "circle" and not has_circle:
+        return [_finding("error", "参考图显示圆形主体，但生成代码没有 Circle 对象。", "用 Circle() 重绘参考图中的圆形主体。", "reference_circle_missing")]
+    if target == "square" and not has_square:
+        return [_finding("error", "参考图显示正方形主体，但生成代码没有 Square 对象。", "用 Square() 重绘参考图中的正方形主体。", "reference_square_missing")]
+    if target == "triangle" and not has_triangle:
+        return [_finding("error", "参考图显示三角形主体，但生成代码没有 Triangle 或 Polygon 对象。", "用 Triangle() 或 Polygon() 重绘参考图中的三角形主体。", "reference_triangle_missing")]
+    return []
+
+
 def inspect_visual_quality(
     code: str,
     brief: dict[str, Any] | None = None,
@@ -322,6 +349,7 @@ def inspect_visual_quality(
     findings: list[dict[str, str]] = []
     render_result = render_result or {}
     findings.extend(_semantic_findings(code, brief))
+    findings.extend(_reference_alignment_findings(code, brief))
     source = code or ""
     code_has_circle = bool(re.search(r"\bCircle\s*\(", source))
     code_has_square = bool(re.search(r"\bSquare\s*\(", source))

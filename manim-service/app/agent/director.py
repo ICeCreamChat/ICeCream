@@ -313,6 +313,12 @@ def _coerce_spec(data: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
             "优先生成清晰、高对比度的教学画面，不追求装饰复杂度。",
             "画面必须铺满浅色 16:9 画布，不要黑边和内嵌白色卡片。",
         ],
+        "reference_usage": _user_visible_text(
+            data.get("reference_usage"),
+            str(brief.get("referenceSummary") or ""),
+            180,
+            require_chinese=False,
+        ),
         "rulePackVersion": RULE_PACK_VERSION,
     }
     spec = _normalize_simple_shape_storyboard(spec, brief)
@@ -340,6 +346,15 @@ def build_director_messages(brief: dict[str, Any], current_code: str = "") -> li
         "animation_type": brief.get("animation_type"),
         "required_objects": brief.get("target_objects", []),
         "semantic_target": semantic_target_from_brief(brief),
+        "referenceSpecs": brief.get("referenceSpecs", []),
+        "referenceSummary": brief.get("referenceSummary", ""),
+        "referenceSemanticTarget": brief.get("referenceSemanticTarget", ""),
+        "referenceConflict": brief.get("referenceConflict", ""),
+        "referencePolicy": [
+            "参考图用于约束主体形状、布局位置、线稿方向和风格，不直接嵌入最终视频。",
+            "如果文字请求与参考图冲突，必须以文字请求为准，并在分镜里说明参考图只作为次要构图参考。",
+            "如果文字较笼统且参考图检测到明确主体，请把 referenceSemanticTarget 作为主要视觉对象。",
+        ],
         "domain_constraints": [
             "如果是简单正弦/余弦函数图像，默认只设计坐标系、函数曲线、关键点和周期总结；不要加入单位圆，除非用户明确要求单位圆。",
             "简单函数图像必须让坐标系和曲线成为主体，不要把解释分散到多个复杂图形。",
@@ -355,6 +370,7 @@ def build_director_messages(brief: dict[str, Any], current_code: str = "") -> li
             "animation_type": "specific animation type",
             "visual_objects": ["必须出现的视觉对象"],
             "semantic_target": "circle|square|triangle|function_graph|data_chart|motion_path|flow|concept",
+            "reference_usage": "如果有参考图，用一句中文说明参考图影响了哪些对象或布局；没有参考图则留空",
             "layout_zones": ["header", "step", "visual", "summary"],
             "shots": [
                 {

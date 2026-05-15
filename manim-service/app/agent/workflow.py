@@ -17,7 +17,8 @@ from .job_registry import create_job, is_cancelled, register_render_client, upda
 from .manim_knowledge import RULE_PACK_VERSION, semantic_target_from_brief
 from .planner import plan_animation
 from .prompt_loader import API_INDEX_VERSION, PROMPT_PACK_VERSION
-from .reference_store import resolve_references
+from .reference_analyzer import analyze_references
+from .reference_store import resolve_reference_records, resolve_references
 from .render_cache import get_cached_render, save_cached_render
 from .repair import repair_code_async
 from .renderer import render_code_for_agent
@@ -93,6 +94,11 @@ def _trace(
         "jobId": brief.get("jobId"),
         "rulePackVersion": RULE_PACK_VERSION,
         "semanticTarget": semantic_target_from_brief({**brief, "storyboardSpec": spec}),
+        "referenceSummary": brief.get("referenceSummary", ""),
+        "referenceSpecs": brief.get("referenceSpecs", []),
+        "referenceSemanticTarget": brief.get("referenceSemanticTarget", ""),
+        "referenceWarnings": brief.get("referenceWarnings", []),
+        "referenceConflict": brief.get("referenceConflict", ""),
         "staticFindings": (quality or {}).get("issues") or (quality or {}).get("findings") or [],
         "storyboardSpec": spec,
         "stylePreset": style_preset or {},
@@ -271,8 +277,25 @@ async def stream_agent_events(
 
     references = resolve_references(reference_ids)
     if references:
+        reference_records = resolve_reference_records(reference_ids)
+        reference_analysis = analyze_references(reference_records, brief)
         brief["references"] = references
-        yield {"type": "reference", "references": references, "summary": "已加载参考素材"}
+        brief["referenceSpecs"] = reference_analysis.get("referenceSpecs", [])
+        brief["referenceSummary"] = reference_analysis.get("summary", "")
+        brief["referenceWarnings"] = reference_analysis.get("warnings", [])
+        brief["referenceConflict"] = reference_analysis.get("conflict", "")
+        reference_target = reference_analysis.get("referenceSemanticTarget")
+        if reference_target:
+            brief["referenceSemanticTarget"] = reference_target
+        yield {
+            "type": "reference",
+            "references": references,
+            "referenceSpecs": brief["referenceSpecs"],
+            "status": reference_analysis.get("status", "pass"),
+            "summary": brief["referenceSummary"] or "已解析参考素材",
+            "warnings": brief["referenceWarnings"],
+            "conflict": brief["referenceConflict"],
+        }
 
     if mode == "modify":
         patch_plan = build_patch_plan(message, current_code)

@@ -259,6 +259,9 @@ class MessageHandler {
         if (currentMode === 'manim' && this.looksLikeSolverRequest(message, hasImage)) {
             return 'solver';
         }
+        if (currentMode === 'manim' && hasImage) {
+            return 'solver';
+        }
         if (currentMode === 'solver' && this.looksLikeManimRequest(message) && !this.looksLikeSolverRequest(message, hasImage)) {
             return 'manim';
         }
@@ -284,24 +287,11 @@ class MessageHandler {
         if (!prompt) return;
 
         this.pendingTaskSwitch = data;
-        const isImagePurpose = data.type === 'image-purpose';
         const targetLabel = this.getTaskLabel(data.targetMode);
         const currentLabel = this.getTaskLabel(data.currentMode);
 
         prompt.classList.remove('hidden');
-        prompt.innerHTML = isImagePurpose
-            ? `
-                <div class="task-switch-copy">
-                    <strong>这张图片要怎么使用？</strong>
-                    <span>当前在动画模式，可以作为动画参考图，也可以切到解题处理。</span>
-                </div>
-                <div class="task-switch-actions">
-                    <button type="button" class="task-switch-btn primary" data-action="image-reference">作为动画参考图</button>
-                    <button type="button" class="task-switch-btn" data-action="image-solver">作为解题图片</button>
-                    <button type="button" class="task-switch-btn ghost" data-action="cancel">稍后再说</button>
-                </div>
-            `
-            : `
+        prompt.innerHTML = `
                 <div class="task-switch-copy">
                     <strong>看起来这是${targetLabel}请求，要切到${targetLabel}吗？</strong>
                     <span>当前选择的是${currentLabel}，切换后会在同一个对话里继续处理。</span>
@@ -347,23 +337,9 @@ class MessageHandler {
         }
 
         if (action === 'stay') {
-            const imagePurpose = pending.currentMode === 'manim' && this.pendingImage ? 'reference' : undefined;
             this.clearTaskPrompts();
-            this.handleSend({ routeMode: pending.currentMode, imagePurpose, skipRouteGuard: true });
+            this.handleSend({ routeMode: pending.currentMode, skipRouteGuard: true });
             return;
-        }
-
-        if (action === 'image-reference') {
-            modeSwitcher.setMode('manim', true);
-            this.clearTaskPrompts();
-            this.handleSend({ routeMode: 'manim', imagePurpose: 'reference', skipRouteGuard: true });
-            return;
-        }
-
-        if (action === 'image-solver') {
-            modeSwitcher.setMode('solver', true);
-            this.clearTaskPrompts();
-            this.handleSend({ routeMode: 'solver', imagePurpose: 'solver', skipRouteGuard: true });
         }
     }
 
@@ -391,22 +367,11 @@ class MessageHandler {
                 });
                 return;
             }
-
-            if (selectedMode === 'manim' && hasImage && !options.imagePurpose) {
-                this.showTaskSwitchPrompt({
-                    targetMode: 'manim',
-                    currentMode: selectedMode,
-                    message,
-                    type: 'image-purpose',
-                });
-                return;
-            }
         }
 
         this.clearTaskPrompts();
         const originalImage = this.pendingImage;
         let imageForServer = originalImage;
-        let extraManimOptions = {};
 
         // 清空输入框
         if (this.elements.chatInput) {
@@ -424,18 +389,6 @@ class MessageHandler {
 
         try {
             const mode = selectedMode;
-            if (mode === 'manim' && options.imagePurpose === 'reference' && originalImage) {
-                const reference = await this.manimWorkbench?.uploadReferenceDataUrl?.(
-                    originalImage,
-                    '输入参考图.jpg',
-                    'image/jpeg'
-                );
-                if (reference?.referenceId) {
-                    extraManimOptions.referenceImageIds = [reference.referenceId];
-                }
-                imageForServer = null;
-            }
-
             const shouldUseAgent = !imageForServer && (
                 mode === 'manim' || (mode === 'auto' && await this.shouldUseManimAgent(message))
             );
@@ -448,7 +401,6 @@ class MessageHandler {
                 const workbenchOptions = this.manimWorkbench?.getAgentOptions?.() || {};
                 const referenceImageIds = Array.from(new Set([
                     ...(workbenchOptions.referenceImageIds || []),
-                    ...(extraManimOptions.referenceImageIds || []),
                 ].filter(Boolean)));
                 await this.sendManimAgentStream({
                     message,
@@ -861,9 +813,16 @@ class MessageHandler {
             this.setManimProcessStep('planner', 'pass', '已识别动画需求', this.formatManimPlanDetails(brief));
         } else if (event.type === 'reference') {
             const refs = event.references || [];
-            this.setManimProcessStep('reference', 'pass', event.summary || '已加载参考素材', refs.length
-                ? refs.map(item => `参考图：${item.filename || item.referenceId}（${item.width || '?'}×${item.height || '?'}）`)
-                : ['未使用参考素材']);
+            const specs = event.referenceSpecs || [];
+            const warnings = event.warnings || [];
+            const details = [
+                ...specs.map(spec => spec.summary || spec.warning || '').filter(Boolean),
+                ...refs.map(item => `参考图：${item.filename || item.referenceId}（${item.width || '?'}×${item.height || '?'}）`),
+                ...warnings.map(item => `注意：${this.localizeManimText(item)}`),
+                event.conflict ? `冲突提示：${this.localizeManimText(event.conflict)}` : '',
+            ].filter(Boolean);
+            const status = event.status === 'warning' ? 'warning' : (event.status === 'error' ? 'error' : 'pass');
+            this.setManimProcessStep('reference', status, event.summary || '已解析参考素材', details.length ? details : ['未使用参考素材']);
         } else if (event.type === 'patch_plan') {
             const plan = event.patchPlan || {};
             this.setManimProcessStep('coder', 'active', plan.summary || '已生成代码修改计划', [
