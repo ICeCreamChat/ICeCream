@@ -22,6 +22,14 @@ def _failure_category(report: dict[str, Any], stderr: str = "") -> str:
         return "语义或视觉错配"
     if "latex" in text or "tex" in text:
         return "LaTeX/公式渲染问题"
+    if (
+        "unexpected keyword" in text
+        or "mobject.__getattr__" in text
+        or "invalid_manim_keyword" in codes
+        or "unsafe_mobject_setter_keyword" in codes
+        or "invalid_vgroup_child" in codes
+    ):
+        return "Manim API 或参数调用错误"
     if "attributeerror" in text or "syntax" in text or "nameerror" in text or "unknown_scene_method" in codes:
         return "Manim API 或代码错误"
     if "black" in text or "contrast" in text or "视觉" in text or "预览" in text:
@@ -54,8 +62,10 @@ def build_repair_observation(
         "failureCategory": _failure_category(report, stderr),
         "issues": issues,
         "stderr": stderr[-1600:] if stderr else "",
+        "stderrSummary": stderr[-500:] if stderr else "",
         "attempt": attempt,
         "root_cause_hint": root,
+        "ruleIds": rule_codes,
         "safe_retry": "返回一个完整、更安全的 Manim 文件，保持同一个 MainScene 合约。",
         "rulePackVersion": RULE_PACK_VERSION,
         "repairRules": repair_rules,
@@ -207,6 +217,9 @@ async def llm_repair_once(
             "For function graph requests, make the graph dominate the visual area; use stroke_width >= 5, sparse symbolic pi labels, remove unit-circle distractors unless explicitly requested, and replace visible MathTex/SafeMathTex labels with SafeText/Text using Unicode π.",
             "For data charts, remove MathTex/SafeMathTex from visible labels; months, numbers, titles, and summaries must use SafeText/Text.",
             "If code uses set_x/set_y/set_z with aligned_edge, remove that keyword and reposition with move_to, next_to, align_to, or explicit center coordinates.",
+            "If a Manim call fails with unexpected keyword, remove the unsupported keyword and replace it with legal positioning, sizing, or set_points_as_corners code.",
+            "If VGroup contains a list, tuple, string, number, or other non-Mobject value, convert each visible item to Text/SafeText/MathTex/SafeMathTex and use VGroup(*items).",
+            "Do not pass guessed keyword arguments into Mobject setter methods; use positional arguments or documented Manim Community parameters only.",
             "For projectile motion, include a visible trajectory, moving ball, velocity/direction arrow, and gravity/acceleration cue; prefer ParametricFunction plus MoveAlongPath over custom VMobject internals or fragile updaters.",
         ],
     }

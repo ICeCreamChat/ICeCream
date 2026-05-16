@@ -495,9 +495,15 @@ class MessageHandler {
      * 调用 Manim Agent 流式接口。
      * @param {Object} payload
      */
-    async sendManimAgentStream(payload) {
+    async sendManimAgentStream(payload, options = {}) {
         const clientId = localStorage.getItem('icecream_client_id') || 'main_chat';
-        this.createManimProcessBubble(payload.message || '');
+        if (options.reuseProcess && this.manimProcess) {
+            this.restartManimProcessInPlace(payload.message || this.manimProcess.prompt || '', {
+                selectedOption: options.selectedOption || this.manimProcess.clarification?.selectedOption || '',
+            });
+        } else {
+            this.createManimProcessBubble(payload.message || '');
+        }
         this.setManimBottomLoadingVisible(false);
 
         let response;
@@ -731,6 +737,39 @@ class MessageHandler {
         this.setManimProcessStep('planner', 'active', '正在理解你的动画需求', prompt ? [`用户需求：${prompt}`] : []);
         this.renderManimProcessBubble(process);
         this.scrollMessagesToBottom({ force: true });
+    }
+
+    restartManimProcessInPlace(prompt = '', options = {}) {
+        const process = this.manimProcess;
+        if (!process) {
+            this.createManimProcessBubble(prompt);
+            return;
+        }
+
+        process.prompt = prompt;
+        process.steps = this.getManimProcessSteps();
+        process.currentStep = 'planner';
+        process.collapsed = false;
+        process.terminalStatus = null;
+        process.detailsScrollTop = 0;
+        process.messageDiv?.classList.remove('has-result');
+        process.contentDiv?.classList.remove('has-result');
+        process.resultEl?.classList.add('hidden');
+        if (process.resultEl) {
+            process.resultEl.innerHTML = '';
+        }
+
+        const selectedOption = options.selectedOption || process.clarification?.selectedOption || '';
+        process.clarification = process.clarification
+            ? { ...process.clarification, selectedOption }
+            : null;
+
+        const details = [
+            selectedOption ? `已选择：${selectedOption}` : '',
+            prompt ? `当前需求：${prompt}` : '',
+        ].filter(Boolean);
+        this.setManimProcessStep('planner', 'active', '已选择动画重点，正在继续制作', details);
+        this.renderManimProcessBubble(process);
     }
 
     toggleManimProcessBubble(forceCollapsed = null, process = this.manimProcess) {
@@ -1041,7 +1080,7 @@ class MessageHandler {
         });
     }
 
-    handleManimClarificationChoice(option = '') {
+    async handleManimClarificationChoice(option = '') {
         const process = this.manimProcess;
         const clarification = process?.clarification || {};
         const selectedOption = String(option || '').trim();
@@ -1058,10 +1097,34 @@ class MessageHandler {
 
         const base = clarification.originalMessage || process?.prompt || '';
         const nextMessage = [base, selectedOption].filter(Boolean).join('，');
-        if (this.elements.chatInput) {
-            this.elements.chatInput.value = nextMessage;
+        const workbenchOptions = this.manimWorkbench?.getAgentOptions?.() || {};
+        const referenceImageIds = Array.from(new Set([
+            ...(workbenchOptions.referenceImageIds || []),
+        ].filter(Boolean)));
+
+        this.setLoading(true);
+        try {
+            await this.sendManimAgentStream({
+                message: nextMessage,
+                mode: 'create',
+                ...workbenchOptions,
+                referenceImageIds,
+            }, {
+                reuseProcess: true,
+                selectedOption,
+            });
+        } catch (error) {
+            console.error('[Manim Agent] clarification continuation failed:', error);
+            if (!error.manimProcessHandled) {
+                this.updateManimProcessFromEvent({
+                    type: 'error',
+                    error: this.localizeManimError(error.message || error),
+                });
+            }
+            showToast(this.localizeManimError(error.message || error), 'error');
+        } finally {
+            this.setLoading(false);
         }
-        this.handleSend({ routeMode: 'manim', skipRouteGuard: true });
     }
 
     formatManimStepStatus(status) {
@@ -1242,6 +1305,8 @@ class MessageHandler {
             [/Quality inspection passed/i, '质量检查通过。'],
             [/Visual inspection passed/i, '视觉检查通过。'],
             [/Preview render failed/i, '预览渲染失败。'],
+            [/Mobject\.__getattr__.*unexpected keyword|unexpected keyword/i, '代码调用了 Manim 不支持的参数，请移除未知参数并重新生成。'],
+            [/Only values of type VMobject can be added as submobjects of VGroup/i, 'VGroup 中混入了非 Manim 可绘制对象，请把文字或公式先包装成可绘制对象。'],
             [/operation was aborted|aborterror|aborted/i, '生成时间过长，连接已中断。可以重试，或减少动画复杂度。'],
             [/Repairing visual quality issues/i, '正在修复视觉质量问题。'],
             [/visual checks failed/i, '视觉检查未通过，已保留可编辑代码。'],

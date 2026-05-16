@@ -372,6 +372,10 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(messageHandlerSource, /process\.clarification/);
   assert.match(messageHandlerSource, /renderManimClarificationPanel/);
   assert.match(messageHandlerSource, /handleManimClarificationChoice/);
+  assert.match(messageHandlerSource, /restartManimProcessInPlace/);
+  assert.match(messageHandlerSource, /reuseProcess:\s*true/);
+  assert.match(messageHandlerSource, /sendManimAgentStream\(payload,\s*options = \{\}/);
+  assert.doesNotMatch(messageHandlerSource, /this\.handleSend\(\{ routeMode: 'manim', skipRouteGuard: true \}\)/);
   assert.match(messageHandlerSource, /manim-clarification-panel/);
   assert.match(messageHandlerSource, /manim-clarification-option/);
   assert.match(messageHandlerSource, /this\.updateManimProcessFromEvent\(\{ type: 'clarification'/);
@@ -413,6 +417,10 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(messageHandlerSource, /Setup Axes/);
   assert.match(messageHandlerSource, /建立坐标系/);
   assert.match(messageHandlerSource, /Draw Cosine Curve/);
+  assert.match(messageHandlerSource, /Mobject\\\.__getattr__/);
+  assert.match(messageHandlerSource, /Only values of type VMobject/);
+  assert.match(messageHandlerSource, /Manim 不支持的参数/);
+  assert.match(messageHandlerSource, /VGroup 中混入/);
   assert.match(messageHandlerSource, /绘制余弦曲线/);
   assert.match(messageHandlerSource, /预览渲染失败：/);
   assert.match(messageHandlerSource, /代码必须只有一个可渲染 Scene 类/);

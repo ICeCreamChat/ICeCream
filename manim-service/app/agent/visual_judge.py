@@ -42,6 +42,12 @@ def _render_failure_reason(render_result: dict[str, Any]) -> str:
     lower = reason.lower()
     if render_result.get("errorType") == "scene_class_missing":
         return "未找到可渲染 Scene 类。请使用 class MainScene(SafeScene, Scene):"
+    if "mobject.__getattr__" in lower and "unexpected keyword" in lower:
+        return "代码调用了 Manim 不支持的参数。请移除未知 keyword，改用合法的 move_to、next_to、align_to 或显式坐标计算。"
+    if "unexpected keyword" in lower or "unexpected keyword argument" in lower:
+        return f"代码调用了 Manim 不支持的参数：{reason}"
+    if "only values of type vmobject can be added as submobjects of vgroup" in lower:
+        return "VGroup 中混入了非 Manim 可绘制对象。请把文字包装为 Text/SafeText，把公式包装为 MathTex/SafeMathTex，并使用 VGroup(*items)。"
     attr_match = re.search(
         r"AttributeError:\s*'([^']+)'\s*object has no attribute\s*'([^']+)'",
         reason,

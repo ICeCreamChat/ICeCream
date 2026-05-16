@@ -65,6 +65,11 @@ def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any])
     kind = str(storyboard_spec.get("animation_type") or storyboard_spec.get("kind") or brief.get("animation_type") or "")
     request_text = str(brief.get("message") or "")
     requirements: list[str] = []
+    requirements.extend([
+        "Do not pass guessed keyword arguments into Manim Mobject setter methods; use positional arguments or documented Manim Community parameters only.",
+        "Do not construct VMobject/Mobject with points=...; create the object first, then use set_points_as_corners(...) or use Line/Polygon.",
+        "Do not put lists, tuples, strings, or numbers directly into VGroup; use VGroup(*items) and make every item a Text/MathTex/Line/Dot/Mobject.",
+    ])
     is_simple_shape = not any(token in request_text for token in ("证明", "推导", "内角", "面积", "对角线", "讲解", "性质", "公式"))
 
     if kind == "geometry_circle" or "圆" in request_text:

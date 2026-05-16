@@ -6,7 +6,13 @@ import ast
 import re
 from typing import Any
 
-from .manim_knowledge import ALLOWED_SCENE_SELF_METHODS, MOJIBAKE_MARKERS, RULE_PACK_VERSION, semantic_target_from_brief
+from .manim_knowledge import (
+    ALLOWED_SCENE_SELF_METHODS,
+    MANIM_API_COMPATIBILITY_RULES,
+    MOJIBAKE_MARKERS,
+    RULE_PACK_VERSION,
+    semantic_target_from_brief,
+)
 
 
 BLOCKED_MODULES = (
@@ -286,6 +292,46 @@ def _main_scene_source(source: str) -> str:
 def _invalid_mobject_keyword_issues(tree: ast.AST) -> list[dict[str, str]]:
     """Catch common hallucinated keyword arguments on Manim mobject methods."""
     issues: list[dict[str, str]] = []
+    blocked_constructor_keywords = MANIM_API_COMPATIBILITY_RULES["blocked_constructor_keywords"]
+    blocked_method_keywords = MANIM_API_COMPATIBILITY_RULES["blocked_method_keywords"]
+    setter_allowed_keywords = MANIM_API_COMPATIBILITY_RULES["setter_allowed_keywords"]
+    seen: set[tuple[str, str, str]] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        call_name = _call_name(node.func)
+        if not call_name:
+            continue
+
+        blocked = set(blocked_constructor_keywords.get(call_name, set()))
+        if isinstance(node.func, ast.Attribute):
+            blocked.update(blocked_method_keywords.get(call_name, set()))
+
+        for keyword in node.keywords:
+            if keyword.arg is None:
+                continue
+            if keyword.arg in blocked and ("blocked", call_name, keyword.arg) not in seen:
+                seen.add(("blocked", call_name, keyword.arg))
+                issues.append(_issue(
+                    "error",
+                    f"生成代码调用了 Manim 不支持的参数：{call_name}(..., {keyword.arg}=...)。",
+                    "移除不支持的参数，并改用 move_to、next_to、align_to、set_points_as_corners 或显式坐标计算。",
+                    "invalid_mobject_keyword",
+                ))
+                continue
+
+            allowed = setter_allowed_keywords.get(call_name)
+            if allowed is not None and keyword.arg not in allowed and ("setter", call_name, keyword.arg) not in seen:
+                seen.add(("setter", call_name, keyword.arg))
+                issues.append(_issue(
+                    "error",
+                    f"生成代码给 Manim setter 传入了不安全参数：{call_name}(..., {keyword.arg}=...)。",
+                    "不要给 Mobject setter 猜测 keyword；请使用位置参数或 Manim Community 明确支持的参数。",
+                    "unsafe_mobject_setter_keyword",
+                ))
+    issues.extend(_invalid_vgroup_child_issues(tree))
+    return issues
+
     invalid_keywords = {
         "set_x": {"aligned_edge"},
         "set_y": {"aligned_edge"},
@@ -308,6 +354,38 @@ def _invalid_mobject_keyword_issues(tree: ast.AST) -> list[dict[str, str]]:
                     "set_x/set_y/set_z 不支持 aligned_edge；请用 move_to、next_to、align_to，或先设置高度后移动到目标中心。",
                     "invalid_mobject_keyword",
                 ))
+    return issues
+
+
+def _invalid_vgroup_child_issues(tree: ast.AST) -> list[dict[str, str]]:
+    """Catch VGroup calls that pass raw containers or primitive values."""
+    issues: list[dict[str, str]] = []
+    reported = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _call_name(node.func) != "VGroup":
+            continue
+        for arg in node.args:
+            if isinstance(arg, ast.Starred):
+                continue
+            if isinstance(arg, (ast.List, ast.Tuple, ast.Set)):
+                if not reported:
+                    issues.append(_issue(
+                        "error",
+                        "VGroup 中传入了列表或元组，可能把非 Manim 可绘制对象加入场景。",
+                        "请使用 VGroup(*items) 展开列表，且列表中的每一项都必须是 Text、MathTex、Line、Dot 等 Mobject。",
+                        "invalid_vgroup_child",
+                    ))
+                    reported = True
+                continue
+            if isinstance(arg, ast.Constant) and not isinstance(arg.value, (type(None), bool)):
+                if not reported:
+                    issues.append(_issue(
+                        "error",
+                        "VGroup 中混入了字符串、数字等非 Manim 可绘制对象。",
+                        "请先把文字包装为 Text/SafeText，把公式包装为 MathTex/SafeMathTex，再加入 VGroup。",
+                        "invalid_vgroup_child",
+                    ))
+                    reported = True
     return issues
 
 

@@ -53,6 +53,29 @@ COMMON_MOBJECT_METHODS = {
     "arrange",
 }
 
+MANIM_API_COMPATIBILITY_RULES: dict[str, Any] = {
+    "blocked_constructor_keywords": {
+        "Mobject": {"points"},
+        "VMobject": {"points"},
+    },
+    "blocked_method_keywords": {
+        "set_x": {"aligned_edge"},
+        "set_y": {"aligned_edge"},
+        "set_z": {"aligned_edge"},
+    },
+    "setter_allowed_keywords": {
+        "set_color": {"color", "family"},
+        "set_fill": {"color", "opacity", "family"},
+        "set_stroke": {"color", "width", "opacity", "background", "family"},
+        "set_opacity": {"opacity", "family"},
+        "set_z_index": {"z_index", "family"},
+        "set_x": set(),
+        "set_y": set(),
+        "set_z": set(),
+    },
+    "vgroup_forbidden_arg_kinds": {"list", "tuple", "set", "constant"},
+}
+
 MOJIBAKE_MARKERS = ("\u9422", "\u6d93", "\u9366", "\u8930", "\ufffd")
 
 RULES: list[dict[str, str]] = [

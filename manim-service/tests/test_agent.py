@@ -744,6 +744,41 @@ class MainScene(Scene):
         self.assertEqual(report["status"], "error")
         self.assertIn("invalid_mobject_keyword", codes)
 
+    def test_critic_flags_invalid_manim_constructor_keywords(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        shape = VMobject(points=[ORIGIN, RIGHT])
+        self.add(shape)
+"""
+        report = critique_code(code, {"intent": "CREATE"})
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("invalid_mobject_keyword", codes)
+
+    def test_critic_flags_raw_values_inside_vgroup(self):
+        cases = [
+            'group = VGroup([Text("a"), Text("b")])',
+            'group = VGroup("a")',
+        ]
+        for body in cases:
+            code = f"""
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        {body}
+        self.add(group)
+"""
+            report = critique_code(code, {"intent": "CREATE"})
+            codes = {issue.get("code") for issue in report["issues"]}
+
+            self.assertEqual(report["status"], "error")
+            self.assertIn("invalid_vgroup_child", codes)
+
     def test_critic_rejects_fragile_vgroup_index_lookup(self):
         code = """
 from manim import *
@@ -1299,6 +1334,18 @@ class MainScene(Scene):
             "details": "AttributeError: 'MainScene' object has no attribute 'get_angle'",
             "errorType": "manim_render_failed",
         })
+        keyword_failed = inspect_visual_quality("from manim import *", {}, {
+            "success": False,
+            "error": "TypeError: Mobject.__getattr__.<locals>.setter() got an unexpected keyword argument 'aligned_edge'",
+            "details": "TypeError: Mobject.__getattr__.<locals>.setter() got an unexpected keyword argument 'aligned_edge'",
+            "errorType": "manim_render_failed",
+        })
+        vgroup_failed = inspect_visual_quality("from manim import *", {}, {
+            "success": False,
+            "error": "TypeError: Only values of type VMobject can be added as submobjects of VGroup",
+            "details": "TypeError: Only values of type VMobject can be added as submobjects of VGroup",
+            "errorType": "manim_render_failed",
+        })
         tiny = inspect_visual_quality(
             "from manim import *\nclass MainScene(Scene):\n    def construct(self):\n        self.wait(1)\n",
             {},
@@ -1311,6 +1358,10 @@ class MainScene(Scene):
         self.assertEqual(attribute_failed["status"], "error")
         self.assertIn("MainScene.get_angle()", attribute_failed["summary"])
         self.assertNotIn("object has no attribute", attribute_failed["summary"])
+        self.assertIn("Manim 不支持的参数", keyword_failed["summary"])
+        self.assertNotIn("Mobject.__getattr__", keyword_failed["summary"])
+        self.assertIn("VGroup 中混入", vgroup_failed["summary"])
+        self.assertNotIn("Only values of type VMobject", vgroup_failed["summary"])
         self.assertEqual(tiny["status"], "error")
 
     def test_repair_stops_after_max_attempts_with_observations(self):
@@ -1360,6 +1411,31 @@ class MainScene(Scene):
         self.assertEqual(attempts[0]["rulePackVersion"], RULE_PACK_VERSION)
         self.assertEqual(attempts[0]["semanticTarget"], "square")
         self.assertEqual(attempts[0]["repairRules"][0]["id"], "mathtex_chinese")
+
+    def test_repair_observation_includes_api_rule_ids_and_stderr_summary(self):
+        report = {
+            "status": "error",
+            "summary": "静态检查失败",
+            "issues": [
+                {
+                    "severity": "error",
+                    "message": "生成代码调用了 Manim 不支持的参数。",
+                    "hint": "移除不支持的参数。",
+                    "code": "invalid_manim_keyword",
+                },
+            ],
+        }
+        observation = build_repair_observation(
+            "from manim import *",
+            report,
+            stderr="TypeError: Mobject.__getattr__.<locals>.setter() got an unexpected keyword argument 'aligned_edge'",
+            attempt=1,
+        )
+
+        self.assertIn("invalid_manim_keyword", observation["ruleIds"])
+        self.assertIn("invalid_manim_keyword", [item["id"] for item in observation["repairRules"]])
+        self.assertIn("unexpected keyword", observation["stderrSummary"])
+        self.assertEqual(observation["failureCategory"], "Manim API 或参数调用错误")
 
     def test_repair_observation_includes_reference_alignment_context(self):
         brief = {
