@@ -76,10 +76,40 @@ def _base64_size(video_base64: str | None) -> int:
         return len(video_base64)
 
 
-def _extract_frames(video_path: Path, frame_dir: Path, count: int = 3) -> list[Path]:
+def _video_duration_seconds(video_path: Path) -> float:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return 0.0
+    cmd = [
+        ffprobe,
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(video_path),
+    ]
+    try:
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+    except Exception:
+        return 0.0
+    if result.returncode != 0:
+        return 0.0
+    try:
+        return max(0.0, float(result.stdout.strip()))
+    except ValueError:
+        return 0.0
+
+
+def _extract_frames(video_path: Path, frame_dir: Path, count: int = 6) -> list[Path]:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         return []
+    duration = _video_duration_seconds(video_path)
+    fps = 1.0
+    if duration > count:
+        fps = max(0.20, min(2.0, count / duration))
     pattern = frame_dir / "frame_%02d.png"
     cmd = [
         ffmpeg,
@@ -87,7 +117,7 @@ def _extract_frames(video_path: Path, frame_dir: Path, count: int = 3) -> list[P
         "-i",
         str(video_path),
         "-vf",
-        "fps=1,scale=640:-1",
+        f"fps={fps:.4f},scale=640:-1",
         "-frames:v",
         str(count),
         str(pattern),
@@ -189,6 +219,89 @@ def _shape_metrics_from_image(image: Image.Image) -> dict[str, Any]:
     }
 
 
+def _foreground_mask(image: Image.Image, *, threshold: float = 18.0) -> tuple[np.ndarray, np.ndarray]:
+    arr = np.asarray(image.convert("RGB")).astype(np.int16)
+    h, w = arr.shape[:2]
+    sample = max(8, min(20, h // 12, w // 12))
+    corner_samples = np.concatenate([
+        arr[:sample, :sample].reshape(-1, 3),
+        arr[:sample, -sample:].reshape(-1, 3),
+        arr[-sample:, :sample].reshape(-1, 3),
+        arr[-sample:, -sample:].reshape(-1, 3),
+    ])
+    bg = np.median(corner_samples, axis=0)
+    diff = np.linalg.norm(arr - bg, axis=2)
+    return diff > threshold, diff
+
+
+def _largest_component_box(mask: np.ndarray) -> dict[str, Any]:
+    coords = np.argwhere(mask)
+    if coords.size == 0:
+        return {"available": False}
+    top, left = coords.min(axis=0)
+    bottom, right = coords.max(axis=0)
+    h, w = mask.shape[:2]
+    width = int(right - left + 1)
+    height = int(bottom - top + 1)
+    area = int(mask.sum())
+    safe_margin = 0.035
+    margin_left = float(left / max(w, 1))
+    margin_right = float((w - 1 - right) / max(w, 1))
+    margin_top = float(top / max(h, 1))
+    margin_bottom = float((h - 1 - bottom) / max(h, 1))
+    return {
+        "available": True,
+        "left": int(left),
+        "right": int(right),
+        "top": int(top),
+        "bottom": int(bottom),
+        "width": width,
+        "height": height,
+        "area": area,
+        "safeMarginMin": round(min(margin_left, margin_right, margin_top, margin_bottom), 4),
+        "touchesSafeEdge": min(margin_left, margin_right, margin_top, margin_bottom) < safe_margin,
+        "touchesHardEdge": min(left, top, w - 1 - right, h - 1 - bottom) <= 2,
+    }
+
+
+def _frame_layout_metrics(image: Image.Image) -> dict[str, Any]:
+    mask, diff = _foreground_mask(image)
+    h, w = mask.shape[:2]
+    hard_border = np.zeros_like(mask)
+    hard_border[:4, :] = True
+    hard_border[-4:, :] = True
+    hard_border[:, :4] = True
+    hard_border[:, -4:] = True
+    safe_border = np.zeros_like(mask)
+    margin_y = max(8, int(h * 0.055))
+    margin_x = max(8, int(w * 0.055))
+    safe_border[:margin_y, :] = True
+    safe_border[-margin_y:, :] = True
+    safe_border[:, :margin_x] = True
+    safe_border[:, -margin_x:] = True
+
+    foreground_pixels = max(int(mask.sum()), 1)
+    hard_edge_pixels = int((mask & hard_border).sum())
+    safe_edge_pixels = int((mask & safe_border).sum())
+    rows = mask.sum(axis=1)
+    cols = mask.sum(axis=0)
+    long_horizontal_edge = bool(np.any(rows[:margin_y] > w * 0.45) or np.any(rows[-margin_y:] > w * 0.45))
+    long_vertical_edge = bool(np.any(cols[:margin_x] > h * 0.45) or np.any(cols[-margin_x:] > h * 0.45))
+    faint_ratio = float(((diff > 10) & (diff <= 28)).mean())
+    mid_ratio = float(((diff > 28) & (diff <= 58)).mean())
+    strong_ratio = float((diff > 58).mean())
+    return {
+        "hardEdgePixels": hard_edge_pixels,
+        "safeEdgeRatio": round(safe_edge_pixels / foreground_pixels, 4),
+        "hardEdgeRatio": round(hard_edge_pixels / foreground_pixels, 4),
+        "longEdgeStroke": long_horizontal_edge or long_vertical_edge,
+        "faintForegroundRatio": round(faint_ratio, 4),
+        "midForegroundRatio": round(mid_ratio, 4),
+        "strongForegroundRatio": round(strong_ratio, 4),
+        "bbox": _largest_component_box(mask),
+    }
+
+
 def inspect_frame_quality(frame_paths: list[Path]) -> dict[str, Any]:
     findings: list[dict[str, str]] = []
     metrics: dict[str, Any] = {"frames": len(frame_paths)}
@@ -207,10 +320,12 @@ def inspect_frame_quality(frame_paths: list[Path]) -> dict[str, Any]:
     dark_edge_ratios: list[float] = []
     center_light_ratios: list[float] = []
     shape_reports: list[dict[str, Any]] = []
+    layout_reports: list[dict[str, Any]] = []
 
     for frame_path in frame_paths:
         with Image.open(frame_path).convert("RGB") as image:
             shape_reports.append(_shape_metrics_from_image(image))
+            layout_reports.append(_frame_layout_metrics(image))
             arr = np.asarray(image).astype(np.int16)
             h, w = arr.shape[:2]
             gray = image.convert("L")
@@ -238,6 +353,18 @@ def inspect_frame_quality(frame_paths: list[Path]) -> dict[str, Any]:
 
     available_shapes = [item for item in shape_reports if item.get("available")]
     shape_metrics = max(available_shapes, key=lambda item: item.get("subjectPixels", 0), default={"available": False})
+    layout_bbox = max(
+        (item.get("bbox") or {} for item in layout_reports if (item.get("bbox") or {}).get("available")),
+        key=lambda item: item.get("area", 0),
+        default={"available": False},
+    )
+    safe_edge_ratio = max((float(item.get("safeEdgeRatio") or 0) for item in layout_reports), default=0.0)
+    hard_edge_ratio = max((float(item.get("hardEdgeRatio") or 0) for item in layout_reports), default=0.0)
+    hard_edge_pixels = max((int(item.get("hardEdgePixels") or 0) for item in layout_reports), default=0)
+    long_edge_stroke = any(bool(item.get("longEdgeStroke")) for item in layout_reports)
+    faint_ratio = max((float(item.get("faintForegroundRatio") or 0) for item in layout_reports), default=0.0)
+    mid_ratio = max((float(item.get("midForegroundRatio") or 0) for item in layout_reports), default=0.0)
+    strong_ratio = max((float(item.get("strongForegroundRatio") or 0) for item in layout_reports), default=0.0)
 
     metrics.update({
         "nonBackgroundRatio": round(max(non_background_ratios), 4),
@@ -246,6 +373,16 @@ def inspect_frame_quality(frame_paths: list[Path]) -> dict[str, Any]:
         "darkEdgeRatio": round(max(dark_edge_ratios), 4),
         "centerLightRatio": round(max(center_light_ratios), 4),
         "shape": shape_metrics,
+        "layout": {
+            "safeEdgeRatio": round(safe_edge_ratio, 4),
+            "hardEdgeRatio": round(hard_edge_ratio, 4),
+            "hardEdgePixels": hard_edge_pixels,
+            "longEdgeStroke": long_edge_stroke,
+            "faintForegroundRatio": round(faint_ratio, 4),
+            "midForegroundRatio": round(mid_ratio, 4),
+            "strongForegroundRatio": round(strong_ratio, 4),
+            "bbox": layout_bbox,
+        },
     })
 
     if metrics["nonBackgroundRatio"] < 0.008:
@@ -269,6 +406,38 @@ def inspect_frame_quality(frame_paths: list[Path]) -> dict[str, Any]:
 
     if metrics["edgeContentRatio"] > 0.18:
         findings.append(_finding("warning", "重要内容过于靠近画面边缘。", "把对象移动或缩放到安全布局区域内。", "edge_overflow"))
+
+    if hard_edge_pixels > 8 and hard_edge_ratio > 0.012 and metrics["darkEdgeRatio"] < 0.35:
+        findings.append(_finding(
+            "error",
+            "检测到可见对象贴到画面边缘，可能已经出框或被裁切。",
+            "把所有线段、箭头和标签放回安全边距内，必要时缩小或重新分区。",
+            "object_clipped",
+        ))
+
+    if long_edge_stroke and metrics["darkEdgeRatio"] < 0.35:
+        findings.append(_finding(
+            "error",
+            "检测到长线段或箭头延伸到画面边缘。",
+            "重算箭头端点，使用 safe_arrow_between 或把连线限制在可见对象之间。",
+            "connector_offscreen",
+        ))
+
+    if layout_bbox.get("available") and layout_bbox.get("touchesSafeEdge") and safe_edge_ratio > 0.24:
+        findings.append(_finding(
+            "warning",
+            "主体或辅助元素离安全边距过近。",
+            "将主体组整体缩放到安全区域内，不要让说明文字或连接线贴边。",
+            "unsafe_edge_contact",
+        ))
+
+    if faint_ratio > 0.18 and strong_ratio > 0.018:
+        findings.append(_finding(
+            "error",
+            "检测到上一阶段对象残留，画面可能出现半透明虚影。",
+            "切换分镜时用 FadeOut、ReplacementTransform 或 clear_stage 清理旧对象。",
+            "stage_residue",
+        ))
 
     if any(item["severity"] == "error" for item in findings):
         status = "error"

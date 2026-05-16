@@ -369,6 +369,13 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(messageHandlerSource, /event\.type === 'job'/);
   assert.match(messageHandlerSource, /event\.type === 'reference'/);
   assert.match(messageHandlerSource, /referenceSpecs/);
+  assert.match(messageHandlerSource, /process\.clarification/);
+  assert.match(messageHandlerSource, /renderManimClarificationPanel/);
+  assert.match(messageHandlerSource, /handleManimClarificationChoice/);
+  assert.match(messageHandlerSource, /manim-clarification-panel/);
+  assert.match(messageHandlerSource, /manim-clarification-option/);
+  assert.match(messageHandlerSource, /this\.updateManimProcessFromEvent\(\{ type: 'clarification'/);
+  assert.doesNotMatch(messageHandlerSource, /this\.showManimClarification\(event\.clarification\)/);
   assert.match(messageHandlerSource, /已解析参考素材/);
   assert.match(messageHandlerSource, /event\.type === 'design'/);
   assert.match(messageHandlerSource, /event\.type === 'storyboard'/);
@@ -472,6 +479,13 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(mainCssSource, /overscroll-behavior: contain/);
   assert.match(mainCssSource, /-webkit-overflow-scrolling: touch/);
   assert.match(mainCssSource, /\.manim-process-detail\.pending/);
+  assert.match(mainCssSource, /\.manim-clarification-panel/);
+  assert.match(mainCssSource, /\.manim-clarification-question/);
+  assert.match(mainCssSource, /\.manim-clarification-options/);
+  assert.match(mainCssSource, /\.manim-clarification-option/);
+  assert.match(mainCssSource, /\.manim-clarification-option\.is-selected/);
+  assert.match(mainCssSource, /body:not\(\.light-mode\) \.manim-clarification-panel/);
+  assert.match(mainCssSource, /body\.light-mode \.manim-clarification-option/);
   assert.match(mainCssSource, /width: min\(720px, 100%\)/);
   assert.match(mainCssSource, /\.manim-process-result/);
   assert.match(mainCssSource, /\.message\.bot\.manim-process-message-row\.has-result/);
@@ -522,6 +536,8 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(mainCssSource, /\.manim-current-job/);
   assert.match(mainCssSource, /\.manim-failure-row/);
   assert.match(mobileCssSource, /\.manim-process-details/);
+  assert.match(mobileCssSource, /\.manim-clarification-options/);
+  assert.match(mobileCssSource, /\.manim-clarification-option/);
   assert.match(mobileCssSource, /max-height: 34vh/);
   assert.match(mobileCssSource, /overflow-y: auto/);
   assert.match(mobileCssSource, /overflow-x: hidden/);

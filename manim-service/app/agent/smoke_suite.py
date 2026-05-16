@@ -204,6 +204,26 @@ def score_smoke_quality(
         score -= 10
         findings.append("重要内容靠近边缘")
 
+    layout = frame.get("layout") if isinstance(frame.get("layout"), dict) else {}
+    safe_edge = float(layout.get("safeEdgeRatio") or 0)
+    hard_edge = float(layout.get("hardEdgeRatio") or 0)
+    if hard_edge > 0.012:
+        score -= 18
+        findings.append("存在对象贴边或被裁切风险")
+    elif safe_edge > 0.28:
+        score -= 8
+        findings.append("主体或辅助元素离安全边距过近")
+
+    if layout.get("longEdgeStroke"):
+        score -= 18
+        findings.append("存在长线段或箭头出框风险")
+
+    residue = float(layout.get("faintForegroundRatio") or 0)
+    strong = float(layout.get("strongForegroundRatio") or 0)
+    if residue > 0.18 and strong > 0.018:
+        score -= 16
+        findings.append("存在阶段残影风险")
+
     score = max(0, min(100, int(round(score))))
     quality = {
         "qualityScore": score,
@@ -218,6 +238,10 @@ def score_smoke_quality(
             "contrast": frame.get("contrast"),
             "darkEdgeRatio": frame.get("darkEdgeRatio"),
             "edgeContentRatio": frame.get("edgeContentRatio"),
+            "safeEdgeRatio": layout.get("safeEdgeRatio"),
+            "hardEdgeRatio": layout.get("hardEdgeRatio"),
+            "longEdgeStroke": layout.get("longEdgeStroke"),
+            "faintForegroundRatio": layout.get("faintForegroundRatio"),
         },
     }
     return {

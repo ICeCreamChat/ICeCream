@@ -2268,6 +2268,68 @@ body:not(.light-mode) .manim-process-details::-webkit-scrollbar-thumb {
     overflow-wrap: anywhere;
 }
 
+.manim-clarification-panel {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid var(--manim-process-panel-border);
+    border-radius: 12px;
+    background: var(--manim-process-panel-focus-bg);
+}
+
+.manim-clarification-question {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.45;
+}
+
+.manim-clarification-options {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.manim-clarification-option {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 38px;
+    padding: 8px 10px;
+    border: 1px solid var(--manim-process-panel-border);
+    border-radius: 10px;
+    background: var(--manim-process-card-bg);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.35;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.manim-clarification-option span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.manim-clarification-option:hover,
+.manim-clarification-option:focus-visible {
+    border-color: rgba(14, 165, 233, 0.42);
+    background: var(--manim-process-stage-active-bg);
+    color: var(--manim-process-stage-active-text);
+    outline: none;
+    transform: translateY(-1px);
+}
+
+.manim-clarification-option.is-selected {
+    border-color: rgba(22, 163, 74, 0.42);
+    background: var(--manim-process-stage-pass-bg);
+    color: var(--manim-process-stage-pass-text);
+}
+
 body:not(.light-mode) .manim-process-header {
     border-bottom-color: rgba(56, 189, 248, 0.18);
 }
@@ -2297,6 +2359,15 @@ body:not(.light-mode) .manim-result-error {
     border-color: var(--manim-process-panel-border);
 }
 
+body:not(.light-mode) .manim-clarification-panel {
+    background: rgba(14, 165, 233, 0.08);
+    border-color: rgba(56, 189, 248, 0.20);
+}
+
+body:not(.light-mode) .manim-clarification-question {
+    color: #eaf6ff;
+}
+
 body.light-mode .manim-process-card {
     color: #1e293b;
 }
@@ -2317,6 +2388,11 @@ body.light-mode .manim-process-detail ul {
 
 body.light-mode .manim-process-step {
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.78) inset, 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+body.light-mode .manim-clarification-option {
+    background: rgba(255, 255, 255, 0.88);
+    color: #31506f;
 }
 
 /* Manim Studio: professional production and result cards */

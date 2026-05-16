@@ -540,7 +540,11 @@ class MessageHandler {
         let finalResult = null;
         try {
             await this.readNdjsonStream(response, (event) => {
-                this.updateManimProcessFromEvent(event);
+                if (event.type === 'clarification') {
+                    this.updateManimProcessFromEvent({ type: 'clarification', clarification: event.clarification });
+                } else {
+                    this.updateManimProcessFromEvent(event);
+                }
                 this.manimWorkbench?.handleAgentEvent?.(event);
 
                 if (event.type === 'job') {
@@ -580,7 +584,7 @@ class MessageHandler {
                 } else if (event.type === 'repair') {
                     return;
                 } else if (event.type === 'clarification') {
-                    this.showManimClarification(event.clarification);
+                    return;
                 } else if (event.type === 'code_delta') {
                     this.latestManimAgentCode = event.code || `${this.latestManimAgentCode || ''}${event.delta || ''}`;
                 } else if (event.type === 'code') {
@@ -710,6 +714,7 @@ class MessageHandler {
             collapsed: false,
             terminalStatus: null,
             detailsScrollTop: 0,
+            clarification: null,
         };
 
         process.header?.addEventListener('click', () => {
@@ -795,7 +800,13 @@ class MessageHandler {
     }
 
     updateManimProcessFromEvent(event = {}) {
-        if (!this.manimProcess) return;
+        if (!this.manimProcess) {
+            if (event.type === 'clarification') {
+                this.createManimProcessBubble(event.clarification?.originalMessage || '');
+            } else {
+                return;
+            }
+        }
         const shouldStickToBottom = this.isMessagesNearBottom();
 
         if (event.type === 'job') {
@@ -892,8 +903,13 @@ class MessageHandler {
             this.manimProcess.terminalStatus = hasProblem ? 'warning' : 'pass';
             this.toggleManimProcessBubble(!hasProblem);
         } else if (event.type === 'clarification') {
+            this.manimProcess.clarification = {
+                ...(event.clarification || {}),
+                selectedOption: this.manimProcess.clarification?.selectedOption || '',
+            };
             this.setManimProcessStep('planner', 'warning', '需要补充动画目标', this.formatManimClarificationDetails(event.clarification || {}));
             this.manimProcess.terminalStatus = 'warning';
+            this.manimProcess.collapsed = false;
         } else if (event.type === 'error') {
             const stepId = this.manimProcess.currentStep || 'planner';
             this.setManimProcessStep(stepId, 'error', this.localizeManimError(event.error || 'Manim Agent 处理失败'), [event.error].filter(Boolean));
@@ -958,6 +974,7 @@ class MessageHandler {
             const previousScrollTop = process.detailsEl.scrollTop || process.detailsScrollTop || 0;
             const visibleSteps = this.getVisibleManimDetailSteps(process, activeStep);
             process.detailsEl.innerHTML = visibleSteps.map(step => this.renderManimProcessDetail(step, process)).join('');
+            this.bindManimClarificationActions(process);
             if (previousScrollTop > 0) {
                 process.detailsEl.scrollTop = Math.min(previousScrollTop, process.detailsEl.scrollHeight);
                 process.detailsScrollTop = process.detailsEl.scrollTop;
@@ -974,6 +991,9 @@ class MessageHandler {
         const detailsHtml = detailItems.length
             ? `<ul>${detailItems.map(item => `<li>${escapeHtml(this.localizeManimText(item))}</li>`).join('')}</ul>`
             : '';
+        const clarificationHtml = step.id === 'planner' && process?.clarification
+            ? this.renderManimClarificationPanel(process.clarification)
+            : '';
         const focusClass = process && step.id === process.currentStep ? 'is-focus' : 'is-history';
         return `
             <section class="manim-process-detail ${escapeHtml(step.status)} ${focusClass}">
@@ -983,8 +1003,65 @@ class MessageHandler {
                 </div>
                 <p>${escapeHtml(this.localizeManimText(step.summary || '等待处理'))}</p>
                 ${detailsHtml}
+                ${clarificationHtml}
             </section>
         `;
+    }
+
+    renderManimClarificationPanel(clarification = {}) {
+        const question = this.localizeManimText(clarification.question || '你想让这个动画重点展示什么？');
+        const options = Array.isArray(clarification.options) ? clarification.options.filter(Boolean) : [];
+        const selectedOption = clarification.selectedOption || '';
+        const optionsHtml = options.length
+            ? `<div class="manim-clarification-options">
+                ${options.map(option => {
+                    const label = this.localizeManimText(option);
+                    const selectedClass = selectedOption === option || selectedOption === label ? ' is-selected' : '';
+                    return `<button type="button" class="manim-clarification-option${selectedClass}" data-manim-clarification-option="${escapeHtml(option)}" aria-pressed="${selectedClass ? 'true' : 'false'}">
+                        <span>${escapeHtml(label)}</span>
+                    </button>`;
+                }).join('')}
+            </div>`
+            : '';
+
+        return `
+            <div class="manim-clarification-panel">
+                <div class="manim-clarification-question">${escapeHtml(question)}</div>
+                ${optionsHtml}
+            </div>
+        `;
+    }
+
+    bindManimClarificationActions(process = this.manimProcess) {
+        if (!process?.detailsEl) return;
+        process.detailsEl.querySelectorAll('.manim-clarification-option').forEach(button => {
+            button.addEventListener('click', () => {
+                this.handleManimClarificationChoice(button.dataset.manimClarificationOption || button.textContent || '');
+            });
+        });
+    }
+
+    handleManimClarificationChoice(option = '') {
+        const process = this.manimProcess;
+        const clarification = process?.clarification || {};
+        const selectedOption = String(option || '').trim();
+        if (!selectedOption) return;
+
+        if (process) {
+            process.clarification = {
+                ...clarification,
+                selectedOption,
+            };
+            this.setManimProcessStep('planner', 'active', '已选择动画重点，正在继续制作', [`已选择：${selectedOption}`]);
+            this.renderManimProcessBubble(process);
+        }
+
+        const base = clarification.originalMessage || process?.prompt || '';
+        const nextMessage = [base, selectedOption].filter(Boolean).join('，');
+        if (this.elements.chatInput) {
+            this.elements.chatInput.value = nextMessage;
+        }
+        this.handleSend({ routeMode: 'manim', skipRouteGuard: true });
     }
 
     formatManimStepStatus(status) {
@@ -1307,8 +1384,7 @@ class MessageHandler {
 
     formatManimClarificationDetails(clarification = {}) {
         const details = [];
-        if (clarification.question) details.push(this.localizeManimText(clarification.question));
-        if (Array.isArray(clarification.options)) details.push(`建议：${clarification.options.map(item => this.localizeManimText(item)).join(' / ')}`);
+        if (clarification.question) details.push('请在下方选择动画重点，或直接补充描述。');
         return details;
     }
 
@@ -1407,47 +1483,7 @@ class MessageHandler {
     }
 
     showManimClarification(clarification = {}) {
-        const messageDiv = document.createElement('div');
-        messageDiv.className = 'message bot';
-
-        const avatarDiv = document.createElement('div');
-        avatarDiv.className = 'message-avatar';
-        avatarDiv.innerHTML = '<img src="/images/bot-avatar.jpg" alt="AI">';
-
-        const contentDiv = document.createElement('div');
-        contentDiv.className = 'message-content';
-        const question = clarification.question || '你想让这个动画重点展示什么？';
-        contentDiv.innerHTML = renderMarkdown(question);
-
-        const options = Array.isArray(clarification.options) ? clarification.options : [];
-        if (options.length) {
-            const optionWrap = document.createElement('div');
-            optionWrap.className = 'manim-clarification-options';
-            optionWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;';
-
-            options.forEach(option => {
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'intent-option-btn';
-                btn.textContent = option;
-                btn.addEventListener('click', () => {
-                    const base = clarification.originalMessage || '';
-                    if (this.elements.chatInput) {
-                        this.elements.chatInput.value = `${base}，${option}`.replace(/^，/, '');
-                    }
-                    this.handleSend();
-                });
-                optionWrap.appendChild(btn);
-            });
-
-            contentDiv.appendChild(optionWrap);
-        }
-
-        messageDiv.appendChild(avatarDiv);
-        messageDiv.appendChild(contentDiv);
-        this.elements.messages?.appendChild(messageDiv);
-
-        this.scrollMessagesToBottom({ force: true });
+        this.updateManimProcessFromEvent({ type: 'clarification', clarification });
     }
 
     /**

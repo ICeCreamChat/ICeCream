@@ -436,6 +436,21 @@ class ManimAgentV4Tests(unittest.TestCase):
         self.assertIn("Circle", spec["visual_objects"])
         self.assertGreaterEqual(len(spec["shots"]), 2)
 
+    def test_director_uses_local_storyboard_fallback_on_malformed_json(self):
+        brief = plan_animation("\u753b\u4e00\u4e2a\u6b63\u65b9\u5f62")
+        ai = _FakeAI(["```json\n{\"version\":\"v6\",\"topic\":\"broken\"\n```"])
+
+        result = asyncio.run(design_storyboard(brief, ai_client=ai, model_name="fake-model"))
+        spec = result["storyboardSpec"]
+        text = json.dumps(spec, ensure_ascii=False)
+
+        self.assertEqual(result["status"], "success")
+        self.assertIn("本地规则补全", result["summary"])
+        self.assertEqual(spec["semantic_target"], "square")
+        self.assertEqual(spec["animation_type"], "square")
+        self.assertIn("Square", text)
+        self.assertGreaterEqual(len(spec["shots"]), 2)
+
     def test_director_prompt_and_fallback_keep_user_visible_storyboard_chinese(self):
         brief = plan_animation("画一个余弦函数")
         ai = _FakeAI([english_cosine_director_json()])
@@ -584,6 +599,7 @@ class ManimAgentV4Tests(unittest.TestCase):
         self.assertEqual(payload["rulePackVersion"], RULE_PACK_VERSION)
         self.assertIn("manimRules", payload)
         self.assertIn("scene_contract", payload["manimRules"])
+        self.assertTrue(any("Adding" in item and "FadeIn" in item for item in payload["hardRequirements"]))
 
     def test_director_and_code_writer_prompts_include_reference_specs(self):
         brief = plan_animation("照这个做一个简单动画")
@@ -696,6 +712,21 @@ class MainScene(Scene):
         self.assertEqual(report["status"], "error")
         self.assertIn("legacy_api_forbidden", codes)
         self.assertIn("black_background", codes)
+
+    def test_critic_rejects_hallucinated_animation_api_names(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        self.play(Adding(Circle()))
+        self.play(Drawing(Text("TCP")))
+"""
+        report = critique_code(code, {"intent": "CREATE"})
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("hallucinated_animation_api", codes)
 
     def test_critic_flags_invalid_mobject_method_keywords(self):
         code = """
@@ -1099,6 +1130,66 @@ class MainScene(Scene):
         self.assertGreater(circle_shape["circleScore"], circle_shape["triangleScore"])
         self.assertGreater(triangle_shape["triangleScore"], triangle_shape["circleScore"])
 
+    def test_visual_judge_flags_clipped_connectors_and_stage_residue(self):
+        try:
+            from PIL import Image, ImageDraw
+        except Exception:
+            self.skipTest("Pillow is unavailable")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            clipped = tmp_path / "clipped.png"
+            residue = tmp_path / "residue.png"
+
+            clipped_image = Image.new("RGB", (640, 360), (247, 251, 255))
+            draw = ImageDraw.Draw(clipped_image)
+            draw.line((410, 180, 639, 180), fill=(14, 165, 233), width=6)
+            draw.polygon([(639, 180), (612, 164), (612, 196)], fill=(14, 165, 233))
+            clipped_image.save(clipped)
+
+            residue_image = Image.new("RGB", (640, 360), (247, 251, 255))
+            draw = ImageDraw.Draw(residue_image)
+            draw.rectangle((45, 42, 590, 315), fill=(222, 242, 252))
+            draw.rectangle((260, 130, 380, 230), fill=(14, 165, 233))
+            residue_image.save(residue)
+
+            clipped_report = inspect_frame_quality([clipped])
+            residue_report = inspect_frame_quality([residue])
+
+        clipped_codes = {item.get("code") for item in clipped_report["findings"]}
+        residue_codes = {item.get("code") for item in residue_report["findings"]}
+        self.assertEqual(clipped_report["status"], "error")
+        self.assertTrue({"object_clipped", "connector_offscreen"} & clipped_codes)
+        self.assertIn("stage_residue", residue_codes)
+
+    def test_static_inspector_flags_layout_and_offscreen_risks(self):
+        risky_code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        a = Rectangle(width=3.5, height=2)
+        b = Rectangle(width=3.5, height=2).next_to(a, RIGHT)
+        c = Rectangle(width=3.5, height=2).next_to(b, RIGHT)
+        arrow = Arrow(LEFT, RIGHT).shift(RIGHT * 6.2)
+        self.add(a)
+        self.add(b)
+        self.add(c)
+        self.add(arrow)
+        self.add(Text("定义"))
+        self.add(Text("推导"))
+        self.add(Text("结论"))
+"""
+        report = inspect_code_quality(risky_code, {"message": "给出等差数列的推导过程"})
+        codes = {item.get("code") for item in report["findings"]}
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("connector_offscreen_risk", codes)
+        self.assertIn("panel_overlap_risk", codes)
+        self.assertIn("unsafe_next_to_chain", codes)
+        self.assertIn("stage_cleanup_missing", codes)
+        self.assertIn("derivation_layout_missing", codes)
+
     def test_motion_inspector_requires_projectile_reasoning_cues(self):
         brief = plan_animation("画一个小球抛物线运动")
         weak_code = """
@@ -1286,6 +1377,27 @@ class MainScene(Scene):
         self.assertEqual(observation["referenceSemanticTarget"], "circle")
         self.assertEqual(observation["referenceSpecs"][0]["referenceId"], "ref-1")
         self.assertIn("reference_circle_missing", [item["id"] for item in observation["repairRules"]])
+
+    def test_repair_observation_includes_layout_visual_rule_ids(self):
+        observation = build_repair_observation(
+            "from manim import *\n",
+            {
+                "status": "error",
+                "summary": "视觉检查失败。",
+                "findings": [
+                    {
+                        "severity": "error",
+                        "message": "检测到长线段或箭头延伸到画面边缘。",
+                        "hint": "重算箭头端点。",
+                        "code": "connector_offscreen",
+                    }
+                ],
+            },
+            brief={"message": "给出等差数列的推导过程"},
+        )
+
+        self.assertIn("connector_offscreen", [item["id"] for item in observation["repairRules"]])
+        self.assertIn("检测到长线段", observation["root_cause_hint"])
 
     def test_repair_attempt_config_defaults_to_four_and_clamps(self):
         with patch.dict(os.environ, {"MANIM_AGENT_REPAIR_ATTEMPTS": ""}, clear=False):

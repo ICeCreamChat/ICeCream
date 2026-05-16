@@ -991,6 +991,22 @@
         padding: 9px 10px;
     }
 
+    .manim-clarification-panel {
+        padding: 10px;
+        gap: 8px;
+    }
+
+    .manim-clarification-options {
+        grid-template-columns: 1fr;
+        gap: 7px;
+    }
+
+    .manim-clarification-option {
+        min-height: 40px;
+        justify-content: flex-start;
+        text-align: left;
+    }
+
     .manim-workbench-overlay {
         align-items: flex-end;
         justify-content: center;

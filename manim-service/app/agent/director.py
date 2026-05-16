@@ -260,6 +260,50 @@ def _normalize_bar_chart_storyboard(spec: dict[str, Any], brief: dict[str, Any])
     return spec
 
 
+def _fallback_storyboard_data(brief: dict[str, Any]) -> dict[str, Any]:
+    """Build a deterministic StoryboardSpec-shaped payload when LLM JSON is invalid."""
+    fallback_spec = brief.get("spec", {}) if isinstance(brief.get("spec"), dict) else {}
+    storyboard = brief.get("storyboard") or fallback_spec.get("storyboard") or []
+    if not isinstance(storyboard, list):
+        storyboard = []
+
+    topic = str(fallback_spec.get("topic") or brief.get("message") or "教学动画")
+    teaching_goal = str(fallback_spec.get("teaching_goal") or "用分步骤画面清晰讲解这个概念。")
+    domain = str(brief.get("domain") or fallback_spec.get("domain") or "concept")
+    animation_type = str(brief.get("animation_type") or fallback_spec.get("kind") or "concept_explanation")
+    visual_objects = brief.get("target_objects") or fallback_spec.get("objects") or []
+    if not isinstance(visual_objects, list):
+        visual_objects = [str(visual_objects)]
+
+    if len(storyboard) < 2:
+        storyboard = ["建立清晰主体画面", "标出关键结构", "总结核心要点"]
+
+    shots: list[dict[str, Any]] = []
+    for index, title in enumerate(storyboard[:5], start=1):
+        title_text = str(title or f"步骤 {index}")
+        shots.append({
+            "id": index,
+            "title": title_text,
+            "narration": title_text,
+            "visual": title_text,
+            "animation": "reveal",
+        })
+
+    return {
+        "version": "v6",
+        "topic": topic,
+        "audience": "学生",
+        "teaching_goal": teaching_goal,
+        "domain": domain,
+        "animation_type": animation_type,
+        "visual_objects": visual_objects,
+        "layout_zones": ["header", "step", "primary_visual", "summary"],
+        "shots": shots,
+        "risks": fallback_spec.get("risk_flags") or ["布局拥挤", "主体过小"],
+        "reference_usage": brief.get("referenceSummary") or "",
+    }
+
+
 def _coerce_spec(data: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
     shots = data.get("shots")
     if not isinstance(shots, list) or len(shots) < 2:
@@ -422,6 +466,20 @@ async def design_storyboard(
             "next_actions": ["选择教学风格并生成 Manim 代码。"],
         }
     except Exception as exc:
+        try:
+            spec = _coerce_spec(_fallback_storyboard_data(brief), brief)
+            spec.setdefault("constraints", []).append(
+                "模型分镜 JSON 不完整时已使用本地规则补全，后续生成仍需遵守语义对象和布局契约。"
+            )
+            return {
+                "status": "success",
+                "summary": "分镜设计已用本地规则补全。",
+                "storyboardSpec": spec,
+                "next_actions": ["继续选择教学风格并生成 Manim 代码。"],
+                "fallbackReason": str(exc)[:240],
+            }
+        except Exception:
+            pass
         return {
             "status": "error",
             "summary": f"分镜设计失败：{exc}",

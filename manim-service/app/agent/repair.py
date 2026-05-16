@@ -189,14 +189,17 @@ async def llm_repair_once(
     user = {
         "observation": observation,
         "currentCode": code,
-            "manimRules": manim_rules_prompt(),
-            "promptPack": build_repair_prompt_pack(),
-            "rulePackVersion": RULE_PACK_VERSION,
-            "requirements": [
+        "manimRules": manim_rules_prompt(),
+        "promptPack": build_repair_prompt_pack(),
+        "rulePackVersion": RULE_PACK_VERSION,
+        "requirements": [
             "Keep MainScene(SafeScene, Scene) as the only renderable Scene.",
             "Use Text/SafeText for Chinese and MathTex only for formulas.",
             "Keep the storyboard semantics unchanged.",
             "Fix the reported static, visual, semantic, or render issue.",
+            "If the issue is connector_offscreen/object_clipped/unsafe_edge_contact, recompute connector endpoints from visible mobjects and keep every object inside safe margins.",
+            "If the issue is panel_overlap/text_overlap/derivation_layout_missing, restructure the scene into separate layout zones instead of moving one object slightly.",
+            "If the issue is stage_residue/stage_cleanup_missing, group each stage with VGroup and FadeOut or ReplacementTransform old stage groups before showing the next stage.",
             "If the observation contains AttributeError for self.<method>(), remove that call.",
             "Use legal Manim object methods such as line.get_angle(), dot.get_center(), mobject.next_to(...), Angle(line1, line2), or explicit vector math.",
             "Remove black borders, default black backgrounds, and inner white presentation cards.",

@@ -17,6 +17,13 @@ INNER_CARD_RE = re.compile(
     r"(RoundedRectangle|Rectangle)\s*\([^)]*(?:width\s*=\s*[3-9](?:\.\d+)?|height\s*=\s*[2-5](?:\.\d+)?)",
     re.DOTALL,
 )
+SHIFT_RE = re.compile(r"\.shift\s*\([^)]*(?:LEFT|RIGHT|UP|DOWN)\s*\*\s*(\d+(?:\.\d+)?)", re.DOTALL)
+CONNECTOR_SHIFT_RE = re.compile(
+    r"(?:Arrow|DoubleArrow|Line|Vector)\s*\([^)]*\)[^\n]{0,160}\.shift\s*\([^)]*(?:LEFT|RIGHT|UP|DOWN)\s*\*\s*(\d+(?:\.\d+)?)",
+    re.DOTALL,
+)
+UNSAFE_NEXT_TO_RE = re.compile(r"\.next_to\s*\([^)]*,\s*(?:LEFT|RIGHT|UP|DOWN)\b", re.DOTALL)
+EDGE_PLACEMENT_RE = re.compile(r"\.(?:to_edge|to_corner)\s*\(", re.DOTALL)
 
 
 def _finding(severity: str, message: str, hint: str, code: str = "") -> dict[str, str]:
@@ -80,6 +87,67 @@ def inspect_code_quality(code: str, brief: dict[str, Any] | None = None) -> dict
 
     if INNER_CARD_RE.search(source) and "make_panel" not in source:
         findings.append(_finding("warning", "代码疑似把内容放进内嵌卡片或小画框。", "用全画布布局，不要在视频内再套展示卡。", "inner_card"))
+
+    large_shifts = [float(value) for value in SHIFT_RE.findall(source)]
+    connector_shifts = [float(value) for value in CONNECTOR_SHIFT_RE.findall(source)]
+    if any(value >= 6.0 for value in large_shifts) or any(value >= 4.8 for value in connector_shifts):
+        findings.append(_finding(
+            "error",
+            "代码存在大幅位移，线段、箭头或标签可能出框。",
+            "使用布局区域和对象端点重新定位，避免用大数值 shift 把对象推到画面边缘。",
+            "connector_offscreen_risk",
+        ))
+    elif any(value >= 4.5 for value in large_shifts):
+        findings.append(_finding(
+            "warning",
+            "代码存在较大位移，可能造成安全边距不足。",
+            "优先使用 VGroup(...).arrange()、move_to 安全区域或 place_in_zone。",
+            "unsafe_shift_risk",
+        ))
+
+    panel_count = len(re.findall(r"\b(?:RoundedRectangle|Rectangle)\s*\(", source))
+    if panel_count >= 3 and "arrange(" not in source and "place_in_zone" not in source:
+        findings.append(_finding(
+            "warning",
+            "多个面板没有统一排列，可能发生覆盖。",
+            "把面板放进 VGroup 后 arrange，或用固定布局区域分别放置。",
+            "panel_overlap_risk",
+        ))
+
+    if UNSAFE_NEXT_TO_RE.search(source) and "fit_to_frame" not in source and "fit_group_to_zone" not in source:
+        findings.append(_finding(
+            "warning",
+            "存在未受边界约束的 next_to 布局。",
+            "next_to 后应整体 fit_to_frame，或改用安全布局区域。",
+            "unsafe_next_to_chain",
+        ))
+
+    add_count = source.count("self.add(")
+    cleanup_count = sum(source.count(token) for token in ("FadeOut(", "ReplacementTransform(", "self.remove(", "self.clear("))
+    if add_count >= 6 and cleanup_count == 0:
+        findings.append(_finding(
+            "warning",
+            "多个阶段持续添加对象但没有清理旧对象，可能出现残影或堆叠。",
+            "每个阶段用 VGroup 管理，并在进入下一阶段前 FadeOut 或 ReplacementTransform。",
+            "stage_cleanup_missing",
+        ))
+
+    derivation_prompt = any(term in prompt for term in ("推导", "证明", "过程", "derive", "proof"))
+    if derivation_prompt and not any(marker in source for marker in ("derivation", "step_group", "layout_zone", "place_in_zone", "fit_group_to_zone")):
+        findings.append(_finding(
+            "warning",
+            "推导类动画缺少明确的分区布局。",
+            "把定义、推导、结论分区放置，禁止公式弹窗覆盖主体卡片。",
+            "derivation_layout_missing",
+        ))
+
+    if EDGE_PLACEMENT_RE.search(source) and text_count > 10 and "make_header" not in source:
+        findings.append(_finding(
+            "warning",
+            "大量文字直接贴边或贴角，容易和标题、步骤说明重叠。",
+            "标题、步骤、正文和总结应使用独立布局区域。",
+            "layout_zone_missing",
+        ))
 
     semantic_target = semantic_target_from_brief(brief)
     wants_circle = semantic_target == "circle"

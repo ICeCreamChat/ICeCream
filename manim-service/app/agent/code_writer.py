@@ -118,6 +118,17 @@ def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any])
             "Flow diagrams should use 2-4 main nodes, 2-4 arrows, and one reusable step banner; avoid creating a separate paragraph for every state.",
             "Keep visible text compact: prefer short Chinese labels such as '客户端', '服务器', 'SYN', 'SYN-ACK', 'ACK'.",
             "Use VGroup(...).arrange() for nodes and arrows, and reuse or transform labels instead of adding many independent Text objects.",
+            "For TCP/process flow, use one persistent client node, one persistent server node, and exactly three message arrows unless the user asks for more detail.",
+            "Use only valid Manim animation constructors: FadeIn, FadeOut, Create, Write, ReplacementTransform, Transform, GrowArrow, LaggedStart. Never invent names like Adding, Creating, Drawing, Showing, or Animating.",
+        ])
+
+    if any(token in request_text for token in ("推导", "证明", "过程", "等差", "公式推导")):
+        requirements.extend([
+            "Derivation animations must use separated zones: definition area, derivation area, visual object area, and conclusion area.",
+            "Do not place a formula popup on top of an existing card, diagram, or step banner.",
+            "Every stage should be a named VGroup; before moving to the next stage, FadeOut or ReplacementTransform outdated objects.",
+            "Arrows and connector lines must be drawn between visible mobject endpoints and stay inside the safe margins.",
+            "For sequence or formula derivations, prefer a stable left-to-right or top-to-bottom layout instead of floating panels.",
         ])
 
     if kind == "motion_path" or any(token in request_text for token in ("小球", "抛物", "运动", "轨迹")):
@@ -173,11 +184,17 @@ def build_code_writer_messages(
         "Include the generic runtime helper code exactly once before MainScene.",
         "Do not return a domain-specific canned full-scene template.",
         "Keep all major objects inside the frame and use the full 16:9 canvas.",
+        "Reserve explicit layout zones for header, step banner, primary visual, derivation panel, secondary visual, and summary when the storyboard needs them.",
+        "For derivation or proof scenes, separate definition, derivation, visual object, and conclusion zones; never let formulas overlap cards or diagrams.",
+        "Use VGroup objects for each stage and clean or transform old stage groups before adding the next stage.",
+        "Compute Arrow/Line endpoints from visible mobjects; avoid large shift values and keep connectors inside safe margins.",
+        "If a helper is needed, define generic helpers such as fit_group_to_zone, place_in_zone, safe_arrow_between, or fade_replace_stage; do not use a topic-specific full-scene template.",
         "Use a light teaching canvas: set self.camera.background_color = '#F7FBFF' or rely on SafeScene.setup.",
         "Do not leave the default black camera background, black letterboxes, or black margins.",
         "Do not place the scene inside a smaller white card or inner presentation frame.",
         "Only use make_panel() as a full-frame background helper, not as a smaller boxed container.",
         "Use at least two staged animations and a final self.wait(1).",
+        "Use only valid Manim animation constructors: FadeIn, FadeOut, Create, Write, ReplacementTransform, Transform, GrowArrow, MoveAlongPath, LaggedStart. Do not invent names like Adding, Creating, Drawing, Showing, or Animating.",
         "Use self only for Scene control methods: add, remove, play, wait, clear, safe_play, bring_to_front, bring_to_back, foreground mobject helpers.",
         "Never call Mobject methods on self. Use line.get_angle(), dot.get_center(), mobject.next_to(...), Angle(line1, line2), or vector math instead of self.get_angle/self.get_center/self.next_to.",
         "Angle() must receive existing Line/Arrow mobjects, for example Angle(side_a, side_b). Never pass raw points, get_corner/get_center results, or vector arithmetic into Angle().",
