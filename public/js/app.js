@@ -174,6 +174,7 @@ class ICeCreamApp {
         // 会话管理器
         sessionManager.init({
             onSessionLoad: (messages) => {
+                this.manimWorkbench?.resetSessionRuntime?.();
                 messageHandler.clearMessages();
                 messageHandler.hideWelcomeScreen();
                 messages.forEach(msg => {
@@ -182,6 +183,7 @@ class ICeCreamApp {
                 this._closeSidebar();
             },
             onSessionClear: () => {
+                this.manimWorkbench?.resetSessionRuntime?.();
                 messageHandler.clearMessages();
                 this._closeSidebar();
             }

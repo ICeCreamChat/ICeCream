@@ -115,6 +115,10 @@ function formatReferenceMeta(item = {}) {
     return '下次生成会携带此素材';
 }
 
+function canCancelJob(status = '') {
+    return ['pending', 'running', 'cancel_requested'].includes(String(status || '').toLowerCase());
+}
+
 class ManimWorkbench {
     constructor() {
         this.button = null;
@@ -134,10 +138,8 @@ class ManimWorkbench {
         this.selectedStyle = 'teaching_premium';
         this.referenceImages = [];
         this.currentJob = null;
-        this.recentJobs = [];
         this.sessionFailures = [];
         this.globalFailures = [];
-        this.failures = this.globalFailures;
         this.globalFailuresLoaded = false;
         this.replaySummary = '';
         this.initialized = false;
@@ -184,7 +186,7 @@ class ManimWorkbench {
                     <div class="manim-workbench-title-block">
                         <span class="manim-workbench-eyebrow">动画制作台</span>
                         <strong>动画工作台</strong>
-                        <span>配置素材、监控任务和查看诊断</span>
+                        <span>配置素材、技能和当前任务</span>
                     </div>
                     <button type="button" class="manim-workbench-close" aria-label="关闭动画工作台">
                         <i data-lucide="x"></i>
@@ -417,6 +419,9 @@ class ManimWorkbench {
         if (!visible && this.isOpen) {
             this.close();
         }
+        if (!visible) {
+            this.resetSessionRuntime();
+        }
     }
 
     toggle() {
@@ -447,7 +452,6 @@ class ManimWorkbench {
     async loadInitialData() {
         await Promise.allSettled([
             this.loadSkills(),
-            this.loadJobs(),
         ]);
     }
 
@@ -462,11 +466,9 @@ class ManimWorkbench {
     handleAgentEvent(event = {}) {
         if (event.type === 'job' && event.job) {
             this.currentJob = normalizeJob(event.job);
-            this.mergeRecentJob(this.currentJob);
         } else if (event.type === 'progress' && this.currentJob) {
             this.currentJob.currentStage = event.step || event.stage || this.currentJob.currentStage;
             this.currentJob.summary = event.message || this.currentJob.summary;
-            this.mergeRecentJob(this.currentJob);
         } else if (event.type === 'reference') {
             this.mergeReferenceAnalysis(event);
         } else if (event.type === 'result') {
@@ -474,7 +476,6 @@ class ManimWorkbench {
         } else if (event.type === 'error' && this.currentJob) {
             this.currentJob.status = 'failed';
             this.currentJob.summary = event.error || '生成失败';
-            this.mergeRecentJob(this.currentJob);
         }
         this.renderIfOpen();
     }
@@ -508,9 +509,7 @@ class ManimWorkbench {
             this.currentJob.currentStage = 'render';
             this.currentJob.summary = result.rendered ? '最终动画已生成' : (result.warning || result.error || '未生成视频');
         }
-        this.mergeRecentJob(this.currentJob);
         this.captureSessionFailure(result);
-        this.loadJobs();
         this.renderIfOpen();
     }
 
@@ -534,9 +533,21 @@ class ManimWorkbench {
         ].slice(0, 6);
     }
 
-    mergeRecentJob(job) {
-        if (!job?.jobId) return;
-        this.recentJobs = [job, ...this.recentJobs.filter(item => item.jobId !== job.jobId)].slice(0, 8);
+    resetSessionRuntime() {
+        this.currentJob = null;
+        this.sessionFailures = [];
+        this.globalFailures = [];
+        this.globalFailuresLoaded = false;
+        this.replaySummary = '';
+        this.renderIfOpen();
+    }
+
+    isDebugMode() {
+        try {
+            return window.localStorage?.getItem('icecream_manim_debug') === '1';
+        } catch {
+            return false;
+        }
     }
 
     async loadSkills() {
@@ -557,26 +568,22 @@ class ManimWorkbench {
     }
 
     async loadJobs() {
-        if (this.loading.jobs) return;
+        if (this.loading.jobs) return [];
         this.loading.jobs = true;
         try {
             const response = await fetch('/api/manim/jobs?limit=8');
             const data = await response.json();
-            if (response.ok && Array.isArray(data.jobs)) {
-                this.recentJobs = data.jobs.map(normalizeJob);
-                if (!this.currentJob && this.recentJobs.length) {
-                    this.currentJob = this.recentJobs[0];
-                }
-            }
+            return response.ok && Array.isArray(data.jobs) ? data.jobs.map(normalizeJob) : [];
         } catch (error) {
             console.warn('[ManimWorkbench] jobs load failed:', error);
+            return [];
         } finally {
             this.loading.jobs = false;
-            this.renderIfOpen();
         }
     }
 
     async loadFailures() {
+        if (!this.isDebugMode()) return;
         if (this.loading.failures) return;
         this.loading.failures = true;
         try {
@@ -584,7 +591,6 @@ class ManimWorkbench {
             const data = await response.json();
             if (response.ok && Array.isArray(data.failures)) {
                 this.globalFailures = data.failures.map(item => ({ ...item, source: 'global' }));
-                this.failures = this.globalFailures;
                 this.globalFailuresLoaded = true;
             }
         } catch (error) {
@@ -605,7 +611,6 @@ class ManimWorkbench {
                 throw new Error(data.error || '取消任务失败');
             }
             this.currentJob = normalizeJob(data.job || { ...this.currentJob, status: 'cancelled' });
-            this.mergeRecentJob(this.currentJob);
             showToast('已请求取消当前动画任务', 'success');
         } catch (error) {
             showToast(error.message || '取消任务失败', 'error');
@@ -762,7 +767,7 @@ class ManimWorkbench {
             ${this.renderSettingsSection()}
             ${this.renderReferenceSection()}
             ${this.renderJobsSection()}
-            ${this.renderCurrentDiagnosticsSection()}
+            ${this.isDebugMode() ? this.renderDebugDiagnosticsSection() : ''}
         `;
         this.bindPanelActions();
         this.refreshIcons();
@@ -856,74 +861,29 @@ class ManimWorkbench {
 
     renderJobsSection() {
         const current = this.currentJob;
-        const currentHtml = current?.jobId
-            ? `
+        if (!current?.jobId) return '';
+
+        const showCancel = canCancelJob(current.status);
+        return `
+            <section class="manim-workbench-section manim-workbench-jobs">
+                <div class="manim-workbench-section-head">
+                    <strong>当前任务</strong>
+                    <span>仅显示本次会话</span>
+                </div>
                 <div class="manim-current-job">
                     <div class="manim-current-job-main">
                         <span class="manim-status-badge ${escapeHtml(formatJobStatusClass(current.status))}">${escapeHtml(formatJobStatus(current.status))}</span>
                         <strong title="${escapeHtml(current.jobId)}">${escapeHtml(shortJobId(current.jobId))}</strong>
                         <small>${escapeHtml(formatJobStage(current.currentStage))}</small>
                     </div>
-                    <button type="button" class="manim-workbench-secondary" data-action="cancel-job">取消</button>
+                    ${showCancel ? '<button type="button" class="manim-workbench-secondary" data-action="cancel-job">取消</button>' : ''}
                     ${current.summary ? `<p>${escapeHtml(current.summary)}</p>` : ''}
                 </div>
-            `
-            : '<div class="manim-workbench-empty">发送动画请求后，这里会显示制作状态。</div>';
-        const recentHtml = this.recentJobs.length
-            ? this.recentJobs.slice(0, 5).map(job => `
-                <div class="manim-job-row">
-                    <span title="${escapeHtml(job.jobId || '')}">${escapeHtml(shortJobId(job.jobId))}</span>
-                    <strong class="${escapeHtml(formatJobStatusClass(job.status))}">${escapeHtml(formatJobStatus(job.status))}</strong>
-                </div>
-            `).join('')
-            : '<div class="manim-workbench-empty compact">暂无最近任务。</div>';
-        return `
-            <section class="manim-workbench-section manim-workbench-jobs">
-                <div class="manim-workbench-section-head">
-                    <strong>任务状态</strong>
-                    <button type="button" class="manim-workbench-link" data-action="refresh-jobs">刷新</button>
-                </div>
-                ${currentHtml}
-                <details class="manim-workbench-nested">
-                    <summary>最近任务</summary>
-                    <div class="manim-job-list">${recentHtml}</div>
-                </details>
             </section>
         `;
     }
 
-    renderDiagnosticsSection() {
-        const failuresHtml = this.failures.length
-            ? this.failures.slice(0, 6).map(item => {
-                const eventId = item.eventId || item.id || '';
-                return `
-                    <div class="manim-failure-row">
-                        <div>
-                            <strong>${escapeHtml(item.prompt || item.message || item.stage || '失败样本')}</strong>
-                            <span>${escapeHtml(item.reason || item.error || item.summary || '可回放静态诊断')}</span>
-                        </div>
-                        <button type="button" class="manim-workbench-secondary" data-replay-id="${escapeHtml(eventId)}">回放</button>
-                    </div>
-                `;
-            }).join('')
-            : '<div class="manim-workbench-empty">暂无失败记录。</div>';
-        return `
-            <details class="manim-workbench-section manim-workbench-diagnostics">
-                <summary>
-                    <span>
-                        <strong>诊断记录</strong>
-                        <small>失败样本、规则命中、缓存与 Job 信息</small>
-                    </span>
-                    <i data-lucide="chevron-down"></i>
-                </summary>
-                ${this.replaySummary ? `<div class="manim-diagnostic-note">${escapeHtml(this.replaySummary)}</div>` : ''}
-                <div class="manim-failure-list">${failuresHtml}</div>
-                <button type="button" class="manim-workbench-link" data-action="refresh-failures">刷新失败样本</button>
-            </details>
-        `;
-    }
-
-    renderCurrentDiagnosticsSection() {
+    renderDebugDiagnosticsSection() {
         const failureItems = [
             ...this.sessionFailures,
             ...(this.globalFailuresLoaded ? this.globalFailures : []),
@@ -949,15 +909,15 @@ class ManimWorkbench {
                     </div>
                 `;
             }).join('')
-            : '<div class="manim-workbench-empty">当前会话暂无失败记录。历史失败样本不会自动展示。</div>';
+            : '<div class="manim-workbench-empty">当前会话暂无失败记录。全局失败样本不会自动展示。</div>';
         const refreshLabel = this.globalFailuresLoaded ? '刷新全局失败样本' : '加载全局失败样本';
 
         return `
-            <details class="manim-workbench-section manim-workbench-diagnostics">
+            <details class="manim-workbench-section manim-workbench-diagnostics manim-workbench-debug">
                 <summary>
                     <span>
-                        <strong>诊断记录</strong>
-                        <small>当前会话优先；全局失败样本需手动加载</small>
+                        <strong>开发诊断</strong>
+                        <small>仅调试使用；全局失败样本需手动加载</small>
                     </span>
                     <i data-lucide="chevron-down"></i>
                 </summary>
@@ -980,9 +940,6 @@ class ManimWorkbench {
         });
         this.body?.querySelectorAll('[data-action="draw-reference"]').forEach(button => {
             button.addEventListener('click', () => this.openSketchPad());
-        });
-        this.body?.querySelectorAll('[data-action="refresh-jobs"]').forEach(button => {
-            button.addEventListener('click', () => this.loadJobs());
         });
         this.body?.querySelectorAll('[data-action="refresh-failures"]').forEach(button => {
             button.addEventListener('click', () => this.loadFailures());
