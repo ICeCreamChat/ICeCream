@@ -239,9 +239,14 @@ class ICeCreamApp {
         messageHandler.setLoading(true);
 
         try {
+            const originalMessage = String(data.originalMessage || '').trim();
+            if (!originalMessage && !data.originalImage) {
+                throw new Error('原始消息丢失，请重新输入');
+            }
+
             // Use FormData to support image re-upload
             const formData = new FormData();
-            formData.append('message', data.originalMessage || '');
+            formData.append('message', originalMessage);
             formData.append('mode', intent);
 
             // Re-append image if it was part of the original request
@@ -256,6 +261,9 @@ class ICeCreamApp {
             });
 
             const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error || '请求失败，请稍后重试');
+            }
             messageHandler.handleResponse(result);
         } catch (error) {
             messageHandler.addMessage('bot', `抱歉，发生了错误：${error.message}`);

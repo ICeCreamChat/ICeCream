@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -27,6 +27,13 @@ test('intent confidence threshold is read from the provided environment', () => 
     assert.equal(getConfidenceThreshold({ INTENT_CONFIDENCE_THRESHOLD: '0.91' }), 0.91);
     assert.equal(getConfidenceThreshold({ INTENT_CONFIDENCE_THRESHOLD: 'invalid' }), 0.75);
     assert.equal(getConfidenceThreshold({}), 0.75);
+});
+
+test('intent confirmation response preserves the original message for resubmission', async () => {
+    const source = await readFile(new URL('../gateway/middleware/intent-router.js', import.meta.url), 'utf8');
+
+    assert.match(source, /const originalMessage = typeof message === 'string' \? message : ''/);
+    assert.match(source, /originalMessage,/);
 });
 
 test('upload startup cleanup preserves sentinel and recent files', async () => {

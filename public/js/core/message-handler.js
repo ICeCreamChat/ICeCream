@@ -332,13 +332,21 @@ class MessageHandler {
         if (action === 'switch') {
             modeSwitcher.setMode(pending.targetMode, true);
             this.clearTaskPrompts();
-            this.handleSend({ routeMode: pending.targetMode, skipRouteGuard: true });
+            this.handleSend({
+                routeMode: pending.targetMode,
+                skipRouteGuard: true,
+                messageOverride: pending.message || '',
+            });
             return;
         }
 
         if (action === 'stay') {
             this.clearTaskPrompts();
-            this.handleSend({ routeMode: pending.currentMode, skipRouteGuard: true });
+            this.handleSend({
+                routeMode: pending.currentMode,
+                skipRouteGuard: true,
+                messageOverride: pending.message || '',
+            });
             return;
         }
     }
@@ -347,7 +355,8 @@ class MessageHandler {
      * 处理发送消息
      */
     async handleSend(options = {}) {
-        const message = this.elements.chatInput?.value.trim() || '';
+        const messageOverride = typeof options.messageOverride === 'string' ? options.messageOverride : '';
+        const message = (messageOverride || this.elements.chatInput?.value || '').trim();
 
         if (!message && !this.pendingImage) {
             return;
@@ -415,6 +424,7 @@ class MessageHandler {
 
             if (response.needConfirmation) {
                 // Attach the pending image to the data passed to intentConfirm so it can be re-sent
+                response.originalMessage = message;
                 response.originalImage = imageForServer;
                 intentConfirm.show(response);
             } else {

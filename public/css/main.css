@@ -2662,7 +2662,9 @@ body.light-mode .video-info {
     padding: 16px;
     margin: 0 8%;
     backdrop-filter: var(--glass-blur);
-    animation: slideUp 0.3s ease;
+    contain: layout paint;
+    transform: translateZ(0);
+    animation: slideUp 0.18s ease-out;
 }
 
 /* ========== Code Panel Styles (Premium Aurora Theme) ========== */
@@ -3328,6 +3330,13 @@ body.light-mode .video-info {
     transition: all 0.2s ease;
     color: var(--text-primary);
     font-size: 14px;
+}
+
+.intent-confirm.is-pending .intent-option,
+.intent-option:disabled {
+    cursor: progress;
+    opacity: 0.58;
+    transform: none;
 }
 
 .intent-option:hover {

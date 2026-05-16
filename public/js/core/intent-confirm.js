@@ -11,6 +11,7 @@ class IntentConfirm {
         this.element = null;
         this.pendingData = null;
         this.onConfirm = null;
+        this.isSubmitting = false;
     }
 
     /**
@@ -44,6 +45,8 @@ class IntentConfirm {
      */
     show(data) {
         this.pendingData = data;
+        this.isSubmitting = false;
+        this.setBusy(false);
         if (this.element) {
             this.element.classList.remove('hidden');
         }
@@ -58,18 +61,35 @@ class IntentConfirm {
         }
     }
 
+    setBusy(isBusy) {
+        this.isSubmitting = Boolean(isBusy);
+        if (!this.element) return;
+
+        this.element.classList.toggle('is-pending', this.isSubmitting);
+        this.element.querySelectorAll('.intent-option').forEach(option => {
+            option.disabled = this.isSubmitting;
+        });
+    }
+
     /**
      * 确认意图
      * @param {string} intent - 用户选择的意图
      */
-    confirm(intent) {
+    async confirm(intent) {
+        if (this.isSubmitting || !this.pendingData) return;
+
+        const data = this.pendingData;
+        this.setBusy(true);
         this.hide();
 
-        if (this.onConfirm && this.pendingData) {
-            this.onConfirm(intent, this.pendingData);
+        try {
+            if (this.onConfirm) {
+                await this.onConfirm(intent, data);
+            }
+        } finally {
+            this.pendingData = null;
+            this.setBusy(false);
         }
-
-        this.pendingData = null;
     }
 
     /**

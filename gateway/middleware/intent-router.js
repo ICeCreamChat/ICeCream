@@ -18,6 +18,7 @@ export function getConfidenceThreshold(env = process.env) {
 export async function intentRouter(req, res, next) {
     try {
         const { message, mode } = req.body;
+        const originalMessage = typeof message === 'string' ? message : '';
         const hasImage = !!req.file;
 
         if (mode && ['chat', 'manim', 'solver'].includes(mode)) {
@@ -36,6 +37,7 @@ export async function intentRouter(req, res, next) {
             success: true,
             needConfirmation: true,
             classification,
+            originalMessage,
             message: '我不太确定您想做什么，请选择：',
             options: [
                 { intent: 'chat', label: '💬 聊一聊', description: '普通对话' },

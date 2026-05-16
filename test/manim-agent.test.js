@@ -13,6 +13,7 @@ import {
 
 const codePanelPath = new URL('../public/js/core/code-panel.js', import.meta.url);
 const messageHandlerPath = new URL('../public/js/core/message-handler.js', import.meta.url);
+const intentConfirmPath = new URL('../public/js/core/intent-confirm.js', import.meta.url);
 const manimWorkbenchPath = new URL('../public/js/core/manim-workbench.js', import.meta.url);
 const manimSketchPadPath = new URL('../public/js/core/manim-sketch-pad.js', import.meta.url);
 const appPath = new URL('../public/js/app.js', import.meta.url);
@@ -609,11 +610,12 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
 });
 
 test('frontend task switcher uses three visible tasks and guards cross-task routing', async () => {
-  const [indexSource, constantsSource, modeSwitcherSource, messageHandlerSource, manimWorkbenchSource, appSource, mainCssSource, mobileCssSource] = await Promise.all([
+  const [indexSource, constantsSource, modeSwitcherSource, messageHandlerSource, intentConfirmSource, manimWorkbenchSource, appSource, mainCssSource, mobileCssSource] = await Promise.all([
     readFile(indexPath, 'utf8'),
     readFile(new URL('../public/js/constants.js', import.meta.url), 'utf8'),
     readFile(new URL('../public/js/core/mode-switcher.js', import.meta.url), 'utf8'),
     readFile(messageHandlerPath, 'utf8'),
+    readFile(intentConfirmPath, 'utf8'),
     readFile(manimWorkbenchPath, 'utf8'),
     readFile(appPath, 'utf8'),
     readFile(mainCssPath, 'utf8'),
@@ -646,7 +648,16 @@ test('frontend task switcher uses three visible tasks and guards cross-task rout
   assert.match(messageHandlerSource, /return 'solver';/);
   assert.match(messageHandlerSource, /modeSwitcher\.setMode\(pending\.targetMode, true\)/);
   assert.match(messageHandlerSource, /skipRouteGuard: true/);
+  assert.match(messageHandlerSource, /messageOverride: pending\.message \|\| ''/);
+  assert.match(messageHandlerSource, /const messageOverride = typeof options\.messageOverride === 'string'/);
+  assert.match(messageHandlerSource, /response\.originalMessage = message/);
   assert.match(messageHandlerSource, /currentMode === 'manim' && hasImage/);
+  assert.match(appSource, /const originalMessage = String\(data\.originalMessage \|\| ''\)\.trim\(\)/);
+  assert.match(appSource, /原始消息丢失，请重新输入/);
+  assert.match(appSource, /if \(!response\.ok\)/);
+  assert.match(intentConfirmSource, /this\.isSubmitting/);
+  assert.match(intentConfirmSource, /async confirm\(intent\)/);
+  assert.match(intentConfirmSource, /await this\.onConfirm\(intent, data\)/);
 
   assert.match(manimWorkbenchSource, /querySelector\('\.mode-tab\[data-mode="manim"\]'\)/);
   assert.match(manimWorkbenchSource, /insertAdjacentElement\('afterend', this\.button\)/);
@@ -657,6 +668,8 @@ test('frontend task switcher uses three visible tasks and guards cross-task rout
 
   assert.match(mainCssSource, /\.task-switch-prompt/);
   assert.match(mainCssSource, /\.task-switch-btn\.primary/);
+  assert.match(mainCssSource, /\.intent-confirm\.is-pending \.intent-option/);
+  assert.match(mainCssSource, /contain: layout paint/);
   assert.match(mainCssSource, /\.manim-workbench-tab/);
   assert.match(mainCssSource, /body\.light-mode \.task-switch-prompt/);
   assert.match(mobileCssSource, /\.task-switch-prompt/);
