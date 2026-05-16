@@ -1322,6 +1322,12 @@ class MainScene(Scene):
         self.assertIn("set_z_index(-20)", SCENE_RUNTIME_CODE)
 
     def test_visual_judge_reports_failed_or_tiny_preview(self):
+        premature_close = inspect_visual_quality("from manim import *\nself_wait = 'self.wait(1)'", {}, {
+            "success": False,
+            "error": "Error: Premature close",
+            "details": "Error: Premature close",
+            "errorType": "preview_transport_closed",
+        })
         failed = inspect_visual_quality("from manim import *", {}, {
             "success": False,
             "error": "NameError: name 'Axes' is not defined",
@@ -1352,6 +1358,11 @@ class MainScene(Scene):
             {"success": True, "videoUrl": "/static/video.mp4", "videoBase64": "AAAA"},
         )
 
+        self.assertEqual(premature_close["status"], "warning")
+        premature_codes = {item.get("code") for item in premature_close["findings"]}
+        self.assertIn("preview_infrastructure_warning", premature_codes)
+        self.assertEqual(premature_close["metrics"]["failureClass"], "preview_infrastructure")
+        self.assertNotIn("Premature close", premature_close["summary"])
         self.assertEqual(failed["status"], "error")
         self.assertIn("预览渲染失败", failed["summary"])
         self.assertIn("名称未定义", failed["summary"])
@@ -1960,6 +1971,182 @@ class MainScene(Scene):
         self.assertEqual(render_calls[0][1], "preview_render")
         self.assertEqual(final["agentTrace"]["codeSource"], "repair")
         self.assertEqual(render_calls[-1][1], "final_render")
+
+    def test_agent_stream_retries_preview_transport_warning_without_repair(self):
+        render_calls = []
+        repair_called = False
+
+        async def fake_render(code, client_id="agent", stage="render"):
+            render_calls.append(stage)
+            if stage == "preview_render":
+                return {
+                    "success": False,
+                    "error": "Premature close",
+                    "details": "Premature close",
+                    "errorType": "preview_transport_closed",
+                }
+            return {"success": True, "videoUrl": "/static/final.mp4", "videoBase64": ""}
+
+        def fake_visual(code, brief=None, render_result=None):
+            if not (render_result or {}).get("success"):
+                return {
+                    "status": "warning",
+                    "summary": "预览通道提前关闭，正在重试或转入最终渲染复检。",
+                    "findings": [{
+                        "severity": "warning",
+                        "message": "预览通道提前关闭。",
+                        "hint": "重试预览或改用最终渲染复检。",
+                        "code": "preview_infrastructure_warning",
+                    }],
+                    "metrics": {"failureClass": "preview_infrastructure"},
+                }
+            return {"status": "pass", "summary": "视觉检查通过。", "findings": [], "metrics": {}}
+
+        async def fake_repair(*args, **kwargs):
+            nonlocal repair_called
+            repair_called = True
+            raise AssertionError("preview transport warnings should not trigger code repair")
+
+        async def collect():
+            events = []
+            ai = _FakeAI([director_json(), f"```python\n{circle_scene_code()}\n```"])
+            with patch("app.agent.workflow.render_code_for_agent", fake_render), patch(
+                "app.agent.workflow.inspect_visual_quality", fake_visual
+            ), patch("app.agent.workflow._repair_from_report", fake_repair):
+                async for event in stream_agent_events(
+                    {"message": "画一个圆形", "mode": "create"},
+                    ai_client=ai,
+                    model_name="fake-model",
+                    render=True,
+                ):
+                    events.append(event)
+            return events
+
+        original_cache = os.environ.get("MANIM_AGENT_RENDER_CACHE")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["MANIM_AGENT_RENDER_CACHE"] = str(Path(temp_dir) / "render-cache.json")
+            events = asyncio.run(collect())
+        if original_cache is None:
+            os.environ.pop("MANIM_AGENT_RENDER_CACHE", None)
+        else:
+            os.environ["MANIM_AGENT_RENDER_CACHE"] = original_cache
+
+        self.assertFalse(repair_called)
+        self.assertEqual(render_calls.count("preview_render"), 2)
+        self.assertEqual(render_calls[-1], "final_render")
+        self.assertEqual(events[-1]["type"], "result")
+        self.assertTrue(events[-1]["rendered"])
+        self.assertIn("preview_infrastructure_warning", [
+            item.get("code")
+            for event in events
+            if event.get("type") == "visual_check"
+            for item in event.get("visual", {}).get("findings", [])
+        ])
+
+    def test_agent_stream_emits_final_visual_check_before_failed_result(self):
+        render_calls = []
+
+        async def fake_render(code, client_id="agent", stage="render"):
+            render_calls.append(stage)
+            return {"success": True, "videoUrl": f"/static/{stage}.mp4", "videoBase64": ""}
+
+        def fake_visual(code, brief=None, render_result=None):
+            video_url = (render_result or {}).get("videoUrl", "")
+            if "final_render" in video_url:
+                return {
+                    "status": "error",
+                    "summary": "检测到可见对象贴到画面边缘，可能已经出框或被裁切。",
+                    "findings": [{
+                        "severity": "error",
+                        "message": "检测到可见对象贴到画面边缘，可能已经出框或被裁切。",
+                        "hint": "把对象放回安全边距内。",
+                        "code": "object_clipped",
+                    }],
+                    "metrics": {"failureClass": "visual_quality"},
+                }
+            return {"status": "pass", "summary": "视觉检查通过。", "findings": [], "metrics": {}}
+
+        async def collect():
+            events = []
+            ai = _FakeAI([director_json(), f"```python\n{circle_scene_code()}\n```"])
+            with patch("app.agent.workflow.render_code_for_agent", fake_render), patch(
+                "app.agent.workflow.inspect_visual_quality", fake_visual
+            ):
+                async for event in stream_agent_events(
+                    {"message": "画一个圆形", "mode": "create"},
+                    ai_client=ai,
+                    model_name="fake-model",
+                    render=True,
+                ):
+                    events.append(event)
+            return events
+
+        original_cache = os.environ.get("MANIM_AGENT_RENDER_CACHE")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.environ["MANIM_AGENT_RENDER_CACHE"] = str(Path(temp_dir) / "render-cache.json")
+            events = asyncio.run(collect())
+        if original_cache is None:
+            os.environ.pop("MANIM_AGENT_RENDER_CACHE", None)
+        else:
+            os.environ["MANIM_AGENT_RENDER_CACHE"] = original_cache
+
+        final_checks = [
+            event for event in events
+            if event.get("type") == "visual_check" and event.get("stage") == "final_visual_check"
+        ]
+        self.assertTrue(final_checks)
+        self.assertEqual(final_checks[-1]["visual"]["status"], "error")
+        self.assertEqual(events[-1]["type"], "result")
+        self.assertFalse(events[-1]["rendered"])
+        self.assertIn("object_clipped", [
+            item.get("code")
+            for item in events[-1]["agentTrace"]["quality"]["visual"]["findings"]
+        ])
+
+    def test_agent_stream_repairs_high_risk_layout_warnings_before_preview(self):
+        repair_reports = []
+        risky_code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title = Text("客户端")
+        formula = Text("服务端").next_to(title, RIGHT)
+        self.add(title, formula)
+        self.wait(1)
+"""
+
+        async def fake_repair(code, brief, report, repair_attempts, **kwargs):
+            repair_reports.append(report)
+            return code, {"status": "pass", "summary": "ok", "issues": []}, repair_attempts + 1, {
+                "status": "success",
+                "summary": "ok",
+                "attempts": 1,
+            }
+
+        async def collect():
+            events = []
+            ai = _FakeAI([director_json(), f"```python\n{risky_code}\n```"])
+            with patch("app.agent.workflow._repair_from_report", fake_repair):
+                async for event in stream_agent_events(
+                    {"message": "解释 TCP 三次握手流程", "mode": "create"},
+                    ai_client=ai,
+                    model_name="fake-model",
+                    render=False,
+                ):
+                    events.append(event)
+            return events
+
+        events = asyncio.run(collect())
+
+        self.assertTrue(repair_reports)
+        repaired_codes = {
+            item.get("code")
+            for report in repair_reports
+            for item in report.get("issues", [])
+        }
+        self.assertIn("unsafe_next_to_chain", repaired_codes)
+        self.assertTrue(any(event.get("type") == "repair" for event in events))
 
     def test_v6_disabled_returns_warning_without_template_fallback(self):
         original = os.environ.get("MANIM_AGENT_V6_ENABLED")

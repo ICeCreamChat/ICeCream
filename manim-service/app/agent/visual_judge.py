@@ -32,6 +32,51 @@ def _short_reason(value: Any, fallback: str = "未知渲染错误") -> str:
     return text[-420:]
 
 
+def render_failure_class(render_result: dict[str, Any]) -> str:
+    """Classify failed preview/final render results for gating decisions."""
+    reason = _short_reason(
+        render_result.get("details")
+        or render_result.get("stderr")
+        or render_result.get("error")
+        or render_result.get("errorType")
+    )
+    lower = reason.lower()
+    error_type = str(render_result.get("errorType") or "").lower()
+    runtime_markers = (
+        "traceback",
+        "attributeerror",
+        "typeerror",
+        "nameerror",
+        "syntaxerror",
+        "valueerror",
+        "latex",
+        "tex",
+    )
+    infrastructure_markers = (
+        "premature close",
+        "stream closed",
+        "connection closed",
+        "socket hang up",
+        "aborted",
+        "econnreset",
+        "readable stream",
+        "body stream",
+        "frame_extract_missing",
+        "preview_transport_closed",
+    )
+    if any(marker in lower for marker in runtime_markers):
+        return "runtime_error"
+    if "transport" in error_type or any(marker in lower for marker in infrastructure_markers):
+        return "preview_infrastructure"
+    if "exception:" in lower or "error:" in lower:
+        return "runtime_error"
+    return "runtime_error"
+
+
+def is_preview_infrastructure_failure(render_result: dict[str, Any]) -> bool:
+    return bool(render_result) and not render_result.get("success") and render_failure_class(render_result) == "preview_infrastructure"
+
+
 def _render_failure_reason(render_result: dict[str, Any]) -> str:
     reason = _short_reason(
         render_result.get("details")
@@ -42,6 +87,8 @@ def _render_failure_reason(render_result: dict[str, Any]) -> str:
     lower = reason.lower()
     if render_result.get("errorType") == "scene_class_missing":
         return "未找到可渲染 Scene 类。请使用 class MainScene(SafeScene, Scene):"
+    if render_failure_class(render_result) == "preview_infrastructure":
+        return "预览通道提前关闭，正在重试或转入最终渲染复检。"
     if "mobject.__getattr__" in lower and "unexpected keyword" in lower:
         return "代码调用了 Manim 不支持的参数。请移除未知 keyword，改用合法的 move_to、next_to、align_to 或显式坐标计算。"
     if "unexpected keyword" in lower or "unexpected keyword argument" in lower:
@@ -108,14 +155,42 @@ def _video_duration_seconds(video_path: Path) -> float:
         return 0.0
 
 
-def _extract_frames(video_path: Path, frame_dir: Path, count: int = 6) -> list[Path]:
+def _extract_frames(video_path: Path, frame_dir: Path, count: int | None = None) -> list[Path]:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         return []
+    count = count or service_config.get_manim_visual_frame_count()
     duration = _video_duration_seconds(video_path)
-    fps = 1.0
-    if duration > count:
-        fps = max(0.20, min(2.0, count / duration))
+    if duration > 0.15:
+        base_ratios = [0.08, 0.20, 0.35, 0.50, 0.65, 0.80, 0.92]
+        if count <= len(base_ratios):
+            start = max(0, (len(base_ratios) - count) // 2)
+            ratios = base_ratios[start:start + count]
+        else:
+            ratios = [0.05 + (0.90 * index / max(count - 1, 1)) for index in range(count)]
+        frame_paths: list[Path] = []
+        for index, ratio in enumerate(ratios):
+            timestamp = max(0.02, min(duration - 0.02, duration * ratio))
+            output = frame_dir / f"frame_{index:02d}.png"
+            cmd = [
+                ffmpeg,
+                "-y",
+                "-ss",
+                f"{timestamp:.3f}",
+                "-i",
+                str(video_path),
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=640:-1",
+                str(output),
+            ]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=20)
+            if result.returncode == 0 and output.exists():
+                frame_paths.append(output)
+        if frame_paths:
+            return frame_paths
+
     pattern = frame_dir / "frame_%02d.png"
     cmd = [
         ffmpeg,
@@ -123,7 +198,7 @@ def _extract_frames(video_path: Path, frame_dir: Path, count: int = 6) -> list[P
         "-i",
         str(video_path),
         "-vf",
-        f"fps={fps:.4f},scale=640:-1",
+        f"fps={max(0.20, min(2.0, float(count))):.4f},scale=640:-1",
         "-frames:v",
         str(count),
         str(pattern),
@@ -533,7 +608,16 @@ def inspect_visual_quality(
     if render_result:
         if not render_result.get("success"):
             reason = _render_failure_reason(render_result)
-            findings.append(_finding("error", f"预览渲染失败：{reason}", "根据错误原因修复代码后再渲染。", "preview_render_failed"))
+            failure_class = render_failure_class(render_result)
+            if failure_class == "preview_infrastructure":
+                findings.append(_finding(
+                    "warning",
+                    reason,
+                    "这是预览通道异常，不一定代表动画代码错误；系统会重试预览或在最终渲染后复检。",
+                    "preview_infrastructure_warning",
+                ))
+            else:
+                findings.append(_finding("error", f"预览渲染失败：{reason}", "根据错误原因修复代码后再渲染。", "preview_render_failed"))
         if render_result.get("success") and not render_result.get("videoUrl"):
             findings.append(_finding("error", "预览渲染没有返回可播放视频。", "渲染结果必须包含可播放的视频文件。", "preview_video_missing"))
 
@@ -612,6 +696,9 @@ def inspect_visual_quality(
         "metrics": {
             "artifactSize": artifact_size,
             "hasVideoUrl": bool(render_result.get("videoUrl")),
+            "failureClass": render_failure_class(render_result) if render_result and not render_result.get("success") else ("visual_quality" if status == "error" else ""),
+            "findingCode": next((item.get("code") for item in findings if item.get("severity") == "error"), next((item.get("code") for item in findings), "")),
+            "frameCountTarget": service_config.get_manim_visual_frame_count(),
             "previewCheckEnabled": os.environ.get("MANIM_AGENT_PREVIEW_CHECK", "true").lower()
             not in {"0", "false", "off", "no"},
             "frame": frame_report.get("metrics", {}),

@@ -80,6 +80,8 @@ MANIM_AGENT_REFERENCE_DIR_DEFAULT = os.path.join(PROJECT_ROOT, "uploads", "manim
 MANIM_AGENT_PROMPT_DIR_DEFAULT = os.path.join(APP_DIR, "agent", "prompts")
 MANIM_AGENT_PROJECT_SKILLS_DIR_DEFAULT = os.path.join(PROJECT_ROOT, ".manim", "skills")
 MANIM_AGENT_REFERENCE_MAX_BYTES_DEFAULT = 8 * 1024 * 1024
+MANIM_AGENT_VISUAL_GATE_POLICY_DEFAULT = "balanced"
+MANIM_VISUAL_FRAME_COUNT_DEFAULT = 7
 
 
 def _bounded_int_env(name, default, minimum, maximum):
@@ -92,6 +94,18 @@ def _bounded_int_env(name, default, minimum, maximum):
 
 def get_manim_agent_repair_attempts():
     return _bounded_int_env("MANIM_AGENT_REPAIR_ATTEMPTS", MANIM_AGENT_REPAIR_ATTEMPTS_DEFAULT, 1, 6)
+
+
+def get_manim_visual_gate_policy():
+    value = os.environ.get("MANIM_AGENT_VISUAL_GATE_POLICY", MANIM_AGENT_VISUAL_GATE_POLICY_DEFAULT)
+    value = str(value or "").strip().lower()
+    if value not in {"balanced", "strict", "lenient"}:
+        return MANIM_AGENT_VISUAL_GATE_POLICY_DEFAULT
+    return value
+
+
+def get_manim_visual_frame_count():
+    return _bounded_int_env("MANIM_VISUAL_FRAME_COUNT", MANIM_VISUAL_FRAME_COUNT_DEFAULT, 3, 9)
 
 
 def get_manim_agent_failure_log_path():

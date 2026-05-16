@@ -61,6 +61,45 @@ def _should_rescue_visual_warning(brief: dict[str, Any], visual_report: dict[str
     return bool(warning_codes & {"subject_too_small", "low_contrast_warning", "black_border", "edge_overflow"})
 
 
+def _visual_finding_codes(visual_report: dict[str, Any]) -> set[str]:
+    return {str(item.get("code") or "") for item in visual_report.get("findings", []) if item.get("code")}
+
+
+def _is_preview_infrastructure_report(visual_report: dict[str, Any]) -> bool:
+    if (visual_report.get("metrics") or {}).get("failureClass") == "preview_infrastructure":
+        return True
+    codes = _visual_finding_codes(visual_report)
+    return bool(codes) and codes <= {"preview_infrastructure_warning", "frame_extract_missing"}
+
+
+def _mark_visual_retry(visual_report: dict[str, Any], retry_count: int, stage: str) -> dict[str, Any]:
+    metrics = dict(visual_report.get("metrics") or {})
+    metrics["retryCount"] = retry_count
+    metrics["gateStage"] = stage
+    return {**visual_report, "metrics": metrics}
+
+
+def _should_repair_layout_warning(brief: dict[str, Any], quality_report: dict[str, Any]) -> bool:
+    if quality_report.get("status") != "warning":
+        return False
+    spec = brief.get("storyboardSpec") or brief.get("spec") or {}
+    kind = str(spec.get("kind") or spec.get("animation_type") or brief.get("animation_type") or "")
+    prompt = str(brief.get("message") or "").lower()
+    strict_context = kind in {"formula_derivation", "geometry_proof", "process_flow", "flow_process"} or any(
+        term in prompt for term in ("推导", "证明", "过程", "流程", "derive", "proof", "process")
+    )
+    if not strict_context:
+        return False
+    codes = {str(item.get("code") or "") for item in quality_report.get("findings", [])}
+    return bool(codes & {
+        "unsafe_next_to_chain",
+        "connector_offscreen_risk",
+        "panel_overlap_risk",
+        "derivation_layout_missing",
+        "stage_cleanup_missing",
+    })
+
+
 def _trace(
     brief: dict[str, Any],
     skills: list[dict[str, str]],
@@ -474,8 +513,10 @@ async def stream_agent_events(
     quality_report = inspect_code_quality(code, brief)
     yield {"type": "quality_report", "quality": quality_report}
 
-    if quality_report["status"] == "error":
-        yield {"type": "repair", "step": "repair", "message": "正在修复布局或语义问题"}
+    repair_layout_warning = _should_repair_layout_warning(brief, quality_report)
+    if quality_report["status"] == "error" or repair_layout_warning:
+        repair_message = "正在修复高风险布局问题" if repair_layout_warning else "正在修复布局或语义问题"
+        yield {"type": "repair", "step": "repair", "message": repair_message}
         code, critic_report, repair_attempts, repaired = await _repair_from_report(
             code,
             brief,
@@ -548,8 +589,34 @@ async def stream_agent_events(
             register_render_client(job_id, preview_client_id)
             preview_render = await render_code_for_agent(code, client_id=preview_client_id, stage="preview_render")
             visual_report = inspect_visual_quality(code, brief, preview_render)
+            visual_report = _mark_visual_retry(visual_report, attempt, "preview_visual_check")
             yield {"type": "visual_check", "visual": visual_report, "videoUrl": preview_render.get("videoUrl")}
             yield {"type": "preview", "preview": visual_report, "videoUrl": preview_render.get("videoUrl")}
+            if _is_preview_infrastructure_report(visual_report):
+                if attempt == 0:
+                    yield {
+                        "type": "diagnostic",
+                        "step": "visual_check",
+                        "status": "warning",
+                        "summary": "预览通道提前关闭，正在重试预览。",
+                        "details": ["这通常是预览流提前断开，不一定代表动画代码错误。"],
+                    }
+                    continue
+                if service_config.get_manim_visual_gate_policy() != "strict":
+                    yield {
+                        "type": "diagnostic",
+                        "step": "visual_check",
+                        "status": "warning",
+                        "summary": "预览通道仍不稳定，将转入最终渲染后复检。",
+                        "details": ["最终渲染完成后会再次做视觉检查，发现出框或遮挡仍会拦截。"],
+                    }
+                    break
+                visual_report = {
+                    **visual_report,
+                    "status": "error",
+                    "summary": "严格模式下，预览通道异常需要先修复或重新生成。",
+                }
+                yield {"type": "visual_check", "stage": "preview_visual_check", "visual": visual_report, "videoUrl": preview_render.get("videoUrl")}
             if _should_rescue_visual_warning(brief, visual_report):
                 rescue_code, rescue_critic, rescue_quality = await _emit_rescue_code(brief, visual_report.get("summary", "视觉质量警告"))
                 if rescue_code and rescue_critic["status"] != "error" and rescue_quality["status"] != "error":
@@ -566,6 +633,7 @@ async def stream_agent_events(
                     register_render_client(job_id, preview_client_id)
                     preview_render = await render_code_for_agent(code, client_id=preview_client_id, stage="preview_render")
                     visual_report = inspect_visual_quality(code, brief, preview_render)
+                    visual_report = _mark_visual_retry(visual_report, attempt, "preview_visual_check")
                     yield {"type": "visual_check", "visual": visual_report, "videoUrl": preview_render.get("videoUrl")}
                     yield {"type": "preview", "preview": visual_report, "videoUrl": preview_render.get("videoUrl")}
             if visual_report["status"] != "error":
@@ -586,6 +654,7 @@ async def stream_agent_events(
                     register_render_client(job_id, preview_client_id)
                     preview_render = await render_code_for_agent(code, client_id=preview_client_id, stage="preview_render")
                     visual_report = inspect_visual_quality(code, brief, preview_render)
+                    visual_report = _mark_visual_retry(visual_report, attempt, "preview_visual_check")
                     yield {"type": "visual_check", "visual": visual_report, "videoUrl": preview_render.get("videoUrl")}
                     yield {"type": "preview", "preview": visual_report, "videoUrl": preview_render.get("videoUrl")}
                     if visual_report["status"] != "error":
@@ -638,6 +707,8 @@ async def stream_agent_events(
         register_render_client(job_id, final_client_id)
         render_result = await render_code_for_agent(code, client_id=final_client_id, stage="final_render")
     final_visual = inspect_visual_quality(code, brief, render_result)
+    final_visual = _mark_visual_retry(final_visual, 0, "final_visual_check")
+    yield {"type": "visual_check", "stage": "final_visual_check", "visual": final_visual, "videoUrl": render_result.get("videoUrl")}
     trace = _trace(
         brief,
         skills,

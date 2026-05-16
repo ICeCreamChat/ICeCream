@@ -1239,6 +1239,9 @@ class MessageHandler {
         if (error?.name === 'AbortError' || /abort|aborted|timeout|timed out/i.test(raw)) {
             return '生成时间过长，连接已中断。可以重试，或减少动画复杂度。';
         }
+        if (/premature close|stream closed|connection closed|socket hang up|econnreset/i.test(raw)) {
+            return '预览通道提前关闭，系统会重试预览或转入最终渲染复检。';
+        }
         return this.localizeManimText(raw || 'Manim Agent 处理失败');
     }
 
@@ -1253,6 +1256,7 @@ class MessageHandler {
             'Frame extraction skipped.': '未执行抽帧检查。',
             'No preview frames extracted.': '未抽取到预览帧。',
             'Preview render failed.': '预览渲染失败。',
+            'Premature close': '预览通道提前关闭，系统会重试预览或转入最终渲染复检。',
             'Preview render did not return a video URL.': '预览渲染没有返回可播放视频。',
             'Preview video is too small.': '预览视频过小，可能画面为空或内容过少。',
             'Preview video artifact is unusually small.': '预览视频文件偏小，请确认画面内容是否完整。',
@@ -1308,12 +1312,16 @@ class MessageHandler {
         const previewFailure = text.match(/^Preview render failed\.?\s*[:：]?\s*(.*)$/i);
         if (previewFailure) {
             const reason = previewFailure[1]?.trim();
+            if (reason && /premature close|stream closed|connection closed|socket hang up|econnreset/i.test(reason)) {
+                return '预览通道提前关闭，系统会重试预览或转入最终渲染复检。';
+            }
             return reason ? `预览渲染失败：${reason}` : '预览渲染失败。';
         }
 
         const includes = [
             [/Quality inspection passed/i, '质量检查通过。'],
             [/Visual inspection passed/i, '视觉检查通过。'],
+            [/premature close|stream closed|connection closed|socket hang up|econnreset/i, '预览通道提前关闭，系统会重试预览或转入最终渲染复检。'],
             [/Preview render failed/i, '预览渲染失败。'],
             [/Mobject\.__getattr__.*unexpected keyword|unexpected keyword/i, '代码调用了 Manim 不支持的参数，请移除未知参数并重新生成。'],
             [/Only values of type VMobject can be added as submobjects of VGroup/i, 'VGroup 中混入了非 Manim 可绘制对象，请把文字或公式先包装成可绘制对象。'],

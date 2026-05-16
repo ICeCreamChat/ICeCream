@@ -437,6 +437,8 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(messageHandlerSource, /Only values of type VMobject/);
   assert.match(messageHandlerSource, /Manim 不支持的参数/);
   assert.match(messageHandlerSource, /VGroup 中混入/);
+  assert.match(messageHandlerSource, /Premature close/);
+  assert.match(messageHandlerSource, /预览通道提前关闭/);
   assert.match(messageHandlerSource, /绘制余弦曲线/);
   assert.match(messageHandlerSource, /预览渲染失败：/);
   assert.match(messageHandlerSource, /代码必须只有一个可渲染 Scene 类/);
