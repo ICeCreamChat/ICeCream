@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app import service_config
+from .json_safety import to_json_safe
 
 
 PATH_RE = re.compile(r"[A-Za-z]:\\[^\s\n]+|/(?:[^/\s]+/)+[^/\s]+")
@@ -76,7 +77,7 @@ def record_failure_event(
         path = _log_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+            handle.write(json.dumps(to_json_safe(event), ensure_ascii=False) + "\n")
     except OSError:
         return ""
     return event_id

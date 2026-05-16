@@ -340,8 +340,8 @@ def _largest_component_box(mask: np.ndarray) -> dict[str, Any]:
         "height": height,
         "area": area,
         "safeMarginMin": round(min(margin_left, margin_right, margin_top, margin_bottom), 4),
-        "touchesSafeEdge": min(margin_left, margin_right, margin_top, margin_bottom) < safe_margin,
-        "touchesHardEdge": min(left, top, w - 1 - right, h - 1 - bottom) <= 2,
+        "touchesSafeEdge": bool(min(margin_left, margin_right, margin_top, margin_bottom) < safe_margin),
+        "touchesHardEdge": bool(min(left, top, w - 1 - right, h - 1 - bottom) <= 2),
     }
 
 

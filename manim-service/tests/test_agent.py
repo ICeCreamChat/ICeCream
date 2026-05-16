@@ -10,6 +10,7 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -35,7 +36,7 @@ from app.agent.reference_store import resolve_reference_records, save_reference_
 from app.agent.render_cache import get_cached_render, save_cached_render
 from app.agent.repair import build_repair_observation, patch_first_repair, repair_code, repair_code_async, static_repair_once
 from app.agent.renderer import sanitize_render_error
-from app.agent.routes import register_agent_routes
+from app.agent.routes import register_agent_routes, to_json_safe
 from app.agent.rescue_scene import rescue_scene_code
 from app.agent.real_smoke import run_real_smoke_suite
 from app.agent.scene_runtime import SCENE_RUNTIME_CODE
@@ -1374,6 +1375,35 @@ class MainScene(Scene):
         self.assertIn("VGroup 中混入", vgroup_failed["summary"])
         self.assertNotIn("Only values of type VMobject", vgroup_failed["summary"])
         self.assertEqual(tiny["status"], "error")
+
+    def test_agent_route_payloads_are_json_safe(self):
+        payload = {
+            "success": np.bool_(True),
+            "count": np.int64(3),
+            "score": np.float32(9.5),
+            "items": {np.int64(2), "ok"},
+            "path": Path("static/video.mp4"),
+            "nested": [{"flag": np.bool_(False)}],
+        }
+        safe = to_json_safe(payload)
+        json.dumps(safe, ensure_ascii=False)
+
+        self.assertIs(type(safe["success"]), bool)
+        self.assertIs(type(safe["count"]), int)
+        self.assertIs(type(safe["score"]), float)
+        self.assertIs(type(safe["nested"][0]["flag"]), bool)
+        self.assertEqual(safe["path"], "static/video.mp4")
+
+    def test_visual_layout_bbox_is_json_serializable(self):
+        from app.agent.visual_judge import _largest_component_box
+
+        mask = np.zeros((12, 12), dtype=bool)
+        mask[:4, :5] = True
+        bbox = _largest_component_box(mask)
+        json.dumps(bbox, ensure_ascii=False)
+
+        self.assertIs(type(bbox["touchesSafeEdge"]), bool)
+        self.assertIs(type(bbox["touchesHardEdge"]), bool)
 
     def test_repair_stops_after_max_attempts_with_observations(self):
         attempts = []

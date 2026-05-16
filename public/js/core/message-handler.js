@@ -29,6 +29,7 @@ class MessageHandler {
         this.manimAutoScrollLockedUntil = 0;
         this.taskSwitchPrompt = null;
         this.pendingTaskSwitch = null;
+        this.lastSubmittedMessage = '';
     }
 
     /**
@@ -361,6 +362,9 @@ class MessageHandler {
         if (!message && !this.pendingImage) {
             return;
         }
+        if (message) {
+            this.lastSubmittedMessage = message;
+        }
 
         const selectedMode = options.routeMode || modeSwitcher.getMode();
         const hasImage = Boolean(this.pendingImage);
@@ -477,6 +481,10 @@ class MessageHandler {
         }
 
         return response.json();
+    }
+
+    getLastSubmittedMessage() {
+        return this.lastSubmittedMessage || '';
     }
 
     /**
@@ -1790,6 +1798,7 @@ class MessageHandler {
             const messageElements = this.elements.messages.querySelectorAll('.message');
             messageElements.forEach(el => el.remove());
         }
+        this.lastSubmittedMessage = '';
         this.showWelcomeScreen();
     }
 

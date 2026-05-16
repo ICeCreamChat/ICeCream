@@ -238,10 +238,13 @@ class ICeCreamApp {
      * @private
      */
     async _handleIntentConfirm(intent, data) {
+        data = data || {};
         messageHandler.setLoading(true);
 
         try {
-            const originalMessage = String(data.originalMessage || '').trim();
+            const originalMessage = String(
+                data.originalMessage || data.message || data.prompt || messageHandler.getLastSubmittedMessage?.() || ''
+            ).trim();
             if (!originalMessage && !data.originalImage) {
                 throw new Error('原始消息丢失，请重新输入');
             }

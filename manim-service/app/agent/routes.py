@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from .failure_events import load_failure_events
 from .failure_replay import replay_failure_events
+from .json_safety import to_json_safe
 from .job_registry import cancel_job, get_job, list_jobs
 from .reference_store import save_reference_image
 from .skill_loader import SKILL_CATALOG_VERSION, skill_catalog
@@ -52,7 +53,7 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
             model_name=model_name,
             render=True,
         )
-        return JSONResponse(result)
+        return JSONResponse(to_json_safe(result))
 
     @app.post("/agent/stream")
     async def agent_stream(
@@ -69,7 +70,7 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
                 model_name=model_name,
                 render=True,
             ):
-                yield json.dumps(event, ensure_ascii=False) + "\n"
+                yield json.dumps(to_json_safe(event), ensure_ascii=False) + "\n"
 
         return StreamingResponse(events(), media_type="application/x-ndjson; charset=utf-8")
 
@@ -80,7 +81,7 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
     ):
         if _forbidden(x_manim_service_token):
             return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
-        return JSONResponse({"success": True, "jobs": list_jobs(limit)})
+        return JSONResponse(to_json_safe({"success": True, "jobs": list_jobs(limit)}))
 
     @app.get("/agent/jobs/{job_id}")
     async def agent_job(
@@ -92,7 +93,7 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
         job = get_job(job_id)
         if not job:
             return JSONResponse({"success": False, "error": "未找到 Manim 任务"}, status_code=404)
-        return JSONResponse({"success": True, "job": job})
+        return JSONResponse(to_json_safe({"success": True, "job": job}))
 
     @app.post("/agent/jobs/{job_id}/cancel")
     async def agent_job_cancel(
@@ -103,7 +104,7 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
             return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
         result = cancel_job(job_id)
         status = 200 if result.get("success") else 404
-        return JSONResponse(result, status_code=status)
+        return JSONResponse(to_json_safe(result), status_code=status)
 
     @app.get("/agent/failures")
     async def agent_failures(
@@ -112,7 +113,7 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
     ):
         if _forbidden(x_manim_service_token):
             return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
-        return JSONResponse({"success": True, "failures": load_failure_events(limit=limit)})
+        return JSONResponse(to_json_safe({"success": True, "failures": load_failure_events(limit=limit)}))
 
     @app.post("/agent/failures/{event_id}/replay")
     async def agent_failure_replay(
@@ -124,7 +125,7 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
         replay = replay_failure_events(limit=200)
         samples = replay.get("samples", [])
         replay["samples"] = [sample for sample in samples if sample.get("id") == event_id] or samples
-        return JSONResponse({"success": True, "replay": replay})
+        return JSONResponse(to_json_safe({"success": True, "replay": replay}))
 
     @app.post("/agent/reference-images")
     async def agent_reference_images(
@@ -138,7 +139,7 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
             mime_type=request.mimeType,
             data_base64=request.dataBase64,
         )
-        return JSONResponse(result, status_code=200 if result.get("success") else 400)
+        return JSONResponse(to_json_safe(result), status_code=200 if result.get("success") else 400)
 
     @app.get("/agent/skills")
     async def agent_skills(
@@ -161,9 +162,9 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
             )
         skills.sort(key=lambda item: item["id"])
         return JSONResponse(
-            {
+            to_json_safe({
                 "success": True,
                 "version": SKILL_CATALOG_VERSION,
                 "skills": skills,
-            }
+            })
         )

@@ -669,7 +669,10 @@ test('frontend task switcher uses three visible tasks and guards cross-task rout
   assert.match(messageHandlerSource, /const messageOverride = typeof options\.messageOverride === 'string'/);
   assert.match(messageHandlerSource, /response\.originalMessage = message/);
   assert.match(messageHandlerSource, /currentMode === 'manim' && hasImage/);
-  assert.match(appSource, /const originalMessage = String\(data\.originalMessage \|\| ''\)\.trim\(\)/);
+  assert.match(appSource, /data\.originalMessage \|\| data\.message \|\| data\.prompt/);
+  assert.match(messageHandlerSource, /getLastSubmittedMessage\(\)/);
+  assert.match(messageHandlerSource, /this\.lastSubmittedMessage = message/);
+  assert.match(messageHandlerSource, /this\.lastSubmittedMessage = ''/);
   assert.match(appSource, /原始消息丢失，请重新输入/);
   assert.match(appSource, /if \(!response\.ok\)/);
   assert.match(intentConfirmSource, /this\.isSubmitting/);
