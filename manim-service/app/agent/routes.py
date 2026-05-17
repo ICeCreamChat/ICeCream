@@ -91,7 +91,9 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
             return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
         result = apply_scene_patch(request.code, request.patch)
         if result.get("success"):
-            result["sceneManifest"] = build_scene_manifest(str(result.get("code") or ""), request.brief)
+            scene_manifest = build_scene_manifest(str(result.get("code") or ""), request.brief)
+            result["sceneManifest"] = scene_manifest
+            result["runtimeSceneManifest"] = scene_manifest
         return JSONResponse(to_json_safe(result), status_code=200 if result.get("success") else 400)
 
     @app.get("/agent/jobs")

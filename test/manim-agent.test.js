@@ -615,9 +615,20 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(codePanelSource, /studio-preview-video/);
   assert.match(codePanelSource, /registerSceneManifest/);
   assert.match(codePanelSource, /renderSceneOverlay/);
+  assert.match(codePanelSource, /runtimeSceneManifest/);
+  assert.match(codePanelSource, /getSceneObjectBoxForCurrentTime/);
+  assert.match(codePanelSource, /buildInteractiveHitTargets/);
+  assert.doesNotMatch(codePanelSource, /matchRegionsToSceneObjects\(objects, regions\)/);
+  assert.match(codePanelSource, /localizeSceneObjectType/);
+  assert.match(codePanelSource, /getSceneObjectDisplayLabel/);
   assert.match(codePanelSource, /selectSceneObject/);
   assert.match(codePanelSource, /applyScenePatch/);
   assert.match(codePanelSource, /\/api\/manim\/patch/);
+  assert.doesNotMatch(codePanelSource, /studio-object-palette/);
+  assert.doesNotMatch(codePanelSource, /<span>\$\{this\.escapeHtml\(item\.type \|\| '对象'\)\}<\/span>/);
+  assert.match(codePanelSource, /studio-object-hotspot/);
+  assert.match(codePanelSource, /studio-object-label/);
+  assert.match(codePanelSource, /视频元素/);
   assert.match(codePanelSource, /history-list-container studio-history-panel/);
   assert.match(codePanelSource, /<i data-lucide="play"><\/i> 运行/);
   assert.doesNotMatch(codePanelSource, /style="width:100%; height:100%; object-fit:contain;"/);
@@ -634,7 +645,10 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(mainCssSource, /display: none !important/);
   assert.match(mainCssSource, /\.studio-preview-video/);
   assert.match(mainCssSource, /\.studio-interaction-overlay/);
-  assert.match(mainCssSource, /\.studio-object-box/);
+  assert.match(mainCssSource, /\.studio-object-hotspot/);
+  assert.match(mainCssSource, /\.studio-object-rect/);
+  assert.match(mainCssSource, /\.studio-object-label/);
+  assert.doesNotMatch(mainCssSource, /\.studio-object-palette/);
   assert.match(mainCssSource, /\.studio-object-inspector/);
   assert.match(mainCssSource, /\.desktop-footer/);
 
@@ -644,6 +658,7 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(mobileCssSource, /max-height: 24vh/);
   assert.match(mobileCssSource, /#code-panel\.manim-studio-window #manim-history-root:not\(\.expanded\) \.history-list/);
   assert.match(mobileCssSource, /\.studio-object-inspector/);
+  assert.match(mobileCssSource, /\.studio-object-hotspot/);
   assert.match(mobileCssSource, /overscroll-behavior: contain/);
 });
 

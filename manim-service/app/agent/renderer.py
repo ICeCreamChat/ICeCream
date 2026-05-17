@@ -99,6 +99,8 @@ async def render_code_for_agent(code: str, client_id: str = "agent", stage: str 
         "warning": body.get("warning"),
         "requestId": body.get("requestId"),
         "sceneName": body.get("sceneName"),
+        "sceneManifest": body.get("sceneManifest"),
+        "runtimeSceneManifest": body.get("runtimeSceneManifest") or body.get("sceneManifest"),
         "clientId": client_id,
         "stage": stage,
     }

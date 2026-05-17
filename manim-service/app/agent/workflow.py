@@ -121,6 +121,7 @@ def _trace(
     visual_summary = visual.get("summary")
     overall_status = visual_status if visual_status and visual_status != "skipped" else quality.get("status")
     overall_summary = visual_summary if visual_status and visual_status != "skipped" else quality.get("summary")
+    scene_manifest = build_scene_manifest(code, {**brief, "storyboardSpec": spec}) if code else {}
     return {
         "brief": {
             "intent": brief.get("intent"),
@@ -140,7 +141,8 @@ def _trace(
         "referenceSemanticTarget": brief.get("referenceSemanticTarget", ""),
         "referenceWarnings": brief.get("referenceWarnings", []),
         "referenceConflict": brief.get("referenceConflict", ""),
-        "sceneManifest": build_scene_manifest(code, {**brief, "storyboardSpec": spec}) if code else {},
+        "sceneManifest": scene_manifest,
+        "runtimeSceneManifest": scene_manifest,
         "staticFindings": (quality or {}).get("issues") or (quality or {}).get("findings") or [],
         "storyboardSpec": spec,
         "stylePreset": style_preset or {},
@@ -185,6 +187,11 @@ def _result(
     render_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     render_result = render_result or {}
+    if render_result.get("sceneManifest") or render_result.get("runtimeSceneManifest"):
+        trace = dict(trace or {})
+        if render_result.get("sceneManifest"):
+            trace["sceneManifest"] = render_result.get("sceneManifest")
+        trace["runtimeSceneManifest"] = render_result.get("runtimeSceneManifest") or render_result.get("sceneManifest")
     payload = {
         "type": "result",
         "success": True,

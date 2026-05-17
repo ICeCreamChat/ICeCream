@@ -110,7 +110,8 @@ class MessageHandler {
 
             // 注册到 CodePanel
             if (this.codePanel) {
-                this.codePanel.registerVideo(videoId, data.code || '', videoUrl, data.agentTrace?.sceneManifest || null);
+                const manifest = data.agentTrace?.runtimeSceneManifest || data.agentTrace?.sceneManifest || null;
+                this.codePanel.registerVideo(videoId, data.code || '', videoUrl, manifest);
             }
 
             const videoLabel = document.createElement('div');

@@ -283,6 +283,8 @@ async function handleManimLegacy(req, res) {
         rendered: true,
         videoUrl: renderData.videoUrl,
         videoBase64: renderData.videoBase64,
+        sceneManifest: renderData.sceneManifest,
+        runtimeSceneManifest: renderData.runtimeSceneManifest || renderData.sceneManifest,
     });
 }
 
@@ -414,6 +416,8 @@ export async function renderCode(req, res) {
             rendered: true,
             videoUrl: data.videoUrl,
             videoBase64: data.videoBase64,
+            sceneManifest: data.sceneManifest,
+            runtimeSceneManifest: data.runtimeSceneManifest || data.sceneManifest,
         });
     } catch (error) {
         console.error('[Manim Client] Render Error:', error);

@@ -677,7 +677,7 @@ class MainScene(Scene):
         manifest = build_scene_manifest(code, brief)
         object_ids = {item["id"] for item in manifest["objects"]}
 
-        self.assertEqual(manifest["version"], "scene-manifest-v1")
+        self.assertEqual(manifest["version"], "scene-manifest-v2")
         self.assertIn("title", object_ids)
         self.assertIn("square", object_ids)
         self.assertIn("label", object_ids)
@@ -686,6 +686,68 @@ class MainScene(Scene):
         self.assertIn("move", square["editable"])
         self.assertIn("set_color", square["editable"])
         self.assertGreaterEqual(square["codeAnchor"]["startLine"], 1)
+
+    def test_scene_manifest_ignores_helper_locals_and_chinese_labels_objects(self):
+        from app.agent.scene_manifest import build_scene_manifest
+
+        code = '''
+from manim import *
+
+def SafeText(content, font_size=28, color="#1D2530", **kwargs):
+    text = Text(str(content), font_size=font_size, color=color, **kwargs)
+    if text.width > 11.2:
+        text.scale_to_fit_width(11.2)
+    return text
+
+class MainScene(SafeScene, Scene):
+    def construct(self):
+        title_mob = SafeText("余弦函数图像")
+        axes = Axes(x_range=[0, 6.28, 1], y_range=[-1, 1, 1])
+        curve = axes.plot(lambda x: np.cos(x), color=BLUE)
+        step_banner = SafeText("步骤 1：建立坐标系")
+        self.add(title_mob, axes, curve, step_banner)
+'''
+        manifest = build_scene_manifest(code, {"storyboardSpec": {"shots": [{"id": "s1", "title": "建立坐标系"}]}})
+        ids = {item["id"] for item in manifest["objects"]}
+        labels = {item["id"]: item.get("displayName") or item.get("label") for item in manifest["objects"]}
+
+        self.assertNotIn("text", ids)
+        self.assertIn("title_mob", ids)
+        self.assertIn("axes", ids)
+        self.assertIn("curve", ids)
+        self.assertIn("step_banner", ids)
+        self.assertEqual(labels["title_mob"], "标题")
+        self.assertEqual(labels["axes"], "坐标系")
+        self.assertEqual(labels["curve"], "曲线")
+        self.assertEqual(labels["step_banner"], "步骤说明")
+        for item in manifest["objects"]:
+            self.assertEqual(item.get("sourceScope"), "MainScene.construct")
+            self.assertTrue(item.get("bbox"))
+
+    def test_runtime_manifest_instrumentation_exports_scene_objects_only(self):
+        from app.agent.scene_manifest import build_scene_manifest, instrument_code_for_runtime_manifest
+
+        code = '''
+from manim import *
+
+def SafeText(content):
+    text = Text(str(content))
+    return text
+
+class MainScene(SafeScene, Scene):
+    def construct(self):
+        title_mob = SafeText("标题")
+        axes = Axes()
+        self.add(title_mob, axes)
+'''
+        manifest = build_scene_manifest(code, {})
+        instrumented = instrument_code_for_runtime_manifest(code, manifest, "D:/tmp/studio_manifest.json")
+
+        self.assertIn("_icecream_studio_export", instrumented)
+        self.assertIn('"title_mob": locals().get("title_mob")', instrumented)
+        self.assertIn('"axes": locals().get("axes")', instrumented)
+        self.assertNotIn('"text": locals().get("text")', instrumented)
+        ast.parse(instrumented)
 
     def test_scene_patch_replaces_text_and_rejects_unknown_operations(self):
         from app.agent.scene_patcher import apply_scene_patch
@@ -705,6 +767,30 @@ class MainScene(Scene):
         rejected = apply_scene_patch(code, {"operation": "run_shell", "objectId": "title"})
         self.assertFalse(rejected["success"])
         self.assertIn("不支持", rejected["warning"])
+
+    def test_scene_patch_rejects_helper_local_object_ids(self):
+        from app.agent.scene_patcher import apply_scene_patch
+
+        code = '''
+from manim import *
+
+def SafeText(content, font_size=28, color="#1D2530", **kwargs):
+    text = Text(str(content), font_size=font_size, color=color, **kwargs)
+    return text
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = SafeText("旧标题")
+        self.add(title_mob)
+'''
+        rejected = apply_scene_patch(code, {"operation": "delete", "objectId": "text"})
+        self.assertFalse(rejected["success"])
+        self.assertIn("只能修改主场景", rejected["warning"])
+
+        patched = apply_scene_patch(code, {"operation": "replace_text", "objectId": "title_mob", "text": "新标题"})
+        self.assertTrue(patched["success"])
+        self.assertIn('SafeText("新标题")', patched["code"])
+        self.assertIn('text = Text(str(content)', patched["code"])
 
     def test_agent_patch_route_applies_safe_patch(self):
         app = FastAPI()

@@ -12,7 +12,10 @@ export class CodePanel {
         this.currentCode = '';
         this.currentVideoId = null; // Track current video
         this.currentSceneManifest = null;
+        this.runtimeSceneManifest = null;
         this.selectedSceneObject = null;
+        this.detectedSceneRegions = [];
+        this.sceneHitTargets = [];
         this.abortController = null; // [Stop Button] Track active request
         this.suggestionController = null;
         this.studioReportEl = null;
@@ -130,7 +133,8 @@ export class CodePanel {
 
     registerSceneManifest(videoId, sceneManifest) {
         if (!videoId || !sceneManifest) return;
-        this.sceneManifestMap.set(videoId, sceneManifest);
+        const manifest = sceneManifest.runtimeSceneManifest || sceneManifest;
+        this.sceneManifestMap.set(videoId, manifest);
     }
 
     /**
@@ -398,12 +402,175 @@ export class CodePanel {
         return overlay;
     }
 
+    bindVideoOverlayRefresh() {
+        const video = this.elements.videoPreview?.querySelector('video');
+        if (!video || video.dataset.studioOverlayBound === '1') return;
+        video.dataset.studioOverlayBound = '1';
+        let lastRefresh = 0;
+        const refresh = () => {
+            this.renderSceneOverlay();
+        };
+        const timedRefresh = () => {
+            const now = Date.now();
+            if (now - lastRefresh < 400) return;
+            lastRefresh = now;
+            refresh();
+        };
+        video.addEventListener('loadeddata', refresh, { once: true });
+        video.addEventListener('seeked', refresh);
+        video.addEventListener('pause', refresh);
+        video.addEventListener('timeupdate', timedRefresh);
+    }
+
+    localizeSceneObjectType(type) {
+        const map = {
+            Text: '文字',
+            SafeText: '文字',
+            Tex: '公式',
+            MathTex: '公式',
+            SafeMathTex: '公式',
+            Circle: '圆形',
+            Square: '正方形',
+            Triangle: '三角形',
+            Rectangle: '矩形',
+            Polygon: '多边形',
+            Line: '线段',
+            Arrow: '箭头',
+            Dot: '点',
+            Graph: '曲线',
+            VGroup: '组合',
+            Axes: '坐标系',
+        };
+        return map[type] || '对象';
+    }
+
+    getSceneObjectDisplayLabel(item) {
+        const text = String(item?.text || '').trim();
+        if (/[\u4e00-\u9fff]/.test(text) && text.length <= 18) return text;
+
+        const id = String(item?.id || item?.label || '').toLowerCase();
+        const rules = [
+            [/title/, '标题'],
+            [/subtitle|sub_title/, '副标题'],
+            [/step|banner/, '步骤说明'],
+            [/summary|conclusion/, '总结'],
+            [/formula|math|tex/, '公式'],
+            [/axes|axis/, '坐标系'],
+            [/graph|curve|plot/, '曲线'],
+            [/point|dot|key/, '关键点'],
+            [/arrow/, '箭头'],
+            [/line/, '线段'],
+            [/circle/, '圆形'],
+            [/square/, '正方形'],
+            [/triangle/, '三角形'],
+            [/label|txt|text/, '文字标签'],
+        ];
+        const matched = rules.find(([pattern]) => pattern.test(id));
+        if (matched) return matched[1];
+
+        return `${this.localizeSceneObjectType(item?.type)} ${String(item?.id || '').replace(/_/g, ' ').trim() || '对象'}`;
+    }
+
+    getSceneObjectRole(item) {
+        const id = String(item?.id || item?.label || '').toLowerCase();
+        const type = String(item?.type || '');
+        if (/title/.test(id)) return 'title';
+        if (/subtitle|sub_title/.test(id)) return 'subtitle';
+        if (/step|banner/.test(id)) return 'step';
+        if (/summary|conclusion/.test(id)) return 'summary';
+        if (/formula|math|tex/.test(id) || /MathTex|Tex/.test(type)) return 'formula';
+        if (/axes|axis/.test(id) || type === 'Axes') return 'axes';
+        if (/graph|curve|plot/.test(id)) return 'graph';
+        if (/point|dot|key/.test(id) || type === 'Dot') return 'point';
+        if (/arrow/.test(id) || type === 'Arrow') return 'connector';
+        if (/line/.test(id) || type === 'Line') return 'connector';
+        if (/Circle|Square|Triangle|Polygon/.test(type)) return 'shape';
+        return item?.role || 'object';
+    }
+
+    shouldExposeSceneObject(item) {
+        const id = String(item?.id || '').toLowerCase();
+        const type = String(item?.type || '');
+        if (/background|bg|panel/.test(id)) return false;
+        if (/x_labels|y_labels|labels_group|formula_group|axes_group/.test(id)) return false;
+        if (type === 'VGroup' && /(group|labels|mob)$/.test(id) && !/(key|point|graph|curve|title|summary|formula)/.test(id)) return false;
+        return true;
+    }
+
+    normalizeSceneBox(box) {
+        if (!box || typeof box !== 'object') return null;
+        const x = Number(box.x);
+        const y = Number(box.y);
+        const width = Number(box.width);
+        const height = Number(box.height);
+        if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+        return {
+            x: Math.max(0.01, Math.min(0.96, x)),
+            y: Math.max(0.01, Math.min(0.94, y)),
+            width: Math.max(0.04, Math.min(0.72, width)),
+            height: Math.max(0.04, Math.min(0.46, height)),
+        };
+    }
+
+    fallbackSceneBox(item, index, total) {
+        const role = this.getSceneObjectRole(item);
+        const byRole = {
+            title: { x: 0.33, y: 0.04, width: 0.34, height: 0.07 },
+            subtitle: { x: 0.36, y: 0.11, width: 0.28, height: 0.055 },
+            step: { x: 0.14, y: 0.22, width: 0.36, height: 0.075 },
+            axes: { x: 0.24, y: 0.34, width: 0.52, height: 0.38 },
+            graph: { x: 0.20, y: 0.35, width: 0.60, height: 0.34 },
+            shape: { x: 0.30, y: 0.30, width: 0.40, height: 0.42 },
+            formula: { x: 0.30, y: 0.74, width: 0.40, height: 0.09 },
+            summary: { x: 0.24, y: 0.84, width: 0.52, height: 0.08 },
+            connector: { x: 0.20, y: 0.48, width: 0.60, height: 0.10 },
+        };
+        if (byRole[role]) return byRole[role];
+        if (role === 'point') {
+            const slot = index % 5;
+            return { x: 0.22 + slot * 0.14, y: 0.58, width: 0.08, height: 0.08 };
+        }
+        const cols = 4;
+        const row = Math.floor(index / cols);
+        const col = index % cols;
+        const y = Math.min(0.82, 0.24 + row * 0.13);
+        return { x: 0.12 + col * 0.20, y, width: Math.max(0.10, Math.min(0.18, 0.72 / Math.max(1, Math.min(total, cols)))), height: 0.08 };
+    }
+
+    getSceneObjectBoxForCurrentTime(object, index = 0, total = 1) {
+        const video = this.elements.videoPreview?.querySelector('video');
+        const duration = Number(video?.duration || 0);
+        const current = Number(video?.currentTime || 0);
+        const bboxes = Array.isArray(object?.bboxes) ? object.bboxes : [];
+        if (bboxes.length) {
+            const normalizedTime = duration > 0 ? current / duration : 0;
+            const exact = bboxes.find(item => {
+                const range = item.timeRange;
+                return Array.isArray(range) && range.length === 2
+                    ? normalizedTime >= Number(range[0]) && normalizedTime <= Number(range[1])
+                    : false;
+            });
+            const selected = exact || bboxes[0];
+            return this.normalizeSceneBox(selected.bbox || selected);
+        }
+        return this.normalizeSceneBox(object?.bbox) || this.fallbackSceneBox(object, index, total);
+    }
+
+    buildInteractiveHitTargets(objects) {
+        return objects.map((object, index) => ({
+            object,
+            box: this.getSceneObjectBoxForCurrentTime(object, index, objects.length),
+            role: this.getSceneObjectRole(object),
+            matchedByVision: false,
+        }));
+    }
+
     renderSceneOverlay() {
         const overlay = this.ensureInteractionOverlay();
         if (!overlay) return;
 
         const objects = Array.isArray(this.currentSceneManifest?.objects)
-            ? this.currentSceneManifest.objects.slice(0, 24)
+            ? this.currentSceneManifest.objects.filter(item => this.shouldExposeSceneObject(item)).slice(0, 18)
             : [];
         if (!objects.length) {
             overlay.innerHTML = '';
@@ -413,21 +580,23 @@ export class CodePanel {
         }
 
         overlay.classList.remove('hidden');
+        const targets = this.buildInteractiveHitTargets(objects);
+        this.sceneHitTargets = targets;
         overlay.innerHTML = `
-            <div class="studio-object-palette" aria-label="可编辑对象">
-                ${objects.map(item => `
+            ${targets.map(({ object, box, matchedByVision }) => `
                     <button type="button"
-                        class="studio-object-box${this.selectedSceneObject?.id === item.id ? ' selected' : ''}"
-                        data-object-id="${this.escapeHtml(item.id)}"
-                        title="${this.escapeHtml(item.label || item.id)}">
-                        <span>${this.escapeHtml(item.type || '对象')}</span>
-                        <strong>${this.escapeHtml(item.label || item.id)}</strong>
+                        class="studio-object-hotspot${this.selectedSceneObject?.id === object.id ? ' selected' : ''}${matchedByVision ? ' is-vision-matched' : ''}"
+                        data-object-id="${this.escapeHtml(object.id)}"
+                        style="left:${(box.x * 100).toFixed(2)}%; top:${(box.y * 100).toFixed(2)}%; width:${(box.width * 100).toFixed(2)}%; height:${(box.height * 100).toFixed(2)}%;"
+                        aria-label="视频元素：${this.escapeHtml(this.getSceneObjectDisplayLabel(object))}"
+                        title="视频元素：${this.escapeHtml(this.getSceneObjectDisplayLabel(object))}">
+                        <span class="studio-object-rect"></span>
+                        <span class="studio-object-label">${this.escapeHtml(this.getSceneObjectDisplayLabel(object))}</span>
                     </button>
                 `).join('')}
-            </div>
         `;
 
-        overlay.querySelectorAll('.studio-object-box').forEach(btn => {
+        overlay.querySelectorAll('.studio-object-hotspot').forEach(btn => {
             btn.addEventListener('click', event => {
                 event.stopPropagation();
                 this.selectSceneObject(btn.dataset.objectId);
@@ -465,7 +634,7 @@ export class CodePanel {
             </div>
             <div class="studio-object-meta">
                 <span>ID：${this.escapeHtml(object.id)}</span>
-                <span>类型：${this.escapeHtml(object.type || '未知')}</span>
+                <span>类型：${this.escapeHtml(this.localizeSceneObjectType(object.type))}</span>
             </div>
             ${message ? `<div class="studio-object-message">${this.escapeHtml(message)}</div>` : ''}
             <div class="studio-object-actions">
@@ -533,9 +702,11 @@ export class CodePanel {
             }
 
             this.currentCode = data.code || code;
-            if (data.sceneManifest) {
-                this.currentSceneManifest = data.sceneManifest;
-                if (this.currentVideoId) this.registerSceneManifest(this.currentVideoId, data.sceneManifest);
+            const manifest = data.runtimeSceneManifest || data.sceneManifest;
+            if (manifest) {
+                this.currentSceneManifest = manifest.runtimeSceneManifest || manifest;
+                this.runtimeSceneManifest = this.currentSceneManifest;
+                if (this.currentVideoId) this.registerSceneManifest(this.currentVideoId, manifest);
             }
             if (this.monacoEditor) this.monacoEditor.setValue(this.currentCode);
             this.pendingHistoryDescription = data.patchSummary || '交互修复';
@@ -710,6 +881,12 @@ export class CodePanel {
                 const newUrl = data.videoUrl;
                 this.latestVideoUrl = newUrl;
                 this.currentCode = code;
+                const manifest = data.runtimeSceneManifest || data.sceneManifest;
+                if (manifest) {
+                    this.currentSceneManifest = manifest.runtimeSceneManifest || manifest;
+                    this.runtimeSceneManifest = this.currentSceneManifest;
+                    if (this.currentVideoId) this.registerSceneManifest(this.currentVideoId, manifest);
+                }
 
                 this.elements.videoPreview.innerHTML = `
                     <video class="studio-preview-video" controls autoplay loop playsinline>
@@ -718,6 +895,7 @@ export class CodePanel {
                 `;
                 this.ensureInteractionOverlay();
                 this.renderSceneOverlay();
+                this.bindVideoOverlayRefresh();
 
                 if (this.pendingHistoryDescription) {
                     this.addHistoryEntry(this.pendingHistoryDescription, code);
@@ -850,6 +1028,7 @@ export class CodePanel {
         this.currentCode = code;
         this.currentVideoId = videoId;
         this.currentSceneManifest = this.sceneManifestMap.get(videoId) || null;
+        this.runtimeSceneManifest = this.currentSceneManifest;
         this.selectedSceneObject = null;
 
         // Update Editors
@@ -878,6 +1057,7 @@ export class CodePanel {
         }
         this.ensureInteractionOverlay();
         this.renderSceneOverlay();
+        this.bindVideoOverlayRefresh();
         this.renderObjectInspector();
 
         // Show panel
