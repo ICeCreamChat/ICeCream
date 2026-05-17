@@ -654,6 +654,78 @@ class ManimAgentV4Tests(unittest.TestCase):
             self.assertTrue(skill["name"])
             self.assertTrue(skill["guidance"])
 
+    def test_scene_manifest_extracts_editable_objects_from_code(self):
+        from app.agent.scene_manifest import build_scene_manifest
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title = Text("Square")
+        square = Square(side_length=2, color=BLUE)
+        label = MathTex("A=s^2")
+        self.add(title, square, label)
+"""
+        brief = {
+            "storyboardSpec": {
+                "shots": [
+                    {"id": "intro", "title": "Show square"},
+                ],
+            }
+        }
+        manifest = build_scene_manifest(code, brief)
+        object_ids = {item["id"] for item in manifest["objects"]}
+
+        self.assertEqual(manifest["version"], "scene-manifest-v1")
+        self.assertIn("title", object_ids)
+        self.assertIn("square", object_ids)
+        self.assertIn("label", object_ids)
+        square = next(item for item in manifest["objects"] if item["id"] == "square")
+        self.assertEqual(square["type"], "Square")
+        self.assertIn("move", square["editable"])
+        self.assertIn("set_color", square["editable"])
+        self.assertGreaterEqual(square["codeAnchor"]["startLine"], 1)
+
+    def test_scene_patch_replaces_text_and_rejects_unknown_operations(self):
+        from app.agent.scene_patcher import apply_scene_patch
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title = Text("Old title")
+        self.add(title)
+"""
+        patched = apply_scene_patch(code, {"operation": "replace_text", "objectId": "title", "text": "New title"})
+        self.assertTrue(patched["success"])
+        self.assertIn('Text("New title")', patched["code"])
+
+        rejected = apply_scene_patch(code, {"operation": "run_shell", "objectId": "title"})
+        self.assertFalse(rejected["success"])
+        self.assertIn("不支持", rejected["warning"])
+
+    def test_agent_patch_route_applies_safe_patch(self):
+        app = FastAPI()
+        register_agent_routes(app)
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title = Text("Old title")
+        self.add(title)
+"""
+        response = TestClient(app).post(
+            "/agent/patch",
+            json={"code": code, "patch": {"operation": "set_color", "objectId": "title", "color": "#0284C7"}},
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["success"])
+        self.assertIn('title.set_color("#0284C7")', data["code"])
+
     def test_critic_blocks_gateway_aligned_security_risks(self):
         code = """
 from manim import *

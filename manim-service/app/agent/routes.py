@@ -14,6 +14,8 @@ from .failure_replay import replay_failure_events
 from .json_safety import to_json_safe
 from .job_registry import cancel_job, get_job, list_jobs
 from .reference_store import save_reference_image
+from .scene_manifest import build_scene_manifest
+from .scene_patcher import apply_scene_patch
 from .skill_loader import SKILL_CATALOG_VERSION, skill_catalog
 from .workflow import run_agent, stream_agent_events
 
@@ -32,6 +34,12 @@ class ReferenceImageRequest(BaseModel):
     filename: str = Field(default="reference.png", max_length=180)
     mimeType: str = Field(default="image/png", max_length=80)
     dataBase64: str = Field(default="", max_length=30_000_000)
+
+
+class ScenePatchRequest(BaseModel):
+    code: str = Field(default="", max_length=120000)
+    patch: dict = Field(default_factory=dict)
+    brief: dict = Field(default_factory=dict)
 
 
 def register_agent_routes(app, *, ai_client=None, model_name: str | None = None, service_token: str = "") -> None:
@@ -73,6 +81,18 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
                 yield json.dumps(to_json_safe(event), ensure_ascii=False) + "\n"
 
         return StreamingResponse(events(), media_type="application/x-ndjson; charset=utf-8")
+
+    @app.post("/agent/patch")
+    async def agent_patch(
+        request: ScenePatchRequest,
+        x_manim_service_token: Optional[str] = Header(default=None, alias="X-Manim-Service-Token"),
+    ):
+        if _forbidden(x_manim_service_token):
+            return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
+        result = apply_scene_patch(request.code, request.patch)
+        if result.get("success"):
+            result["sceneManifest"] = build_scene_manifest(str(result.get("code") or ""), request.brief)
+        return JSONResponse(to_json_safe(result), status_code=200 if result.get("success") else 400)
 
     @app.get("/agent/jobs")
     async def agent_jobs(

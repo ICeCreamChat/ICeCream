@@ -570,6 +570,24 @@ export async function uploadReferenceImage(req, res) {
     }
 }
 
+export async function patchScene(req, res) {
+    try {
+        const code = String(req.body?.code || '');
+        const patch = req.body?.patch || {};
+        if (!code.trim()) {
+            return res.status(400).json({ success: false, error: '代码不能为空' });
+        }
+        const data = await proxyManimJson('/agent/patch', {
+            method: 'POST',
+            body: { code, patch, brief: req.body?.brief || {} },
+            timeoutMs: 30000,
+        });
+        return res.json(data);
+    } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+    }
+}
+
 export default {
     handleManim,
     streamAgent,
@@ -584,4 +602,5 @@ export default {
     listFailures,
     replayFailure,
     uploadReferenceImage,
+    patchScene,
 };

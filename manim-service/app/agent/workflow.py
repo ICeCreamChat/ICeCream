@@ -23,6 +23,7 @@ from .render_cache import get_cached_render, save_cached_render
 from .repair import repair_code_async
 from .renderer import render_code_for_agent
 from .rescue_scene import rescue_scene_code
+from .scene_manifest import build_scene_manifest
 from .skill_loader import select_skills
 from .static_guard import run_static_guard
 from .studio_patch import build_patch_plan
@@ -111,6 +112,7 @@ def _trace(
     storyboard_spec: dict[str, Any] | None = None,
     style_preset: dict[str, Any] | None = None,
     code_source: str = "llm_v6",
+    code: str = "",
 ) -> dict[str, Any]:
     quality = quality or {}
     visual = visual or {}
@@ -138,6 +140,7 @@ def _trace(
         "referenceSemanticTarget": brief.get("referenceSemanticTarget", ""),
         "referenceWarnings": brief.get("referenceWarnings", []),
         "referenceConflict": brief.get("referenceConflict", ""),
+        "sceneManifest": build_scene_manifest(code, {**brief, "storyboardSpec": spec}) if code else {},
         "staticFindings": (quality or {}).get("issues") or (quality or {}).get("findings") or [],
         "storyboardSpec": spec,
         "stylePreset": style_preset or {},
@@ -404,7 +407,7 @@ async def stream_agent_events(
     if generated.get("status") != "success":
         yield _result(
             code=code,
-            trace=_trace(brief, skills, failure_reason=generated.get("summary", ""), storyboard_spec=storyboard_spec, style_preset=style_preset, code_source=code_source),
+            trace=_trace(brief, skills, failure_reason=generated.get("summary", ""), storyboard_spec=storyboard_spec, style_preset=style_preset, code_source=code_source, code=code),
             warning=generated.get("summary") or "Manim Agent v6 未能生成代码。",
         )
         return
@@ -458,6 +461,7 @@ async def stream_agent_events(
             storyboard_spec=storyboard_spec,
             style_preset=style_preset,
             code_source=code_source,
+            code=code,
         )
         yield _result(code=code, trace=trace, warning="Manim Agent v6 已生成代码，但 Python 静态守卫仍需处理。")
         return
@@ -505,6 +509,7 @@ async def stream_agent_events(
             storyboard_spec=storyboard_spec,
             style_preset=style_preset,
             code_source=code_source,
+            code=code,
         )
         yield _result(code=code, trace=trace, warning="Manim Agent v6 已生成代码，但静态检查仍需处理。")
         return
@@ -555,6 +560,7 @@ async def stream_agent_events(
                 storyboard_spec=storyboard_spec,
                 style_preset=style_preset,
                 code_source=code_source,
+                code=code,
             )
             yield _result(code=code, trace=trace, warning="Manim Agent v6 已尝试修复代码，但质量检查仍需处理。")
             return
@@ -577,6 +583,7 @@ async def stream_agent_events(
             storyboard_spec=storyboard_spec,
             style_preset=style_preset,
             code_source=code_source,
+            code=code,
         )
         yield _result(code=code, trace=trace)
         return
@@ -669,6 +676,7 @@ async def stream_agent_events(
                     storyboard_spec=storyboard_spec,
                     style_preset=style_preset,
                     code_source=code_source,
+                    code=code,
                 )
                 yield _result(code=code, trace=trace, warning="视觉检查未通过，已保留可编辑代码。", render_result=preview_render or {})
                 return
@@ -719,6 +727,7 @@ async def stream_agent_events(
         storyboard_spec=storyboard_spec,
         style_preset=style_preset,
         code_source=code_source,
+        code=code,
     )
     rendered = bool(render_result.get("success")) and final_visual["status"] != "error"
     if rendered and not cached_render:

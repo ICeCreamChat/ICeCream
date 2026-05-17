@@ -238,6 +238,8 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
         res.end(JSON.stringify({ success: true, replay: { eventId: 'fail-1', status: 'pass' } }));
       } else if (req.url === '/agent/reference-images') {
         res.end(JSON.stringify({ success: true, reference: { referenceId: 'ref-1', filename: 'sketch.png' } }));
+      } else if (req.url === '/agent/patch') {
+        res.end(JSON.stringify({ success: true, code: `${observed.at(-1)?.body?.code || ''}\n# patched`, patchSummary: '已应用交互修复' }));
       } else {
         res.statusCode = 404;
         res.end(JSON.stringify({ success: false, error: req.url }));
@@ -255,6 +257,11 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ filename: 'sketch.png', mimeType: 'image/png', dataBase64: 'abc' }),
     })).json();
+    const patch = await (await fetch(`${appBase}/api/manim/patch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: 'title = Text("旧标题")', patch: { operation: 'replace_text', objectId: 'title', text: '新标题' } }),
+    })).json();
 
     assert.equal(skills.skills[0].id, 'geometry');
     assert.equal(jobs.jobs[0].jobId, 'job-1');
@@ -263,6 +270,7 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
     assert.equal(failures.failures[0].eventId, 'fail-1');
     assert.equal(replay.replay.status, 'pass');
     assert.equal(reference.reference.referenceId, 'ref-1');
+    assert.match(patch.code, /patched/);
   });
 
   assert.deepEqual(observed.map(item => `${item.method} ${item.url}`), [
@@ -273,8 +281,10 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
     'GET /agent/failures?limit=3',
     'POST /agent/failures/fail-1/replay',
     'POST /agent/reference-images',
+    'POST /agent/patch',
   ]);
-  assert.equal(observed.at(-1).body.filename, 'sketch.png');
+  assert.equal(observed.at(-2).body.filename, 'sketch.png');
+  assert.equal(observed.at(-1).body.patch.operation, 'replace_text');
 });
 
 test('frontend shows Manim agent v6 production progress in a chat bubble', async () => {
@@ -595,12 +605,19 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(indexSource, /class="code-panel manim-studio-window"/);
   assert.match(indexSource, /studio-title-sub">动画代码与预览工作区/);
   assert.match(indexSource, /studio-preview-frame/);
+  assert.match(indexSource, /id="studio-interaction-overlay"/);
+  assert.match(indexSource, /id="studio-object-inspector"/);
   assert.match(indexSource, /id="manim-history-root" class="history-list-container studio-history-panel"/);
   assert.match(indexSource, /studio-editor-panel/);
   assert.match(indexSource, /studio-command-bar/);
   assert.match(indexSource, /试试：把标题字体调大至 40/);
 
   assert.match(codePanelSource, /studio-preview-video/);
+  assert.match(codePanelSource, /registerSceneManifest/);
+  assert.match(codePanelSource, /renderSceneOverlay/);
+  assert.match(codePanelSource, /selectSceneObject/);
+  assert.match(codePanelSource, /applyScenePatch/);
+  assert.match(codePanelSource, /\/api\/manim\/patch/);
   assert.match(codePanelSource, /history-list-container studio-history-panel/);
   assert.match(codePanelSource, /<i data-lucide="play"><\/i> 运行/);
   assert.doesNotMatch(codePanelSource, /style="width:100%; height:100%; object-fit:contain;"/);
@@ -616,6 +633,9 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(mainCssSource, /#code-panel\.manim-studio-window #manim-history-root:not\(\.expanded\) \.history-list/);
   assert.match(mainCssSource, /display: none !important/);
   assert.match(mainCssSource, /\.studio-preview-video/);
+  assert.match(mainCssSource, /\.studio-interaction-overlay/);
+  assert.match(mainCssSource, /\.studio-object-box/);
+  assert.match(mainCssSource, /\.studio-object-inspector/);
   assert.match(mainCssSource, /\.desktop-footer/);
 
   assert.match(mobileCssSource, /Manim Studio Mobile Redesign/);
@@ -623,6 +643,7 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(mobileCssSource, /#code-panel\.manim-studio-window \.mobile-panel-tabs/);
   assert.match(mobileCssSource, /max-height: 24vh/);
   assert.match(mobileCssSource, /#code-panel\.manim-studio-window #manim-history-root:not\(\.expanded\) \.history-list/);
+  assert.match(mobileCssSource, /\.studio-object-inspector/);
   assert.match(mobileCssSource, /overscroll-behavior: contain/);
 });
 

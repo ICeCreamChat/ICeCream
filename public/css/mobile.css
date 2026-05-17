@@ -2082,4 +2082,29 @@ input:focus-visible {
     #code-panel.manim-studio-window.studio-report-visible .mobile-code-tab #monaco-container {
         min-height: 180px !important;
     }
+
+    #code-panel.manim-studio-window .studio-interaction-overlay {
+        inset: 8px !important;
+        align-items: flex-end !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-palette {
+        max-width: 100% !important;
+        max-height: 96px !important;
+        overflow-y: auto !important;
+        overscroll-behavior: contain !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-box {
+        min-width: 72px !important;
+        max-width: 118px !important;
+        padding: 6px 7px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-inspector {
+        margin: 8px 10px 0 !important;
+        max-height: 22vh !important;
+        overflow-y: auto !important;
+        overscroll-behavior: contain !important;
+    }
 }

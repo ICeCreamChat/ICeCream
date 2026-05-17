@@ -125,4 +125,13 @@ router.post('/reference-images', upload.single('image'), async (req, res) => {
     }
 });
 
+router.post('/patch', async (req, res) => {
+    try {
+        const manimClient = await import('../../services/manim/manim-client.js');
+        return manimClient.patchScene(req, res);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 export default router;

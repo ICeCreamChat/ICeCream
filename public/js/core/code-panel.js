@@ -6,10 +6,13 @@ export class CodePanel {
     constructor() {
         this.codeVideoMap = new Map();
         this.videoUrlMap = new Map();
+        this.sceneManifestMap = new Map();
         this.videoHistoryMap = new Map(); // [Manim Port] History State
         this.monacoEditor = null;
         this.currentCode = '';
         this.currentVideoId = null; // Track current video
+        this.currentSceneManifest = null;
+        this.selectedSceneObject = null;
         this.abortController = null; // [Stop Button] Track active request
         this.suggestionController = null;
         this.studioReportEl = null;
@@ -25,6 +28,8 @@ export class CodePanel {
             aiInputDesktop: document.getElementById('ai-instruction-input-desktop'),
             aiBtnDesktop: document.getElementById('ai-modify-btn-desktop'),
             videoPreview: document.getElementById('video-inner-container'),
+            interactionOverlay: document.getElementById('studio-interaction-overlay'),
+            objectInspector: document.getElementById('studio-object-inspector'),
             monacoContainer: document.getElementById('monaco-container'),
             mobileTabs: document.querySelectorAll('.mobile-tab-btn'),
             mobileCodeView: document.querySelector('.mobile-code-view'),
@@ -117,9 +122,15 @@ export class CodePanel {
     /**
      * 注册视频数据
      */
-    registerVideo(videoId, code, videoUrl) {
+    registerVideo(videoId, code, videoUrl, sceneManifest = null) {
         if (code) this.codeVideoMap.set(videoId, code);
         if (videoUrl) this.videoUrlMap.set(videoId, videoUrl);
+        if (sceneManifest) this.registerSceneManifest(videoId, sceneManifest);
+    }
+
+    registerSceneManifest(videoId, sceneManifest) {
+        if (!videoId || !sceneManifest) return;
+        this.sceneManifestMap.set(videoId, sceneManifest);
     }
 
     /**
@@ -373,6 +384,170 @@ export class CodePanel {
             .replace(/'/g, '&#039;');
     }
 
+    ensureInteractionOverlay() {
+        if (!this.elements.videoPreview) return null;
+        let overlay = this.elements.videoPreview.querySelector('#studio-interaction-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'studio-interaction-overlay';
+            overlay.className = 'studio-interaction-overlay';
+            overlay.setAttribute('aria-label', '可交互对象层');
+            this.elements.videoPreview.appendChild(overlay);
+        }
+        this.elements.interactionOverlay = overlay;
+        return overlay;
+    }
+
+    renderSceneOverlay() {
+        const overlay = this.ensureInteractionOverlay();
+        if (!overlay) return;
+
+        const objects = Array.isArray(this.currentSceneManifest?.objects)
+            ? this.currentSceneManifest.objects.slice(0, 24)
+            : [];
+        if (!objects.length) {
+            overlay.innerHTML = '';
+            overlay.classList.add('hidden');
+            this.renderObjectInspector();
+            return;
+        }
+
+        overlay.classList.remove('hidden');
+        overlay.innerHTML = `
+            <div class="studio-object-palette" aria-label="可编辑对象">
+                ${objects.map(item => `
+                    <button type="button"
+                        class="studio-object-box${this.selectedSceneObject?.id === item.id ? ' selected' : ''}"
+                        data-object-id="${this.escapeHtml(item.id)}"
+                        title="${this.escapeHtml(item.label || item.id)}">
+                        <span>${this.escapeHtml(item.type || '对象')}</span>
+                        <strong>${this.escapeHtml(item.label || item.id)}</strong>
+                    </button>
+                `).join('')}
+            </div>
+        `;
+
+        overlay.querySelectorAll('.studio-object-box').forEach(btn => {
+            btn.addEventListener('click', event => {
+                event.stopPropagation();
+                this.selectSceneObject(btn.dataset.objectId);
+            });
+        });
+    }
+
+    selectSceneObject(objectId) {
+        const objects = Array.isArray(this.currentSceneManifest?.objects) ? this.currentSceneManifest.objects : [];
+        this.selectedSceneObject = objects.find(item => item.id === objectId) || null;
+        this.renderSceneOverlay();
+        this.renderObjectInspector();
+    }
+
+    renderObjectInspector(message = '') {
+        const inspector = this.elements.objectInspector;
+        if (!inspector) return;
+
+        const object = this.selectedSceneObject;
+        if (!object) {
+            inspector.classList.add('hidden');
+            inspector.innerHTML = '';
+            return;
+        }
+
+        inspector.classList.remove('hidden');
+        const editable = new Set(Array.isArray(object.editable) ? object.editable : []);
+        inspector.innerHTML = `
+            <div class="studio-object-inspector-header">
+                <div>
+                    <span>已选对象</span>
+                    <strong>${this.escapeHtml(object.label || object.id)}</strong>
+                </div>
+                <button type="button" class="studio-object-close" aria-label="关闭对象属性">×</button>
+            </div>
+            <div class="studio-object-meta">
+                <span>ID：${this.escapeHtml(object.id)}</span>
+                <span>类型：${this.escapeHtml(object.type || '未知')}</span>
+            </div>
+            ${message ? `<div class="studio-object-message">${this.escapeHtml(message)}</div>` : ''}
+            <div class="studio-object-actions">
+                ${editable.has('replace_text') ? '<button type="button" data-studio-patch="replace_text">改文字</button>' : ''}
+                ${editable.has('set_color') ? '<button type="button" data-studio-patch="set_color">改为蓝色</button>' : ''}
+                ${editable.has('move') ? '<button type="button" data-studio-patch="move_up">上移</button><button type="button" data-studio-patch="move_down">下移</button>' : ''}
+                ${editable.has('scale') ? '<button type="button" data-studio-patch="scale_down">缩小</button>' : ''}
+                ${editable.has('delete') ? '<button type="button" data-studio-patch="delete" class="danger">删除</button>' : ''}
+            </div>
+        `;
+
+        inspector.querySelector('.studio-object-close')?.addEventListener('click', () => {
+            this.selectedSceneObject = null;
+            this.renderSceneOverlay();
+            this.renderObjectInspector();
+        });
+
+        inspector.querySelectorAll('[data-studio-patch]').forEach(btn => {
+            btn.addEventListener('click', () => this.handleInspectorPatch(btn.dataset.studioPatch));
+        });
+    }
+
+    async handleInspectorPatch(action) {
+        if (!this.selectedSceneObject) return;
+        const objectId = this.selectedSceneObject.id;
+        let patch = null;
+
+        if (action === 'replace_text') {
+            const nextText = window.prompt?.('输入新的文字内容', this.selectedSceneObject.text || this.selectedSceneObject.label || '') || '';
+            if (!nextText.trim()) return;
+            patch = { operation: 'replace_text', objectId, text: nextText.trim() };
+        } else if (action === 'set_color') {
+            patch = { operation: 'set_color', objectId, color: '#0284C7' };
+        } else if (action === 'move_up') {
+            patch = { operation: 'move', objectId, dx: 0, dy: 0.35 };
+        } else if (action === 'move_down') {
+            patch = { operation: 'move', objectId, dx: 0, dy: -0.35 };
+        } else if (action === 'scale_down') {
+            patch = { operation: 'scale', objectId, factor: 0.88 };
+        } else if (action === 'delete') {
+            if (window.confirm && !window.confirm('确定删除这个对象吗？')) return;
+            patch = { operation: 'delete', objectId };
+        }
+
+        if (patch) {
+            await this.applyScenePatch(patch);
+        }
+    }
+
+    async applyScenePatch(patch) {
+        const code = this.monacoEditor ? this.monacoEditor.getValue() : this.currentCode;
+        if (!code?.trim()) return;
+        this.renderObjectInspector('正在应用交互修复...');
+
+        try {
+            const response = await fetch('/api/manim/patch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code, patch }),
+            });
+            const data = await response.json();
+            if (!response.ok || !data.success) {
+                this.renderObjectInspector(data.warning || data.error || '交互修复失败。');
+                return;
+            }
+
+            this.currentCode = data.code || code;
+            if (data.sceneManifest) {
+                this.currentSceneManifest = data.sceneManifest;
+                if (this.currentVideoId) this.registerSceneManifest(this.currentVideoId, data.sceneManifest);
+            }
+            if (this.monacoEditor) this.monacoEditor.setValue(this.currentCode);
+            this.pendingHistoryDescription = data.patchSummary || '交互修复';
+            this.renderSceneOverlay();
+            this.renderObjectInspector(data.patchSummary || '已应用交互修复，正在重新渲染。');
+            await this.renderCode(this.currentCode);
+        } catch (error) {
+            console.error('Studio patch failed:', error);
+            this.renderObjectInspector('交互修复请求失败，请稍后再试。');
+        }
+    }
+
     async readAgentNdjson(response, onEvent) {
         if (!response.body || !response.body.getReader) {
             const text = await response.text();
@@ -534,12 +709,15 @@ export class CodePanel {
                 // ... (成功逻辑保持不变) ...
                 const newUrl = data.videoUrl;
                 this.latestVideoUrl = newUrl;
+                this.currentCode = code;
 
                 this.elements.videoPreview.innerHTML = `
                     <video class="studio-preview-video" controls autoplay loop playsinline>
                         <source src="${newUrl}?t=${Date.now()}" type="video/mp4">
                     </video>
                 `;
+                this.ensureInteractionOverlay();
+                this.renderSceneOverlay();
 
                 if (this.pendingHistoryDescription) {
                     this.addHistoryEntry(this.pendingHistoryDescription, code);
@@ -671,6 +849,8 @@ export class CodePanel {
 
         this.currentCode = code;
         this.currentVideoId = videoId;
+        this.currentSceneManifest = this.sceneManifestMap.get(videoId) || null;
+        this.selectedSceneObject = null;
 
         // Update Editors
         if (this.monacoEditor) {
@@ -696,6 +876,9 @@ export class CodePanel {
                 </div>
             `;
         }
+        this.ensureInteractionOverlay();
+        this.renderSceneOverlay();
+        this.renderObjectInspector();
 
         // Show panel
         this.elements.panel.classList.add('open');

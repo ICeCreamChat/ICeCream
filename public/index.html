@@ -437,6 +437,7 @@
                     <!-- Video Wrapper (Target for renderCode) -->
                     <div class="studio-preview-frame">
                         <div id="video-inner-container" class="studio-video-stage">
+                        <div id="studio-interaction-overlay" class="studio-interaction-overlay" aria-label="可交互对象层"></div>
                         <!-- Video inserted by JS -->
                         <div class="video-preview-placeholder"
                             style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--manim-text-muted);">
@@ -470,6 +471,7 @@
                         </div>
                         <div class="editor-tab">MainScene.py</div>
                     </div>
+                    <aside id="studio-object-inspector" class="studio-object-inspector hidden" aria-label="对象属性检查器"></aside>
                     <div id="monaco-container"></div>
                 </div>
             </div>
