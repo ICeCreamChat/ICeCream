@@ -15,7 +15,7 @@ from .json_safety import to_json_safe
 from .job_registry import cancel_job, get_job, list_jobs
 from .reference_store import save_reference_image
 from .scene_manifest import build_scene_manifest
-from .scene_patcher import apply_scene_patch
+from .scene_patcher import apply_layout_rebuild, apply_scene_patch
 from .skill_loader import SKILL_CATALOG_VERSION, skill_catalog
 from .workflow import run_agent, stream_agent_events
 
@@ -39,6 +39,12 @@ class ReferenceImageRequest(BaseModel):
 class ScenePatchRequest(BaseModel):
     code: str = Field(default="", max_length=120000)
     patch: dict = Field(default_factory=dict)
+    brief: dict = Field(default_factory=dict)
+
+
+class LayoutRebuildRequest(BaseModel):
+    code: str = Field(default="", max_length=120000)
+    layoutEditSpec: dict = Field(default_factory=dict)
     brief: dict = Field(default_factory=dict)
 
 
@@ -90,6 +96,20 @@ def register_agent_routes(app, *, ai_client=None, model_name: str | None = None,
         if _forbidden(x_manim_service_token):
             return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
         result = apply_scene_patch(request.code, request.patch)
+        if result.get("success"):
+            scene_manifest = build_scene_manifest(str(result.get("code") or ""), request.brief)
+            result["sceneManifest"] = scene_manifest
+            result["runtimeSceneManifest"] = scene_manifest
+        return JSONResponse(to_json_safe(result), status_code=200 if result.get("success") else 400)
+
+    @app.post("/agent/layout-rebuild")
+    async def agent_layout_rebuild(
+        request: LayoutRebuildRequest,
+        x_manim_service_token: Optional[str] = Header(default=None, alias="X-Manim-Service-Token"),
+    ):
+        if _forbidden(x_manim_service_token):
+            return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
+        result = apply_layout_rebuild(request.code, request.layoutEditSpec)
         if result.get("success"):
             scene_manifest = build_scene_manifest(str(result.get("code") or ""), request.brief)
             result["sceneManifest"] = scene_manifest

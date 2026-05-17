@@ -104,6 +104,9 @@ def _base_name(node: ast.AST) -> str:
 
 
 def _first_literal_string(call: ast.Call) -> str:
+    root_call = _root_call(call)
+    if root_call is not call:
+        return _first_literal_string(root_call)
     for arg in call.args:
         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
             return arg.value
@@ -219,8 +222,22 @@ def _estimated_bbox(role: str, index: int, total: int) -> dict[str, float]:
     return {"x": 0.16 + col * 0.23, "y": min(0.82, 0.25 + row * 0.12), "width": 0.18, "height": 0.08}
 
 
+def _root_call(value: ast.Call) -> ast.Call:
+    """Return the constructor/source call under common Manim method chains.
+
+    Manim code often creates objects as ``Circle(...).shift(...)`` or
+    ``axes.plot(...).set_color(...)``. The editable object type is the root
+    constructor/plot call, not the last layout method.
+    """
+    current = value
+    while isinstance(current.func, ast.Attribute) and isinstance(current.func.value, ast.Call):
+        current = current.func.value
+    return current
+
+
 def _call_type(value: ast.Call) -> str:
-    object_type = _name_of(value.func)
+    root = _root_call(value)
+    object_type = _name_of(root.func)
     if object_type in {"plot", "plot_parametric_curve", "plot_line_graph"}:
         return "Graph"
     return object_type

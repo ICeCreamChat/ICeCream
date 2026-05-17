@@ -101,6 +101,8 @@ async def render_code_for_agent(code: str, client_id: str = "agent", stage: str 
         "sceneName": body.get("sceneName"),
         "sceneManifest": body.get("sceneManifest"),
         "runtimeSceneManifest": body.get("runtimeSceneManifest") or body.get("sceneManifest"),
+        "studioFrameSet": body.get("studioFrameSet"),
+        "recommendedFrameId": body.get("recommendedFrameId") or (body.get("studioFrameSet") or {}).get("recommendedFrameId"),
         "clientId": client_id,
         "stage": stage,
     }

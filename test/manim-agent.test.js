@@ -240,6 +240,14 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
         res.end(JSON.stringify({ success: true, reference: { referenceId: 'ref-1', filename: 'sketch.png' } }));
       } else if (req.url === '/agent/patch') {
         res.end(JSON.stringify({ success: true, code: `${observed.at(-1)?.body?.code || ''}\n# patched`, patchSummary: '已应用交互修复' }));
+      } else if (req.url === '/agent/layout-rebuild') {
+        res.end(JSON.stringify({
+          success: true,
+          code: `${observed.at(-1)?.body?.code || ''}\n# layout rebuilt`,
+          videoUrl: '/static/video_rebuilt.mp4',
+          runtimeSceneManifest: { objects: [] },
+          studioFrameSet: { recommendedFrameId: 'frame_03', frames: [{ frameId: 'frame_03', imageUrl: '/static/frame_03.png' }] },
+        }));
       } else {
         res.statusCode = 404;
         res.end(JSON.stringify({ success: false, error: req.url }));
@@ -263,6 +271,18 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
       body: JSON.stringify({ code: 'title = Text("旧标题")', patch: { operation: 'replace_text', objectId: 'title', text: '新标题' } }),
     })).json();
 
+    const layout = await (await fetch(`${appBase}/api/manim/layout-rebuild`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code: 'title = Text("old")',
+        layoutEditSpec: {
+          baseFrameId: 'frame_03',
+          edits: [{ operation: 'move', objectId: 'title', normalizedBBox: { x: 0.2, y: 0.2, width: 0.2, height: 0.1 } }],
+        },
+      }),
+    })).json();
+
     assert.equal(skills.skills[0].id, 'geometry');
     assert.equal(jobs.jobs[0].jobId, 'job-1');
     assert.equal(job.job.status, 'running');
@@ -271,6 +291,8 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
     assert.equal(replay.replay.status, 'pass');
     assert.equal(reference.reference.referenceId, 'ref-1');
     assert.match(patch.code, /patched/);
+    assert.match(layout.code, /layout rebuilt/);
+    assert.equal(layout.studioFrameSet.recommendedFrameId, 'frame_03');
   });
 
   assert.deepEqual(observed.map(item => `${item.method} ${item.url}`), [
@@ -282,9 +304,11 @@ test('Gateway proxies v6 Manim jobs, failures, replay, and reference image APIs'
     'POST /agent/failures/fail-1/replay',
     'POST /agent/reference-images',
     'POST /agent/patch',
+    'POST /agent/layout-rebuild',
   ]);
-  assert.equal(observed.at(-2).body.filename, 'sketch.png');
-  assert.equal(observed.at(-1).body.patch.operation, 'replace_text');
+  assert.equal(observed.at(-3).body.filename, 'sketch.png');
+  assert.equal(observed.at(-2).body.patch.operation, 'replace_text');
+  assert.equal(observed.at(-1).body.layoutEditSpec.baseFrameId, 'frame_03');
 });
 
 test('frontend shows Manim agent v6 production progress in a chat bubble', async () => {
@@ -623,7 +647,15 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(codePanelSource, /getSceneObjectDisplayLabel/);
   assert.match(codePanelSource, /selectSceneObject/);
   assert.match(codePanelSource, /applyScenePatch/);
-  assert.match(codePanelSource, /\/api\/manim\/patch/);
+  assert.match(codePanelSource, /studioFrameSet/);
+  assert.match(codePanelSource, /recommendedFrameId/);
+    assert.match(codePanelSource, /renderStudioFrameStrip/);
+    assert.match(codePanelSource, /selectStudioFrame/);
+    assert.match(codePanelSource, /createManualStudioObject/);
+    assert.match(codePanelSource, /startStudioObjectDrag/);
+    assert.match(codePanelSource, /layout_calibrate/);
+    assert.match(codePanelSource, /buildLayoutEditSpec/);
+    assert.match(codePanelSource, /\/api\/manim\/layout-rebuild/);
   assert.doesNotMatch(codePanelSource, /studio-object-palette/);
   assert.doesNotMatch(codePanelSource, /<span>\$\{this\.escapeHtml\(item\.type \|\| '对象'\)\}<\/span>/);
   assert.match(codePanelSource, /studio-object-hotspot/);
@@ -645,6 +677,10 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(mainCssSource, /display: none !important/);
   assert.match(mainCssSource, /\.studio-preview-video/);
   assert.match(mainCssSource, /\.studio-interaction-overlay/);
+    assert.match(mainCssSource, /\.studio-frame-strip/);
+    assert.match(mainCssSource, /\.studio-calibration-frame/);
+    assert.match(mainCssSource, /\.studio-manual-selection/);
+    assert.match(mainCssSource, /\.studio-interaction-overlay\.is-manual-drawing/);
   assert.match(mainCssSource, /\.studio-object-hotspot/);
   assert.match(mainCssSource, /\.studio-object-rect/);
   assert.match(mainCssSource, /\.studio-object-label/);

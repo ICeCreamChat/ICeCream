@@ -134,4 +134,13 @@ router.post('/patch', async (req, res) => {
     }
 });
 
+router.post('/layout-rebuild', async (req, res) => {
+    try {
+        const manimClient = await import('../../services/manim/manim-client.js');
+        return manimClient.layoutRebuild(req, res);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 export default router;

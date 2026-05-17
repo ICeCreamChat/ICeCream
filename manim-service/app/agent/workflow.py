@@ -192,6 +192,10 @@ def _result(
         if render_result.get("sceneManifest"):
             trace["sceneManifest"] = render_result.get("sceneManifest")
         trace["runtimeSceneManifest"] = render_result.get("runtimeSceneManifest") or render_result.get("sceneManifest")
+    if render_result.get("studioFrameSet"):
+        trace = dict(trace or {})
+        trace["studioFrameSet"] = render_result.get("studioFrameSet")
+        trace["recommendedFrameId"] = render_result.get("recommendedFrameId") or render_result.get("studioFrameSet", {}).get("recommendedFrameId")
     payload = {
         "type": "result",
         "success": True,
@@ -203,6 +207,9 @@ def _result(
         "warning": warning or render_result.get("warning"),
         "agentTrace": trace,
     }
+    if render_result.get("studioFrameSet"):
+        payload["studioFrameSet"] = render_result.get("studioFrameSet")
+        payload["recommendedFrameId"] = render_result.get("recommendedFrameId") or render_result.get("studioFrameSet", {}).get("recommendedFrameId")
     if warning or render_result.get("success") is False:
         event_id = record_failure_event(payload, code=code)
         if event_id:

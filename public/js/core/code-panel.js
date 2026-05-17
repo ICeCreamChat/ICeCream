@@ -7,12 +7,18 @@ export class CodePanel {
         this.codeVideoMap = new Map();
         this.videoUrlMap = new Map();
         this.sceneManifestMap = new Map();
+        this.studioFrameSetMap = new Map();
         this.videoHistoryMap = new Map(); // [Manim Port] History State
         this.monacoEditor = null;
         this.currentCode = '';
         this.currentVideoId = null; // Track current video
         this.currentSceneManifest = null;
         this.runtimeSceneManifest = null;
+        this.currentStudioFrameSet = null;
+        this.selectedStudioFrameId = null;
+        this.manualStudioObjects = [];
+        this.isManualSelectionMode = false;
+        this.studioPointerState = null;
         this.selectedSceneObject = null;
         this.detectedSceneRegions = [];
         this.sceneHitTargets = [];
@@ -133,8 +139,15 @@ export class CodePanel {
 
     registerSceneManifest(videoId, sceneManifest) {
         if (!videoId || !sceneManifest) return;
-        const manifest = sceneManifest.runtimeSceneManifest || sceneManifest;
+        const manifest = sceneManifest.runtimeSceneManifest || sceneManifest.sceneManifest || sceneManifest;
         this.sceneManifestMap.set(videoId, manifest);
+        const studioFrameSet = sceneManifest.studioFrameSet || sceneManifest.agentTrace?.studioFrameSet || null;
+        if (studioFrameSet) {
+            this.studioFrameSetMap.set(videoId, {
+                ...studioFrameSet,
+                recommendedFrameId: sceneManifest.recommendedFrameId || studioFrameSet.recommendedFrameId,
+            });
+        }
     }
 
     /**
@@ -388,15 +401,187 @@ export class CodePanel {
             .replace(/'/g, '&#039;');
     }
 
+    getSelectedStudioFrame() {
+        const frames = Array.isArray(this.currentStudioFrameSet?.frames) ? this.currentStudioFrameSet.frames : [];
+        return frames.find(frame => frame.frameId === this.selectedStudioFrameId)
+            || frames.find(frame => frame.frameId === this.currentStudioFrameSet?.recommendedFrameId)
+            || frames[0]
+            || null;
+    }
+
+    renderStudioFrameStrip() {
+        const strip = this.elements.videoPreview?.querySelector('.studio-frame-strip');
+        if (!strip) return;
+        const frames = Array.isArray(this.currentStudioFrameSet?.frames) ? this.currentStudioFrameSet.frames : [];
+        if (!frames.length) {
+            strip.innerHTML = '<span class="studio-frame-empty">暂无可校准关键帧</span>';
+            return;
+        }
+        strip.innerHTML = frames.map((frame, index) => `
+            <button type="button"
+                class="studio-frame-btn${frame.frameId === this.selectedStudioFrameId ? ' active' : ''}${frame.isRecommended ? ' recommended' : ''}"
+                data-frame-id="${this.escapeHtml(frame.frameId)}"
+                title="${this.escapeHtml(frame.reason || '')}">
+                <span>${this.escapeHtml(frame.isRecommended ? '推荐帧' : (frame.label || `阶段 ${index + 1}`))}</span>
+                <small>${Number(frame.objectCount || 0)} 个对象</small>
+            </button>
+        `).join('');
+        strip.querySelectorAll('.studio-frame-btn').forEach(btn => {
+            btn.addEventListener('click', () => this.selectStudioFrame(btn.dataset.frameId));
+        });
+    }
+
+    selectStudioFrame(frameId) {
+        const frames = Array.isArray(this.currentStudioFrameSet?.frames) ? this.currentStudioFrameSet.frames : [];
+        const frame = frames.find(item => item.frameId === frameId) || frames[0] || null;
+        this.selectedStudioFrameId = frame?.frameId || null;
+        const image = this.elements.videoPreview?.querySelector('.studio-calibration-frame');
+        if (image && frame?.imageUrl) {
+            image.src = frame.imageUrl;
+            image.alt = `${frame.isRecommended ? '推荐帧' : '关键帧'}：${frame.reason || '用于校准'}`;
+        }
+        this.renderStudioFrameStrip();
+        this.renderSceneOverlay();
+    }
+
+    normalizeStudioBox(box) {
+        const x = Math.max(0, Math.min(0.98, Number(box?.x) || 0));
+        const y = Math.max(0, Math.min(0.98, Number(box?.y) || 0));
+        const width = Math.max(0.02, Math.min(1 - x, Number(box?.width) || 0.08));
+        const height = Math.max(0.02, Math.min(1 - y, Number(box?.height) || 0.06));
+        return { x, y, width, height };
+    }
+
+    updateSceneObjectBox(object, box, options = {}) {
+        if (!object) return;
+        const normalized = this.normalizeStudioBox(box);
+        if (!object._studioOriginalBBox && !options.skipOriginal) {
+            object._studioOriginalBBox = this.getSceneObjectBoxForCurrentTime(object, 0, 1);
+        }
+        object.bbox = normalized;
+        const frameId = this.selectedStudioFrameId || this.getSelectedStudioFrame()?.frameId || 'manual';
+        const bboxes = Array.isArray(object.bboxes) ? [...object.bboxes] : [];
+        const index = bboxes.findIndex(item => item?.frameId === frameId);
+        const nextEntry = { frameId, bbox: normalized };
+        if (index >= 0) {
+            bboxes[index] = { ...bboxes[index], ...nextEntry };
+        } else {
+            bboxes.push(nextEntry);
+        }
+        object.bboxes = bboxes;
+    }
+
+    enableManualSelectionMode() {
+        this.isManualSelectionMode = true;
+        this.selectedSceneObject = null;
+        this.ensureInteractionOverlay()?.classList.add('is-manual-drawing');
+        this.renderObjectInspector();
+        this.renderSceneOverlay();
+    }
+
+    createManualStudioObject(box = null) {
+        const frame = this.getSelectedStudioFrame();
+        const bbox = this.normalizeStudioBox(box || { x: 0.34, y: 0.34, width: 0.28, height: 0.18 });
+        const object = {
+            id: `manual_${Date.now()}`,
+            type: 'Manual',
+            label: '手动画框对象',
+            role: 'object',
+            bbox,
+            bboxes: [{ frameId: frame?.frameId || this.selectedStudioFrameId || 'manual', bbox }],
+            editable: ['move', 'scale', 'delete', 'manual_region'],
+            _studioOriginalBBox: bbox,
+        };
+        this.manualStudioObjects = [...this.manualStudioObjects, object];
+        this.selectedSceneObject = object;
+        this.renderSceneOverlay();
+        this.renderObjectInspector('已创建手动画框。你可以拖动调整，再应用到整段动画。');
+        return object;
+    }
+
+    renderVideoPreview(videoUrl) {
+        if (!this.elements.videoPreview) return;
+        const frames = Array.isArray(this.currentStudioFrameSet?.frames) ? this.currentStudioFrameSet.frames : [];
+        const recommendedFrameId = this.currentStudioFrameSet?.recommendedFrameId || frames[0]?.frameId || null;
+        this.selectedStudioFrameId = this.selectedStudioFrameId || recommendedFrameId;
+        const selectedFrame = frames.find(frame => frame.frameId === this.selectedStudioFrameId)
+            || frames.find(frame => frame.frameId === recommendedFrameId)
+            || frames[0]
+            || null;
+
+        if (videoUrl) {
+            this.elements.videoPreview.innerHTML = `
+                <div class="studio-video-reference">
+                    <video class="studio-preview-video" controls autoplay loop playsinline>
+                        <source src="${videoUrl}" type="video/mp4">
+                    </video>
+                </div>
+                <div class="studio-frame-strip" aria-label="关键帧选择"></div>
+                <div class="studio-calibration-frame-wrap">
+                    ${selectedFrame?.imageUrl
+                        ? `<img class="studio-calibration-frame" src="${this.escapeHtml(selectedFrame.imageUrl)}" alt="用于校准的关键帧">`
+                        : '<div class="studio-calibration-frame studio-calibration-empty">没有找到适合校准的关键帧</div>'}
+                    <div id="studio-interaction-overlay" class="studio-interaction-overlay hidden" aria-label="可交互对象层"></div>
+                    <div class="studio-calibration-toolbar">
+                        <button type="button" class="studio-manual-selection">手动画框</button>
+                        <button type="button" class="studio-apply-layout-btn">应用到整段动画</button>
+                    </div>
+                </div>
+            `;
+            this.elements.videoPreview.querySelector('.studio-manual-selection')?.addEventListener('click', () => this.enableManualSelectionMode());
+            this.elements.videoPreview.querySelector('.studio-apply-layout-btn')?.addEventListener('click', () => {
+                this.applySelectedLayoutCalibration();
+            });
+            this.renderStudioFrameStrip();
+            this.bindVideoOverlayRefresh();
+            this.bindCalibrationFrameDrawing();
+        } else {
+            this.elements.videoPreview.innerHTML = `
+                <div class="video-preview-placeholder">
+                    <span>🎬</span>
+                    <p>视频预览区</p>
+                </div>
+            `;
+        }
+        this.ensureInteractionOverlay();
+        this.renderSceneOverlay();
+    }
+
+    bindCalibrationFrameDrawing() {
+        const wrap = this.elements.videoPreview?.querySelector('.studio-calibration-frame-wrap');
+        if (!wrap || wrap.dataset.studioDrawingBound === '1') return;
+        wrap.dataset.studioDrawingBound = '1';
+        wrap.addEventListener('pointerdown', event => {
+            if (!this.isManualSelectionMode || event.target.closest('.studio-object-hotspot')) return;
+            const rect = wrap.getBoundingClientRect();
+            const startX = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+            const startY = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+            const object = this.createManualStudioObject({ x: startX, y: startY, width: 0.02, height: 0.02 });
+            this.studioPointerState = {
+                mode: 'draw',
+                object,
+                startX,
+                startY,
+                rect,
+            };
+            wrap.setPointerCapture?.(event.pointerId);
+            event.preventDefault();
+        });
+        wrap.addEventListener('pointermove', event => this.handleStudioPointerMove(event));
+        wrap.addEventListener('pointerup', event => this.finishStudioPointer(event));
+        wrap.addEventListener('pointercancel', event => this.finishStudioPointer(event));
+    }
+
     ensureInteractionOverlay() {
         if (!this.elements.videoPreview) return null;
-        let overlay = this.elements.videoPreview.querySelector('#studio-interaction-overlay');
+        const target = this.elements.videoPreview.querySelector('.studio-calibration-frame-wrap') || this.elements.videoPreview;
+        let overlay = target.querySelector('#studio-interaction-overlay');
         if (!overlay) {
             overlay = document.createElement('div');
             overlay.id = 'studio-interaction-overlay';
             overlay.className = 'studio-interaction-overlay';
             overlay.setAttribute('aria-label', '可交互对象层');
-            this.elements.videoPreview.appendChild(overlay);
+            target.appendChild(overlay);
         }
         this.elements.interactionOverlay = overlay;
         return overlay;
@@ -440,6 +625,7 @@ export class CodePanel {
             Graph: '曲线',
             VGroup: '组合',
             Axes: '坐标系',
+            Manual: '手动画框',
         };
         return map[type] || '对象';
     }
@@ -538,11 +724,16 @@ export class CodePanel {
     }
 
     getSceneObjectBoxForCurrentTime(object, index = 0, total = 1) {
+        const selectedFrame = this.getSelectedStudioFrame();
         const video = this.elements.videoPreview?.querySelector('video');
         const duration = Number(video?.duration || 0);
         const current = Number(video?.currentTime || 0);
         const bboxes = Array.isArray(object?.bboxes) ? object.bboxes : [];
         if (bboxes.length) {
+            if (selectedFrame?.frameId) {
+                const byFrame = bboxes.find(item => String(item?.frameId || '') === String(selectedFrame.frameId));
+                if (byFrame) return this.normalizeSceneBox(byFrame.bbox || byFrame);
+            }
             const normalizedTime = duration > 0 ? current / duration : 0;
             const exact = bboxes.find(item => {
                 const range = item.timeRange;
@@ -565,13 +756,97 @@ export class CodePanel {
         }));
     }
 
+    startStudioObjectDrag(event, objectId) {
+        if (event.button !== undefined && event.button !== 0) return;
+        const overlay = this.ensureInteractionOverlay();
+        if (!overlay) return;
+        this.selectSceneObject(objectId);
+        const object = this.selectedSceneObject;
+        if (!object) return;
+        const box = this.getSceneObjectBoxForCurrentTime(object, 0, 1);
+        const rect = overlay.getBoundingClientRect();
+        this.studioPointerState = {
+            mode: 'move',
+            object,
+            rect,
+            startClientX: event.clientX,
+            startClientY: event.clientY,
+            startBox: { ...box },
+            moved: false,
+        };
+        overlay.setPointerCapture?.(event.pointerId);
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    handleStudioPointerMove(event) {
+        const state = this.studioPointerState;
+        if (!state?.object || !state.rect?.width || !state.rect?.height) return;
+
+        if (state.mode === 'draw') {
+            const currentX = Math.max(0, Math.min(1, (event.clientX - state.rect.left) / state.rect.width));
+            const currentY = Math.max(0, Math.min(1, (event.clientY - state.rect.top) / state.rect.height));
+            const x = Math.min(state.startX, currentX);
+            const y = Math.min(state.startY, currentY);
+            const width = Math.abs(currentX - state.startX);
+            const height = Math.abs(currentY - state.startY);
+            this.updateSceneObjectBox(state.object, { x, y, width, height }, { skipOriginal: true });
+            state.moved = width > 0.01 || height > 0.01;
+        } else if (state.mode === 'move') {
+            const dx = (event.clientX - state.startClientX) / state.rect.width;
+            const dy = (event.clientY - state.startClientY) / state.rect.height;
+            const nextBox = {
+                ...state.startBox,
+                x: state.startBox.x + dx,
+                y: state.startBox.y + dy,
+            };
+            this.updateSceneObjectBox(state.object, nextBox);
+            state.moved = Math.abs(dx) > 0.003 || Math.abs(dy) > 0.003;
+        }
+        this.selectedSceneObject = state.object;
+        this.renderSceneOverlay();
+        event.preventDefault();
+    }
+
+    finishStudioPointer(event) {
+        const state = this.studioPointerState;
+        if (!state) return;
+        this.studioPointerState = null;
+        this.isManualSelectionMode = false;
+        this.ensureInteractionOverlay()?.classList.remove('is-manual-drawing');
+
+        if (state.mode === 'draw') {
+            const box = this.getSceneObjectBoxForCurrentTime(state.object, 0, 1);
+            if (!state.moved || box.width < 0.025 || box.height < 0.025) {
+                this.manualStudioObjects = this.manualStudioObjects.filter(item => item.id !== state.object.id);
+                this.selectedSceneObject = null;
+                this.renderObjectInspector('手动画框太小，已取消。');
+            } else {
+                this.selectedSceneObject = state.object;
+                this.renderObjectInspector('已创建手动画框。可继续拖动校准，或应用到整段动画。');
+            }
+        } else if (state.mode === 'move' && state.moved) {
+            this.selectedSceneObject = state.object;
+            this.renderObjectInspector('位置已在关键帧上调整。点击“应用到整段动画”后会重构 Manim 代码。');
+        }
+        this.renderSceneOverlay();
+        event?.preventDefault?.();
+    }
+
     renderSceneOverlay() {
         const overlay = this.ensureInteractionOverlay();
         if (!overlay) return;
 
-        const objects = Array.isArray(this.currentSceneManifest?.objects)
+        const selectedFrame = this.getSelectedStudioFrame();
+        const hasFrameFilter = Array.isArray(selectedFrame?.objectIds);
+        const frameObjectIds = new Set(hasFrameFilter ? selectedFrame.objectIds.map(String) : []);
+        const manifestObjects = Array.isArray(this.currentSceneManifest?.objects)
             ? this.currentSceneManifest.objects.filter(item => this.shouldExposeSceneObject(item)).slice(0, 18)
             : [];
+        const objects = [
+            ...manifestObjects.filter(item => !hasFrameFilter || frameObjectIds.has(String(item.id))),
+            ...this.manualStudioObjects,
+        ];
         if (!objects.length) {
             overlay.innerHTML = '';
             overlay.classList.add('hidden');
@@ -580,6 +855,7 @@ export class CodePanel {
         }
 
         overlay.classList.remove('hidden');
+        overlay.classList.toggle('is-manual-drawing', Boolean(this.isManualSelectionMode));
         const targets = this.buildInteractiveHitTargets(objects);
         this.sceneHitTargets = targets;
         overlay.innerHTML = `
@@ -597,6 +873,7 @@ export class CodePanel {
         `;
 
         overlay.querySelectorAll('.studio-object-hotspot').forEach(btn => {
+            btn.addEventListener('pointerdown', event => this.startStudioObjectDrag(event, btn.dataset.objectId));
             btn.addEventListener('click', event => {
                 event.stopPropagation();
                 this.selectSceneObject(btn.dataset.objectId);
@@ -605,7 +882,10 @@ export class CodePanel {
     }
 
     selectSceneObject(objectId) {
-        const objects = Array.isArray(this.currentSceneManifest?.objects) ? this.currentSceneManifest.objects : [];
+        const objects = [
+            ...(Array.isArray(this.currentSceneManifest?.objects) ? this.currentSceneManifest.objects : []),
+            ...this.manualStudioObjects,
+        ];
         this.selectedSceneObject = objects.find(item => item.id === objectId) || null;
         this.renderSceneOverlay();
         this.renderObjectInspector();
@@ -628,7 +908,7 @@ export class CodePanel {
             <div class="studio-object-inspector-header">
                 <div>
                     <span>已选对象</span>
-                    <strong>${this.escapeHtml(object.label || object.id)}</strong>
+                    <strong>${this.escapeHtml(this.getSceneObjectDisplayLabel(object))}</strong>
                 </div>
                 <button type="button" class="studio-object-close" aria-label="关闭对象属性">×</button>
             </div>
@@ -684,20 +964,67 @@ export class CodePanel {
         }
     }
 
+    buildLayoutEditSpec(patch) {
+        const frame = this.getSelectedStudioFrame();
+        const sourceBBox = this.selectedSceneObject
+            ? (this.selectedSceneObject._studioOriginalBBox || this.getSceneObjectBoxForCurrentTime(this.selectedSceneObject, 0, 1))
+            : null;
+        const currentBBox = this.selectedSceneObject
+            ? this.getSceneObjectBoxForCurrentTime(this.selectedSceneObject, 0, 1)
+            : null;
+        const edit = {
+            ...patch,
+            baseFrameId: frame?.frameId || this.selectedStudioFrameId || '',
+            baseTime: Number(frame?.time || 0),
+        };
+        if (sourceBBox) {
+            edit.sourceBBox = sourceBBox;
+            edit.normalizedBBox = patch.normalizedBBox || (patch.operation === 'layout_calibrate' && currentBBox ? currentBBox : {
+                ...sourceBBox,
+                x: Math.max(0.01, Math.min(0.96, sourceBBox.x + Number(patch.dx || 0) / 14.222)),
+                y: Math.max(0.01, Math.min(0.94, sourceBBox.y - Number(patch.dy || 0) / 8.0)),
+                width: patch.factor ? Math.max(0.04, Math.min(0.72, sourceBBox.width * Number(patch.factor || 1))) : sourceBBox.width,
+                height: patch.factor ? Math.max(0.04, Math.min(0.46, sourceBBox.height * Number(patch.factor || 1))) : sourceBBox.height,
+            });
+        }
+        return {
+            baseFrameId: frame?.frameId || this.selectedStudioFrameId || '',
+            baseTime: Number(frame?.time || 0),
+            edits: [edit],
+        };
+    }
+
+    async applySelectedLayoutCalibration() {
+        if (!this.selectedSceneObject) {
+            this.renderObjectInspector('请先选择视频中的对象，或手动画框一个区域。');
+            return;
+        }
+        if (String(this.selectedSceneObject.id || '').startsWith('manual_')) {
+            this.renderObjectInspector('手动画框已记录为校准参考。当前版本请优先选择已有对象进行整段重构。');
+            return;
+        }
+        await this.applyScenePatch({
+            operation: 'layout_calibrate',
+            objectId: this.selectedSceneObject.id,
+            normalizedBBox: this.getSceneObjectBoxForCurrentTime(this.selectedSceneObject, 0, 1),
+        });
+    }
+
     async applyScenePatch(patch) {
         const code = this.monacoEditor ? this.monacoEditor.getValue() : this.currentCode;
         if (!code?.trim()) return;
-        this.renderObjectInspector('正在应用交互修复...');
+        this.renderObjectInspector('正在应用到整段动画...');
 
         try {
-            const response = await fetch('/api/manim/patch', {
+            const layoutEditSpec = this.buildLayoutEditSpec(patch);
+            const response = await fetch('/api/manim/layout-rebuild', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ code, patch }),
+                body: JSON.stringify({ code, layoutEditSpec }),
             });
             const data = await response.json();
             if (!response.ok || !data.success) {
-                this.renderObjectInspector(data.warning || data.error || '交互修复失败。');
+                this.renderObjectInspector(data.warning || data.error || '关键帧重构失败。');
                 return;
             }
 
@@ -709,13 +1036,13 @@ export class CodePanel {
                 if (this.currentVideoId) this.registerSceneManifest(this.currentVideoId, manifest);
             }
             if (this.monacoEditor) this.monacoEditor.setValue(this.currentCode);
-            this.pendingHistoryDescription = data.patchSummary || '交互修复';
+            this.pendingHistoryDescription = data.patchSummary || '关键帧校准';
             this.renderSceneOverlay();
-            this.renderObjectInspector(data.patchSummary || '已应用交互修复，正在重新渲染。');
+            this.renderObjectInspector(data.patchSummary || '已应用关键帧校准，正在重新渲染。');
             await this.renderCode(this.currentCode);
         } catch (error) {
             console.error('Studio patch failed:', error);
-            this.renderObjectInspector('交互修复请求失败，请稍后再试。');
+            this.renderObjectInspector('关键帧重构请求失败，请稍后再试。');
         }
     }
 
@@ -885,17 +1212,21 @@ export class CodePanel {
                 if (manifest) {
                     this.currentSceneManifest = manifest.runtimeSceneManifest || manifest;
                     this.runtimeSceneManifest = this.currentSceneManifest;
-                    if (this.currentVideoId) this.registerSceneManifest(this.currentVideoId, manifest);
+                    if (this.currentVideoId) {
+                        this.registerSceneManifest(this.currentVideoId, {
+                            sceneManifest: data.sceneManifest,
+                            runtimeSceneManifest: data.runtimeSceneManifest || data.sceneManifest,
+                            studioFrameSet: data.studioFrameSet,
+                            recommendedFrameId: data.recommendedFrameId,
+                        });
+                    }
                 }
-
-                this.elements.videoPreview.innerHTML = `
-                    <video class="studio-preview-video" controls autoplay loop playsinline>
-                        <source src="${newUrl}?t=${Date.now()}" type="video/mp4">
-                    </video>
-                `;
-                this.ensureInteractionOverlay();
-                this.renderSceneOverlay();
-                this.bindVideoOverlayRefresh();
+                if (data.studioFrameSet) {
+                    this.currentStudioFrameSet = data.studioFrameSet;
+                    this.selectedStudioFrameId = data.recommendedFrameId || data.studioFrameSet.recommendedFrameId || null;
+                    if (this.currentVideoId) this.studioFrameSetMap.set(this.currentVideoId, data.studioFrameSet);
+                }
+                this.renderVideoPreview(`${newUrl}?t=${Date.now()}`);
 
                 if (this.pendingHistoryDescription) {
                     this.addHistoryEntry(this.pendingHistoryDescription, code);
@@ -1029,6 +1360,9 @@ export class CodePanel {
         this.currentVideoId = videoId;
         this.currentSceneManifest = this.sceneManifestMap.get(videoId) || null;
         this.runtimeSceneManifest = this.currentSceneManifest;
+        this.currentStudioFrameSet = this.studioFrameSetMap.get(videoId) || null;
+        this.selectedStudioFrameId = this.currentStudioFrameSet?.recommendedFrameId || null;
+        this.manualStudioObjects = [];
         this.selectedSceneObject = null;
 
         // Update Editors
@@ -1041,23 +1375,7 @@ export class CodePanel {
 
         // Update Video Preview (WITHOUT wiping history container)
         // this.elements.videoPreview is #video-inner-container
-        if (videoUrl && this.elements.videoPreview) {
-            this.elements.videoPreview.innerHTML = `
-                <video class="studio-preview-video" controls autoplay loop playsinline>
-                    <source src="${videoUrl}" type="video/mp4">
-                </video>
-            `;
-        } else {
-            this.elements.videoPreview.innerHTML = `
-                <div class="video-preview-placeholder">
-                    <span>🎬</span>
-                    <p>视频预览区</p>
-                </div>
-            `;
-        }
-        this.ensureInteractionOverlay();
-        this.renderSceneOverlay();
-        this.bindVideoOverlayRefresh();
+        this.renderVideoPreview(videoUrl || null);
         this.renderObjectInspector();
 
         // Show panel

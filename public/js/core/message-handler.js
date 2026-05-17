@@ -110,8 +110,13 @@ class MessageHandler {
 
             // 注册到 CodePanel
             if (this.codePanel) {
-                const manifest = data.agentTrace?.runtimeSceneManifest || data.agentTrace?.sceneManifest || null;
-                this.codePanel.registerVideo(videoId, data.code || '', videoUrl, manifest);
+                const manifestBundle = {
+                    sceneManifest: data.sceneManifest || data.agentTrace?.sceneManifest || null,
+                    runtimeSceneManifest: data.runtimeSceneManifest || data.agentTrace?.runtimeSceneManifest || data.agentTrace?.sceneManifest || null,
+                    studioFrameSet: data.studioFrameSet || data.agentTrace?.studioFrameSet || null,
+                    recommendedFrameId: data.recommendedFrameId || data.agentTrace?.recommendedFrameId || null,
+                };
+                this.codePanel.registerVideo(videoId, data.code || '', videoUrl, manifestBundle);
             }
 
             const videoLabel = document.createElement('div');

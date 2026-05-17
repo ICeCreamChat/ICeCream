@@ -2104,4 +2104,25 @@ input:focus-visible {
         overflow-y: auto !important;
         overscroll-behavior: contain !important;
     }
+
+    #code-panel.manim-studio-window .studio-frame-strip {
+        overflow-x: auto !important;
+        flex-wrap: nowrap !important;
+        padding-bottom: 4px !important;
+        -webkit-overflow-scrolling: touch !important;
+    }
+
+    #code-panel.manim-studio-window .studio-frame-btn {
+        flex: 0 0 auto !important;
+        min-width: 112px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-calibration-frame-wrap {
+        min-height: 180px !important;
+        max-height: 40vh !important;
+    }
+
+    #code-panel.manim-studio-window .studio-calibration-toolbar {
+        flex-wrap: wrap !important;
+    }
 }

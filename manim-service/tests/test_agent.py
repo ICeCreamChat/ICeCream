@@ -704,8 +704,9 @@ class MainScene(SafeScene, Scene):
         title_mob = SafeText("余弦函数图像")
         axes = Axes(x_range=[0, 6.28, 1], y_range=[-1, 1, 1])
         curve = axes.plot(lambda x: np.cos(x), color=BLUE)
+        circle = Circle(radius=0.8, color=BLUE).shift(DOWN * 0.5)
         step_banner = SafeText("步骤 1：建立坐标系")
-        self.add(title_mob, axes, curve, step_banner)
+        self.add(title_mob, axes, curve, circle, step_banner)
 '''
         manifest = build_scene_manifest(code, {"storyboardSpec": {"shots": [{"id": "s1", "title": "建立坐标系"}]}})
         ids = {item["id"] for item in manifest["objects"]}
@@ -715,6 +716,7 @@ class MainScene(SafeScene, Scene):
         self.assertIn("title_mob", ids)
         self.assertIn("axes", ids)
         self.assertIn("curve", ids)
+        self.assertIn("circle", ids)
         self.assertIn("step_banner", ids)
         self.assertEqual(labels["title_mob"], "标题")
         self.assertEqual(labels["axes"], "坐标系")
@@ -748,6 +750,64 @@ class MainScene(SafeScene, Scene):
         self.assertIn('"axes": locals().get("axes")', instrumented)
         self.assertNotIn('"text": locals().get("text")', instrumented)
         ast.parse(instrumented)
+
+    def test_studio_frame_set_recommends_dense_middle_frame_over_empty_final_frame(self):
+        from app.agent.studio_frames import build_studio_frame_set_from_candidates
+
+        manifest = {
+            "objects": [
+                {"id": "title_mob", "bbox": {"x": 0.3, "y": 0.04, "width": 0.4, "height": 0.08}},
+                {"id": "axes", "bbox": {"x": 0.18, "y": 0.28, "width": 0.64, "height": 0.48}},
+                {"id": "curve", "bbox": {"x": 0.2, "y": 0.34, "width": 0.6, "height": 0.34}},
+            ]
+        }
+        candidates = [
+            {"frameId": "frame_00", "time": 0.8, "ratio": 0.08, "imageUrl": "/static/frame_00.png", "foregroundArea": 0.02},
+            {"frameId": "frame_03", "time": 5.0, "ratio": 0.50, "imageUrl": "/static/frame_03.png", "foregroundArea": 0.16},
+            {"frameId": "final", "time": 10.0, "ratio": 1.0, "imageUrl": "/static/final.png", "foregroundArea": 0.0},
+        ]
+
+        frame_set = build_studio_frame_set_from_candidates(candidates, manifest)
+
+        self.assertEqual(frame_set["recommendedFrameId"], "frame_03")
+        recommended = next(item for item in frame_set["frames"] if item["frameId"] == "frame_03")
+        final = next(item for item in frame_set["frames"] if item["frameId"] == "final")
+        self.assertTrue(recommended["isRecommended"])
+        self.assertGreater(recommended["score"], final["score"])
+        self.assertGreaterEqual(recommended["objectCount"], 3)
+        self.assertIn("元素最多", recommended["reason"])
+
+    def test_layout_rebuild_applies_normalized_bbox_to_scene_patch(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("旧标题")
+        self.add(title_mob)
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "edits": [
+                {
+                    "operation": "move",
+                    "objectId": "title_mob",
+                    "sourceBBox": {"x": 0.30, "y": 0.05, "width": 0.40, "height": 0.08},
+                    "normalizedBBox": {"x": 0.42, "y": 0.10, "width": 0.40, "height": 0.08},
+                },
+                {"operation": "replace_text", "objectId": "title_mob", "text": "新标题"},
+            ],
+        }
+
+        result = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(result["success"])
+        self.assertIn('Text("新标题")', result["code"])
+        self.assertIn("title_mob.shift", result["code"])
+        self.assertEqual(result["layoutEditSpec"]["baseFrameId"], "frame_03")
 
     def test_scene_patch_replaces_text_and_rejects_unknown_operations(self):
         from app.agent.scene_patcher import apply_scene_patch

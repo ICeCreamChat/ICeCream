@@ -137,6 +137,10 @@ function normalizeAgentResult(data = {}) {
         warning: data.warning,
         clarification: data.clarification,
         agentTrace: data.agentTrace,
+        sceneManifest: data.sceneManifest,
+        runtimeSceneManifest: data.runtimeSceneManifest,
+        studioFrameSet: data.studioFrameSet,
+        recommendedFrameId: data.recommendedFrameId,
     };
 }
 
@@ -418,6 +422,8 @@ export async function renderCode(req, res) {
             videoBase64: data.videoBase64,
             sceneManifest: data.sceneManifest,
             runtimeSceneManifest: data.runtimeSceneManifest || data.sceneManifest,
+            studioFrameSet: data.studioFrameSet,
+            recommendedFrameId: data.recommendedFrameId || data.studioFrameSet?.recommendedFrameId,
         });
     } catch (error) {
         console.error('[Manim Client] Render Error:', error);
@@ -592,6 +598,24 @@ export async function patchScene(req, res) {
     }
 }
 
+export async function layoutRebuild(req, res) {
+    try {
+        const code = String(req.body?.code || '');
+        const layoutEditSpec = req.body?.layoutEditSpec || {};
+        if (!code.trim()) {
+            return res.status(400).json({ success: false, error: '代码不能为空' });
+        }
+        const data = await proxyManimJson('/agent/layout-rebuild', {
+            method: 'POST',
+            body: { code, layoutEditSpec, brief: req.body?.brief || {} },
+            timeoutMs: 30000,
+        });
+        return res.json(data);
+    } catch (error) {
+        return res.status(error.status || 500).json({ success: false, error: error.message });
+    }
+}
+
 export default {
     handleManim,
     streamAgent,
@@ -607,4 +631,5 @@ export default {
     replayFailure,
     uploadReferenceImage,
     patchScene,
+    layoutRebuild,
 };

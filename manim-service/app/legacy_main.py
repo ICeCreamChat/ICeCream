@@ -903,42 +903,6 @@ async def process_chat_workflow(prompt: str, websocket: WebSocket):
         
         # 2. 专属场景文件路径
         local_scene_file = os.path.join(request_dir, "current_scene.py")
-        runtime_manifest_path = os.path.join(request_dir, "scene_manifest_runtime.json")
-        scene_manifest = {}
-        runtime_scene_manifest = {}
-        render_code = code
-        try:
-            from .agent.scene_manifest import build_scene_manifest, instrument_code_for_runtime_manifest
-
-            scene_manifest = build_scene_manifest(code)
-            runtime_scene_manifest = scene_manifest
-            render_code = instrument_code_for_runtime_manifest(code, scene_manifest, runtime_manifest_path)
-        except Exception as manifest_error:
-            print(f"[{request_id}] Studio manifest instrumentation skipped: {manifest_error}")
-        runtime_manifest_path = os.path.join(request_dir, "scene_manifest_runtime.json")
-        scene_manifest = {}
-        runtime_scene_manifest = {}
-        render_code = code
-        try:
-            from .agent.scene_manifest import build_scene_manifest, instrument_code_for_runtime_manifest
-
-            scene_manifest = build_scene_manifest(code)
-            runtime_scene_manifest = scene_manifest
-            render_code = instrument_code_for_runtime_manifest(code, scene_manifest, runtime_manifest_path)
-        except Exception as manifest_error:
-            print(f"[{request_id}] Studio manifest instrumentation skipped: {manifest_error}")
-        runtime_manifest_path = os.path.join(request_dir, "scene_manifest_runtime.json")
-        scene_manifest = {}
-        runtime_scene_manifest = {}
-        render_code = code
-        try:
-            from .agent.scene_manifest import build_scene_manifest, instrument_code_for_runtime_manifest
-
-            scene_manifest = build_scene_manifest(code)
-            runtime_scene_manifest = scene_manifest
-            render_code = instrument_code_for_runtime_manifest(code, scene_manifest, runtime_manifest_path)
-        except Exception as manifest_error:
-            print(f"[{request_id}] Studio manifest instrumentation skipped: {manifest_error}")
         dump_file = os.path.join(request_dir, "objects_dump.json").replace("\\", "/")
         
         # 🔥【关键】注入 Inspector 代码 (侦探升级版) 🔥
@@ -1186,7 +1150,7 @@ async def render_code_directly(code: str, websocket: WebSocket):
         
         # 3. Write code to file
         with open(local_scene_file, "w", encoding="utf-8") as f:
-            f.write(render_code)
+            f.write(code)
         
         # 4. Run Manim
         cmd = [
@@ -1211,8 +1175,6 @@ async def render_code_directly(code: str, websocket: WebSocket):
                 target_path = os.path.join(STATIC_DIR, target_name)
                 shutil.move(video_path, target_path)
                 video_url = f"/static/{target_name}"
-                runtime_scene_manifest = _read_runtime_scene_manifest()
-                runtime_scene_manifest = _read_runtime_scene_manifest()
                 
                 print(f"[{request_id}] 🎉 直接渲染成功!")
                 
@@ -1613,6 +1575,19 @@ async def http_render_code(
                 with open(target_path, "rb") as vf:
                     video_base64 = base64.b64encode(vf.read()).decode('utf-8')
                 runtime_scene_manifest = _read_runtime_scene_manifest()
+                studio_frame_set = {}
+                try:
+                    from .agent.studio_frames import build_studio_frame_set_for_video
+
+                    studio_frame_set = build_studio_frame_set_for_video(
+                        target_path,
+                        STATIC_DIR,
+                        "/static",
+                        request_id,
+                        runtime_scene_manifest or scene_manifest,
+                    )
+                except Exception as frame_error:
+                    print(f"[{request_id}] Studio frame set skipped: {frame_error}")
                 
                 print(f"[{request_id}] ✅ 渲染成功!")
                 
@@ -1630,6 +1605,8 @@ async def http_render_code(
                     "sceneName": scene_name,
                     "sceneManifest": scene_manifest,
                     "runtimeSceneManifest": runtime_scene_manifest,
+                    "studioFrameSet": studio_frame_set,
+                    "recommendedFrameId": studio_frame_set.get("recommendedFrameId") if isinstance(studio_frame_set, dict) else "",
                 })
             else:
                 # 尝试查找图片 (如果 Manim 因为是静态场景只生成了图片)
@@ -1658,7 +1635,19 @@ async def http_render_code(
                     if bg_proc.returncode == 0 and os.path.exists(target_path):
                         video_url = f"/static/{target_name}"
                         runtime_scene_manifest = _read_runtime_scene_manifest()
-                        runtime_scene_manifest = _read_runtime_scene_manifest()
+                        studio_frame_set = {}
+                        try:
+                            from .agent.studio_frames import build_studio_frame_set_for_video
+
+                            studio_frame_set = build_studio_frame_set_for_video(
+                                target_path,
+                                STATIC_DIR,
+                                "/static",
+                                request_id,
+                                runtime_scene_manifest or scene_manifest,
+                            )
+                        except Exception as frame_error:
+                            print(f"[{request_id}] Studio frame set skipped: {frame_error}")
                         
                         import base64
                         with open(target_path, "rb") as vf:
@@ -1681,6 +1670,8 @@ async def http_render_code(
                             "sceneName": scene_name,
                             "sceneManifest": scene_manifest,
                             "runtimeSceneManifest": runtime_scene_manifest,
+                            "studioFrameSet": studio_frame_set,
+                            "recommendedFrameId": studio_frame_set.get("recommendedFrameId") if isinstance(studio_frame_set, dict) else "",
                         })
                 
                 # Debug logging if still failing

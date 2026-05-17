@@ -35,6 +35,7 @@ uploads/*
 # Manim outputs
 manim-service/media/
 manim-service/static/*.mp4
+manim-service/static/studio_*_frame_*.png
 manim-service/__pycache__/
 *.pyc
 

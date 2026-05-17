@@ -6304,6 +6304,124 @@ body.light-mode #code-panel.manim-studio-window {
     position: relative;
 }
 
+.studio-video-reference {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border: 1px solid var(--studio-border);
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--studio-canvas);
+}
+
+.studio-frame-strip {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 6px 2px 2px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+}
+
+.studio-frame-empty {
+    color: var(--studio-muted);
+    font-size: 12px;
+}
+
+.studio-frame-btn {
+    display: inline-flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 88px;
+    padding: 7px 10px;
+    border: 1px solid var(--studio-border);
+    border-radius: 10px;
+    background: var(--studio-panel-raised);
+    color: var(--studio-text);
+    cursor: pointer;
+}
+
+.studio-frame-btn span {
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.studio-frame-btn small {
+    color: var(--studio-muted);
+    font-size: 10px;
+}
+
+.studio-frame-btn.active {
+    border-color: color-mix(in srgb, var(--studio-accent) 62%, transparent);
+    background: color-mix(in srgb, var(--studio-accent) 12%, var(--studio-panel-raised));
+    color: var(--studio-accent);
+}
+
+.studio-frame-btn.recommended::after {
+    content: "推荐";
+    align-self: flex-start;
+    padding: 1px 5px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--studio-accent) 12%, transparent);
+    color: var(--studio-accent);
+    font-size: 10px;
+    font-weight: 800;
+}
+
+.studio-calibration-frame-wrap {
+    position: relative;
+    margin-top: 10px;
+    border: 1px solid var(--studio-border);
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--studio-panel);
+}
+
+.studio-calibration-frame {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: contain;
+    background: var(--studio-panel-raised);
+}
+
+.studio-calibration-empty {
+    display: grid;
+    place-items: center;
+    color: var(--studio-muted);
+    font-size: 13px;
+}
+
+.studio-calibration-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 8px;
+    border-top: 1px solid var(--studio-border);
+    background: var(--studio-panel-raised);
+}
+
+.studio-manual-selection,
+.studio-apply-layout-btn {
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--studio-border);
+    border-radius: 9px;
+    background: var(--studio-panel);
+    color: var(--studio-text);
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.studio-manual-selection:hover,
+.studio-apply-layout-btn:hover {
+    border-color: color-mix(in srgb, var(--studio-accent) 48%, transparent);
+    color: var(--studio-accent);
+}
+
 .studio-interaction-overlay {
     position: absolute;
     inset: 0;
@@ -6316,6 +6434,11 @@ body.light-mode #code-panel.manim-studio-window {
     display: none;
 }
 
+.studio-interaction-overlay.is-manual-drawing {
+    pointer-events: auto;
+    cursor: crosshair;
+}
+
 .studio-object-hotspot {
     position: absolute;
     min-width: 34px;
@@ -6324,10 +6447,14 @@ body.light-mode #code-panel.manim-studio-window {
     border: 0;
     background: transparent;
     color: var(--studio-accent);
-    cursor: pointer;
+    cursor: move;
     pointer-events: auto;
     opacity: 0;
     transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.studio-object-hotspot:active {
+    cursor: grabbing;
 }
 
 #code-panel.manim-studio-window .studio-object-hotspot.selected,
