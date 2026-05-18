@@ -425,27 +425,66 @@
 
         <div class="panel-body">
             <!-- Mobile Preview Tab (Video + History + AI Input) -->
-            <div class="mobile-preview-tab" id="mobile-preview-tab">
-                <section id="video-preview-container" class="panel-preview studio-preview-panel" aria-label="作品预览">
+            <div class="mobile-preview-tab studio-preview-workspace" id="mobile-preview-tab">
+                <section id="video-preview-container" class="panel-preview studio-preview-panel" aria-label="预览与校准">
                     <div class="studio-pane-heading">
                         <div>
                             <span class="studio-pane-kicker">Preview</span>
-                            <strong>作品预览</strong>
+                            <strong>预览与校准</strong>
                         </div>
-                        <small>运行后显示最新动画</small>
+                        <small>视频仅作参考，编辑发生在关键帧画布上</small>
                     </div>
-                    <!-- Video Wrapper (Target for renderCode) -->
-                    <div class="studio-preview-frame">
-                        <div id="video-inner-container" class="studio-video-stage">
-                        <div id="studio-interaction-overlay" class="studio-interaction-overlay" aria-label="可交互对象层"></div>
-                        <!-- Video inserted by JS -->
-                        <div class="video-preview-placeholder"
-                            style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; color:var(--manim-text-muted);">
-                            <i data-lucide="clapperboard"></i>
-                            <p>视频预览区</p>
+
+                    <div class="studio-preview-stack">
+                        <article class="studio-preview-card studio-reference-card" aria-label="视频参考">
+                            <div class="studio-card-heading">
+                                <div>
+                                    <span class="studio-pane-kicker">Video</span>
+                                    <strong>视频参考</strong>
+                                </div>
+                                <small>运行后显示最新动画</small>
+                            </div>
+                            <div id="studio-video-reference-container" class="studio-reference-video-shell">
+                                <div class="video-preview-placeholder">
+                                    <i data-lucide="clapperboard"></i>
+                                    <p>视频参考区</p>
+                                </div>
+                            </div>
+                        </article>
+
+                        <article class="studio-preview-card studio-frame-card" aria-label="关键帧选择">
+                            <div class="studio-card-heading">
+                                <div>
+                                    <span class="studio-pane-kicker">Frames</span>
+                                    <strong>关键帧</strong>
+                                </div>
+                                <small>默认使用推荐帧</small>
+                            </div>
+                            <div id="studio-frame-strip" class="studio-frame-strip" aria-label="关键帧选择"></div>
+                        </article>
+
+                        <article class="studio-preview-card studio-calibration-card" aria-label="静态校准画布">
+                            <div class="studio-card-heading">
+                                <div>
+                                    <span class="studio-pane-kicker">Canvas</span>
+                                    <strong>静态校准画布</strong>
+                                </div>
+                                <small>拖动热点或手动画框后应用到整段动画</small>
+                            </div>
+                            <div id="studio-calibration-frame-wrap" class="studio-calibration-frame-wrap">
+                                <div id="video-inner-container" class="studio-video-stage">
+                                    <div class="studio-calibration-frame studio-calibration-empty">运行后显示推荐关键帧</div>
+                                    <div id="studio-interaction-overlay" class="studio-interaction-overlay hidden" aria-label="可交互对象层"></div>
+                                </div>
+                                <div class="studio-calibration-toolbar">
+                                    <button type="button" class="studio-manual-selection">手动画框</button>
+                                    <button type="button" class="studio-apply-layout-btn">应用到整段动画</button>
+                                </div>
+                            </div>
+                        </article>
+
+                        <aside id="studio-object-inspector" class="studio-object-inspector hidden" aria-label="对象属性检查器"></aside>
                         </div>
-                        </div>
-                    </div>
                 </section>
                 <!-- History (Inside Preview Tab on Mobile) -->
                 <section id="manim-history-root" class="history-list-container studio-history-panel" aria-label="修改历史"></section>
@@ -471,7 +510,6 @@
                         </div>
                         <div class="editor-tab">MainScene.py</div>
                     </div>
-                    <aside id="studio-object-inspector" class="studio-object-inspector hidden" aria-label="对象属性检查器"></aside>
                     <div id="monaco-container"></div>
                 </div>
             </div>

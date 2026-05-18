@@ -11,6 +11,8 @@ from typing import Any, Callable
 OBJECT_ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,79}$")
 COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 TEXT_CALL_RE = re.compile(r"(Text|SafeText|Tex|MathTex|SafeMathTex)\(\s*(['\"])(.*?)(\2)", re.S)
+MANUAL_BLOCK_BEGIN = "# Studio manual layout constraints"
+MANUAL_BLOCK_END = "# End Studio manual layout constraints"
 
 
 def _failure(message: str, code: str = "") -> dict[str, Any]:
@@ -234,28 +236,97 @@ def _patches_from_layout_edit(edit: dict[str, Any]) -> list[dict[str, Any]]:
         patches.append({"operation": "set_color", "objectId": object_id, "color": str(edit.get("color") or style.get("color") or "#0284C7")})
     elif operation == "delete":
         patches.append({"operation": "delete", "objectId": object_id})
+    elif operation == "manual_region":
+        return []
     else:
         patches.append({"operation": operation, "objectId": object_id})
 
     return patches
 
 
+def _remove_existing_manual_block(lines: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    skipping = False
+    for line in lines:
+        if MANUAL_BLOCK_BEGIN in line:
+            skipping = True
+            continue
+        if skipping and MANUAL_BLOCK_END in line:
+            skipping = False
+            continue
+        if not skipping:
+            cleaned.append(line)
+    return cleaned
+
+
+def _insert_manual_constraints(code: str, spec: dict[str, Any], regions: list[dict[str, Any]]) -> tuple[bool, str, str]:
+    if not regions:
+        return True, code, ""
+    try:
+        tree = ast.parse(code or "")
+    except SyntaxError:
+        return False, code, "代码暂时无法解析，不能写入手动画框约束。"
+    construct = _find_construct(tree)
+    if construct is None:
+        return False, code, _scene_anchor_warning()
+
+    lines = _remove_existing_manual_block(code.splitlines())
+    construct_line = max(0, int(getattr(construct, "lineno", 1) or 1) - 1)
+    if construct_line >= len(lines):
+        return False, code, _scene_anchor_warning()
+    indent = _line_indent(lines[construct_line]) + "    "
+    base_frame = str(spec.get("baseFrameId") or "")
+    base_time = _clamp_number(spec.get("baseTime"), 0, 10_000, 0)
+    block = [
+        f"{indent}{MANUAL_BLOCK_BEGIN}: frame={base_frame}, time={base_time:.3f}",
+        f"{indent}# These regions were drawn in Manim Studio and should guide layout rebuilds.",
+    ]
+    for index, region in enumerate(regions, start=1):
+        if not isinstance(region, dict):
+            continue
+        box = region.get("normalizedBBox") if isinstance(region.get("normalizedBBox"), dict) else {}
+        region_id = str(region.get("id") or f"manual_{index}")[:80]
+        region_type = str(region.get("type") or region.get("label") or "手动画框")[:80]
+        label = str(region.get("label") or region_type)[:120]
+        x = _clamp_number(box.get("x"), 0, 1, 0)
+        y = _clamp_number(box.get("y"), 0, 1, 0)
+        width = _clamp_number(box.get("width"), 0, 1, 0)
+        height = _clamp_number(box.get("height"), 0, 1, 0)
+        block.append(
+            f"{indent}# - {region_id}: type={region_type}, label={label}, "
+            f"bbox=({x:.3f}, {y:.3f}, {width:.3f}, {height:.3f})"
+        )
+    block.append(f"{indent}{MANUAL_BLOCK_END}")
+    lines[construct_line + 1 : construct_line + 1] = block
+    next_code = "\n".join(lines) + ("\n" if code.endswith("\n") else "")
+    return True, next_code, f"已记录 {len(regions)} 个手动画框布局约束。"
+
+
+def _normalize_layout_edits(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    edits = spec.get("objectEdits")
+    if not isinstance(edits, list):
+        edits = spec.get("edits")
+    if isinstance(edits, list):
+        return [item for item in edits if isinstance(item, dict)]
+    single = {key: value for key, value in spec.items() if key not in {"edits", "objectEdits", "manualReferenceRegions"}}
+    return [single] if single.get("objectId") and single.get("operation") else []
+
+
 def apply_layout_rebuild(code: str, layout_edit_spec: dict[str, Any]) -> dict[str, Any]:
     """Apply key-frame calibration edits as safe code patches."""
     code = str(code or "")
     spec = layout_edit_spec or {}
-    edits = spec.get("edits")
-    if not isinstance(edits, list):
-        single = {key: value for key, value in spec.items() if key not in {"edits"}}
-        edits = [single] if single.get("objectId") and single.get("operation") else []
-    if not edits:
+    edits = _normalize_layout_edits(spec)
+    manual_regions = spec.get("manualReferenceRegions")
+    if not isinstance(manual_regions, list):
+        manual_regions = []
+    manual_regions = [item for item in manual_regions if isinstance(item, dict)]
+    if not edits and not manual_regions:
         return _failure("没有可应用的关键帧校准操作。", code)
 
     next_code = code
     summaries: list[str] = []
     for edit in edits:
-        if not isinstance(edit, dict):
-            continue
         for patch in _patches_from_layout_edit(edit):
             result = apply_scene_patch(next_code, patch)
             if not result.get("success"):
@@ -268,6 +339,15 @@ def apply_layout_rebuild(code: str, layout_edit_spec: dict[str, Any]) -> dict[st
             summary = str(result.get("patchSummary") or "").strip()
             if summary:
                 summaries.append(summary)
+
+    inserted, next_code, manual_summary = _insert_manual_constraints(next_code, spec, manual_regions)
+    if not inserted:
+        return {
+            **_failure(manual_summary, code),
+            "layoutEditSpec": spec,
+        }
+    if manual_summary:
+        summaries.append(manual_summary)
 
     return {
         "success": True,

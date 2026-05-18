@@ -6330,12 +6330,13 @@ body.light-mode #code-panel.manim-studio-window {
 }
 
 .studio-frame-btn {
-    display: inline-flex;
+    display: grid;
     flex: 0 0 auto;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 88px;
-    padding: 7px 10px;
+    grid-template-columns: 1fr;
+    gap: 3px;
+    width: 92px;
+    min-width: 92px;
+    padding: 8px 10px;
     border: 1px solid var(--studio-border);
     border-radius: 10px;
     background: var(--studio-panel-raised);
@@ -6343,14 +6344,25 @@ body.light-mode #code-panel.manim-studio-window {
     cursor: pointer;
 }
 
-.studio-frame-btn span {
+.studio-frame-label {
+    display: block;
+    min-width: 0;
     font-size: 12px;
     font-weight: 800;
+    line-height: 1.25;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.studio-frame-btn small {
+.studio-frame-count {
+    display: block;
     color: var(--studio-muted);
     font-size: 10px;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .studio-frame-btn.active {
@@ -6392,6 +6404,28 @@ body.light-mode #code-panel.manim-studio-window {
     place-items: center;
     color: var(--studio-muted);
     font-size: 13px;
+}
+
+.studio-calibration-empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 6px;
+    padding: 18px;
+    color: var(--studio-muted);
+    text-align: center;
+    line-height: 1.5;
+}
+
+.studio-calibration-empty-state strong {
+    color: var(--studio-text);
+    font-size: 14px;
+}
+
+.studio-calibration-empty-state span {
+    max-width: 360px;
+    font-size: 12px;
 }
 
 .studio-calibration-toolbar {
@@ -6449,7 +6483,7 @@ body.light-mode #code-panel.manim-studio-window {
     color: var(--studio-accent);
     cursor: move;
     pointer-events: auto;
-    opacity: 0;
+    opacity: 0.46;
     transition: opacity 0.14s ease, transform 0.14s ease;
 }
 
@@ -6501,8 +6535,18 @@ body.light-mode #code-panel.manim-studio-window {
     font-weight: 750;
     line-height: 1.2;
     overflow: hidden;
+    opacity: 0;
     text-overflow: ellipsis;
+    transform: translateY(2px);
+    transition: opacity 0.14s ease, transform 0.14s ease;
     white-space: nowrap;
+}
+
+.studio-object-hotspot:hover .studio-object-label,
+.studio-object-hotspot.selected .studio-object-label,
+.studio-object-hotspot:focus-visible .studio-object-label {
+    opacity: 1;
+    transform: translateY(0);
 }
 
 .studio-object-inspector {
@@ -6601,4 +6645,237 @@ body.light-mode #code-panel.manim-studio-window {
     #code-panel.manim-studio-window.active {
         animation: none !important;
     }
+}
+
+/* ==========================================================================
+   Manim Studio Workspace V2
+   ========================================================================== */
+#code-panel.manim-studio-window {
+    --studio-canvas: color-mix(in srgb, var(--studio-panel-raised) 84%, #eaf3fb);
+}
+
+body:not(.light-mode) #code-panel.manim-studio-window {
+    --studio-canvas: #0b1422;
+}
+
+#code-panel.manim-studio-window .panel-body {
+    grid-template-columns: minmax(520px, 42%) minmax(0, 1fr) !important;
+}
+
+#code-panel.manim-studio-window .studio-preview-workspace {
+    display: flex !important;
+    flex-direction: column !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    overscroll-behavior: contain !important;
+    background: var(--studio-panel) !important;
+}
+
+#code-panel.manim-studio-window .studio-preview-panel {
+    flex: 0 0 auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 12px !important;
+    padding: 16px !important;
+    overflow: visible !important;
+}
+
+#code-panel.manim-studio-window .studio-preview-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+}
+
+#code-panel.manim-studio-window .studio-preview-card {
+    border: 1px solid var(--studio-border);
+    border-radius: 14px;
+    background: var(--studio-panel-raised);
+    box-shadow: none;
+    overflow: hidden;
+}
+
+#code-panel.manim-studio-window .studio-card-heading {
+    min-height: 42px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid var(--studio-border);
+}
+
+#code-panel.manim-studio-window .studio-card-heading>div {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+#code-panel.manim-studio-window .studio-card-heading strong {
+    color: var(--studio-text);
+    font-size: 14px;
+    line-height: 1.2;
+}
+
+#code-panel.manim-studio-window .studio-card-heading small {
+    max-width: 220px;
+    color: var(--studio-muted);
+    font-size: 12px;
+    line-height: 1.35;
+    text-align: right;
+}
+
+#code-panel.manim-studio-window .studio-reference-video-shell {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    max-height: clamp(150px, 22vh, 230px);
+    display: grid;
+    place-items: center;
+    background: var(--studio-canvas);
+    overflow: hidden;
+}
+
+#code-panel.manim-studio-window .studio-reference-video-shell .video-preview-placeholder {
+    min-height: 140px;
+}
+
+#code-panel.manim-studio-window .studio-reference-video-shell .studio-preview-video {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: contain !important;
+    background: var(--studio-canvas) !important;
+}
+
+#code-panel.manim-studio-window .studio-frame-card {
+    overflow: visible;
+}
+
+#code-panel.manim-studio-window .studio-frame-strip {
+    margin: 0 !important;
+    padding: 10px 12px 12px !important;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+}
+
+#code-panel.manim-studio-window .studio-frame-empty {
+    width: 100%;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    color: var(--studio-muted);
+    font-size: 12px;
+}
+
+#code-panel.manim-studio-window .studio-frame-btn {
+    width: 124px;
+    min-width: 124px;
+    min-height: 50px;
+    padding: 8px 10px;
+    display: grid;
+    align-content: center;
+    gap: 4px;
+}
+
+#code-panel.manim-studio-window .studio-frame-label {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+#code-panel.manim-studio-window .studio-frame-meta,
+#code-panel.manim-studio-window .studio-frame-count {
+    color: var(--studio-muted);
+    font-size: 10px;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#code-panel.manim-studio-window .studio-calibration-card {
+    overflow: hidden;
+}
+
+#code-panel.manim-studio-window .studio-calibration-frame-wrap {
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: var(--studio-panel-raised) !important;
+    overflow: hidden !important;
+}
+
+#code-panel.manim-studio-window #video-inner-container.studio-video-stage {
+    position: relative;
+    width: 100% !important;
+    aspect-ratio: 16 / 9;
+    min-height: 320px !important;
+    height: auto !important;
+    display: grid !important;
+    place-items: center !important;
+    border: 0 !important;
+    background: var(--studio-canvas) !important;
+    overflow: hidden !important;
+}
+
+#code-panel.manim-studio-window .studio-calibration-frame {
+    width: 100%;
+    height: 100%;
+    min-height: 320px;
+    aspect-ratio: 16 / 9;
+    object-fit: contain;
+    background: var(--studio-canvas);
+}
+
+#code-panel.manim-studio-window .studio-calibration-empty,
+#code-panel.manim-studio-window .studio-calibration-empty-state {
+    width: 100%;
+    height: 100%;
+    min-height: 320px;
+}
+
+#code-panel.manim-studio-window .studio-calibration-toolbar {
+    padding: 10px 12px !important;
+    justify-content: space-between !important;
+}
+
+#code-panel.manim-studio-window .studio-manual-selection,
+#code-panel.manim-studio-window .studio-apply-layout-btn {
+    min-height: 34px;
+    padding: 0 12px;
+}
+
+#code-panel.manim-studio-window .studio-object-inspector {
+    margin: 0 !important;
+    border-radius: 14px;
+    background: var(--studio-panel-raised);
+}
+
+#code-panel.manim-studio-window .studio-object-inspector:not(.hidden) {
+    display: block !important;
+}
+
+#code-panel.manim-studio-window .studio-object-actions button {
+    min-height: 34px;
+}
+
+#code-panel.manim-studio-window .panel-editor {
+    border-left: 1px solid var(--studio-border) !important;
+}
+
+#code-panel.manim-studio-window .video-preview-placeholder {
+    width: 100%;
+    height: 100%;
+    min-height: 160px;
+    display: flex !important;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--studio-muted) !important;
+    text-align: center;
 }

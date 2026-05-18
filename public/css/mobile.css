@@ -2126,3 +2126,88 @@ input:focus-visible {
         flex-wrap: wrap !important;
     }
 }
+
+@media (max-width: 768px) {
+    #code-panel.manim-studio-window .panel-body {
+        display: flex !important;
+        grid-template-columns: none !important;
+        min-height: 0 !important;
+    }
+
+    #code-panel.manim-studio-window .studio-preview-workspace {
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        overscroll-behavior: contain !important;
+        -webkit-overflow-scrolling: touch !important;
+    }
+
+    #code-panel.manim-studio-window .studio-preview-panel {
+        padding: 12px !important;
+        gap: 10px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-preview-stack {
+        gap: 10px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-preview-card {
+        border-radius: 12px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-calibration-card {
+        overflow: hidden !important;
+    }
+
+    #code-panel.manim-studio-window .studio-card-heading {
+        min-height: 38px !important;
+        padding: 9px 10px !important;
+        align-items: flex-start !important;
+    }
+
+    #code-panel.manim-studio-window .studio-card-heading small {
+        max-width: 150px !important;
+        font-size: 11px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-reference-video-shell {
+        max-height: none !important;
+        min-height: 168px !important;
+        aspect-ratio: 16 / 9 !important;
+    }
+
+    #code-panel.manim-studio-window .studio-frame-strip {
+        overflow-x: auto !important;
+        flex-wrap: nowrap !important;
+        padding: 9px 10px 10px !important;
+        -webkit-overflow-scrolling: touch !important;
+    }
+
+    #code-panel.manim-studio-window .studio-frame-btn {
+        flex: 0 0 auto !important;
+        width: 116px !important;
+        min-width: 116px !important;
+        min-height: 48px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-frame-meta {
+        display: block !important;
+    }
+
+    #code-panel.manim-studio-window #video-inner-container.studio-video-stage,
+    #code-panel.manim-studio-window .studio-calibration-frame,
+    #code-panel.manim-studio-window .studio-calibration-empty,
+    #code-panel.manim-studio-window .studio-calibration-empty-state {
+        min-height: 210px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-calibration-toolbar {
+        padding: 9px 10px !important;
+        gap: 8px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-inspector {
+        max-height: 24vh !important;
+        overflow-y: auto !important;
+        overscroll-behavior: contain !important;
+    }
+}

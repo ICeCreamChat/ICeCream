@@ -6,7 +6,11 @@ import test from 'node:test';
 
 import { createGatewayApp } from '../gateway/app.js';
 import { getConfidenceThreshold } from '../gateway/middleware/intent-router.js';
-import { normalizeManimServiceUrl } from '../gateway/routes/static-video.js';
+import {
+    createStaticVideoProxy,
+    isAllowedManimStaticFilename,
+    normalizeManimServiceUrl,
+} from '../gateway/routes/static-video.js';
 import { cleanupUploadsDirectory, ensureDirectory } from '../gateway/startup/uploads.js';
 
 test('gateway app can be constructed without starting the HTTP listener', () => {
@@ -21,6 +25,70 @@ test('Manim static proxy URL normalization is stable', () => {
     assert.equal(normalizeManimServiceUrl('http://localhost:8001/'), 'http://localhost:8001');
     assert.equal(normalizeManimServiceUrl('https://example.com/manim/'), 'https://example.com/manim');
     assert.equal(normalizeManimServiceUrl(''), 'http://localhost:8001');
+});
+
+test('Manim static proxy allows generated frame images and rejects unsafe names', async () => {
+    assert.equal(isAllowedManimStaticFilename('studio_abc_frame_03.png'), true);
+    assert.equal(isAllowedManimStaticFilename('video_abc.mp4'), true);
+    assert.equal(isAllowedManimStaticFilename('../secret.png'), false);
+    assert.equal(isAllowedManimStaticFilename('nested/file.png'), false);
+    assert.equal(isAllowedManimStaticFilename('script.js'), false);
+
+    let proxiedUrl = '';
+    const proxy = createStaticVideoProxy({
+        manimServiceUrl: 'localhost:8001/',
+        fetchImpl: async url => {
+            proxiedUrl = url;
+            return {
+                ok: true,
+                status: 200,
+                headers: { get: name => (name === 'content-type' ? 'image/png' : null) },
+            };
+        },
+        logger: { error() {} },
+    });
+
+    const res = {
+        statusCode: 200,
+        headers: {},
+        setHeader(name, value) {
+            this.headers[name] = value;
+        },
+        status(code) {
+            this.statusCode = code;
+            return this;
+        },
+        send(body) {
+            this.body = body;
+            return this;
+        },
+        end(body = '') {
+            this.body = body;
+            return this;
+        },
+    };
+
+    await proxy(
+        {
+            params: { filename: 'studio_abc_frame_03.png' },
+            originalUrl: '/static/studio_abc_frame_03.png?t=1',
+        },
+        res,
+    );
+
+    assert.equal(proxiedUrl, 'http://localhost:8001/static/studio_abc_frame_03.png?t=1');
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.headers['Content-Type'], 'image/png');
+
+    const rejected = { ...res, headers: {}, body: undefined, statusCode: 200 };
+    await proxy(
+        {
+            params: { filename: '..%2Fsecret.png' },
+            originalUrl: '/static/..%2Fsecret.png',
+        },
+        rejected,
+    );
+    assert.equal(rejected.statusCode, 404);
 });
 
 test('intent confidence threshold is read from the provided environment', () => {

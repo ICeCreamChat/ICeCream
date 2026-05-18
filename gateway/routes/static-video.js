@@ -1,5 +1,7 @@
 import fetch from 'node-fetch';
 
+const ALLOWED_STATIC_EXTENSIONS = new Set(['.mp4', '.png', '.jpg', '.jpeg', '.webp']);
+
 export function normalizeManimServiceUrl(value) {
     let normalized = value || 'http://localhost:8001';
 
@@ -10,6 +12,16 @@ export function normalizeManimServiceUrl(value) {
     return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
 }
 
+export function isAllowedManimStaticFilename(filename) {
+    if (typeof filename !== 'string' || !filename) return false;
+    if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) return false;
+
+    const dotIndex = filename.lastIndexOf('.');
+    if (dotIndex <= 0) return false;
+
+    return ALLOWED_STATIC_EXTENSIONS.has(filename.slice(dotIndex).toLowerCase());
+}
+
 export function createStaticVideoProxy(options = {}) {
     const {
         fetchImpl = fetch,
@@ -18,13 +30,19 @@ export function createStaticVideoProxy(options = {}) {
     } = options;
 
     return async function staticVideoProxy(req, res) {
-        const targetUrl = `${normalizeManimServiceUrl(manimServiceUrl)}${req.originalUrl}`;
+        const filename = req.params?.filename || '';
+        if (!isAllowedManimStaticFilename(filename)) {
+            return res.status(404).send('Static asset not found');
+        }
+
+        const query = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+        const targetUrl = `${normalizeManimServiceUrl(manimServiceUrl)}/static/${encodeURIComponent(filename)}${query}`;
 
         try {
             const response = await fetchImpl(targetUrl);
 
             if (!response.ok) {
-                return res.status(response.status).send('Video not found');
+                return res.status(response.status).send('Static asset not found');
             }
 
             const contentType = response.headers.get('content-type');
@@ -39,12 +57,12 @@ export function createStaticVideoProxy(options = {}) {
                 res.end();
             }
         } catch (error) {
-            logger.error('[Video Proxy Error]', error);
+            logger.error('[Manim Static Proxy Error]', error);
             res.status(500).send('Proxy error');
         }
     };
 }
 
 export function registerStaticVideoProxy(app, options = {}) {
-    app.get('/static/*.mp4', createStaticVideoProxy(options));
+    app.get('/static/:filename', createStaticVideoProxy(options));
 }

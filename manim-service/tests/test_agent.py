@@ -1,4 +1,4 @@
-import ast
+﻿import ast
 import asyncio
 import base64
 import json
@@ -271,8 +271,11 @@ class ManimAgentV4Tests(unittest.TestCase):
             SERVICE_ROOT / "app" / "agent" / "repair.py",
             SERVICE_ROOT / "app" / "agent" / "workflow.py",
             SERVICE_ROOT / "app" / "agent" / "inspector.py",
+            SERVICE_ROOT / "app" / "agent" / "scene_manifest.py",
+            SERVICE_ROOT / "app" / "agent" / "scene_patcher.py",
+            SERVICE_ROOT / "app" / "agent" / "studio_frames.py",
         ]
-        forbidden = ("\u9422", "\u6d93", "\u9366", "\u8930", "\ufffd")
+        forbidden = ("\u9422", "\u6d93", "\u9366", "\u8930", "\ufffd", "鏍", "鍏", "鐢", "绋", "鍙", "鏇", "鏃", "锛", "銆")
 
         for path in checked:
             text = path.read_text(encoding="utf-8")
@@ -725,7 +728,6 @@ class MainScene(SafeScene, Scene):
         for item in manifest["objects"]:
             self.assertEqual(item.get("sourceScope"), "MainScene.construct")
             self.assertTrue(item.get("bbox"))
-
     def test_runtime_manifest_instrumentation_exports_scene_objects_only(self):
         from app.agent.scene_manifest import build_scene_manifest, instrument_code_for_runtime_manifest
 
@@ -777,6 +779,46 @@ class MainScene(SafeScene, Scene):
         self.assertGreaterEqual(recommended["objectCount"], 3)
         self.assertIn("元素最多", recommended["reason"])
 
+    def test_studio_frame_set_counts_unscoped_runtime_bboxes(self):
+        from app.agent.studio_frames import build_studio_frame_set_from_candidates
+
+        manifest = {
+            "objects": [
+                {
+                    "id": "title_mob",
+                    "bboxes": [
+                        {
+                            "stageId": "stage_1",
+                            "timeRange": None,
+                            "bbox": {"x": 0.3, "y": 0.04, "width": 0.4, "height": 0.08},
+                        }
+                    ],
+                },
+                {
+                    "id": "axes",
+                    "bboxes": [
+                        {
+                            "stageId": "stage_1",
+                            "timeRange": None,
+                            "bbox": {"x": 0.18, "y": 0.28, "width": 0.64, "height": 0.48},
+                        }
+                    ],
+                },
+            ]
+        }
+        candidates = [
+            {"frameId": "frame_03", "time": 5.0, "ratio": 0.50, "imageUrl": "/static/frame_03.png", "foregroundArea": 0.16},
+            {"frameId": "final", "time": 10.0, "ratio": 1.0, "imageUrl": "/static/final.png", "foregroundArea": 0.0},
+        ]
+
+        frame_set = build_studio_frame_set_from_candidates(candidates, manifest)
+
+        middle = next(item for item in frame_set["frames"] if item["frameId"] == "frame_03")
+        final = next(item for item in frame_set["frames"] if item["frameId"] == "final")
+        self.assertEqual(middle["objectCount"], 2)
+        self.assertEqual(middle["objectIds"], ["title_mob", "axes"])
+        self.assertEqual(final["objectCount"], 0)
+
     def test_layout_rebuild_applies_normalized_bbox_to_scene_patch(self):
         from app.agent.scene_patcher import apply_layout_rebuild
 
@@ -791,7 +833,7 @@ class MainScene(Scene):
         layout_spec = {
             "baseFrameId": "frame_03",
             "baseTime": 5.0,
-            "edits": [
+            "objectEdits": [
                 {
                     "operation": "move",
                     "objectId": "title_mob",
@@ -809,6 +851,36 @@ class MainScene(Scene):
         self.assertIn("title_mob.shift", result["code"])
         self.assertEqual(result["layoutEditSpec"]["baseFrameId"], "frame_03")
 
+    def test_layout_rebuild_records_manual_reference_regions(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("标题")
+        self.add(title_mob)
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "manualReferenceRegions": [
+                {
+                    "id": "manual_1",
+                    "type": "步骤说明",
+                    "label": "手动画框区域",
+                    "normalizedBBox": {"x": 0.18, "y": 0.22, "width": 0.42, "height": 0.12},
+                }
+            ],
+        }
+
+        result = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(result["success"])
+        self.assertIn("Studio manual layout constraints", result["code"])
+        self.assertIn("手动画框", result["patchSummary"])
+        self.assertEqual(result["layoutEditSpec"]["manualReferenceRegions"][0]["id"], "manual_1")
     def test_scene_patch_replaces_text_and_rejects_unknown_operations(self):
         from app.agent.scene_patcher import apply_scene_patch
 
@@ -851,7 +923,6 @@ class MainScene(Scene):
         self.assertTrue(patched["success"])
         self.assertIn('SafeText("新标题")', patched["code"])
         self.assertIn('text = Text(str(content)', patched["code"])
-
     def test_agent_patch_route_applies_safe_patch(self):
         app = FastAPI()
         register_agent_routes(app)

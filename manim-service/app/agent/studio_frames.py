@@ -29,15 +29,25 @@ def _manifest_objects(manifest: dict[str, Any] | None) -> list[dict[str, Any]]:
     return [item for item in objects if isinstance(item, dict)]
 
 
+def _has_bbox(value: Any) -> bool:
+    if isinstance(value, dict):
+        return any(key in value for key in ("x", "y", "width", "height"))
+    if isinstance(value, list):
+        return bool(value)
+    return False
+
+
 def _object_visible_in_frame(obj: dict[str, Any], frame: dict[str, Any]) -> bool:
     frame_id = str(frame.get("frameId") or "")
     ratio = _safe_float(frame.get("ratio"), _safe_float(frame.get("timeRatio"), 0.0))
     bboxes = obj.get("bboxes")
     if isinstance(bboxes, list) and bboxes:
+        has_unscoped_bbox = False
         for entry in bboxes:
             if not isinstance(entry, dict):
                 continue
-            if str(entry.get("frameId") or "") == frame_id:
+            entry_frame_id = str(entry.get("frameId") or "")
+            if entry_frame_id and entry_frame_id == frame_id:
                 return True
             time_range = entry.get("timeRange")
             if isinstance(time_range, list) and len(time_range) == 2:
@@ -45,6 +55,11 @@ def _object_visible_in_frame(obj: dict[str, Any], frame: dict[str, Any]) -> bool
                 end = _safe_float(time_range[1], 1.0)
                 if start <= ratio <= end:
                     return True
+                continue
+            if _has_bbox(entry.get("bbox")) and not entry_frame_id:
+                has_unscoped_bbox = True
+        if has_unscoped_bbox:
+            return True
         return False
     return bool(obj.get("bbox") or obj.get("id"))
 
@@ -86,13 +101,15 @@ def build_studio_frame_set_from_candidates(
     for index, candidate in enumerate(candidates or []):
         frame = dict(candidate)
         frame.setdefault("frameId", f"frame_{index:02d}")
-        frame.setdefault("label", "结尾帧" if _safe_float(frame.get("ratio"), 0.0) >= 0.995 else f"阶段 {index + 1}")
+        is_final = _safe_float(frame.get("ratio"), 0.0) >= 0.995 or str(frame.get("frameId") or "") == "final"
+        frame.setdefault("label", "结尾帧" if is_final else f"阶段 {index + 1}")
         object_ids = _frame_object_ids(frame, objects)
         score, reason = _score_frame(frame, object_ids)
         frame["objectIds"] = object_ids
         frame["objectCount"] = len(object_ids)
         frame["score"] = round(score, 2)
         frame["reason"] = reason
+        frame["imageAvailable"] = bool(frame.get("imageUrl"))
         frames.append(frame)
 
     recommended = max(frames, key=lambda item: _safe_float(item.get("score"), -9999.0), default=None)
@@ -208,6 +225,7 @@ def build_studio_frame_set_for_video(
                 "imageUrl": f"{static_prefix.rstrip('/')}/{filename}",
                 "foregroundArea": _foreground_area(output_path),
                 "label": "结尾帧" if frame_id == "final" else f"阶段 {index + 1}",
+                "imageAvailable": True,
             }
         )
 

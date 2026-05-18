@@ -36,6 +36,10 @@ export class CodePanel {
             // Desktop AI input/button
             aiInputDesktop: document.getElementById('ai-instruction-input-desktop'),
             aiBtnDesktop: document.getElementById('ai-modify-btn-desktop'),
+            previewPanel: document.getElementById('video-preview-container'),
+            referenceVideo: document.getElementById('studio-video-reference-container'),
+            frameStrip: document.getElementById('studio-frame-strip'),
+            calibrationWrap: document.getElementById('studio-calibration-frame-wrap'),
             videoPreview: document.getElementById('video-inner-container'),
             interactionOverlay: document.getElementById('studio-interaction-overlay'),
             objectInspector: document.getElementById('studio-object-inspector'),
@@ -72,6 +76,9 @@ export class CodePanel {
         this.elements.aiInputDesktop?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') this.requestAIModification(true);
         });
+
+        this.elements.panel?.querySelector('.studio-manual-selection')?.addEventListener('click', () => this.enableManualSelectionMode());
+        this.elements.panel?.querySelector('.studio-apply-layout-btn')?.addEventListener('click', () => this.applySelectedLayoutCalibration());
 
         // Legacy Mobile Tabs
         this.elements.mobileTabs.forEach(btn => {
@@ -410,11 +417,11 @@ export class CodePanel {
     }
 
     renderStudioFrameStrip() {
-        const strip = this.elements.videoPreview?.querySelector('.studio-frame-strip');
+        const strip = this.elements.frameStrip || this.elements.panel?.querySelector('#studio-frame-strip');
         if (!strip) return;
         const frames = Array.isArray(this.currentStudioFrameSet?.frames) ? this.currentStudioFrameSet.frames : [];
         if (!frames.length) {
-            strip.innerHTML = '<span class="studio-frame-empty">暂无可校准关键帧</span>';
+            strip.innerHTML = '<div class="studio-frame-empty">暂无可校准关键帧。运行后会在这里显示推荐帧和阶段帧。</div>';
             return;
         }
         strip.innerHTML = frames.map((frame, index) => `
@@ -422,8 +429,8 @@ export class CodePanel {
                 class="studio-frame-btn${frame.frameId === this.selectedStudioFrameId ? ' active' : ''}${frame.isRecommended ? ' recommended' : ''}"
                 data-frame-id="${this.escapeHtml(frame.frameId)}"
                 title="${this.escapeHtml(frame.reason || '')}">
-                <span>${this.escapeHtml(frame.isRecommended ? '推荐帧' : (frame.label || `阶段 ${index + 1}`))}</span>
-                <small>${Number(frame.objectCount || 0)} 个对象</small>
+                <span class="studio-frame-label">${this.escapeHtml(frame.isRecommended ? '推荐帧' : (frame.label || `阶段 ${index + 1}`))}</span>
+                <span class="studio-frame-meta">${Number(frame.objectCount || 0)} 个对象</span>
             </button>
         `).join('');
         strip.querySelectorAll('.studio-frame-btn').forEach(btn => {
@@ -435,13 +442,87 @@ export class CodePanel {
         const frames = Array.isArray(this.currentStudioFrameSet?.frames) ? this.currentStudioFrameSet.frames : [];
         const frame = frames.find(item => item.frameId === frameId) || frames[0] || null;
         this.selectedStudioFrameId = frame?.frameId || null;
-        const image = this.elements.videoPreview?.querySelector('.studio-calibration-frame');
-        if (image && frame?.imageUrl) {
-            image.src = frame.imageUrl;
-            image.alt = `${frame.isRecommended ? '推荐帧' : '关键帧'}：${frame.reason || '用于校准'}`;
-        }
+        this.clearInvalidStudioFrameSelection(frame);
+        this.showStudioFrameImage(frame);
         this.renderStudioFrameStrip();
         this.renderSceneOverlay();
+    }
+
+    clearInvalidStudioFrameSelection(frame) {
+        if (!this.selectedSceneObject || !frame) return;
+        const objectId = String(this.selectedSceneObject.id || '');
+        if (objectId.startsWith('manual_')) {
+            const visible = (this.selectedSceneObject.bboxes || []).some(item => String(item?.frameId || '') === String(frame.frameId));
+            if (!visible) this.selectedSceneObject = null;
+            return;
+        }
+        if (Array.isArray(frame.objectIds) && !frame.objectIds.map(String).includes(objectId)) {
+            this.selectedSceneObject = null;
+            this.renderObjectInspector();
+        }
+    }
+
+    showStudioFrameImage(frame) {
+        const stage = this.elements.videoPreview;
+        if (!stage) return;
+        const existing = stage.querySelector('.studio-calibration-frame, .studio-calibration-empty-state, .studio-calibration-empty');
+        if (!frame?.imageUrl) {
+            this.renderStudioFrameEmptyState('没有找到适合校准的关键帧。可以播放视频后使用当前画面作为参考。');
+            return;
+        }
+        const image = document.createElement('img');
+        image.className = 'studio-calibration-frame';
+        image.src = frame.imageUrl;
+        image.alt = `${frame.isRecommended ? '推荐帧' : '关键帧'}：${frame.reason || '用于校准'}`;
+        image.addEventListener('error', () => this.handleStudioFrameImageError(frame), { once: true });
+        if (existing) {
+            existing.replaceWith(image);
+        } else {
+            stage.prepend(image);
+        }
+    }
+
+    handleStudioFrameImageError(frame) {
+        const label = frame?.label || (frame?.isRecommended ? '推荐帧' : '关键帧');
+        if (frame) {
+            frame.imageAvailable = false;
+            frame._imageLoadFailed = true;
+        }
+
+        const frames = Array.isArray(this.currentStudioFrameSet?.frames) ? this.currentStudioFrameSet.frames : [];
+        const fallbackFrame = frames
+            .filter(item => item && item.frameId !== frame?.frameId && item.imageUrl && !item._imageLoadFailed)
+            .sort((left, right) => Number(right.objectCount || 0) - Number(left.objectCount || 0))[0];
+
+        if (fallbackFrame) {
+            this.selectedStudioFrameId = fallbackFrame.frameId;
+            this.clearInvalidStudioFrameSelection(fallbackFrame);
+            this.renderStudioFrameStrip();
+            this.showStudioFrameImage(fallbackFrame);
+            this.renderSceneOverlay();
+            this.renderObjectInspector(`${label}图片加载失败，已切换到可用关键帧。`);
+            return;
+        }
+
+        this.renderStudioFrameStrip();
+        this.renderStudioFrameEmptyState(`${label}图片加载失败。你可以重新运行抽帧，或播放视频后手动画框校准。`);
+    }
+
+    renderStudioFrameEmptyState(message) {
+        const stage = this.elements.videoPreview;
+        if (!stage) return;
+        const existing = stage.querySelector('.studio-calibration-frame, .studio-calibration-empty-state, .studio-calibration-empty');
+        const empty = document.createElement('div');
+        empty.className = 'studio-calibration-frame studio-calibration-empty-state';
+        empty.innerHTML = `
+            <strong>关键帧暂不可用</strong>
+            <span>${this.escapeHtml(message || '没有找到适合校准的关键帧。')}</span>
+        `;
+        if (existing) {
+            existing.replaceWith(empty);
+        } else {
+            stage.prepend(empty);
+        }
     }
 
     normalizeStudioBox(box) {
@@ -509,51 +590,43 @@ export class CodePanel {
             || frames[0]
             || null;
 
+        const reference = this.elements.referenceVideo || this.elements.panel?.querySelector('#studio-video-reference-container');
         if (videoUrl) {
-            this.elements.videoPreview.innerHTML = `
-                <div class="studio-video-reference">
+            if (reference) {
+                reference.innerHTML = `
                     <video class="studio-preview-video" controls autoplay loop playsinline>
                         <source src="${videoUrl}" type="video/mp4">
                     </video>
-                </div>
-                <div class="studio-frame-strip" aria-label="关键帧选择"></div>
-                <div class="studio-calibration-frame-wrap">
-                    ${selectedFrame?.imageUrl
-                        ? `<img class="studio-calibration-frame" src="${this.escapeHtml(selectedFrame.imageUrl)}" alt="用于校准的关键帧">`
-                        : '<div class="studio-calibration-frame studio-calibration-empty">没有找到适合校准的关键帧</div>'}
-                    <div id="studio-interaction-overlay" class="studio-interaction-overlay hidden" aria-label="可交互对象层"></div>
-                    <div class="studio-calibration-toolbar">
-                        <button type="button" class="studio-manual-selection">手动画框</button>
-                        <button type="button" class="studio-apply-layout-btn">应用到整段动画</button>
-                    </div>
-                </div>
-            `;
-            this.elements.videoPreview.querySelector('.studio-manual-selection')?.addEventListener('click', () => this.enableManualSelectionMode());
-            this.elements.videoPreview.querySelector('.studio-apply-layout-btn')?.addEventListener('click', () => {
-                this.applySelectedLayoutCalibration();
-            });
+                `;
+            }
             this.renderStudioFrameStrip();
+            this.showStudioFrameImage(selectedFrame);
             this.bindVideoOverlayRefresh();
-            this.bindCalibrationFrameDrawing();
         } else {
-            this.elements.videoPreview.innerHTML = `
+            if (reference) {
+                reference.innerHTML = `
                 <div class="video-preview-placeholder">
-                    <span>🎬</span>
+                    <i data-lucide="clapperboard"></i>
                     <p>视频预览区</p>
                 </div>
             `;
+            }
+            this.renderStudioFrameStrip();
+            this.renderStudioFrameEmptyState('运行后会在这里显示推荐关键帧。');
         }
+        this.bindCalibrationFrameDrawing();
         this.ensureInteractionOverlay();
         this.renderSceneOverlay();
+        if (window.lucide) lucide.createIcons();
     }
 
     bindCalibrationFrameDrawing() {
-        const wrap = this.elements.videoPreview?.querySelector('.studio-calibration-frame-wrap');
-        if (!wrap || wrap.dataset.studioDrawingBound === '1') return;
-        wrap.dataset.studioDrawingBound = '1';
-        wrap.addEventListener('pointerdown', event => {
+        const stage = this.elements.videoPreview;
+        if (!stage || stage.dataset.studioDrawingBound === '1') return;
+        stage.dataset.studioDrawingBound = '1';
+        stage.addEventListener('pointerdown', event => {
             if (!this.isManualSelectionMode || event.target.closest('.studio-object-hotspot')) return;
-            const rect = wrap.getBoundingClientRect();
+            const rect = stage.getBoundingClientRect();
             const startX = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
             const startY = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
             const object = this.createManualStudioObject({ x: startX, y: startY, width: 0.02, height: 0.02 });
@@ -564,17 +637,17 @@ export class CodePanel {
                 startY,
                 rect,
             };
-            wrap.setPointerCapture?.(event.pointerId);
+            stage.setPointerCapture?.(event.pointerId);
             event.preventDefault();
         });
-        wrap.addEventListener('pointermove', event => this.handleStudioPointerMove(event));
-        wrap.addEventListener('pointerup', event => this.finishStudioPointer(event));
-        wrap.addEventListener('pointercancel', event => this.finishStudioPointer(event));
+        stage.addEventListener('pointermove', event => this.handleStudioPointerMove(event));
+        stage.addEventListener('pointerup', event => this.finishStudioPointer(event));
+        stage.addEventListener('pointercancel', event => this.finishStudioPointer(event));
     }
 
     ensureInteractionOverlay() {
         if (!this.elements.videoPreview) return null;
-        const target = this.elements.videoPreview.querySelector('.studio-calibration-frame-wrap') || this.elements.videoPreview;
+        const target = this.elements.videoPreview;
         let overlay = target.querySelector('#studio-interaction-overlay');
         if (!overlay) {
             overlay = document.createElement('div');
@@ -588,7 +661,7 @@ export class CodePanel {
     }
 
     bindVideoOverlayRefresh() {
-        const video = this.elements.videoPreview?.querySelector('video');
+        const video = this.elements.referenceVideo?.querySelector('video') || this.elements.panel?.querySelector('#studio-video-reference-container video');
         if (!video || video.dataset.studioOverlayBound === '1') return;
         video.dataset.studioOverlayBound = '1';
         let lastRefresh = 0;
@@ -725,7 +798,7 @@ export class CodePanel {
 
     getSceneObjectBoxForCurrentTime(object, index = 0, total = 1) {
         const selectedFrame = this.getSelectedStudioFrame();
-        const video = this.elements.videoPreview?.querySelector('video');
+        const video = this.elements.referenceVideo?.querySelector('video') || this.elements.panel?.querySelector('#studio-video-reference-container video');
         const duration = Number(video?.duration || 0);
         const current = Number(video?.currentTime || 0);
         const bboxes = Array.isArray(object?.bboxes) ? object.bboxes : [];
@@ -966,6 +1039,8 @@ export class CodePanel {
 
     buildLayoutEditSpec(patch) {
         const frame = this.getSelectedStudioFrame();
+        const selectedObjectId = String(this.selectedSceneObject?.id || '');
+        const isManualObject = selectedObjectId.startsWith('manual_');
         const sourceBBox = this.selectedSceneObject
             ? (this.selectedSceneObject._studioOriginalBBox || this.getSceneObjectBoxForCurrentTime(this.selectedSceneObject, 0, 1))
             : null;
@@ -987,11 +1062,29 @@ export class CodePanel {
                 height: patch.factor ? Math.max(0.04, Math.min(0.46, sourceBBox.height * Number(patch.factor || 1))) : sourceBBox.height,
             });
         }
+        const objectEdits = isManualObject ? [] : [edit];
         return {
             baseFrameId: frame?.frameId || this.selectedStudioFrameId || '',
             baseTime: Number(frame?.time || 0),
-            edits: [edit],
+            objectEdits,
+            edits: objectEdits,
+            manualReferenceRegions: this.getManualReferenceRegions(),
         };
+    }
+
+    getManualReferenceRegions() {
+        const frame = this.getSelectedStudioFrame();
+        return (this.manualStudioObjects || []).map((object, index) => {
+            const box = this.getSceneObjectBoxForCurrentTime(object, index, this.manualStudioObjects.length || 1);
+            return {
+                id: object.id || `manual_${index + 1}`,
+                type: object.publicType || object.type || '手动画框',
+                label: object.label || '手动画框区域',
+                baseFrameId: frame?.frameId || this.selectedStudioFrameId || '',
+                baseTime: Number(frame?.time || 0),
+                normalizedBBox: box,
+            };
+        });
     }
 
     async applySelectedLayoutCalibration() {
@@ -999,12 +1092,9 @@ export class CodePanel {
             this.renderObjectInspector('请先选择视频中的对象，或手动画框一个区域。');
             return;
         }
-        if (String(this.selectedSceneObject.id || '').startsWith('manual_')) {
-            this.renderObjectInspector('手动画框已记录为校准参考。当前版本请优先选择已有对象进行整段重构。');
-            return;
-        }
+        const isManualObject = String(this.selectedSceneObject.id || '').startsWith('manual_');
         await this.applyScenePatch({
-            operation: 'layout_calibrate',
+            operation: isManualObject ? 'manual_region' : 'layout_calibrate',
             objectId: this.selectedSceneObject.id,
             normalizedBBox: this.getSceneObjectBoxForCurrentTime(this.selectedSceneObject, 0, 1),
         });
@@ -1029,6 +1119,7 @@ export class CodePanel {
             }
 
             this.currentCode = data.code || code;
+            this.manualStudioObjects = [];
             const manifest = data.runtimeSceneManifest || data.sceneManifest;
             if (manifest) {
                 this.currentSceneManifest = manifest.runtimeSceneManifest || manifest;
