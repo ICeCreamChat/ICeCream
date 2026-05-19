@@ -34,6 +34,9 @@ EDITABLE_TYPES: dict[str, list[str]] = {
     "Axes": ["move", "scale", "delete"],
 }
 
+TEXT_OBJECT_TYPES = {"Text", "SafeText", "Tex", "MathTex", "SafeMathTex"}
+VISIBLE_HELPER_FACTORIES = {"make_header", "make_step_banner", "make_summary"}
+
 RENDERABLE_SCENE_BASES = {"Scene", "ThreeDScene", "MovingCameraScene", "ZoomedScene"}
 INTERNAL_ID_PARTS = {
     "bg",
@@ -46,6 +49,42 @@ INTERNAL_ID_PARTS = {
     "shadow",
     "container",
 }
+
+DISPLAY_BY_ROLE = {
+    "title": "标题",
+    "subtitle": "副标题",
+    "step": "步骤说明",
+    "summary": "总结",
+    "formula": "公式",
+    "axes": "坐标系",
+    "graph": "曲线",
+    "point": "关键点",
+    "connector": "箭头/线段",
+    "shape": "图形",
+    "group": "组合",
+    "text": "文字",
+    "object": "对象",
+}
+
+PUBLIC_TYPE_BY_TYPE = {
+    "Text": "文字",
+    "SafeText": "文字",
+    "Tex": "公式",
+    "MathTex": "公式",
+    "SafeMathTex": "公式",
+    "Circle": "圆形",
+    "Square": "正方形",
+    "Triangle": "三角形",
+    "Rectangle": "矩形",
+    "Polygon": "多边形",
+    "Line": "线段",
+    "Arrow": "箭头",
+    "Dot": "点",
+    "Graph": "曲线",
+    "VGroup": "组合",
+    "Axes": "坐标系",
+}
+
 
 DISPLAY_BY_ROLE = {
     "title": "标题",
@@ -113,6 +152,13 @@ def _first_literal_string(call: ast.Call) -> str:
     return ""
 
 
+def _literal_strings(call: ast.Call) -> list[str]:
+    root_call = _root_call(call)
+    if root_call is not call:
+        return _literal_strings(root_call)
+    return [arg.value for arg in root_call.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str)]
+
+
 def _stage_list(brief: dict[str, Any] | None) -> list[dict[str, str]]:
     brief = brief or {}
     spec = brief.get("storyboardSpec") or brief.get("spec") or {}
@@ -151,18 +197,22 @@ def _find_scene_construct(tree: ast.Module) -> ast.FunctionDef | None:
     return next((item for item in scene.body if isinstance(item, ast.FunctionDef) and item.name == "construct"), None)
 
 
-def _assigned_name(node: ast.Assign) -> str:
+def _assigned_names(node: ast.Assign) -> list[str]:
     if len(node.targets) != 1:
-        return ""
+        return []
     target = node.targets[0]
-    return target.id if isinstance(target, ast.Name) else ""
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return [item.id for item in target.elts if isinstance(item, ast.Name) and item.id != "_"]
+    return []
 
 
-def _is_internal_id(object_id: str, object_type: str, role: str) -> bool:
+def _is_internal_id(object_id: str, object_type: str, role: str, text: str = "") -> bool:
     oid = object_id.lower()
     if oid in {"text", "mob", "mobject", "item", "obj"}:
         return True
-    if oid in {"formula", "label"} and role != "formula":
+    if oid in {"formula", "label"} and role != "formula" and not (object_type in TEXT_OBJECT_TYPES and text):
         return True
     if any(part in oid for part in INTERNAL_ID_PARTS) and role not in {"step", "title", "subtitle", "summary"}:
         return True
@@ -243,8 +293,76 @@ def _call_type(value: ast.Call) -> str:
     return object_type
 
 
+def _helper_object_type(factory: str, object_id: str, index: int) -> str:
+    if factory == "make_header":
+        return "SafeText" if index in {1, 2} or "title" in object_id.lower() else "VGroup"
+    if factory in {"make_step_banner", "make_summary"}:
+        return "SafeText"
+    return "VGroup"
+
+
+def _helper_text(factory: str, object_id: str, index: int, strings: list[str]) -> str:
+    if factory == "make_header":
+        oid = object_id.lower()
+        if "sub" in oid and len(strings) > 1:
+            return strings[1]
+        if ("title" in oid or index == 1) and strings:
+            return strings[0]
+        return ""
+    if factory in {"make_step_banner", "make_summary"} and strings:
+        return strings[0]
+    return ""
+
+
+def _assignment_to_objects(node: ast.Assign, stage_id: str) -> list[dict[str, Any]]:
+    object_ids = _assigned_names(node)
+    if not object_ids or not isinstance(node.value, ast.Call):
+        return []
+    root_call = _root_call(node.value)
+    factory = _name_of(root_call.func)
+    strings = _literal_strings(node.value)
+    results: list[dict[str, Any]] = []
+
+    for index, object_id in enumerate(object_ids):
+        object_type = _helper_object_type(factory, object_id, index) if factory in VISIBLE_HELPER_FACTORIES else _call_type(node.value)
+        editable = EDITABLE_TYPES.get(object_type)
+        if not editable:
+            continue
+        text = _helper_text(factory, object_id, index, strings) if factory in VISIBLE_HELPER_FACTORIES else _first_literal_string(node.value)
+        role = _infer_role(object_id, object_type, text)
+        if _is_internal_id(object_id, object_type, role, text):
+            continue
+        results.append(
+            {
+                "id": object_id,
+                "label": text or DISPLAY_BY_ROLE.get(role, object_id),
+                "displayName": DISPLAY_BY_ROLE.get(role, "对象"),
+                "type": object_type,
+                "publicType": PUBLIC_TYPE_BY_TYPE.get(object_type, "对象"),
+                "stageId": stage_id,
+                "text": text,
+                "role": role,
+                "bbox": None,
+                "layoutHint": "manifest",
+                "sourceScope": "MainScene.construct",
+                "editable": editable,
+                "codeAnchor": {
+                    "startLine": int(getattr(node, "lineno", 1) or 1),
+                    "endLine": int(getattr(node, "end_lineno", getattr(node, "lineno", 1)) or 1),
+                },
+            }
+        )
+    return results
+
+
 def _assignment_to_object(node: ast.Assign, stage_id: str) -> dict[str, Any] | None:
-    object_id = _assigned_name(node)
+    objects = _assignment_to_objects(node, stage_id)
+    return objects[0] if objects else None
+
+
+def _legacy_assignment_to_object(node: ast.Assign, stage_id: str) -> dict[str, Any] | None:
+    object_ids = _assigned_names(node)
+    object_id = object_ids[0] if object_ids else ""
     if not object_id or not isinstance(node.value, ast.Call):
         return None
     object_type = _call_type(node.value)
@@ -253,7 +371,7 @@ def _assignment_to_object(node: ast.Assign, stage_id: str) -> dict[str, Any] | N
         return None
     text = _first_literal_string(node.value)
     role = _infer_role(object_id, object_type, text)
-    if _is_internal_id(object_id, object_type, role):
+    if _is_internal_id(object_id, object_type, role, text):
         return None
     return {
         "id": object_id,
@@ -293,10 +411,10 @@ def build_scene_manifest(code: str, brief: dict[str, Any] | None = None) -> dict
     for node in ast.walk(construct):
         if not isinstance(node, ast.Assign):
             continue
-        item = _assignment_to_object(node, stage_id)
-        if item and item["id"] not in seen_ids:
-            objects.append(item)
-            seen_ids.add(item["id"])
+        for item in _assignment_to_objects(node, stage_id):
+            if item and item["id"] not in seen_ids:
+                objects.append(item)
+                seen_ids.add(item["id"])
 
     objects.sort(key=lambda item: (item["codeAnchor"]["startLine"], item["id"]))
     for index, item in enumerate(objects):

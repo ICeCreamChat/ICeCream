@@ -881,6 +881,267 @@ class MainScene(Scene):
         self.assertIn("Studio manual layout constraints", result["code"])
         self.assertIn("手动画框", result["patchSummary"])
         self.assertEqual(result["layoutEditSpec"]["manualReferenceRegions"][0]["id"], "manual_1")
+
+    def test_layout_rebuild_applies_deleted_object_ids(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("标题")
+        subtitle_mob = Text("副标题")
+        self.add(title_mob, subtitle_mob)
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "deletedObjectIds": ["subtitle_mob"],
+        }
+
+        result = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(result["success"])
+        self.assertIn("subtitle_mob.set_opacity(0)", result["code"])
+        self.assertIn("subtitle_mob", result["layoutEditSpec"]["deletedObjectIds"])
+
+    def test_layout_rebuild_inserts_new_canvas_objects(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("标题")
+        self.add(title_mob)
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "newObjects": [
+                {
+                    "id": "new_text_1",
+                    "kind": "text",
+                    "text": "补充说明",
+                    "normalizedBBox": {"x": 0.40, "y": 0.55, "width": 0.22, "height": 0.08},
+                },
+                {
+                    "id": "new_formula_1",
+                    "kind": "formula",
+                    "text": "S_n",
+                    "normalizedBBox": {"x": 0.52, "y": 0.68, "width": 0.16, "height": 0.08},
+                },
+            ],
+        }
+
+        result = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(result["success"])
+        self.assertIn("new_text_1 = SafeText", result["code"])
+        self.assertIn("new_formula_1 = SafeMathTex", result["code"])
+        self.assertIn("self.add(new_text_1)", result["code"])
+        self.assertIn("已新增 2 个画布对象", result["patchSummary"])
+
+    def test_scene_manifest_exposes_visible_text_helper_anchors(self):
+        from app.agent.scene_manifest import build_scene_manifest
+
+        code = '''
+from manim import *
+
+def make_header(title, subtitle):
+    title_mob = Text(title)
+    subtitle_mob = Text(subtitle)
+    return VGroup(title_mob, subtitle_mob), title_mob, subtitle_mob
+
+def make_step_banner(text):
+    return Text(text)
+
+def make_summary(text):
+    return Text(text)
+
+class MainScene(Scene):
+    def construct(self):
+        header_group, title_mob, subtitle_mob = make_header("正弦函数 y = sin(x) 的图像", "理解周期")
+        step_text_mob = make_step_banner("总结周期性质")
+        summary_mob = make_summary("正弦函数 y = sin(x) 的周期为 2π。")
+        y_name = Text("y 轴")
+        self.add(header_group, step_text_mob, summary_mob, y_name)
+'''
+
+        manifest = build_scene_manifest(code)
+        by_id = {item["id"]: item for item in manifest["objects"]}
+
+        self.assertIn("title_mob", by_id)
+        self.assertIn("subtitle_mob", by_id)
+        self.assertIn("step_text_mob", by_id)
+        self.assertIn("summary_mob", by_id)
+        self.assertIn("y_name", by_id)
+        self.assertEqual(by_id["title_mob"]["text"], "正弦函数 y = sin(x) 的图像")
+        self.assertEqual(by_id["step_text_mob"]["publicType"], "文字")
+
+    def test_layout_rebuild_applies_natural_language_edit(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("旧标题")
+        self.add(title_mob)
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "naturalLanguageEdit": {
+                "command": "把文字改成“正弦函数的周期与振幅”，往上移一点，缩小并改成深蓝色",
+                "selectedObjectId": "title_mob",
+                "selectedObjectSnapshot": {"id": "title_mob", "type": "Text", "text": "旧标题"},
+            },
+        }
+
+        result = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(result["success"])
+        self.assertIn('Text("正弦函数的周期与振幅")', result["code"])
+        self.assertIn('title_mob.set_color("#0F4C81")', result["code"])
+        self.assertIn("title_mob.shift", result["code"])
+        self.assertIn("title_mob.scale", result["code"])
+        self.assertIn("naturalLanguageEdit", result["layoutEditSpec"])
+
+    def test_layout_rebuild_replaces_text_in_header_tuple_anchor(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = '''
+from manim import *
+
+def make_header(title, subtitle):
+    return VGroup(), Text(title), Text(subtitle)
+
+class MainScene(Scene):
+    def construct(self):
+        header_group, title_mob, subtitle_mob = make_header("旧标题", "旧副标题")
+        self.add(header_group)
+'''
+        layout_spec = {
+            "naturalLanguageEdit": {
+                "command": "把标题改成“新标题”",
+                "selectedObjectId": "title_mob",
+                "selectedObjectSnapshot": {"id": "title_mob", "type": "SafeText", "text": "旧标题"},
+            }
+        }
+
+        result = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(result["success"])
+        self.assertIn('make_header("新标题", "旧副标题")', result["code"])
+
+    def test_layout_rebuild_applies_multi_object_natural_language_edit(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("标题")
+        subtitle_mob = Text("副标题")
+        self.add(title_mob, subtitle_mob)
+"""
+        layout_spec = {
+            "baseFrameId": "frame_02",
+            "baseTime": 3.0,
+            "naturalLanguageEdit": {
+                "command": "这些文字一起往上移一点，缩小并改成深蓝色",
+                "selectionMode": "multi",
+                "selectedObjectIds": ["title_mob", "subtitle_mob"],
+                "selectedObjectSnapshots": [
+                    {"id": "title_mob", "type": "Text", "text": "标题", "bbox": {"x": 0.25, "y": 0.18, "width": 0.2, "height": 0.08}},
+                    {"id": "subtitle_mob", "type": "Text", "text": "副标题", "bbox": {"x": 0.28, "y": 0.28, "width": 0.24, "height": 0.08}},
+                ],
+            },
+        }
+
+        result = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(result["success"])
+        self.assertIn('title_mob.set_color("#0F4C81")', result["code"])
+        self.assertIn('subtitle_mob.set_color("#0F4C81")', result["code"])
+        self.assertIn("title_mob.shift", result["code"])
+        self.assertIn("subtitle_mob.shift", result["code"])
+        self.assertIn("title_mob.scale", result["code"])
+        self.assertIn("subtitle_mob.scale", result["code"])
+        self.assertEqual(result["layoutEditSpec"]["naturalLanguageEdit"]["selectionMode"], "multi")
+
+    def test_layout_rebuild_distributes_multi_object_selection(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        left_label = Text("左")
+        right_label = Text("右")
+        self.add(left_label, right_label)
+"""
+        layout_spec = {
+            "naturalLanguageEdit": {
+                "command": "这些文字排开，不要互相遮住",
+                "selectionMode": "multi",
+                "selectedObjectIds": ["left_label", "right_label"],
+                "selectedObjectSnapshots": [
+                    {"id": "left_label", "type": "Text", "bbox": {"x": 0.4, "y": 0.4, "width": 0.16, "height": 0.08}},
+                    {"id": "right_label", "type": "Text", "bbox": {"x": 0.42, "y": 0.41, "width": 0.18, "height": 0.08}},
+                ],
+            }
+        }
+
+        result = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(result["success"])
+        self.assertIn("left_label.shift", result["code"])
+        self.assertIn("right_label.shift", result["code"])
+        self.assertNotIn("'operation': 'delete'", str(result["editPlan"]))
+        self.assertGreaterEqual(str(result["editPlan"]).count("'operation': 'move'"), 2)
+
+    def test_layout_rebuild_keeps_manual_natural_language_as_constraints(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("标题")
+        self.add(title_mob)
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "manualReferenceRegions": [
+                {
+                    "id": "manual_1",
+                    "type": "文字区域",
+                    "label": "手动画框文字区域",
+                    "normalizedBBox": {"x": 0.2, "y": 0.3, "width": 0.3, "height": 0.1},
+                }
+            ],
+            "naturalLanguageEdit": {
+                "command": "删除这段说明",
+                "selectedObjectId": "manual_1",
+            },
+        }
+
+        result = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(result["success"])
+        self.assertIn("Studio manual layout constraints", result["code"])
+        self.assertIn("删除这段说明", result["code"])
+        self.assertEqual(result["editPlan"], [])
+
     def test_scene_patch_replaces_text_and_rejects_unknown_operations(self):
         from app.agent.scene_patcher import apply_scene_patch
 

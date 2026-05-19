@@ -2087,9 +2087,119 @@ input:focus-visible {
         inset: 0 !important;
     }
 
+    #code-panel.manim-studio-window .studio-object-layer {
+        inset: 0 !important;
+        z-index: 80 !important;
+    }
+
+    #code-panel.manim-studio-window .studio-live-object {
+        min-width: 24px !important;
+        min-height: 20px !important;
+        border-radius: 9px !important;
+        touch-action: none !important;
+    }
+
+    #code-panel.manim-studio-window .studio-live-object.is-quiet {
+        opacity: 0.12 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+
+    #code-panel.manim-studio-window .studio-live-object.is-quiet .studio-live-text,
+    #code-panel.manim-studio-window .studio-live-object.is-quiet .studio-live-caption,
+    #code-panel.manim-studio-window .studio-live-object.is-quiet .studio-live-crop {
+        opacity: 0 !important;
+    }
+
+    #code-panel.manim-studio-window .studio-live-text,
+    #code-panel.manim-studio-window .studio-live-caption {
+        font-size: 10px !important;
+        line-height: 1.15 !important;
+    }
+
+    #code-panel.manim-studio-window .studio-live-crop {
+        opacity: 0.54 !important;
+    }
+
+    #code-panel.manim-studio-window .studio-canvas-tooling {
+        left: 8px !important;
+        right: 8px !important;
+        bottom: 8px !important;
+        gap: 5px !important;
+        padding: 6px !important;
+        border-radius: 13px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-canvas-tooling button {
+        min-height: 28px !important;
+        padding: 0 8px !important;
+        font-size: 11px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-canvas-tooling button.primary {
+        flex: 1 1 100% !important;
+        margin-left: 0 !important;
+    }
+
     #code-panel.manim-studio-window .studio-object-hotspot {
         min-width: 28px !important;
         min-height: 22px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-cluster {
+        min-width: 34px !important;
+        min-height: 28px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-picker {
+        left: 10px !important;
+        right: 10px !important;
+        top: auto !important;
+        bottom: 10px !important;
+        width: auto !important;
+        max-height: 46vh !important;
+        border-radius: 16px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-picker-list {
+        max-height: calc(46vh - 62px) !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-picker-row {
+        grid-template-columns: minmax(0, 1fr) auto !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-picker-main {
+        grid-template-columns: minmax(0, 1fr) !important;
+        min-height: 56px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-picker-status {
+        grid-column: auto !important;
+        justify-self: start !important;
+        margin-left: 0 !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-picker-close {
+        width: 30px !important;
+        height: 30px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-hover-preview {
+        left: 14px !important;
+        right: 14px !important;
+        top: auto !important;
+        bottom: 12px !important;
+        width: auto !important;
+        max-width: none !important;
+        padding: 10px !important;
+        border-radius: 16px !important;
+        pointer-events: none !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-hover-preview-image {
+        aspect-ratio: 16 / 9 !important;
+        max-height: 180px !important;
     }
 
     #code-panel.manim-studio-window .studio-object-label {
@@ -2209,5 +2319,18 @@ input:focus-visible {
         max-height: 24vh !important;
         overflow-y: auto !important;
         overscroll-behavior: contain !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-command-input {
+        min-height: 76px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-apply-row {
+        align-items: stretch !important;
+        flex-direction: column !important;
+    }
+
+    #code-panel.manim-studio-window .studio-object-apply {
+        width: 100% !important;
     }
 }
