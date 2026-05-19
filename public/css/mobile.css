@@ -2310,6 +2310,55 @@ input:focus-visible {
         min-height: 210px !important;
     }
 
+    #code-panel.manim-studio-window #video-inner-container.has-react-studio-canvas {
+        min-height: 58vh !important;
+        height: auto !important;
+        display: block !important;
+        overflow: hidden !important;
+    }
+
+    #code-panel.manim-studio-window .studio-konva-root,
+    #code-panel.manim-studio-window .manim-studio-canvas-app {
+        min-height: 58vh !important;
+    }
+
+    #code-panel.manim-studio-window .manim-studio-canvas-app {
+        grid-template-rows: auto minmax(240px, 1fr) auto auto !important;
+        padding: 10px !important;
+        gap: 10px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-konva-toolbar,
+    #code-panel.manim-studio-window .studio-konva-selected-list,
+    #code-panel.manim-studio-window .studio-konva-quick-chips,
+    #code-panel.manim-studio-window .studio-konva-inspector-actions {
+        gap: 6px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-konva-toolbar button,
+    #code-panel.manim-studio-window .studio-konva-frame-row button,
+    #code-panel.manim-studio-window .studio-konva-quick-chips button,
+    #code-panel.manim-studio-window .studio-konva-inspector-actions button {
+        min-height: 36px !important;
+        padding: 0 10px !important;
+        font-size: 12px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-konva-stage-shell {
+        min-height: 240px !important;
+        border-radius: 14px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-konva-frame-row {
+        grid-auto-columns: minmax(110px, 1fr) !important;
+    }
+
+    #code-panel.manim-studio-window .studio-konva-inspector {
+        max-height: 34vh !important;
+        overflow-y: auto !important;
+        overscroll-behavior: contain !important;
+    }
+
     #code-panel.manim-studio-window .studio-calibration-toolbar {
         padding: 9px 10px !important;
         gap: 8px !important;

@@ -53,6 +53,13 @@ test_students_60.csv
 
 # Vite / TypeScript remnants (unused)
 src/
+!/src/
+/src/*
+!/src/manim-studio/
+!/src/manim-studio/**
+/public/js/studio/*
+!/public/js/studio/
+!/public/js/studio/manim-studio-canvas.js
 index.html
 tsconfig.json
 vite.config.ts

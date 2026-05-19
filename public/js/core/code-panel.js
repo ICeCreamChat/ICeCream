@@ -27,6 +27,9 @@ export class CodePanel {
         this.detectedSceneRegions = [];
         this.sceneHitTargets = [];
         this.sceneCollisionGroups = [];
+        this.studioCanvasBridge = null;
+        this.studioCanvasRoot = null;
+        this.useReactStudioCanvas = true;
         this.abortController = null; // [Stop Button] Track active request
         this.suggestionController = null;
         this.studioReportEl = null;
@@ -124,6 +127,149 @@ export class CodePanel {
         const keepTool = options.keepTool ? this.canvasEditState?.tool : null;
         this.canvasEditState = this.createCanvasEditState();
         if (keepTool) this.canvasEditState.tool = keepTool;
+    }
+
+    shouldUseReactStudioCanvas() {
+        return Boolean(
+            this.useReactStudioCanvas &&
+            this.elements.videoPreview &&
+            window.ManimStudioCanvas &&
+            typeof window.ManimStudioCanvas.mount === 'function'
+        );
+    }
+
+    ensureReactStudioCanvas() {
+        if (!this.shouldUseReactStudioCanvas()) return false;
+        const container = this.elements.videoPreview;
+        if (!container) return false;
+
+        container.classList.add('has-react-studio-canvas');
+        if (!this.studioCanvasRoot || this.studioCanvasRoot.parentElement !== container) {
+            if (this.studioCanvasBridge?.unmount) {
+                this.studioCanvasBridge.unmount();
+            }
+            this.studioCanvasBridge = null;
+            this.studioCanvasRoot = document.createElement('div');
+            this.studioCanvasRoot.id = 'studio-konva-root';
+            this.studioCanvasRoot.className = 'studio-konva-root';
+            container.appendChild(this.studioCanvasRoot);
+        }
+
+        if (this.elements.interactionOverlay) {
+            this.elements.interactionOverlay.classList.add('hidden');
+            this.elements.interactionOverlay.innerHTML = '';
+        }
+        if (this.elements.objectInspector) {
+            this.elements.objectInspector.classList.add('hidden');
+            this.elements.objectInspector.innerHTML = '';
+        }
+
+        if (!this.studioCanvasBridge) {
+            this.studioCanvasBridge = window.ManimStudioCanvas.mount(this.studioCanvasRoot, this.getReactStudioCanvasProps());
+        }
+        return true;
+    }
+
+    getReactStudioCanvasProps() {
+        return {
+            manifest: this.runtimeSceneManifest || this.currentSceneManifest || null,
+            frameSet: this.currentStudioFrameSet || null,
+            selectedFrameId: this.selectedStudioFrameId || '',
+            recommendedFrameId: this.currentStudioFrameSet?.recommendedFrameId || '',
+            videoUrl: this.latestVideoUrl || '',
+            theme: document.body.classList.contains('light-mode') ? 'light' : 'dark',
+            onFrameChange: (frameId) => this.handleReactStudioFrameChange(frameId),
+            onDraftChange: (editState) => this.handleReactStudioDraftChange(editState),
+            onSelectionChange: (selection) => this.handleReactStudioSelectionChange(selection),
+            onApply: (editState) => this.handleReactStudioApply(editState),
+        };
+    }
+
+    syncReactStudioCanvas() {
+        if (!this.ensureReactStudioCanvas()) return false;
+        this.studioCanvasBridge?.update?.(this.getReactStudioCanvasProps());
+        return true;
+    }
+
+    handleReactStudioFrameChange(frameId) {
+        if (frameId && String(frameId) !== String(this.selectedStudioFrameId || '')) {
+            this.selectedStudioFrameId = frameId;
+            this.renderStudioFrameStrip();
+        }
+    }
+
+    handleReactStudioDraftChange(editState = {}) {
+        this.canvasEditState = this.convertReactStudioCanvasState(editState);
+        this.manualStudioObjects = this.canvasEditState.manualRegions || [];
+        this.hydrateSelectedSceneObjects(editState);
+    }
+
+    handleReactStudioSelectionChange(selection = {}) {
+        this.hydrateSelectedSceneObjects(selection);
+    }
+
+    async handleReactStudioApply(editState = {}) {
+        this.handleReactStudioDraftChange(editState);
+        const command = String(editState.naturalLanguageCommand || editState.naturalLanguageEdit?.command || '').trim();
+        await this.applyScenePatch({
+            operation: command ? 'natural_language_edit' : 'layout_calibrate',
+            objectId: editState.selectedObjectIds?.[0] || '',
+            command,
+        });
+    }
+
+    convertReactStudioCanvasState(editState = {}) {
+        const next = this.createCanvasEditState();
+        next.selectedObjectIds = Array.isArray(editState.selectedObjectIds) ? editState.selectedObjectIds.map(String) : [];
+        next.pendingObjectEdits = new Map(
+            (editState.objectEdits || editState.pendingObjectEdits || [])
+                .map(edit => [String(edit.objectId || ''), edit])
+                .filter(([id]) => Boolean(id))
+        );
+        next.pendingNewObjects = Array.isArray(editState.newObjects)
+            ? editState.newObjects
+            : (Array.isArray(editState.pendingNewObjects) ? editState.pendingNewObjects : []);
+        next.pendingDeletes = new Set(editState.deletedObjectIds || editState.pendingDeletes || []);
+        next.manualRegions = Array.isArray(editState.manualReferenceRegions)
+            ? editState.manualReferenceRegions
+            : (Array.isArray(editState.manualRegions) ? editState.manualRegions : []);
+        next.objectBoxOverrides = new Map(
+            (editState.objectBoxOverrides || [])
+                .map(item => [String(item.objectId || ''), item.normalizedBBox || item.bbox])
+                .filter(([id, box]) => Boolean(id) && Boolean(box))
+        );
+        next.naturalLanguageCommand = String(editState.naturalLanguageCommand || editState.naturalLanguageEdit?.command || '');
+        next.baseFrameId = editState.baseFrameId || editState.naturalLanguageEdit?.baseFrameId || this.selectedStudioFrameId || '';
+        next.baseTime = Number(editState.baseTime || editState.naturalLanguageEdit?.baseTime || 0);
+        next.tool = editState.tool || 'select';
+        return next;
+    }
+
+    hydrateSelectedSceneObjects(selection = {}) {
+        const ids = Array.isArray(selection.selectedObjectIds) ? selection.selectedObjectIds.map(String) : [];
+        const snapshots = new Map(
+            (selection.selectedObjects || selection.selectedObjectSnapshots || [])
+                .map(item => [String(item?.id || ''), item])
+                .filter(([id]) => Boolean(id))
+        );
+        const nextSelection = new Map();
+        ids.forEach(id => {
+            const object = this.findStudioObjectById(id) || snapshots.get(id);
+            if (object) nextSelection.set(id, object);
+        });
+        this.selectedSceneObjects = nextSelection;
+        this.selectedSceneObject = nextSelection.values().next().value || null;
+    }
+
+    findStudioObjectById(id) {
+        const objectId = String(id || '');
+        if (!objectId) return null;
+        const manifestObject = this.getAllSelectableSceneObjects().find(item => String(item.id || '') === objectId);
+        if (manifestObject) return manifestObject;
+        const manualObject = (this.manualStudioObjects || []).find(item => String(item.id || '') === objectId);
+        if (manualObject) return manualObject;
+        const newObject = (this.canvasEditState?.pendingNewObjects || []).find(item => String(item.id || '') === objectId);
+        return newObject || null;
     }
 
     getCanvasTool() {
@@ -1678,6 +1824,9 @@ export class CodePanel {
     }
 
     renderSceneOverlay() {
+        if (this.syncReactStudioCanvas()) {
+            return;
+        }
         const overlay = this.ensureInteractionOverlay();
         if (!overlay) return;
 

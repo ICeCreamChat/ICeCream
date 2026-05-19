@@ -5681,12 +5681,14 @@ body #code-panel #ai-modify-btn.btn-stop,
    ================================ */
 #code-panel.manim-studio-window {
     --studio-bg: var(--manim-studio-surface);
+    --studio-surface: var(--manim-studio-surface);
     --studio-panel: var(--manim-studio-surface-2);
     --studio-panel-raised: var(--manim-studio-surface);
     --studio-border: var(--manim-studio-border);
     --studio-text: var(--text-primary, #e5edf7);
     --studio-muted: var(--manim-studio-muted);
     --studio-accent: var(--manim-studio-accent);
+    --studio-accent-strong: var(--manim-studio-accent-strong, var(--manim-studio-accent));
     --studio-success: var(--manim-studio-success);
     --studio-danger: var(--manim-studio-error);
     --studio-shadow: var(--manim-studio-shadow);
@@ -7511,6 +7513,272 @@ body:not(.light-mode) #code-panel.manim-studio-window {
     width: 100%;
     height: 100%;
     min-height: 320px;
+}
+
+#code-panel.manim-studio-window #video-inner-container.has-react-studio-canvas {
+    display: block !important;
+    min-height: 620px !important;
+    height: auto !important;
+    aspect-ratio: auto !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    background: var(--studio-canvas) !important;
+}
+
+#code-panel.manim-studio-window #video-inner-container.has-react-studio-canvas > .studio-calibration-frame,
+#code-panel.manim-studio-window #video-inner-container.has-react-studio-canvas > .studio-calibration-empty,
+#code-panel.manim-studio-window #video-inner-container.has-react-studio-canvas > .studio-calibration-empty-state,
+#code-panel.manim-studio-window #video-inner-container.has-react-studio-canvas > #studio-interaction-overlay {
+    display: none !important;
+}
+
+#code-panel.manim-studio-window .studio-konva-root {
+    position: relative;
+    z-index: 30;
+    width: 100%;
+    min-height: 620px;
+    height: 100%;
+    font-family: var(--studio-font-body);
+    color: var(--studio-text);
+}
+
+#code-panel.manim-studio-window .manim-studio-canvas-app {
+    display: grid;
+    grid-template-rows: auto minmax(360px, 1fr) auto auto;
+    gap: 12px;
+    min-height: 620px;
+    padding: 12px;
+    box-sizing: border-box;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--studio-canvas) 96%, #ffffff 4%), var(--studio-canvas));
+}
+
+#code-panel.manim-studio-window .studio-konva-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 8px;
+    border: 1px solid var(--studio-border);
+    border-radius: 14px;
+    background: var(--studio-panel-raised);
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+}
+
+#code-panel.manim-studio-window .studio-konva-toolbar button,
+#code-panel.manim-studio-window .studio-konva-frame-row button,
+#code-panel.manim-studio-window .studio-konva-quick-chips button,
+#code-panel.manim-studio-window .studio-konva-inspector-actions button {
+    min-height: 34px;
+    border: 1px solid var(--studio-border);
+    border-radius: 10px;
+    padding: 0 12px;
+    background: var(--studio-surface);
+    color: var(--studio-text);
+    font-family: var(--studio-font-body);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background .16s ease, border-color .16s ease, color .16s ease, box-shadow .16s ease;
+}
+
+#code-panel.manim-studio-window .studio-konva-toolbar button:hover,
+#code-panel.manim-studio-window .studio-konva-frame-row button:hover,
+#code-panel.manim-studio-window .studio-konva-quick-chips button:hover {
+    border-color: var(--studio-accent);
+    background: color-mix(in srgb, var(--studio-accent) 10%, var(--studio-surface));
+}
+
+#code-panel.manim-studio-window .studio-konva-toolbar button.is-active,
+#code-panel.manim-studio-window .studio-konva-frame-row button.is-active {
+    border-color: var(--studio-accent);
+    background: color-mix(in srgb, var(--studio-accent) 16%, var(--studio-surface));
+    color: var(--studio-accent-strong);
+}
+
+#code-panel.manim-studio-window .studio-konva-toolbar .is-danger {
+    color: var(--studio-danger);
+    border-color: color-mix(in srgb, var(--studio-danger) 28%, var(--studio-border));
+}
+
+#code-panel.manim-studio-window .studio-konva-toolbar .is-primary,
+#code-panel.manim-studio-window .studio-konva-inspector-actions .is-primary {
+    margin-left: auto;
+    border-color: var(--studio-accent);
+    background: var(--studio-accent);
+    color: #fff;
+    box-shadow: 0 12px 26px rgba(2, 132, 199, 0.22);
+}
+
+#code-panel.manim-studio-window .studio-konva-toolbar .is-primary:disabled,
+#code-panel.manim-studio-window .studio-konva-inspector-actions .is-primary:disabled {
+    opacity: .48;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+#code-panel.manim-studio-window .studio-konva-toolbar-spacer {
+    flex: 1 1 auto;
+}
+
+#code-panel.manim-studio-window .studio-konva-stage-shell {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-height: 360px;
+    border: 1px solid var(--studio-border);
+    border-radius: 16px;
+    background:
+        linear-gradient(90deg, rgba(2, 132, 199, .035) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(2, 132, 199, .035) 1px, transparent 1px),
+        var(--studio-canvas);
+    background-size: 24px 24px;
+    overflow: hidden;
+    touch-action: none;
+}
+
+#code-panel.manim-studio-window .studio-konva-stage-shell canvas {
+    display: block;
+}
+
+#code-panel.manim-studio-window .studio-konva-empty {
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 8px;
+    width: min(460px, 78%);
+    min-height: 220px;
+    padding: 24px;
+    border: 1px dashed color-mix(in srgb, var(--studio-accent) 36%, var(--studio-border));
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--studio-surface) 72%, transparent);
+    color: var(--studio-muted);
+    text-align: center;
+}
+
+#code-panel.manim-studio-window .studio-konva-empty strong {
+    color: var(--studio-text);
+    font-size: 15px;
+}
+
+#code-panel.manim-studio-window .studio-konva-frame-row {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(124px, 1fr);
+    gap: 8px;
+    overflow-x: auto;
+    padding: 2px 2px 8px;
+    scrollbar-width: thin;
+}
+
+#code-panel.manim-studio-window .studio-konva-frame-row button {
+    display: grid;
+    gap: 3px;
+    justify-items: start;
+    min-height: 52px;
+    padding: 8px 10px;
+    text-align: left;
+    white-space: normal;
+}
+
+#code-panel.manim-studio-window .studio-konva-frame-row button strong {
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#code-panel.manim-studio-window .studio-konva-frame-row button span {
+    color: var(--studio-muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+#code-panel.manim-studio-window .studio-konva-inspector {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--studio-border);
+    border-radius: 16px;
+    background: var(--studio-panel-raised);
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+}
+
+#code-panel.manim-studio-window .studio-konva-inspector-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+#code-panel.manim-studio-window .studio-konva-inspector-head strong {
+    color: var(--studio-text);
+    font-size: 15px;
+}
+
+#code-panel.manim-studio-window .studio-konva-inspector-head span {
+    color: var(--studio-muted);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+#code-panel.manim-studio-window .studio-konva-selected-list,
+#code-panel.manim-studio-window .studio-konva-quick-chips,
+#code-panel.manim-studio-window .studio-konva-inspector-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+#code-panel.manim-studio-window .studio-konva-selected-chip {
+    max-width: 190px;
+    padding: 5px 9px;
+    border: 1px solid var(--studio-border);
+    border-radius: 999px;
+    background: var(--studio-surface);
+    color: var(--studio-text);
+    font-size: 12px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#code-panel.manim-studio-window .studio-konva-command {
+    display: grid;
+    gap: 7px;
+    color: var(--studio-text);
+    font-size: 13px;
+    font-weight: 800;
+}
+
+#code-panel.manim-studio-window .studio-konva-command textarea {
+    min-height: 82px;
+    resize: vertical;
+    border: 1px solid var(--studio-border);
+    border-radius: 12px;
+    padding: 11px 12px;
+    background: var(--studio-surface);
+    color: var(--studio-text);
+    font-family: var(--studio-font-body);
+    font-size: 14px;
+    line-height: 1.5;
+    outline: none;
+}
+
+#code-panel.manim-studio-window .studio-konva-command textarea:focus {
+    border-color: var(--studio-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--studio-accent) 18%, transparent);
+}
+
+#code-panel.manim-studio-window .studio-konva-inspector-actions {
+    align-items: center;
+    justify-content: space-between;
+}
+
+#code-panel.manim-studio-window .studio-konva-inspector-actions .studio-konva-status {
+    color: var(--studio-muted);
+    font-size: 12px;
+    font-weight: 700;
 }
 
 #code-panel.manim-studio-window .studio-calibration-toolbar {

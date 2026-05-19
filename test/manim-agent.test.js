@@ -20,6 +20,8 @@ const appPath = new URL('../public/js/app.js', import.meta.url);
 const indexPath = new URL('../public/index.html', import.meta.url);
 const mainCssPath = new URL('../public/css/main.css', import.meta.url);
 const mobileCssPath = new URL('../public/css/mobile.css', import.meta.url);
+const studioCanvasPath = new URL('../src/manim-studio/main.jsx', import.meta.url);
+const studioBundlePath = new URL('../public/js/studio/manim-studio-canvas.js', import.meta.url);
 
 function listen(server) {
   return new Promise(resolve => {
@@ -619,11 +621,13 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
 });
 
 test('Manim Studio code panel uses the redesigned workspace shell', async () => {
-  const [indexSource, codePanelSource, mainCssSource, mobileCssSource] = await Promise.all([
+  const [indexSource, codePanelSource, mainCssSource, mobileCssSource, studioCanvasSource, studioBundleSource] = await Promise.all([
     readFile(indexPath, 'utf8'),
     readFile(codePanelPath, 'utf8'),
     readFile(mainCssPath, 'utf8'),
     readFile(mobileCssPath, 'utf8'),
+    readFile(studioCanvasPath, 'utf8'),
+    readFile(studioBundlePath, 'utf8'),
   ]);
 
   assert.match(indexSource, /class="code-panel manim-studio-window"/);
@@ -640,7 +644,14 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(indexSource, /studio-editor-panel/);
   assert.match(indexSource, /studio-command-bar/);
   assert.match(indexSource, /试试：把标题字体调大至 40/);
+  assert.match(indexSource, /js\/studio\/manim-studio-canvas\.js/);
 
+  assert.match(codePanelSource, /ManimStudioCanvas/);
+  assert.match(codePanelSource, /studio-konva-root/);
+  assert.match(codePanelSource, /has-react-studio-canvas/);
+  assert.match(codePanelSource, /syncReactStudioCanvas/);
+  assert.match(codePanelSource, /handleReactStudioApply/);
+  assert.match(codePanelSource, /convertReactStudioCanvasState/);
   assert.match(codePanelSource, /studio-preview-video/);
   assert.match(codePanelSource, /registerSceneManifest/);
   assert.match(codePanelSource, /renderSceneOverlay/);
@@ -751,8 +762,28 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.doesNotMatch(codePanelSource, /当前版本请优先选择已有对象进行整段重构/);
   assert.doesNotMatch(codePanelSource, /background-color: #ef4444 !important/);
 
+  assert.match(studioCanvasSource, /react-konva/);
+  assert.match(studioCanvasSource, /zustand/);
+  assert.match(studioCanvasSource, /Stage/);
+  assert.match(studioCanvasSource, /Layer/);
+  assert.match(studioCanvasSource, /KonvaImage/);
+  assert.match(studioCanvasSource, /objectBoxOverrides/);
+  assert.match(studioCanvasSource, /objectEdits/);
+  assert.match(studioCanvasSource, /newObjects/);
+  assert.match(studioCanvasSource, /deletedObjectIds/);
+  assert.match(studioCanvasSource, /manualReferenceRegions/);
+  assert.match(studioCanvasSource, /naturalLanguageEdit/);
+  assert.match(studioCanvasSource, /box-select/);
+  assert.match(studioCanvasSource, /add_text/);
+  assert.match(studioCanvasSource, /add_formula/);
+  assert.match(studioCanvasSource, /add_arrow/);
+  assert.match(studioCanvasSource, /onApply/);
+  assert.match(studioCanvasSource, /window\.ManimStudioCanvas/);
+  assert.match(studioBundleSource, /ManimStudioCanvas/);
+
   assert.match(mainCssSource, /#code-panel\.manim-studio-window/);
   assert.match(mainCssSource, /--studio-bg: var\(--manim-studio-surface\)/);
+  assert.match(mainCssSource, /--studio-surface: var\(--manim-studio-surface\)/);
   assert.match(mainCssSource, /grid-template-columns: minmax\(520px, 42%\) minmax\(0, 1fr\)/);
   assert.match(mainCssSource, /aspect-ratio: 16 \/ 9/);
   assert.match(mainCssSource, /#code-panel\.manim-studio-window #manim-history-root/);
@@ -808,6 +839,12 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(mainCssSource, /\.studio-object-command-input/);
   assert.match(mainCssSource, /\.studio-object-suggestion/);
   assert.match(mainCssSource, /\.studio-object-apply/);
+  assert.match(mainCssSource, /\.studio-konva-root/);
+  assert.match(mainCssSource, /\.manim-studio-canvas-app/);
+  assert.match(mainCssSource, /\.studio-konva-toolbar/);
+  assert.match(mainCssSource, /\.studio-konva-stage-shell/);
+  assert.match(mainCssSource, /\.studio-konva-inspector/);
+  assert.match(mainCssSource, /\.has-react-studio-canvas/);
   assert.match(mainCssSource, /\.desktop-footer/);
 
   assert.match(mobileCssSource, /Manim Studio Mobile Redesign/);
@@ -832,6 +869,9 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(mobileCssSource, /\.studio-object-hover-preview-image/);
   assert.match(mobileCssSource, /\.studio-object-command-input/);
   assert.match(mobileCssSource, /\.studio-object-apply/);
+  assert.match(mobileCssSource, /\.studio-konva-root/);
+  assert.match(mobileCssSource, /\.studio-konva-stage-shell/);
+  assert.match(mobileCssSource, /\.studio-konva-inspector/);
   assert.match(mobileCssSource, /overscroll-behavior: contain/);
 });
 
