@@ -649,7 +649,11 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(codePanelSource, /ManimStudioCanvas/);
   assert.match(codePanelSource, /studio-konva-root/);
   assert.match(codePanelSource, /has-react-studio-canvas/);
+  assert.match(codePanelSource, /studioRevision/);
   assert.match(codePanelSource, /syncReactStudioCanvas/);
+  assert.match(codePanelSource, /normalizeStudioFrameSetForRevision/);
+  assert.match(codePanelSource, /withStudioCacheBust/);
+  assert.match(codePanelSource, /stripStudioCacheParam/);
   assert.match(codePanelSource, /handleReactStudioApply/);
   assert.match(codePanelSource, /convertReactStudioCanvasState/);
   assert.match(codePanelSource, /studio-preview-video/);
@@ -754,6 +758,8 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(codePanelSource, /newObjects/);
   assert.match(codePanelSource, /deletedObjectIds/);
   assert.match(codePanelSource, /applyStudioRenderResult/);
+  assert.match(codePanelSource, /this\.studioFrameSetMap\.delete\(this\.currentVideoId\)/);
+  assert.match(codePanelSource, /requestAnimationFrame\(\(\) => this\.syncReactStudioCanvas\(\)\)/);
   assert.match(codePanelSource, /handleStudioFrameImageError/);
   assert.match(codePanelSource, /_imageLoadFailed/);
   assert.match(codePanelSource, /已切换到可用关键帧/);
@@ -767,6 +773,10 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(studioCanvasSource, /Stage/);
   assert.match(studioCanvasSource, /Layer/);
   assert.match(studioCanvasSource, /KonvaImage/);
+  assert.match(studioCanvasSource, /studioRevision = 0/);
+  assert.match(studioCanvasSource, /videoUrl = ''/);
+  assert.match(studioCanvasSource, /useCanvasStore\.getState\(\)\.resetDraft\(\)/);
+  assert.match(studioCanvasSource, /setImage\(null\);\s*setFailed\(false\);/s);
   assert.match(studioCanvasSource, /objectBoxOverrides/);
   assert.match(studioCanvasSource, /objectEdits/);
   assert.match(studioCanvasSource, /newObjects/);

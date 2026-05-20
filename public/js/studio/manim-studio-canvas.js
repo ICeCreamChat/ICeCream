@@ -48152,6 +48152,8 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
         return void 0;
       }
       let cancelled = false;
+      setImage(null);
+      setFailed(false);
       const img = new window.Image();
       img.crossOrigin = "anonymous";
       img.onload = () => {
@@ -48373,10 +48375,12 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
   }
   function StudioCanvasApp(props) {
     const {
+      studioRevision = 0,
       manifest,
       frameSet,
       selectedFrameId,
       recommendedFrameId,
+      videoUrl = "",
       onFrameChange,
       onDraftChange,
       onSelectionChange,
@@ -48385,7 +48389,7 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
     const rootRef = (0, import_react4.useRef)(null);
     const stageRef = (0, import_react4.useRef)(null);
     const size = useElementSize(rootRef);
-    const frameData = (0, import_react4.useMemo)(() => normalizeFrameSet(frameSet, selectedFrameId || recommendedFrameId), [frameSet, selectedFrameId, recommendedFrameId]);
+    const frameData = (0, import_react4.useMemo)(() => normalizeFrameSet(frameSet, selectedFrameId || recommendedFrameId), [frameSet, selectedFrameId, recommendedFrameId, studioRevision, videoUrl]);
     const [activeFrameId, setActiveFrameId] = (0, import_react4.useState)(selectedFrameId || recommendedFrameId || frameData.recommendedFrameId);
     const activeFrame = (0, import_react4.useMemo)(() => {
       return frameData.frames.find((item) => String(item.frameId) === String(activeFrameId)) || frameData.frames.find((item) => String(item.frameId) === String(frameData.recommendedFrameId)) || frameData.frames[0] || null;
@@ -48396,6 +48400,13 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
     const selectedSet = (0, import_react4.useMemo)(() => new Set(state.selectedObjectIds.map(String)), [state.selectedObjectIds]);
     const [hoverId, setHoverId] = (0, import_react4.useState)("");
     const [pointerStart, setPointerStart] = (0, import_react4.useState)(null);
+    (0, import_react4.useEffect)(() => {
+      const nextFrameId = selectedFrameId || frameData.recommendedFrameId || frameData.frames[0]?.frameId || "";
+      setActiveFrameId(nextFrameId);
+      setHoverId("");
+      setPointerStart(null);
+      useCanvasStore.getState().resetDraft();
+    }, [studioRevision, videoUrl, frameData.recommendedFrameId]);
     (0, import_react4.useEffect)(() => {
       if (selectedFrameId) setActiveFrameId(selectedFrameId);
     }, [selectedFrameId]);

@@ -16,6 +16,7 @@ export class CodePanel {
         this.runtimeSceneManifest = null;
         this.currentStudioFrameSet = null;
         this.selectedStudioFrameId = null;
+        this.studioRevision = 0;
         this.manualStudioObjects = [];
         this.isManualSelectionMode = false;
         this.studioPointerState = null;
@@ -172,6 +173,7 @@ export class CodePanel {
 
     getReactStudioCanvasProps() {
         return {
+            studioRevision: this.studioRevision || 0,
             manifest: this.runtimeSceneManifest || this.currentSceneManifest || null,
             frameSet: this.currentStudioFrameSet || null,
             selectedFrameId: this.selectedStudioFrameId || '',
@@ -189,6 +191,49 @@ export class CodePanel {
         if (!this.ensureReactStudioCanvas()) return false;
         this.studioCanvasBridge?.update?.(this.getReactStudioCanvasProps());
         return true;
+    }
+
+    stripStudioCacheParam(url = '') {
+        const value = String(url || '');
+        if (!value) return '';
+        try {
+            const parsed = new URL(value, window.location.origin);
+            parsed.searchParams.delete('studioRev');
+            parsed.searchParams.delete('_studioRev');
+            const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+            return value.startsWith('http') ? parsed.toString() : path;
+        } catch (_) {
+            return value.replace(/([?&])(?:_?studioRev)=[^&#]*(&?)/g, (match, prefix, suffix) => (prefix === '?' && suffix ? '?' : suffix ? prefix : ''));
+        }
+    }
+
+    withStudioCacheBust(url = '', revision = this.studioRevision) {
+        const base = this.stripStudioCacheParam(url);
+        if (!base) return '';
+        const separator = base.includes('?') ? '&' : '?';
+        return `${base}${separator}studioRev=${encodeURIComponent(String(revision || 0))}`;
+    }
+
+    normalizeStudioFrameSetForRevision(frameSet, revision = this.studioRevision) {
+        if (!frameSet || !Array.isArray(frameSet.frames)) return null;
+        const frames = frameSet.frames.map(frame => {
+            const rawImageUrl = frame.rawImageUrl || this.stripStudioCacheParam(frame.imageUrl || frame.url || '');
+            const imageUrl = rawImageUrl ? this.withStudioCacheBust(rawImageUrl, revision) : '';
+            return {
+                ...frame,
+                rawImageUrl,
+                imageUrl,
+                url: imageUrl || frame.url || '',
+                _imageLoadFailed: false,
+                imageAvailable: frame.imageAvailable !== false,
+            };
+        });
+        const recommendedFrameId = frameSet.recommendedFrameId || frames[0]?.frameId || '';
+        return {
+            ...frameSet,
+            frames,
+            recommendedFrameId,
+        };
     }
 
     handleReactStudioFrameChange(frameId) {
@@ -2506,6 +2551,12 @@ export class CodePanel {
         const code = data.code || options.codeFallback || this.currentCode;
         const videoUrl = data.videoUrl || data.video_url || '';
         const manifest = data.runtimeSceneManifest || data.sceneManifest || null;
+        const hasFrameSetField = Object.prototype.hasOwnProperty.call(data, 'studioFrameSet');
+        const hasFreshStudioVisuals = Boolean(videoUrl || data.studioFrameSet || hasFrameSetField || manifest);
+        const nextRevision = hasFreshStudioVisuals ? (Number(this.studioRevision || 0) + 1) : Number(this.studioRevision || 0);
+        if (hasFreshStudioVisuals) {
+            this.studioRevision = nextRevision;
+        }
 
         if (code) {
             this.currentCode = code;
@@ -2529,14 +2580,20 @@ export class CodePanel {
         }
 
         if (data.studioFrameSet) {
-            this.currentStudioFrameSet = data.studioFrameSet;
-            this.selectedStudioFrameId = data.recommendedFrameId || data.studioFrameSet.recommendedFrameId || null;
+            const normalizedFrameSet = this.normalizeStudioFrameSetForRevision(data.studioFrameSet, this.studioRevision);
+            const recommendedFrameId = data.recommendedFrameId || normalizedFrameSet?.recommendedFrameId || normalizedFrameSet?.frames?.[0]?.frameId || null;
+            this.currentStudioFrameSet = normalizedFrameSet ? { ...normalizedFrameSet, recommendedFrameId } : null;
+            this.selectedStudioFrameId = recommendedFrameId;
             if (this.currentVideoId) {
                 this.studioFrameSetMap.set(this.currentVideoId, {
-                    ...data.studioFrameSet,
-                    recommendedFrameId: data.recommendedFrameId || data.studioFrameSet.recommendedFrameId,
+                    ...this.currentStudioFrameSet,
+                    recommendedFrameId,
                 });
             }
+        } else if (videoUrl || hasFrameSetField) {
+            this.currentStudioFrameSet = null;
+            this.selectedStudioFrameId = null;
+            if (this.currentVideoId) this.studioFrameSetMap.delete(this.currentVideoId);
         }
 
         if (videoUrl) {
@@ -2554,6 +2611,7 @@ export class CodePanel {
         this.clearSceneSelection({ silent: true });
         this.renderSceneOverlay();
         this.renderObjectInspector(options.message || data.patchSummary || '已更新预览与校准数据。');
+        requestAnimationFrame(() => this.syncReactStudioCanvas());
 
         const historyDescription = options.historyDescription || this.pendingHistoryDescription || '';
         if (options.recordHistory && code) {
@@ -2834,9 +2892,10 @@ export class CodePanel {
      */
     open(videoId, messageId = null) {
         this.currentMessageId = messageId;
-        this.latestVideoUrl = null;
         const code = this.codeVideoMap.get(videoId) || '# No code available';
         const videoUrl = this.videoUrlMap.get(videoId);
+        this.latestVideoUrl = videoUrl || null;
+        this.studioRevision = Number(this.studioRevision || 0) + 1;
 
         // 📜 [MathSpace] Reset history if switching to a different video
         const previousVideoId = this.currentVideoId;
@@ -2851,7 +2910,7 @@ export class CodePanel {
         this.currentVideoId = videoId;
         this.currentSceneManifest = this.sceneManifestMap.get(videoId) || null;
         this.runtimeSceneManifest = this.currentSceneManifest;
-        this.currentStudioFrameSet = this.studioFrameSetMap.get(videoId) || null;
+        this.currentStudioFrameSet = this.normalizeStudioFrameSetForRevision(this.studioFrameSetMap.get(videoId) || null, this.studioRevision);
         this.selectedStudioFrameId = this.currentStudioFrameSet?.recommendedFrameId || null;
         this.manualStudioObjects = [];
         this.resetCanvasEditState();

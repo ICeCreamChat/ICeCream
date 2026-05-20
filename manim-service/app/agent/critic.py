@@ -138,6 +138,7 @@ def critique_code(code: str, brief: dict[str, Any] | None = None) -> dict[str, A
             issues.extend(_invalid_mobject_keyword_issues(tree))
             issues.extend(_invalid_angle_usage_issues(tree))
             issues.extend(_semantic_object_issues(source, brief or {}))
+            issues.extend(_trig_semantic_issues(source, brief or {}))
         except SyntaxError as exc:
             issues.append(_issue("error", "生成代码存在 Python 语法错误。", f"先修复语法：{exc.msg}", "syntax_error"))
 
@@ -465,6 +466,195 @@ def _semantic_object_issues(source: str, brief: dict[str, Any]) -> list[dict[str
             issues.append(_issue("error", "函数图像缺少坐标系。", "使用 Axes 或 NumberPlane 绘制函数坐标系。", "function_axes_missing"))
         if not has_curve:
             issues.append(_issue("error", "函数图像缺少可见函数曲线。", "使用 axes.plot(...)、ParametricFunction 或 FunctionGraph 绘制主曲线。", "function_curve_missing"))
+
+    return issues
+
+
+def _is_trig_semantic_request(source: str, brief: dict[str, Any]) -> bool:
+    spec = brief.get("storyboardSpec") or brief.get("spec") or {}
+    haystack = " ".join([
+        str(brief.get("message") or ""),
+        str(brief.get("animation_type") or ""),
+        str(spec.get("animation_type") or ""),
+        str(spec.get("kind") or ""),
+    ]).lower()
+    if any(token in haystack for token in (
+        "三角函数", "直角三角", "正弦余弦正切", "正弦、余弦、正切",
+        "sin cos tan", "sine cosine tangent", "trigonometric",
+    )):
+        return True
+    main_source = _main_scene_source(source).lower()
+    return (
+        ("triangle" in haystack or "三角" in haystack or "polygon(" in main_source or "triangle(" in main_source)
+        and all(token in main_source for token in ("sin", "cos", "tan"))
+    )
+
+
+def _assignment_base_call(node: ast.AST) -> ast.Call | None:
+    expr = node
+    while isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute):
+        expr = expr.func.value
+    return expr if isinstance(expr, ast.Call) else None
+
+
+def _literal_first_arg(call: ast.Call) -> str:
+    if not call.args:
+        return ""
+    first = call.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return first.value.strip()
+    return ""
+
+
+def _named_text_labels(source: str) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return labels
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not node.targets:
+            continue
+        call = _assignment_base_call(node.value)
+        if call is None or _call_name(call.func) not in {"Text", "SafeText", "MathTex", "SafeMathTex", "Tex"}:
+            continue
+        text = _literal_first_arg(call)
+        if not text:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                labels[target.id] = text
+    return labels
+
+
+def _variable_position_lines(source: str, var_name: str) -> list[str]:
+    pattern = re.compile(rf"\b{re.escape(var_name)}\s*\.\s*(?:move_to|next_to|to_edge|to_corner|shift)\s*\(")
+    return [line.strip() for line in source.splitlines() if pattern.search(line)]
+
+
+def _position_is_semantically_bound(lines: list[str], semantic_tokens: tuple[str, ...]) -> bool:
+    joined = " ".join(lines).lower()
+    return any(token.lower() in joined for token in semantic_tokens)
+
+
+def _position_is_free_floating(lines: list[str]) -> bool:
+    joined = " ".join(lines)
+    return bool(re.search(r"\.(?:to_edge|to_corner)\s*\(", joined)) or bool(
+        re.search(r"\.move_to\s*\([^)]*(?:ORIGIN|UP|DOWN|LEFT|RIGHT|header|title|banner)", joined)
+    )
+
+
+def _trig_semantic_issues(source: str, brief: dict[str, Any]) -> list[dict[str, str]]:
+    """Ensure trigonometry labels are attached to triangle geometry, not free text."""
+    if not _is_trig_semantic_request(source, brief):
+        return []
+
+    main_source = _main_scene_source(source)
+    labels = _named_text_labels(main_source)
+    lower_source = main_source.lower()
+    issues: list[dict[str, str]] = []
+
+    has_triangle = bool(re.search(r"\b(?:Triangle|Polygon)\s*\(", main_source)) or bool(
+        re.search(r"\bRegularPolygon\s*\(\s*(?:n\s*=\s*)?3\b", main_source)
+    )
+    if not has_triangle:
+        issues.append(_issue(
+            "error",
+            "三角函数讲解缺少明确的三角形主体。",
+            "请先用 Triangle/Polygon 或三条 Line 建立直角三角形，再绑定角标、边标和公式。",
+            "trig_triangle_missing",
+        ))
+
+    has_angle_marker = bool(re.search(r"\b(?:Angle|RightAngle|Arc)\s*\(", main_source))
+    if not has_angle_marker:
+        issues.append(_issue(
+            "error",
+            "三角函数讲解缺少绑定到目标顶点的角标对象。",
+            "请用 Angle(line1, line2) 或 RightAngle(...) 创建目标角，再把 α 标签放到角标附近。",
+            "trig_angle_marker_missing",
+        ))
+
+    alpha_vars = [
+        var for var, text in labels.items()
+        if text in {"α", "\\alpha", r"\alpha", "alpha", "Alpha"}
+    ]
+    formula_has_alpha = any(token in main_source for token in ("α", "\\alpha", r"\alpha"))
+    if formula_has_alpha and not alpha_vars:
+        issues.append(_issue(
+            "error",
+            "画面里缺少独立可见的 α 角标。",
+            "请创建 alpha_label，并将它 next_to 或 move_to 到 Angle/RightAngle 对象附近。",
+            "trig_angle_label_missing",
+        ))
+    for var in alpha_vars:
+        lines = _variable_position_lines(main_source, var)
+        if not lines or _position_is_free_floating(lines) or not _position_is_semantically_bound(
+            lines,
+            ("angle", "alpha_angle", "right_angle", "target_angle", "vertex", "corner"),
+        ):
+            issues.append(_issue(
+                "error",
+                "α 角标没有绑定到三角形目标顶点。",
+                "请把 α 标签放在 Angle/RightAngle 对象附近，不要使用 to_edge/to_corner 或绝对 move_to 让它漂浮。",
+                "trig_angle_label_unbound",
+            ))
+            break
+
+    side_label_vars = {
+        side: [
+            var for var, text in labels.items()
+            if text.strip() == side
+        ]
+        for side in ("a", "b", "c")
+    }
+    side_formula_uses_abc = bool(re.search(r"\b(?:sin|cos|tan)\b[^'\n]*(?:a|b|c)\s*/\s*(?:a|b|c)", lower_source))
+    if side_formula_uses_abc and not all(side_label_vars.values()):
+        issues.append(_issue(
+            "error",
+            "三角函数公式使用了 a/b/c，但画面缺少完整边标。",
+            "请为对边、邻边、斜边分别创建贴边的 a/b/c 标签，或直接使用“对边/邻边/斜边”文字说明。",
+            "trig_side_label_missing",
+        ))
+
+    for side, vars_for_side in side_label_vars.items():
+        for var in vars_for_side:
+            lines = _variable_position_lines(main_source, var)
+            if not lines or _position_is_free_floating(lines) or not _position_is_semantically_bound(
+                lines,
+                ("side", "line", "opposite", "adjacent", "hypotenuse", "point_from_proportion", "get_center", "get_start", "get_end", "对边", "邻边", "斜边"),
+            ):
+                issues.append(_issue(
+                    "error",
+                    f"{side} 边标没有贴到对应边。",
+                    "请把边标放到对应 Line 的中点附近，例如 side_label.move_to(side_line.point_from_proportion(0.5) + offset)。",
+                    "trig_side_label_unbound",
+                ))
+                break
+
+    semantic_terms = ("opposite", "adjacent", "hypotenuse", "对边", "邻边", "斜边")
+    has_all_trig = all(token in lower_source for token in ("sin", "cos", "tan"))
+    if has_all_trig and not any(term in main_source for term in semantic_terms):
+        issues.append(_issue(
+            "error",
+            "三角函数公式缺少对边、邻边、斜边的语义绑定。",
+            "请在变量名、标签或说明中明确：sin α = 对边 / 斜边，cos α = 邻边 / 斜边，tan α = 对边 / 邻边。",
+            "trig_formula_semantics_missing",
+        ))
+
+    wrong_formula_patterns = [
+        (r"sin[^\n]*(?:邻边|adjacent)", "sin α 应对应对边 / 斜边，不应对应邻边。"),
+        (r"cos[^\n]*(?:对边|opposite)", "cos α 应对应邻边 / 斜边，不应对应对边。"),
+        (r"tan[^\n]*(?:斜边|hypotenuse)", "tan α 应对应对边 / 邻边，不应对应斜边。"),
+    ]
+    for pattern, message in wrong_formula_patterns:
+        if re.search(pattern, main_source, re.IGNORECASE):
+            issues.append(_issue(
+                "error",
+                message,
+                "请重建三角函数公式与边标的对应关系，保持图中边标和公式一致。",
+                "trig_formula_mapping_mismatch",
+            ))
+            break
 
     return issues
 

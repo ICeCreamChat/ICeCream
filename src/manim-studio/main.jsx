@@ -389,6 +389,8 @@ function useImage(src) {
             return undefined;
         }
         let cancelled = false;
+        setImage(null);
+        setFailed(false);
         const img = new window.Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
@@ -620,10 +622,12 @@ function hasDraftState(state) {
 
 function StudioCanvasApp(props) {
     const {
+        studioRevision = 0,
         manifest,
         frameSet,
         selectedFrameId,
         recommendedFrameId,
+        videoUrl = '',
         onFrameChange,
         onDraftChange,
         onSelectionChange,
@@ -632,7 +636,7 @@ function StudioCanvasApp(props) {
     const rootRef = useRef(null);
     const stageRef = useRef(null);
     const size = useElementSize(rootRef);
-    const frameData = useMemo(() => normalizeFrameSet(frameSet, selectedFrameId || recommendedFrameId), [frameSet, selectedFrameId, recommendedFrameId]);
+    const frameData = useMemo(() => normalizeFrameSet(frameSet, selectedFrameId || recommendedFrameId), [frameSet, selectedFrameId, recommendedFrameId, studioRevision, videoUrl]);
     const [activeFrameId, setActiveFrameId] = useState(selectedFrameId || recommendedFrameId || frameData.recommendedFrameId);
     const activeFrame = useMemo(() => {
         return frameData.frames.find(item => String(item.frameId) === String(activeFrameId))
@@ -646,6 +650,14 @@ function StudioCanvasApp(props) {
     const selectedSet = useMemo(() => new Set(state.selectedObjectIds.map(String)), [state.selectedObjectIds]);
     const [hoverId, setHoverId] = useState('');
     const [pointerStart, setPointerStart] = useState(null);
+
+    useEffect(() => {
+        const nextFrameId = selectedFrameId || frameData.recommendedFrameId || frameData.frames[0]?.frameId || '';
+        setActiveFrameId(nextFrameId);
+        setHoverId('');
+        setPointerStart(null);
+        useCanvasStore.getState().resetDraft();
+    }, [studioRevision, videoUrl, frameData.recommendedFrameId]);
 
     useEffect(() => {
         if (selectedFrameId) setActiveFrameId(selectedFrameId);
