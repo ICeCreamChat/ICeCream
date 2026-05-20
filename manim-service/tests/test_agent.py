@@ -258,10 +258,69 @@ class ManimAgentV4Tests(unittest.TestCase):
             "axis_config",
             "canvas_quality",
             "semantic_object_match",
+            "trig_triangle_semantics",
         }:
             self.assertIn(required, ids)
             self.assertIn(required, prompt)
         self.assertIn("ManimCat", prompt)
+        self.assertIn("sin=对边/斜边", prompt)
+
+    def test_code_writer_prompt_includes_trig_semantic_binding_rules(self):
+        brief = plan_animation("画一个直角三角形，说明 sin cos tan")
+        messages = build_code_writer_messages(
+            brief,
+            {"animation_type": "geometry_proof"},
+            {},
+            [],
+        )
+        payload = "\n".join(message["content"] for message in messages)
+
+        self.assertIn("opposite_side", payload)
+        self.assertIn("adjacent_side", payload)
+        self.assertIn("hypotenuse_side", payload)
+        self.assertIn("alpha_label", payload)
+        self.assertIn("对边", payload)
+        self.assertIn("邻边", payload)
+        self.assertIn("斜边", payload)
+
+    def test_code_writer_prompt_detects_chinese_trig_concept_from_storyboard(self):
+        brief = plan_animation("讲解三角函数的定义")
+        messages = build_code_writer_messages(
+            brief,
+            {
+                "animation_type": "concept_explanation",
+                "storyboard": [
+                    {"title": "引入直角三角形", "narration": "标记对边、邻边和斜边。"},
+                    {"title": "定义正弦余弦正切", "narration": "说明 sin cos tan 的边长比值。"},
+                ],
+            },
+            {},
+            [],
+        )
+        payload = "\n".join(message["content"] for message in messages)
+
+        self.assertIn("opposite_side", payload)
+        self.assertIn("adjacent_side", payload)
+        self.assertIn("hypotenuse_side", payload)
+        self.assertIn("point_from_proportion", payload)
+        self.assertIn("sin θ = 对边 / 斜边", payload)
+
+    def test_critic_accepts_main_scene_inheriting_safe_scene_scene_helper(self):
+        code = """
+from manim import *
+
+class SafeScene(Scene):
+    pass
+
+class MainScene(SafeScene):
+    def construct(self):
+        self.add(Circle())
+"""
+        report = critique_code(code, plan_animation("画一个圆形"))
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertNotIn("scene_count", codes)
+        self.assertNotIn("scene_contract", codes)
 
     def test_core_manim_agent_files_do_not_contain_mojibake_literals(self):
         checked = [
@@ -634,6 +693,37 @@ class ManimAgentV4Tests(unittest.TestCase):
         self.assertIn("function_graph", skill_ids)
         self.assertIn("text_formula_layout", skill_ids)
         self.assertTrue(all(skill["version"] == "v6" for skill in skills))
+
+    def test_skill_loader_routes_trig_concepts_to_geometry(self):
+        brief = plan_animation("讲解三角函数的定义")
+        brief["animation_type"] = "concept_explanation"
+        brief["storyboardSpec"] = {
+            "topic": "三角函数的定义",
+            "teaching_goal": "用直角三角形说明 sin cos tan。",
+            "animation_type": "concept_explanation",
+            "storyboard": [
+                {"title": "引入直角三角形", "narration": "标记对边、邻边和斜边。"},
+                {"title": "定义正弦余弦正切", "narration": "写出 sin cos tan 的边长比。"},
+            ],
+        }
+
+        skills = select_skills(brief)
+        skill_ids = [skill["id"] for skill in skills]
+
+        self.assertEqual(skill_ids[0], "geometry")
+        self.assertIn("formula_derivation", skill_ids)
+        self.assertIn("text_formula_layout", skill_ids)
+        self.assertNotIn("flow_explanation", skill_ids)
+
+    def test_skill_catalog_has_readable_chinese_metadata(self):
+        catalog = skill_catalog()
+        mojibake_tokens = ("鍒", "涓", "褰", "�")
+
+        self.assertEqual(catalog["geometry"]["name"], "几何图形")
+        self.assertEqual(catalog["text_formula_layout"]["name"], "文字与公式布局")
+        for skill in catalog.values():
+            combined = f"{skill.get('name', '')} {skill.get('guidance', '')}"
+            self.assertFalse(any(token in combined for token in mojibake_tokens), combined)
 
     def test_agent_skills_route_returns_safe_catalog_metadata(self):
         app = FastAPI()
@@ -1383,6 +1473,297 @@ class MainScene(Scene):
 
         self.assertNotIn("invalid_angle_arguments", codes)
 
+    def test_critic_rejects_unbound_trig_angle_and_side_labels(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        right_vertex = ORIGIN
+        alpha_vertex = RIGHT * 3
+        top_vertex = UP * 2
+        triangle = Polygon(right_vertex, alpha_vertex, top_vertex)
+        adjacent_side = Line(right_vertex, alpha_vertex)
+        hypotenuse_side = Line(alpha_vertex, top_vertex)
+        opposite_side = Line(right_vertex, top_vertex)
+        alpha_angle = Angle(adjacent_side, hypotenuse_side)
+        alpha_label = Text("α")
+        alpha_label.to_edge(UP)
+        a_label = Text("a")
+        a_label.move_to(RIGHT * 4)
+        b_label = Text("b")
+        b_label.move_to(LEFT * 4)
+        c_label = Text("c")
+        c_label.move_to(UP * 2)
+        formula = Text("sin α = a/c, cos α = b/c, tan α = a/b")
+        self.add(triangle, adjacent_side, opposite_side, hypotenuse_side, alpha_angle, alpha_label, a_label, b_label, c_label, formula)
+"""
+        report = critique_code(code, plan_animation("讲解三角函数的定义"))
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("trig_angle_label_unbound", codes)
+        self.assertIn("trig_side_label_unbound", codes)
+
+    def test_critic_allows_bound_trig_angle_and_side_labels(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        right_vertex = ORIGIN
+        alpha_vertex = RIGHT * 3
+        top_vertex = UP * 2
+        triangle = Polygon(right_vertex, alpha_vertex, top_vertex)
+        adjacent_side = Line(right_vertex, alpha_vertex)
+        hypotenuse_side = Line(alpha_vertex, top_vertex)
+        opposite_side = Line(right_vertex, top_vertex)
+        alpha_angle = Angle(adjacent_side, hypotenuse_side)
+        alpha_label = Text("α")
+        alpha_label.next_to(alpha_angle, UP, buff=0.1)
+        a_label = Text("a")
+        a_label.move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)
+        b_label = Text("b")
+        b_label.move_to(adjacent_side.point_from_proportion(0.5) + DOWN * 0.2)
+        c_label = Text("c")
+        c_label.move_to(hypotenuse_side.point_from_proportion(0.5) + RIGHT * 0.2)
+        sin_formula = Text("sin α = 对边 / 斜边")
+        cos_formula = Text("cos α = 邻边 / 斜边")
+        tan_formula = Text("tan α = 对边 / 邻边")
+        self.add(triangle, adjacent_side, opposite_side, hypotenuse_side, alpha_angle, alpha_label, a_label, b_label, c_label, sin_formula, cos_formula, tan_formula)
+"""
+        report = critique_code(code, plan_animation("画一个直角三角形，说明 sin cos tan"))
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertFalse(any(str(code).startswith("trig_") for code in codes))
+
+    def test_critic_rejects_circle_distractor_in_trig_definition(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        right_vertex = ORIGIN
+        alpha_vertex = RIGHT * 3
+        top_vertex = UP * 2
+        triangle = Polygon(right_vertex, alpha_vertex, top_vertex)
+        unit_circle = Circle(radius=1.2).shift(LEFT * 3)
+        adjacent_side = Line(right_vertex, alpha_vertex)
+        hypotenuse_side = Line(alpha_vertex, top_vertex)
+        opposite_side = Line(right_vertex, top_vertex)
+        alpha_angle = Angle(adjacent_side, hypotenuse_side)
+        alpha_label = Text("α").next_to(alpha_angle, UP, buff=0.1)
+        a_label = Text("a").move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)
+        b_label = Text("b").move_to(adjacent_side.point_from_proportion(0.5) + DOWN * 0.2)
+        c_label = Text("c").move_to(hypotenuse_side.point_from_proportion(0.5) + RIGHT * 0.2)
+        sin_formula = Text("sin α = 对边 / 斜边")
+        cos_formula = Text("cos α = 邻边 / 斜边")
+        tan_formula = Text("tan α = 对边 / 邻边")
+        self.add(unit_circle, triangle, adjacent_side, opposite_side, hypotenuse_side, alpha_angle, alpha_label, a_label, b_label, c_label, sin_formula, cos_formula, tan_formula)
+"""
+        report = critique_code(code, plan_animation("讲解三角函数的定义"))
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("trig_circle_distractor", codes)
+
+    def test_critic_allows_unit_circle_when_explicitly_requested(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        right_vertex = ORIGIN
+        alpha_vertex = RIGHT * 3
+        top_vertex = UP * 2
+        triangle = Polygon(right_vertex, alpha_vertex, top_vertex)
+        unit_circle = Circle(radius=1.2).shift(LEFT * 3)
+        adjacent_side = Line(right_vertex, alpha_vertex)
+        hypotenuse_side = Line(alpha_vertex, top_vertex)
+        opposite_side = Line(right_vertex, top_vertex)
+        alpha_angle = Angle(adjacent_side, hypotenuse_side)
+        alpha_label = Text("α").next_to(alpha_angle, UP, buff=0.1)
+        a_label = Text("a").move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)
+        b_label = Text("b").move_to(adjacent_side.point_from_proportion(0.5) + DOWN * 0.2)
+        c_label = Text("c").move_to(hypotenuse_side.point_from_proportion(0.5) + RIGHT * 0.2)
+        sin_formula = Text("sin α = 对边 / 斜边")
+        cos_formula = Text("cos α = 邻边 / 斜边")
+        tan_formula = Text("tan α = 对边 / 邻边")
+        self.add(unit_circle, triangle, adjacent_side, opposite_side, hypotenuse_side, alpha_angle, alpha_label, a_label, b_label, c_label, sin_formula, cos_formula, tan_formula)
+"""
+        report = critique_code(code, plan_animation("用单位圆和直角三角形讲解三角函数的定义"))
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertNotIn("trig_circle_distractor", codes)
+
+    def test_critic_allows_chained_bound_trig_side_labels(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        right_vertex = ORIGIN
+        alpha_vertex = RIGHT * 3
+        top_vertex = UP * 2
+        triangle = Polygon(right_vertex, alpha_vertex, top_vertex)
+        adjacent_side = Line(right_vertex, alpha_vertex)
+        hypotenuse_side = Line(alpha_vertex, top_vertex)
+        opposite_side = Line(right_vertex, top_vertex)
+        alpha_angle = Angle(adjacent_side, hypotenuse_side)
+        alpha_label = Text("α").next_to(alpha_angle, UP, buff=0.1)
+        a_label = Text("a").move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)
+        b_label = Text("b").move_to(adjacent_side.point_from_proportion(0.5) + DOWN * 0.2)
+        c_label = Text("c").move_to(hypotenuse_side.point_from_proportion(0.5) + RIGHT * 0.2)
+        sin_formula = Text("sin α = 对边 / 斜边")
+        cos_formula = Text("cos α = 邻边 / 斜边")
+        tan_formula = Text("tan α = 对边 / 邻边")
+        self.add(triangle, adjacent_side, opposite_side, hypotenuse_side, alpha_angle, alpha_label, a_label, b_label, c_label, sin_formula, cos_formula, tan_formula)
+"""
+        report = critique_code(code, plan_animation("画一个直角三角形，说明 sin cos tan"))
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertFalse(any(str(code).startswith("trig_") for code in codes))
+
+    def test_patch_first_repair_binds_trig_side_labels_to_midpoints(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        right_vertex = ORIGIN
+        alpha_vertex = RIGHT * 3
+        top_vertex = UP * 2
+        triangle = Polygon(right_vertex, alpha_vertex, top_vertex)
+        adjacent_side = Line(right_vertex, alpha_vertex)
+        hypotenuse_side = Line(alpha_vertex, top_vertex)
+        opposite_side = Line(right_vertex, top_vertex)
+        alpha_angle = Angle(adjacent_side, hypotenuse_side)
+        alpha_label = Text("α").next_to(alpha_angle, UP, buff=0.1)
+        a_label = Text("a")
+        a_label.move_to(RIGHT * 4)
+        a_label.next_to(triangle, LEFT)
+        b_label = Text("b")
+        b_label.move_to(LEFT * 4)
+        b_label.shift(UP * 1.2)
+        c_label = Text("c")
+        c_label.move_to(UP * 2)
+        c_label.to_edge(UP)
+        sin_formula = Text("sin α = 对边 / 斜边")
+        cos_formula = Text("cos α = 邻边 / 斜边")
+        tan_formula = Text("tan α = 对边 / 邻边")
+        self.add(triangle, adjacent_side, opposite_side, hypotenuse_side, alpha_angle, alpha_label, a_label, b_label, c_label, sin_formula, cos_formula, tan_formula)
+"""
+        report = critique_code(code, plan_animation("讲解三角函数的定义"))
+        patched = patch_first_repair(code, report)
+        patched_report = critique_code(patched["code"], plan_animation("讲解三角函数的定义"))
+        codes = {issue.get("code") for issue in patched_report["issues"]}
+
+        self.assertTrue(any(patch["id"] == "trig_side_label_midpoint_binding" for patch in patched["patches"]))
+        self.assertNotIn("trig_side_label_unbound", codes)
+
+    def test_critic_allows_semantic_side_labels_and_final_bound_position(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        right_vertex = ORIGIN
+        alpha_vertex = RIGHT * 3
+        top_vertex = UP * 2
+        triangle = Polygon(right_vertex, alpha_vertex, top_vertex)
+        adjacent_side = Line(right_vertex, alpha_vertex)
+        hypotenuse_side = Line(alpha_vertex, top_vertex)
+        opposite_side = Line(right_vertex, top_vertex)
+        alpha_angle = Angle(adjacent_side, hypotenuse_side)
+        alpha_label = Text("α")
+        alpha_label.move_to(UP * 2)
+        alpha_label.next_to(alpha_angle, UP, buff=0.1)
+        opposite_label = Text("a = 对边")
+        opposite_label.move_to(RIGHT * 4)
+        opposite_label.move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)
+        adjacent_label = Text("邻边 b")
+        adjacent_label.shift(UP * 1.2)
+        adjacent_label.move_to(adjacent_side.point_from_proportion(0.5) + DOWN * 0.2)
+        hypotenuse_label = MathTex("c")
+        hypotenuse_label.to_edge(UP)
+        hypotenuse_label.move_to(hypotenuse_side.point_from_proportion(0.5) + RIGHT * 0.2)
+        sin_formula = Text("sin α = 对边 / 斜边")
+        cos_formula = Text("cos α = 邻边 / 斜边")
+        tan_formula = Text("tan α = 对边 / 邻边")
+        self.add(triangle, adjacent_side, opposite_side, hypotenuse_side, alpha_angle, alpha_label, opposite_label, adjacent_label, hypotenuse_label, sin_formula, cos_formula, tan_formula)
+"""
+        report = critique_code(code, plan_animation("画一个直角三角形，说明 sin cos tan"))
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertFalse(any(str(code).startswith("trig_") for code in codes), codes)
+
+    def test_patch_first_repair_rewrites_wrong_trig_formula_mapping(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        right_vertex = ORIGIN
+        alpha_vertex = RIGHT * 3
+        top_vertex = UP * 2
+        triangle = Polygon(right_vertex, alpha_vertex, top_vertex)
+        adjacent_side = Line(right_vertex, alpha_vertex)
+        hypotenuse_side = Line(alpha_vertex, top_vertex)
+        opposite_side = Line(right_vertex, top_vertex)
+        alpha_angle = Angle(adjacent_side, hypotenuse_side)
+        alpha_label = Text("α").next_to(alpha_angle, UP, buff=0.1)
+        a_label = Text("a")
+        a_label.move_to(RIGHT * 4)
+        b_label = Text("b")
+        b_label.move_to(LEFT * 4)
+        c_label = Text("c")
+        c_label.to_edge(UP)
+        formula = Text("sin α = 邻边 / 斜边, cos α = 对边 / 斜边, tan α = 斜边 / 对边")
+        self.add(triangle, adjacent_side, opposite_side, hypotenuse_side, alpha_angle, alpha_label, a_label, b_label, c_label, formula)
+"""
+        report = critique_code(code, plan_animation("讲解三角函数的定义"))
+        patched = patch_first_repair(code, report)
+        patched_report = critique_code(patched["code"], plan_animation("讲解三角函数的定义"))
+        codes = {issue.get("code") for issue in patched_report["issues"]}
+
+        self.assertTrue(any(patch["id"] in {"trig_formula_semantics_rewrite", "trig_semantic_rescue_block"} for patch in patched["patches"]))
+        self.assertNotIn("trig_formula_mapping_mismatch", codes)
+        self.assertFalse(any(str(code).startswith("trig_") for code in codes), codes)
+
+    def test_repair_code_rescues_trig_scene_without_ai_after_static_failures(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        right_vertex = ORIGIN
+        alpha_vertex = RIGHT * 3
+        top_vertex = UP * 2
+        triangle = Polygon(right_vertex, alpha_vertex, top_vertex)
+        adjacent_side = Line(right_vertex, alpha_vertex)
+        hypotenuse_side = Line(alpha_vertex, top_vertex)
+        opposite_side = Line(right_vertex, top_vertex)
+        alpha_angle = Angle(adjacent_side, hypotenuse_side)
+        alpha_label = Text("α").to_edge(UP)
+        a_label = Text("a").move_to(RIGHT * 4)
+        b_label = Text("b").move_to(LEFT * 4)
+        c_label = Text("c").to_edge(UP)
+        formula = Text("sin α = 邻边 / 斜边, cos α = 对边 / 斜边, tan α = 斜边 / 对边")
+        self.add(triangle, adjacent_side, opposite_side, hypotenuse_side, alpha_angle, alpha_label, a_label, b_label, c_label, formula)
+"""
+        brief = plan_animation("讲解三角函数的定义")
+        report = critique_code(code, brief)
+        repaired = repair_code(code, report, max_attempts=4, brief=brief)
+        repaired_report = critique_code(repaired["code"], brief)
+        codes = {issue.get("code") for issue in repaired_report["issues"]}
+
+        self.assertEqual(repaired["status"], "success")
+        self.assertFalse(any(str(code).startswith("trig_") for code in codes), codes)
+        self.assertIn("opposite_side", repaired["code"])
+        self.assertIn("adjacent_side", repaired["code"])
+        self.assertIn("hypotenuse_side", repaired["code"])
+        self.assertIn("sin θ = 对边 / 斜边", repaired["code"])
+
     def test_critic_allows_scene_control_self_methods(self):
         code = """
 from manim import *
@@ -2027,6 +2408,29 @@ class MainScene(Scene):
         self.assertIn("invalid_manim_keyword", [item["id"] for item in observation["repairRules"]])
         self.assertIn("unexpected keyword", observation["stderrSummary"])
         self.assertEqual(observation["failureCategory"], "Manim API 或参数调用错误")
+
+    def test_repair_observation_classifies_trig_semantic_rules(self):
+        report = {
+            "status": "error",
+            "summary": "静态检查失败",
+            "issues": [
+                {
+                    "severity": "error",
+                    "message": "α 角标没有绑定到三角形目标顶点。",
+                    "hint": "把 α 标签放在 Angle 对象附近。",
+                    "code": "trig_angle_label_unbound",
+                },
+            ],
+        }
+        observation = build_repair_observation(
+            "from manim import *",
+            report,
+            brief=plan_animation("讲解三角函数的定义"),
+        )
+
+        self.assertEqual(observation["failureCategory"], "几何语义或视觉错配")
+        self.assertIn("trig_angle_label_unbound", observation["ruleIds"])
+        self.assertIn("trig_angle_label_unbound", [item["id"] for item in observation["repairRules"]])
 
     def test_repair_observation_includes_reference_alignment_context(self):
         brief = {

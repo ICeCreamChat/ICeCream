@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from typing import Any, Callable
@@ -15,9 +16,49 @@ from .prompt_loader import build_repair_prompt_pack
 Fixer = Callable[[str, dict[str, Any]], str]
 
 
+def _compact_trig_label_text(text: str) -> str:
+    return re.sub(r"[\s:=：=（）()\\{}_\-]+", "", str(text).strip().lower())
+
+
+def _trig_side_from_label(var_name: str, text: str) -> str | None:
+    var = var_name.lower()
+    compact = _compact_trig_label_text(text)
+    non_side_var_tokens = ("formula", "summary", "title", "subtitle", "header", "banner", "step")
+    if any(token in var for token in non_side_var_tokens):
+        return None
+    if any(token in compact.lower() for token in ("sin", "cos", "tan")):
+        return None
+    if any(token in compact for token in ("=", "/", "＝", "：", ":", "；", ";")) and len(compact) > 6:
+        return None
+    if len(compact) > 10 and "label" not in var:
+        return None
+    for side, tokens in {
+        "a": ("对边", "opposite"),
+        "b": ("邻边", "adjacent"),
+        "c": ("斜边", "hypotenuse"),
+    }.items():
+        if any(token in var or token in compact for token in tokens):
+            return side
+    if "opposite" in var:
+        return "a"
+    if "adjacent" in var:
+        return "b"
+    if "hypotenuse" in var:
+        return "c"
+    if compact in {"a", "sidea"}:
+        return "a"
+    if compact in {"b", "sideb"}:
+        return "b"
+    if compact in {"c", "sidec"}:
+        return "c"
+    return None
+
+
 def _failure_category(report: dict[str, Any], stderr: str = "") -> str:
     codes = {str(item.get("code", "")) for item in report.get("issues", []) + report.get("findings", [])}
     text = f"{report.get('summary', '')} {stderr}".lower()
+    if any(code.startswith("trig_") for code in codes):
+        return "几何语义或视觉错配"
     if any(code.startswith("semantic_") or code.startswith("visual_") for code in codes):
         return "语义或视觉错配"
     if "latex" in text or "tex" in text:
@@ -104,6 +145,12 @@ def static_repair_once(code: str, observation: dict[str, Any]) -> str:
     repaired = re.sub(r"-1\.5707963267948966\d*", "-PI / 2", repaired)
     repaired = re.sub(r"background_color\s*=\s*BLACK", "background_color = '#F7FBFF'", repaired)
     repaired = re.sub(r"fill_color\s*=\s*BLACK", "fill_color = '#F7FBFF'", repaired)
+    repaired = re.sub(
+        r"(?ms)^\s*if\s+__name__\s*==\s*['\"]__main__['\"]\s*:\s*(?:\n\s+.*?)(?=\n\S|\Z)",
+        "",
+        repaired,
+    )
+    repaired = repaired.replace("__main__", "main")
 
     repaired = re.sub(
         r"class\s+SafeScene\s*\(\s*(?:Scene|SafeScene\s*,\s*Scene|Scene\s*,\s*SafeScene)\s*\)\s*:",
@@ -125,6 +172,185 @@ def static_repair_once(code: str, observation: dict[str, Any]) -> str:
         if match:
             repaired = repaired[: match.start()] + "class MainScene(SafeScene, Scene):" + repaired[match.end():]
     return repaired
+
+
+def _trig_side_label_repair(code: str) -> tuple[str, list[dict[str, str]]]:
+    """Bind simple trigonometry side labels to their canonical Line midpoint."""
+    if not code or not all(name in code for name in ("opposite_side", "adjacent_side", "hypotenuse_side")):
+        return code, []
+
+    side_specs = {
+        "a": ("opposite_side", "LEFT * 0.28", "对边"),
+        "b": ("adjacent_side", "DOWN * 0.28", "邻边"),
+        "c": ("hypotenuse_side", "UP * 0.28", "斜边"),
+    }
+    label_pattern = re.compile(
+        r"(?m)^(?P<indent>\s*)(?P<var>[A-Za-z_]\w*)\s*=\s*"
+        r"(?P<ctor>Text|SafeText|MathTex|SafeMathTex|Tex)\(\s*(?P<quote>['\"])(?P<label>[^'\"]+)(?P=quote)"
+    )
+    repaired = code
+    patches: list[dict[str, str]] = []
+    insertions: list[tuple[int, str]] = []
+
+    for match in list(label_pattern.finditer(code)):
+        var_name = match.group("var")
+        label = match.group("label").strip()
+        side = _trig_side_from_label(var_name, label)
+        spec = side_specs.get(side or "")
+        if not spec:
+            continue
+        line_var, offset, semantic_name = spec
+        bind_line = (
+            f"{match.group('indent')}{var_name}.move_to("
+            f"{line_var}.point_from_proportion(0.5) + {offset})"
+        )
+        position_pattern = re.compile(
+            rf"(?m)^\s*{re.escape(var_name)}\s*\.\s*"
+            rf"(?:move_to|next_to|to_edge|to_corner|shift)\s*\([^\n]*\)\s*$"
+        )
+        did_bind = False
+
+        def _replace_position(position_match: re.Match[str]) -> str:
+            nonlocal did_bind
+            if not did_bind:
+                did_bind = True
+                return bind_line
+            return f"{match.group('indent')}# Studio repair removed older floating placement for {var_name}"
+
+        repaired, count = position_pattern.subn(_replace_position, repaired)
+        if count == 0:
+            line_end = code.find("\n", match.end())
+            if line_end == -1:
+                line_end = len(code)
+            insertions.append((line_end, "\n" + bind_line))
+        patches.append({
+            "id": "trig_side_label_midpoint_binding",
+            "summary": f"已将 {semantic_name} 标签绑定到对应边的中点附近。",
+        })
+
+    for position, text in sorted(insertions, reverse=True):
+        repaired = repaired[:position] + text + repaired[position:]
+
+    return repaired, patches
+
+
+def _trig_formula_repair(code: str) -> tuple[str, list[dict[str, str]]]:
+    """Rewrite visible trig formulas to the canonical semantic ratios."""
+    if not re.search(r"\b(?:sin|cos|tan)\b|\\(?:sin|cos|tan)", code):
+        return code, []
+
+    def _replace_literal(match: re.Match[str]) -> str:
+        quote = match.group("quote")
+        text = match.group("text")
+        lower = text.lower()
+        if not any(token in lower for token in ("sin", "cos", "tan", "\\sin", "\\cos", "\\tan")):
+            return match.group(0)
+        if all(token in lower for token in ("sin", "cos", "tan")):
+            replacement = "sin θ = 对边 / 斜边；cos θ = 邻边 / 斜边；tan θ = 对边 / 邻边"
+        elif "sin" in lower or "\\sin" in lower:
+            replacement = "sin θ = 对边 / 斜边"
+        elif "cos" in lower or "\\cos" in lower:
+            replacement = "cos θ = 邻边 / 斜边"
+        else:
+            replacement = "tan θ = 对边 / 邻边"
+        return f"{quote}{replacement}{quote}"
+
+    literal_pattern = re.compile(
+        r"(?P<quote>['\"])(?P<text>[^'\"]*(?:\\?sin|\\?cos|\\?tan)[^'\"]*)(?P=quote)",
+        re.IGNORECASE,
+    )
+    repaired, count = literal_pattern.subn(_replace_literal, code)
+    if count == 0 or repaired == code:
+        return code, []
+    return repaired, [{
+        "id": "trig_formula_semantics_rewrite",
+        "summary": "已把三角函数公式改为 sin θ=对边/斜边、cos θ=邻边/斜边、tan θ=对边/邻边。",
+    }]
+
+
+def _replace_construct_body(code: str, body: str) -> str:
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+    target_method: ast.FunctionDef | None = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef) or node.name != "MainScene":
+            continue
+        for item in node.body:
+            if isinstance(item, ast.FunctionDef) and item.name == "construct":
+                target_method = item
+                break
+    if target_method is None:
+        return code
+    lines = code.splitlines()
+    body_indent = " " * ((target_method.body[0].col_offset if target_method.body else target_method.col_offset + 4))
+    start = (target_method.body[0].lineno - 1) if target_method.body else target_method.lineno
+    end = target_method.end_lineno or start
+    replacement = [
+        (body_indent + line if line.strip() else "")
+        for line in body.strip("\n").splitlines()
+    ]
+    return "\n".join(lines[:start] + replacement + lines[end:])
+
+
+def _trig_semantic_rescue(code: str) -> tuple[str, list[dict[str, str]]]:
+    """Replace only MainScene.construct with a conservative right-triangle explanation."""
+    if "class MainScene" not in code:
+        return code, []
+    text_call = "SafeText" if "def SafeText" in code else "Text"
+    formula_call = "SafeText" if "def SafeText" in code else "Text"
+    rescue_body = f'''
+self.camera.background_color = "#F7FBFF"
+title_mob = {text_call}("三角函数的定义", font_size=34, color="#0284C7").to_edge(UP)
+subtitle_mob = {text_call}("先确定目标角 θ，再找对边、邻边和斜边。", font_size=24, color="#64748B").next_to(title_mob, DOWN, buff=0.16)
+
+right_vertex = LEFT * 2.2 + DOWN * 1.25
+theta_vertex = RIGHT * 2.2 + DOWN * 1.25
+top_vertex = LEFT * 2.2 + UP * 1.35
+
+adjacent_side = Line(right_vertex, theta_vertex, color="#0284C7", stroke_width=5)
+opposite_side = Line(right_vertex, top_vertex, color="#16A34A", stroke_width=5)
+hypotenuse_side = Line(theta_vertex, top_vertex, color="#F97316", stroke_width=5)
+triangle = VGroup(adjacent_side, opposite_side, hypotenuse_side)
+
+right_angle = RightAngle(adjacent_side, opposite_side, length=0.28, color="#334155")
+theta_angle = Angle(adjacent_side, hypotenuse_side, radius=0.42, color="#E11D48")
+theta_label = {text_call}("θ", font_size=28, color="#E11D48")
+theta_label.next_to(theta_angle, UP, buff=0.08)
+
+opposite_label = {text_call}("对边", font_size=24, color="#166534")
+opposite_label.move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.34)
+adjacent_label = {text_call}("邻边", font_size=24, color="#075985")
+adjacent_label.move_to(adjacent_side.point_from_proportion(0.5) + DOWN * 0.34)
+hypotenuse_label = {text_call}("斜边", font_size=24, color="#C2410C")
+hypotenuse_label.move_to(hypotenuse_side.point_from_proportion(0.5) + RIGHT * 0.34)
+
+diagram_group = VGroup(
+    triangle, right_angle, theta_angle, theta_label,
+    opposite_label, adjacent_label, hypotenuse_label,
+)
+diagram_group.move_to(LEFT * 1.75 + DOWN * 0.08)
+
+sin_formula = {formula_call}("sin θ = 对边 / 斜边", font_size=26, color="#1D2530")
+cos_formula = {formula_call}("cos θ = 邻边 / 斜边", font_size=26, color="#1D2530")
+tan_formula = {formula_call}("tan θ = 对边 / 邻边", font_size=26, color="#1D2530")
+formula_group = VGroup(sin_formula, cos_formula, tan_formula).arrange(DOWN, aligned_edge=LEFT, buff=0.24)
+formula_group.to_edge(RIGHT, buff=0.8).shift(UP * 0.1)
+
+summary_mob = {text_call}("记忆顺序：正弦看对边，余弦看邻边，正切是对边比邻边。", font_size=24, color="#475569")
+summary_mob.to_edge(DOWN, buff=0.45)
+
+self.add(title_mob, subtitle_mob, diagram_group, formula_group, summary_mob)
+self.wait(1)
+'''
+    repaired = _replace_construct_body(code, rescue_body)
+    if repaired == code:
+        return code, []
+    return repaired, [{
+        "id": "trig_semantic_rescue_block",
+        "summary": "已用稳定的直角三角函数语义子块重建图解，保留外层 Manim 场景结构。",
+    }]
 
 
 def _replace_chinese_mathtex(match: re.Match[str]) -> str:
@@ -175,6 +401,34 @@ def patch_first_repair(code: str, report: dict[str, Any]) -> dict[str, Any]:
             "summary": "已移除 set_x/set_y/set_z 不支持的 aligned_edge 参数。",
         })
 
+    issue_codes = {str(item.get("code", "")) for item in report.get("issues", []) + report.get("findings", [])}
+    trig_issue_codes = {code for code in issue_codes if code.startswith("trig_")}
+    if trig_issue_codes:
+        before = repaired
+        repaired, trig_patches = _trig_side_label_repair(repaired)
+        if repaired != before:
+            patches.extend(trig_patches)
+        before = repaired
+        repaired, formula_patches = _trig_formula_repair(repaired)
+        if repaired != before:
+            patches.extend(formula_patches)
+        # If semantic trig issues reached repair, prefer a deterministic right-triangle
+        # sub-block over repeatedly asking the LLM to nudge free-floating labels.
+        if trig_issue_codes & {
+            "trig_side_label_unbound",
+            "trig_side_label_missing",
+            "trig_formula_mapping_mismatch",
+            "trig_formula_semantics_missing",
+            "trig_angle_label_unbound",
+            "trig_angle_label_missing",
+            "trig_triangle_missing",
+            "trig_circle_distractor",
+        }:
+            before = repaired
+            repaired, rescue_patches = _trig_semantic_rescue(repaired)
+            if repaired != before:
+                patches.extend(rescue_patches)
+
     return {"code": repaired, "patches": patches}
 
 
@@ -203,6 +457,7 @@ async def llm_repair_once(
         "promptPack": build_repair_prompt_pack(),
         "rulePackVersion": RULE_PACK_VERSION,
         "requirements": [
+            "For trig_ semantic issues, rebuild the triangle semantics: create opposite_side, adjacent_side, hypotenuse_side Line objects; place α/θ near Angle/RightAngle; place every side label at its Line midpoint; use exact formulas sin α = 对边/斜边, cos α = 邻边/斜边, tan α = 对边/邻边.",
             "Keep MainScene(SafeScene, Scene) as the only renderable Scene.",
             "Use Text/SafeText for Chinese and MathTex only for formulas.",
             "Keep the storyboard semantics unchanged.",
@@ -220,6 +475,8 @@ async def llm_repair_once(
             "If a Manim call fails with unexpected keyword, remove the unsupported keyword and replace it with legal positioning, sizing, or set_points_as_corners code.",
             "If VGroup contains a list, tuple, string, number, or other non-Mobject value, convert each visible item to Text/SafeText/MathTex/SafeMathTex and use VGroup(*items).",
             "Do not pass guessed keyword arguments into Mobject setter methods; use positional arguments or documented Manim Community parameters only.",
+            "If any issue code starts with trig_, rebuild the triangle semantics instead of nudging text: create named opposite_side, adjacent_side, and hypotenuse_side Line objects; create alpha_angle with Angle/RightAngle at the target vertex; place alpha_label near alpha_angle; place side labels at each side midpoint; keep formulas exact: sin α = 对边/斜边, cos α = 邻边/斜边, tan α = 对边/邻边. Never float α/a/b/c with to_edge/to_corner or unrelated absolute move_to.",
+            "For trig_circle_distractor or trigonometry definition repairs, remove Circle()/unit-circle visuals unless the original user request explicitly says 单位圆 or unit circle; the dominant visual must be a right triangle.",
             "For projectile motion, include a visible trajectory, moving ball, velocity/direction arrow, and gravity/acceleration cue; prefer ParametricFunction plus MoveAlongPath over custom VMobject internals or fragile updaters.",
         ],
     }
@@ -248,6 +505,16 @@ async def repair_code_async(
     ai_client: Any | None = None,
     model_name: str | None = None,
 ) -> dict[str, Any]:
+    if report.get("status") != "error":
+        return {
+            "status": "success",
+            "summary": "代码已通过静态检查，无需自动修复。",
+            "attempts": 0,
+            "code": code,
+            "critic": report,
+            "observations": [],
+        }
+
     current = code
     last_report = report
     observations: list[dict[str, Any]] = []
@@ -313,6 +580,15 @@ def repair_code(
     brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Synchronous compatibility helper used by tests."""
+    if report.get("status") != "error":
+        return {
+            "status": "success",
+            "summary": "代码已通过静态检查，无需自动修复。",
+            "attempts": 0,
+            "code": code,
+            "critic": report,
+        }
+
     current = code
     repair_fn = fixer or static_repair_once
     attempts = 0

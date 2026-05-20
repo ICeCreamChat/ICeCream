@@ -146,6 +146,43 @@ def skill_catalog() -> dict[str, dict[str, str]]:
     return {**BUILTIN_SKILLS, **load_project_skills()}
 
 
+def _is_trig_geometry_brief(brief: dict[str, Any]) -> bool:
+    """Detect trigonometry explanations that need geometry, not flow-chart skills."""
+    spec = brief.get("storyboardSpec") or brief.get("spec") or {}
+    chunks: list[str] = [
+        str(brief.get("message") or ""),
+        str(brief.get("domain") or ""),
+        str(brief.get("animation_type") or ""),
+        str(spec.get("domain") or ""),
+        str(spec.get("topic") or ""),
+        str(spec.get("teaching_goal") or ""),
+        str(spec.get("animation_type") or ""),
+    ]
+    for key in ("storyboard", "teaching_steps", "shots", "layout_zones"):
+        value = spec.get(key) or brief.get(key) or []
+        if isinstance(value, list):
+            chunks.extend(str(item) for item in value)
+        elif value:
+            chunks.append(str(value))
+
+    text = " ".join(chunks).lower()
+    explicit_tokens = (
+        "三角函数",
+        "直角三角",
+        "正弦余弦正切",
+        "对边",
+        "邻边",
+        "斜边",
+        "trigonometric",
+        "right triangle",
+        "sine cosine tangent",
+        "opposite side",
+        "adjacent side",
+        "hypotenuse",
+    )
+    return any(token in text for token in explicit_tokens) or all(token in text for token in ("sin", "cos", "tan"))
+
+
 def select_skills(brief: dict[str, Any], limit: int = 3) -> list[dict[str, str]]:
     """Return 1-3 runtime skills relevant to the brief."""
     spec = brief.get("storyboardSpec") or brief.get("spec") or {}
@@ -157,7 +194,12 @@ def select_skills(brief: dict[str, Any], limit: int = 3) -> list[dict[str, str]]
         for item in (brief.get("requestedSkillIds") or brief.get("skillIds") or [])
         if str(item) in catalog
     ]
-    selected = requested_ids or TYPE_TO_SKILLS.get(animation_type, TYPE_TO_SKILLS["concept_explanation"])
+    if requested_ids:
+        selected = requested_ids
+    elif _is_trig_geometry_brief(brief):
+        selected = ["geometry", "formula_derivation", "text_formula_layout"]
+    else:
+        selected = TYPE_TO_SKILLS.get(animation_type, TYPE_TO_SKILLS["concept_explanation"])
     if brief.get("intent") == "MODIFY":
         selected = ["code_modify", *selected]
 

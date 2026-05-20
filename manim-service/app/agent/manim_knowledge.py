@@ -171,6 +171,13 @@ RULES: list[dict[str, str]] = [
         "test": "圆形请求不能只生成 Triangle，正方形请求不能只生成 Circle。",
     },
     {
+        "id": "trig_triangle_semantics",
+        "title": "三角函数几何语义绑定",
+        "generation": "讲解 sin/cos/tan 或直角三角形时，必须显式建立目标角、对边、邻边、斜边语义；α 角标贴近 Angle/RightAngle，a/b/c 或中文边标贴近对应 Line 的中点；公式必须匹配 sin=对边/斜边、cos=邻边/斜边、tan=对边/邻边。",
+        "critic": "三角函数场景中自由漂浮的 α/a/b/c 标签、缺失 Angle/RightAngle、或公式与边标语义不一致必须静态失败。",
+        "test": "α 放在标题区、a/b/c 不贴边或公式映射错误必须被拒绝；合法绑定应通过。",
+    },
+    {
         "id": "animation_minimum",
         "title": "基本动画节奏",
         "generation": "动画至少包含两个分阶段动作，并在结尾 self.wait(1)。",

@@ -62,8 +62,117 @@ def iter_code_deltas(code: str, chunk_size: int = 900) -> Iterable[dict[str, Any
 
 
 def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any]) -> list[str]:
+    """Clean v6 domain requirements injected into the LLM prompt.
+
+    This later definition overrides the older mojibake-heavy implementation
+    above because Python resolves the global name when
+    build_code_writer_messages() runs.
+    """
     kind = str(storyboard_spec.get("animation_type") or storyboard_spec.get("kind") or brief.get("animation_type") or "")
     request_text = str(brief.get("message") or "")
+    request_lower = request_text.lower()
+    story_text = " ".join(
+        str(part)
+        for shot in (storyboard_spec.get("storyboard") or [])
+        if isinstance(shot, dict)
+        for part in (shot.get("title"), shot.get("narration"), shot.get("visual"))
+        if part
+    )
+    haystack = f"{request_text} {kind} {story_text}".lower()
+    requirements: list[str] = [
+        "Do not pass guessed keyword arguments into Manim Mobject setter methods.",
+        "Do not construct VMobject/Mobject with points=...; create the object first, then use set_points_as_corners(...) or use Line/Polygon.",
+        "Do not put lists, tuples, strings, or numbers directly into VGroup; use VGroup(*items) and make every item a Mobject.",
+    ]
+
+    is_simple_shape = not any(token in haystack for token in (
+        "证明", "推导", "内角", "面积", "对角线", "讲解", "性质", "公式",
+        "proof", "derive", "property",
+    ))
+
+    if kind == "geometry_circle" or "圆形" in haystack or "circle" in haystack:
+        requirements.extend([
+            "Circle must be the dominant visible object, centered and large enough to read.",
+            "Do not use Triangle/Polygon as the primary object for a circle request.",
+        ])
+
+    if kind in {"geometry_proof", "triangle"} or "三角形" in haystack or "triangle" in haystack:
+        requirements.extend([
+            "Triangle or Polygon with exactly three vertices must be the dominant visible object.",
+            "The triangle should occupy roughly 45%-65% of the visual width with straight high-contrast edges.",
+        ])
+        if is_simple_shape:
+            requirements.append("For a simple triangle prompt, do not create a proof scene or dense derivation.")
+
+    is_trig_definition = (
+        any(token in haystack for token in (
+            "三角函数", "直角三角", "正弦余弦正切", "正弦、余弦、正切",
+            "对边", "邻边", "斜边",
+        ))
+        or any(token in request_lower for token in ("sin cos tan", "sine cosine tangent", "trigonometric"))
+        or all(token in request_lower for token in ("sin", "cos", "tan"))
+    )
+    if is_trig_definition:
+        requirements.extend([
+            "For trigonometry definition scenes, build one clear right triangle with named points: right_vertex, theta_vertex, opposite_vertex.",
+            "Create named side Line objects: opposite_side, adjacent_side, hypotenuse_side.",
+            "Create side labels with Chinese semantic text: opposite_label = SafeText('对边'), adjacent_label = SafeText('邻边'), hypotenuse_label = SafeText('斜边'). Avoid a/b/c unless the user explicitly asks for letters.",
+            "Every side label must be positioned from its matching Line midpoint, for example opposite_label.move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.28).",
+            "Create theta_angle with Angle(adjacent_side, hypotenuse_side) or a legal Angle/RightAngle object at the target vertex.",
+            "Create theta_label/alpha_label and place it near theta_angle or the target vertex; never use to_edge, to_corner, or unrelated absolute move_to for the angle label.",
+            "Use exact visible formulas with Chinese side names: sin θ = 对边 / 斜边, cos θ = 邻边 / 斜边, tan θ = 对边 / 邻边.",
+            "Keep the formulas in a separate derivation/formula zone; do not overlap the triangle or side labels.",
+        ])
+
+    if kind == "square" or "正方形" in haystack or "square" in haystack:
+        requirements.extend([
+            "Square must be the dominant visible object, centered and large enough to read.",
+            "Do not use Circle/Triangle/Polygon as the primary object for a square request.",
+        ])
+        if is_simple_shape:
+            requirements.append("For a simple square prompt, do not create a proof scene or formula-heavy layout.")
+
+    if kind == "function_graph" or any(token in haystack for token in ("正弦函数", "余弦函数", "函数图像", "sine graph", "cosine graph")):
+        requirements.extend([
+            "Function graph requests must contain a large Axes/NumberPlane and a clearly visible curve with stroke_width >= 5.",
+            "Use symbolic pi labels such as -π, -π/2, 0, π/2, π; never show long decimal tick labels.",
+            "Do not use MathTex/SafeMathTex for visible Chinese labels or simple formulas; use SafeText/Text with Unicode π.",
+            "For a simple sine/cosine graph request, do not add a unit circle unless explicitly requested.",
+        ])
+
+    if kind in {"data_chart", "bar_chart", "line_chart"} or any(token in haystack for token in ("柱状图", "销量", "数据图", "bar chart")):
+        requirements.extend([
+            "Bars must be large, high contrast, and occupy the central teaching area.",
+            "For a three-month bar chart, draw exactly three large Rectangle bars with compact labels.",
+            "Do not use MathTex/SafeMathTex for data charts; months, numbers, titles, and summaries must use SafeText/Text.",
+            "Do not use bars.index(bar), VGroup.index(...), or mobject index lookup for data values.",
+        ])
+
+    if kind in {"flow_process", "process_flow"} or any(token in haystack for token in ("流程", "握手", "tcp", "flow", "process")):
+        requirements.extend([
+            "Flow diagrams should use 2-4 main nodes, 2-4 arrows, and one reusable step banner.",
+            "Use VGroup(...).arrange() for nodes and arrows, and reuse or transform labels instead of adding many independent Text objects.",
+        ])
+
+    if any(token in haystack for token in ("推导", "证明", "过程", "等差", "公式推导", "derive", "proof")):
+        requirements.extend([
+            "Derivation animations must use separated zones: definition area, derivation area, visual object area, and conclusion area.",
+            "Every stage should be a named VGroup; FadeOut or ReplacementTransform outdated objects before showing the next stage.",
+        ])
+
+    if kind == "motion_path" or any(token in haystack for token in ("小球", "抛物", "运动", "轨迹", "projectile")):
+        requirements.extend([
+            "Physical motion must show trajectory, current object position, velocity/direction arrow, and gravity/acceleration cue.",
+            "Prefer a simple ParametricFunction trajectory plus MoveAlongPath; avoid custom VMobject internals or fragile updaters.",
+        ])
+
+    return requirements
+
+
+def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any]) -> list[str]:
+    kind = str(storyboard_spec.get("animation_type") or storyboard_spec.get("kind") or brief.get("animation_type") or "")
+    request_text = str(brief.get("message") or "")
+    request_lower = request_text.lower()
     requirements: list[str] = []
     requirements.extend([
         "Do not pass guessed keyword arguments into Manim Mobject setter methods; use positional arguments or documented Manim Community parameters only.",
@@ -87,6 +196,22 @@ def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any])
         ])
         if is_simple_shape:
             requirements.append("For a simple triangle prompt, do not create a proof scene; avoid angle-sum derivations, dense angle arcs, and formula-heavy layouts.")
+
+    is_trig_definition = (
+        any(token in request_text for token in ("三角函数", "直角三角", "正弦余弦正切", "正弦、余弦、正切"))
+        or any(token in request_lower for token in ("sin cos tan", "sine cosine tangent", "trigonometric"))
+        or all(token in request_lower for token in ("sin", "cos", "tan"))
+    )
+    if is_trig_definition:
+        requirements.extend([
+            "For trigonometry definition scenes, build a real right triangle with named points such as right_vertex, alpha_vertex, and opposite_vertex.",
+            "Create named side Line objects: opposite_side, adjacent_side, and hypotenuse_side. Do not treat a/b/c as free floating labels.",
+            "Create alpha_angle with Angle(adjacent_side, hypotenuse_side) or an equivalent legal Angle/RightAngle object at the target vertex.",
+            "Create alpha_label as a named Text/SafeText object and place it using alpha_angle or the target vertex; never place α with to_edge, to_corner, or an unrelated absolute move_to.",
+            "Place side labels at the midpoint of their corresponding Line, for example label.move_to(opposite_side.point_from_proportion(0.5) + offset).",
+            "Keep formula semantics exact: sin α = 对边 / 斜边, cos α = 邻边 / 斜边, tan α = 对边 / 邻边. The visible labels must match these meanings.",
+            "Use Chinese semantic side labels (对边、邻边、斜边) when possible; if using a/b/c, explicitly map each letter to the correct side on the diagram.",
+        ])
 
     if kind == "square" or "正方形" in request_text or "square" in request_text.lower():
         requirements.extend([
@@ -142,6 +267,108 @@ def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any])
             "For projectile motion use a visible parabola/ParametricFunction/TracedPath and at least one arrow label for velocity or gravity.",
             "Prefer a simple ParametricFunction trajectory plus MoveAlongPath; avoid custom VMobject internals, manual submobjects mutation, or fragile updaters.",
             "Do not produce a static ball-only scene.",
+        ])
+
+    return requirements
+
+
+def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any]) -> list[str]:
+    """Final clean domain constraints used by the code writer prompt."""
+    kind = str(storyboard_spec.get("animation_type") or storyboard_spec.get("kind") or brief.get("animation_type") or "")
+    request_text = str(brief.get("message") or "")
+    request_lower = request_text.lower()
+    story_text = " ".join(
+        str(part)
+        for shot in (storyboard_spec.get("storyboard") or [])
+        if isinstance(shot, dict)
+        for part in (shot.get("title"), shot.get("narration"), shot.get("visual"))
+        if part
+    )
+    haystack = f"{request_text} {kind} {story_text}".lower()
+    requirements: list[str] = [
+        "Do not pass guessed keyword arguments into Manim Mobject setter methods; use documented Manim Community parameters only.",
+        "Do not construct VMobject/Mobject with points=...; create the object first, then use set_points_as_corners(...) or use Line/Polygon.",
+        "Do not put lists, tuples, strings, or numbers directly into VGroup; use VGroup(*items) and make every item a Mobject.",
+    ]
+
+    simple_shape_blockers = ("证明", "推导", "内角", "面积", "对角线", "讲解", "性质", "公式", "proof", "derive", "property")
+    is_simple_shape = not any(token in haystack for token in simple_shape_blockers)
+
+    if kind == "geometry_circle" or "圆形" in haystack or "circle" in haystack:
+        requirements.extend([
+            "Circle must be the dominant visible object, centered and large enough to read.",
+            "Do not use Triangle/Polygon as the primary object for a circle request.",
+        ])
+
+    if kind in {"geometry_proof", "triangle"} or "三角形" in haystack or "triangle" in haystack:
+        requirements.extend([
+            "Triangle or Polygon with exactly three vertices must be the dominant visible object.",
+            "The triangle should occupy roughly 45%-65% of the visual width with straight high-contrast edges.",
+        ])
+        if is_simple_shape:
+            requirements.append("For a simple triangle prompt, do not create a proof scene or dense derivation.")
+
+    is_trig_definition = (
+        any(token in haystack for token in (
+            "三角函数", "直角三角", "正弦余弦正切", "正弦、余弦、正切",
+            "对边", "邻边", "斜边",
+        ))
+        or any(token in request_lower for token in ("sin cos tan", "sine cosine tangent", "trigonometric"))
+        or all(token in request_lower for token in ("sin", "cos", "tan"))
+    )
+    if is_trig_definition:
+        requirements.extend([
+            "For trigonometry definition scenes, build one clear right triangle with named points: right_vertex, theta_vertex, opposite_vertex.",
+            "Create named side Line objects: opposite_side, adjacent_side, hypotenuse_side.",
+            "Do not use Circle() or a unit-circle visual for trigonometry definitions unless the user explicitly asks for a unit circle; the right triangle must be the dominant subject.",
+            "Use Chinese semantic side labels: opposite_label = SafeText('对边'), adjacent_label = SafeText('邻边'), hypotenuse_label = SafeText('斜边'). Avoid a/b/c unless the user explicitly asks for letters.",
+            "Every side label must be positioned from its matching Line midpoint, for example opposite_label.move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.28).",
+            "Create theta_angle with Angle(adjacent_side, hypotenuse_side) or a legal Angle/RightAngle object at the target vertex.",
+            "Create theta_label or alpha_label and place it near theta_angle or the target vertex; never use to_edge, to_corner, or unrelated absolute move_to for the angle label.",
+            "Use exact visible formulas with Chinese side names: sin θ = 对边 / 斜边, cos θ = 邻边 / 斜边, tan θ = 对边 / 邻边.",
+            "Keep the formulas in a separate derivation/formula zone; do not overlap the triangle or side labels.",
+        ])
+
+    if kind == "square" or "正方形" in haystack or "square" in haystack:
+        requirements.extend([
+            "Square must be the dominant visible object, centered and large enough to read.",
+            "Do not use Circle/Triangle/Polygon as the primary object for a square request.",
+        ])
+        if is_simple_shape:
+            requirements.append("For a simple square prompt, do not create a proof scene or formula-heavy layout.")
+
+    if kind == "function_graph" or any(token in haystack for token in ("正弦函数", "余弦函数", "函数图像", "sine graph", "cosine graph")):
+        requirements.extend([
+            "Function graph requests must contain a large Axes/NumberPlane and a clearly visible curve with stroke_width >= 5.",
+            "Use symbolic pi labels such as -π, -π/2, 0, π/2, π; never show long decimal tick labels.",
+            "Do not use MathTex/SafeMathTex for visible Chinese labels or simple formulas; use SafeText/Text with Unicode π.",
+            "For a simple sine/cosine graph request, do not add a unit circle unless explicitly requested.",
+        ])
+
+    if kind in {"data_chart", "bar_chart", "line_chart"} or any(token in haystack for token in ("柱状图", "销量", "数据图", "bar chart")):
+        requirements.extend([
+            "Bars must be large, high contrast, and occupy the central teaching area.",
+            "For a three-month bar chart, draw exactly three large Rectangle bars with compact labels.",
+            "Do not use MathTex/SafeMathTex for data charts; months, numbers, titles, and summaries must use SafeText/Text.",
+            "Do not use bars.index(bar), VGroup.index(...), or mobject index lookup for data values.",
+        ])
+
+    if kind in {"flow_process", "process_flow"} or any(token in haystack for token in ("流程", "握手", "tcp", "flow", "process")):
+        requirements.extend([
+            "Flow diagrams should use 2-4 main nodes, 2-4 arrows, and one reusable step banner.",
+            "Use VGroup(...).arrange() for nodes and arrows, and reuse or transform labels instead of adding many independent Text objects.",
+        ])
+
+    if any(token in haystack for token in ("推导", "证明", "过程", "等差", "公式推导", "derive", "proof")):
+        requirements.extend([
+            "Derivation animations must use separated zones: definition area, derivation area, visual object area, and conclusion area.",
+            "Every stage should be a named VGroup; FadeOut or ReplacementTransform outdated objects before showing the next stage.",
+        ])
+
+    if kind == "motion_path" or any(token in haystack for token in ("小球", "抛物", "运动", "轨迹", "projectile")):
+        requirements.extend([
+            "Physical motion must show trajectory, current object position, velocity/direction arrow, and gravity/acceleration cue.",
+            "Prefer a simple ParametricFunction trajectory plus MoveAlongPath; avoid custom VMobject internals or fragile updaters.",
         ])
 
     return requirements
