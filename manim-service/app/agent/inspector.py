@@ -5,7 +5,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .manim_knowledge import MOJIBAKE_MARKERS, RULE_PACK_VERSION, semantic_target_from_brief
+from .manim_knowledge import (
+    MOJIBAKE_MARKERS,
+    RULE_PACK_VERSION,
+    contains_triangle_geometry,
+    semantic_target_from_brief,
+)
 
 
 LONG_DECIMAL_RE = re.compile(r"\b-?\d+\.\d{6,}\b")
@@ -43,9 +48,7 @@ def _message(brief: dict[str, Any] | None) -> str:
 
 
 def _contains_triangle_object(source: str) -> bool:
-    return bool(re.search(r"\b(?:Triangle|Polygon)\s*\(", source)) or bool(
-        re.search(r"\bRegularPolygon\s*\(\s*(?:n\s*=\s*)?3\b", source)
-    )
+    return contains_triangle_geometry(source)
 
 
 def _contains_circle_object(source: str) -> bool:
@@ -171,7 +174,7 @@ def inspect_code_quality(code: str, brief: dict[str, Any] | None = None) -> dict
 
     if wants_triangle:
         if not has_triangle:
-            findings.append(_finding("error", "三角形请求没有生成三角形对象。", "使用 Triangle()、Polygon() 或 RegularPolygon(n=3) 绘制三角形主体。", "semantic_triangle_missing"))
+            findings.append(_finding("error", "三角形请求没有生成三角形对象。", "使用 Triangle()、Polygon()、RegularPolygon(n=3)，或用三条 Line 明确构成三角形主体。", "semantic_triangle_missing"))
         if has_circle and not has_triangle:
             findings.append(_finding("error", "三角形请求生成了圆形主体。", "不要用圆形满足三角形提示。", "semantic_triangle_circle_mismatch"))
 

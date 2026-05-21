@@ -421,6 +421,7 @@ def patch_first_repair(code: str, report: dict[str, Any]) -> dict[str, Any]:
             "trig_formula_semantics_missing",
             "trig_angle_label_unbound",
             "trig_angle_label_missing",
+            "trig_angle_marker_missing",
             "trig_triangle_missing",
             "trig_circle_distractor",
         }:

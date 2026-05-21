@@ -15,6 +15,7 @@ import numpy as np
 from PIL import Image, ImageStat
 
 from app import service_config
+from .manim_knowledge import contains_triangle_geometry
 
 
 def _finding(severity: str, message: str, hint: str, code: str = "") -> dict[str, str]:
@@ -543,7 +544,7 @@ def _semantic_findings(code: str, brief: dict[str, Any] | None) -> list[dict[str
     findings: list[dict[str, str]] = []
     has_circle = bool(re.search(r"\bCircle\s*\(", source))
     has_square = bool(re.search(r"\bSquare\s*\(", source))
-    has_triangle = bool(re.search(r"\b(Triangle|Polygon)\s*\(", source))
+    has_triangle = contains_triangle_geometry(source)
 
     if _wants_circle(brief):
         if not has_circle:
@@ -553,7 +554,7 @@ def _semantic_findings(code: str, brief: dict[str, Any] | None) -> list[dict[str
 
     if _wants_triangle(brief):
         if not has_triangle:
-            findings.append(_finding("error", "语义检查失败：三角形请求没有生成三角形主体。", "使用 Triangle() 或 Polygon() 绘制三角形。", "semantic_triangle_missing"))
+            findings.append(_finding("error", "语义检查失败：三角形请求没有生成三角形主体。", "使用 Triangle()、Polygon()，或用三条 Line 明确构成三角形主体。", "semantic_triangle_missing"))
 
     if _wants_square(brief):
         if not has_square:
@@ -581,13 +582,13 @@ def _reference_alignment_findings(code: str, brief: dict[str, Any] | None) -> li
     source = code or ""
     has_circle = bool(re.search(r"\bCircle\s*\(", source))
     has_square = bool(re.search(r"\bSquare\s*\(", source))
-    has_triangle = bool(re.search(r"\b(Triangle|Polygon)\s*\(", source))
+    has_triangle = contains_triangle_geometry(source)
     if target == "circle" and not has_circle:
         return [_finding("error", "参考图显示圆形主体，但生成代码没有 Circle 对象。", "用 Circle() 重绘参考图中的圆形主体。", "reference_circle_missing")]
     if target == "square" and not has_square:
         return [_finding("error", "参考图显示正方形主体，但生成代码没有 Square 对象。", "用 Square() 重绘参考图中的正方形主体。", "reference_square_missing")]
     if target == "triangle" and not has_triangle:
-        return [_finding("error", "参考图显示三角形主体，但生成代码没有 Triangle 或 Polygon 对象。", "用 Triangle() 或 Polygon() 重绘参考图中的三角形主体。", "reference_triangle_missing")]
+        return [_finding("error", "参考图显示三角形主体，但生成代码没有三角形主体。", "用 Triangle()/Polygon()，或用三条 Line 重绘参考图中的三角形主体。", "reference_triangle_missing")]
     return []
 
 
@@ -603,7 +604,7 @@ def inspect_visual_quality(
     source = code or ""
     code_has_circle = bool(re.search(r"\bCircle\s*\(", source))
     code_has_square = bool(re.search(r"\bSquare\s*\(", source))
-    code_has_triangle = bool(re.search(r"\b(Triangle|Polygon)\s*\(", source))
+    code_has_triangle = contains_triangle_geometry(source)
 
     if render_result:
         if not render_result.get("success"):

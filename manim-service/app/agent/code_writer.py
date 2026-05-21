@@ -113,8 +113,8 @@ def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any])
             "Do not use Circle() or a unit-circle visual for trigonometry definitions unless the user explicitly asks for a unit circle; the right triangle must be the dominant subject.",
             "Use Chinese semantic side labels: opposite_label = SafeText('对边'), adjacent_label = SafeText('邻边'), hypotenuse_label = SafeText('斜边'). Avoid a/b/c unless the user explicitly asks for letters.",
             "Every side label must be positioned from its matching Line midpoint, for example opposite_label.move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.28).",
-            "Create theta_angle with Angle(adjacent_side, hypotenuse_side) or a legal Angle/RightAngle object at the target vertex.",
-            "Create theta_label or alpha_label and place it near theta_angle or the target vertex; never use to_edge, to_corner, or unrelated absolute move_to for the angle label.",
+            "Create theta_angle with Angle(adjacent_side, hypotenuse_side) or a legal RightAngle(adjacent_side, opposite_side) object at the target vertex. Never pass raw coordinates, points, or get_center() results into Angle().",
+            "Create a visible theta_label or alpha_label (using SafeText or Text) and bind it near the theta_angle using theta_label.next_to(theta_angle, UP, buff=0.08) or similar relative positioning. Never use to_edge, to_corner, or absolute coordinate move_to for this label.",
             "Use exact visible formulas with Chinese side names: sin θ = 对边 / 斜边, cos θ = 邻边 / 斜边, tan θ = 对边 / 邻边.",
             "Keep the formulas in a separate derivation/formula zone; do not overlap the triangle or side labels.",
         ])

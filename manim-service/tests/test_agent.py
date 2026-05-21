@@ -1884,6 +1884,34 @@ class MainScene(Scene):
         self.assertEqual(report["status"], "error")
         self.assertIn("semantic_triangle_missing", codes)
 
+    def test_inspector_accepts_triangle_constructed_from_three_lines(self):
+        brief = plan_animation("\u753b\u4e00\u4e2a\u4e09\u89d2\u5f62")
+        line_triangle_code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        vertex_a = LEFT * 2 + DOWN
+        vertex_b = RIGHT * 2 + DOWN
+        vertex_c = UP * 1.6
+        side_ab = Line(vertex_a, vertex_b)
+        side_bc = Line(vertex_b, vertex_c)
+        side_ca = Line(vertex_c, vertex_a)
+        title = Text("三角形")
+        self.add(side_ab, side_bc, side_ca, title)
+        self.wait(1)
+"""
+        report = inspect_code_quality(line_triangle_code, brief)
+        codes = {item.get("code") for item in report["findings"]}
+
+        self.assertNotIn("semantic_triangle_missing", codes)
+        critique = critique_code(line_triangle_code, brief)
+        critique_codes = {item.get("code") for item in critique["issues"]}
+        self.assertNotIn("semantic_triangle_missing", critique_codes)
+        visual = inspect_visual_quality(line_triangle_code, brief)
+        visual_codes = {item.get("code") for item in visual["findings"]}
+        self.assertNotIn("semantic_triangle_missing", visual_codes)
+
     def test_square_prompt_requires_square_object_before_preview(self):
         brief = plan_animation("\u753b\u4e00\u4e2a\u6b63\u65b9\u5f62")
         wrong_code = """

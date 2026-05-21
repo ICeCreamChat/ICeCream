@@ -8,6 +8,7 @@ checks, and regression-test expectations.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .prompt_loader import API_INDEX_VERSION, PROMPT_PACK_VERSION, build_generation_prompt_pack
@@ -166,9 +167,9 @@ RULES: list[dict[str, str]] = [
     {
         "id": "semantic_object_match",
         "title": "语义对象匹配",
-        "generation": "用户要求圆形必须使用 Circle；正方形必须使用 Square；三角形必须使用 Triangle/Polygon。",
+        "generation": "用户要求圆形必须使用 Circle；正方形必须使用 Square；三角形必须使用 Triangle/Polygon，或用三条 Line 明确构成三角形。",
         "critic": "圆形/正方形/三角形等请求和代码主对象错配必须失败。",
-        "test": "圆形请求不能只生成 Triangle，正方形请求不能只生成 Circle。",
+        "test": "圆形请求不能只生成 Triangle，正方形请求不能只生成 Circle；三角形请求可以由 Triangle/Polygon 或三条边 Line 构成。",
     },
     {
         "id": "trig_triangle_semantics",
@@ -236,6 +237,56 @@ def rule_by_id(rule_id: str) -> dict[str, str]:
 def rule_hint(rule_id: str, fallback: str = "") -> str:
     rule = rule_by_id(rule_id)
     return rule.get("critic") or rule.get("generation") or fallback
+
+
+TRIANGLE_OBJECT_RE = re.compile(r"\b(?:Triangle|Polygon)\s*\(")
+TRIANGLE_REGULAR_POLYGON_RE = re.compile(r"\bRegularPolygon\s*\(\s*(?:n\s*=\s*)?3\b")
+LINE_CALL_RE = re.compile(r"\bLine\s*\(")
+LINE_ASSIGN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*=\s*Line\s*\(")
+
+
+def contains_triangle_geometry(source: str) -> bool:
+    """Return true when code visibly constructs a triangle-like geometry.
+
+    A generated triangle scene may use Triangle/Polygon directly, or it may
+    build a pedagogical triangle from three Line objects so labels and angle
+    markers can bind to individual sides. Pure text like Text("三角形") must
+    not count as a triangle.
+    """
+
+    if TRIANGLE_OBJECT_RE.search(source) or TRIANGLE_REGULAR_POLYGON_RE.search(source):
+        return True
+
+    if len(LINE_CALL_RE.findall(source)) < 3:
+        return False
+
+    lowered = source.lower()
+    semantic_markers = (
+        "triangle",
+        "三角",
+        "vertex",
+        "vertices",
+        "side",
+        "edge",
+        "leg",
+        "hypotenuse",
+        "opposite",
+        "adjacent",
+        "theta",
+        "angle(",
+        "rightangle(",
+    )
+    if any(marker in lowered or marker in source for marker in semantic_markers):
+        return True
+
+    # Last-resort guard for terse generated code using side-like variable names.
+    line_names = [name.lower() for name in LINE_ASSIGN_RE.findall(source)]
+    semantic_line_names = sum(
+        1
+        for name in line_names
+        if any(token in name for token in ("side", "edge", "leg", "hypotenuse", "opposite", "adjacent", "base"))
+    )
+    return semantic_line_names >= 2
 
 
 def semantic_target_from_brief(brief: dict[str, Any] | None) -> str:

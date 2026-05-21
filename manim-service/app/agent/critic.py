@@ -11,6 +11,7 @@ from .manim_knowledge import (
     MANIM_API_COMPATIBILITY_RULES,
     MOJIBAKE_MARKERS,
     RULE_PACK_VERSION,
+    contains_triangle_geometry,
     semantic_target_from_brief,
 )
 
@@ -433,12 +434,7 @@ def _semantic_object_issues(source: str, brief: dict[str, Any]) -> list[dict[str
 
     has_circle = bool(re.search(r"\bCircle\s*\(", source))
     has_square = bool(re.search(r"\bSquare\s*\(", source))
-    has_triangle = bool(re.search(r"\b(?:Triangle|Polygon)\s*\(", source)) or bool(
-        re.search(r"\bRegularPolygon\s*\(\s*(?:n\s*=\s*)?3\b", source)
-    )
-    # Triangles may also be built from three Line objects (common in trig geometry).
-    if not has_triangle and len(re.findall(r"\bLine\s*\(", source)) >= 3:
-        has_triangle = True
+    has_triangle = contains_triangle_geometry(source)
     has_axes = "Axes(" in source or "NumberPlane(" in source
     has_curve = any(marker in source for marker in ("axes.plot", ".plot(", "ParametricFunction", "FunctionGraph", "plot_parametric_curve"))
 
@@ -723,7 +719,7 @@ def _is_trig_semantic_request(source: str, brief: dict[str, Any]) -> bool:
         return True
 
     main_source = _main_scene_source(source).lower()
-    has_triangle_shape = any(token in main_source for token in ("triangle(", "polygon(", "regularpolygon"))
+    has_triangle_shape = contains_triangle_geometry(_main_scene_source(source))
     has_trig_formulas = all(token in main_source for token in ("sin", "cos", "tan"))
     return has_triangle_shape and has_trig_formulas
 
