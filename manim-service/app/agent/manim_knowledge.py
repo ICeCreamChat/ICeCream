@@ -252,6 +252,13 @@ def semantic_target_from_brief(brief: dict[str, Any] | None) -> str:
         return "square"
     if kind in {"triangle", "geometry_proof"} or "triangle" in message or "三角" in message or "triangle" in objects:
         return "triangle"
+    # Trig geometry definitions (sin/cos/tan with triangle context) should be
+    # classified as triangle, not function_graph.
+    _trig_geo_tokens = ("三角函数", "直角三角", "正弦余弦正切", "对边", "邻边", "斜边", "trigonometric")
+    if any(token in message for token in _trig_geo_tokens):
+        return "triangle"
+    if all(token in message for token in ("sin", "cos", "tan")):
+        return "triangle"
     if kind == "function_graph" or any(token in message for token in ("正弦", "余弦", "函数", "sin", "cos")):
         return "function_graph"
     if kind in {"data_chart", "bar_chart", "line_chart"} or any(token in message for token in ("柱状图", "销量", "数据")):

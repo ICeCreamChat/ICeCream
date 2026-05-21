@@ -39,6 +39,13 @@ def classify_domain(message: str, mode: str = "create", current_code: str = "") 
 
 def classify_function(message: str) -> str:
     lowered = message.lower()
+    # If the message is about trig geometry definitions (not function graphs),
+    # do not classify as a function name to avoid routing to function_graph.
+    _trig_geo_tokens = ("三角函数", "直角三角", "正弦余弦正切", "对边", "邻边", "斜边", "trigonometric")
+    if any(token in lowered for token in _trig_geo_tokens):
+        return ""
+    if all(token in lowered for token in ("sin", "cos", "tan")):
+        return ""  # all three together implies trig definition, not a single function graph
     if "cos" in lowered or "余弦" in message or "cosine" in lowered:
         return "cos"
     if "sin" in lowered or "正弦" in message or "sine" in lowered:
@@ -48,6 +55,10 @@ def classify_function(message: str) -> str:
 
 def classify_animation_type(message: str, domain: str, function_name: str = "") -> str:
     lowered = message.lower()
+    # Trig geometry definitions take priority over function_graph routing.
+    _trig_geo_tokens = ("三角函数", "直角三角", "正弦余弦正切", "对边", "邻边", "斜边", "trigonometric")
+    if any(token in lowered for token in _trig_geo_tokens):
+        return "triangle"
     if function_name:
         return "function_graph"
     if domain == "math" and _contains_any(message, ("推导", "公式", "derive", "derivation")):
