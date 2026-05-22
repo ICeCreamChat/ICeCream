@@ -1503,9 +1503,10 @@ class MainScene(Scene):
 
         self.assertEqual(report["status"], "error")
         self.assertIn("trig_angle_label_unbound", codes)
+        self.assertIn("trig_angle_ray_orientation_missing", codes)
         self.assertIn("trig_side_label_unbound", codes)
 
-    def test_critic_allows_bound_trig_angle_and_side_labels(self):
+    def test_critic_rejects_trig_angle_from_oriented_side_lines(self):
         code = """
 from manim import *
 
@@ -1521,6 +1522,110 @@ class MainScene(Scene):
         alpha_angle = Angle(adjacent_side, hypotenuse_side)
         alpha_label = Text("α")
         alpha_label.next_to(alpha_angle, UP, buff=0.1)
+        a_label = Text("a")
+        a_label.move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)
+        b_label = Text("b")
+        b_label.move_to(adjacent_side.point_from_proportion(0.5) + DOWN * 0.2)
+        c_label = Text("c")
+        c_label.move_to(hypotenuse_side.point_from_proportion(0.5) + RIGHT * 0.2)
+        sin_formula = Text("sin α = 对边 / 斜边")
+        cos_formula = Text("cos α = 邻边 / 斜边")
+        tan_formula = Text("tan α = 对边 / 邻边")
+        self.add(triangle, adjacent_side, opposite_side, hypotenuse_side, alpha_angle, alpha_label, a_label, b_label, c_label, sin_formula, cos_formula, tan_formula)
+"""
+        report = critique_code(code, plan_animation("画一个直角三角形，说明 sin cos tan"))
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("trig_angle_ray_orientation_missing", codes)
+        self.assertIn("trig_angle_label_unbound_to_bisector", codes)
+
+    def test_patch_first_repair_rebuilds_trig_angle_with_vertex_rays(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        right_vertex = ORIGIN
+        alpha_vertex = RIGHT * 3
+        top_vertex = UP * 2
+        triangle = Polygon(right_vertex, alpha_vertex, top_vertex)
+        adjacent_side = Line(right_vertex, alpha_vertex)
+        hypotenuse_side = Line(alpha_vertex, top_vertex)
+        opposite_side = Line(right_vertex, top_vertex)
+        alpha_angle = Angle(adjacent_side, hypotenuse_side)
+        alpha_label = Text("α")
+        alpha_label.next_to(alpha_angle, UP, buff=0.1)
+        a_label = Text("a").move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)
+        b_label = Text("b").move_to(adjacent_side.point_from_proportion(0.5) + DOWN * 0.2)
+        c_label = Text("c").move_to(hypotenuse_side.point_from_proportion(0.5) + RIGHT * 0.2)
+        sin_formula = Text("sin α = 对边 / 斜边")
+        cos_formula = Text("cos α = 邻边 / 斜边")
+        tan_formula = Text("tan α = 对边 / 邻边")
+        self.add(triangle, adjacent_side, opposite_side, hypotenuse_side, alpha_angle, alpha_label, a_label, b_label, c_label, sin_formula, cos_formula, tan_formula)
+"""
+        report = critique_code(code, plan_animation("讲解三角函数的定义"))
+        patched = patch_first_repair(code, report)
+        patched_report = critique_code(patched["code"], plan_animation("讲解三角函数的定义"))
+        codes = {issue.get("code") for issue in patched_report["issues"]}
+
+        self.assertTrue(any(patch["id"] == "trig_semantic_rescue_block" for patch in patched["patches"]))
+        self.assertIn("theta_adjacent_ray", patched["code"])
+        self.assertIn("theta_hypotenuse_ray", patched["code"])
+        self.assertIn("Angle(theta_hypotenuse_ray, theta_adjacent_ray", patched["code"])
+        self.assertIn("theta_label.move_to(theta_vertex", patched["code"])
+        self.assertFalse(any(str(code).startswith("trig_") for code in codes), codes)
+
+    def test_critic_rejects_reversed_trig_angle_arc_helper_order(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        right_vertex = ORIGIN
+        alpha_vertex = RIGHT * 3
+        top_vertex = UP * 2
+        triangle = Polygon(right_vertex, alpha_vertex, top_vertex)
+        adjacent_side = Line(right_vertex, alpha_vertex)
+        hypotenuse_side = Line(alpha_vertex, top_vertex)
+        opposite_side = Line(right_vertex, top_vertex)
+        alpha_adjacent_ray = Line(alpha_vertex, right_vertex)
+        alpha_hypotenuse_ray = Line(alpha_vertex, top_vertex)
+        alpha_angle = Angle(alpha_adjacent_ray, alpha_hypotenuse_ray)
+        alpha_label = Text("α")
+        alpha_label.move_to(alpha_vertex + LEFT * 0.45 + UP * 0.32)
+        a_label = Text("a").move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)
+        b_label = Text("b").move_to(adjacent_side.point_from_proportion(0.5) + DOWN * 0.2)
+        c_label = Text("c").move_to(hypotenuse_side.point_from_proportion(0.5) + RIGHT * 0.2)
+        sin_formula = Text("sin α = 对边 / 斜边")
+        cos_formula = Text("cos α = 邻边 / 斜边")
+        tan_formula = Text("tan α = 对边 / 邻边")
+        self.add(triangle, adjacent_side, opposite_side, hypotenuse_side, alpha_angle, alpha_label, a_label, b_label, c_label, sin_formula, cos_formula, tan_formula)
+"""
+        report = critique_code(code, plan_animation("画一个直角三角形，说明 sin cos tan"))
+        codes = {issue.get("code") for issue in report["issues"]}
+
+        self.assertEqual(report["status"], "error")
+        self.assertIn("trig_angle_arc_reversed", codes)
+
+    def test_critic_allows_bound_trig_angle_and_side_labels(self):
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        right_vertex = ORIGIN
+        alpha_vertex = RIGHT * 3
+        top_vertex = UP * 2
+        triangle = Polygon(right_vertex, alpha_vertex, top_vertex)
+        adjacent_side = Line(right_vertex, alpha_vertex)
+        hypotenuse_side = Line(alpha_vertex, top_vertex)
+        opposite_side = Line(right_vertex, top_vertex)
+        alpha_adjacent_ray = Line(alpha_vertex, right_vertex)
+        alpha_hypotenuse_ray = Line(alpha_vertex, top_vertex)
+        alpha_angle = Angle(alpha_hypotenuse_ray, alpha_adjacent_ray)
+        alpha_label = Text("α")
+        alpha_label.move_to(alpha_vertex + LEFT * 0.45 + UP * 0.32)
         a_label = Text("a")
         a_label.move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)
         b_label = Text("b")
@@ -1551,8 +1656,11 @@ class MainScene(Scene):
         adjacent_side = Line(right_vertex, alpha_vertex)
         hypotenuse_side = Line(alpha_vertex, top_vertex)
         opposite_side = Line(right_vertex, top_vertex)
-        alpha_angle = Angle(adjacent_side, hypotenuse_side)
-        alpha_label = Text("α").next_to(alpha_angle, UP, buff=0.1)
+        alpha_adjacent_ray = Line(alpha_vertex, right_vertex)
+        alpha_hypotenuse_ray = Line(alpha_vertex, top_vertex)
+        alpha_angle = Angle(alpha_hypotenuse_ray, alpha_adjacent_ray)
+        alpha_label = Text("α")
+        alpha_label.move_to(alpha_vertex + LEFT * 0.45 + UP * 0.32)
         a_label = Text("a").move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)
         b_label = Text("b").move_to(adjacent_side.point_from_proportion(0.5) + DOWN * 0.2)
         c_label = Text("c").move_to(hypotenuse_side.point_from_proportion(0.5) + RIGHT * 0.2)
@@ -1581,8 +1689,11 @@ class MainScene(Scene):
         adjacent_side = Line(right_vertex, alpha_vertex)
         hypotenuse_side = Line(alpha_vertex, top_vertex)
         opposite_side = Line(right_vertex, top_vertex)
-        alpha_angle = Angle(adjacent_side, hypotenuse_side)
-        alpha_label = Text("α").next_to(alpha_angle, UP, buff=0.1)
+        alpha_adjacent_ray = Line(alpha_vertex, right_vertex)
+        alpha_hypotenuse_ray = Line(alpha_vertex, top_vertex)
+        alpha_angle = Angle(alpha_hypotenuse_ray, alpha_adjacent_ray)
+        alpha_label = Text("α")
+        alpha_label.move_to(alpha_vertex + LEFT * 0.45 + UP * 0.32)
         a_label = Text("a").move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)
         b_label = Text("b").move_to(adjacent_side.point_from_proportion(0.5) + DOWN * 0.2)
         c_label = Text("c").move_to(hypotenuse_side.point_from_proportion(0.5) + RIGHT * 0.2)
@@ -1609,8 +1720,11 @@ class MainScene(Scene):
         adjacent_side = Line(right_vertex, alpha_vertex)
         hypotenuse_side = Line(alpha_vertex, top_vertex)
         opposite_side = Line(right_vertex, top_vertex)
-        alpha_angle = Angle(adjacent_side, hypotenuse_side)
-        alpha_label = Text("α").next_to(alpha_angle, UP, buff=0.1)
+        alpha_adjacent_ray = Line(alpha_vertex, right_vertex)
+        alpha_hypotenuse_ray = Line(alpha_vertex, top_vertex)
+        alpha_angle = Angle(alpha_hypotenuse_ray, alpha_adjacent_ray)
+        alpha_label = Text("α")
+        alpha_label.move_to(alpha_vertex + LEFT * 0.45 + UP * 0.32)
         a_label = Text("a").move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)
         b_label = Text("b").move_to(adjacent_side.point_from_proportion(0.5) + DOWN * 0.2)
         c_label = Text("c").move_to(hypotenuse_side.point_from_proportion(0.5) + RIGHT * 0.2)
@@ -1637,8 +1751,11 @@ class MainScene(Scene):
         adjacent_side = Line(right_vertex, alpha_vertex)
         hypotenuse_side = Line(alpha_vertex, top_vertex)
         opposite_side = Line(right_vertex, top_vertex)
-        alpha_angle = Angle(adjacent_side, hypotenuse_side)
-        alpha_label = Text("α").next_to(alpha_angle, UP, buff=0.1)
+        alpha_adjacent_ray = Line(alpha_vertex, right_vertex)
+        alpha_hypotenuse_ray = Line(alpha_vertex, top_vertex)
+        alpha_angle = Angle(alpha_hypotenuse_ray, alpha_adjacent_ray)
+        alpha_label = Text("α")
+        alpha_label.move_to(alpha_vertex + LEFT * 0.45 + UP * 0.32)
         a_label = Text("a")
         a_label.move_to(RIGHT * 4)
         a_label.next_to(triangle, LEFT)
@@ -1674,10 +1791,12 @@ class MainScene(Scene):
         adjacent_side = Line(right_vertex, alpha_vertex)
         hypotenuse_side = Line(alpha_vertex, top_vertex)
         opposite_side = Line(right_vertex, top_vertex)
-        alpha_angle = Angle(adjacent_side, hypotenuse_side)
+        alpha_adjacent_ray = Line(alpha_vertex, right_vertex)
+        alpha_hypotenuse_ray = Line(alpha_vertex, top_vertex)
+        alpha_angle = Angle(alpha_hypotenuse_ray, alpha_adjacent_ray)
         alpha_label = Text("α")
         alpha_label.move_to(UP * 2)
-        alpha_label.next_to(alpha_angle, UP, buff=0.1)
+        alpha_label.move_to(alpha_vertex + LEFT * 0.45 + UP * 0.32)
         opposite_label = Text("a = 对边")
         opposite_label.move_to(RIGHT * 4)
         opposite_label.move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.2)

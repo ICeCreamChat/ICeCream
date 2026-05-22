@@ -253,10 +253,11 @@ def _trig_formula_repair(code: str) -> tuple[str, list[dict[str, str]]]:
             replacement = "cos θ = 邻边 / 斜边"
         else:
             replacement = "tan θ = 对边 / 邻边"
-        return f"{quote}{replacement}{quote}"
+        return f"{match.group('prefix')}{quote}{replacement}{quote}"
 
     literal_pattern = re.compile(
-        r"(?P<quote>['\"])(?P<text>[^'\"]*(?:\\?sin|\\?cos|\\?tan)[^'\"]*)(?P=quote)",
+        r"(?P<prefix>\b(?:Text|SafeText|MathTex|SafeMathTex|Tex)\(\s*)"
+        r"(?P<quote>['\"])(?P<text>[^'\"\n]*(?:\\?sin|\\?cos|\\?tan)[^'\"\n]*)(?P=quote)",
         re.IGNORECASE,
     )
     repaired, count = literal_pattern.subn(_replace_literal, code)
@@ -315,9 +316,11 @@ hypotenuse_side = Line(theta_vertex, top_vertex, color="#F97316", stroke_width=5
 triangle = VGroup(adjacent_side, opposite_side, hypotenuse_side)
 
 right_angle = RightAngle(adjacent_side, opposite_side, length=0.28, color="#334155")
-theta_angle = Angle(adjacent_side, hypotenuse_side, radius=0.42, color="#E11D48")
+theta_adjacent_ray = Line(theta_vertex, right_vertex)
+theta_hypotenuse_ray = Line(theta_vertex, top_vertex)
+theta_angle = Angle(theta_hypotenuse_ray, theta_adjacent_ray, radius=0.42, color="#E11D48")
 theta_label = {text_call}("θ", font_size=28, color="#E11D48")
-theta_label.next_to(theta_angle, UP, buff=0.08)
+theta_label.move_to(theta_vertex + LEFT * 0.46 + UP * 0.33)
 
 opposite_label = {text_call}("对边", font_size=24, color="#166534")
 opposite_label.move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.34)
@@ -420,8 +423,11 @@ def patch_first_repair(code: str, report: dict[str, Any]) -> dict[str, Any]:
             "trig_formula_mapping_mismatch",
             "trig_formula_semantics_missing",
             "trig_angle_label_unbound",
+            "trig_angle_label_unbound_to_bisector",
             "trig_angle_label_missing",
             "trig_angle_marker_missing",
+            "trig_angle_ray_orientation_missing",
+            "trig_angle_arc_reversed",
             "trig_triangle_missing",
             "trig_circle_distractor",
         }:
@@ -459,6 +465,8 @@ async def llm_repair_once(
         "rulePackVersion": RULE_PACK_VERSION,
         "requirements": [
             "For trig_ semantic issues, rebuild the triangle semantics: create opposite_side, adjacent_side, hypotenuse_side Line objects; place α/θ near Angle/RightAngle; place every side label at its Line midpoint; use exact formulas sin α = 对边/斜边, cos α = 邻边/斜边, tan α = 对边/邻边.",
+            "For trig angle repairs, never call Angle(adjacent_side, hypotenuse_side) directly. Create two helper rays from the same target vertex, such as theta_adjacent_ray = Line(theta_vertex, right_vertex) and theta_hypotenuse_ray = Line(theta_vertex, top_vertex), then call Angle(theta_hypotenuse_ray, theta_adjacent_ray). If the arc is outside or reversed, swap the two helper ray arguments instead of nudging labels.",
+            "Place theta_label/alpha_label from theta_vertex/alpha_vertex along the interior angle direction, for example theta_label.move_to(theta_vertex + LEFT * 0.45 + UP * 0.32). Do not use next_to(theta_angle, UP) as the only placement.",
             "Keep MainScene(SafeScene, Scene) as the only renderable Scene.",
             "Use Text/SafeText for Chinese and MathTex only for formulas.",
             "Keep the storyboard semantics unchanged.",
@@ -476,7 +484,7 @@ async def llm_repair_once(
             "If a Manim call fails with unexpected keyword, remove the unsupported keyword and replace it with legal positioning, sizing, or set_points_as_corners code.",
             "If VGroup contains a list, tuple, string, number, or other non-Mobject value, convert each visible item to Text/SafeText/MathTex/SafeMathTex and use VGroup(*items).",
             "Do not pass guessed keyword arguments into Mobject setter methods; use positional arguments or documented Manim Community parameters only.",
-            "If any issue code starts with trig_, rebuild the triangle semantics instead of nudging text: create named opposite_side, adjacent_side, and hypotenuse_side Line objects; create alpha_angle with Angle/RightAngle at the target vertex; place alpha_label near alpha_angle; place side labels at each side midpoint; keep formulas exact: sin α = 对边/斜边, cos α = 邻边/斜边, tan α = 对边/邻边. Never float α/a/b/c with to_edge/to_corner or unrelated absolute move_to.",
+            "If any issue code starts with trig_, rebuild the triangle semantics instead of nudging text: create named opposite_side, adjacent_side, and hypotenuse_side Line objects; create helper rays from the same target vertex for alpha_angle/theta_angle; call Angle(theta_hypotenuse_ray, theta_adjacent_ray) or Angle(alpha_hypotenuse_ray, alpha_adjacent_ray) so the arc is inside the triangle; place alpha_label/theta_label with alpha_vertex/theta_vertex plus an interior-angle offset; place side labels at each side midpoint; keep formulas exact: sin α = 对边/斜边, cos α = 邻边/斜边, tan α = 对边/邻边. Never float α/a/b/c with to_edge/to_corner, unrelated absolute move_to, or next_to(angle, UP) alone.",
             "For trig_circle_distractor or trigonometry definition repairs, remove Circle()/unit-circle visuals unless the original user request explicitly says 单位圆 or unit circle; the dominant visual must be a right triangle.",
             "For projectile motion, include a visible trajectory, moving ball, velocity/direction arrow, and gravity/acceleration cue; prefer ParametricFunction plus MoveAlongPath over custom VMobject internals or fragile updaters.",
         ],

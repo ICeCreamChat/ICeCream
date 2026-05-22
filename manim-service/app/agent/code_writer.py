@@ -113,8 +113,9 @@ def _domain_requirements(brief: dict[str, Any], storyboard_spec: dict[str, Any])
             "Do not use Circle() or a unit-circle visual for trigonometry definitions unless the user explicitly asks for a unit circle; the right triangle must be the dominant subject.",
             "Use Chinese semantic side labels: opposite_label = SafeText('对边'), adjacent_label = SafeText('邻边'), hypotenuse_label = SafeText('斜边'). Avoid a/b/c unless the user explicitly asks for letters.",
             "Every side label must be positioned from its matching Line midpoint, for example opposite_label.move_to(opposite_side.point_from_proportion(0.5) + LEFT * 0.28).",
-            "Create theta_angle with Angle(adjacent_side, hypotenuse_side) or a legal RightAngle(adjacent_side, opposite_side) object at the target vertex. Never pass raw coordinates, points, or get_center() results into Angle().",
-            "Create a visible theta_label or alpha_label (using SafeText or Text) and bind it near the theta_angle using theta_label.next_to(theta_angle, UP, buff=0.08) or similar relative positioning. Never use to_edge, to_corner, or absolute coordinate move_to for this label.",
+            "For the target acute angle, create helper rays from the same target vertex: theta_adjacent_ray = Line(theta_vertex, right_vertex) and theta_hypotenuse_ray = Line(theta_vertex, opposite_vertex). Use Angle(theta_hypotenuse_ray, theta_adjacent_ray), with the hypotenuse ray first and the adjacent ray second, so Manim draws the interior acute arc. Do not add these helper rays to the scene.",
+            "Never build the target acute angle directly from adjacent_side/hypotenuse_side because their orientation can draw the outside or supplementary arc. Never pass raw coordinates, points, or get_center() results into Angle().",
+            "Create a visible theta_label or alpha_label (using SafeText or Text) and place it from theta_vertex along the angle bisector, for example theta_label.move_to(theta_vertex + LEFT * 0.45 + UP * 0.32). Do not use next_to(theta_angle, UP) as the only binding.",
             "Use exact visible formulas with Chinese side names: sin θ = 对边 / 斜边, cos θ = 邻边 / 斜边, tan θ = 对边 / 邻边.",
             "Keep the formulas in a separate derivation/formula zone; do not overlap the triangle or side labels.",
         ])

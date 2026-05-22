@@ -145,6 +145,8 @@ export class CodePanel {
         if (!container) return false;
 
         container.classList.add('has-react-studio-canvas');
+        this.elements.panel?.classList.add('react-studio-canvas-active');
+        this.elements.calibrationWrap?.classList.add('has-react-studio-canvas');
         if (!this.studioCanvasRoot || this.studioCanvasRoot.parentElement !== container) {
             if (this.studioCanvasBridge?.unmount) {
                 this.studioCanvasBridge.unmount();
@@ -188,7 +190,12 @@ export class CodePanel {
     }
 
     syncReactStudioCanvas() {
-        if (!this.ensureReactStudioCanvas()) return false;
+        if (!this.ensureReactStudioCanvas()) {
+            this.elements.panel?.classList.remove('react-studio-canvas-active');
+            this.elements.calibrationWrap?.classList.remove('has-react-studio-canvas');
+            this.elements.videoPreview?.classList.remove('has-react-studio-canvas');
+            return false;
+        }
         this.studioCanvasBridge?.update?.(this.getReactStudioCanvasProps());
         return true;
     }
@@ -2433,8 +2440,8 @@ export class CodePanel {
             selectedObjectIds,
             selectedObjectSnapshots,
             selectionBBox,
-            objectEdits: patch.operation === 'natural_language_edit' ? pendingEdits : objectEdits,
-            edits: patch.operation === 'natural_language_edit' ? pendingEdits : objectEdits,
+            objectEdits,
+            edits: objectEdits,
             newObjects,
             deletedObjectIds: pendingDeleteIds,
             manualReferenceRegions: manualRegions,

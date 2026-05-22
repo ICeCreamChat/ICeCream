@@ -2317,6 +2317,13 @@ input:focus-visible {
         overflow: hidden !important;
     }
 
+    #code-panel.manim-studio-window.react-studio-canvas-active .studio-calibration-toolbar,
+    #code-panel.manim-studio-window.react-studio-canvas-active #studio-interaction-overlay,
+    #code-panel.manim-studio-window.react-studio-canvas-active #studio-object-inspector {
+        display: none !important;
+        pointer-events: none !important;
+    }
+
     #code-panel.manim-studio-window .studio-konva-root,
     #code-panel.manim-studio-window .manim-studio-canvas-app {
         min-height: 58vh !important;
@@ -2347,6 +2354,13 @@ input:focus-visible {
     #code-panel.manim-studio-window .studio-konva-stage-shell {
         min-height: 240px !important;
         border-radius: 14px !important;
+    }
+
+    #code-panel.manim-studio-window .studio-inline-object-editor {
+        max-width: calc(100% - 12px) !important;
+        min-width: 128px !important;
+        padding: 8px 10px !important;
+        font-size: 13px !important;
     }
 
     #code-panel.manim-studio-window .studio-konva-frame-row {

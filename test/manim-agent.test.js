@@ -723,6 +723,8 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.doesNotMatch(codePanelSource, /style="width:100%; height:100%; object-fit:contain;"/);
   assert.match(codePanelSource, /manualReferenceRegions/);
   assert.match(codePanelSource, /objectEdits/);
+  assert.match(codePanelSource, /objectEdits,\s*\n\s*edits: objectEdits/);
+  assert.doesNotMatch(codePanelSource, /patch\.operation === 'natural_language_edit'\s*\?\s*pendingEdits\s*:\s*objectEdits/);
   assert.match(codePanelSource, /createCanvasEditState/);
   assert.match(codePanelSource, /canvasEditState/);
   assert.match(codePanelSource, /studio-canvas-tooling/);
@@ -780,6 +782,13 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(studioCanvasSource, /objectBoxOverrides/);
   assert.match(studioCanvasSource, /objectEdits/);
   assert.match(studioCanvasSource, /newObjects/);
+  assert.match(studioCanvasSource, /updateNewObjectText/);
+  assert.match(studioCanvasSource, /commitInlineEditor/);
+  assert.match(studioCanvasSource, /studio-inline-object-editor/);
+  assert.match(studioCanvasSource, /formulaNoChinese/);
+  assert.match(studioCanvasSource, /objectInputRequired/);
+  assert.match(studioCanvasSource, /输入文字内容/);
+  assert.match(studioCanvasSource, /例如：x\^2\+y\^2=r\^2/);
   assert.match(studioCanvasSource, /deletedObjectIds/);
   assert.match(studioCanvasSource, /manualReferenceRegions/);
   assert.match(studioCanvasSource, /naturalLanguageEdit/);
@@ -853,6 +862,7 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(mainCssSource, /\.manim-studio-canvas-app/);
   assert.match(mainCssSource, /\.studio-konva-toolbar/);
   assert.match(mainCssSource, /\.studio-konva-stage-shell/);
+  assert.match(mainCssSource, /\.studio-inline-object-editor/);
   assert.match(mainCssSource, /\.studio-konva-inspector/);
   assert.match(mainCssSource, /\.has-react-studio-canvas/);
   assert.match(mainCssSource, /\.desktop-footer/);
@@ -881,6 +891,7 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(mobileCssSource, /\.studio-object-apply/);
   assert.match(mobileCssSource, /\.studio-konva-root/);
   assert.match(mobileCssSource, /\.studio-konva-stage-shell/);
+  assert.match(mobileCssSource, /\.studio-inline-object-editor/);
   assert.match(mobileCssSource, /\.studio-konva-inspector/);
   assert.match(mobileCssSource, /overscroll-behavior: contain/);
 });

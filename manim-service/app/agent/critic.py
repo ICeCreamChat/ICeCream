@@ -427,6 +427,73 @@ def _invalid_angle_usage_issues(tree: ast.AST) -> list[dict[str, str]]:
     return issues
 
 
+def _angle_arg_name(arg: ast.AST) -> str:
+    if isinstance(arg, ast.Name):
+        return arg.id
+    if isinstance(arg, ast.Attribute):
+        return arg.attr
+    return ""
+
+
+def _trig_angle_ray_orientation_issues(source: str) -> list[dict[str, str]]:
+    """Reject trig angle arcs built from full side lines with ambiguous orientation."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if _call_name(node.func) != "Angle" or len(node.args) < 2:
+            continue
+        arg_names = [_angle_arg_name(node.args[0]), _angle_arg_name(node.args[1])]
+        if not all(arg_names):
+            continue
+        if tuple(arg_names) in {
+            ("theta_adjacent_ray", "theta_hypotenuse_ray"),
+            ("alpha_adjacent_ray", "alpha_hypotenuse_ray"),
+        }:
+            return [_issue(
+                "error",
+                "三角函数目标角弧方向反了。",
+                "请交换 Angle 的两条辅助射线顺序，例如 Angle(theta_hypotenuse_ray, theta_adjacent_ray)，让角弧落在三角形内部。",
+                "trig_angle_arc_reversed",
+            )]
+        uses_full_side = any(
+            name in {"adjacent_side", "hypotenuse_side", "opposite_side"}
+            or name.endswith("_side")
+            for name in arg_names
+        )
+        uses_vertex_ray = all(
+            "ray" in name or name.endswith("_angle_line") or name.endswith("_angle_ray")
+            for name in arg_names
+        )
+        if uses_full_side and not uses_vertex_ray:
+            return [_issue(
+                "error",
+                "三角函数目标角不能直接用方向不确定的边线生成角弧。",
+                "请先创建从同一目标顶点出发的辅助射线，例如 theta_adjacent_ray = Line(theta_vertex, right_vertex)、theta_hypotenuse_ray = Line(theta_vertex, opposite_vertex)，再用 Angle(theta_hypotenuse_ray, theta_adjacent_ray)。",
+                "trig_angle_ray_orientation_missing",
+            )]
+    return []
+
+
+def _angle_label_has_vertex_binding(lines: list[str]) -> bool:
+    joined = " ".join(lines).lower()
+    return any(token in joined for token in (
+        "theta_vertex",
+        "alpha_vertex",
+        "target_vertex",
+        "angle_vertex",
+        "theta_label_direction",
+        "alpha_label_direction",
+        "theta_bisector",
+        "alpha_bisector",
+        "bisector",
+    ))
+
+
 def _semantic_object_issues(source: str, brief: dict[str, Any]) -> list[dict[str, str]]:
     target = semantic_target_from_brief(brief)
     if not target:
@@ -773,6 +840,8 @@ def _trig_semantic_issues(source: str, brief: dict[str, Any]) -> list[dict[str, 
             "请用 Angle(line1, line2) 或 RightAngle(...) 创建目标角，再把 α/θ 标签放到角标附近。",
             "trig_angle_marker_missing",
         ))
+    else:
+        issues.extend(_trig_angle_ray_orientation_issues(main_source))
 
     angle_vars = [
         var for var, text in labels.items()
@@ -788,15 +857,24 @@ def _trig_semantic_issues(source: str, brief: dict[str, Any]) -> list[dict[str, 
         ))
     for var in angle_vars:
         lines = _variable_position_lines(main_source, var)
-        if not lines or not _position_has_final_semantic_binding(
+        has_final_binding = bool(lines) and _position_has_final_semantic_binding(
             lines,
             ("angle", "alpha_angle", "theta_angle", "right_angle", "target_angle", "vertex", "corner"),
-        ):
+        )
+        if not has_final_binding:
             issues.append(_issue(
                 "error",
                 "α/θ 角标没有绑定到三角形目标顶点。",
                 "请把角标放在 Angle/RightAngle 对象附近，不要使用 to_edge/to_corner 或 unrelated absolute move_to 让它漂浮。",
                 "trig_angle_label_unbound",
+            ))
+            break
+        if not _angle_label_has_vertex_binding(lines):
+            issues.append(_issue(
+                "error",
+                "α/θ 角标没有沿目标角顶点的内角方向放置。",
+                "请用 theta_vertex/alpha_vertex 加角平分方向定位，例如 theta_label.move_to(theta_vertex + LEFT * 0.45 + UP * 0.32)，不要只用 next_to(theta_angle, UP)。",
+                "trig_angle_label_unbound_to_bisector",
             ))
             break
 

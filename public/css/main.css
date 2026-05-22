@@ -7532,6 +7532,13 @@ body:not(.light-mode) #code-panel.manim-studio-window {
     display: none !important;
 }
 
+#code-panel.manim-studio-window.react-studio-canvas-active .studio-calibration-toolbar,
+#code-panel.manim-studio-window.react-studio-canvas-active #studio-interaction-overlay,
+#code-panel.manim-studio-window.react-studio-canvas-active #studio-object-inspector {
+    display: none !important;
+    pointer-events: none !important;
+}
+
 #code-panel.manim-studio-window .studio-konva-root {
     position: relative;
     z-index: 30;
@@ -7638,6 +7645,36 @@ body:not(.light-mode) #code-panel.manim-studio-window {
 
 #code-panel.manim-studio-window .studio-konva-stage-shell canvas {
     display: block;
+}
+
+#code-panel.manim-studio-window .studio-inline-object-editor {
+    position: absolute;
+    z-index: 12;
+    box-sizing: border-box;
+    resize: both;
+    max-width: calc(100% - 16px);
+    max-height: calc(100% - 16px);
+    padding: 9px 11px;
+    border: 2px solid var(--studio-accent);
+    border-radius: 12px;
+    outline: none;
+    background: color-mix(in srgb, var(--studio-surface) 96%, transparent);
+    color: var(--studio-text);
+    box-shadow: 0 16px 36px rgba(15, 23, 42, .18);
+    font-family: var(--studio-font-body);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.45;
+}
+
+#code-panel.manim-studio-window .studio-inline-object-editor.is-formula {
+    font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
+    font-weight: 600;
+}
+
+#code-panel.manim-studio-window .studio-inline-object-editor::placeholder {
+    color: var(--studio-muted);
+    font-weight: 600;
 }
 
 #code-panel.manim-studio-window .studio-konva-empty {

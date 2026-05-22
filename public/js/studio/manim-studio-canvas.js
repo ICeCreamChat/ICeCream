@@ -47813,7 +47813,9 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
     region: "\u624B\u52A8\u533A\u57DF",
     newText: "\u65B0\u589E\u6587\u5B57",
     newFormula: "\u65B0\u589E\u516C\u5F0F",
-    newArrow: "\u65B0\u589E\u7BAD\u5934"
+    newArrow: "\u65B0\u589E\u7BAD\u5934",
+    formulaNoChinese: "\u516C\u5F0F\u4E0D\u80FD\u5305\u542B\u4E2D\u6587\uFF0C\u8BF7\u6539\u7528\u201C\u6DFB\u52A0\u6587\u5B57\u201D\u3002",
+    objectInputRequired: "\u8BF7\u8F93\u5165\u5185\u5BB9\uFF0C\u6216\u6309 Esc \u53D6\u6D88\u3002"
   };
   var toolOptions = [
     ["select", ui.select],
@@ -47821,7 +47823,8 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
     ["manual", ui.manual],
     ["add_text", ui.addText],
     ["add_formula", ui.addFormula],
-    ["add_arrow", ui.addArrow]
+    ["add_arrow", ui.addArrow],
+    ["delete", ui.delete]
   ];
   var typeLabels = {
     text: ui.text,
@@ -47989,10 +47992,10 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
         };
       });
     },
-    addNewObject: (kind, point, frame) => {
+    addNewObject: (kind, point, frame, bboxOverride = null) => {
       const preset = getNewPreset(kind);
       const id = `new_${kind}_${Date.now()}_${Math.round(Math.random() * 1e3)}`;
-      const bbox = clampBox({
+      const bbox = bboxOverride ? clampBox(bboxOverride) : clampBox({
         x: point.x - preset.width / 2,
         y: point.y - preset.height / 2,
         width: preset.width,
@@ -48014,6 +48017,15 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
       set((state) => ({
         newObjects: [...state.newObjects, object],
         selectedObjectIds: [id],
+        statusMessage: ui.pending
+      }));
+      return object;
+    },
+    updateNewObjectText: (id, text) => {
+      const objectId = String(id || "");
+      if (!objectId) return;
+      set((state) => ({
+        newObjects: state.newObjects.map((item) => String(item.id) === objectId ? { ...item, text: String(text || ""), label: String(text || "") || item.label } : item),
         statusMessage: ui.pending
       }));
     },
@@ -48060,6 +48072,16 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
   function boxesIntersect(a2, b2) {
     if (!a2 || !b2) return false;
     return a2.x <= b2.x + b2.width && a2.x + a2.width >= b2.x && a2.y <= b2.y + b2.height && a2.y + a2.height >= b2.y;
+  }
+  function isCanvasBackgroundTarget(event) {
+    const target = event?.target;
+    const stage = target?.getStage?.();
+    if (!target || !stage) return false;
+    return target === stage || target.name?.() === "studio-frame-background";
+  }
+  function isTextInputTarget(target) {
+    const tag = String(target?.tagName || "").toLowerCase();
+    return tag === "input" || tag === "textarea" || target?.isContentEditable;
   }
   function getNewPreset(kind) {
     const presets = {
@@ -48231,8 +48253,8 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
         id
       )),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "studio-konva-toolbar-spacer" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: onDelete, children: ui.delete }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "primary", disabled: !hasDraft, onClick: onApply, children: ui.apply })
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "is-danger", onClick: onDelete, children: ui.delete }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "is-primary", disabled: !hasDraft, onClick: onApply, children: ui.apply })
     ] });
   }
   function CanvasObject({ object, image, size, selected, hover, onPointerDown, onPointerEnter, onPointerLeave }) {
@@ -48365,7 +48387,7 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
         "\u8FD9\u4E9B\u6587\u5B57\u6392\u5F00\uFF0C\u4E0D\u8981\u76F8\u4E92\u906E\u4F4F",
         "\u5220\u9664\u8FD9\u4E9B\u5BF9\u8C61"
       ].map((text) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", onClick: () => onChip(text), children: text }, text)) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "studio-konva-inspector-actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "primary", disabled: !hasDraft, onClick: onApply, children: ui.apply }) })
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "studio-konva-inspector-actions", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "is-primary", disabled: !hasDraft, onClick: onApply, children: ui.apply }) })
     ] });
   }
   function hasDraftState(state) {
@@ -48400,18 +48422,22 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
     const selectedSet = (0, import_react4.useMemo)(() => new Set(state.selectedObjectIds.map(String)), [state.selectedObjectIds]);
     const [hoverId, setHoverId] = (0, import_react4.useState)("");
     const [pointerStart, setPointerStart] = (0, import_react4.useState)(null);
+    const [inlineEditor, setInlineEditor] = (0, import_react4.useState)(null);
+    const inlineInputRef = (0, import_react4.useRef)(null);
     (0, import_react4.useEffect)(() => {
       const nextFrameId = selectedFrameId || frameData.recommendedFrameId || frameData.frames[0]?.frameId || "";
       setActiveFrameId(nextFrameId);
       setHoverId("");
       setPointerStart(null);
+      setInlineEditor(null);
       useCanvasStore.getState().resetDraft();
     }, [studioRevision, videoUrl, frameData.recommendedFrameId]);
     (0, import_react4.useEffect)(() => {
       if (selectedFrameId) setActiveFrameId(selectedFrameId);
     }, [selectedFrameId]);
     (0, import_react4.useEffect)(() => {
-      state.resetFrameInteraction();
+      useCanvasStore.getState().resetFrameInteraction();
+      setInlineEditor(null);
       onFrameChange?.(activeFrame?.frameId || "");
     }, [activeFrame?.frameId]);
     const manifestObjects = (0, import_react4.useMemo)(() => {
@@ -48443,7 +48469,7 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
         bbox: state.objectBoxOverrides[String(item.id)] || item.normalizedBBox || item.bbox,
         originalBBox: item.normalizedBBox || item.bbox,
         sourceBBox: item.normalizedBBox || item.bbox,
-        label: item.label || item.text || ui.newText,
+        label: item.text || item.label || ui.newText,
         priority: 100,
         isNewObject: true
       }));
@@ -48485,78 +48511,177 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
       if (!pointer) return null;
       return { x: pointer.x / size.width, y: pointer.y / size.height };
     }, [size.width, size.height]);
+    (0, import_react4.useEffect)(() => {
+      if (!inlineEditor) return;
+      const input = inlineInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.select?.();
+    }, [inlineEditor?.objectId]);
+    const commitInlineEditor = (0, import_react4.useCallback)((cancel = false) => {
+      const editor = inlineEditor;
+      if (!editor) return true;
+      const store = useCanvasStore.getState();
+      if (cancel) {
+        store.markDeleted([editor.objectId]);
+        setInlineEditor(null);
+        return true;
+      }
+      const value = String(editor.value || "").trim();
+      if (!value) {
+        store.setTool("select");
+        useCanvasStore.setState({ statusMessage: ui.objectInputRequired });
+        return false;
+      }
+      if (editor.kind === "add_formula" && /[\u3400-\u9FFF]/.test(value)) {
+        useCanvasStore.setState({ statusMessage: ui.formulaNoChinese });
+        return false;
+      }
+      store.updateNewObjectText(editor.objectId, value);
+      store.selectObject(editor.objectId, "replace");
+      setInlineEditor(null);
+      return true;
+    }, [inlineEditor]);
+    (0, import_react4.useEffect)(() => {
+      const onKeyDown = (event) => {
+        if (isTextInputTarget(event.target)) return;
+        const store = useCanvasStore.getState();
+        if (event.key === "Escape") {
+          if (inlineEditor) {
+            commitInlineEditor(true);
+            event.preventDefault();
+            return;
+          }
+          store.clearSelection();
+          store.setMarquee(null);
+          store.endDrag();
+          setPointerStart(null);
+          setHoverId("");
+          event.preventDefault();
+          return;
+        }
+        if ((event.key === "Delete" || event.key === "Backspace") && store.selectedObjectIds.length) {
+          store.markDeleted(store.selectedObjectIds);
+          event.preventDefault();
+        }
+      };
+      window.addEventListener("keydown", onKeyDown);
+      return () => window.removeEventListener("keydown", onKeyDown);
+    }, [commitInlineEditor, inlineEditor]);
     const handleObjectPointerDown = (0, import_react4.useCallback)((event, object) => {
       event.cancelBubble = true;
-      const mode = event.evt.shiftKey || event.evt.ctrlKey || event.evt.metaKey ? "toggle" : "replace";
-      const ids = mode === "replace" && selectedSet.has(String(object.id)) && state.selectedObjectIds.length > 1 ? state.selectedObjectIds : [String(object.id)];
-      state.selectObject(object.id, mode);
-      const selectedIds = mode === "replace" && selectedSet.has(String(object.id)) ? state.selectedObjectIds : ids;
+      const store = useCanvasStore.getState();
+      const objectId = String(object.id);
+      if (store.tool === "delete") {
+        store.markDeleted([objectId]);
+        return;
+      }
+      if (store.tool !== "select") return;
+      const additive = event.evt.shiftKey || event.evt.ctrlKey || event.evt.metaKey;
+      const wasSelected = store.selectedObjectIds.map(String).includes(objectId);
+      if (additive) {
+        store.selectObject(objectId, "toggle");
+        const afterToggle = useCanvasStore.getState().selectedObjectIds.map(String);
+        if (!afterToggle.includes(objectId)) return;
+      } else if (!wasSelected) {
+        store.selectObject(objectId, "replace");
+      }
+      const selectedIds = useCanvasStore.getState().selectedObjectIds.map(String);
+      const dragIds = selectedIds.includes(objectId) ? selectedIds : [objectId];
       const boxes = {};
-      selectedIds.forEach((id) => {
+      dragIds.forEach((id) => {
         const target = objectsById.get(String(id));
         if (target?.bbox) boxes[String(id)] = target.bbox;
       });
       const point = stagePoint();
-      if (point) state.beginDrag(selectedIds, point, boxes);
-    }, [objectsById, selectedSet, stagePoint, state]);
+      if (point && Object.keys(boxes).length) store.beginDrag(dragIds, point, boxes);
+    }, [objectsById, stagePoint]);
     const handleStagePointerDown = (0, import_react4.useCallback)((event) => {
-      if (event.target !== event.target.getStage()) return;
+      if (!isCanvasBackgroundTarget(event)) return;
       const point = stagePoint();
       if (!point) return;
-      if (state.tool === "box-select" || state.tool === "manual") {
+      const store = useCanvasStore.getState();
+      if (store.tool === "box-select" || store.tool === "manual" || store.tool === "add_arrow") {
         setPointerStart(point);
-        state.setMarquee({ x: point.x, y: point.y, width: 0, height: 0 });
+        store.setMarquee({ x: point.x, y: point.y, width: 0, height: 0 });
         return;
       }
-      if (state.tool === "add_text" || state.tool === "add_formula" || state.tool === "add_arrow") {
-        state.addNewObject(state.tool, point, activeFrame);
-        state.setTool("select");
+      if (store.tool === "add_text" || store.tool === "add_formula") {
+        const currentTool = store.tool;
+        const created = store.addNewObject(currentTool, point, activeFrame);
+        store.setTool("select");
+        if (created) {
+          setInlineEditor({
+            objectId: created.id,
+            kind: currentTool,
+            value: created.text || "",
+            bbox: created.bbox
+          });
+        }
         return;
       }
-      if (!event.evt.shiftKey && !event.evt.ctrlKey && !event.evt.metaKey) state.clearSelection();
-    }, [activeFrame, stagePoint, state]);
+      if (!event.evt.shiftKey && !event.evt.ctrlKey && !event.evt.metaKey) store.clearSelection();
+    }, [activeFrame, stagePoint]);
     const handleStagePointerMove = (0, import_react4.useCallback)(() => {
       const point = stagePoint();
       if (!point) return;
-      if (useCanvasStore.getState().dragSession) {
-        state.updateDrag(point, objectsById, activeFrame);
+      const store = useCanvasStore.getState();
+      if (store.dragSession) {
+        store.updateDrag(point, objectsById, activeFrame);
         return;
       }
-      if (pointerStart && (state.tool === "box-select" || state.tool === "manual")) {
+      if (pointerStart && (store.tool === "box-select" || store.tool === "manual" || store.tool === "add_arrow")) {
         const x2 = Math.min(pointerStart.x, point.x);
         const y = Math.min(pointerStart.y, point.y);
-        state.setMarquee(clampBox({
+        store.setMarquee(clampBox({
           x: x2,
           y,
           width: Math.abs(point.x - pointerStart.x),
           height: Math.abs(point.y - pointerStart.y)
         }));
       }
-    }, [activeFrame, objectsById, pointerStart, stagePoint, state]);
+    }, [activeFrame, objectsById, pointerStart, stagePoint]);
     const handleStagePointerUp = (0, import_react4.useCallback)(() => {
       const current = useCanvasStore.getState();
       if (current.dragSession) {
-        state.endDrag();
+        current.endDrag();
         return;
       }
       if (pointerStart && current.marquee) {
         const box = current.marquee;
         if (box.width > 0.01 && box.height > 0.01) {
-          if (state.tool === "manual") {
-            state.addManualRegion(box, activeFrame);
+          if (current.tool === "manual") {
+            current.addManualRegion(box, activeFrame);
+          } else if (current.tool === "add_arrow") {
+            current.addNewObject("add_arrow", {
+              x: box.x + box.width / 2,
+              y: box.y + box.height / 2
+            }, activeFrame, box);
+            current.setTool("select");
           } else {
             const ids = allObjects.filter((item) => boxesIntersect(item.bbox, box)).map((item) => item.id);
-            state.selectObjects(ids, "replace");
+            current.selectObjects(ids, "replace");
           }
+        } else if (current.tool === "add_arrow") {
+          current.addNewObject("add_arrow", pointerStart, activeFrame);
+          current.setTool("select");
         }
       }
       setPointerStart(null);
-      state.setMarquee(null);
-    }, [activeFrame, allObjects, pointerStart, state]);
-    const handleDelete = (0, import_react4.useCallback)(() => state.markDeleted(), [state]);
+      current.setMarquee(null);
+    }, [activeFrame, allObjects, pointerStart]);
+    const handleDelete = (0, import_react4.useCallback)(() => {
+      const store = useCanvasStore.getState();
+      if (store.selectedObjectIds.length) {
+        store.markDeleted(store.selectedObjectIds);
+        return;
+      }
+      store.setTool("delete");
+    }, []);
     const handleApply = (0, import_react4.useCallback)(() => {
+      if (inlineEditor && !commitInlineEditor(false)) return;
       onApply?.(buildExportState(useCanvasStore.getState(), objectsById, activeFrame));
-    }, [activeFrame, objectsById, onApply]);
+    }, [activeFrame, commitInlineEditor, inlineEditor, objectsById, onApply]);
     const hasDraft = hasDraftState(state);
     const selectedBoxes = state.selectedObjectIds.map((id) => objectsById.get(String(id))?.bbox).filter(Boolean);
     const selectionBox = boxUnion(selectedBoxes);
@@ -48571,68 +48696,110 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
           onApply: handleApply
         }
       ),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "studio-konva-stage-shell", ref: rootRef, children: !image || failed ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "studio-konva-empty", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: ui.frameMissing }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: ui.frameMissingHelp })
-      ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-        Stage2,
-        {
-          ref: stageRef,
-          width: size.width,
-          height: size.height,
-          onPointerDown: handleStagePointerDown,
-          onPointerMove: handleStagePointerMove,
-          onPointerUp: handleStagePointerUp,
-          onPointerLeave: handleStagePointerUp,
-          children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Layer2, { listening: false, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Image2, { image, x: 0, y: 0, width: size.width, height: size.height }) }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Layer2, { children: [
-              allObjects.map((object) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                CanvasObject,
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "studio-konva-stage-shell", ref: rootRef, children: [
+        !image || failed ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "studio-konva-empty", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("strong", { children: ui.frameMissing }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: ui.frameMissingHelp })
+        ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          Stage2,
+          {
+            ref: stageRef,
+            width: size.width,
+            height: size.height,
+            onPointerDown: handleStagePointerDown,
+            onPointerMove: handleStagePointerMove,
+            onPointerUp: handleStagePointerUp,
+            onPointerLeave: handleStagePointerUp,
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Layer2, { children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                Image2,
                 {
-                  object,
+                  name: "studio-frame-background",
                   image,
-                  size,
-                  selected: selectedSet.has(String(object.id)),
-                  hover: hoverId === String(object.id),
-                  onPointerDown: (event) => handleObjectPointerDown(event, object),
-                  onPointerEnter: () => setHoverId(String(object.id)),
-                  onPointerLeave: () => setHoverId("")
-                },
-                object.id
-              )),
-              selectionBox ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                Rect2,
-                {
-                  x: selectionBox.x * size.width,
-                  y: selectionBox.y * size.height,
-                  width: selectionBox.width * size.width,
-                  height: selectionBox.height * size.height,
-                  stroke: "#0284C7",
-                  strokeWidth: 2,
-                  dash: [8, 5],
-                  fill: "rgba(2, 132, 199, 0.06)",
-                  listening: false
+                  x: 0,
+                  y: 0,
+                  width: size.width,
+                  height: size.height
                 }
-              ) : null,
-              state.marquee ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                Rect2,
-                {
-                  x: state.marquee.x * size.width,
-                  y: state.marquee.y * size.height,
-                  width: state.marquee.width * size.width,
-                  height: state.marquee.height * size.height,
-                  stroke: "#0EA5E9",
-                  strokeWidth: 1.5,
-                  dash: [6, 4],
-                  fill: "rgba(14, 165, 233, 0.1)",
-                  listening: false
-                }
-              ) : null
-            ] })
-          ]
-        }
-      ) }),
+              ) }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Layer2, { children: [
+                allObjects.map((object) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  CanvasObject,
+                  {
+                    object,
+                    image,
+                    size,
+                    selected: selectedSet.has(String(object.id)),
+                    hover: hoverId === String(object.id),
+                    onPointerDown: (event) => handleObjectPointerDown(event, object),
+                    onPointerEnter: () => setHoverId(String(object.id)),
+                    onPointerLeave: () => setHoverId("")
+                  },
+                  object.id
+                )),
+                selectionBox ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  Rect2,
+                  {
+                    x: selectionBox.x * size.width,
+                    y: selectionBox.y * size.height,
+                    width: selectionBox.width * size.width,
+                    height: selectionBox.height * size.height,
+                    stroke: "#0284C7",
+                    strokeWidth: 2,
+                    dash: [8, 5],
+                    fill: "rgba(2, 132, 199, 0.06)",
+                    listening: false
+                  }
+                ) : null,
+                state.marquee ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  Rect2,
+                  {
+                    x: state.marquee.x * size.width,
+                    y: state.marquee.y * size.height,
+                    width: state.marquee.width * size.width,
+                    height: state.marquee.height * size.height,
+                    stroke: "#0EA5E9",
+                    strokeWidth: 1.5,
+                    dash: [6, 4],
+                    fill: "rgba(14, 165, 233, 0.1)",
+                    listening: false
+                  }
+                ) : null
+              ] })
+            ]
+          }
+        ),
+        inlineEditor && size.width > 0 && size.height > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "textarea",
+          {
+            ref: inlineInputRef,
+            className: `studio-inline-object-editor ${inlineEditor.kind === "add_formula" ? "is-formula" : "is-text"}`,
+            value: inlineEditor.value,
+            placeholder: inlineEditor.kind === "add_formula" ? "\u4F8B\u5982\uFF1Ax^2+y^2=r^2" : "\u8F93\u5165\u6587\u5B57\u5185\u5BB9",
+            style: {
+              left: `${Math.max(8, inlineEditor.bbox.x * size.width)}px`,
+              top: `${Math.max(8, inlineEditor.bbox.y * size.height)}px`,
+              width: `${Math.max(148, inlineEditor.bbox.width * size.width)}px`,
+              minHeight: `${Math.max(42, inlineEditor.bbox.height * size.height)}px`
+            },
+            onPointerDown: (event) => event.stopPropagation(),
+            onClick: (event) => event.stopPropagation(),
+            onChange: (event) => setInlineEditor((prev) => prev ? { ...prev, value: event.target.value } : prev),
+            onKeyDown: (event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                commitInlineEditor(true);
+                return;
+              }
+              if (event.key === "Enter" && (event.ctrlKey || event.metaKey || inlineEditor.kind === "add_formula")) {
+                event.preventDefault();
+                commitInlineEditor(false);
+              }
+            },
+            onBlur: () => commitInlineEditor(false)
+          }
+        ) : null
+      ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "studio-konva-frame-row", children: (frameData.frames || []).map((frame) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
         "button",
         {
