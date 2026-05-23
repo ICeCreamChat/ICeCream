@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import test from 'node:test';
@@ -769,6 +769,13 @@ test('Manim Studio code panel uses the redesigned workspace shell', async () => 
   assert.match(codePanelSource, /clearInvalidStudioFrameSelection/);
   assert.doesNotMatch(codePanelSource, /当前版本请优先选择已有对象进行整段重构/);
   assert.doesNotMatch(codePanelSource, /background-color: #ef4444 !important/);
+
+  // Static calibration pipeline guards
+  assert.match(codePanelSource, /sourceBBox === normalizedBBox/);
+  assert.match(codePanelSource, /filtered zero-displacement edit for/);
+  assert.match(codePanelSource, /data\.code !== code/);
+  assert.match(codePanelSource, /layout-rebuild returned success but code is unchanged/);
+  assert.match(codePanelSource, /this\.resetCanvasEditState\(\);\s*\n\s*this\.clearSceneSelection/);
 
   assert.match(studioCanvasSource, /react-konva/);
   assert.match(studioCanvasSource, /zustand/);

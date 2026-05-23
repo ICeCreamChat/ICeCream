@@ -1,4 +1,4 @@
-﻿import ast
+import ast
 import asyncio
 import base64
 import json
@@ -941,6 +941,112 @@ class MainScene(Scene):
         self.assertIn("title_mob.shift", result["code"])
         self.assertEqual(result["layoutEditSpec"]["baseFrameId"], "frame_03")
 
+    def test_layout_rebuild_places_layout_mutation_after_following_layout_setup(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("旧标题")
+        subtitle_mob = Text("副标题").next_to(title_mob, DOWN)
+        panel = VGroup(title_mob, subtitle_mob).move_to(ORIGIN)
+        self.safe_play(Write(title_mob))
+        self.wait(1)
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "objectEdits": [
+                {
+                    "operation": "move",
+                    "objectId": "title_mob",
+                    "sourceBBox": {"x": 0.24, "y": 0.18, "width": 0.22, "height": 0.08},
+                    "normalizedBBox": {"x": 0.34, "y": 0.26, "width": 0.22, "height": 0.08},
+                }
+            ],
+        }
+
+        rebuild = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(rebuild["success"])
+        self.assertNotEqual(rebuild["code"], code)
+        self.assertGreater(rebuild["code"].index("title_mob.shift"), rebuild["code"].index('subtitle_mob = Text("副标题").next_to(title_mob, DOWN)'))
+        self.assertGreater(rebuild["code"].index("title_mob.shift"), rebuild["code"].index("VGroup(title_mob, subtitle_mob).move_to(ORIGIN)"))
+        self.assertLess(rebuild["code"].index("title_mob.shift"), rebuild["code"].index("self.safe_play(Write(title_mob))"))
+        self.assertEqual(len(rebuild["editPlan"]), 1)
+        self.assertEqual(rebuild["editPlan"][0]["operation"], "move")
+        self.assertEqual(rebuild["editPlan"][0]["objectId"], "title_mob")
+
+    def test_layout_rebuild_places_mutation_after_target_group_helper_layout(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("旧标题")
+        subtitle_mob = Text("副标题").next_to(title_mob, DOWN)
+        self.add(Rectangle())
+        visual_group = VGroup(title_mob, subtitle_mob)
+        visual_group.move_to(ORIGIN)
+        visual = place_visual(visual_group)
+        self.safe_play(Write(title_mob))
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "objectEdits": [
+                {
+                    "operation": "move",
+                    "objectId": "title_mob",
+                    "sourceBBox": {"x": 0.24, "y": 0.18, "width": 0.22, "height": 0.08},
+                    "normalizedBBox": {"x": 0.30, "y": 0.24, "width": 0.22, "height": 0.08},
+                }
+            ],
+        }
+
+        rebuild = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(rebuild["success"])
+        self.assertGreater(rebuild["code"].index("title_mob.shift"), rebuild["code"].index("visual_group.move_to(ORIGIN)"))
+        self.assertGreater(rebuild["code"].index("title_mob.shift"), rebuild["code"].index("visual = place_visual(visual_group)"))
+        self.assertLess(rebuild["code"].index("title_mob.shift"), rebuild["code"].index("self.safe_play(Write(title_mob))"))
+
+    def test_layout_rebuild_places_mutation_after_layout_even_when_scene_control_comes_first(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("旧标题")
+        self.add(title_mob)
+        title_mob.move_to(RIGHT * 2)
+        self.safe_play(Write(title_mob))
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "objectEdits": [
+                {
+                    "operation": "move",
+                    "objectId": "title_mob",
+                    "sourceBBox": {"x": 0.24, "y": 0.18, "width": 0.22, "height": 0.08},
+                    "normalizedBBox": {"x": 0.31, "y": 0.18, "width": 0.22, "height": 0.08},
+                }
+            ],
+        }
+
+        rebuild = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(rebuild["success"])
+        self.assertGreater(rebuild["code"].index("title_mob.shift"), rebuild["code"].index("title_mob.move_to(RIGHT * 2)"))
+        self.assertLess(rebuild["code"].index("title_mob.shift"), rebuild["code"].index("self.safe_play(Write(title_mob))"))
+
     def test_layout_rebuild_records_manual_reference_regions(self):
         from app.agent.scene_patcher import apply_layout_rebuild
 
@@ -971,6 +1077,36 @@ class MainScene(Scene):
         self.assertIn("Studio manual layout constraints", result["code"])
         self.assertIn("手动画框", result["patchSummary"])
         self.assertEqual(result["layoutEditSpec"]["manualReferenceRegions"][0]["id"], "manual_1")
+
+    def test_layout_rebuild_rejects_zero_change_layout_calibration(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("标题")
+        self.add(title_mob)
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "objectEdits": [
+                {
+                    "operation": "layout_calibrate",
+                    "objectId": "title_mob",
+                    "sourceBBox": {"x": 0.28, "y": 0.20, "width": 0.20, "height": 0.08},
+                    "normalizedBBox": {"x": 0.28, "y": 0.20, "width": 0.20, "height": 0.08},
+                }
+            ],
+        }
+
+        rebuild = apply_layout_rebuild(code, layout_spec)
+
+        self.assertFalse(rebuild["success"])
+        self.assertEqual(rebuild["code"], code)
+        self.assertTrue(rebuild["warning"])
 
     def test_layout_rebuild_applies_deleted_object_ids(self):
         from app.agent.scene_patcher import apply_layout_rebuild
@@ -1231,6 +1367,102 @@ class MainScene(Scene):
         self.assertIn("Studio manual layout constraints", result["code"])
         self.assertIn("删除这段说明", result["code"])
         self.assertEqual(result["editPlan"], [])
+
+    def test_layout_rebuild_rejects_zero_displacement_from_empty_patches(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("标题")
+        self.add(title_mob)
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "objectEdits": [
+                {
+                    "operation": "layout_calibrate",
+                    "objectId": "title_mob",
+                    "sourceBBox": {"x": 0.30, "y": 0.10, "width": 0.40, "height": 0.08},
+                    "normalizedBBox": {"x": 0.30, "y": 0.10, "width": 0.40, "height": 0.08},
+                }
+            ],
+        }
+
+        result = apply_layout_rebuild(code, layout_spec)
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result["code"], code)
+        self.assertTrue(result.get("warning"))
+
+    def test_layout_rebuild_code_actually_changes_after_valid_drag(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("标题")
+        self.add(title_mob)
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "objectEdits": [
+                {
+                    "operation": "layout_calibrate",
+                    "objectId": "title_mob",
+                    "sourceBBox": {"x": 0.30, "y": 0.10, "width": 0.40, "height": 0.08},
+                    "normalizedBBox": {"x": 0.50, "y": 0.30, "width": 0.40, "height": 0.08},
+                }
+            ],
+        }
+
+        result = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(result["success"])
+        self.assertNotEqual(result["code"], code)
+        self.assertIn("title_mob.shift", result["code"])
+
+    def test_layout_rebuild_shift_after_animate_move_to(self):
+        from app.agent.scene_patcher import apply_layout_rebuild
+
+        code = """
+from manim import *
+
+class MainScene(Scene):
+    def construct(self):
+        title_mob = Text("标题")
+        title_mob.move_to(UP * 2)
+        self.play(title_mob.animate.move_to(DOWN))
+        self.wait(1)
+"""
+        layout_spec = {
+            "baseFrameId": "frame_03",
+            "baseTime": 5.0,
+            "objectEdits": [
+                {
+                    "operation": "layout_calibrate",
+                    "objectId": "title_mob",
+                    "sourceBBox": {"x": 0.30, "y": 0.10, "width": 0.40, "height": 0.08},
+                    "normalizedBBox": {"x": 0.50, "y": 0.30, "width": 0.40, "height": 0.08},
+                }
+            ],
+        }
+
+        result = apply_layout_rebuild(code, layout_spec)
+
+        self.assertTrue(result["success"])
+        self.assertNotEqual(result["code"], code)
+        self.assertIn("title_mob.shift", result["code"])
+        self.assertGreater(
+            result["code"].index("title_mob.shift"),
+            result["code"].index("title_mob.move_to(UP * 2)"),
+        )
 
     def test_scene_patch_replaces_text_and_rejects_unknown_operations(self):
         from app.agent.scene_patcher import apply_scene_patch

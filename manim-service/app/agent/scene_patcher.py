@@ -120,6 +120,142 @@ def _line_indent(line: str) -> str:
     return line[: len(line) - len(line.lstrip())]
 
 
+_SCENE_CONTROL_METHODS = {"add", "play", "safe_play", "wait", "remove", "clear"}
+_TARGET_LAYOUT_METHODS = {
+    "arrange",
+    "move_to",
+    "next_to",
+    "scale",
+    "shift",
+    "to_corner",
+    "to_edge",
+}
+_TARGET_LAYOUT_FUNCTIONS = {
+    "fit_group_to_zone",
+    "fit_to_frame",
+    "place_in_zone",
+    "place_visual",
+}
+_TARGET_CONTAINER_FACTORIES = {"Group", "VGroup"}
+
+
+def _statement_contains_scene_control(statement: ast.stmt) -> bool:
+    stack: list[ast.AST] = [statement]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute) and _name_of(func.value) == "self" and func.attr in _SCENE_CONTROL_METHODS:
+                return True
+        stack.extend(ast.iter_child_nodes(node))
+    return False
+
+
+def _construct_statement_index(construct: ast.FunctionDef, start_line: int, end_line: int) -> int | None:
+    for index, statement in enumerate(construct.body):
+        statement_start = int(getattr(statement, "lineno", 0) or 0)
+        statement_end = int(getattr(statement, "end_lineno", statement_start) or statement_start)
+        if statement_start <= start_line <= statement_end or statement_start <= end_line <= statement_end:
+            return index
+    return None
+
+
+def _statement_end_line(statement: ast.stmt) -> int:
+    start_line = int(getattr(statement, "lineno", 0) or 0)
+    return int(getattr(statement, "end_lineno", start_line) or start_line)
+
+
+def _expression_mentions_names(node: ast.AST, names: set[str]) -> bool:
+    return any(isinstance(item, ast.Name) and item.id in names for item in ast.walk(node))
+
+
+def _call_is_target_layout_operation(call: ast.Call) -> bool:
+    call_name = _name_of(call.func)
+    if isinstance(call.func, ast.Attribute):
+        return call_name in _TARGET_LAYOUT_METHODS or call_name.startswith("scale_to_fit_")
+    return call_name in _TARGET_LAYOUT_FUNCTIONS
+
+
+def _expression_builds_target_container(node: ast.AST, names: set[str]) -> bool:
+    if not _expression_mentions_names(node, names):
+        return False
+    for item in ast.walk(node):
+        if not isinstance(item, ast.Call):
+            continue
+        call_name = _name_of(item.func)
+        if call_name in _TARGET_CONTAINER_FACTORIES or _call_is_target_layout_operation(item):
+            if _expression_mentions_names(item, names):
+                return True
+    return False
+
+
+def _assigned_container_names(statement: ast.stmt, names: set[str]) -> list[str]:
+    if isinstance(statement, ast.Assign):
+        assigned_names = [name for target in statement.targets for name in _target_names(target)]
+        return assigned_names if _expression_builds_target_container(statement.value, names) else []
+    if isinstance(statement, ast.AnnAssign):
+        return _target_names(statement.target) if statement.value and _expression_builds_target_container(statement.value, names) else []
+    return []
+
+
+def _statement_contains_target_layout(statement: ast.stmt, names: set[str]) -> bool:
+    for item in ast.walk(statement):
+        if isinstance(item, ast.Call) and _call_is_target_layout_operation(item) and _expression_mentions_names(item, names):
+            return True
+    return False
+
+
+def _insert_after_layout_setup(code: str, object_id: str, line_builder: Callable[[str], str]) -> tuple[bool, str]:
+    anchor = _assignment_anchor(code, object_id)
+    if not anchor:
+        return False, code
+    try:
+        tree = ast.parse(code or "")
+    except SyntaxError:
+        return False, code
+    construct = _find_construct(tree)
+    if construct is None:
+        return _insert_after_assignment(code, object_id, line_builder)
+
+    statement_index = _construct_statement_index(construct, int(anchor["start"]), int(anchor["end"]))
+    if statement_index is None:
+        return _insert_after_assignment(code, object_id, line_builder)
+
+    lines = code.splitlines()
+    first_control_line: int | None = None
+    last_target_layout_line: int | None = None
+    tracked_names = {object_id}
+    for statement in construct.body[statement_index + 1 :]:
+        if first_control_line is None and _statement_contains_scene_control(statement):
+            control_line = int(getattr(statement, "lineno", 0) or 0)
+            if control_line > 0:
+                first_control_line = control_line
+
+        contains_target_layout = _statement_contains_target_layout(statement, tracked_names)
+        assigned_container_names = _assigned_container_names(statement, tracked_names)
+        if assigned_container_names:
+            tracked_names.update(assigned_container_names)
+        if contains_target_layout or assigned_container_names:
+            last_target_layout_line = _statement_end_line(statement)
+
+    if last_target_layout_line is not None:
+        insert_after_index = max(0, min(last_target_layout_line, len(lines)))
+        indent_line_index = max(0, min(last_target_layout_line - 1, len(lines) - 1))
+        indent = _line_indent(lines[indent_line_index])
+        lines.insert(insert_after_index, line_builder(indent))
+        return True, "\n".join(lines) + ("\n" if code.endswith("\n") else "")
+
+    if first_control_line is None:
+        return _insert_after_assignment(code, object_id, line_builder)
+
+    insert_before_line = first_control_line - 1
+    indent = _line_indent(lines[insert_before_line])
+    lines.insert(insert_before_line, line_builder(indent))
+    return True, "\n".join(lines) + ("\n" if code.endswith("\n") else "")
+
+
 def _replace_assignment_block(code: str, object_id: str, replacer: Callable[[str, str, dict[str, Any]], str]) -> tuple[bool, str]:
     anchor = _assignment_anchor(code, object_id)
     if not anchor:
@@ -196,7 +332,7 @@ def _patch_set_color(code: str, object_id: str, patch: dict[str, Any]) -> dict[s
     color = str(patch.get("color") or "#0284C7")
     if not COLOR_RE.match(color):
         return _failure("颜色必须是 #RRGGBB 格式。", code)
-    changed, next_code = _insert_after_assignment(code, object_id, lambda indent: f'{indent}{object_id}.set_color("{color}")')
+    changed, next_code = _insert_after_layout_setup(code, object_id, lambda indent: f'{indent}{object_id}.set_color("{color}")')
     if not changed:
         return _failure(_scene_anchor_warning(), code)
     return _success(next_code, f"已修改 {object_id} 的颜色。")
@@ -207,7 +343,7 @@ def _patch_move(code: str, object_id: str, patch: dict[str, Any]) -> dict[str, A
     dy = _clamp_number(patch.get("dy"), -3, 3, 0)
     if abs(dx) < 0.001 and abs(dy) < 0.001:
         return _success(code, f"{object_id} 的位置无需调整。")
-    changed, next_code = _insert_after_assignment(
+    changed, next_code = _insert_after_layout_setup(
         code,
         object_id,
         lambda indent: f"{indent}{object_id}.shift(RIGHT * {dx:.3f} + UP * {dy:.3f})",
@@ -221,14 +357,14 @@ def _patch_scale(code: str, object_id: str, patch: dict[str, Any]) -> dict[str, 
     factor = _clamp_number(patch.get("factor"), 0.1, 4, 1)
     if abs(factor - 1) < 0.005:
         return _success(code, f"{object_id} 的大小无需调整。")
-    changed, next_code = _insert_after_assignment(code, object_id, lambda indent: f"{indent}{object_id}.scale({factor:.3f})")
+    changed, next_code = _insert_after_layout_setup(code, object_id, lambda indent: f"{indent}{object_id}.scale({factor:.3f})")
     if not changed:
         return _failure(_scene_anchor_warning(), code)
     return _success(next_code, f"已缩放 {object_id}。")
 
 
 def _patch_delete(code: str, object_id: str) -> dict[str, Any]:
-    changed, next_code = _insert_after_assignment(code, object_id, lambda indent: f"{indent}{object_id}.set_opacity(0)")
+    changed, next_code = _insert_after_layout_setup(code, object_id, lambda indent: f"{indent}{object_id}.set_opacity(0)")
     if not changed:
         return _failure(_scene_anchor_warning(), code)
     return _success(next_code, f"已在主场景中隐藏 {object_id}。")
@@ -286,8 +422,7 @@ def _patches_from_layout_edit(edit: dict[str, Any]) -> list[dict[str, Any]]:
         factor = target_width / source_width
         if operation in {"scale", "layout_calibrate"} and abs(factor - 1) >= 0.01:
             patches.append({"operation": "scale", "objectId": object_id, "factor": factor})
-        if not patches:
-            patches.append({"operation": "move", "objectId": object_id, "dx": 0, "dy": 0})
+        # No fallback — empty patches means no real displacement was detected.
     elif operation == "replace_text":
         patches.append({"operation": "replace_text", "objectId": object_id, "text": str(edit.get("targetText") or edit.get("text") or "")})
     elif operation == "set_color":
@@ -642,6 +777,11 @@ def apply_layout_rebuild(code: str, layout_edit_spec: dict[str, Any]) -> dict[st
     code = str(code or "")
     spec = layout_edit_spec or {}
     edits = _normalize_layout_edits(spec)
+    has_layout_calibration_edit = any(
+        str(edit.get("operation") or "") in {"move", "scale", "layout_calibrate"}
+        or (isinstance(edit.get("sourceBBox"), dict) and isinstance(edit.get("normalizedBBox"), dict))
+        for edit in edits
+    )
 
     manual_regions = spec.get("manualReferenceRegions")
     if not isinstance(manual_regions, list):
@@ -707,6 +847,12 @@ def apply_layout_rebuild(code: str, layout_edit_spec: dict[str, Any]) -> dict[st
         }
     if manual_summary:
         summaries.append(manual_summary)
+
+    if edits and next_code == code and not new_objects and not manual_regions:
+        return {
+            **_failure("布局校准没有产生实际代码变更。", code),
+            "layoutEditSpec": spec,
+        }
 
     summary = "；".join(summaries) or "已应用关键帧校准。"
     return {

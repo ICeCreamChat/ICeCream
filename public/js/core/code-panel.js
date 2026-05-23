@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Code Panel Module
  * 处理 Manim 代码显示、编辑和 AI 修改建议
  */
@@ -399,6 +399,14 @@ export class CodePanel {
         const frame = this.getSelectedStudioFrame();
         const sourceBBox = this.normalizeStudioBox(object._studioOriginalBBox || this.getSceneObjectBoxForCurrentTime(object, 0, 1));
         const normalizedBBox = this.normalizeStudioBox(this.getEditedSceneObjectBox(object, 0, 1));
+        const eps = 0.002;
+        if (Math.abs(sourceBBox.x - normalizedBBox.x) < eps &&
+            Math.abs(sourceBBox.y - normalizedBBox.y) < eps &&
+            Math.abs(sourceBBox.width - normalizedBBox.width) < eps &&
+            Math.abs(sourceBBox.height - normalizedBBox.height) < eps) {
+            if (this.isStudioDebugMode()) console.warn('[Studio] recordCanvasObjectEdit: sourceBBox === normalizedBBox for', objectId, sourceBBox);
+            return;
+        }
         this.canvasEditState.pendingObjectEdits.set(objectId, {
             operation,
             objectId,
@@ -2405,7 +2413,19 @@ export class CodePanel {
             if (!objectId) return;
             mergedEdits.set(objectId, edit);
         });
-        const objectEdits = [...mergedEdits.values()];
+        const eps = 0.002;
+        const objectEdits = [...mergedEdits.values()].filter(edit => {
+            const src = edit.sourceBBox;
+            const tgt = edit.normalizedBBox;
+            if (!src || !tgt) return true;
+            if (edit.operation && edit.operation !== 'layout_calibrate' && edit.operation !== 'move' && edit.operation !== 'scale') return true;
+            const same = Math.abs(src.x - tgt.x) < eps &&
+                Math.abs(src.y - tgt.y) < eps &&
+                Math.abs((src.width || 0) - (tgt.width || 0)) < eps &&
+                Math.abs((src.height || 0) - (tgt.height || 0)) < eps;
+            if (same && this.isStudioDebugMode()) console.warn('[Studio] buildLayoutEditSpec: filtered zero-displacement edit for', edit.objectId);
+            return !same;
+        });
         const manualRegions = this.getManualReferenceRegions();
         const newObjects = pendingNewObjects.map(object => ({
             id: object.id,
@@ -2504,6 +2524,15 @@ export class CodePanel {
 
         try {
             const layoutEditSpec = this.buildLayoutEditSpec(patch);
+            if (this.isStudioDebugMode()) {
+                console.log('[Studio] applyScenePatch layoutEditSpec:', JSON.stringify({
+                    editsCount: layoutEditSpec.objectEdits?.length || 0,
+                    newObjectsCount: layoutEditSpec.newObjects?.length || 0,
+                    deletedCount: layoutEditSpec.deletedObjectIds?.length || 0,
+                    manualCount: layoutEditSpec.manualReferenceRegions?.length || 0,
+                    hasNaturalLanguage: Boolean(layoutEditSpec.naturalLanguageEdit),
+                }));
+            }
             const response = await fetch('/api/manim/layout-rebuild', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -2513,6 +2542,12 @@ export class CodePanel {
             if (!response.ok || !data.success) {
                 this.renderObjectInspector(data.warning || data.error || '关键帧重构失败。');
                 return;
+            }
+
+            if (this.isStudioDebugMode()) {
+                const codeChanged = data.code !== code;
+                console.log('[Studio] layout-rebuild result:', { codeChanged, patchSummary: data.patchSummary, hasVideoUrl: Boolean(data.videoUrl) });
+                if (!codeChanged) console.warn('[Studio] WARNING: layout-rebuild returned success but code is unchanged!');
             }
 
             this.currentCode = data.code || code;
@@ -2547,6 +2582,9 @@ export class CodePanel {
 
             this.renderSceneOverlay();
             this.renderObjectInspector(data.patchSummary || '已生成安全代码补丁，正在重新渲染整段动画。');
+            this.manualStudioObjects = [];
+            this.resetCanvasEditState();
+            this.clearSceneSelection({ silent: true });
             await this.renderCode(this.currentCode, true);
         } catch (error) {
             console.error('Studio patch failed:', error);
