@@ -45,6 +45,14 @@ manim-service/.venv/
 
 # Pip cache
 .pip-cache/
+.pytest_cache/
+.coverage
+coverage/
+
+# Agent session notes
+task_plan.md
+findings.md
+progress.md
 
 # Debug / scratch files
 list_models.js
@@ -52,18 +60,13 @@ models.json
 test_students_60.csv
 
 # Vite / TypeScript remnants (unused)
-src/
-!/src/
-/src/*
-!/src/manim-studio/
-!/src/manim-studio/**
 /public/js/studio/*
 !/public/js/studio/
 !/public/js/studio/manim-studio-canvas.js
-index.html
-tsconfig.json
-vite.config.ts
-docs/
+/index.html
+/tsconfig.json
+/vite.config.ts
+/docs/
 
 # Robustness audit plan (local reference only)
 ROBUSTNESS_PLAN.md
