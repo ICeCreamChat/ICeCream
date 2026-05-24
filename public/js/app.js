@@ -149,6 +149,9 @@ class ICeCreamApp {
             onModeChange: (mode) => {
                 devLog.log('Mode changed to', mode);
                 this.manimWorkbench?.setMode(mode);
+                if (mode === 'manim') {
+                    this.manimWorkbench?.setAnimationEngine?.(this.manimWorkbench?.getAnimationEngine?.() || 'manim');
+                }
                 messageHandler.clearTaskPrompts?.();
             }
         });

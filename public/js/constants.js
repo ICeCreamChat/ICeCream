@@ -12,21 +12,21 @@
 const MODE_HINTS = {
     auto: '问答模式 · 智能识别任务',
     chat: '问答模式 · 与 AI 自由对话',
-    manim: '动画模式 · 描述想要的动画',
+    manim: '动画模式 · 选择 Manim 或 GeoGebra',
     solver: '解题模式 · 上传题目或输入问题'
 };
 
 const MODE_LOADING_TEXTS = {
     auto: 'AI 正在分析中...',
     chat: 'AI 正在思考中...',
-    manim: '正在生成动画代码...',
+    manim: '正在生成动画内容...',
     solver: 'AI 正在解题中...'
 };
 
 const MODE_PLACEHOLDERS = {
     auto: '问点什么，或描述动画/上传题目...',
     chat: '输入想聊的内容...',
-    manim: '描述想要的动画，如：画一个正弦函数...',
+    manim: '描述想要的 Manim 视频或 GeoGebra 动态几何，如：画一个可拖动顶点的三角形...',
     solver: '输入问题或上传题目图片...'
 };
 

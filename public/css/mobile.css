@@ -1059,6 +1059,35 @@
         border-radius: 14px;
     }
 
+    .animation-engine-switch {
+        grid-template-columns: 1fr;
+        gap: 6px;
+    }
+
+    .animation-engine-switch button {
+        min-height: 40px;
+        justify-content: flex-start;
+        padding: 0 12px;
+    }
+
+    .geogebra-canvas-shell {
+        min-height: 360px;
+    }
+
+    .geogebra-canvas-root {
+        height: min(54vh, 430px);
+        min-height: 340px;
+    }
+
+    .geogebra-command-row {
+        grid-template-columns: 1fr;
+        align-items: start;
+    }
+
+    .geogebra-command-row span {
+        max-width: 100%;
+    }
+
     .manim-config-summary {
         grid-template-columns: 1fr;
     }

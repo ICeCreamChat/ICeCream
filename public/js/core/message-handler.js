@@ -7,6 +7,7 @@ import { escapeHtml, dataURLtoBlob, devLog, showToast } from '../utils/helpers.j
 import { renderMarkdown, renderMath } from '../utils/markdown.js';
 import { modeSwitcher } from './mode-switcher.js';
 import { intentConfirm } from './intent-confirm.js';
+import { geogebraWorkbench } from './geogebra-workbench.js';
 
 /**
  * 消息处理器类
@@ -262,6 +263,10 @@ class MessageHandler {
         return /(动画|manim|可视化|演示|生成.*图|画一个|画个|绘制|展示.*过程|做一个.*动画|分步骤讲解动画|流程图|函数图像|曲线|运动轨迹)/i.test(text);
     }
 
+    looksLikeGeoGebraRequest(message = '') {
+        return geogebraWorkbench.looksLikeGeoGebraRequest(message);
+    }
+
     getCrossTaskTarget(currentMode, message, hasImage = false) {
         if (currentMode === 'manim' && this.looksLikeSolverRequest(message, hasImage)) {
             return 'solver';
@@ -408,6 +413,23 @@ class MessageHandler {
 
         try {
             const mode = selectedMode;
+            const animationEngine = this.manimWorkbench?.getAnimationEngine?.() || 'manim';
+            const shouldUseGeoGebra = !imageForServer && (
+                (mode === 'manim' && animationEngine === 'geogebra') ||
+                (mode === 'auto' && this.looksLikeGeoGebraRequest(message))
+            );
+
+            if (shouldUseGeoGebra) {
+                if (mode === 'auto') {
+                    modeSwitcher.setMode('manim', false);
+                    this.manimWorkbench?.setMode?.('manim');
+                    this.manimWorkbench?.setAnimationEngine?.('geogebra');
+                }
+                this.manimWorkbench?.open?.();
+                await this.runGeoGebraPlan(message);
+                return;
+            }
+
             const shouldUseAgent = !imageForServer && (
                 mode === 'manim' || (mode === 'auto' && await this.shouldUseManimAgent(message))
             );
@@ -450,6 +472,12 @@ class MessageHandler {
             this.setLoading(false);
             this.pendingImage = null;
         }
+    }
+
+    async runGeoGebraPlan(message) {
+        const outcome = await geogebraWorkbench.runGeoGebraPlan(message);
+        geogebraWorkbench.refreshVisiblePanel(this.manimWorkbench?.body);
+        this.addMessage('bot', geogebraWorkbench.formatChatReply(outcome));
     }
 
     /**

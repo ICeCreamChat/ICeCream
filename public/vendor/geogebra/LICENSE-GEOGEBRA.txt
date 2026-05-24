@@ -1,0 +1,15 @@
+GeoGebra HTML5 Offline Runtime
+
+The files in this directory are vendored from the local GeoGebra offline
+package used by this project:
+
+  local GGBTool offline package v2.7, lib/GeoGebra
+
+GeoGebra's deployggb.js header states that the file is subject to the
+GeoGebra Non-Commercial License Agreement:
+
+  https://www.geogebra.org/license
+
+These vendored GeoGebra runtime files are not covered by the ICeCream MIT
+license. ICeCream source code remains MIT licensed, while the GeoGebra
+runtime must be used according to GeoGebra's own license terms.
