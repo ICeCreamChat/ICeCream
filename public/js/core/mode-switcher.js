@@ -20,6 +20,7 @@ class ModeSwitcher {
             chatInput: null
         };
         this.onModeChange = null;
+        this.onAnimationEntryOpen = null;
     }
 
     /**
@@ -32,6 +33,7 @@ class ModeSwitcher {
         this.elements.modeHint = document.getElementById('mode-hint');
         this.elements.chatInput = document.getElementById('chat-input');
         this.onModeChange = options.onModeChange || null;
+        this.onAnimationEntryOpen = options.onAnimationEntryOpen || null;
 
         this._bindEvents();
     }
@@ -42,16 +44,26 @@ class ModeSwitcher {
      */
     _bindEvents() {
         this.elements.modeTabs.forEach(tab => {
-            tab.addEventListener('click', () => {
+            tab.addEventListener('click', (event) => {
                 const mode = tab.dataset.mode;
+                if (mode === 'manim' && this.onAnimationEntryOpen) {
+                    event.preventDefault();
+                    this.onAnimationEntryOpen();
+                    return;
+                }
                 this.setMode(mode);
             });
         });
 
         // Feature cards 点击切换模式
         document.querySelectorAll('.feature-card').forEach(card => {
-            card.addEventListener('click', () => {
+            card.addEventListener('click', (event) => {
                 const mode = card.dataset.mode;
+                if (mode === 'manim' && this.onAnimationEntryOpen) {
+                    event.preventDefault();
+                    this.onAnimationEntryOpen();
+                    return;
+                }
                 if (mode) {
                     this.setMode(mode);
                     this.elements.chatInput?.focus();

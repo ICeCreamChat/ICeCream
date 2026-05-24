@@ -78,7 +78,7 @@ API 路由注册在 `gateway/routes/index.js`：
 - `/api/ai`：AI 状态。
 - `/api/chat`：直接聊天。
 - `/api/manim`：Manim 网关代理。
-- `/api/geogebra`：GeoGebra 状态、命令搜索、AI 作图规划和失败修复。
+- `/api/geogebra`：GeoGebra 状态、命令搜索、AI 作图规划、Studio 调整和失败修复。
 - `/api/solver`：解题服务。
 - `/api/tools`：课堂工具箱，目前 seating 相关逻辑最重。
 
@@ -127,7 +127,7 @@ API 路由注册在 `gateway/routes/index.js`：
 - `services/solver/image-utils.js`、`services/solver/diagram-detector.js`：图片和图形识别辅助逻辑。
 - `services/manim/manim-client.js`：Gateway 侧 Manim 客户端，`buildRenderPayload()` 已有回归测试覆盖。
 - `services/geogebra/command-search.js`：加载 GeoGebra 命令索引，提供稳定搜索和状态检查。
-- `services/geogebra/geogebra-agent.js`：复用 DeepSeek 兼容配置生成 GeoGebra 命令计划和失败修复计划。
+- `services/geogebra/geogebra-agent.js`：复用 DeepSeek 兼容配置生成 GeoGebra 命令计划、Studio 调整计划和失败修复计划。
 - `services/geogebra/geogebra-prompt.js`：GeoGebra 中文教学作图提示词。
 - `gateway/routes/geogebra.js`：GeoGebra HTTP 适配层，只负责请求归一化、状态码和响应形状。
 
@@ -143,7 +143,7 @@ API 路由注册在 `gateway/routes/index.js`：
 ### 前端
 
 - `public/js/app.js`：浏览器入口。
-- `public/js/core/`：会话、消息、模式切换、图片上传、代码面板、Manim workbench、GeoGebra canvas/workbench。
+- `public/js/core/`：会话、消息、模式切换、图片上传、代码面板、Manim workbench、GeoGebra canvas/studio/workbench。
 - `public/js/tools/`：课堂工具箱，目前 `seating-planner.js` 是最大 UI 单体。
 - `public/js/utils/`：历史通用模块；不要继续把新领域逻辑放进去。
 - `public/vendor/geogebra/`：GeoGebra HTML5 离线运行时，遵循 GeoGebra 自身非商业授权，不属于 ICeCream MIT 源码。
@@ -159,21 +159,23 @@ API 路由注册在 `gateway/routes/index.js`：
 
 GeoGebra 与 Manim 同属于“动画”能力，但二者是并行子项目：
 - Manim 负责后端视频生成和渲染产物。
-- GeoGebra 负责浏览器内动态几何画布、AI 命令规划、命令执行和失败修复。
+- GeoGebra 负责浏览器内动态几何画布、GeoGebra Studio、AI 命令规划、命令执行和失败修复。
 
 当前边界：
 - `public/js/core/manim-workbench.js`：只负责动画工作台入口和 Manim/GeoGebra 子模式切换，子模式保存在 `localStorage` 的 `icecream_animation_engine_v1`。
-- `public/js/core/geogebra-canvas.js`：加载 `/vendor/geogebra/deployggb.js`，注入 applet，封装命令执行、画布读取、视图切换、重置和导出。
-- `public/js/core/geogebra-workbench.js`：渲染 GeoGebra 面板、命令历史、状态展示，并把主输入框请求转成 `/api/geogebra/plan` 和 `/api/geogebra/repair` 调用。
+- `public/js/core/geogebra-canvas.js`：加载 `/vendor/geogebra/deployggb.js`，注入 applet，封装命令执行、画布读取、XML 快照恢复、视图切换、重置和导出。
+- `public/js/core/geogebra-studio.js`：GeoGebra Studio UI 和本地会话状态，负责对象检查、AI 调整、命令编辑、历史、撤销/重做和导出。
+- `public/js/core/geogebra-workbench.js`：GeoGebra 子项目编排层，把主输入框请求转成 `/api/geogebra/plan` 和 `/api/geogebra/repair` 调用，并把结果交给 Studio 执行。
 - `services/geogebra/command-search.js`：从 `commands-index.json` 构建命令搜索索引，模块加载时构建一次。
-- `services/geogebra/geogebra-agent.js`：复用 `DEEPSEEK_API_BASE`、`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 生成命令计划。
-- `gateway/routes/geogebra.js`：暴露 `/api/geogebra/status`、`/api/geogebra/commands/search`、`/api/geogebra/plan`、`/api/geogebra/repair`。
+- `services/geogebra/geogebra-agent.js`：复用 `DEEPSEEK_API_BASE`、`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 生成命令计划、Studio 调整和修复计划。
+- `gateway/routes/geogebra.js`：暴露 `/api/geogebra/status`、`/api/geogebra/commands/search`、`/api/geogebra/plan`、`/api/geogebra/studio/adjust`、`/api/geogebra/repair`。
 - `public/vendor/geogebra/`：从本地离线包 vendored 的 GeoGebra HTML5 运行时，授权见 `public/vendor/geogebra/LICENSE-GEOGEBRA.txt`。
 
 维护约束：
 - 不把 GeoGebra 逻辑塞进 Manim Python 服务；GeoGebra 第一版没有后端视频渲染。
 - 不复用 `GGBTool离线包v2.7/lib/js/main.min.js` 这类混淆 UI 代码。
 - 不新增顶部主模式；入口仍在“动画”工作台内部。
+- 点击“GeoGebra 动态几何”后默认进入 GeoGebra Studio；Studio 本地会话键是 `icecream_geogebra_studio_v1`。
 - Auto 模式只有用户明确提到 `geogebra`、`ggb`、`动态几何`、`几何画板`、`拖动点` 等词时才走 GeoGebra。
 - GeoGebra AI 配置复用 DeepSeek 兼容变量，不在 `.env.example` 增加必填项。
 
@@ -247,6 +249,7 @@ public/
   js/
     core/
       geogebra-canvas.js
+      geogebra-studio.js
       geogebra-workbench.js
     tools/
       seating-planner.js
@@ -282,8 +285,8 @@ solver/
 - `gateway/services/seating/` 的文件名必须表达具体业务能力，不新增 `seating-utils.js`。
 - `shared/seating/` 只能包含前后端都能运行的纯逻辑。
 - `public/js/tools/seating-planner/` 只放前端 UI 和浏览器交互逻辑。
-- `services/geogebra/` 只放 Node 侧命令索引、AI 规划和修复；不新增 Python、Java 或独立 GeoGebra 进程。
-- `public/js/core/geogebra-*` 只放动画工作台内的 GeoGebra 前端运行时和 UI 委托。
+- `services/geogebra/` 只放 Node 侧命令索引、AI 规划、Studio 调整和修复；不新增 Python、Java 或独立 GeoGebra 进程。
+- `public/js/core/geogebra-*` 只放动画工作台内的 GeoGebra 前端运行时、Studio 和 UI 委托。
 - `public/vendor/geogebra/` 是 vendored 离线运行时，升级时整体替换并同步授权说明。
 - Python adapter 目录使用现有 `services`、`runtime`、`security` 名称，但每个文件要承接真实实现。
 - Java solver 不需要大规模目录重排，只拆 REST resource 的内部职责。
@@ -687,17 +690,18 @@ shared 模块禁止依赖：
 放置规则：
 
 - 新命令搜索或语法索引能力：放 `services/geogebra/command-search.js`，索引文件放 `services/geogebra/commands-index.json`。
-- 新 AI 作图规划能力：放 `services/geogebra/geogebra-agent.js` 或明确的新领域文件，提示词放 `services/geogebra/geogebra-prompt.js`。
+- 新 AI 作图规划或 Studio 调整能力：放 `services/geogebra/geogebra-agent.js` 或明确的新领域文件，提示词放 `services/geogebra/geogebra-prompt.js`。
 - 新 HTTP 能力：放 `gateway/routes/geogebra.js`，保持 route 只做 HTTP 适配。
 - 新画布运行时能力：放 `public/js/core/geogebra-canvas.js`。
-- 新工作台 UI 能力：放 `public/js/core/geogebra-workbench.js`；如果继续变大，再拆成 `public/js/core/geogebra/` 下的明确子模块。
+- 新 Studio UI 能力：放 `public/js/core/geogebra-studio.js`；如果继续变大，再拆成 `public/js/core/geogebra/` 下的明确子模块。
+- 新工作台编排能力：放 `public/js/core/geogebra-workbench.js`，保持它只做状态和调用委托。
 - 离线 GeoGebra 运行时升级：整体替换 `public/vendor/geogebra/`，并检查 `LICENSE-GEOGEBRA.txt`。
 
 不要：
 
 - 不要新增单独 GeoGebra 后端进程，除非未来明确需要服务端渲染。
 - 不要把 GeoGebra 作为顶部主模式；它是动画工作台内的子模式。
-- 不要把 GeoGebra 命令执行逻辑写进 `message-handler.js`；主输入框只负责路由，执行留给 GeoGebra workbench。
+- 不要把 GeoGebra 命令执行逻辑写进 `message-handler.js`；主输入框只负责路由，执行留给 GeoGebra Studio/workbench。
 - 不要把 vendored GeoGebra 资源描述为 ICeCream 自有 MIT 代码。
 
 ### 新环境变量
@@ -744,7 +748,7 @@ node --test test/seating-planner-ui.test.js test/mobile-responsive.test.js
 GeoGebra 聚焦测试：
 
 ```bash
-node --test test/geogebra-command-search.test.js test/geogebra-route.test.js test/geogebra-ui-integration.test.js
+node --test test/geogebra-studio-ui.test.js test/geogebra-command-search.test.js test/geogebra-route.test.js test/geogebra-ui-integration.test.js
 ```
 
 Manim agent 测试：
@@ -792,7 +796,7 @@ cd solver
 
 - `gateway/middleware/upload.js` 已改为使用 `gateway/config/paths.js` 中的 `gatewayPaths.uploadsDir`。
 - 上传目录创建和清理由 `gateway/startup/uploads.js` 在启动边界负责。
-- GeoGebra 已作为动画工作台内的并行子项目接入，当前边界是 `services/geogebra/`、`gateway/routes/geogebra.js`、`public/js/core/geogebra-*`、`public/vendor/geogebra/`。
+- GeoGebra 已作为动画工作台内的并行 Studio 子项目接入，当前边界是 `services/geogebra/`、`gateway/routes/geogebra.js`、`public/js/core/geogebra-*`、`public/vendor/geogebra/`。
 - 后端 seating、前端 SeatingPlanner、shared seating、tools route、Manim legacy 是主要模块化目标。
 - Java solver 结构相对清楚，作为后期小整理处理。
 - `PROJECT_READING_GUIDE.md` 是唯一主接手文档；不要再新增第二份路线图分散维护信息。

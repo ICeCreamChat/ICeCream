@@ -3,7 +3,7 @@ import { access } from 'node:fs/promises';
 import express from 'express';
 
 import { getGeoGebraCommandIndexStatus, normalizeSearchLimit, searchGeoGebraCommands } from '../../services/geogebra/command-search.js';
-import { createGeoGebraPlan, hasGeoGebraAiConfig, repairGeoGebraPlan } from '../../services/geogebra/geogebra-agent.js';
+import { adjustGeoGebraStudio, createGeoGebraPlan, hasGeoGebraAiConfig, repairGeoGebraPlan } from '../../services/geogebra/geogebra-agent.js';
 
 const router = express.Router();
 const GEOGEBRA_DEPLOY_URL = new URL('../../public/vendor/geogebra/deployggb.js', import.meta.url);
@@ -68,6 +68,16 @@ router.post('/repair', async (req, res) => {
         return res.json(repairPayload);
     } catch (error) {
         console.error('[GeoGebra Route] Repair Error:', error);
+        return sendGeoGebraError(res, error);
+    }
+});
+
+router.post('/studio/adjust', async (req, res) => {
+    try {
+        const adjustPayload = await adjustGeoGebraStudio(req.body);
+        return res.json(adjustPayload);
+    } catch (error) {
+        console.error('[GeoGebra Route] Studio Adjust Error:', error);
         return sendGeoGebraError(res, error);
     }
 });

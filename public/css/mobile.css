@@ -1059,19 +1059,59 @@
         border-radius: 14px;
     }
 
-    .animation-engine-switch {
+    .animation-entry-panel {
+        width: 100%;
+        max-width: 420px;
+        border-radius: 14px;
+    }
+
+    .animation-entry-grid {
         grid-template-columns: 1fr;
         gap: 6px;
     }
 
-    .animation-engine-switch button {
-        min-height: 40px;
-        justify-content: flex-start;
-        padding: 0 12px;
+    .animation-entry-card {
+        min-height: 78px;
+        padding: 12px;
     }
 
     .geogebra-canvas-shell {
         min-height: 360px;
+    }
+
+    .geogebra-studio-head {
+        display: grid;
+        padding: 10px;
+    }
+
+    .geogebra-studio-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .geogebra-studio-sidebar {
+        order: 2;
+    }
+
+    .geogebra-studio-canvas-pane {
+        order: 1;
+    }
+
+    .geogebra-studio-tabs {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .geogebra-studio-panel {
+        min-height: 240px;
+        padding: 10px;
+    }
+
+    .geogebra-studio-object-list {
+        max-height: 180px;
+    }
+
+    .geogebra-studio-footer {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .geogebra-canvas-root {

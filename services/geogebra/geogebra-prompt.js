@@ -17,6 +17,7 @@ JSON 格式：
   "summary": "用中文简述完成了什么",
   "perspective": "G 或 T",
   "commands": ["A = (0, 0)", "B = (4, 0)"],
-  "followUp": "给用户一个可拖动或可继续修改的建议"
+  "followUp": "给用户一个可拖动或可继续修改的建议",
+  "studioNotes": "如果 taskType 是 studio_adjust，简述本次调整影响了哪些已有对象"
 }
 `.trim();

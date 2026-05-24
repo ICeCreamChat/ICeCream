@@ -40,6 +40,17 @@ function readObjectSummary(api, objectName) {
     return entry;
 }
 
+function normalizeObjectNames(names = []) {
+    return Array.isArray(names)
+        ? names.map(item => {
+            if (item && typeof item === 'object') {
+                return String(item.name || item.label || '').trim();
+            }
+            return String(item || '').trim();
+        }).filter(Boolean)
+        : [];
+}
+
 class GeoGebraCanvas {
     constructor() {
         this.scriptPromise = null;
@@ -240,6 +251,52 @@ class GeoGebraCanvas {
         const api = this.getApi();
         if (!api) return [];
         return this.selectedObjectNames.map(name => readObjectSummary(api, name));
+    }
+
+    setSelectedObjectNames(names = []) {
+        this.selectedObjectNames = normalizeObjectNames(names).slice(0, 20);
+        const api = this.getApi();
+        if (!api || !this.selectedObjectNames.length) return;
+        try {
+            api.setSelected?.(this.selectedObjectNames);
+        } catch {
+            // Selection is mirrored in Studio state even when the offline applet lacks setSelected.
+        }
+    }
+
+    captureSnapshot(label = '') {
+        const canvas = this.readCanvas();
+        return {
+            label: String(label || '').slice(0, 120),
+            xml: canvas.xml || '',
+            objects: canvas.objects || [],
+            selectedObjects: canvas.selectedObjects || [],
+            perspective: canvas.perspective || this.lastPerspective,
+            createdAt: new Date().toISOString(),
+        };
+    }
+
+    async setXML(xml) {
+        const xmlText = String(xml || '').trim();
+        if (!xmlText) return false;
+        await this.whenReady();
+        const api = this.getApi();
+        if (!api || typeof api.setXML !== 'function') return false;
+
+        api.setXML(xmlText);
+        await waitForNextFrame();
+        this.resize();
+        this.selectedObjectNames = [];
+        return true;
+    }
+
+    async restoreSnapshot(snapshot = {}) {
+        const restored = await this.setXML(snapshot.xml || '');
+        if (restored) {
+            this.setPerspective(snapshot.perspective || this.lastPerspective || DEFAULT_PERSPECTIVE);
+            this.setSelectedObjectNames(snapshot.selectedObjects || []);
+        }
+        return restored ? this.readCanvas() : null;
     }
 
     setPerspective(perspective = DEFAULT_PERSPECTIVE) {

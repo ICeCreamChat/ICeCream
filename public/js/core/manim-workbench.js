@@ -813,27 +813,9 @@ class ManimWorkbench {
                 ${this.renderJobsSection()}
                 ${this.isDebugMode() ? this.renderDebugDiagnosticsSection() : ''}
             `;
-        this.body.innerHTML = `
-            ${this.renderAnimationEngineSwitch()}
-            ${content}
-        `;
+        this.body.innerHTML = content;
         this.bindPanelActions();
         this.refreshIcons();
-    }
-
-    renderAnimationEngineSwitch() {
-        return `
-            <section class="animation-engine-switch" aria-label="动画子模式">
-                <button type="button" class="${this.animationEngine === 'manim' ? 'active' : ''}" data-animation-engine="manim">
-                    <i data-lucide="clapperboard"></i>
-                    <span>Manim 视频动画</span>
-                </button>
-                <button type="button" class="${this.animationEngine === 'geogebra' ? 'active' : ''}" data-animation-engine="geogebra">
-                    <i data-lucide="compass"></i>
-                    <span>GeoGebra 动态几何</span>
-                </button>
-            </section>
-        `;
     }
 
     renderSettingsSection() {
@@ -992,9 +974,6 @@ class ManimWorkbench {
     }
 
     bindPanelActions() {
-        this.body?.querySelectorAll('[data-animation-engine]').forEach(button => {
-            button.addEventListener('click', () => this.setAnimationEngine(button.dataset.animationEngine));
-        });
         if (this.animationEngine === 'geogebra') {
             geogebraWorkbench.bindPanelActions(this.body);
             return;

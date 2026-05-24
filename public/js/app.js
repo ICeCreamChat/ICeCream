@@ -13,6 +13,7 @@ import { messageHandler } from './core/message-handler.js';
 import { sessionManager } from './core/session-manager.js';
 import { imageUploader } from './core/image-uploader.js';
 import { manimWorkbench } from './core/manim-workbench.js';
+import { animationEntryLauncher } from './core/animation-entry-launcher.js';
 import { CodePanel } from './core/code-panel.js';
 import { showToast, devLog, dataURLtoBlob } from './utils/helpers.js';
 import appLauncher from './tools/app-launcher.js';
@@ -143,15 +144,17 @@ class ICeCreamApp {
         //代码面板
         this.codePanel = new CodePanel();
         this.manimWorkbench = manimWorkbench;
+        animationEntryLauncher.init({
+            modeSwitcher,
+            manimWorkbench: this.manimWorkbench,
+        });
 
         // 模态切换器
         modeSwitcher.init({
+            onAnimationEntryOpen: () => animationEntryLauncher.open(),
             onModeChange: (mode) => {
                 devLog.log('Mode changed to', mode);
                 this.manimWorkbench?.setMode(mode);
-                if (mode === 'manim') {
-                    this.manimWorkbench?.setAnimationEngine?.(this.manimWorkbench?.getAnimationEngine?.() || 'manim');
-                }
                 messageHandler.clearTaskPrompts?.();
             }
         });

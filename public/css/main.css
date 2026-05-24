@@ -967,51 +967,388 @@ body.light-mode .manim-workbench-panel {
 }
 
 .manim-workbench-panel.has-geogebra {
-    width: min(820px, calc(100vw - 32px));
+    width: min(1160px, calc(100vw - 32px));
 }
 
-.animation-engine-switch {
+.animation-entry-launcher {
+    position: fixed;
+    inset: 0;
+    z-index: 4100;
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    padding: 4px;
-    border: 1px solid var(--manim-studio-border);
-    border-radius: 14px;
-    background: var(--manim-studio-surface-2);
+    place-items: center;
+    padding: 20px;
+    background: rgba(2, 6, 23, 0.42);
 }
 
-.animation-engine-switch button {
+.animation-entry-launcher.hidden {
+    display: none;
+}
+
+.animation-entry-panel {
+    width: min(560px, calc(100vw - 32px));
+    border: 1px solid var(--manim-workbench-border);
+    border-radius: 16px;
+    background: var(--manim-workbench-bg);
+    box-shadow: var(--manim-workbench-shadow);
+}
+
+.animation-entry-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 16px 12px;
+    border-bottom: 1px solid var(--manim-workbench-border);
+}
+
+.animation-entry-head strong {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 850;
+}
+
+.animation-entry-close {
     display: inline-flex;
-    min-width: 0;
-    min-height: 42px;
+    width: 34px;
+    height: 34px;
     align-items: center;
     justify-content: center;
-    gap: 8px;
     border: 0;
-    border-radius: 10px;
+    border-radius: 8px;
     background: transparent;
     color: var(--text-secondary);
-    font-size: 13px;
-    font-weight: 800;
     cursor: pointer;
-    transition: background 0.16s ease, color 0.16s ease;
 }
 
-.animation-engine-switch button.active,
-.animation-engine-switch button:hover {
+.animation-entry-close:hover,
+.animation-entry-card:hover {
     background: var(--manim-workbench-hover-bg);
+}
+
+.animation-entry-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 14px;
+}
+
+.animation-entry-card {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    min-height: 96px;
+    padding: 14px;
+    border: 1px solid var(--manim-workbench-border);
+    border-radius: 12px;
+    background: var(--manim-workbench-panel-bg);
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+
+.animation-entry-card:hover,
+.animation-entry-card:focus-visible {
+    border-color: rgba(14, 165, 233, 0.42);
+    transform: translateY(-1px);
+    outline: none;
+}
+
+.animation-entry-card > .lucide {
+    width: 30px;
+    height: 30px;
     color: var(--manim-studio-accent);
 }
 
-.animation-engine-switch .lucide {
-    width: 17px;
-    height: 17px;
-    flex: 0 0 auto;
+.animation-entry-card span,
+.animation-entry-card strong,
+.animation-entry-card small {
+    min-width: 0;
+}
+
+.animation-entry-card strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 14px;
+    font-weight: 850;
+}
+
+.animation-entry-card small {
+    display: block;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
 }
 
 .geogebra-workbench-panel {
     display: grid;
     gap: 12px;
+}
+
+.geogebra-studio-root {
+    display: grid;
+    gap: 12px;
+}
+
+.geogebra-studio-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--manim-studio-border);
+    border-radius: 12px;
+    background: var(--manim-studio-surface-2);
+}
+
+.geogebra-studio-head > div:first-child {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.geogebra-studio-head strong {
+    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 850;
+}
+
+.geogebra-studio-head small {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.geogebra-studio-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
+    gap: 12px;
+    align-items: start;
+}
+
+.geogebra-studio-canvas-pane {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+}
+
+.geogebra-studio-sidebar {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+}
+
+.geogebra-studio-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--manim-studio-border);
+    border-radius: 10px;
+    background: var(--manim-studio-surface-2);
+}
+
+.geogebra-studio-tabs button {
+    min-width: 0;
+    min-height: 32px;
+    border: 0;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    background: transparent;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 750;
+}
+
+.geogebra-studio-tabs button.active,
+.geogebra-studio-tabs button:focus-visible {
+    color: var(--accent-color);
+    background: var(--manim-process-stage-active-bg);
+    outline: none;
+}
+
+.geogebra-studio-panel {
+    min-height: 316px;
+    padding: 12px;
+    border: 1px solid var(--manim-studio-border);
+    border-radius: 12px;
+    background: var(--manim-studio-surface-2);
+}
+
+.geogebra-studio-section,
+.geogebra-studio-messages {
+    display: grid;
+    gap: 10px;
+}
+
+.geogebra-studio-section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.geogebra-studio-section-head strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 850;
+}
+
+.geogebra-studio-section-head span {
+    overflow: hidden;
+    color: var(--text-secondary);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.geogebra-studio-object-list {
+    display: grid;
+    gap: 6px;
+    max-height: 220px;
+    overflow: auto;
+}
+
+.geogebra-studio-object-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 18px;
+    align-items: center;
+    gap: 8px;
+    min-height: 48px;
+    padding: 8px 10px;
+    border: 1px solid var(--manim-studio-border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    background: var(--manim-studio-surface);
+    cursor: pointer;
+    text-align: left;
+}
+
+.geogebra-studio-object-row.active {
+    border-color: rgba(14, 165, 233, 0.42);
+    background: rgba(14, 165, 233, 0.10);
+}
+
+.geogebra-studio-object-row span,
+.geogebra-studio-object-row strong,
+.geogebra-studio-object-row small {
+    min-width: 0;
+}
+
+.geogebra-studio-object-row strong,
+.geogebra-studio-object-row small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.geogebra-studio-object-row small {
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+.geogebra-studio-inspector {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--manim-studio-border);
+    border-radius: 10px;
+    background: var(--manim-studio-surface);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.geogebra-studio-inspector.muted {
+    color: var(--text-secondary);
+}
+
+.geogebra-studio-inspector-card {
+    display: grid;
+    gap: 6px;
+}
+
+.geogebra-studio-inspector-card strong {
+    color: var(--text-primary);
+}
+
+.geogebra-studio-inspector-card dl {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr);
+    gap: 4px 8px;
+    margin: 0;
+}
+
+.geogebra-studio-inspector-card dt {
+    color: var(--text-secondary);
+}
+
+.geogebra-studio-inspector-card dd {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+    color: var(--text-primary);
+}
+
+.geogebra-studio-adjust-input,
+.geogebra-studio-command-editor {
+    width: 100%;
+    resize: vertical;
+    border: 1px solid var(--manim-studio-border);
+    border-radius: 10px;
+    padding: 10px;
+    color: var(--text-primary);
+    background: var(--manim-studio-surface);
+    font: inherit;
+    line-height: 1.5;
+}
+
+.geogebra-studio-command-editor {
+    min-height: 168px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+}
+
+.manim-workbench-primary,
+.geogebra-studio-wide-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 34px;
+    border: 0;
+    border-radius: 8px;
+    color: #ffffff;
+    background: var(--accent-color);
+    cursor: pointer;
+    font-weight: 800;
+}
+
+.geogebra-studio-wide-action {
+    width: 100%;
+}
+
+.manim-workbench-primary:disabled,
+.manim-workbench-secondary:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.geogebra-studio-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.geogebra-studio-note {
+    padding: 9px 10px;
+    border-radius: 10px;
+    color: #047857;
+    font-size: 12px;
+    line-height: 1.5;
+    background: rgba(16, 185, 129, 0.10);
 }
 
 .geogebra-status-row,

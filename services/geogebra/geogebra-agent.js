@@ -123,6 +123,26 @@ export function buildGeoGebraRepairRequest(body = {}) {
     };
 }
 
+function normalizeCommandHistory(commandHistory) {
+    const sourceItems = Array.isArray(commandHistory) ? commandHistory : [];
+    return sourceItems
+        .map(entry => ({
+            command: String(entry?.command || '').slice(0, MAX_COMMAND_LENGTH),
+            success: Boolean(entry?.success),
+            label: String(entry?.label || '').slice(0, 80),
+            error: String(entry?.error || '').slice(0, 240),
+        }))
+        .slice(-MAX_COMMANDS);
+}
+
+export function buildGeoGebraStudioAdjustRequest(body = {}) {
+    const planRequest = buildGeoGebraPlanRequest(body);
+    return {
+        ...planRequest,
+        commandHistory: normalizeCommandHistory(body.commandHistory),
+    };
+}
+
 function isSafeGeoGebraCommand(command) {
     const trimmedCommand = String(command || '').trim();
     if (!trimmedCommand || trimmedCommand.length > MAX_COMMAND_LENGTH) return false;
@@ -153,6 +173,7 @@ export function parseGeoGebraAgentReply(replyText) {
         commands: safeCommands,
         followUp: String(parsedReply.followUp || '').slice(0, 400),
         repairSummary: parsedReply.repairSummary ? String(parsedReply.repairSummary).slice(0, 400) : undefined,
+        studioNotes: parsedReply.studioNotes ? String(parsedReply.studioNotes).slice(0, 400) : undefined,
     };
 }
 
@@ -189,6 +210,7 @@ function buildAgentMessages(requestPayload, mode) {
             perspective: 'G 或 T',
             commands: ['GeoGebra English command'],
             followUp: '中文后续建议',
+            studioNotes: mode === 'studio_adjust' ? '中文 Studio 调整说明' : undefined,
         },
     };
 
@@ -250,6 +272,19 @@ export async function repairGeoGebraPlan(body = {}, options = {}) {
         data: {
             ...repairPayload,
             repairSummary: repairPayload.repairSummary || '已根据失败命令生成修复步骤',
+        },
+    };
+}
+
+export async function adjustGeoGebraStudio(body = {}, options = {}) {
+    const requestPayload = buildGeoGebraStudioAdjustRequest(body);
+    const adjustPayload = await requestGeoGebraCompletion(requestPayload, { ...options, mode: 'studio_adjust' });
+    return {
+        success: true,
+        intent: 'geogebra',
+        data: {
+            ...adjustPayload,
+            studioNotes: adjustPayload.studioNotes || '已根据 GeoGebra Studio 当前画布生成调整命令',
         },
     };
 }
