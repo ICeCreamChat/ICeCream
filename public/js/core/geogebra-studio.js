@@ -8,6 +8,7 @@ const GEOGEBRA_PROBLEM_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/
 const GEOGEBRA_PROBLEM_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const GEOGEBRA_STUDIO_BASE64_LIMIT = 900000;
 const GEOGEBRA_NO_VISIBLE_OBJECTS_ERROR = '命令已返回但未落图，请重试或检查 GeoGebra 离线画布。';
+const GEOGEBRA_COURSEWARE_EXPORT_ENDPOINT = '/api/geogebra/export/courseware';
 
 const FALLBACK_STATUS = {
     assetsAvailable: false,
@@ -48,6 +49,38 @@ function compactHistory(records = []) {
         source: String(record.source || '').slice(0, 80),
         createdAt: record.createdAt || new Date().toISOString(),
     }));
+}
+
+function cleanCoursewareTitle(value) {
+    return String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 80) || 'ICeCream GeoGebra 互动课件';
+}
+
+function fallbackCoursewareFilename() {
+    const now = new Date();
+    const pad = value => String(value).padStart(2, '0');
+    const stamp = [
+        now.getFullYear(),
+        pad(now.getMonth() + 1),
+        pad(now.getDate()),
+    ].join('') + '-' + [pad(now.getHours()), pad(now.getMinutes())].join('');
+    return `icecream-geogebra-courseware-${stamp}.zip`;
+}
+
+function readDownloadFilename(response, fallback = fallbackCoursewareFilename()) {
+    const disposition = response.headers.get('content-disposition') || '';
+    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match) {
+        try {
+            return decodeURIComponent(utf8Match[1]);
+        } catch {
+            return fallback;
+        }
+    }
+    const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+    return plainMatch?.[1] || fallback;
 }
 
 function waitForStudioFrame() {
@@ -365,6 +398,7 @@ class GeoGebraStudio {
         this.repairSummary = '';
         this.latestError = '';
         this.studioNotes = '';
+        this.latestViewport = null;
         this.demoConfig = null;
         this.demoPlaying = false;
         this.demoStatus = '';
@@ -428,6 +462,7 @@ class GeoGebraStudio {
         this.repairSummary = '';
         this.latestError = '';
         this.studioNotes = '';
+        this.latestViewport = null;
         this.demoConfig = null;
         this.demoPlaying = false;
         this.demoStatus = '';
@@ -576,6 +611,10 @@ class GeoGebraStudio {
                 <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="export-ggb">
                     <i data-lucide="download"></i>
                     <span>导出GGB</span>
+                </button>
+                <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="export-courseware">
+                    <i data-lucide="presentation"></i>
+                    <span>导出互动课件包</span>
                 </button>
             </div>
         `;
@@ -1185,6 +1224,8 @@ class GeoGebraStudio {
             this.exportPng();
         } else if (action === 'export-ggb') {
             await this.exportGgb();
+        } else if (action === 'export-courseware') {
+            await this.exportCourseware();
         } else if (action === 'upload-problem') {
             await this.selectProblemImage();
         } else if (action === 'retry-problem-image') {
@@ -1297,6 +1338,58 @@ class GeoGebraStudio {
         anchor.href = `data:application/vnd.geogebra.file;base64,${base64}`;
         anchor.download = `geogebra-studio-${Date.now()}.ggb`;
         anchor.click();
+    }
+
+    async exportCourseware() {
+        const base64 = await geogebraCanvas.exportGgbBase64();
+        if (!base64) {
+            showToast('当前 GeoGebra 画布暂时无法导出互动课件包', 'error');
+            return;
+        }
+        const title = cleanCoursewareTitle(this.latestSummary || this.projectPages[0]?.title || this.problemReviewText);
+        const pages = this.projectPages
+            .filter(page => page?.base64)
+            .map(page => ({
+                title: cleanCoursewareTitle(page.title),
+                base64: page.base64,
+            }));
+
+        try {
+            const response = await fetch(GEOGEBRA_COURSEWARE_EXPORT_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    title,
+                    base64,
+                    pages,
+                    problemText: this.problemReviewText || this.problemExtractedText || '',
+                    summary: this.latestSummary || '',
+                    demo: this.demoConfig,
+                    viewport: this.latestViewport,
+                }),
+            });
+            if (!response.ok) {
+                let message = '互动课件包导出失败';
+                try {
+                    const payload = await response.json();
+                    message = payload.error || message;
+                } catch {
+                    message = await response.text() || message;
+                }
+                throw new Error(message);
+            }
+
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = readDownloadFilename(response);
+            anchor.click();
+            URL.revokeObjectURL(url);
+            showToast('已导出互动课件包，可在 PPT 中作为超链接打开。', 'success');
+        } catch (error) {
+            showToast(error?.message || '互动课件包导出失败', 'error');
+        }
     }
 
     async saveCurrentProjectPage() {
@@ -1412,6 +1505,7 @@ class GeoGebraStudio {
         if (!viewport) return false;
         const applied = await geogebraCanvas.fitBoundsEqualScale(viewport);
         if (applied) {
+            this.latestViewport = viewport;
             await waitForStudioFrame();
         }
         return applied;

@@ -17,7 +17,7 @@ ICeCream 是一个面向学习和教学场景的本地 AI 工作台。它把 AI 
 | AI 对话 | 通过 Node Gateway 统一接入大模型，支持普通对话和流式对话。 |
 | 题目解析 | 支持文本、图片和 OCR 相关解题链路，图片能力依赖视觉模型或文档解析服务。 |
 | Manim 视频动画 | Python 3.12 Manim 服务负责意图识别、代码生成、渲染任务和 Studio 预览。 |
-| GeoGebra 动态几何 | 动画工作台内的并行 Studio，使用本地离线 GeoGebra HTML5 资源和 DeepSeek 兼容接口生成、调整、修复可交互作图命令。 |
+| GeoGebra 动态几何 | 动画工作台内的并行 Studio，使用本地离线 GeoGebra HTML5 资源和 DeepSeek 兼容接口生成、调整、修复可交互作图命令，并可导出离线互动课件包供 PPT 超链接使用。 |
 | 座位规划 | 提供名单解析、座位安排、布局预览、评分、导出、反馈等课堂工具能力。 |
 | Timefold 求解 | Java 21 Quarkus 服务提供可选的 Timefold Solver 后端，用于更复杂的排布求解。 |
 | 反馈邮件 | 可选 SMTP 配置，用于把用户反馈发送到维护者邮箱。 |
@@ -144,6 +144,12 @@ Node Gateway :3000
 
 Gateway 是浏览器唯一需要直接访问的本地入口。Manim、Timefold 和外部模型服务都由 Gateway 统一适配。GeoGebra 不新增独立后端进程，浏览器从 `public/vendor/geogebra/` 加载离线 HTML5 运行时，Gateway 只负责命令搜索、AI 规划、Studio 调整和失败修复。
 
+## GeoGebra 互动课件包和 PPT
+
+GeoGebra Studio 支持导出 GGBTool 风格的离线互动课件包。导出的 zip 包含 `index.html`、`config/ggbs.js`、课件脚本和 `lib/GeoGebra/` 离线运行时，并会携带当前题目的 timeline 轨迹演示、等比例视图和清洗后的题目文本。
+
+在 PowerPoint 中使用时，推荐先把 zip 完整解压，然后在 PPT 里插入截图、形状按钮或文字，并给它添加指向 `index.html` 的超链接。放映时点击该对象，会在浏览器中打开可拖动、可播放的 GeoGebra 互动课件。第一版不直接生成 `.pptx`，也不要求 Office 插件。
+
 ## 常用命令
 
 | 命令 | 用途 |
@@ -208,6 +214,7 @@ README 只列主要入口，避免把内部 job、failure、patch 等维护接�
 | `POST /api/geogebra/plan` | 根据主输入框描述生成动态几何命令计划。 |
 | `POST /api/geogebra/studio/adjust` | 根据 GeoGebra Studio 当前画布、选中对象和命令历史生成调整命令。 |
 | `POST /api/geogebra/repair` | 根据失败命令和画布状态生成修复命令。 |
+| `POST /api/geogebra/export/courseware` | 导出包含本地 GeoGebra runtime 的离线互动课件包 zip。 |
 
 ### Tools 和 Seating
 
@@ -230,7 +237,7 @@ README 只列主要入口，避免把内部 job、failure、patch 等维护接�
 | --- | --- |
 | Node 全量测试 | `npm test` |
 | Gateway 模块测试 | `node --test test/gateway-modules.test.js` |
-| GeoGebra 聚焦测试 | `node --test test/geogebra-studio-ui.test.js test/geogebra-command-search.test.js test/geogebra-route.test.js test/geogebra-ui-integration.test.js` |
+| GeoGebra 聚焦测试 | `node --test test/geogebra-courseware-export.test.js test/geogebra-studio-ui.test.js test/geogebra-command-search.test.js test/geogebra-route.test.js test/geogebra-ui-integration.test.js` |
 | Seating 聚焦测试 | `node --test test/seating-arrange.test.js test/seating-arrange-route.test.js test/seating-core.test.js` |
 | Manim agent 测试 | `cd manim-service && python -m unittest tests.test_agent` |
 | Solver 测试 | `cd solver && .\mvnw.cmd test "-Dquarkus.http.test-port=0"` |

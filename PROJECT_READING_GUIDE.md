@@ -129,6 +129,7 @@ API 路由注册在 `gateway/routes/index.js`：
 - `services/geogebra/command-search.js`：加载 GeoGebra 命令索引，提供稳定搜索和状态检查。
 - `services/geogebra/geogebra-agent.js`：复用 DeepSeek 兼容配置生成 GeoGebra 命令计划、Studio 调整计划和失败修复计划。
 - `services/geogebra/geogebra-prompt.js`：GeoGebra 中文教学作图提示词。
+- `services/geogebra/courseware-export.js`：把当前 `.ggb base64`、草稿页、timeline 演示、题目文本和 `public/vendor/geogebra/` 打包成 GGBTool 风格离线互动课件包。
 - `gateway/routes/geogebra.js`：GeoGebra HTTP 适配层，只负责请求归一化、状态码和响应形状。
 
 ### Seating 后端
@@ -168,14 +169,15 @@ GeoGebra 与 Manim 同属于“动画”能力，但二者是并行子项目：
 - `public/js/core/geogebra-workbench.js`：GeoGebra 子项目编排层，把主输入框请求转成 `/api/geogebra/plan` 和 `/api/geogebra/repair` 调用，并把结果交给 Studio 执行。
 - `services/geogebra/command-search.js`：从 `commands-index.json` 构建命令搜索索引，模块加载时构建一次。
 - `services/geogebra/geogebra-agent.js`：复用 `DEEPSEEK_API_BASE`、`DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 生成命令计划、Studio 调整和修复计划。
-- `gateway/routes/geogebra.js`：暴露 `/api/geogebra/status`、`/api/geogebra/commands/search`、`/api/geogebra/plan`、`/api/geogebra/studio/adjust`、`/api/geogebra/repair`。
+- `services/geogebra/courseware-export.js`：生成可被 PPT 超链接打开的离线互动课件包 zip，包内包含 `index.html`、`config/ggbs.js`、课件脚本、timeline 演示数据和 GeoGebra runtime。
+- `gateway/routes/geogebra.js`：暴露 `/api/geogebra/status`、`/api/geogebra/commands/search`、`/api/geogebra/plan`、`/api/geogebra/studio/adjust`、`/api/geogebra/repair`、`/api/geogebra/export/courseware`。
 - `public/vendor/geogebra/`：从本地离线包 vendored 的 GeoGebra HTML5 运行时，授权见 `public/vendor/geogebra/LICENSE-GEOGEBRA.txt`。
 
 维护约束：
 - 不把 GeoGebra 逻辑塞进 Manim Python 服务；GeoGebra 第一版没有后端视频渲染。
 - 不复用 `GGBTool离线包v2.7/lib/js/main.min.js` 这类混淆 UI 代码。
 - 不新增顶部主模式；入口仍在“动画”工作台内部。
-- 点击“GeoGebra 动态几何”后默认进入 GeoGebra Studio；Studio 本地会话键是 `icecream_geogebra_studio_v1`。
+- 点击“GeoGebra 动态几何”后默认进入 GeoGebra Studio；Studio 本地会话键是 `icecream_geogebra_studio_v2`。
 - Auto 模式只有用户明确提到 `geogebra`、`ggb`、`动态几何`、`几何画板`、`拖动点` 等词时才走 GeoGebra。
 - GeoGebra AI 配置复用 DeepSeek 兼容变量，不在 `.env.example` 增加必填项。
 
@@ -691,6 +693,7 @@ shared 模块禁止依赖：
 
 - 新命令搜索或语法索引能力：放 `services/geogebra/command-search.js`，索引文件放 `services/geogebra/commands-index.json`。
 - 新 AI 作图规划或 Studio 调整能力：放 `services/geogebra/geogebra-agent.js` 或明确的新领域文件，提示词放 `services/geogebra/geogebra-prompt.js`。
+- 新课件或导出能力：放 `services/geogebra/courseware-export.js` 或明确的新导出模块，route 仍从 `gateway/routes/geogebra.js` 暴露。
 - 新 HTTP 能力：放 `gateway/routes/geogebra.js`，保持 route 只做 HTTP 适配。
 - 新画布运行时能力：放 `public/js/core/geogebra-canvas.js`。
 - 新 Studio UI 能力：放 `public/js/core/geogebra-studio.js`；如果继续变大，再拆成 `public/js/core/geogebra/` 下的明确子模块。
@@ -749,6 +752,7 @@ GeoGebra 聚焦测试：
 
 ```bash
 node --test test/geogebra-studio-ui.test.js test/geogebra-command-search.test.js test/geogebra-route.test.js test/geogebra-ui-integration.test.js
+node --test test/geogebra-courseware-export.test.js
 ```
 
 Manim agent 测试：

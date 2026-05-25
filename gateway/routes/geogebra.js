@@ -7,6 +7,7 @@ import { getGeoGebraCommandIndexStatus, normalizeSearchLimit, searchGeoGebraComm
 import { adjustGeoGebraStudio, createGeoGebraAgentStep, createGeoGebraPlan, hasGeoGebraAiConfig, repairGeoGebraPlan } from '../../services/geogebra/geogebra-agent.js';
 import { createGeoGebraImagePlan } from '../../services/geogebra/geogebra-image-agent.js';
 import { getGeoGebraManualIndexStatus, normalizeManualSearchLimit, searchGeoGebraManual } from '../../services/geogebra/manual-search.js';
+import { createGeoGebraCoursewarePackage, GEOGEBRA_COURSEWARE_MIME } from '../../services/geogebra/courseware-export.js';
 
 const router = express.Router();
 const GEOGEBRA_DEPLOY_URL = new URL('../../public/vendor/geogebra/deployggb.js', import.meta.url);
@@ -124,6 +125,21 @@ router.post('/studio/parse-image', upload.single('image'), async (req, res) => {
         if (imageFile?.path) {
             unlink(imageFile.path).catch(() => {});
         }
+    }
+});
+
+router.post('/export/courseware', async (req, res) => {
+    try {
+        const packagePayload = await createGeoGebraCoursewarePackage(req.body);
+        res.setHeader('Content-Type', GEOGEBRA_COURSEWARE_MIME);
+        res.setHeader('Content-Disposition', `attachment; filename="${packagePayload.filename}"`);
+        res.setHeader('Cache-Control', 'no-store');
+        return res.send(packagePayload.buffer);
+    } catch (error) {
+        if (!Number.isInteger(error.status) || error.status >= 500) {
+            console.error('[GeoGebra Route] Courseware Export Error:', error);
+        }
+        return sendGeoGebraError(res, error);
     }
 });
 

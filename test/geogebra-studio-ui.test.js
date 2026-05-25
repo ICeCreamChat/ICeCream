@@ -57,6 +57,7 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioSource, /data-geogebra-studio-action="undo"/);
   assert.match(studioSource, /data-geogebra-studio-action="redo"/);
   assert.match(studioSource, /data-geogebra-studio-action="export"/);
+  assert.match(studioSource, /data-geogebra-studio-action="export-courseware"/);
   assert.match(studioSource, /data-geogebra-studio-action="upload-problem"/);
   assert.match(studioSource, /data-geogebra-studio-action="retry-problem-image"/);
   assert.match(studioSource, /parseProblemImage/);
@@ -81,6 +82,14 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioSource, /executeManualCommands/);
   assert.match(studioSource, /selectObject/);
   assert.match(studioSource, /runTrajectoryDemo/);
+  assert.match(studioSource, /exportCourseware/);
+  assert.match(studioSource, /\/api\/geogebra\/export\/courseware/);
+  assert.match(studioSource, /icecream-geogebra-courseware/);
+  assert.match(studioSource, /problemText:\s*this\.problemReviewText/);
+  assert.match(studioSource, /summary:\s*this\.latestSummary/);
+  assert.match(studioSource, /demo:\s*this\.demoConfig/);
+  assert.match(studioSource, /viewport:\s*this\.latestViewport/);
+  assert.ok(studioSource.includes('导出互动课件包'));
   assert.match(studioSource, /stopTrajectoryDemo/);
   assert.match(studioSource, /clearTrajectoryTrace/);
   assert.match(studioSource, /normalizeTimelineDemo/);
