@@ -83,9 +83,15 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioSource, /runTrajectoryDemo/);
   assert.match(studioSource, /stopTrajectoryDemo/);
   assert.match(studioSource, /clearTrajectoryTrace/);
-  assert.match(studioSource, /runParametricTrajectoryDemo/);
+  assert.match(studioSource, /normalizeTimelineDemo/);
+  assert.match(studioSource, /runTimelineDemo/);
+  assert.match(studioSource, /runTimelineTrack/);
+  assert.match(studioSource, /runPathTraceTrack/);
   assert.match(studioSource, /requestAnimationFrame/);
   assert.match(studioSource, /SetValue\(\$\{movingObject\}, \(\$\{formatGeoGebraNumber\(x\)\}, \$\{formatGeoGebraNumber\(y\)\}\)\)/);
+  assert.match(studioSource, /normalizeTimelineNumber\(track\.samples,\s*240,\s*24,\s*600\)/);
+  assert.match(studioSource, /clearBeforePlay/);
+  assert.match(studioSource, /preserveAfterFinish/);
   assert.match(studioSource, /StartAnimation\(\$\{movingObject\}, false\)/);
   assert.match(studioSource, /planBody\.demo\?\.autoPlay/);
   const drawingAssistantStart = studioSource.indexOf('\n    renderDrawingAssistant() {');

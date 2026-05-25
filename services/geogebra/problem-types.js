@@ -147,19 +147,24 @@ function buildCircleChordMidpointLocusPlan(facts) {
         equalScale: true,
     };
     const demo = {
-        type: 'trace',
+        type: 'timeline',
         autoPlay: true,
-        movingObject: 'P',
-        tracedObject: 'M',
-        durationMs: 6500,
-        frameCount: 96,
-        path: {
-            type: 'circle',
-            center: { x: center.x, y: center.y },
-            radius,
-            startAngle: -90,
-            endAngle: 270,
-        },
+        clearBeforePlay: true,
+        preserveAfterFinish: true,
+        durationMs: 8000,
+        tracks: [{
+            kind: 'path-trace',
+            movingObject: 'P',
+            tracedObject: 'M',
+            samples: 240,
+            path: {
+                type: 'circle',
+                center: { x: center.x, y: center.y },
+                radius,
+                startAngle: -90,
+                endAngle: 270,
+            },
+        }],
     };
 
     return {

@@ -144,21 +144,80 @@ function readFiniteDemoNumber(value) {
     return Number.isFinite(number) ? number : null;
 }
 
+function normalizeParametricExpression(expression) {
+    const text = String(expression || '').trim();
+    if (!text || text.length > 120) return '';
+    const normalized = text
+        .replace(/\b(sin|cos|tan|asin|acos|atan|sqrt|abs|min|max|pow)\b/g, 'Math.$1')
+        .replace(/\bPI\b/g, 'Math.PI')
+        .replace(/\bE\b/g, 'Math.E');
+    if (!/^[0-9t+\-*/().,\sMathPIEinscoqrtabmpw]+$/.test(normalized)) return '';
+    const identifiers = normalized.match(/[A-Za-z_$][\w$]*/g) || [];
+    const allowed = new Set(['t', 'Math', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sqrt', 'abs', 'min', 'max', 'pow', 'PI', 'E']);
+    if (identifiers.some(identifier => !allowed.has(identifier))) return '';
+    return normalized;
+}
+
+function evaluateParametricExpression(expression, t) {
+    try {
+        const evaluator = new Function('t', 'Math', `"use strict"; return Number(${expression});`);
+        const value = evaluator(t, Math);
+        return Number.isFinite(value) ? value : 0;
+    } catch {
+        return 0;
+    }
+}
+
 function normalizeDemoPath(path = {}) {
-    if (!path || path.type !== 'circle') return null;
-    const centerX = readFiniteDemoNumber(path.center?.x);
-    const centerY = readFiniteDemoNumber(path.center?.y);
-    const radius = readFiniteDemoNumber(path.radius);
-    if (centerX === null || centerY === null || radius === null || radius <= 0) return null;
-    const startAngle = readFiniteDemoNumber(path.startAngle) ?? -90;
-    const endAngle = readFiniteDemoNumber(path.endAngle) ?? 270;
-    return {
-        type: 'circle',
-        center: { x: centerX, y: centerY },
-        radius,
-        startAngle,
-        endAngle,
-    };
+    if (!path || typeof path !== 'object') return null;
+    if (path.type === 'circle') {
+        const centerX = readFiniteDemoNumber(path.center?.x);
+        const centerY = readFiniteDemoNumber(path.center?.y);
+        const radius = readFiniteDemoNumber(path.radius);
+        if (centerX === null || centerY === null || radius === null || radius <= 0) return null;
+        const startAngle = readFiniteDemoNumber(path.startAngle) ?? -90;
+        const endAngle = readFiniteDemoNumber(path.endAngle) ?? 270;
+        return {
+            type: 'circle',
+            center: { x: centerX, y: centerY },
+            radius,
+            startAngle,
+            endAngle,
+        };
+    }
+    if (path.type === 'segment') {
+        const fromX = readFiniteDemoNumber(path.from?.x);
+        const fromY = readFiniteDemoNumber(path.from?.y);
+        const toX = readFiniteDemoNumber(path.to?.x);
+        const toY = readFiniteDemoNumber(path.to?.y);
+        if ([fromX, fromY, toX, toY].some(value => value === null)) return null;
+        return {
+            type: 'segment',
+            from: { x: fromX, y: fromY },
+            to: { x: toX, y: toY },
+        };
+    }
+    if (path.type === 'polyline') {
+        const points = Array.isArray(path.points)
+            ? path.points.map(point => {
+                const x = readFiniteDemoNumber(point?.x);
+                const y = readFiniteDemoNumber(point?.y);
+                return x === null || y === null ? null : { x, y };
+            }).filter(Boolean)
+            : [];
+        return points.length >= 2 ? { type: 'polyline', points: points.slice(0, 80) } : null;
+    }
+    if (path.type === 'parametric') {
+        const xExpression = normalizeParametricExpression(path.xExpression);
+        const yExpression = normalizeParametricExpression(path.yExpression);
+        if (!xExpression || !yExpression) return null;
+        return {
+            type: 'parametric',
+            xExpression,
+            yExpression,
+        };
+    }
+    return null;
 }
 
 function formatGeoGebraNumber(value) {
@@ -167,35 +226,129 @@ function formatGeoGebraNumber(value) {
 }
 
 function pointOnDemoPath(path, progress) {
-    if (!path || path.type !== 'circle') return null;
-    const startRadians = path.startAngle * Math.PI / 180;
-    const endRadians = path.endAngle * Math.PI / 180;
-    const angle = startRadians + (endRadians - startRadians) * Math.min(Math.max(progress, 0), 1);
-    return {
-        x: path.center.x + path.radius * Math.cos(angle),
-        y: path.center.y + path.radius * Math.sin(angle),
-    };
+    if (!path) return null;
+    const clampedProgress = Math.min(Math.max(progress, 0), 1);
+    if (path.type === 'circle') {
+        const startRadians = path.startAngle * Math.PI / 180;
+        const endRadians = path.endAngle * Math.PI / 180;
+        const angle = startRadians + (endRadians - startRadians) * clampedProgress;
+        return {
+            x: path.center.x + path.radius * Math.cos(angle),
+            y: path.center.y + path.radius * Math.sin(angle),
+        };
+    }
+    if (path.type === 'segment') {
+        return {
+            x: path.from.x + (path.to.x - path.from.x) * clampedProgress,
+            y: path.from.y + (path.to.y - path.from.y) * clampedProgress,
+        };
+    }
+    if (path.type === 'polyline') {
+        const scaled = clampedProgress * (path.points.length - 1);
+        const index = Math.min(Math.floor(scaled), path.points.length - 2);
+        const localProgress = scaled - index;
+        const from = path.points[index];
+        const to = path.points[index + 1];
+        return {
+            x: from.x + (to.x - from.x) * localProgress,
+            y: from.y + (to.y - from.y) * localProgress,
+        };
+    }
+    if (path.type === 'parametric') {
+        const t = clampedProgress;
+        return {
+            x: evaluateParametricExpression(path.xExpression, t),
+            y: evaluateParametricExpression(path.yExpression, t),
+        };
+    }
+    return null;
 }
 
 function buildSetPointCommand(movingObject, x, y) {
     return `SetValue(${movingObject}, (${formatGeoGebraNumber(x)}, ${formatGeoGebraNumber(y)}))`;
 }
 
-function normalizeDemoConfig(demo = {}) {
-    if (!demo || demo.type !== 'trace') return null;
-    const movingObject = String(demo.movingObject || '').trim();
-    const tracedObject = String(demo.tracedObject || '').trim();
-    if (!movingObject || !tracedObject) return null;
-    const durationMs = Number(demo.durationMs);
-    const frameCount = Number(demo.frameCount);
+function normalizeTimelineNumber(value, fallback, min, max) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return fallback;
+    return Math.min(Math.max(number, min), max);
+}
+
+function normalizeTimelineTrack(track = {}, timelineDurationMs = 8000) {
+    if (!track || typeof track !== 'object') return null;
+    if (track.kind === 'path-trace') {
+        const movingObject = String(track.movingObject || '').trim();
+        const tracedObject = String(track.tracedObject || '').trim();
+        const path = normalizeDemoPath(track.path);
+        if (!movingObject || !tracedObject || !path) return null;
+        return {
+            kind: 'path-trace',
+            movingObject,
+            tracedObject,
+            path,
+            startMs: normalizeTimelineNumber(track.startMs, 0, 0, timelineDurationMs),
+            endMs: normalizeTimelineNumber(track.endMs, timelineDurationMs, 0, timelineDurationMs),
+            samples: Math.round(normalizeTimelineNumber(track.samples, 240, 24, 600)),
+        };
+    }
+    if (track.kind === 'command-at') {
+        const commands = normalizeCommands(track.commands || track.command);
+        if (!commands.length) return null;
+        return {
+            kind: 'command-at',
+            timeMs: normalizeTimelineNumber(track.timeMs, 0, 0, timelineDurationMs),
+            commands,
+        };
+    }
+    if (track.kind === 'set-visible') {
+        const objects = Array.isArray(track.objects)
+            ? track.objects.map(item => String(item || '').trim()).filter(Boolean).slice(0, 20)
+            : [String(track.object || '').trim()].filter(Boolean);
+        if (!objects.length) return null;
+        return {
+            kind: 'set-visible',
+            timeMs: normalizeTimelineNumber(track.timeMs, 0, 0, timelineDurationMs),
+            objects,
+            visible: track.visible !== false,
+        };
+    }
+    return null;
+}
+
+function normalizeTimelineDemo(demo = {}) {
+    if (!demo || typeof demo !== 'object') return null;
+    if (demo.type === 'trace') {
+        const durationMs = normalizeTimelineNumber(demo.durationMs, 6500, 1200, 30000);
+        const track = normalizeTimelineTrack({
+            kind: 'path-trace',
+            movingObject: demo.movingObject,
+            tracedObject: demo.tracedObject,
+            path: demo.path,
+            samples: demo.frameCount || demo.samples || 240,
+        }, durationMs);
+        if (!track) return null;
+        return {
+            type: 'timeline',
+            autoPlay: demo.autoPlay !== false,
+            clearBeforePlay: true,
+            preserveAfterFinish: true,
+            durationMs,
+            tracks: [track],
+        };
+    }
+    if (demo.type !== 'timeline') return null;
+    const durationMs = normalizeTimelineNumber(demo.durationMs, 8000, 1200, 30000);
+    const tracks = Array.isArray(demo.tracks)
+        ? demo.tracks.map(track => normalizeTimelineTrack(track, durationMs)).filter(Boolean).slice(0, 12)
+        : [];
+    if (!tracks.length) return null;
     return {
-        type: 'trace',
+        type: 'timeline',
         autoPlay: demo.autoPlay !== false,
-        movingObject,
-        tracedObject,
-        durationMs: Number.isFinite(durationMs) ? Math.min(Math.max(durationMs, 1200), 15000) : 6500,
-        frameCount: Number.isFinite(frameCount) ? Math.min(Math.max(Math.round(frameCount), 24), 240) : 96,
-        path: normalizeDemoPath(demo.path),
+        clearBeforePlay: demo.clearBeforePlay !== false,
+        preserveAfterFinish: demo.preserveAfterFinish !== false,
+        durationMs,
+        tracks,
     };
 }
 
@@ -1278,9 +1431,11 @@ class GeoGebraStudio {
     async stopTrajectoryDemo(options = {}) {
         this.clearDemoTimer();
         this.demoRunId += 1;
-        const demo = normalizeDemoConfig(options.demo || this.demoConfig);
-        if (demo) {
-            const movingObject = demo.movingObject;
+        const demo = normalizeTimelineDemo(options.demo || this.demoConfig);
+        const movingObjects = demo?.tracks
+            ?.filter(track => track.kind === 'path-trace')
+            .map(track => track.movingObject) || [];
+        for (const movingObject of movingObjects) {
             await geogebraCanvas.executeCommand(`StartAnimation(${movingObject}, false)`);
         }
         this.demoPlaying = false;
@@ -1355,7 +1510,124 @@ class GeoGebraStudio {
         return true;
     }
 
+    async prepareTimelineTrace(timeline, options = {}) {
+        const tracedObjects = [...new Set((timeline?.tracks || [])
+            .filter(track => track.kind === 'path-trace')
+            .map(track => track.tracedObject)
+            .filter(Boolean))];
+        if (!tracedObjects.length) return true;
+        const commands = [
+            ...tracedObjects.map(objectName => `SetTrace(${objectName}, false)`),
+            'ZoomIn(1)',
+        ];
+        if (options.reenable !== false) {
+            commands.push(...tracedObjects.map(objectName => `SetTrace(${objectName}, true)`));
+        }
+        const records = await geogebraCanvas.executeCommands(commands);
+        await geogebraCanvas.reapplyEqualScaleViewport();
+        const failedRecord = records.find(record => !record.success);
+        if (failedRecord) {
+            this.demoStatus = failedRecord.error || '轨迹演示准备失败';
+            this.latestError = this.demoStatus;
+            return false;
+        }
+        return true;
+    }
+
+    async runPathTraceTrack(track, timelineProgress, state = {}) {
+        const duration = Math.max((track.endMs || 0) - (track.startMs || 0), 1);
+        const elapsed = Math.min(Math.max(timelineProgress.elapsedMs - (track.startMs || 0), 0), duration);
+        const progress = elapsed / duration;
+        const samples = Math.max(track.samples || 240, 1);
+        const frame = Math.min(samples, Math.floor(progress * samples));
+        if (state.lastFrame === frame) return;
+        state.lastFrame = frame;
+        const point = pointOnDemoPath(track.path, frame / samples);
+        if (point) {
+            await geogebraCanvas.executeCommand(buildSetPointCommand(track.movingObject, point.x, point.y));
+        }
+    }
+
+    async runTimelineTrack(track, timelineProgress, state = {}) {
+        if (track.kind === 'path-trace') {
+            await this.runPathTraceTrack(track, timelineProgress, state);
+            return;
+        }
+        if (track.kind === 'command-at') {
+            if (state.done || timelineProgress.elapsedMs < track.timeMs) return;
+            state.done = true;
+            await geogebraCanvas.executeCommands(track.commands);
+            return;
+        }
+        if (track.kind === 'set-visible') {
+            if (state.done || timelineProgress.elapsedMs < track.timeMs) return;
+            state.done = true;
+            await geogebraCanvas.executeCommands(track.objects.map(objectName => `SetVisibleInView(${objectName}, 1, ${track.visible ? 'true' : 'false'})`));
+        }
+    }
+
+    async runTimelineDemo(demo = this.demoConfig, options = {}) {
+        const timeline = normalizeTimelineDemo(demo);
+        if (!timeline) return false;
+        this.demoConfig = timeline;
+        await this.stopTrajectoryDemo({ demo: timeline, silent: true, refresh: false });
+        this.demoRunId += 1;
+        const runId = this.demoRunId;
+
+        this.demoPlaying = true;
+        this.demoStatus = '正在演示轨迹过程';
+        if (options.refresh !== false) {
+            this.refresh();
+        }
+
+        if (timeline.clearBeforePlay) {
+            const prepared = await this.prepareTimelineTrace(timeline, { reenable: true });
+            if (!prepared) {
+                this.demoPlaying = false;
+                if (options.refresh !== false) this.refresh();
+                return false;
+            }
+        }
+
+        const trackStates = new Map();
+        let firstTimestamp = 0;
+        const finishDemo = async () => {
+            if (runId !== this.demoRunId) return;
+            for (const track of timeline.tracks.filter(item => item.kind === 'path-trace')) {
+                if (!trackStates.has(track)) trackStates.set(track, {});
+                await this.runPathTraceTrack(track, { elapsedMs: timeline.durationMs }, trackStates.get(track));
+            }
+            this.demoPlaying = false;
+            this.demoStatus = timeline.preserveAfterFinish
+                ? '轨迹演示完成，轨迹已保留'
+                : '轨迹演示完成';
+            await geogebraCanvas.reapplyEqualScaleViewport();
+            this.refreshCanvasState();
+            this.refresh();
+        };
+
+        const step = async (timestamp) => {
+            if (!this.demoPlaying || runId !== this.demoRunId) return;
+            firstTimestamp ||= timestamp;
+            const elapsedMs = Math.min(Math.max(timestamp - firstTimestamp, 0), timeline.durationMs);
+            for (const track of timeline.tracks) {
+                if (!trackStates.has(track)) trackStates.set(track, {});
+                await this.runTimelineTrack(track, { elapsedMs }, trackStates.get(track));
+            }
+            if (!this.demoPlaying || runId !== this.demoRunId) return;
+            if (elapsedMs >= timeline.durationMs) {
+                await finishDemo();
+                return;
+            }
+            this.demoFrameId = window.requestAnimationFrame(step);
+        };
+
+        this.demoFrameId = window.requestAnimationFrame(step);
+        return true;
+    }
+
     async runTrajectoryDemo(demo = this.demoConfig, options = {}) {
+        return this.runTimelineDemo(demo, options);
         const demoConfig = normalizeDemoConfig(demo);
         if (!demoConfig) return false;
         this.demoConfig = demoConfig;
@@ -1403,17 +1675,13 @@ class GeoGebraStudio {
     }
 
     async clearTrajectoryTrace() {
-        const demo = normalizeDemoConfig(this.demoConfig);
+        const demo = normalizeTimelineDemo(this.demoConfig);
         await this.stopTrajectoryDemo({ demo, silent: true, refresh: false });
         if (demo) {
-            await geogebraCanvas.executeCommands([
-                `SetTrace(${demo.tracedObject}, false)`,
-                'ZoomIn(1)',
-            ]);
-            await geogebraCanvas.reapplyEqualScaleViewport();
+            await this.prepareTimelineTrace(demo, { reenable: false });
         }
         this.demoPlaying = false;
-        this.demoStatus = '轨迹痕迹已清除，可重新演示。';
+        this.demoStatus = '轨迹已清除';
         this.refreshCanvasState();
         this.refresh();
     }
@@ -1476,7 +1744,7 @@ class GeoGebraStudio {
                 }
             }
             if (!summary.failedRecord) {
-                this.demoConfig = normalizeDemoConfig(planBody.demo);
+                this.demoConfig = normalizeTimelineDemo(planBody.demo);
                 if (planBody.demo?.autoPlay && this.demoConfig && options.autoPlayDemo !== false) {
                     await this.runTrajectoryDemo(this.demoConfig, { refresh: false });
                 }
