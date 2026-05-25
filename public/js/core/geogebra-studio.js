@@ -63,6 +63,8 @@ class GeoGebraStudio {
         this.manualCommands = '';
         this.busy = false;
         this.canvasMounted = false;
+        this.canvasLoadState = 'idle';
+        this.canvasLoadError = '';
         this.sessionRestored = false;
         this.undoStack = [];
         this.redoStack = [];
@@ -167,10 +169,23 @@ class GeoGebraStudio {
     }
 
     renderCanvasArea() {
+        const isLoading = this.canvasLoadState === 'loading' || (!this.canvasMounted && this.canvasLoadState !== 'error');
+        const isError = this.canvasLoadState === 'error';
         return `
             <main class="geogebra-studio-canvas-pane">
                 <div class="geogebra-canvas-shell">
                     <div id="geogebra-canvas-root" class="geogebra-canvas-root" role="application" aria-label="GeoGebra 动态几何画布"></div>
+                    <div class="geogebra-canvas-loading" data-geogebra-canvas-loading ${isLoading ? '' : 'hidden'}>
+                        <span>正在加载 GeoGebra 离线画布...</span>
+                    </div>
+                    <div class="geogebra-canvas-error-state" data-geogebra-canvas-error ${isError ? '' : 'hidden'}>
+                        <strong>GeoGebra 画布加载失败</strong>
+                        <span>${escapeHtml(this.canvasLoadError || this.latestError || '离线运行时暂时无法启动。')}</span>
+                        <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="retry-canvas">
+                            <i data-lucide="refresh-ccw"></i>
+                            <span>重试加载</span>
+                        </button>
+                    </div>
                 </div>
                 ${this.renderFooter()}
             </main>
@@ -403,18 +418,50 @@ class GeoGebraStudio {
         }
     }
 
-    async mountCanvas() {
+    async mountCanvas(options = {}) {
+        this.canvasLoadState = 'loading';
+        this.canvasLoadError = '';
+        this.latestError = '';
+        this.refreshCanvasOverlay();
         try {
-            await geogebraCanvas.mount('geogebra-canvas-root');
+            if (options.forceRebuild) {
+                await geogebraCanvas.rebuild('geogebra-canvas-root');
+            } else {
+                await geogebraCanvas.mount('geogebra-canvas-root');
+            }
             this.canvasMounted = true;
+            this.canvasLoadState = 'ready';
+            this.canvasLoadError = '';
             await this.restoreSavedCanvasOnce();
             this.refreshCanvasState();
             this.refresh();
+            this.refreshCanvasOverlay();
         } catch (error) {
             this.latestError = error?.message || 'GeoGebra 画布加载失败';
+            this.canvasLoadState = 'error';
+            this.canvasLoadError = this.latestError;
+            this.canvasMounted = false;
             showToast(this.latestError, 'error');
             this.refresh();
+            this.refreshCanvasOverlay();
         }
+    }
+
+    refreshCanvasOverlay() {
+        if (!this.root) return;
+        const loading = this.root.querySelector('[data-geogebra-canvas-loading]');
+        const error = this.root.querySelector('[data-geogebra-canvas-error]');
+        if (loading) {
+            loading.hidden = this.canvasLoadState !== 'loading' && (this.canvasMounted || this.canvasLoadState === 'error');
+        }
+        if (error) {
+            error.hidden = this.canvasLoadState !== 'error';
+            const errorText = error.querySelector('span');
+            if (errorText) {
+                errorText.textContent = this.canvasLoadError || this.latestError || '离线运行时暂时无法启动。';
+            }
+        }
+        this.refreshIcons();
     }
 
     async restoreSavedCanvasOnce() {
@@ -503,6 +550,8 @@ class GeoGebraStudio {
         if (action === 'refresh-objects') {
             this.refreshCanvasState();
             this.refresh();
+        } else if (action === 'retry-canvas') {
+            await this.mountCanvas({ forceRebuild: true });
         } else if (action === 'reset') {
             await this.resetCanvas();
         } else if (action === 'undo') {

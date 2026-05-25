@@ -31,6 +31,11 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioSource, /data-geogebra-studio-action="undo"/);
   assert.match(studioSource, /data-geogebra-studio-action="redo"/);
   assert.match(studioSource, /data-geogebra-studio-action="export"/);
+  assert.match(studioSource, /data-geogebra-canvas-loading/);
+  assert.match(studioSource, /data-geogebra-canvas-error/);
+  assert.match(studioSource, /data-geogebra-studio-action="retry-canvas"/);
+  assert.match(studioSource, /正在加载 GeoGebra 离线画布/);
+  assert.match(studioSource, /重试加载/);
   assert.match(studioSource, /runStudioAdjustment/);
   assert.match(studioSource, /executeManualCommands/);
   assert.match(studioSource, /selectObject/);
@@ -51,4 +56,21 @@ test('GeoGebra canvas supports Studio snapshots without replacing existing APIs'
   assert.match(canvasSource, /executeCommands/);
   assert.match(canvasSource, /readCanvas/);
   assert.match(canvasSource, /exportPngBase64/);
+});
+
+test('GeoGebra canvas uses reference-style applet boot and resize handling', async () => {
+  const canvasSource = await readFile(canvasPath, 'utf8');
+
+  assert.match(canvasSource, /window\.ggbAppletReady/);
+  assert.match(canvasSource, /window\.ggbApplet/);
+  assert.match(canvasSource, /width:\s*'100%'/);
+  assert.match(canvasSource, /height:\s*'100%'/);
+  assert.match(canvasSource, /showMenuBar:\s*true/);
+  assert.match(canvasSource, /showAlgebraInput:\s*false/);
+  assert.match(canvasSource, /enable3d:\s*true/);
+  assert.match(canvasSource, /enableUndoRedo:\s*true/);
+  assert.match(canvasSource, /scaleContainerClass:\s*'geogebra-canvas-root'/);
+  assert.match(canvasSource, /ResizeObserver/);
+  assert.match(canvasSource, /case 'select'/);
+  assert.match(canvasSource, /case 'deselect'/);
 });

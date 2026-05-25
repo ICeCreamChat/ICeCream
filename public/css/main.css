@@ -1389,6 +1389,7 @@ body.light-mode .manim-workbench-panel {
 }
 
 .geogebra-canvas-shell {
+    position: relative;
     min-height: 480px;
     border: 1px solid var(--manim-studio-border);
     border-radius: 12px;
@@ -1401,6 +1402,46 @@ body.light-mode .manim-workbench-panel {
     height: min(62vh, 560px);
     min-height: 440px;
     background: #ffffff;
+}
+
+.geogebra-canvas-loading,
+.geogebra-canvas-error-state {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    color: var(--text-secondary);
+    text-align: center;
+    background: rgba(248, 250, 252, 0.84);
+}
+
+.geogebra-canvas-loading[hidden],
+.geogebra-canvas-error-state[hidden] {
+    display: none;
+}
+
+.geogebra-canvas-loading span,
+.geogebra-canvas-error-state span {
+    max-width: 360px;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.geogebra-canvas-error-state {
+    gap: 10px;
+    color: #b91c1c;
+    background: rgba(255, 247, 247, 0.92);
+}
+
+.geogebra-canvas-error-state strong {
+    color: #991b1b;
+    font-size: 14px;
+}
+
+.geogebra-canvas-error-state .manim-workbench-secondary {
+    width: fit-content;
+    justify-self: center;
 }
 
 .geogebra-command-history {

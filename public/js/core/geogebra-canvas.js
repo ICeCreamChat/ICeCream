@@ -2,9 +2,34 @@ const GEOGEBRA_SCRIPT_SRC = '/vendor/geogebra/deployggb.js';
 const GEOGEBRA_CODEBASE = '/vendor/geogebra/HTML5/5.0/web3d/';
 const GEOGEBRA_APPLET_ID = 'icecreamGeoGebraApplet';
 const DEFAULT_PERSPECTIVE = 'G';
+const SCRIPT_READY_TIMEOUT_MS = 15000;
+const APPLET_READY_TIMEOUT_MS = 30000;
+const RESIZE_DEBOUNCE_MS = 160;
 
 function waitForNextFrame() {
     return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
+
+function waitForGgbAppletConstructor(timeoutMs = SCRIPT_READY_TIMEOUT_MS) {
+    if (window.GGBApplet) {
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+        const startedAt = Date.now();
+        const poll = () => {
+            if (window.GGBApplet) {
+                resolve();
+                return;
+            }
+            if (Date.now() - startedAt >= timeoutMs) {
+                reject(new Error('GeoGebra runtime constructor is not available'));
+                return;
+            }
+            window.setTimeout(poll, 50);
+        };
+        poll();
+    });
 }
 
 function normalizeCommand(command) {
@@ -60,99 +85,178 @@ class GeoGebraCanvas {
         this.loaded = false;
         this.lastPerspective = DEFAULT_PERSPECTIVE;
         this.selectedObjectNames = [];
+        this.resizeObserver = null;
+        this.resizeHandler = null;
+        this.resizeTimer = 0;
     }
 
     async mount(containerId = 'geogebra-canvas-root') {
         this.containerId = containerId;
+        const host = this.getHost();
+        this.setCanvasState(host, 'loading');
+
         await this.loadScript();
-        this.injectApplet();
+        await this.injectApplet();
         await this.whenReady();
         await waitForNextFrame();
         this.resize();
+        this.observeResize();
         return this.getApi();
+    }
+
+    async rebuild(containerId = this.containerId) {
+        this.containerId = containerId;
+        this.disconnectResizeObserver();
+        this.appletApi = null;
+        this.appletPromise = null;
+        this.loaded = false;
+        this.selectedObjectNames = [];
+        this.resetGlobalAppletState();
+        const host = this.getHost(false);
+        if (host) {
+            host.innerHTML = '';
+            this.setCanvasState(host, 'idle');
+            host.dataset.geogebraReady = 'false';
+        }
+        return this.mount(containerId);
     }
 
     loadScript() {
         if (window.GGBApplet) {
-            return Promise.resolve();
+            return waitForGgbAppletConstructor();
         }
         if (this.scriptPromise) {
             return this.scriptPromise;
         }
 
         this.scriptPromise = new Promise((resolve, reject) => {
+            let settled = false;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                waitForGgbAppletConstructor().then(resolve, reject);
+            };
+            const fail = () => {
+                if (settled) return;
+                settled = true;
+                reject(new Error('GeoGebra runtime load failed'));
+            };
+
             const existingScript = document.querySelector(`script[src="${GEOGEBRA_SCRIPT_SRC}"]`);
             if (existingScript) {
-                existingScript.addEventListener('load', () => resolve(), { once: true });
-                existingScript.addEventListener('error', () => reject(new Error('GeoGebra runtime load failed')), { once: true });
+                existingScript.addEventListener('load', finish, { once: true });
+                existingScript.addEventListener('error', fail, { once: true });
+                waitForGgbAppletConstructor().then(resolve, reject);
                 return;
             }
 
             const script = document.createElement('script');
             script.src = GEOGEBRA_SCRIPT_SRC;
             script.async = true;
-            script.onload = () => resolve();
-            script.onerror = () => reject(new Error('GeoGebra runtime load failed'));
-            document.head.appendChild(script);
+            script.onload = finish;
+            script.onerror = fail;
+            (document.body || document.head).appendChild(script);
         });
 
         return this.scriptPromise;
     }
 
     injectApplet() {
-        const host = document.getElementById(this.containerId);
-        if (!host) {
-            throw new Error('GeoGebra canvas container is missing');
-        }
+        const host = this.getHost();
         if (this.appletApi && host.dataset.geogebraReady === 'true') {
-            return;
+            this.observeResize();
+            this.resize();
+            return this.appletPromise || Promise.resolve(this.appletApi);
+        }
+        if (!window.GGBApplet) {
+            throw new Error('GeoGebra runtime is not ready');
         }
 
-        host.dataset.geogebraReady = 'false';
-        host.innerHTML = '';
+        this.disconnectResizeObserver();
+        this.appletApi = null;
         this.loaded = false;
+        this.selectedObjectNames = [];
+        this.resetGlobalAppletState({ keepDomApplet: true });
+        host.innerHTML = '';
+        host.dataset.geogebraReady = 'false';
+        this.setCanvasState(host, 'loading');
 
         this.appletPromise = new Promise((resolve, reject) => {
             const failTimer = window.setTimeout(() => {
+                this.setCanvasState(host, 'error', 'GeoGebra applet load timed out');
                 reject(new Error('GeoGebra applet load timed out'));
-            }, 30000);
+            }, APPLET_READY_TIMEOUT_MS);
 
-            const applet = new window.GGBApplet({
+            const appletParams = {
                 id: GEOGEBRA_APPLET_ID,
                 appName: 'classic',
-                width: Math.max(host.clientWidth, 720),
-                height: Math.max(host.clientHeight, 520),
+                width: '100%',
+                height: '100%',
                 showToolBar: true,
-                showMenuBar: false,
-                showAlgebraInput: true,
-                enableLabelDrags: true,
+                showAlgebraInput: false,
+                showMenuBar: true,
+                enableLabelDrags: false,
                 enableShiftDragZoom: true,
                 enableRightClick: true,
-                showResetIcon: true,
-                allowStyleBar: true,
+                enable3d: true,
+                enableUndoRedo: true,
                 errorDialogsActive: false,
+                showResetIcon: true,
+                useBrowserForJS: false,
+                allowStyleBar: false,
+                scaleContainerClass: 'geogebra-canvas-root',
+                preventFocus: false,
                 language: 'zh',
                 appletOnLoad: (api) => {
                     window.clearTimeout(failTimer);
                     this.appletApi = api;
+                    window.ggbApplet = api;
+                    window[GEOGEBRA_APPLET_ID] = api;
+                    window.ggbAppletReady = true;
                     this.loaded = true;
                     host.dataset.geogebraReady = 'true';
+                    this.setCanvasState(host, 'ready');
                     this.bindSelectionListener(api);
                     this.setPerspective(this.lastPerspective);
+                    this.resize();
+                    this.observeResize();
                     resolve(api);
                 },
-            }, true);
+            };
 
-            applet.setHTML5Codebase('/vendor/geogebra/HTML5/5.0/web3d/');
-            applet.inject(this.containerId);
+            try {
+                const applet = new window.GGBApplet(appletParams, true);
+                applet.setHTML5Codebase('/vendor/geogebra/HTML5/5.0/web3d/');
+                applet.inject(this.containerId);
+            } catch (error) {
+                window.clearTimeout(failTimer);
+                this.setCanvasState(host, 'error', error?.message || 'GeoGebra applet inject failed');
+                reject(error);
+            }
         });
+
+        return this.appletPromise;
     }
 
     bindSelectionListener(api) {
         try {
             api.registerClientListener?.((event = {}) => {
-                if (event.type === 'select') {
-                    this.selectedObjectNames = event.target ? [String(event.target)] : [];
+                const target = event.target ? String(event.target) : '';
+                switch (event.type) {
+                    case 'select':
+                        if (target && !this.selectedObjectNames.includes(target)) {
+                            this.selectedObjectNames = [target, ...this.selectedObjectNames].slice(0, 20);
+                        }
+                        break;
+                    case 'deselect':
+                        if (target) {
+                            this.selectedObjectNames = this.selectedObjectNames.filter(name => name !== target);
+                        } else {
+                            this.selectedObjectNames = [];
+                        }
+                        break;
+                    default:
+                        break;
                 }
             });
         } catch {
@@ -164,6 +268,10 @@ class GeoGebraCanvas {
         if (this.appletApi) {
             return Promise.resolve(this.appletApi);
         }
+        if (window.ggbAppletReady && window.ggbApplet) {
+            this.appletApi = window.ggbApplet;
+            return Promise.resolve(this.appletApi);
+        }
         if (!this.appletPromise) {
             return this.mount(this.containerId);
         }
@@ -171,7 +279,68 @@ class GeoGebraCanvas {
     }
 
     getApi() {
-        return this.appletApi || window[GEOGEBRA_APPLET_ID] || window.ggbApplet || null;
+        return this.appletApi || window.ggbApplet || window[GEOGEBRA_APPLET_ID] || null;
+    }
+
+    getHost(required = true) {
+        const host = document.getElementById(this.containerId);
+        if (!host && required) {
+            throw new Error('GeoGebra canvas container is missing');
+        }
+        return host;
+    }
+
+    setCanvasState(host, state, error = '') {
+        if (!host) return;
+        host.dataset.geogebraState = state;
+        if (error) {
+            host.dataset.geogebraError = error;
+        } else {
+            delete host.dataset.geogebraError;
+        }
+    }
+
+    resetGlobalAppletState(options = {}) {
+        window.ggbAppletReady = false;
+        window.ggbLastCommandError = '';
+        if (!options.keepDomApplet) {
+            try {
+                window.ggbApplet?.remove?.();
+            } catch {
+                // The vendored applet may already have removed its DOM.
+            }
+        }
+        window.ggbApplet = null;
+        window[GEOGEBRA_APPLET_ID] = null;
+    }
+
+    observeResize() {
+        const host = this.getHost(false);
+        if (!host) return;
+        this.disconnectResizeObserver();
+        const scheduleResize = () => {
+            window.clearTimeout(this.resizeTimer);
+            this.resizeTimer = window.setTimeout(() => this.resize(), RESIZE_DEBOUNCE_MS);
+        };
+        this.resizeHandler = scheduleResize;
+        if (window.ResizeObserver) {
+            this.resizeObserver = new ResizeObserver(scheduleResize);
+            this.resizeObserver.observe(host);
+        }
+        window.addEventListener('resize', scheduleResize);
+    }
+
+    disconnectResizeObserver() {
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+            this.resizeObserver = null;
+        }
+        if (this.resizeHandler) {
+            window.removeEventListener('resize', this.resizeHandler);
+            this.resizeHandler = null;
+        }
+        window.clearTimeout(this.resizeTimer);
+        this.resizeTimer = 0;
     }
 
     async executeCommand(command) {
@@ -187,9 +356,18 @@ class GeoGebraCanvas {
         }
 
         try {
+            window.ggbLastCommandError = '';
             let label = '';
             if (typeof api.asyncEvalCommandGetLabels === 'function') {
                 label = await api.asyncEvalCommandGetLabels(normalizedCommand);
+                if (window.ggbLastCommandError) {
+                    return {
+                        command: normalizedCommand,
+                        success: false,
+                        label: String(label || ''),
+                        error: window.ggbLastCommandError,
+                    };
+                }
             } else {
                 const accepted = api.evalCommand(normalizedCommand);
                 if (accepted === false) {
@@ -204,6 +382,8 @@ class GeoGebraCanvas {
                 label: '',
                 error: error?.message || 'GeoGebra command failed',
             };
+        } finally {
+            window.ggbLastCommandError = '';
         }
     }
 
@@ -326,10 +506,12 @@ class GeoGebraCanvas {
 
     resize() {
         const api = this.getApi();
-        const host = document.getElementById(this.containerId);
+        const host = this.getHost(false);
         if (!host || !api) return;
+        const width = Math.max(host.clientWidth || host.getBoundingClientRect?.().width || 0, 320);
+        const height = Math.max(host.clientHeight || host.getBoundingClientRect?.().height || 0, 320);
         try {
-            api.setSize?.(Math.max(host.clientWidth, 320), Math.max(host.clientHeight, 320));
+            api.setSize?.(width, height);
         } catch {
             try {
                 api.refreshViews?.();
@@ -350,4 +532,4 @@ class GeoGebraCanvas {
 }
 
 export const geogebraCanvas = new GeoGebraCanvas();
-export { GEOGEBRA_SCRIPT_SRC, GEOGEBRA_CODEBASE, GEOGEBRA_APPLET_ID };
+export { GEOGEBRA_SCRIPT_SRC, GEOGEBRA_CODEBASE, GEOGEBRA_APPLET_ID, waitForGgbAppletConstructor };
