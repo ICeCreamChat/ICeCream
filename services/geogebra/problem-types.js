@@ -13,6 +13,25 @@ function formatSquaredTerm(variable, centerValue) {
     return `(${variable} + ${formatNumber(Math.abs(center))})^2`;
 }
 
+function formatRadical(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 0) return `√${formatNumber(value)}`;
+    if (Math.abs(number) < 1e-9) return '0';
+    const roundedInteger = Math.round(number);
+    if (Math.abs(number - roundedInteger) > 1e-9) return `√${formatNumber(number)}`;
+
+    let coefficient = 1;
+    let remainder = roundedInteger;
+    for (let factor = 2; factor * factor <= remainder; factor += 1) {
+        while (remainder % (factor * factor) === 0) {
+            coefficient *= factor;
+            remainder /= factor * factor;
+        }
+    }
+    if (remainder === 1) return formatNumber(coefficient);
+    return coefficient === 1 ? `√${remainder}` : `${coefficient}√${remainder}`;
+}
+
 export function normalizeGeoGebraProblemText(value = '') {
     return String(value || '')
         .normalize('NFKC')
@@ -127,6 +146,112 @@ function isCircleChordMidpointLocus(facts) {
         && /中点M|M的轨迹|轨迹方程/.test(text)
         && facts.points.O?.x === 0
         && facts.points.O?.y === 0;
+}
+
+function isPositiveXAxisMaximumAngleProblem(facts) {
+    const text = facts.text;
+    const pointLabels = Object.keys(facts.points);
+    const yAxisPoints = pointLabels.filter(label => {
+        const point = facts.points[label];
+        return label !== 'P'
+            && Math.abs(point.x) < 1e-9
+            && point.y > 0;
+    });
+
+    return yAxisPoints.length >= 2
+        && /P/.test(text)
+        && /x轴|x軸|X轴|X軸|x-axis/i.test(text)
+        && /正半轴|正半軸|positive/i.test(text)
+        && /(∠|angle|角)/i.test(text)
+        && /最大|达到最大|max|maximum/i.test(text);
+}
+
+function buildPositiveXAxisMaximumAnglePlan(facts) {
+    const yAxisPoints = Object.entries(facts.points)
+        .filter(([label, point]) => label !== 'P' && Math.abs(point.x) < 1e-9 && point.y > 0)
+        .sort((left, right) => left[1].y - right[1].y)
+        .slice(0, 2);
+    const [[firstLabel, firstPoint], [secondLabel, secondPoint]] = yAxisPoints;
+    const product = firstPoint.y * secondPoint.y;
+    const optimalX = Math.sqrt(product);
+    const exactX = formatRadical(product);
+    const maxX = Math.max(optimalX * 2, optimalX + 2, secondPoint.y + 1);
+    const demoEndX = Number(formatNumber(Math.max(optimalX * 2, optimalX + 2, 6)));
+    const optimalXNumber = Number(formatNumber(optimalX));
+    const viewport = {
+        xmin: -1,
+        ymin: -1,
+        xmax: Number(formatNumber(Math.max(maxX + 1, 7))),
+        ymax: Number(formatNumber(Math.max(firstPoint.y, secondPoint.y) + 1)),
+        equalScale: true,
+    };
+    const demo = {
+        type: 'timeline',
+        autoPlay: true,
+        clearBeforePlay: true,
+        preserveAfterFinish: true,
+        durationMs: 6500,
+        tracks: [{
+            kind: 'path-trace',
+            movingObject: 'Q',
+            tracedObject: 'Q',
+            samples: 240,
+            path: {
+                type: 'polyline',
+                points: [
+                    { x: 0.3, y: 0 },
+                    { x: demoEndX, y: 0 },
+                    { x: optimalXNumber, y: 0 },
+                ],
+            },
+        }],
+    };
+
+    return {
+        summary: `已按题意绘制定点 ${firstLabel}(0, ${formatNumber(firstPoint.y)})、${secondLabel}(0, ${formatNumber(secondPoint.y)})，当 P 在 x 轴正半轴且 ∠${firstLabel}P${secondLabel} 最大时，P = (${exactX}, 0) ≈ (${formatNumber(optimalX)}, 0)。`,
+        perspective: 'G',
+        commands: [
+            'O = (0, 0)',
+            'X = (1, 0)',
+            `${firstLabel} = (0, ${formatNumber(firstPoint.y)})`,
+            `${secondLabel} = (0, ${formatNumber(secondPoint.y)})`,
+            'positiveXAxis = Ray(O, X)',
+            `P = (sqrt(${formatNumber(product)}), 0)`,
+            'Q = (0.3, 0)',
+            `optA = Segment(P, ${firstLabel})`,
+            `optB = Segment(P, ${secondLabel})`,
+            `candA = Segment(Q, ${firstLabel})`,
+            `candB = Segment(Q, ${secondLabel})`,
+            `alpha = Angle(${firstLabel}, P, ${secondLabel})`,
+            `beta = Angle(${firstLabel}, Q, ${secondLabel})`,
+            'SetColor(positiveXAxis, 0.35, 0.35, 0.35)',
+            'SetColor(P, 0.95, 0.35, 0.1)',
+            'SetColor(Q, 0, 0.55, 0.85)',
+            'SetColor(optA, 0.1, 0.35, 0.95)',
+            'SetColor(optB, 0.1, 0.35, 0.95)',
+            'SetColor(candA, 0.55, 0.72, 1)',
+            'SetColor(candB, 0.55, 0.72, 1)',
+            'SetColor(alpha, 0.95, 0.35, 0.1)',
+            'SetLineThickness(optA, 5)',
+            'SetLineThickness(optB, 5)',
+            'ShowLabel(O, true)',
+            `ShowLabel(${firstLabel}, true)`,
+            `ShowLabel(${secondLabel}, true)`,
+            'ShowLabel(P, true)',
+            'ShowLabel(Q, true)',
+            'ShowLabel(alpha, true)',
+        ],
+        viewport,
+        demo,
+        followUp: `演示点 Q 在 x 轴正半轴上移动时，∠${firstLabel}Q${secondLabel} 先增大后减小；最优点 P 的横坐标为 √(${formatNumber(product)}) = ${exactX}。`,
+        studioNotes: '确定性题型模板：两点在 y 轴正向、动点 P 在 x 轴正半轴，最大化 ∠APB。由 tan∠APB = x(b-a)/(x^2+ab) 得 x^2=ab。',
+        deterministic: true,
+        problemType: 'angle_max_on_positive_x_axis',
+        extractedFacts: {
+            points: facts.points,
+            optimalPoint: { x: optimalXNumber, y: 0 },
+        },
+    };
 }
 
 function buildCircleChordMidpointLocusPlan(facts) {
@@ -301,6 +426,9 @@ export function tryCreateGeoGebraProblemPlan(requestPayload = {}) {
 
     if (isCircleChordMidpointLocus(facts)) {
         return buildCircleChordMidpointLocusPlan(facts);
+    }
+    if (isPositiveXAxisMaximumAngleProblem(facts)) {
+        return buildPositiveXAxisMaximumAnglePlan(facts);
     }
     if (/三角形|triangle/i.test(text) && /外接圆|circumcircle/i.test(text)) {
         return buildTriangleCircumcirclePlan();

@@ -33,6 +33,7 @@ function restoreEnv(key, value) {
 }
 
 const REAL_LOCUS_PROBLEM_WITH_LATEX_ORIGIN = '\u3010\u4f8b1\u3011\u3001\u5df2\u77e5\u5706C\u662f\u4ee5C(0,3)\u4e3a\u5706\u5fc3\u30013\u4e3a\u534a\u5f84\u7684\u5706\u3002\u8fc7\u539f\u70b9$O$\u4f5c\u5706C\u7684\u4efb\u610f\u5f26OP,\u6c42OP\u7684\u4e2d\u70b9M\u7684\u8f68\u8ff9\u65b9\u7a0b\u3002';
+const REAL_ANGLE_MAX_PROBLEM = '\u5728\u5e73\u9762\u76f4\u89d2\u5750\u6807\u7cfb\u4e2d\uff0c\u5df2\u77e5\u4e24\u5b9a\u70b9$A(0,2)$\u548c$B(0,6)$\u3002\u5728$x$\u8f74\u7684\u6b63\u534a\u8f74\u4e0a\u786e\u5b9a\u4e00\u70b9$P$\uff0c\u4f7f\u5f97\u9510\u89d2$\\angle APB$\u8fbe\u5230\u6700\u5927\u3002\u6c42\u6b64\u65f6\u70b9$P$\u7684\u5750\u6807\u3002';
 
 test('GeoGebra plan request normalizes user input at the API boundary', () => {
   const requestPayload = buildGeoGebraPlanRequest({
@@ -164,6 +165,22 @@ test('GeoGebra deterministic planner handles real OCR text without DeepSeek fall
   assert.ok(payload.data.commands.includes('C = (0, 3)'));
   assert.ok(payload.data.commands.includes('K = (0, 1.5)'));
   assert.ok(payload.data.commands.includes('locusM = Circle(K, 1.5)'));
+});
+
+test('GeoGebra deterministic planner handles maximum angle coordinate problems without DeepSeek fallback', async () => {
+  const payload = await createGeoGebraPlan({
+    message: REAL_ANGLE_MAX_PROBLEM,
+  }, {
+    env: {},
+  });
+
+  assert.equal(payload.success, true);
+  assert.equal(payload.data.deterministic, true);
+  assert.equal(payload.data.problemType, 'angle_max_on_positive_x_axis');
+  assert.match(payload.data.summary, /P = \(2√3, 0\)/);
+  assert.ok(payload.data.commands.includes('P = (sqrt(12), 0)'));
+  assert.ok(payload.data.commands.includes('alpha = Angle(A, P, B)'));
+  assert.equal(payload.data.demo?.type, 'timeline');
 });
 
 test('GeoGebra image plan rejects requests without an uploaded image', async () => {
