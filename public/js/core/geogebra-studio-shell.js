@@ -63,6 +63,7 @@ class GeoGebraStudioShell {
 
         setAnimationEngine('geogebra');
         this.modeSwitcher?.setMode?.('manim', true);
+        geogebraWorkbench.clearTransientProblemState();
         this.isOpen = true;
         this.overlay.classList.remove('hidden');
         this.overlay.classList.add('open');

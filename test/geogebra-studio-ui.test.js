@@ -26,10 +26,21 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioShellSource, /geogebraWorkbench\.prepare/);
 
   assert.match(studioSource, /GEOGEBRA_STUDIO_SESSION_KEY/);
-  assert.match(studioSource, /icecream_geogebra_studio_v1/);
+  assert.match(studioSource, /icecream_geogebra_studio_v2/);
   assert.match(studioSource, /\/api\/geogebra\/studio\/adjust/);
   assert.match(studioSource, /\/api\/geogebra\/studio\/parse-image/);
-  assert.match(studioSource, /GEOGEBRA_STUDIO_TABS = \['objects', 'adjust', 'commands', 'manual', 'projects', 'history'\]/);
+  assert.match(studioSource, /renderDrawingAssistant/);
+  assert.match(studioSource, /renderAdvancedTools/);
+  assert.match(studioSource, /data-geogebra-studio-action="draw-from-prompt"/);
+  assert.match(studioSource, /data-geogebra-studio-action="adjust-current-graph"/);
+  assert.match(studioSource, /data-geogebra-prompt-input/);
+  assert.match(studioSource, /data-geogebra-advanced-tools/);
+  assert.match(studioSource, /绘图助手/);
+  assert.match(studioSource, /生成图形/);
+  assert.match(studioSource, /调整当前图/);
+  assert.match(studioSource, /高级工具/);
+  assert.doesNotMatch(studioSource, /renderStudioMessages/);
+  assert.doesNotMatch(studioSource, /renderProblemReview/);
   assert.match(studioSource, /renderTab\('objects'/);
   assert.match(studioSource, /renderTab\('adjust'/);
   assert.match(studioSource, /renderTab\('commands'/);
@@ -42,6 +53,13 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioSource, /data-geogebra-studio-action="upload-problem"/);
   assert.match(studioSource, /data-geogebra-studio-action="retry-problem-image"/);
   assert.match(studioSource, /parseProblemImage/);
+  assert.ok(studioSource.includes('\u6309\u4fee\u6b63\u6587\u9898\u91cd\u65b0\u7ed8\u56fe'));
+  assert.match(studioSource, /async replanProblemText\(options = \{\}\)/);
+  assert.match(studioSource, /const outcome = await this\.executePlanCommands\(payload\.data \|\| \{\}, \{[\s\S]*source: 'problem_replan'/);
+  assert.match(studioSource, /resetBeforeExecute/);
+  assert.match(studioSource, /requireVisibleObjects/);
+  assert.match(studioSource, /canvasAfterExecution/);
+  assert.ok(studioSource.includes('\u547d\u4ee4\u5df2\u8fd4\u56de\u4f46\u672a\u843d\u56fe'));
   assert.match(studioSource, /data-geogebra-canvas-loading/);
   assert.match(studioSource, /data-geogebra-canvas-error/);
   assert.match(studioSource, /data-geogebra-studio-action="retry-canvas"/);
@@ -58,12 +76,18 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
 
   assert.match(mainStyles, /\.geogebra-studio-layout/);
   assert.match(mainStyles, /\.geogebra-studio-shell/);
+  assert.match(mainStyles, /\.geogebra-drawing-assistant/);
+  assert.match(mainStyles, /\.geogebra-assistant-scroll/);
+  assert.match(mainStyles, /\.geogebra-result-card/);
+  assert.match(mainStyles, /\.geogebra-recognized-problem/);
   assert.match(mainStyles, /\.geogebra-problem-upload/);
   assert.match(mainStyles, /\.geogebra-studio-sidebar/);
   assert.match(mainStyles, /\.geogebra-studio-object-list/);
   assert.match(mainStyles, /\.geogebra-studio-command-editor/);
+  assert.match(mainStyles, /overflow-wrap:\s*anywhere/);
   assert.match(mobileStyles, /\.geogebra-studio-layout/);
   assert.match(mobileStyles, /\.geogebra-studio-shell/);
+  assert.match(mobileStyles, /\.geogebra-drawing-assistant/);
 });
 
 test('GeoGebra canvas supports Studio snapshots without replacing existing APIs', async () => {

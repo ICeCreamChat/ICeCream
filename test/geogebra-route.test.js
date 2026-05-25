@@ -32,6 +32,8 @@ function restoreEnv(key, value) {
   }
 }
 
+const REAL_LOCUS_PROBLEM_WITH_LATEX_ORIGIN = '\u3010\u4f8b1\u3011\u3001\u5df2\u77e5\u5706C\u662f\u4ee5C(0,3)\u4e3a\u5706\u5fc3\u30013\u4e3a\u534a\u5f84\u7684\u5706\u3002\u8fc7\u539f\u70b9$O$\u4f5c\u5706C\u7684\u4efb\u610f\u5f26OP,\u6c42OP\u7684\u4e2d\u70b9M\u7684\u8f68\u8ff9\u65b9\u7a0b\u3002';
+
 test('GeoGebra plan request normalizes user input at the API boundary', () => {
   const requestPayload = buildGeoGebraPlanRequest({
     message: '  画一个三角形  ',
@@ -116,7 +118,8 @@ test('GeoGebra deterministic planner handles circle chord midpoint locus problem
   assert.ok(payload.data.commands.includes('C = (0, 3)'));
   assert.ok(payload.data.commands.includes('c = Circle(C, 3)'));
   assert.ok(payload.data.commands.includes('M = Midpoint(O, P)'));
-  assert.ok(payload.data.commands.includes('locusM = Circle((0, 1.5), 1.5)'));
+  assert.ok(payload.data.commands.includes('K = (0, 1.5)'));
+  assert.ok(payload.data.commands.includes('locusM = Circle(K, 1.5)'));
 });
 
 test('GeoGebra image OCR text can trigger deterministic drawing without DeepSeek', async () => {
@@ -130,7 +133,24 @@ test('GeoGebra image OCR text can trigger deterministic drawing without DeepSeek
 
   assert.equal(payload.data.deterministic, true);
   assert.match(payload.data.summary, /M 的轨迹方程/);
-  assert.ok(payload.data.commands.includes('locusM = Circle((0, 1.5), 1.5)'));
+  assert.ok(payload.data.commands.includes('K = (0, 1.5)'));
+  assert.ok(payload.data.commands.includes('locusM = Circle(K, 1.5)'));
+});
+
+test('GeoGebra deterministic planner handles real OCR text without DeepSeek fallback', async () => {
+  const payload = await createGeoGebraPlan({
+    message: REAL_LOCUS_PROBLEM_WITH_LATEX_ORIGIN,
+  }, {
+    env: {},
+  });
+
+  assert.equal(payload.success, true);
+  assert.equal(payload.data.deterministic, true);
+  assert.match(payload.data.summary, /x\^2 \+ \(y - 1\.5\)\^2 = 2\.25/);
+  assert.ok(payload.data.commands.includes('O = (0, 0)'));
+  assert.ok(payload.data.commands.includes('C = (0, 3)'));
+  assert.ok(payload.data.commands.includes('K = (0, 1.5)'));
+  assert.ok(payload.data.commands.includes('locusM = Circle(K, 1.5)'));
 });
 
 test('GeoGebra image plan rejects requests without an uploaded image', async () => {

@@ -21,8 +21,12 @@ test('GeoGebra Studio supports OCR review before drawing uploaded problems', asy
 
   assert.match(studioSource, /pendingProblemPlan/);
   assert.match(studioSource, /problemReviewText/);
-  assert.match(studioSource, /data-geogebra-problem-review-input/);
-  assert.match(studioSource, /data-geogebra-studio-action="draw-problem-plan"/);
+  assert.match(studioSource, /data-geogebra-prompt-input/);
+  assert.match(studioSource, /executeUploadedProblemPlan/);
+  assert.match(studioSource, /parseProblemImage[\s\S]*await this\.executeUploadedProblemPlan/);
+  assert.match(studioSource, /data-geogebra-studio-action="draw-from-prompt"/);
   assert.match(studioSource, /data-geogebra-studio-action="replan-problem-text"/);
+  assert.doesNotMatch(studioSource, /data-geogebra-problem-review-input/);
+  assert.doesNotMatch(studioSource, /data-geogebra-studio-action="draw-problem-plan"/);
   assert.doesNotMatch(studioSource, /const outcome = await this\.executePlanCommands\(body,\s*\{\s*source: 'image_parse'/);
 });

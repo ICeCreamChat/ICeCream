@@ -45,7 +45,8 @@ test('GeoGebra agent-step returns execute for deterministic high confidence prob
   assert.equal(payload.intent, 'geogebra');
   assert.equal(payload.data.status, 'execute');
   assert.equal(payload.data.deterministic, true);
-  assert.ok(payload.data.commands.includes('locusM = Circle((0, 1.5), 1.5)'));
+  assert.ok(payload.data.commands.includes('K = (0, 1.5)'));
+  assert.ok(payload.data.commands.includes('locusM = Circle(K, 1.5)'));
 });
 
 test('GeoGebra agent-step asks for clarification when no template and no AI are available', async () => {

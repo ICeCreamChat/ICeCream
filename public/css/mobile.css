@@ -1117,6 +1117,30 @@
     .geogebra-studio-sidebar {
         order: 2;
         height: auto;
+        overflow: visible;
+    }
+
+    .geogebra-drawing-assistant {
+        height: auto;
+        min-height: 0;
+        padding: 10px;
+    }
+
+    .geogebra-assistant-scroll {
+        overflow: visible;
+        max-height: none;
+    }
+
+    .geogebra-assistant-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .geogebra-assistant-actions .manim-workbench-primary {
+        grid-column: auto;
+    }
+
+    .geogebra-result-card {
+        max-height: none;
     }
 
     .geogebra-studio-canvas-pane {

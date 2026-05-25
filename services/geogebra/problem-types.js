@@ -16,6 +16,10 @@ function formatSquaredTerm(variable, centerValue) {
 export function normalizeGeoGebraProblemText(value = '') {
     return String(value || '')
         .normalize('NFKC')
+        .replace(/\\\(([\s\S]*?)\\\)/g, '$1')
+        .replace(/\\\[([\s\S]*?)\\\]/g, '$1')
+        .replace(/\$+([^$]+)\$+/g, '$1')
+        .replace(/【\s*例\s*\d+\s*】/g, '')
         .replace(/[，。；：]/g, match => ({ '，': ',', '。': '.', '；': ';', '：': ':' }[match] || match))
         .replace(/[（]/g, '(')
         .replace(/[）]/g, ')')
@@ -103,7 +107,7 @@ function parseCircleFacts(text, points) {
 export function extractGeoGebraFacts(message = '') {
     const text = normalizeGeoGebraProblemText(message);
     const points = parsePointDefinitions(text);
-    if (/原点O|O为原点|O是原点/.test(text) && !points.O) {
+    if (/(?:过|以|从|在)?(?:坐标)?原点O?|O(?:为|是)(?:坐标)?原点/.test(text) && !points.O) {
         points.O = { x: 0, y: 0 };
     }
 
@@ -146,8 +150,8 @@ function buildCircleChordMidpointLocusPlan(facts) {
             'P = Point(c)',
             's = Segment(O, P)',
             'M = Midpoint(O, P)',
-            `locusM = Circle((${formatNumber(locusCenter.x)}, ${formatNumber(locusCenter.y)}), ${formatNumber(locusRadius)})`,
-            'traceM = Locus(M, P)',
+            `K = (${formatNumber(locusCenter.x)}, ${formatNumber(locusCenter.y)})`,
+            `locusM = Circle(K, ${formatNumber(locusRadius)})`,
             'SetColor(c, 0.25, 0.25, 0.25)',
             'SetColor(s, 0.1, 0.35, 0.95)',
             'SetColor(M, 0.95, 0.35, 0.1)',
@@ -158,6 +162,7 @@ function buildCircleChordMidpointLocusPlan(facts) {
             `ShowLabel(${circle.centerLabel}, true)`,
             'ShowLabel(P, true)',
             'ShowLabel(M, true)',
+            'ShowLabel(K, true)',
             `ZoomIn(${formatNumber(Math.min(-4, center.x - radius - 1))}, ${formatNumber(Math.min(-2, center.y - radius - 1))}, ${formatNumber(Math.max(4, center.x + radius + 1))}, ${formatNumber(Math.max(5, center.y + radius + 1))})`,
         ],
         followUp: `拖动点 P，可以看到 M 始终落在以 (${formatNumber(locusCenter.x)}, ${formatNumber(locusCenter.y)}) 为圆心、${formatNumber(locusRadius)} 为半径的轨迹圆上。`,

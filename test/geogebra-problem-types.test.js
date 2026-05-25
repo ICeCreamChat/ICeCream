@@ -7,6 +7,10 @@ import {
   tryCreateGeoGebraProblemPlan,
 } from '../services/geogebra/problem-types.js';
 
+const REAL_LOCUS_PROBLEM = '\u5df2\u77e5\u5706C\u662f\u4ee5C(0,3)\u4e3a\u5706\u5fc3\u30013\u4e3a\u534a\u5f84\u7684\u5706\u3002\u8fc7\u539f\u70b9O\u4f5c\u5706C\u7684\u4efb\u610f\u5f26OP,\u6c42OP\u7684\u4e2d\u70b9M\u7684\u8f68\u8ff9\u65b9\u7a0b\u3002';
+const REAL_LOCUS_PROBLEM_WITH_LATEX_ORIGIN = '\u3010\u4f8b1\u3011\u3001\u5df2\u77e5\u5706C\u662f\u4ee5C(0,3)\u4e3a\u5706\u5fc3\u30013\u4e3a\u534a\u5f84\u7684\u5706\u3002\u8fc7\u539f\u70b9$O$\u4f5c\u5706C\u7684\u4efb\u610f\u5f26OP,\u6c42OP\u7684\u4e2d\u70b9M\u7684\u8f68\u8ff9\u65b9\u7a0b\u3002';
+const REAL_LOCUS_PROBLEM_WITH_PAREN_ORIGIN = '\u3010\u4f8b1\u3011\u5df2\u77e5\u5706C\u662f\u4ee5C(0,3)\u4e3a\u5706\u5fc3\uff0c3\u4e3a\u534a\u5f84\u7684\u5706\u3002\u8fc7\u539f\u70b9\\(O\\)\u4f5c\u5706C\u7684\u4efb\u610f\u5f26OP\uff0c\u6c42OP\u7684\u4e2d\u70b9M\u7684\u8f68\u8ff9\u65b9\u7a0b\u3002';
+
 test('GeoGebra problem classifier identifies locus and analytic geometry requests', () => {
   const classification = classifyGeoGebraProblem('已知圆C是以C(0,3)为圆心、3为半径的圆。过原点O作圆C的任意弦OP,求OP的中点M的轨迹方程。');
 
@@ -35,6 +39,22 @@ test('GeoGebra deterministic template draws circle chord midpoint locus exactly'
   assert.ok(plan.commands.includes('C = (0, 3)'));
   assert.ok(plan.commands.includes('c = Circle(C, 3)'));
   assert.ok(plan.commands.includes('M = Midpoint(O, P)'));
+});
+
+test('GeoGebra deterministic template handles real OCR text with LaTeX origin markers', () => {
+  for (const message of [REAL_LOCUS_PROBLEM, REAL_LOCUS_PROBLEM_WITH_LATEX_ORIGIN, REAL_LOCUS_PROBLEM_WITH_PAREN_ORIGIN]) {
+    const facts = extractGeoGebraFacts(message);
+    const plan = tryCreateGeoGebraProblemPlan({ message });
+
+    assert.deepEqual(facts.points.O, { x: 0, y: 0 });
+    assert.equal(facts.circles[0].centerLabel, 'C');
+    assert.equal(facts.circles[0].radius, 3);
+    assert.equal(plan.deterministic, true);
+    assert.equal(plan.problemType, 'locus');
+    assert.match(plan.summary, /x\^2 \+ \(y - 1\.5\)\^2 = 2\.25/);
+    assert.ok(plan.commands.includes('K = (0, 1.5)'));
+    assert.ok(plan.commands.includes('locusM = Circle(K, 1.5)'));
+  }
 });
 
 test('GeoGebra problem templates cover common geometry families without guessing unknowns', () => {

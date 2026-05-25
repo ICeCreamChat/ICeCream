@@ -48,6 +48,11 @@ class GeoGebraWorkbench {
         geogebraStudio.resetSessionRuntime();
     }
 
+    clearTransientProblemState() {
+        geogebraStudio.clearTransientProblemState();
+        geogebraStudio.saveSession();
+    }
+
     render() {
         return geogebraStudio.render({
             status: this.status,
@@ -97,6 +102,8 @@ class GeoGebraWorkbench {
             const planOutcome = await geogebraStudio.executePlanCommands(planPayload.data || {}, {
                 source: 'plan',
                 label: 'plan',
+                resetBeforeExecute: true,
+                requireVisibleObjects: true,
             });
             let records = planOutcome.records || [];
 
