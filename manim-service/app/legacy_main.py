@@ -20,7 +20,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
-from openai import AsyncOpenAI 
 from dotenv import load_dotenv
 
 # Ensure Windows console logging does not crash on non-GBK characters.
@@ -38,6 +37,7 @@ load_dotenv(dotenv_path="../.env")
 # ================= 📦 导入配置和提示词 =================
 # ================= 📦 导入配置和提示词 =================
 from . import service_config as config
+from .openai_client import create_async_openai_client
 
 # Map config variables to globals to avoid changing all usages
 API_KEY = config.API_KEY
@@ -302,10 +302,10 @@ app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=config.TEMPLATES_DIR)
 
-client = AsyncOpenAI(
-    api_key=API_KEY, 
-    base_url=BASE_URL, 
-    timeout=REQUEST_TIMEOUT
+client = create_async_openai_client(
+    api_key=API_KEY,
+    base_url=BASE_URL,
+    timeout=REQUEST_TIMEOUT,
 )
 
 # ================= 📝 智能上下文管理器 =================
