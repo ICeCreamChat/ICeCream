@@ -10,6 +10,15 @@ import { registerFrontendLogRoute } from './routes/frontend-log.js';
 import { registerHealthRoute } from './routes/health.js';
 import { registerStaticVideoProxy } from './routes/static-video.js';
 
+export function setDevelopmentStaticHeaders(res, filePath = '') {
+    const normalizedPath = String(filePath).replace(/\\/g, '/');
+    if (normalizedPath.includes('/public/js/') || normalizedPath.includes('/public/vendor/geogebra/')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+    }
+}
+
 export function createGatewayApp(options = {}) {
     loadEnvironment();
 
@@ -32,7 +41,9 @@ export function createGatewayApp(options = {}) {
         logger: config.logger || console,
     });
 
-    app.use(express.static(config.publicDir || gatewayPaths.publicDir));
+    app.use(express.static(config.publicDir || gatewayPaths.publicDir, {
+        setHeaders: config.isDev ? setDevelopmentStaticHeaders : undefined,
+    }));
 
     registerApiRoutes(app);
     registerHealthRoute(app);

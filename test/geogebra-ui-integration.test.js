@@ -26,6 +26,8 @@ test('GeoGebra frontend modules use local vendor assets and explicit APIs', asyn
   ]);
 
   assert.match(canvasSource, /\/vendor\/geogebra\/deployggb\.js/);
+  assert.match(canvasSource, /GEOGEBRA_RUNTIME_VERSION/);
+  assert.match(canvasSource, /data-geogebra-runtime/);
   assert.match(canvasSource, /setHTML5Codebase\('\/vendor\/geogebra\/HTML5\/5\.0\/web3d\/'\)/);
   assert.match(canvasSource, /waitForGgbAppletConstructor/);
   assert.match(canvasSource, /window\.ggbAppletReady = true/);

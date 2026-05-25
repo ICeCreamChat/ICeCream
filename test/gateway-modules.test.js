@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createGatewayApp } from '../gateway/app.js';
+import { createGatewayApp, setDevelopmentStaticHeaders } from '../gateway/app.js';
 import { getConfidenceThreshold } from '../gateway/middleware/intent-router.js';
 import {
     createStaticVideoProxy,
@@ -18,6 +18,21 @@ test('gateway app can be constructed without starting the HTTP listener', () => 
 
     assert.equal(typeof app, 'function');
     assert.equal(app.get('trust proxy'), 1);
+});
+
+test('development static headers prevent stale GeoGebra runtime caching', () => {
+    const headers = {};
+    const res = {
+        setHeader(name, value) {
+            headers[name] = value;
+        },
+    };
+
+    setDevelopmentStaticHeaders(res, 'D:/607document/ICeCream/public/vendor/geogebra/deployggb.js');
+
+    assert.match(headers['Cache-Control'], /no-store/);
+    assert.equal(headers.Pragma, 'no-cache');
+    assert.equal(headers.Expires, '0');
 });
 
 test('Manim static proxy URL normalization is stable', () => {

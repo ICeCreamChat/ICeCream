@@ -1,4 +1,5 @@
-const GEOGEBRA_SCRIPT_SRC = '/vendor/geogebra/deployggb.js';
+const GEOGEBRA_RUNTIME_VERSION = 'chat-with-geogebra-next-20260525';
+const GEOGEBRA_SCRIPT_SRC = `/vendor/geogebra/deployggb.js?v=${GEOGEBRA_RUNTIME_VERSION}`;
 const GEOGEBRA_CODEBASE = '/vendor/geogebra/HTML5/5.0/web3d/';
 const GEOGEBRA_APPLET_ID = 'icecreamGeoGebraApplet';
 const DEFAULT_PERSPECTIVE = 'G';
@@ -142,7 +143,7 @@ class GeoGebraCanvas {
                 reject(new Error('GeoGebra runtime load failed'));
             };
 
-            const existingScript = document.querySelector(`script[src="${GEOGEBRA_SCRIPT_SRC}"]`);
+            const existingScript = document.querySelector('script[data-geogebra-runtime="true"]');
             if (existingScript) {
                 existingScript.addEventListener('load', finish, { once: true });
                 existingScript.addEventListener('error', fail, { once: true });
@@ -153,6 +154,7 @@ class GeoGebraCanvas {
             const script = document.createElement('script');
             script.src = GEOGEBRA_SCRIPT_SRC;
             script.async = true;
+            script.dataset.geogebraRuntime = 'true';
             script.onload = finish;
             script.onerror = fail;
             (document.body || document.head).appendChild(script);
