@@ -63,6 +63,7 @@ class GeoGebraStudio {
         this.manualCommands = '';
         this.busy = false;
         this.canvasMounted = false;
+        this.canvasMountPromise = null;
         this.canvasLoadState = 'idle';
         this.canvasLoadError = '';
         this.sessionRestored = false;
@@ -413,21 +414,65 @@ class GeoGebraStudio {
             button.addEventListener('click', () => this.handleAction(button.dataset.geogebraStudioAction));
         });
 
-        if (!options.skipMount && !this.canvasMounted) {
-            this.mountCanvas();
+        if (!options.skipMount && this.needsCanvasMount()) {
+            const domWasReplaced = this.canvasMounted && !this.isCanvasDomReady();
+            if (domWasReplaced) {
+                this.canvasMounted = false;
+            }
+            this.mountCanvas({
+                forceRebuild: domWasReplaced,
+                restoreSnapshot: domWasReplaced,
+            });
         }
     }
 
     async mountCanvas(options = {}) {
+        if (this.canvasMountPromise && !options.forceRebuild) {
+            return this.canvasMountPromise;
+        }
+        this.canvasMountPromise = this.performCanvasMount(options).finally(() => {
+            this.canvasMountPromise = null;
+        });
+        return this.canvasMountPromise;
+    }
+
+    needsCanvasMount() {
+        const canvasRoot = this.getCanvasRoot();
+        if (!canvasRoot) return false;
+        return !this.canvasMounted || !this.isCanvasDomReady(canvasRoot);
+    }
+
+    getCanvasRoot() {
+        return this.root?.querySelector?.('#geogebra-canvas-root') || document.getElementById('geogebra-canvas-root');
+    }
+
+    isCanvasDomReady(canvasRoot = this.getCanvasRoot()) {
+        if (!canvasRoot) return false;
+        const hasInjectedApplet = Boolean(canvasRoot.querySelector('.applet_scaler, .GeoGebraFrame, article, canvas, iframe'))
+            || canvasRoot.childElementCount > 0;
+        return canvasRoot.dataset.geogebraReady === 'true' && hasInjectedApplet;
+    }
+
+    async performCanvasMount(options = {}) {
         this.canvasLoadState = 'loading';
         this.canvasLoadError = '';
         this.latestError = '';
         this.refreshCanvasOverlay();
         try {
+            if (options.restoreSnapshot) {
+                this.sessionRestored = false;
+            }
             if (options.forceRebuild) {
                 await geogebraCanvas.rebuild('geogebra-canvas-root');
             } else {
                 await geogebraCanvas.mount('geogebra-canvas-root');
+            }
+            if (!this.isCanvasDomReady()) {
+                this.sessionRestored = false;
+                await geogebraCanvas.rebuild('geogebra-canvas-root');
+            }
+            if (!this.isCanvasDomReady()) {
+                throw new Error('GeoGebra applet mounted but the current canvas DOM is empty');
             }
             this.canvasMounted = true;
             this.canvasLoadState = 'ready';

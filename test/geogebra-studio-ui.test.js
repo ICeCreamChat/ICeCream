@@ -36,6 +36,11 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioSource, /data-geogebra-studio-action="retry-canvas"/);
   assert.match(studioSource, /正在加载 GeoGebra 离线画布/);
   assert.match(studioSource, /重试加载/);
+  assert.match(studioSource, /canvasMountPromise/);
+  assert.match(studioSource, /needsCanvasMount/);
+  assert.match(studioSource, /isCanvasDomReady/);
+  assert.match(studioSource, /forceRebuild:\s*domWasReplaced/);
+  assert.match(studioSource, /restoreSnapshot:\s*domWasReplaced/);
   assert.match(studioSource, /runStudioAdjustment/);
   assert.match(studioSource, /executeManualCommands/);
   assert.match(studioSource, /selectObject/);
