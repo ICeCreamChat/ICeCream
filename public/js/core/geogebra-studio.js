@@ -3,7 +3,10 @@ import { geogebraCanvas } from './geogebra-canvas.js';
 
 const GEOGEBRA_STUDIO_SESSION_KEY = 'icecream_geogebra_studio_v1';
 const GEOGEBRA_STUDIO_XML_LIMIT = 220000;
-const GEOGEBRA_STUDIO_TABS = ['objects', 'adjust', 'commands', 'history'];
+const GEOGEBRA_STUDIO_TABS = ['objects', 'adjust', 'commands', 'manual', 'projects', 'history'];
+const GEOGEBRA_PROBLEM_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const GEOGEBRA_PROBLEM_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+const GEOGEBRA_STUDIO_BASE64_LIMIT = 900000;
 
 const FALLBACK_STATUS = {
     assetsAvailable: false,
@@ -59,8 +62,20 @@ class GeoGebraStudio {
         this.repairSummary = '';
         this.latestError = '';
         this.studioNotes = '';
+        this.problemParseStatus = '';
+        this.problemImageName = '';
+        this.lastProblemImageFile = null;
+        this.pendingProblemPlan = null;
+        this.problemReviewText = '';
+        this.problemExtractedText = '';
+        this.problemImageDescription = '';
         this.adjustMessage = '';
         this.manualCommands = '';
+        this.manualQuery = '';
+        this.manualResults = [];
+        this.manualStatus = '';
+        this.projectPages = [];
+        this.activeProjectPageId = '';
         this.busy = false;
         this.canvasMounted = false;
         this.canvasMountPromise = null;
@@ -87,8 +102,21 @@ class GeoGebraStudio {
             this.repairSummary = String(session.repairSummary || '');
             this.latestError = String(session.latestError || '');
             this.studioNotes = String(session.studioNotes || '');
+            this.problemParseStatus = String(session.problemParseStatus || '');
+            this.problemImageName = String(session.problemImageName || '');
+            this.pendingProblemPlan = session.pendingProblemPlan && typeof session.pendingProblemPlan === 'object'
+                ? session.pendingProblemPlan
+                : null;
+            this.problemReviewText = String(session.problemReviewText || '');
+            this.problemExtractedText = String(session.problemExtractedText || '');
+            this.problemImageDescription = String(session.problemImageDescription || '');
             this.adjustMessage = String(session.adjustMessage || '');
             this.manualCommands = String(session.manualCommands || '');
+            this.manualQuery = String(session.manualQuery || '');
+            this.manualResults = Array.isArray(session.manualResults) ? session.manualResults.slice(0, 10) : [];
+            this.manualStatus = String(session.manualStatus || '');
+            this.projectPages = Array.isArray(session.projectPages) ? session.projectPages.slice(0, 20) : [];
+            this.activeProjectPageId = String(session.activeProjectPageId || '');
             if (session.latestCanvasSnapshot?.xml) {
                 this.latestCanvasSnapshot = session.latestCanvasSnapshot;
             }
@@ -115,8 +143,22 @@ class GeoGebraStudio {
                 repairSummary: this.repairSummary,
                 latestError: this.latestError,
                 studioNotes: this.studioNotes,
+                problemParseStatus: this.problemParseStatus,
+                problemImageName: this.problemImageName,
+                pendingProblemPlan: this.pendingProblemPlan,
+                problemReviewText: this.problemReviewText,
+                problemExtractedText: this.problemExtractedText,
+                problemImageDescription: this.problemImageDescription,
                 adjustMessage: this.adjustMessage,
                 manualCommands: this.manualCommands,
+                manualQuery: this.manualQuery,
+                manualResults: this.manualResults.slice(0, 10),
+                manualStatus: this.manualStatus,
+                projectPages: this.projectPages.slice(0, 20).map(page => ({
+                    ...page,
+                    base64: page.base64 && page.base64.length <= GEOGEBRA_STUDIO_BASE64_LIMIT ? page.base64 : '',
+                })),
+                activeProjectPageId: this.activeProjectPageId,
                 latestCanvasSnapshot: snapshot,
             }));
         } catch {
@@ -149,12 +191,18 @@ class GeoGebraStudio {
                 <div>
                     <span class="manim-workbench-eyebrow">GeoGebra Studio</span>
                     <strong>动态几何工作台</strong>
-                    <small>调整对象、执行命令、保留历史并继续用 AI 修改构图。</small>
+                    <small>调整对象、执行命令、上传题目并继续用 AI 修改构图。</small>
                 </div>
-                <div class="geogebra-status-row">
-                    ${this.renderStatusChip('离线资源', status.assetsAvailable)}
-                    ${this.renderStatusChip('AI 调整', status.aiAvailable)}
-                    ${this.renderStatusChip('命令索引', status.commandIndexReady)}
+                <div class="geogebra-head-actions">
+                    <button type="button" class="manim-workbench-secondary geogebra-problem-upload" data-geogebra-studio-action="upload-problem" ${this.busy ? 'disabled' : ''}>
+                        <i data-lucide="image-plus"></i>
+                        <span>上传题目</span>
+                    </button>
+                    <div class="geogebra-status-row">
+                        ${this.renderStatusChip('离线资源', status.assetsAvailable)}
+                        ${this.renderStatusChip('AI 调整', status.aiAvailable)}
+                        ${this.renderStatusChip('命令索引', status.commandIndexReady)}
+                    </div>
                 </div>
             </header>
         `;
@@ -216,6 +264,10 @@ class GeoGebraStudio {
                     <i data-lucide="image-down"></i>
                     <span>导出</span>
                 </button>
+                <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="export-ggb">
+                    <i data-lucide="download"></i>
+                    <span>导出GGB</span>
+                </button>
             </div>
         `;
     }
@@ -227,6 +279,8 @@ class GeoGebraStudio {
                     ${this.renderTab('objects', '对象')}
                     ${this.renderTab('adjust', 'AI 调整')}
                     ${this.renderTab('commands', '命令')}
+                    ${this.renderTab('manual', '参考')}
+                    ${this.renderTab('projects', '草稿')}
                     ${this.renderTab('history', '历史')}
                 </div>
                 <div class="geogebra-studio-panel">
@@ -249,6 +303,8 @@ class GeoGebraStudio {
     renderActivePanel() {
         if (this.activeTab === 'adjust') return this.renderAdjustPanel();
         if (this.activeTab === 'commands') return this.renderCommandPanel();
+        if (this.activeTab === 'manual') return this.renderManualReferencePanel();
+        if (this.activeTab === 'projects') return this.renderProjectsPanel();
         if (this.activeTab === 'history') return this.renderHistoryPanel();
         return this.renderObjectsPanel();
     }
@@ -337,6 +393,69 @@ class GeoGebraStudio {
         `;
     }
 
+    renderManualReferencePanel() {
+        const rows = this.manualResults.length
+            ? this.manualResults.map(match => `
+                <article class="geogebra-manual-result">
+                    <strong>${escapeHtml(match.title || '')}</strong>
+                    <small>${escapeHtml(match.type || '')} · ${escapeHtml(match.source || '')}</small>
+                    <p>${escapeHtml(match.summary || '')}</p>
+                    ${(match.syntax || []).length ? `<code>${escapeHtml(match.syntax[0])}</code>` : ''}
+                    ${(match.examples || []).length ? `<button type="button" class="manim-workbench-secondary" data-geogebra-manual-example="${escapeHtml(match.examples[0])}">填入示例</button>` : ''}
+                </article>
+            `).join('')
+            : '<div class="manim-workbench-empty compact">搜索 Circle、Locus、Midpoint、getBase64 等命令或 API。</div>';
+        return `
+            <div class="geogebra-studio-section geogebra-manual-reference">
+                <div class="geogebra-studio-section-head">
+                    <strong>GeoGebra 手册参考</strong>
+                    <span>${escapeHtml(this.manualStatus || '本地紧凑索引')}</span>
+                </div>
+                <input class="geogebra-studio-manual-search" data-geogebra-manual-search-input value="${escapeHtml(this.manualQuery)}" placeholder="搜索命令、工具、API，例如 Locus 或 getBase64">
+                <button type="button" class="manim-workbench-primary geogebra-studio-wide-action" data-geogebra-studio-action="search-manual" ${this.busy ? 'disabled' : ''}>
+                    <i data-lucide="book-open-text"></i>
+                    <span>搜索参考</span>
+                </button>
+                <div class="geogebra-manual-results">${rows}</div>
+            </div>
+        `;
+    }
+
+    renderProjectsPanel() {
+        const rows = this.projectPages.length
+            ? this.projectPages.map(page => `
+                <article class="geogebra-project-page ${page.id === this.activeProjectPageId ? 'active' : ''}">
+                    <button type="button" data-geogebra-project-load="${escapeHtml(page.id)}">
+                        <strong>${escapeHtml(page.title || '未命名草稿')}</strong>
+                        <small>${escapeHtml(page.updatedAt || page.createdAt || '')}</small>
+                    </button>
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-project-delete="${escapeHtml(page.id)}">
+                        <i data-lucide="trash-2"></i>
+                    </button>
+                </article>
+            `).join('')
+            : '<div class="manim-workbench-empty compact">还没有草稿页。可以先保存当前画布，之后再恢复继续编辑。</div>';
+        return `
+            <div class="geogebra-studio-section geogebra-projects-panel">
+                <div class="geogebra-studio-section-head">
+                    <strong>Studio 草稿页</strong>
+                    <span>${this.projectPages.length} 页</span>
+                </div>
+                <div class="geogebra-project-actions">
+                    <button type="button" class="manim-workbench-primary" data-geogebra-studio-action="save-page">
+                        <i data-lucide="save"></i>
+                        <span>保存当前页</span>
+                    </button>
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="new-page">
+                        <i data-lucide="file-plus-2"></i>
+                        <span>新建页</span>
+                    </button>
+                </div>
+                <div class="geogebra-project-list">${rows}</div>
+            </div>
+        `;
+    }
+
     renderHistoryPanel() {
         return `
             <div class="geogebra-studio-section geogebra-command-history">
@@ -371,14 +490,44 @@ class GeoGebraStudio {
         `;
     }
 
+    renderProblemReview() {
+        if (!this.pendingProblemPlan) return '';
+        return `
+            <div class="geogebra-problem-review">
+                <strong>题目解析复核</strong>
+                <small>先确认 OCR/题意，再自动绘图。</small>
+                <textarea data-geogebra-problem-review-input rows="4">${escapeHtml(this.problemReviewText || this.problemExtractedText || '')}</textarea>
+                ${this.problemImageDescription ? `<p>${escapeHtml(this.problemImageDescription)}</p>` : ''}
+                <div class="geogebra-problem-review-actions">
+                    <button type="button" class="manim-workbench-primary" data-geogebra-studio-action="draw-problem-plan">
+                        <i data-lucide="play"></i>
+                        <span>按解析绘图</span>
+                    </button>
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="replan-problem-text">
+                        <i data-lucide="refresh-cw"></i>
+                        <span>按修正文题重算</span>
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
     renderStudioMessages() {
         return `
             <div class="geogebra-studio-messages">
+                ${this.problemParseStatus ? `<div class="geogebra-problem-status">${escapeHtml(this.problemParseStatus)}</div>` : ''}
+                ${this.renderProblemReview()}
                 ${this.latestSummary ? `<div class="geogebra-summary">${escapeHtml(this.latestSummary)}</div>` : ''}
                 ${this.studioNotes ? `<div class="geogebra-studio-note">${escapeHtml(this.studioNotes)}</div>` : ''}
                 ${this.repairSummary ? `<div class="geogebra-repair-summary">${escapeHtml(this.repairSummary)}</div>` : ''}
                 ${this.latestFollowUp ? `<div class="geogebra-follow-up">${escapeHtml(this.latestFollowUp)}</div>` : ''}
                 ${this.latestError ? `<div class="geogebra-error">${escapeHtml(this.latestError)}</div>` : ''}
+                ${this.lastProblemImageFile && this.latestError ? `
+                    <button type="button" class="manim-workbench-secondary geogebra-studio-wide-action" data-geogebra-studio-action="retry-problem-image">
+                        <i data-lucide="refresh-ccw"></i>
+                        <span>重试题目解析</span>
+                    </button>
+                ` : ''}
             </div>
         `;
     }
@@ -408,6 +557,33 @@ class GeoGebraStudio {
         this.root.querySelector('[data-geogebra-studio-command-editor]')?.addEventListener('input', (event) => {
             this.manualCommands = event.target.value;
             this.saveSession();
+        });
+        this.root.querySelector('[data-geogebra-manual-search-input]')?.addEventListener('input', (event) => {
+            this.manualQuery = event.target.value;
+            this.saveSession();
+        });
+        this.root.querySelector('[data-geogebra-problem-review-input]')?.addEventListener('input', (event) => {
+            this.problemReviewText = event.target.value;
+            this.saveSession();
+        });
+
+        this.root.querySelectorAll('[data-geogebra-manual-example]').forEach(button => {
+            button.addEventListener('click', () => {
+                this.manualCommands = [this.manualCommands, button.dataset.geogebraManualExample]
+                    .map(value => String(value || '').trim())
+                    .filter(Boolean)
+                    .join('\n');
+                this.activeTab = 'commands';
+                this.saveSession();
+                this.refresh();
+            });
+        });
+
+        this.root.querySelectorAll('[data-geogebra-project-load]').forEach(button => {
+            button.addEventListener('click', () => this.loadProjectPage(button.dataset.geogebraProjectLoad));
+        });
+        this.root.querySelectorAll('[data-geogebra-project-delete]').forEach(button => {
+            button.addEventListener('click', () => this.deleteProjectPage(button.dataset.geogebraProjectDelete));
         });
 
         this.root.querySelectorAll('[data-geogebra-studio-action]').forEach(button => {
@@ -470,6 +646,9 @@ class GeoGebraStudio {
             if (!this.isCanvasDomReady()) {
                 this.sessionRestored = false;
                 await geogebraCanvas.rebuild('geogebra-canvas-root');
+            }
+            if (!this.isCanvasDomReady()) {
+                await geogebraCanvas.mountIframeFallback(new Error('GeoGebra applet mounted but the current canvas DOM is empty'));
             }
             if (!this.isCanvasDomReady()) {
                 throw new Error('GeoGebra applet mounted but the current canvas DOM is empty');
@@ -565,6 +744,13 @@ class GeoGebraStudio {
         this.repairSummary = '';
         this.latestError = '';
         this.studioNotes = '';
+        this.problemParseStatus = '';
+        this.problemImageName = '';
+        this.lastProblemImageFile = null;
+        this.pendingProblemPlan = null;
+        this.problemReviewText = '';
+        this.problemExtractedText = '';
+        this.problemImageDescription = '';
         this.selectedObjectNames = [];
         this.undoStack = [];
         this.redoStack = [];
@@ -605,10 +791,28 @@ class GeoGebraStudio {
             await this.redo();
         } else if (action === 'export') {
             this.exportPng();
+        } else if (action === 'export-ggb') {
+            await this.exportGgb();
+        } else if (action === 'upload-problem') {
+            await this.selectProblemImage();
+        } else if (action === 'retry-problem-image') {
+            if (this.lastProblemImageFile) {
+                await this.parseProblemImage(this.lastProblemImageFile);
+            }
         } else if (action === 'run-adjust') {
             await this.runStudioAdjustment();
         } else if (action === 'run-commands') {
             await this.executeManualCommands();
+        } else if (action === 'search-manual') {
+            await this.searchManualReference();
+        } else if (action === 'save-page') {
+            await this.saveCurrentProjectPage();
+        } else if (action === 'new-page') {
+            await this.createProjectPage();
+        } else if (action === 'draw-problem-plan') {
+            await this.drawPendingProblemPlan();
+        } else if (action === 'replan-problem-text') {
+            await this.replanProblemText();
         } else if (action === 'clear-history') {
             this.commandHistory = [];
             this.saveSession();
@@ -677,6 +881,110 @@ class GeoGebraStudio {
         anchor.href = `data:image/png;base64,${pngBase64}`;
         anchor.download = `geogebra-studio-${Date.now()}.png`;
         anchor.click();
+    }
+
+    async exportGgb() {
+        const base64 = await geogebraCanvas.exportGgbBase64();
+        if (!base64) {
+            showToast('当前 GeoGebra 画布暂时无法导出 .ggb', 'error');
+            return;
+        }
+        const anchor = document.createElement('a');
+        anchor.href = `data:application/vnd.geogebra.file;base64,${base64}`;
+        anchor.download = `geogebra-studio-${Date.now()}.ggb`;
+        anchor.click();
+    }
+
+    async saveCurrentProjectPage() {
+        await geogebraCanvas.mount('geogebra-canvas-root');
+        const snapshot = this.refreshCanvasState();
+        const base64 = await geogebraCanvas.getBase64();
+        const now = new Date().toISOString();
+        const pageId = this.activeProjectPageId || `page-${Date.now()}`;
+        const existingIndex = this.projectPages.findIndex(page => page.id === pageId);
+        const page = {
+            id: pageId,
+            title: this.latestSummary || `GeoGebra 草稿 ${this.projectPages.length + 1}`,
+            snapshot,
+            base64: base64 && base64.length <= GEOGEBRA_STUDIO_BASE64_LIMIT ? base64 : '',
+            createdAt: this.projectPages[existingIndex]?.createdAt || now,
+            updatedAt: now,
+        };
+        if (existingIndex >= 0) {
+            this.projectPages.splice(existingIndex, 1, page);
+        } else {
+            this.projectPages.unshift(page);
+        }
+        this.projectPages = this.projectPages.slice(0, 20);
+        this.activeProjectPageId = pageId;
+        this.latestSummary = '已保存当前 GeoGebra 草稿页';
+        this.saveSession();
+        this.refresh();
+    }
+
+    async createProjectPage() {
+        this.activeProjectPageId = `page-${Date.now()}`;
+        await this.resetCanvas();
+        this.latestSummary = '已新建 GeoGebra 草稿页';
+        this.saveSession();
+        this.refresh();
+    }
+
+    async loadProjectPage(pageId) {
+        const page = this.projectPages.find(item => item.id === pageId);
+        if (!page) return;
+        await geogebraCanvas.mount('geogebra-canvas-root');
+        let restored = false;
+        if (page.base64) {
+            restored = await geogebraCanvas.setBase64(page.base64);
+        }
+        if (!restored && page.snapshot?.xml) {
+            restored = Boolean(await geogebraCanvas.restoreSnapshot(page.snapshot));
+        }
+        if (restored) {
+            this.activeProjectPageId = page.id;
+            this.latestSummary = `已恢复草稿页：${page.title || page.id}`;
+            this.refreshCanvasState();
+            this.saveSession();
+            this.refresh();
+        }
+    }
+
+    deleteProjectPage(pageId) {
+        this.projectPages = this.projectPages.filter(page => page.id !== pageId);
+        if (this.activeProjectPageId === pageId) {
+            this.activeProjectPageId = '';
+        }
+        this.saveSession();
+        this.refresh();
+    }
+
+    async searchManualReference() {
+        const query = String(this.manualQuery || '').trim();
+        if (!query) {
+            showToast('请先输入要查找的 GeoGebra 命令或 API', 'error');
+            return;
+        }
+        this.busy = true;
+        this.manualStatus = '正在搜索本地手册索引...';
+        this.refresh();
+        try {
+            const response = await fetch(`/api/geogebra/manual/search?q=${encodeURIComponent(query)}&limit=8`);
+            const payload = await response.json();
+            if (!response.ok || !payload?.success) {
+                throw new Error(payload?.error || 'GeoGebra 手册搜索失败');
+            }
+            this.manualResults = payload.data?.matches || [];
+            this.manualStatus = this.manualResults.length ? `找到 ${this.manualResults.length} 条参考` : '没有找到匹配参考';
+            this.saveSession();
+        } catch (error) {
+            this.manualResults = [];
+            this.manualStatus = error?.message || 'GeoGebra 手册搜索失败';
+            showToast(this.manualStatus, 'error');
+        } finally {
+            this.busy = false;
+            this.refresh();
+        }
     }
 
     async executeCommandsWithUndo(commands, options = {}) {
@@ -750,6 +1058,164 @@ class GeoGebraStudio {
         } finally {
             this.busy = false;
             this.saveSession();
+            this.refresh();
+        }
+    }
+
+    validateProblemImageFile(file) {
+        if (!file) {
+            throw new Error('请选择要解析的题目图片');
+        }
+        if (!GEOGEBRA_PROBLEM_IMAGE_TYPES.has(file.type)) {
+            throw new Error('GeoGebra Studio 仅支持 PNG、JPG 或 WebP 题目图片');
+        }
+        if (file.size > GEOGEBRA_PROBLEM_IMAGE_MAX_BYTES) {
+            throw new Error('题目图片不能超过 20MB');
+        }
+    }
+
+    async selectProblemImage() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/png,image/jpeg,image/webp';
+        input.hidden = true;
+        document.body.appendChild(input);
+        input.addEventListener('change', async () => {
+            const file = input.files?.[0];
+            input.remove();
+            if (!file) return;
+            try {
+                this.validateProblemImageFile(file);
+                await this.parseProblemImage(file);
+            } catch (error) {
+                this.latestError = error?.message || '题目图片解析失败';
+                showToast(this.latestError, 'error');
+                this.refresh();
+            }
+        }, { once: true });
+        input.click();
+    }
+
+    async parseProblemImage(file) {
+        this.validateProblemImageFile(file);
+        this.lastProblemImageFile = file;
+        this.problemImageName = file.name || '题目图片';
+        this.problemParseStatus = `正在解析 ${this.problemImageName}...`;
+        this.busy = true;
+        this.latestError = '';
+        this.refresh();
+
+        try {
+            await geogebraCanvas.mount('geogebra-canvas-root');
+            const canvasSnapshot = this.refreshCanvasState();
+            const selectedObjects = this.getSelectedObjects(canvasSnapshot.objects);
+            const formData = new FormData();
+            formData.append('image', file, file.name || 'geogebra-problem.png');
+            formData.append('message', this.adjustMessage || '请解析上传的数学题目，优先重建题图或可交互几何图形，不需要输出完整解题步骤。');
+            formData.append('canvas', JSON.stringify(canvasSnapshot));
+            formData.append('selectedObjects', JSON.stringify(selectedObjects));
+            formData.append('preferredPerspective', canvasSnapshot.perspective || 'G');
+
+            const response = await fetch('/api/geogebra/studio/parse-image', {
+                method: 'POST',
+                body: formData,
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload?.success) {
+                throw new Error(payload?.error || 'GeoGebra 题目解析失败');
+            }
+
+            const body = payload.data || {};
+            this.pendingProblemPlan = body;
+            this.problemExtractedText = String(body.extractedText || '');
+            this.problemImageDescription = String(body.imageDescription || '');
+            this.problemReviewText = this.problemExtractedText || this.adjustMessage || '';
+            this.problemParseStatus = this.problemExtractedText
+                ? `已解析题目，等待确认：${this.problemExtractedText.slice(0, 80)}${this.problemExtractedText.length > 80 ? '...' : ''}`
+                : `${this.problemImageName} 已解析，请确认图形描述后再绘图`;
+            this.latestSummary = body.summary || '已根据上传题目生成候选 GeoGebra 绘图计划';
+            this.latestFollowUp = body.followUp || '请先核对 OCR 文本；如果识别不准，可以直接修改后重新生成。';
+            this.studioNotes = body.studioNotes || '';
+            this.activeTab = 'adjust';
+            this.saveSession();
+            return summarizeExecution([]);
+        } catch (error) {
+            this.latestError = error?.message || 'GeoGebra 题目解析失败';
+            this.problemParseStatus = `${this.problemImageName} 解析失败`;
+            showToast(this.latestError, 'error');
+            return summarizeExecution([]);
+        } finally {
+            this.busy = false;
+            this.saveSession();
+            this.refresh();
+        }
+    }
+
+    async drawPendingProblemPlan() {
+        if (!this.pendingProblemPlan) {
+            showToast('暂无可绘制的题目解析结果', 'error');
+            return summarizeExecution([]);
+        }
+        const outcome = await this.executePlanCommands(this.pendingProblemPlan, {
+            source: 'image_parse',
+            label: 'image_parse',
+        });
+        if (!outcome.failedRecord) {
+            this.pendingProblemPlan = null;
+            this.problemParseStatus = '已根据确认后的题目解析完成绘图';
+            this.saveSession();
+            this.refresh();
+        } else if (this.actions?.repairFailedCommand) {
+            const repairOutcome = await this.actions.repairFailedCommand({
+                message: this.problemReviewText || this.problemExtractedText || this.adjustMessage || '修复题目图片生成的 GeoGebra 命令',
+                canvasSnapshot: geogebraCanvas.readCanvas(),
+                failedCommand: outcome.failedRecord,
+            });
+            return summarizeExecution([...outcome.records, ...(repairOutcome?.records || [])]);
+        }
+        return outcome;
+    }
+
+    async replanProblemText() {
+        const message = String(this.problemReviewText || '').trim();
+        if (!message) {
+            showToast('请先确认或修正题目文字', 'error');
+            return summarizeExecution([]);
+        }
+        this.busy = true;
+        this.latestError = '';
+        this.problemParseStatus = '正在按修正文题重新生成绘图计划...';
+        this.refresh();
+        try {
+            await geogebraCanvas.mount('geogebra-canvas-root');
+            const canvasSnapshot = this.refreshCanvasState();
+            const response = await fetch('/api/geogebra/plan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message,
+                    canvas: canvasSnapshot,
+                    selectedObjects: this.getSelectedObjects(canvasSnapshot.objects),
+                    preferredPerspective: canvasSnapshot.perspective || 'G',
+                }),
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload?.success) {
+                throw new Error(payload?.error || 'GeoGebra 题目重算失败');
+            }
+            this.pendingProblemPlan = payload.data || null;
+            this.latestSummary = payload.data?.summary || '已重新生成绘图计划';
+            this.latestFollowUp = payload.data?.followUp || '';
+            this.studioNotes = payload.data?.studioNotes || '';
+            this.problemParseStatus = '已按修正文题重新生成计划，等待确认绘图';
+            this.saveSession();
+            return summarizeExecution([]);
+        } catch (error) {
+            this.latestError = error?.message || 'GeoGebra 题目重算失败';
+            showToast(this.latestError, 'error');
+            return summarizeExecution([]);
+        } finally {
+            this.busy = false;
             this.refresh();
         }
     }

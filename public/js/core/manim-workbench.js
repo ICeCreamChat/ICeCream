@@ -1,5 +1,4 @@
 import { escapeHtml, showToast } from '../utils/helpers.js';
-import { geogebraWorkbench } from './geogebra-workbench.js';
 import { ManimSketchPad } from './manim-sketch-pad.js';
 
 const FALLBACK_SKILLS = [
@@ -45,19 +44,8 @@ const STYLE_PRESETS = [
 ];
 
 const WORKBENCH_POSITION_KEY = 'icecream_manim_workbench_position_v1';
-const ANIMATION_ENGINE_KEY = 'icecream_animation_engine_v1';
-const ANIMATION_ENGINES = new Set(['manim', 'geogebra']);
 const WORKBENCH_VIEWPORT_MARGIN = 12;
 const WORKBENCH_DESKTOP_QUERY = '(min-width: 769px)';
-
-function readAnimationEngine() {
-    try {
-        const storedEngine = window.localStorage?.getItem(ANIMATION_ENGINE_KEY);
-        return ANIMATION_ENGINES.has(storedEngine) ? storedEngine : 'manim';
-    } catch {
-        return 'manim';
-    }
-}
 
 function unique(values) {
     return Array.from(new Set(values.filter(Boolean)));
@@ -139,7 +127,6 @@ class ManimWorkbench {
         this.body = null;
         this.fileInput = null;
         this.mode = 'auto';
-        this.animationEngine = readAnimationEngine();
         this.isOpen = false;
         this.loading = {
             skills: false,
@@ -181,9 +168,9 @@ class ManimWorkbench {
         this.button.type = 'button';
         this.button.id = 'manim-workbench-btn';
         this.button.className = 'manim-workbench-btn manim-workbench-tab';
-        this.button.title = '动画工作台';
-        this.button.setAttribute('aria-label', '动画工作台');
-        this.button.innerHTML = '<i data-lucide="sliders-horizontal"></i><span>工作台</span>';
+        this.button.title = 'Manim 工作台';
+        this.button.setAttribute('aria-label', 'Manim 工作台');
+        this.button.innerHTML = '<i data-lucide="sliders-horizontal"></i><span>Manim</span>';
         this.button.addEventListener('click', () => this.toggle());
 
         manimTab.insertAdjacentElement('afterend', this.button);
@@ -194,14 +181,14 @@ class ManimWorkbench {
         this.overlay = document.createElement('div');
         this.overlay.className = 'manim-workbench-overlay hidden';
         this.overlay.innerHTML = `
-            <aside class="manim-workbench-panel" role="dialog" aria-modal="true" aria-label="动画工作台">
+            <aside class="manim-workbench-panel" role="dialog" aria-modal="true" aria-label="Manim 工作台">
                 <header class="manim-workbench-header">
                     <div class="manim-workbench-title-block">
-                        <span class="manim-workbench-eyebrow">动画制作台</span>
-                        <strong>动画工作台</strong>
+                        <span class="manim-workbench-eyebrow">Manim 制作台</span>
+                        <strong>Manim 工作台</strong>
                         <span>配置素材、技能和当前任务</span>
                     </div>
-                    <button type="button" class="manim-workbench-close" aria-label="关闭动画工作台">
+                    <button type="button" class="manim-workbench-close" aria-label="关闭 Manim 工作台">
                         <i data-lucide="x"></i>
                     </button>
                 </header>
@@ -238,7 +225,7 @@ class ManimWorkbench {
         header.classList.add('manim-workbench-drag-handle');
         header.tabIndex = 0;
         header.title = '\u62d6\u52a8\u8c03\u6574\u4f4d\u7f6e\uff0c\u53cc\u51fb\u6062\u590d\u9ed8\u8ba4\u4f4d\u7f6e';
-        header.setAttribute('aria-label', '\u62d6\u52a8\u52a8\u753b\u5de5\u4f5c\u53f0\uff0c\u53cc\u51fb\u6062\u590d\u9ed8\u8ba4\u4f4d\u7f6e');
+        header.setAttribute('aria-label', '拖动 Manim 工作台，双击恢复默认位置');
         header.addEventListener('pointerdown', (event) => this.handleDragStart(event));
         header.addEventListener('dblclick', () => this.resetWorkbenchPosition());
         header.addEventListener('keydown', (event) => this.handleDragKeydown(event));
@@ -437,27 +424,6 @@ class ManimWorkbench {
         }
     }
 
-    getAnimationEngine() {
-        return this.animationEngine;
-    }
-
-    setAnimationEngine(engine) {
-        const nextEngine = ANIMATION_ENGINES.has(engine) ? engine : 'manim';
-        if (this.animationEngine === nextEngine) return;
-        this.animationEngine = nextEngine;
-        try {
-            window.localStorage?.setItem(ANIMATION_ENGINE_KEY, nextEngine);
-        } catch {
-            // The selected engine is still kept for the current page session.
-        }
-        if (nextEngine === 'geogebra') {
-            geogebraWorkbench.refreshStatus().catch(error => {
-                showToast(error?.message || 'GeoGebra 初始化失败', 'error');
-            });
-        }
-        this.renderIfOpen();
-    }
-
     toggle() {
         if (this.isOpen) {
             this.close();
@@ -484,12 +450,6 @@ class ManimWorkbench {
     }
 
     async loadInitialData() {
-        if (this.animationEngine === 'geogebra') {
-            await geogebraWorkbench.refreshStatus().catch(error => {
-                showToast(error?.message || 'GeoGebra 初始化失败', 'error');
-            });
-            return;
-        }
         await Promise.allSettled([
             this.loadSkills(),
         ]);
@@ -579,7 +539,6 @@ class ManimWorkbench {
         this.globalFailures = [];
         this.globalFailuresLoaded = false;
         this.replaySummary = '';
-        geogebraWorkbench.resetSessionRuntime();
         this.renderIfOpen();
     }
 
@@ -731,7 +690,7 @@ class ManimWorkbench {
         };
         this.referenceImages = [reference, ...this.referenceImages.filter(item => item.referenceId !== reference.referenceId)].slice(0, 6);
         if (!options.silent) {
-            showToast('参考图已加入动画工作台', 'success');
+            showToast('参考图已加入 Manim 工作台', 'success');
         }
         this.renderIfOpen();
         return reference;
@@ -804,16 +763,12 @@ class ManimWorkbench {
 
     render() {
         if (!this.body) return;
-        this.panel?.classList.toggle('has-geogebra', this.animationEngine === 'geogebra');
-        const content = this.animationEngine === 'geogebra'
-            ? geogebraWorkbench.render()
-            : `
-                ${this.renderSettingsSection()}
-                ${this.renderReferenceSection()}
-                ${this.renderJobsSection()}
-                ${this.isDebugMode() ? this.renderDebugDiagnosticsSection() : ''}
-            `;
-        this.body.innerHTML = content;
+        this.body.innerHTML = `
+            ${this.renderSettingsSection()}
+            ${this.renderReferenceSection()}
+            ${this.renderJobsSection()}
+            ${this.isDebugMode() ? this.renderDebugDiagnosticsSection() : ''}
+        `;
         this.bindPanelActions();
         this.refreshIcons();
     }
@@ -974,10 +929,6 @@ class ManimWorkbench {
     }
 
     bindPanelActions() {
-        if (this.animationEngine === 'geogebra') {
-            geogebraWorkbench.bindPanelActions(this.body);
-            return;
-        }
         this.body?.querySelectorAll('[data-style-id]').forEach(button => {
             button.addEventListener('click', () => this.setStyle(button.dataset.styleId));
         });

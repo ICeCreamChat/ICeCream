@@ -4,6 +4,7 @@ import { readdir, stat } from 'node:fs/promises';
 import test from 'node:test';
 
 const appPath = new URL('../public/js/app.js', import.meta.url);
+const animationStatePath = new URL('../public/js/core/animation-engine-state.js', import.meta.url);
 const animationEntryPath = new URL('../public/js/core/animation-entry-launcher.js', import.meta.url);
 const canvasPath = new URL('../public/js/core/geogebra-canvas.js', import.meta.url);
 const constantsPath = new URL('../public/js/constants.js', import.meta.url);
@@ -12,6 +13,7 @@ const modeSwitcherPath = new URL('../public/js/core/mode-switcher.js', import.me
 const workbenchPath = new URL('../public/js/core/manim-workbench.js', import.meta.url);
 const geogebraWorkbenchPath = new URL('../public/js/core/geogebra-workbench.js', import.meta.url);
 const geogebraStudioPath = new URL('../public/js/core/geogebra-studio.js', import.meta.url);
+const geogebraStudioShellPath = new URL('../public/js/core/geogebra-studio-shell.js', import.meta.url);
 const indexPath = new URL('../public/index.html', import.meta.url);
 const mainStylesPath = new URL('../public/css/main.css', import.meta.url);
 const mobileStylesPath = new URL('../public/css/mobile.css', import.meta.url);
@@ -42,28 +44,38 @@ test('GeoGebra frontend modules use local vendor assets and explicit APIs', asyn
 });
 
 test('Animation entry opens Manim and GeoGebra as explicit parallel choices', async () => {
-  const [animationEntrySource, appSource, constantsSource, messageHandlerSource, modeSwitcherSource, workbenchSource, htmlSource, mainStyles, mobileStyles] = await Promise.all([
+  const [animationEntrySource, animationStateSource, appSource, constantsSource, messageHandlerSource, modeSwitcherSource, workbenchSource, geogebraStudioShellSource, htmlSource, mainStyles, mobileStyles] = await Promise.all([
     readFile(animationEntryPath, 'utf8'),
+    readFile(animationStatePath, 'utf8'),
     readFile(appPath, 'utf8'),
     readFile(constantsPath, 'utf8'),
     readFile(messageHandlerPath, 'utf8'),
     readFile(modeSwitcherPath, 'utf8'),
     readFile(workbenchPath, 'utf8'),
+    readFile(geogebraStudioShellPath, 'utf8'),
     readFile(indexPath, 'utf8'),
     readFile(mainStylesPath, 'utf8'),
     readFile(mobileStylesPath, 'utf8'),
   ]);
 
-  assert.match(workbenchSource, /icecream_animation_engine_v1/);
-  assert.match(workbenchSource, /geogebraWorkbench/);
+  assert.doesNotMatch(workbenchSource, /icecream_animation_engine_v1/);
+  assert.doesNotMatch(workbenchSource, /geogebraWorkbench/);
+  assert.doesNotMatch(workbenchSource, /animationEngine/);
+  assert.doesNotMatch(workbenchSource, /has-geogebra/);
   assert.doesNotMatch(workbenchSource, /renderAnimationEngineSwitch/);
   assert.doesNotMatch(workbenchSource, /data-animation-engine/);
+
+  assert.match(animationStateSource, /icecream_animation_engine_v1/);
+  assert.match(animationStateSource, /setAnimationEngine/);
+  assert.match(animationStateSource, /getAnimationEngine/);
 
   assert.match(animationEntrySource, /animation-entry-launcher/);
   assert.match(animationEntrySource, /Manim 视频动画/);
   assert.match(animationEntrySource, /GeoGebra 动态几何/);
-  assert.match(animationEntrySource, /setAnimationEngine\?\.\('manim'\)/);
-  assert.match(animationEntrySource, /setAnimationEngine\?\.\('geogebra'\)/);
+  assert.match(animationEntrySource, /setAnimationEngine\('manim'\)/);
+  assert.match(animationEntrySource, /setAnimationEngine\('geogebra'\)/);
+  assert.match(animationEntrySource, /geogebraStudioShell\?\.open\?\.\(\)/);
+  assert.match(animationEntrySource, /manimWorkbench\?\.open\?\.\(\)/);
 
   assert.match(modeSwitcherSource, /onAnimationEntryOpen/);
   assert.match(modeSwitcherSource, /mode === 'manim'/);
@@ -71,16 +83,25 @@ test('Animation entry opens Manim and GeoGebra as explicit parallel choices', as
   assert.match(messageHandlerSource, /runGeoGebraPlan/);
   assert.match(messageHandlerSource, /looksLikeGeoGebraRequest/);
   assert.match(messageHandlerSource, /getAnimationEngine/);
+  assert.match(messageHandlerSource, /geogebraStudioShell\?\.open/);
   assert.match(messageHandlerSource, /refreshVisiblePanel/);
 
+  assert.match(geogebraStudioShellSource, /class GeoGebraStudioShell/);
+  assert.match(geogebraStudioShellSource, /geogebra-studio-shell/);
+  assert.match(geogebraStudioShellSource, /geogebraWorkbench\.render/);
+  assert.match(geogebraStudioShellSource, /geogebraWorkbench\.bindPanelActions/);
+
   assert.match(appSource, /animationEntryLauncher/);
+  assert.match(appSource, /geogebraStudioShell/);
   assert.match(constantsSource, /GeoGebra/);
   assert.match(htmlSource, /自然语言描述，生成 Manim 动画或 GeoGebra 动态几何/);
   assert.match(htmlSource, /title="选择动画类型"/);
   assert.match(mainStyles, /\.animation-entry-launcher/);
   assert.match(mainStyles, /\.animation-entry-card/);
+  assert.match(mainStyles, /\.geogebra-studio-shell/);
   assert.match(mainStyles, /\.geogebra-canvas-root/);
   assert.match(mobileStyles, /\.animation-entry-panel/);
+  assert.match(mobileStyles, /\.geogebra-studio-shell/);
   assert.match(mobileStyles, /\.geogebra-canvas-root/);
 });
 

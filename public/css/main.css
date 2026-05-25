@@ -966,10 +966,6 @@ body.light-mode .manim-workbench-panel {
     box-shadow: none;
 }
 
-.manim-workbench-panel.has-geogebra {
-    width: min(1160px, calc(100vw - 32px));
-}
-
 .animation-entry-launcher {
     position: fixed;
     inset: 0;
@@ -1086,9 +1082,91 @@ body.light-mode .manim-workbench-panel {
     gap: 12px;
 }
 
+.geogebra-studio-shell {
+    position: fixed;
+    inset: 0;
+    z-index: 4200;
+    display: grid;
+    padding: 16px;
+    background: rgba(2, 6, 23, 0.46);
+}
+
+.geogebra-studio-shell.hidden {
+    display: none;
+}
+
+.geogebra-studio-shell-panel {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: min(1500px, calc(100vw - 32px));
+    height: min(920px, calc(100vh - 32px));
+    align-self: center;
+    justify-self: center;
+    overflow: hidden;
+    border: 1px solid var(--manim-workbench-border);
+    border-radius: 16px;
+    background: var(--manim-workbench-bg);
+    box-shadow: var(--manim-workbench-shadow);
+}
+
+.geogebra-studio-shell-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--manim-workbench-border);
+    background: var(--manim-studio-surface-2);
+}
+
+.geogebra-studio-shell-bar > div {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.geogebra-studio-shell-bar span {
+    color: var(--accent-color);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.geogebra-studio-shell-bar strong {
+    color: var(--text-primary);
+    font-size: 18px;
+    font-weight: 900;
+}
+
+.geogebra-studio-shell-close {
+    display: inline-flex;
+    width: 38px;
+    height: 38px;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 8px;
+    color: var(--text-secondary);
+    background: transparent;
+    cursor: pointer;
+}
+
+.geogebra-studio-shell-close:hover {
+    color: var(--accent-color);
+    background: var(--manim-workbench-hover-bg);
+}
+
+.geogebra-studio-shell-body {
+    min-height: 0;
+    padding: 14px;
+    overflow: hidden;
+}
+
 .geogebra-studio-root {
     display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     gap: 12px;
+    height: 100%;
+    min-height: 0;
 }
 
 .geogebra-studio-head {
@@ -1102,10 +1180,16 @@ body.light-mode .manim-workbench-panel {
     background: var(--manim-studio-surface-2);
 }
 
-.geogebra-studio-head > div:first-child {
+.geogebra-studio-head > div:first-child,
+.geogebra-head-actions {
     display: grid;
     gap: 3px;
     min-width: 0;
+}
+
+.geogebra-head-actions {
+    justify-items: end;
+    gap: 8px;
 }
 
 .geogebra-studio-head strong {
@@ -1125,18 +1209,26 @@ body.light-mode .manim-workbench-panel {
     grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
     gap: 12px;
     align-items: start;
+    height: 100%;
+    min-height: 0;
 }
 
 .geogebra-studio-canvas-pane {
     display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
     gap: 10px;
+    height: 100%;
     min-width: 0;
+    min-height: 0;
 }
 
 .geogebra-studio-sidebar {
     display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 10px;
+    height: 100%;
     min-width: 0;
+    min-height: 0;
 }
 
 .geogebra-studio-tabs {
@@ -1170,6 +1262,7 @@ body.light-mode .manim-workbench-panel {
 
 .geogebra-studio-panel {
     min-height: 316px;
+    overflow: auto;
     padding: 12px;
     border: 1px solid var(--manim-studio-border);
     border-radius: 12px;
@@ -1351,6 +1444,19 @@ body.light-mode .manim-workbench-panel {
     background: rgba(16, 185, 129, 0.10);
 }
 
+.geogebra-problem-upload {
+    width: fit-content;
+}
+
+.geogebra-problem-status {
+    padding: 9px 10px;
+    border-radius: 10px;
+    color: #075985;
+    font-size: 12px;
+    line-height: 1.5;
+    background: rgba(14, 165, 233, 0.10);
+}
+
 .geogebra-status-row,
 .geogebra-action-row {
     display: flex;
@@ -1390,7 +1496,8 @@ body.light-mode .manim-workbench-panel {
 
 .geogebra-canvas-shell {
     position: relative;
-    min-height: 480px;
+    min-height: 0;
+    height: 100%;
     border: 1px solid var(--manim-studio-border);
     border-radius: 12px;
     background: #f8fafc;
@@ -1399,8 +1506,8 @@ body.light-mode .manim-workbench-panel {
 
 .geogebra-canvas-root {
     width: 100%;
-    height: min(62vh, 560px);
-    min-height: 440px;
+    height: 100%;
+    min-height: 520px;
     background: #ffffff;
 }
 
@@ -1506,6 +1613,118 @@ body.light-mode .manim-workbench-panel {
 
 .geogebra-error {
     color: #b91c1c;
+}
+
+.geogebra-iframe-fallback {
+    width: 100%;
+    height: 100%;
+    min-height: 520px;
+    border: 0;
+    background: #ffffff;
+}
+
+.geogebra-manual-reference,
+.geogebra-projects-panel {
+    display: grid;
+    gap: 10px;
+}
+
+.geogebra-studio-manual-search {
+    width: 100%;
+    min-height: 36px;
+    border: 1px solid var(--manim-studio-border);
+    border-radius: 10px;
+    padding: 0 10px;
+    color: var(--text-primary);
+    background: var(--manim-studio-surface);
+    font: inherit;
+}
+
+.geogebra-manual-results,
+.geogebra-project-list {
+    display: grid;
+    gap: 8px;
+    max-height: 280px;
+    overflow: auto;
+}
+
+.geogebra-manual-result,
+.geogebra-project-page,
+.geogebra-problem-review {
+    display: grid;
+    gap: 7px;
+    padding: 10px;
+    border: 1px solid var(--manim-studio-border);
+    border-radius: 10px;
+    background: var(--manim-studio-surface-2);
+}
+
+.geogebra-manual-result strong,
+.geogebra-project-page strong,
+.geogebra-problem-review strong {
+    color: var(--text-primary);
+    font-size: 13px;
+}
+
+.geogebra-manual-result small,
+.geogebra-project-page small,
+.geogebra-problem-review small,
+.geogebra-manual-result p,
+.geogebra-problem-review p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.geogebra-manual-result code {
+    display: block;
+    overflow: hidden;
+    padding: 7px 8px;
+    border-radius: 8px;
+    color: var(--text-primary);
+    background: rgba(15, 23, 42, 0.05);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.geogebra-project-actions,
+.geogebra-problem-review-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.geogebra-project-page {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+}
+
+.geogebra-project-page.active {
+    border-color: rgba(14, 165, 233, 0.42);
+    background: rgba(14, 165, 233, 0.08);
+}
+
+.geogebra-project-page > button:first-child {
+    min-width: 0;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    text-align: left;
+    background: transparent;
+    cursor: pointer;
+}
+
+.geogebra-problem-review textarea {
+    width: 100%;
+    resize: vertical;
+    border: 1px solid var(--manim-studio-border);
+    border-radius: 10px;
+    padding: 9px;
+    color: var(--text-primary);
+    background: var(--manim-studio-surface);
+    font: inherit;
+    line-height: 1.5;
 }
 
 .manim-config-summary {

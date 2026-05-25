@@ -1,7 +1,10 @@
 import fetch from 'node-fetch';
 
 import { searchGeoGebraCommands } from './command-search.js';
+import { tryCreateDeterministicGeoGebraPlan } from './geogebra-deterministic-plans.js';
 import { GEOGEBRA_SYSTEM_PROMPT } from './geogebra-prompt.js';
+import { searchGeoGebraManual } from './manual-search.js';
+import { classifyGeoGebraProblem, extractGeoGebraFacts } from './problem-types.js';
 
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_CANVAS_ITEMS = 80;
@@ -26,6 +29,26 @@ const CHINESE_COMMAND_HINTS = [
     { pattern: /函数|曲线|图像/, query: 'Function' },
     { pattern: /导数|切线/, query: 'Derivative Tangent' },
     { pattern: /向量/, query: 'Vector' },
+];
+
+const GEOGEBRA_COMMAND_HINTS = [
+    ...CHINESE_COMMAND_HINTS,
+    { pattern: /圆|外接圆|内切圆|半径|圆心|circle/i, query: 'Circle' },
+    { pattern: /三角形|多边形|四边形|正方形|矩形|triangle|polygon/i, query: 'Polygon' },
+    { pattern: /点|顶点|坐标|point/i, query: 'Point' },
+    { pattern: /直线|线段|弦|line|segment/i, query: 'Line Segment' },
+    { pattern: /垂直|垂线|垂足|perpendicular/i, query: 'PerpendicularLine' },
+    { pattern: /平行|平行线|parallel/i, query: 'Line ParallelLine' },
+    { pattern: /中点|中垂线|midpoint/i, query: 'Midpoint PerpendicularBisector' },
+    { pattern: /交点|相交|intersect/i, query: 'Intersect' },
+    { pattern: /轨迹|locus/i, query: 'Locus Curve' },
+    { pattern: /椭圆|ellipse/i, query: 'Ellipse' },
+    { pattern: /双曲线|hyperbola/i, query: 'Hyperbola' },
+    { pattern: /抛物线|parabola/i, query: 'Parabola' },
+    { pattern: /滑块|参数|动态|slider/i, query: 'Slider' },
+    { pattern: /函数|曲线|图像|function|graph/i, query: 'Function Curve' },
+    { pattern: /导数|切线|tangent/i, query: 'Derivative Tangent' },
+    { pattern: /向量|vector/i, query: 'Vector' },
 ];
 
 export function hasGeoGebraAiConfig(env = process.env) {
@@ -143,6 +166,29 @@ export function buildGeoGebraStudioAdjustRequest(body = {}) {
     };
 }
 
+export function buildGeoGebraAgentStepRequest(body = {}) {
+    const message = String(body.message || '').trim();
+    if (!message) {
+        const emptyMessageError = new Error('请描述 GeoGebra Studio 下一步需要绘制或调整什么');
+        emptyMessageError.status = 400;
+        throw emptyMessageError;
+    }
+    const planRequest = buildGeoGebraPlanRequest({
+        message,
+        canvas: body.canvas,
+        selectedObjects: body.selectedObjects,
+        preferredPerspective: body.preferredPerspective,
+    });
+    return {
+        ...planRequest,
+        commandHistory: normalizeCommandHistory(body.commandHistory),
+        problem: {
+            classification: classifyGeoGebraProblem(message),
+            facts: extractGeoGebraFacts(message),
+        },
+    };
+}
+
 function isSafeGeoGebraCommand(command) {
     const trimmedCommand = String(command || '').trim();
     if (!trimmedCommand || trimmedCommand.length > MAX_COMMAND_LENGTH) return false;
@@ -179,7 +225,7 @@ export function parseGeoGebraAgentReply(replyText) {
 
 function inferCommandQueries(message) {
     const queries = new Set();
-    for (const hint of CHINESE_COMMAND_HINTS) {
+    for (const hint of GEOGEBRA_COMMAND_HINTS) {
         if (hint.pattern.test(message)) {
             hint.query.split(/\s+/).forEach(query => queries.add(query));
         }
@@ -199,12 +245,25 @@ function buildCommandHints(message) {
     }));
 }
 
+function buildManualHints(message) {
+    return inferCommandQueries(message).map(query => ({
+        query,
+        matches: searchGeoGebraManual(query, 3),
+    }));
+}
+
 function buildAgentMessages(requestPayload, mode) {
     const commandHints = buildCommandHints(requestPayload.message);
+    const manualHints = buildManualHints(requestPayload.message);
+    const classification = classifyGeoGebraProblem(requestPayload.message);
+    const extractedFacts = extractGeoGebraFacts(requestPayload.message);
     const userPayload = {
         taskType: mode,
         request: requestPayload,
         commandHints,
+        manualHints,
+        classification,
+        extractedFacts,
         outputContract: {
             summary: '中文摘要',
             perspective: 'G 或 T',
@@ -255,6 +314,14 @@ async function requestGeoGebraCompletion(requestPayload, { mode, env = process.e
 
 export async function createGeoGebraPlan(body = {}, options = {}) {
     const requestPayload = buildGeoGebraPlanRequest(body);
+    const deterministicPlan = tryCreateDeterministicGeoGebraPlan(requestPayload);
+    if (deterministicPlan) {
+        return {
+            success: true,
+            intent: 'geogebra',
+            data: deterministicPlan,
+        };
+    }
     const planPayload = await requestGeoGebraCompletion(requestPayload, { ...options, mode: 'plan' });
     return {
         success: true,
@@ -285,6 +352,52 @@ export async function adjustGeoGebraStudio(body = {}, options = {}) {
         data: {
             ...adjustPayload,
             studioNotes: adjustPayload.studioNotes || '已根据 GeoGebra Studio 当前画布生成调整命令',
+        },
+    };
+}
+
+export async function createGeoGebraAgentStep(body = {}, options = {}) {
+    const requestPayload = buildGeoGebraAgentStepRequest(body);
+    const deterministicPlan = tryCreateDeterministicGeoGebraPlan(requestPayload);
+    if (deterministicPlan) {
+        return {
+            success: true,
+            intent: 'geogebra',
+            data: {
+                status: 'execute',
+                ...deterministicPlan,
+            },
+        };
+    }
+
+    if (!hasGeoGebraAiConfig(options.env || process.env)) {
+        const manualReferences = searchGeoGebraManual(requestPayload.message, 5);
+        return {
+            success: true,
+            intent: 'geogebra',
+            data: {
+                status: 'clarify',
+                summary: '当前题目信息不足，暂时只进入确认步骤。',
+                perspective: requestPayload.preferredPerspective || 'G',
+                commands: [],
+                followUp: '请补充题目中的关键条件、坐标、半径、长度或目标对象；也可以先修正上传题目的 OCR 文本后再绘图。',
+                studioNotes: '未匹配到高置信确定性模板，且当前没有可用 AI 配置。',
+                manualReferences,
+                classification: requestPayload.problem.classification,
+            },
+        };
+    }
+
+    const stepPayload = await requestGeoGebraCompletion(requestPayload, { ...options, mode: 'agent_step' });
+    const status = stepPayload.commands.length ? 'execute' : 'clarify';
+    return {
+        success: true,
+        intent: 'geogebra',
+        data: {
+            status,
+            ...stepPayload,
+            manualReferences: searchGeoGebraManual(requestPayload.message, 5),
+            classification: requestPayload.problem.classification,
         },
     };
 }

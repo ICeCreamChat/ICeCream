@@ -14,6 +14,7 @@ import { sessionManager } from './core/session-manager.js';
 import { imageUploader } from './core/image-uploader.js';
 import { manimWorkbench } from './core/manim-workbench.js';
 import { animationEntryLauncher } from './core/animation-entry-launcher.js';
+import { geogebraStudioShell } from './core/geogebra-studio-shell.js';
 import { CodePanel } from './core/code-panel.js';
 import { showToast, devLog, dataURLtoBlob } from './utils/helpers.js';
 import appLauncher from './tools/app-launcher.js';
@@ -39,6 +40,7 @@ class ICeCreamApp {
         };
         this.codePanel = null;
         this.manimWorkbench = null;
+        this.geogebraStudioShell = null;
     }
 
     /**
@@ -144,9 +146,12 @@ class ICeCreamApp {
         //代码面板
         this.codePanel = new CodePanel();
         this.manimWorkbench = manimWorkbench;
+        this.geogebraStudioShell = geogebraStudioShell;
+        this.geogebraStudioShell.init({ modeSwitcher });
         animationEntryLauncher.init({
             modeSwitcher,
             manimWorkbench: this.manimWorkbench,
+            geogebraStudioShell: this.geogebraStudioShell,
         });
 
         // 模态切换器
@@ -155,6 +160,7 @@ class ICeCreamApp {
             onModeChange: (mode) => {
                 devLog.log('Mode changed to', mode);
                 this.manimWorkbench?.setMode(mode);
+                this.geogebraStudioShell?.setMode(mode);
                 messageHandler.clearTaskPrompts?.();
             }
         });
@@ -174,13 +180,15 @@ class ICeCreamApp {
                 sessionManager.addMessage(message);
             },
             codePanel: this.codePanel,
-            manimWorkbench: this.manimWorkbench
+            manimWorkbench: this.manimWorkbench,
+            geogebraStudioShell: this.geogebraStudioShell
         });
 
         // 会话管理器
         sessionManager.init({
             onSessionLoad: (messages) => {
                 this.manimWorkbench?.resetSessionRuntime?.();
+                this.geogebraStudioShell?.resetSessionRuntime?.();
                 messageHandler.clearMessages();
                 messageHandler.hideWelcomeScreen();
                 messages.forEach(msg => {
@@ -190,6 +198,7 @@ class ICeCreamApp {
             },
             onSessionClear: () => {
                 this.manimWorkbench?.resetSessionRuntime?.();
+                this.geogebraStudioShell?.resetSessionRuntime?.();
                 messageHandler.clearMessages();
                 this._closeSidebar();
             }
@@ -449,5 +458,6 @@ window.ICeCream = {
     messageHandler,
     sessionManager,
     showToast,
-    appLauncher
+    appLauncher,
+    geogebraStudioShell
 };

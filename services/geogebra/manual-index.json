@@ -1,0 +1,262 @@
+[
+  {
+    "id": "command-circle",
+    "type": "command",
+    "title": "Circle",
+    "keywords": ["circle", "radius", "center", "circumcircle", "圆", "圆心", "半径", "外接圆"],
+    "summary": "Creates a circle from a center and radius, a center and point, or three points.",
+    "syntax": ["Circle(<Point>, <Number>)", "Circle(<Point>, <Point>)", "Circle(<Point>, <Point>, <Point>)"],
+    "examples": ["C = (0, 3)", "c = Circle(C, 3)", "circum = Circle(A, B, C)"],
+    "source": "manual/en/commands/Circle"
+  },
+  {
+    "id": "command-point",
+    "type": "command",
+    "title": "Point",
+    "keywords": ["point", "object", "path", "free point", "点", "动点", "路径"],
+    "summary": "Creates a point, including a movable point on a path such as a line, conic, segment, or circle.",
+    "syntax": ["Point(<Object>)"],
+    "examples": ["P = Point(c)", "A = (0, 0)"],
+    "source": "manual/en/commands/Point"
+  },
+  {
+    "id": "command-line",
+    "type": "command",
+    "title": "Line",
+    "keywords": ["line", "through", "直线", "过两点"],
+    "summary": "Creates a line, commonly through two points.",
+    "syntax": ["Line(<Point>, <Point>)"],
+    "examples": ["l = Line(A, B)"],
+    "source": "manual/en/commands/Line"
+  },
+  {
+    "id": "command-segment",
+    "type": "command",
+    "title": "Segment",
+    "keywords": ["segment", "length", "弦", "线段", "边"],
+    "summary": "Creates a segment between two points or from a point with a fixed length.",
+    "syntax": ["Segment(<Point>, <Point>)", "Segment(<Point>, <Number>)"],
+    "examples": ["s = Segment(O, P)"],
+    "source": "manual/en/commands/Segment"
+  },
+  {
+    "id": "command-midpoint",
+    "type": "command",
+    "title": "Midpoint",
+    "keywords": ["midpoint", "center", "中点", "中心"],
+    "summary": "Creates the midpoint of two points or the center of a conic.",
+    "syntax": ["Midpoint(<Point>, <Point>)", "Midpoint(<Conic>)"],
+    "examples": ["M = Midpoint(O, P)"],
+    "source": "manual/en/commands/Midpoint"
+  },
+  {
+    "id": "command-locus",
+    "type": "command",
+    "title": "Locus",
+    "keywords": ["locus", "trace", "path", "轨迹", "动点", "几何轨迹"],
+    "summary": "Returns the locus curve of a dependent point Q controlled by a point P on a path, or by a slider.",
+    "syntax": ["Locus(<Point Creating Locus Line Q>, <Point P>)", "Locus(<Point Creating Locus Line Q>, <Slider t>)"],
+    "examples": ["traceM = Locus(M, P)"],
+    "source": "manual/en/commands/Locus"
+  },
+  {
+    "id": "command-curve",
+    "type": "command",
+    "title": "Curve",
+    "keywords": ["curve", "parametric", "参数曲线", "曲线"],
+    "summary": "Creates a 2D or 3D parametric curve over a finite parameter interval.",
+    "syntax": ["Curve(<Expression>, <Expression>, <Parameter Variable>, <Start Value>, <End Value>)"],
+    "examples": ["Curve(2 cos(t), 2 sin(t), t, 0, 2 pi)"],
+    "source": "manual/en/commands/Curve"
+  },
+  {
+    "id": "command-polygon",
+    "type": "command",
+    "title": "Polygon",
+    "keywords": ["polygon", "triangle", "quadrilateral", "三角形", "多边形", "四边形"],
+    "summary": "Creates a polygon from a sequence of points.",
+    "syntax": ["Polygon(<Point>, ..., <Point>)"],
+    "examples": ["tri = Polygon(A, B, C)"],
+    "source": "manual/en/commands/Polygon"
+  },
+  {
+    "id": "command-intersect",
+    "type": "command",
+    "title": "Intersect",
+    "keywords": ["intersect", "intersection", "交点", "相交"],
+    "summary": "Creates intersection point(s) of two objects.",
+    "syntax": ["Intersect(<Object>, <Object>)"],
+    "examples": ["X = Intersect(c, l)"],
+    "source": "manual/en/commands/Intersect"
+  },
+  {
+    "id": "command-perpendicularline",
+    "type": "command",
+    "title": "PerpendicularLine",
+    "keywords": ["perpendicular", "垂线", "垂直"],
+    "summary": "Creates a line through a point perpendicular to a given line.",
+    "syntax": ["PerpendicularLine(<Point>, <Line>)"],
+    "examples": ["h = PerpendicularLine(A, l)"],
+    "source": "manual/en/commands/PerpendicularLine"
+  },
+  {
+    "id": "command-parallelline",
+    "type": "command",
+    "title": "ParallelLine",
+    "keywords": ["parallel", "平行线", "平行"],
+    "summary": "Creates a line through a point parallel to a given line.",
+    "syntax": ["ParallelLine(<Point>, <Line>)"],
+    "examples": ["p = ParallelLine(A, l)"],
+    "source": "manual/en/commands/ParallelLine"
+  },
+  {
+    "id": "command-tangent",
+    "type": "command",
+    "title": "Tangent",
+    "keywords": ["tangent", "切线", "切点"],
+    "summary": "Creates tangent line(s) to a conic, function, or curve.",
+    "syntax": ["Tangent(<Point>, <Conic>)", "Tangent(<Point>, <Function>)"],
+    "examples": ["t = Tangent(P, c)"],
+    "source": "manual/en/commands/Tangent"
+  },
+  {
+    "id": "command-ellipse",
+    "type": "command",
+    "title": "Ellipse",
+    "keywords": ["ellipse", "conic", "椭圆", "焦点"],
+    "summary": "Creates an ellipse from foci and a point or distance.",
+    "syntax": ["Ellipse(<Focus>, <Focus>, <Point>)", "Ellipse(<Focus>, <Focus>, <Number>)"],
+    "examples": ["e = Ellipse(F1, F2, A)"],
+    "source": "manual/en/commands/Ellipse"
+  },
+  {
+    "id": "command-hyperbola",
+    "type": "command",
+    "title": "Hyperbola",
+    "keywords": ["hyperbola", "conic", "双曲线", "焦点"],
+    "summary": "Creates a hyperbola from foci and a point or distance.",
+    "syntax": ["Hyperbola(<Focus>, <Focus>, <Point>)", "Hyperbola(<Focus>, <Focus>, <Number>)"],
+    "examples": ["h = Hyperbola(F1, F2, A)"],
+    "source": "manual/en/commands/Hyperbola"
+  },
+  {
+    "id": "command-parabola",
+    "type": "command",
+    "title": "Parabola",
+    "keywords": ["parabola", "conic", "抛物线", "焦点", "准线"],
+    "summary": "Creates a parabola from a focus and directrix.",
+    "syntax": ["Parabola(<Point>, <Line>)"],
+    "examples": ["p = Parabola(F, d)"],
+    "source": "manual/en/commands/Parabola"
+  },
+  {
+    "id": "command-function",
+    "type": "command",
+    "title": "Function",
+    "keywords": ["function", "graph", "函数", "图像"],
+    "summary": "Defines or restricts a function graph.",
+    "syntax": ["f(x) = <Expression>", "Function(<Function>, <Start x-Value>, <End x-Value>)"],
+    "examples": ["f(x) = x^2 - 1"],
+    "source": "manual/en/commands/Function"
+  },
+  {
+    "id": "command-slider",
+    "type": "command",
+    "title": "Slider",
+    "keywords": ["slider", "parameter", "animation", "滑块", "参数", "动画"],
+    "summary": "Creates a numeric slider for dynamic parameters.",
+    "syntax": ["Slider(<Min>, <Max>, <Increment>)"],
+    "examples": ["a = Slider(-5, 5, 0.1)"],
+    "source": "manual/en/commands/Slider"
+  },
+  {
+    "id": "command-setcolor",
+    "type": "command",
+    "title": "SetColor",
+    "keywords": ["color", "style", "颜色", "样式"],
+    "summary": "Sets object color using RGB values.",
+    "syntax": ["SetColor(<Object>, <Red>, <Green>, <Blue>)"],
+    "examples": ["SetColor(M, 0.95, 0.35, 0.1)"],
+    "source": "manual/en/commands/SetColor"
+  },
+  {
+    "id": "command-setlinethickness",
+    "type": "command",
+    "title": "SetLineThickness",
+    "keywords": ["line thickness", "style", "线宽", "粗细"],
+    "summary": "Sets line thickness for a visible object.",
+    "syntax": ["SetLineThickness(<Object>, <Number>)"],
+    "examples": ["SetLineThickness(locusM, 5)"],
+    "source": "manual/en/commands/SetLineThickness"
+  },
+  {
+    "id": "command-settrace",
+    "type": "command",
+    "title": "SetTrace",
+    "keywords": ["trace", "locus", "轨迹", "跟踪"],
+    "summary": "Turns trace display on or off for an object.",
+    "syntax": ["SetTrace(<Object>, <Boolean>)"],
+    "examples": ["SetTrace(M, true)"],
+    "source": "manual/en/commands/SetTrace"
+  },
+  {
+    "id": "api-eval-command",
+    "type": "api",
+    "title": "evalCommand",
+    "keywords": ["api", "execute", "evalCommand", "command", "执行命令"],
+    "summary": "Evaluates an English GeoGebra command as if it was entered in the input bar.",
+    "syntax": ["boolean evalCommand(String cmdString)", "String evalCommandGetLabels(String cmdString)"],
+    "examples": ["ggbApplet.evalCommand('A = (0, 0)')"],
+    "source": "reference/en/GeoGebra_Apps_API"
+  },
+  {
+    "id": "api-getbase64",
+    "type": "api",
+    "title": "getBase64",
+    "keywords": ["api", "base64", "save", "ggb", "保存", "导出"],
+    "summary": "Gets the current construction as a base64-encoded .ggb file.",
+    "syntax": ["String getBase64()", "String getBase64(function callback)"],
+    "examples": ["ggbApplet.getBase64(base64 => save(base64))"],
+    "source": "reference/en/GeoGebra_Apps_API"
+  },
+  {
+    "id": "api-setbase64",
+    "type": "api",
+    "title": "setBase64",
+    "keywords": ["api", "base64", "restore", "ggb", "恢复", "导入"],
+    "summary": "Loads the current construction from a base64-encoded .ggb file.",
+    "syntax": ["void setBase64(String base64, function callback)"],
+    "examples": ["ggbApplet.setBase64(base64, () => refresh())"],
+    "source": "reference/en/GeoGebra_Apps_API"
+  },
+  {
+    "id": "api-xml",
+    "type": "api",
+    "title": "getXML / setXML",
+    "keywords": ["api", "xml", "snapshot", "state", "快照", "恢复"],
+    "summary": "Gets or restores the construction XML. setXML clears the current construction before loading.",
+    "syntax": ["String getXML()", "void setXML(String xmlString)"],
+    "examples": ["const xml = ggbApplet.getXML()", "ggbApplet.setXML(xml)"],
+    "source": "reference/en/GeoGebra_Apps_API"
+  },
+  {
+    "id": "parameter-scale-container",
+    "type": "parameter",
+    "title": "scaleContainerClass",
+    "keywords": ["parameter", "responsive", "scale", "container", "自适应"],
+    "summary": "Applet parameter used to scale the applet to fit a CSS container.",
+    "syntax": ["scaleContainerClass: 'geogebra-canvas-root'"],
+    "examples": ["new GGBApplet({ width: '100%', height: '100%', scaleContainerClass: 'geogebra-canvas-root' })"],
+    "source": "reference/en/GeoGebra_App_Parameters"
+  },
+  {
+    "id": "file-format-ggb",
+    "type": "file_format",
+    "title": ".ggb file",
+    "keywords": ["ggb", "file", "base64", "project", "文件", "项目"],
+    "summary": ".ggb files store a GeoGebra construction and can be represented as base64 via the applet API.",
+    "syntax": ["getBase64()", "setBase64(base64)"],
+    "examples": ["Export a Studio page as geogebra-studio.ggb"],
+    "source": "reference/en/File_Format"
+  }
+]

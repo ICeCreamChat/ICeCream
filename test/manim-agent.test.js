@@ -378,7 +378,7 @@ test('frontend shows Manim agent v6 production progress in a chat bubble', async
   assert.match(manimWorkbenchSource, /resetWorkbenchPosition/);
   assert.match(manimWorkbenchSource, /manim-workbench-header/);
   assert.doesNotMatch(manimWorkbenchSource, /body\.addEventListener\('pointerdown'/);
-  assert.match(manimWorkbenchSource, /动画工作台/);
+  assert.match(manimWorkbenchSource, /Manim 工作台/);
   assert.match(manimWorkbenchSource, /生成设置/);
   assert.match(manimWorkbenchSource, /参考素材/);
   assert.match(manimWorkbenchSource, /当前任务/);
@@ -960,7 +960,7 @@ test('frontend task switcher uses three visible tasks and guards cross-task rout
   assert.match(manimWorkbenchSource, /insertAdjacentElement\('afterend', this\.button\)/);
   assert.match(manimWorkbenchSource, /manim-workbench-tab/);
   assert.match(manimWorkbenchSource, /uploadReferenceDataUrl/);
-  assert.match(manimWorkbenchSource, /参考图已加入动画工作台/);
+  assert.match(manimWorkbenchSource, /参考图已加入 Manim 工作台/);
   assert.match(appSource, /messageHandler\.clearTaskPrompts\?\.\(\)/);
 
   assert.match(mainCssSource, /\.task-switch-prompt/);

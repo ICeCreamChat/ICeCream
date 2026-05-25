@@ -8,6 +8,7 @@ import { renderMarkdown, renderMath } from '../utils/markdown.js';
 import { modeSwitcher } from './mode-switcher.js';
 import { intentConfirm } from './intent-confirm.js';
 import { geogebraWorkbench } from './geogebra-workbench.js';
+import { getAnimationEngine, setAnimationEngine } from './animation-engine-state.js';
 
 /**
  * 消息处理器类
@@ -26,6 +27,7 @@ class MessageHandler {
         this.pendingImage = null;
         this.onMessageAdded = null;
         this.manimWorkbench = null;
+        this.geogebraStudioShell = null;
         this.manimProcess = null;
         this.manimAutoScrollLockedUntil = 0;
         this.taskSwitchPrompt = null;
@@ -55,6 +57,7 @@ class MessageHandler {
         this.onMessageAdded = options.onMessageAdded || null;
         this.codePanel = options.codePanel || null;
         this.manimWorkbench = options.manimWorkbench || null;
+        this.geogebraStudioShell = options.geogebraStudioShell || null;
 
         this._bindEvents();
     }
@@ -413,7 +416,7 @@ class MessageHandler {
 
         try {
             const mode = selectedMode;
-            const animationEngine = this.manimWorkbench?.getAnimationEngine?.() || 'manim';
+            const animationEngine = getAnimationEngine();
             const shouldUseGeoGebra = !imageForServer && (
                 (mode === 'manim' && animationEngine === 'geogebra') ||
                 (mode === 'auto' && this.looksLikeGeoGebraRequest(message))
@@ -423,9 +426,9 @@ class MessageHandler {
                 if (mode === 'auto') {
                     modeSwitcher.setMode('manim', false);
                     this.manimWorkbench?.setMode?.('manim');
-                    this.manimWorkbench?.setAnimationEngine?.('geogebra');
                 }
-                this.manimWorkbench?.open?.();
+                setAnimationEngine('geogebra');
+                this.geogebraStudioShell?.open?.();
                 await this.runGeoGebraPlan(message);
                 return;
             }
@@ -476,7 +479,7 @@ class MessageHandler {
 
     async runGeoGebraPlan(message) {
         const outcome = await geogebraWorkbench.runGeoGebraPlan(message);
-        geogebraWorkbench.refreshVisiblePanel(this.manimWorkbench?.body);
+        geogebraWorkbench.refreshVisiblePanel();
         this.addMessage('bot', geogebraWorkbench.formatChatReply(outcome));
     }
 

@@ -1,6 +1,7 @@
 const GEOGEBRA_RUNTIME_VERSION = 'chat-with-geogebra-next-20260525';
 const GEOGEBRA_SCRIPT_SRC = `/vendor/geogebra/deployggb.js?v=${GEOGEBRA_RUNTIME_VERSION}`;
 const GEOGEBRA_CODEBASE = '/vendor/geogebra/HTML5/5.0/web3d/';
+const GEOGEBRA_IFRAME_SRC = '/vendor/geogebra/HTML5/5.0/GeoGebra.html?appName=classic&showToolBar=true&showMenuBar=true&showAlgebraInput=false';
 const GEOGEBRA_APPLET_ID = 'icecreamGeoGebraApplet';
 const DEFAULT_PERSPECTIVE = 'G';
 const SCRIPT_READY_TIMEOUT_MS = 15000;
@@ -89,6 +90,8 @@ class GeoGebraCanvas {
         this.resizeObserver = null;
         this.resizeHandler = null;
         this.resizeTimer = 0;
+        this.geogebraRuntimeMode = 'direct';
+        this.iframeWindow = null;
     }
 
     async mount(containerId = 'geogebra-canvas-root') {
@@ -96,13 +99,18 @@ class GeoGebraCanvas {
         const host = this.getHost();
         this.setCanvasState(host, 'loading');
 
-        await this.loadScript();
-        await this.injectApplet();
-        await this.whenReady();
-        await waitForNextFrame();
-        this.resize();
-        this.observeResize();
-        return this.getApi();
+        try {
+            this.geogebraRuntimeMode = 'direct';
+            await this.loadScript();
+            await this.injectApplet();
+            await this.whenReady();
+            await waitForNextFrame();
+            this.resize();
+            this.observeResize();
+            return this.getApi();
+        } catch (error) {
+            return this.mountIframeFallback(error);
+        }
     }
 
     async rebuild(containerId = this.containerId) {
@@ -112,6 +120,8 @@ class GeoGebraCanvas {
         this.appletPromise = null;
         this.loaded = false;
         this.selectedObjectNames = [];
+        this.geogebraRuntimeMode = 'direct';
+        this.iframeWindow = null;
         this.resetGlobalAppletState();
         const host = this.getHost(false);
         if (host) {
@@ -238,6 +248,82 @@ class GeoGebraCanvas {
         });
 
         return this.appletPromise;
+    }
+
+    mountIframeFallback(reason) {
+        const host = this.getHost();
+        this.disconnectResizeObserver();
+        host.innerHTML = '';
+        this.geogebraRuntimeMode = 'iframe';
+        this.loaded = true;
+        this.selectedObjectNames = [];
+        this.setCanvasState(host, 'ready');
+        host.dataset.geogebraReady = 'true';
+        host.dataset.geogebraRuntimeMode = 'iframe';
+        if (reason?.message) {
+            host.dataset.geogebraFallbackReason = reason.message;
+        }
+
+        const iframe = document.createElement('iframe');
+        iframe.className = 'geogebra-iframe-fallback';
+        iframe.title = 'GeoGebra fallback runtime';
+        iframe.src = GEOGEBRA_IFRAME_SRC;
+        iframe.allow = 'fullscreen';
+        iframe.setAttribute('data-geogebra-iframe-fallback', 'true');
+        iframe.addEventListener('load', () => {
+            this.iframeWindow = iframe.contentWindow;
+            this.postIframeMessage('setLanguage', { language: 'zh-CN' });
+            this.postIframeMessage('edit', { showToolBar: true });
+        });
+        host.appendChild(iframe);
+        this.iframeWindow = iframe.contentWindow;
+
+        const bridgeApi = this.createIframeBridgeApi();
+        this.appletApi = bridgeApi;
+        window.ggbApplet = bridgeApi;
+        window[GEOGEBRA_APPLET_ID] = bridgeApi;
+        window.ggbAppletReady = true;
+        this.observeResize();
+        return Promise.resolve(bridgeApi);
+    }
+
+    postIframeMessage(action, payload = {}) {
+        const frame = this.getHost(false)?.querySelector?.('.geogebra-iframe-fallback');
+        const targetWindow = this.iframeWindow || frame?.contentWindow;
+        if (!targetWindow) return false;
+        targetWindow.postMessage(JSON.stringify({ action, ...payload }), '*');
+        return true;
+    }
+
+    createIframeBridgeApi() {
+        return {
+            evalCommand: (command) => this.postIframeMessage('eval', { command }),
+            asyncEvalCommandGetLabels: async (command) => {
+                const sent = this.postIframeMessage('eval', { command });
+                return sent ? '' : Promise.reject(new Error('GeoGebra iframe fallback is not ready'));
+            },
+            getAllObjectNames: () => [],
+            getXML: () => '',
+            setXML: () => false,
+            getBase64: (callback) => {
+                this.postIframeMessage('getggb');
+                if (typeof callback === 'function') callback('');
+                return '';
+            },
+            setBase64: (base64, callback) => {
+                this.postIframeMessage('setggb', { base64 });
+                if (typeof callback === 'function') callback();
+            },
+            newConstruction: () => this.postIframeMessage('reset'),
+            reset: () => this.postIframeMessage('reset'),
+            setPerspective: (perspective) => this.postIframeMessage('perspective', { perspective }),
+            setSize: () => true,
+            getPNGBase64: () => '',
+            remove: () => {
+                const host = this.getHost(false);
+                if (host) host.innerHTML = '';
+            },
+        };
     }
 
     bindSelectionListener(api) {
@@ -531,7 +617,48 @@ class GeoGebraCanvas {
             return '';
         }
     }
+
+    async getBase64() {
+        const api = this.getApi();
+        if (!api || typeof api.getBase64 !== 'function') return '';
+        try {
+            if (api.getBase64.length > 0) {
+                return await new Promise(resolve => {
+                    api.getBase64(value => resolve(String(value || '')));
+                });
+            }
+            return String(api.getBase64() || '');
+        } catch {
+            return '';
+        }
+    }
+
+    async setBase64(base64) {
+        const base64Text = String(base64 || '').trim();
+        if (!base64Text) return false;
+        await this.whenReady();
+        const api = this.getApi();
+        if (!api || typeof api.setBase64 !== 'function') return false;
+        try {
+            await new Promise(resolve => {
+                const maybeResult = api.setBase64(base64Text, () => resolve(true));
+                if (api.setBase64.length < 2) {
+                    resolve(maybeResult !== false);
+                }
+            });
+            await waitForNextFrame();
+            this.resize();
+            this.selectedObjectNames = [];
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    async exportGgbBase64() {
+        return this.getBase64();
+    }
 }
 
 export const geogebraCanvas = new GeoGebraCanvas();
-export { GEOGEBRA_SCRIPT_SRC, GEOGEBRA_CODEBASE, GEOGEBRA_APPLET_ID, waitForGgbAppletConstructor };
+export { GEOGEBRA_SCRIPT_SRC, GEOGEBRA_CODEBASE, GEOGEBRA_IFRAME_SRC, GEOGEBRA_APPLET_ID, waitForGgbAppletConstructor };

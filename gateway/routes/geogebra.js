@@ -1,9 +1,12 @@
-import { access } from 'node:fs/promises';
+import { access, unlink } from 'node:fs/promises';
 
 import express from 'express';
 
+import { upload } from '../middleware/upload.js';
 import { getGeoGebraCommandIndexStatus, normalizeSearchLimit, searchGeoGebraCommands } from '../../services/geogebra/command-search.js';
-import { adjustGeoGebraStudio, createGeoGebraPlan, hasGeoGebraAiConfig, repairGeoGebraPlan } from '../../services/geogebra/geogebra-agent.js';
+import { adjustGeoGebraStudio, createGeoGebraAgentStep, createGeoGebraPlan, hasGeoGebraAiConfig, repairGeoGebraPlan } from '../../services/geogebra/geogebra-agent.js';
+import { createGeoGebraImagePlan } from '../../services/geogebra/geogebra-image-agent.js';
+import { getGeoGebraManualIndexStatus, normalizeManualSearchLimit, searchGeoGebraManual } from '../../services/geogebra/manual-search.js';
 
 const router = express.Router();
 const GEOGEBRA_DEPLOY_URL = new URL('../../public/vendor/geogebra/deployggb.js', import.meta.url);
@@ -28,6 +31,7 @@ function sendGeoGebraError(res, error) {
 
 router.get('/status', async (req, res) => {
     const indexStatus = getGeoGebraCommandIndexStatus();
+    const manualStatus = getGeoGebraManualIndexStatus();
     return res.json({
         success: true,
         data: {
@@ -35,6 +39,8 @@ router.get('/status', async (req, res) => {
             aiAvailable: hasGeoGebraAiConfig(),
             commandIndexReady: indexStatus.ready,
             commandCount: indexStatus.commandCount,
+            manualIndexReady: manualStatus.ready,
+            manualEntryCount: manualStatus.entryCount,
             license: GEOGEBRA_LICENSE,
         },
     });
@@ -48,6 +54,20 @@ router.get('/commands/search', (req, res) => {
         data: {
             query,
             matches: searchGeoGebraCommands(query, limit),
+        },
+    });
+});
+
+router.get('/manual/search', (req, res) => {
+    const query = String(req.query.q || req.query.query || '');
+    const limit = normalizeManualSearchLimit(req.query.limit);
+    const status = getGeoGebraManualIndexStatus();
+    return res.json({
+        success: true,
+        data: {
+            query,
+            ready: status.ready,
+            matches: searchGeoGebraManual(query, limit),
         },
     });
 });
@@ -79,6 +99,31 @@ router.post('/studio/adjust', async (req, res) => {
     } catch (error) {
         console.error('[GeoGebra Route] Studio Adjust Error:', error);
         return sendGeoGebraError(res, error);
+    }
+});
+
+router.post('/studio/agent-step', async (req, res) => {
+    try {
+        const stepPayload = await createGeoGebraAgentStep(req.body);
+        return res.json(stepPayload);
+    } catch (error) {
+        console.error('[GeoGebra Route] Studio Agent Step Error:', error);
+        return sendGeoGebraError(res, error);
+    }
+});
+
+router.post('/studio/parse-image', upload.single('image'), async (req, res) => {
+    const imageFile = req.file;
+    try {
+        const imagePayload = await createGeoGebraImagePlan(req.body, imageFile?.path);
+        return res.json(imagePayload);
+    } catch (error) {
+        console.error('[GeoGebra Route] Studio Image Parse Error:', error);
+        return sendGeoGebraError(res, error);
+    } finally {
+        if (imageFile?.path) {
+            unlink(imageFile.path).catch(() => {});
+        }
     }
 });
 

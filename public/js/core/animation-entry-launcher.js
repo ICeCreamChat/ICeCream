@@ -1,18 +1,22 @@
+import { setAnimationEngine } from './animation-engine-state.js';
+
 class AnimationEntryLauncher {
     constructor() {
         this.overlay = null;
         this.panel = null;
         this.modeSwitcher = null;
         this.manimWorkbench = null;
+        this.geogebraStudioShell = null;
         this.initialized = false;
         this.handleKeydown = this.handleKeydown.bind(this);
     }
 
-    init({ modeSwitcher, manimWorkbench } = {}) {
+    init({ modeSwitcher, manimWorkbench, geogebraStudioShell } = {}) {
         if (this.initialized) return;
         this.initialized = true;
         this.modeSwitcher = modeSwitcher || null;
         this.manimWorkbench = manimWorkbench || null;
+        this.geogebraStudioShell = geogebraStudioShell || null;
         this.createOverlay();
     }
 
@@ -89,17 +93,23 @@ class AnimationEntryLauncher {
 
     selectEngine(engine) {
         if (engine === 'manim') {
-            this.manimWorkbench?.setAnimationEngine?.('manim');
+            setAnimationEngine('manim');
+            this.close();
+            this.geogebraStudioShell?.close?.();
+            this.modeSwitcher?.setMode?.('manim', true);
+            this.manimWorkbench?.open?.();
+            document.getElementById('chat-input')?.focus();
+            return;
         } else if (engine === 'geogebra') {
-            this.manimWorkbench?.setAnimationEngine?.('geogebra');
+            setAnimationEngine('geogebra');
+            this.close();
+            this.manimWorkbench?.close?.();
+            this.modeSwitcher?.setMode?.('manim', true);
+            this.geogebraStudioShell?.open?.();
+            return;
         } else {
             return;
         }
-
-        this.close();
-        this.modeSwitcher?.setMode?.('manim', true);
-        this.manimWorkbench?.open?.();
-        document.getElementById('chat-input')?.focus();
     }
 }
 

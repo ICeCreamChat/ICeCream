@@ -24,6 +24,11 @@ export function registerCoreMiddleware(app, config) {
         max: config.ocrRateLimitPerMinute,
         message: 'Image recognition requests are too frequent. Please try again later.',
     }));
+    app.use('/api/geogebra/studio/parse-image', createRateLimiter({
+        windowMs: 60 * 1000,
+        max: config.ocrRateLimitPerMinute,
+        message: 'GeoGebra image parsing requests are too frequent. Please try again later.',
+    }));
     app.use(express.json({ limit: config.jsonBodyLimit }));
     app.use(express.urlencoded({ extended: true, limit: config.formBodyLimit }));
 }
