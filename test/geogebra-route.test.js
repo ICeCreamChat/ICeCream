@@ -120,6 +120,14 @@ test('GeoGebra deterministic planner handles circle chord midpoint locus problem
   assert.ok(payload.data.commands.includes('M = Midpoint(O, P)'));
   assert.ok(payload.data.commands.includes('K = (0, 1.5)'));
   assert.ok(payload.data.commands.includes('locusM = Circle(K, 1.5)'));
+  assert.equal(payload.data.viewport?.equalScale, true);
+  assert.equal(payload.data.demo?.type, 'trace');
+  assert.equal(payload.data.demo?.autoPlay, true);
+  assert.equal(payload.data.demo?.movingObject, 'P');
+  assert.equal(payload.data.demo?.tracedObject, 'M');
+  assert.equal(payload.data.demo?.path?.type, 'circle');
+  assert.deepEqual(payload.data.demo?.path?.center, { x: 0, y: 3 });
+  assert.equal(payload.data.demo?.path?.radius, 3);
 });
 
 test('GeoGebra image OCR text can trigger deterministic drawing without DeepSeek', async () => {

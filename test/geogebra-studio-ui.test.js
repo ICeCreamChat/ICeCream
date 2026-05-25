@@ -33,6 +33,13 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioSource, /renderAdvancedTools/);
   assert.match(studioSource, /data-geogebra-studio-action="draw-from-prompt"/);
   assert.match(studioSource, /data-geogebra-studio-action="adjust-current-graph"/);
+  assert.match(studioSource, /data-geogebra-studio-action="play-demo"/);
+  assert.match(studioSource, /data-geogebra-studio-action="pause-demo"/);
+  assert.match(studioSource, /data-geogebra-studio-action="clear-demo-trace"/);
+  assert.match(studioSource, /data-geogebra-studio-action="toggle-advanced-tools"/);
+  assert.ok(studioSource.includes('\u6f14\u793a\u8f68\u8ff9'));
+  assert.ok(studioSource.includes('\u6682\u505c\u6f14\u793a'));
+  assert.ok(studioSource.includes('\u6e05\u9664\u8f68\u8ff9'));
   assert.match(studioSource, /data-geogebra-prompt-input/);
   assert.match(studioSource, /data-geogebra-advanced-tools/);
   assert.match(studioSource, /绘图助手/);
@@ -73,12 +80,31 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioSource, /runStudioAdjustment/);
   assert.match(studioSource, /executeManualCommands/);
   assert.match(studioSource, /selectObject/);
+  assert.match(studioSource, /runTrajectoryDemo/);
+  assert.match(studioSource, /stopTrajectoryDemo/);
+  assert.match(studioSource, /clearTrajectoryTrace/);
+  assert.match(studioSource, /runParametricTrajectoryDemo/);
+  assert.match(studioSource, /requestAnimationFrame/);
+  assert.match(studioSource, /SetValue\(\$\{movingObject\}, \(\$\{formatGeoGebraNumber\(x\)\}, \$\{formatGeoGebraNumber\(y\)\}\)\)/);
+  assert.match(studioSource, /StartAnimation\(\$\{movingObject\}, false\)/);
+  assert.match(studioSource, /planBody\.demo\?\.autoPlay/);
+  const drawingAssistantStart = studioSource.indexOf('\n    renderDrawingAssistant() {');
+  assert.notEqual(drawingAssistantStart, -1);
+  const drawingAssistantBody = studioSource.slice(
+    drawingAssistantStart,
+    studioSource.indexOf('renderAssistantStatus()'),
+  );
+  assert.doesNotMatch(drawingAssistantBody, /renderAdvancedTools/);
 
   assert.match(mainStyles, /\.geogebra-studio-layout/);
   assert.match(mainStyles, /\.geogebra-studio-shell/);
   assert.match(mainStyles, /\.geogebra-drawing-assistant/);
   assert.match(mainStyles, /\.geogebra-assistant-scroll/);
+  assert.match(mainStyles, /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(mainStyles, /\.geogebra-demo-controls/);
+  assert.match(mainStyles, /\.geogebra-result-panel/);
   assert.match(mainStyles, /\.geogebra-result-card/);
+  assert.doesNotMatch(mainStyles, /\.geogebra-result-card\s*\{[\s\S]*?max-height:\s*180px/);
   assert.match(mainStyles, /\.geogebra-recognized-problem/);
   assert.match(mainStyles, /\.geogebra-problem-upload/);
   assert.match(mainStyles, /\.geogebra-studio-sidebar/);
@@ -88,6 +114,20 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(mobileStyles, /\.geogebra-studio-layout/);
   assert.match(mobileStyles, /\.geogebra-studio-shell/);
   assert.match(mobileStyles, /\.geogebra-drawing-assistant/);
+  assert.match(mobileStyles, /\.geogebra-result-panel/);
+});
+
+test('GeoGebra Studio stops trajectory demos on reset and shell close', async () => {
+  const [studioSource, studioShellSource, workbenchSource] = await Promise.all([
+    readFile(studioPath, 'utf8'),
+    readFile(studioShellPath, 'utf8'),
+    readFile(workbenchPath, 'utf8'),
+  ]);
+
+  assert.match(studioSource, /resetCanvas\(\)[\s\S]*await this\.stopTrajectoryDemo/);
+  assert.match(studioSource, /executePlanCommands\(planBody = \{\}, options = \{\}\)[\s\S]*await this\.stopTrajectoryDemo/);
+  assert.match(workbenchSource, /stopTrajectoryDemo\(\)/);
+  assert.match(studioShellSource, /close\(\)[\s\S]*geogebraWorkbench\.stopTrajectoryDemo\(\)/);
 });
 
 test('GeoGebra canvas supports Studio snapshots without replacing existing APIs', async () => {
@@ -95,6 +135,10 @@ test('GeoGebra canvas supports Studio snapshots without replacing existing APIs'
 
   assert.match(canvasSource, /captureSnapshot/);
   assert.match(canvasSource, /restoreSnapshot/);
+  assert.match(canvasSource, /fitBoundsEqualScale/);
+  assert.match(canvasSource, /setCoordSystem/);
+  assert.match(canvasSource, /SetAxesRatio\(1,\s*1\)/);
+  assert.match(canvasSource, /lastEqualScaleViewport/);
   assert.match(canvasSource, /setXML/);
   assert.match(canvasSource, /executeCommands/);
   assert.match(canvasSource, /readCanvas/);
@@ -116,4 +160,14 @@ test('GeoGebra canvas uses reference-style applet boot and resize handling', asy
   assert.match(canvasSource, /ResizeObserver/);
   assert.match(canvasSource, /case 'select'/);
   assert.match(canvasSource, /case 'deselect'/);
+  assert.match(canvasSource, /this\.fitBoundsEqualScale\(this\.lastEqualScaleViewport/);
+});
+
+test('GeoGebra Studio applies equal-scale viewport after generated plans', async () => {
+  const studioSource = await readFile(studioPath, 'utf8');
+
+  assert.match(studioSource, /applyPlanViewport/);
+  assert.match(studioSource, /planBody\.viewport/);
+  assert.match(studioSource, /geogebraCanvas\.fitBoundsEqualScale/);
+  assert.match(studioSource, /inferEqualScaleViewport/);
 });

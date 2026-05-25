@@ -39,6 +39,31 @@ test('GeoGebra deterministic template draws circle chord midpoint locus exactly'
   assert.ok(plan.commands.includes('C = (0, 3)'));
   assert.ok(plan.commands.includes('c = Circle(C, 3)'));
   assert.ok(plan.commands.includes('M = Midpoint(O, P)'));
+  assert.deepEqual(plan.viewport, {
+    xmin: -4,
+    ymin: -1,
+    xmax: 4,
+    ymax: 7,
+    equalScale: true,
+  });
+  assert.deepEqual(plan.demo, {
+    type: 'trace',
+    autoPlay: true,
+    movingObject: 'P',
+    tracedObject: 'M',
+    durationMs: 6500,
+    frameCount: 96,
+    path: {
+      type: 'circle',
+      center: { x: 0, y: 3 },
+      radius: 3,
+      startAngle: -90,
+      endAngle: 270,
+    },
+  });
+  assert.equal(plan.commands.some(command => /^ZoomIn\(/.test(command)), false);
+  assert.equal(plan.commands.some(command => /^StartAnimation\(/.test(command)), false);
+  assert.equal(plan.commands.some(command => /^SetTrace\(/.test(command)), false);
 });
 
 test('GeoGebra deterministic template handles real OCR text with LaTeX origin markers', () => {
@@ -54,6 +79,12 @@ test('GeoGebra deterministic template handles real OCR text with LaTeX origin ma
     assert.match(plan.summary, /x\^2 \+ \(y - 1\.5\)\^2 = 2\.25/);
     assert.ok(plan.commands.includes('K = (0, 1.5)'));
     assert.ok(plan.commands.includes('locusM = Circle(K, 1.5)'));
+    assert.equal(plan.viewport?.equalScale, true);
+    assert.equal(plan.demo?.type, 'trace');
+    assert.equal(plan.demo?.autoPlay, true);
+    assert.equal(plan.demo?.path?.type, 'circle');
+    assert.deepEqual(plan.demo?.path?.center, { x: 0, y: 3 });
+    assert.equal(plan.demo?.path?.radius, 3);
   }
 });
 

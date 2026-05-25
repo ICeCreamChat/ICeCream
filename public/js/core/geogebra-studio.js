@@ -60,6 +60,145 @@ function waitForStudioFrame() {
     });
 }
 
+const GEOGEBRA_NUMBER_PATTERN = '[-+]?\\d+(?:\\.\\d+)?';
+const GEOGEBRA_GEOMETRY_COMMAND_PATTERN = /\b(Circle|Segment|Polygon|Midpoint|Point|Line|Ray|Vector|Locus|Incircle)\b/i;
+
+function createEmptyBounds() {
+    return {
+        xmin: Number.POSITIVE_INFINITY,
+        ymin: Number.POSITIVE_INFINITY,
+        xmax: Number.NEGATIVE_INFINITY,
+        ymax: Number.NEGATIVE_INFINITY,
+    };
+}
+
+function includePointInBounds(bounds, x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    bounds.xmin = Math.min(bounds.xmin, x);
+    bounds.ymin = Math.min(bounds.ymin, y);
+    bounds.xmax = Math.max(bounds.xmax, x);
+    bounds.ymax = Math.max(bounds.ymax, y);
+}
+
+function includeCircleInBounds(bounds, center, radius) {
+    if (!center || !Number.isFinite(radius) || radius <= 0) return;
+    includePointInBounds(bounds, center.x - radius, center.y - radius);
+    includePointInBounds(bounds, center.x + radius, center.y + radius);
+}
+
+function boundsToViewport(bounds, margin = 1) {
+    if (![bounds.xmin, bounds.ymin, bounds.xmax, bounds.ymax].every(Number.isFinite)) return null;
+    const width = Math.max(bounds.xmax - bounds.xmin, 1);
+    const height = Math.max(bounds.ymax - bounds.ymin, 1);
+    const padding = Math.max(margin, Math.min(Math.max(width, height) * 0.12, 2));
+    return {
+        xmin: bounds.xmin - padding,
+        ymin: bounds.ymin - padding,
+        xmax: bounds.xmax + padding,
+        ymax: bounds.ymax + padding,
+        equalScale: true,
+    };
+}
+
+function inferEqualScaleViewport(planBody = {}) {
+    if (planBody.viewport?.equalScale === false || planBody.problemType === 'function_graph') return null;
+    const commands = normalizeCommands(planBody.commands);
+    if (!commands.some(command => GEOGEBRA_GEOMETRY_COMMAND_PATTERN.test(command))) return null;
+
+    const bounds = createEmptyBounds();
+    const points = {};
+    const pointPattern = new RegExp(`^([A-Za-z][\\w]*)\\s*=\\s*\\(\\s*(${GEOGEBRA_NUMBER_PATTERN})\\s*,\\s*(${GEOGEBRA_NUMBER_PATTERN})\\s*\\)`);
+    const circleByPointPattern = new RegExp(`^([A-Za-z][\\w]*)\\s*=\\s*Circle\\(\\s*([A-Za-z][\\w]*)\\s*,\\s*(${GEOGEBRA_NUMBER_PATTERN})\\s*\\)`, 'i');
+    const circleByLiteralPattern = new RegExp(`^([A-Za-z][\\w]*)\\s*=\\s*Circle\\(\\s*\\(\\s*(${GEOGEBRA_NUMBER_PATTERN})\\s*,\\s*(${GEOGEBRA_NUMBER_PATTERN})\\s*\\)\\s*,\\s*(${GEOGEBRA_NUMBER_PATTERN})\\s*\\)`, 'i');
+
+    commands.forEach(command => {
+        const pointMatch = command.match(pointPattern);
+        if (pointMatch) {
+            const point = { x: Number(pointMatch[2]), y: Number(pointMatch[3]) };
+            points[pointMatch[1]] = point;
+            includePointInBounds(bounds, point.x, point.y);
+            return;
+        }
+
+        const literalCircleMatch = command.match(circleByLiteralPattern);
+        if (literalCircleMatch) {
+            includeCircleInBounds(bounds, { x: Number(literalCircleMatch[2]), y: Number(literalCircleMatch[3]) }, Number(literalCircleMatch[4]));
+            return;
+        }
+
+        const circleMatch = command.match(circleByPointPattern);
+        if (circleMatch) {
+            includeCircleInBounds(bounds, points[circleMatch[2]], Number(circleMatch[3]));
+        }
+    });
+
+    (planBody.extractedFacts?.circles || []).forEach(circle => {
+        includeCircleInBounds(bounds, circle.center, Number(circle.radius));
+    });
+
+    return boundsToViewport(bounds);
+}
+
+function readFiniteDemoNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function normalizeDemoPath(path = {}) {
+    if (!path || path.type !== 'circle') return null;
+    const centerX = readFiniteDemoNumber(path.center?.x);
+    const centerY = readFiniteDemoNumber(path.center?.y);
+    const radius = readFiniteDemoNumber(path.radius);
+    if (centerX === null || centerY === null || radius === null || radius <= 0) return null;
+    const startAngle = readFiniteDemoNumber(path.startAngle) ?? -90;
+    const endAngle = readFiniteDemoNumber(path.endAngle) ?? 270;
+    return {
+        type: 'circle',
+        center: { x: centerX, y: centerY },
+        radius,
+        startAngle,
+        endAngle,
+    };
+}
+
+function formatGeoGebraNumber(value) {
+    if (!Number.isFinite(value)) return '0';
+    return String(Number(value.toFixed(8)));
+}
+
+function pointOnDemoPath(path, progress) {
+    if (!path || path.type !== 'circle') return null;
+    const startRadians = path.startAngle * Math.PI / 180;
+    const endRadians = path.endAngle * Math.PI / 180;
+    const angle = startRadians + (endRadians - startRadians) * Math.min(Math.max(progress, 0), 1);
+    return {
+        x: path.center.x + path.radius * Math.cos(angle),
+        y: path.center.y + path.radius * Math.sin(angle),
+    };
+}
+
+function buildSetPointCommand(movingObject, x, y) {
+    return `SetValue(${movingObject}, (${formatGeoGebraNumber(x)}, ${formatGeoGebraNumber(y)}))`;
+}
+
+function normalizeDemoConfig(demo = {}) {
+    if (!demo || demo.type !== 'trace') return null;
+    const movingObject = String(demo.movingObject || '').trim();
+    const tracedObject = String(demo.tracedObject || '').trim();
+    if (!movingObject || !tracedObject) return null;
+    const durationMs = Number(demo.durationMs);
+    const frameCount = Number(demo.frameCount);
+    return {
+        type: 'trace',
+        autoPlay: demo.autoPlay !== false,
+        movingObject,
+        tracedObject,
+        durationMs: Number.isFinite(durationMs) ? Math.min(Math.max(durationMs, 1200), 15000) : 6500,
+        frameCount: Number.isFinite(frameCount) ? Math.min(Math.max(Math.round(frameCount), 24), 240) : 96,
+        path: normalizeDemoPath(demo.path),
+    };
+}
+
 class GeoGebraStudio {
     constructor() {
         this.root = null;
@@ -73,6 +212,12 @@ class GeoGebraStudio {
         this.repairSummary = '';
         this.latestError = '';
         this.studioNotes = '';
+        this.demoConfig = null;
+        this.demoPlaying = false;
+        this.demoStatus = '';
+        this.demoTimer = 0;
+        this.demoFrameId = 0;
+        this.demoRunId = 0;
         this.problemParseStatus = '';
         this.problemImageName = '';
         this.lastProblemImageFile = null;
@@ -130,6 +275,18 @@ class GeoGebraStudio {
         this.repairSummary = '';
         this.latestError = '';
         this.studioNotes = '';
+        this.demoConfig = null;
+        this.demoPlaying = false;
+        this.demoStatus = '';
+        if (this.demoTimer) {
+            window.clearTimeout(this.demoTimer);
+            this.demoTimer = 0;
+        }
+        if (this.demoFrameId) {
+            window.cancelAnimationFrame?.(this.demoFrameId);
+            this.demoFrameId = 0;
+        }
+        this.demoRunId += 1;
         this.problemParseStatus = '';
         this.problemImageName = '';
         this.lastProblemImageFile = null;
@@ -275,6 +432,7 @@ class GeoGebraStudio {
         return `
             <aside class="geogebra-studio-sidebar">
                 ${this.renderDrawingAssistant()}
+                ${this.renderAdvancedTools()}
             </aside>
         `;
     }
@@ -313,8 +471,8 @@ class GeoGebraStudio {
                             <span>调整当前图</span>
                         </button>
                     </div>
+                    ${this.renderDemoControls()}
                     ${this.renderResultCards()}
-                    ${this.renderAdvancedTools()}
                 </div>
             </section>
         `;
@@ -329,6 +487,37 @@ class GeoGebraStudio {
             <div class="geogebra-assistant-status" data-tone="${tone}">
                 ${escapeHtml(status)}
             </div>
+        `;
+    }
+
+    renderDemoControls() {
+        const hasDemo = Boolean(this.demoConfig);
+        const demoStatus = this.demoStatus || (hasDemo ? '可演示轨迹过程' : '生成轨迹题后可自动演示');
+        return `
+            <section class="geogebra-demo-controls" aria-label="GeoGebra 轨迹演示">
+                <div>
+                    <strong>轨迹演示</strong>
+                    <small>${escapeHtml(demoStatus)}</small>
+                </div>
+                <div class="geogebra-demo-actions">
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="play-demo" ${hasDemo && !this.busy ? '' : 'disabled'}>
+                        <i data-lucide="play"></i>
+                        <span>演示轨迹</span>
+                    </button>
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="pause-demo" ${this.demoPlaying ? '' : 'disabled'}>
+                        <i data-lucide="pause"></i>
+                        <span>暂停演示</span>
+                    </button>
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="clear-demo-trace" ${hasDemo && !this.busy ? '' : 'disabled'}>
+                        <i data-lucide="eraser"></i>
+                        <span>清除轨迹</span>
+                    </button>
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="toggle-advanced-tools">
+                        <i data-lucide="panel-right-open"></i>
+                        <span>高级工具</span>
+                    </button>
+                </div>
+            </section>
         `;
     }
 
@@ -361,16 +550,24 @@ class GeoGebraStudio {
                 </button>
             `);
         }
-        return cards.join('');
+        return `
+            <section class="geogebra-result-panel" aria-label="GeoGebra 绘图结果">
+                ${cards.length ? cards.join('') : '<div class="geogebra-result-placeholder">结果会显示在这里。</div>'}
+            </section>
+        `;
     }
 
     renderAdvancedTools() {
         return `
-            <details class="geogebra-advanced-tools" data-geogebra-advanced-tools ${this.advancedToolsOpen ? 'open' : ''}>
-                <summary>
+            <section class="geogebra-advanced-tools ${this.advancedToolsOpen ? 'open' : ''}" data-geogebra-advanced-tools ${this.advancedToolsOpen ? '' : 'hidden'}>
+                <header class="geogebra-advanced-head">
                     <span>高级工具</span>
                     <small>对象、命令、历史、参考和草稿</small>
-                </summary>
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="close-advanced-tools">
+                        <i data-lucide="x"></i>
+                        <span>关闭</span>
+                    </button>
+                </header>
                 <div class="geogebra-studio-tabs" role="tablist" aria-label="GeoGebra Studio advanced panels">
                     ${this.renderTab('objects', '对象')}
                     ${this.renderTab('adjust', 'AI 调整')}
@@ -382,7 +579,7 @@ class GeoGebraStudio {
                 <div class="geogebra-studio-panel">
                     ${this.renderActivePanel()}
                 </div>
-            </details>
+            </section>
         `;
     }
 
@@ -619,9 +816,6 @@ class GeoGebraStudio {
             this.problemReviewText = event.target.value;
             this.saveSession();
         });
-        this.root.querySelector('[data-geogebra-advanced-tools]')?.addEventListener('toggle', (event) => {
-            this.advancedToolsOpen = Boolean(event.target.open);
-        });
 
         this.root.querySelectorAll('[data-geogebra-manual-example]').forEach(button => {
             button.addEventListener('click', () => {
@@ -848,6 +1042,18 @@ class GeoGebraStudio {
             await this.replanProblemText();
         } else if (action === 'adjust-current-graph') {
             await this.adjustCurrentGraph();
+        } else if (action === 'play-demo') {
+            await this.runTrajectoryDemo();
+        } else if (action === 'pause-demo') {
+            await this.stopTrajectoryDemo();
+        } else if (action === 'clear-demo-trace') {
+            await this.clearTrajectoryTrace();
+        } else if (action === 'toggle-advanced-tools') {
+            this.advancedToolsOpen = true;
+            this.refresh();
+        } else if (action === 'close-advanced-tools') {
+            this.advancedToolsOpen = false;
+            this.refresh();
         } else if (action === 'run-adjust') {
             await this.runStudioAdjustment();
         } else if (action === 'run-commands') {
@@ -877,6 +1083,7 @@ class GeoGebraStudio {
     }
 
     async resetCanvas() {
+        await this.stopTrajectoryDemo({ silent: true, refresh: false });
         this.pushUndoSnapshot('reset');
         geogebraCanvas.reset();
         this.clearTransientProblemState();
@@ -1046,11 +1253,179 @@ class GeoGebraStudio {
         return records;
     }
 
+    async applyPlanViewport(planBody = {}) {
+        if (planBody.viewport?.equalScale === false) return false;
+        const viewport = planBody.viewport || inferEqualScaleViewport(planBody);
+        if (!viewport) return false;
+        const applied = await geogebraCanvas.fitBoundsEqualScale(viewport);
+        if (applied) {
+            await waitForStudioFrame();
+        }
+        return applied;
+    }
+
+    clearDemoTimer() {
+        if (this.demoTimer) {
+            window.clearTimeout(this.demoTimer);
+            this.demoTimer = 0;
+        }
+        if (this.demoFrameId) {
+            window.cancelAnimationFrame?.(this.demoFrameId);
+            this.demoFrameId = 0;
+        }
+    }
+
+    async stopTrajectoryDemo(options = {}) {
+        this.clearDemoTimer();
+        this.demoRunId += 1;
+        const demo = normalizeDemoConfig(options.demo || this.demoConfig);
+        if (demo) {
+            const movingObject = demo.movingObject;
+            await geogebraCanvas.executeCommand(`StartAnimation(${movingObject}, false)`);
+        }
+        this.demoPlaying = false;
+        if (!options.silent) {
+            this.demoStatus = options.status || '轨迹演示已暂停';
+        }
+        if (options.refresh !== false) {
+            this.refresh();
+        }
+    }
+
+    async runParametricTrajectoryDemo(demoConfig, options = {}) {
+        const path = demoConfig.path;
+        if (!path) return false;
+
+        const movingObject = demoConfig.movingObject;
+        const tracedObject = demoConfig.tracedObject;
+        const runId = this.demoRunId;
+        let firstTimestamp = 0;
+        let lastFrame = -1;
+
+        const setupRecords = await geogebraCanvas.executeCommands([
+            `SetTrace(${tracedObject}, false)`,
+            'ZoomIn(1)',
+            `SetTrace(${tracedObject}, true)`,
+        ]);
+        const failedSetup = setupRecords.find(record => !record.success);
+        if (failedSetup) {
+            this.demoPlaying = false;
+            this.demoStatus = failedSetup.error || '轨迹演示启动失败';
+            this.latestError = this.demoStatus;
+            if (options.refresh !== false) this.refresh();
+            return false;
+        }
+        await geogebraCanvas.reapplyEqualScaleViewport();
+
+        const finishDemo = async () => {
+            if (runId !== this.demoRunId) return;
+            const finalPoint = pointOnDemoPath(path, 1);
+            if (finalPoint) {
+                await geogebraCanvas.executeCommand(buildSetPointCommand(movingObject, finalPoint.x, finalPoint.y));
+            }
+            this.demoPlaying = false;
+            this.demoStatus = '轨迹演示已完成，已保留中点 M 的完整运动痕迹。';
+            await geogebraCanvas.reapplyEqualScaleViewport();
+            this.refreshCanvasState();
+            this.refresh();
+        };
+
+        const step = async (timestamp) => {
+            if (!this.demoPlaying || runId !== this.demoRunId) return;
+            firstTimestamp ||= timestamp;
+            const elapsed = Math.max(timestamp - firstTimestamp, 0);
+            const progress = Math.min(elapsed / demoConfig.durationMs, 1);
+            const frame = Math.min(demoConfig.frameCount, Math.floor(progress * demoConfig.frameCount));
+            if (frame !== lastFrame) {
+                lastFrame = frame;
+                const point = pointOnDemoPath(path, frame / demoConfig.frameCount);
+                if (point) {
+                    await geogebraCanvas.executeCommand(buildSetPointCommand(movingObject, point.x, point.y));
+                }
+            }
+            if (!this.demoPlaying || runId !== this.demoRunId) return;
+            if (progress >= 1) {
+                await finishDemo();
+                return;
+            }
+            this.demoFrameId = window.requestAnimationFrame(step);
+        };
+
+        this.demoFrameId = window.requestAnimationFrame(step);
+        return true;
+    }
+
+    async runTrajectoryDemo(demo = this.demoConfig, options = {}) {
+        const demoConfig = normalizeDemoConfig(demo);
+        if (!demoConfig) return false;
+        this.demoConfig = demoConfig;
+        this.clearDemoTimer();
+        this.demoRunId += 1;
+        await this.stopTrajectoryDemo({ demo: demoConfig, silent: true, refresh: false });
+
+        this.demoPlaying = true;
+        this.demoStatus = '正在演示轨迹过程';
+        if (options.refresh !== false) {
+            this.refresh();
+        }
+        if (demoConfig.path) {
+            const started = await this.runParametricTrajectoryDemo(demoConfig, options);
+            if (!started) {
+                this.demoPlaying = false;
+            }
+            return started;
+        }
+
+        const movingObject = demoConfig.movingObject;
+        const tracedObject = demoConfig.tracedObject;
+        const records = await geogebraCanvas.executeCommands([
+            `SetTrace(${tracedObject}, true)`,
+            `StartAnimation(${movingObject}, true)`,
+        ]);
+        const failedRecord = records.find(record => !record.success);
+        if (failedRecord) {
+            this.demoPlaying = false;
+            this.demoStatus = failedRecord.error || '轨迹演示启动失败';
+            this.latestError = this.demoStatus;
+            if (options.refresh !== false) this.refresh();
+            return false;
+        }
+
+        this.demoPlaying = true;
+        this.demoStatus = '正在演示轨迹过程';
+        this.demoTimer = window.setTimeout(() => {
+            void this.stopTrajectoryDemo({ status: '轨迹演示已完成，已保留中点 M 的运动痕迹。' });
+        }, demoConfig.durationMs);
+        if (options.refresh !== false) {
+            this.refresh();
+        }
+        return true;
+    }
+
+    async clearTrajectoryTrace() {
+        const demo = normalizeDemoConfig(this.demoConfig);
+        await this.stopTrajectoryDemo({ demo, silent: true, refresh: false });
+        if (demo) {
+            await geogebraCanvas.executeCommands([
+                `SetTrace(${demo.tracedObject}, false)`,
+                'ZoomIn(1)',
+            ]);
+            await geogebraCanvas.reapplyEqualScaleViewport();
+        }
+        this.demoPlaying = false;
+        this.demoStatus = '轨迹痕迹已清除，可重新演示。';
+        this.refreshCanvasState();
+        this.refresh();
+    }
+
     async executePlanCommands(planBody = {}, options = {}) {
         this.busy = true;
         this.latestError = '';
         this.refresh();
         try {
+            await this.stopTrajectoryDemo({ silent: true, refresh: false });
+            this.demoConfig = null;
+            this.demoStatus = '';
             if (options.resetBeforeExecute) {
                 this.pushUndoSnapshot(options.label || 'problem_plan');
                 geogebraCanvas.reset();
@@ -1075,6 +1450,9 @@ class GeoGebraStudio {
                 label: options.label || 'plan',
             });
             const summary = summarizeExecution(records);
+            if (!summary.failedRecord) {
+                await this.applyPlanViewport(planBody);
+            }
             if (summary.failedRecord) {
                 this.latestError = summary.failedRecord.error || 'GeoGebra 命令执行失败';
             } else if (options.requireVisibleObjects && normalizeCommands(planBody.commands).length) {
@@ -1095,6 +1473,12 @@ class GeoGebraStudio {
                     summary.failedRecord = failedRecord;
                     summary.success = false;
                     this.latestError = GEOGEBRA_NO_VISIBLE_OBJECTS_ERROR;
+                }
+            }
+            if (!summary.failedRecord) {
+                this.demoConfig = normalizeDemoConfig(planBody.demo);
+                if (planBody.demo?.autoPlay && this.demoConfig && options.autoPlayDemo !== false) {
+                    await this.runTrajectoryDemo(this.demoConfig, { refresh: false });
                 }
             }
             return summary;

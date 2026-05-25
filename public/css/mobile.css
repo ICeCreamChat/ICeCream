@@ -1139,8 +1139,27 @@
         grid-column: auto;
     }
 
+    .geogebra-demo-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .geogebra-result-panel {
+        max-height: none;
+        overflow: visible;
+    }
+
     .geogebra-result-card {
         max-height: none;
+    }
+
+    .geogebra-advanced-tools {
+        position: static;
+        max-height: none;
+        overflow: visible;
+    }
+
+    .geogebra-advanced-head {
+        grid-template-columns: 1fr;
     }
 
     .geogebra-studio-canvas-pane {

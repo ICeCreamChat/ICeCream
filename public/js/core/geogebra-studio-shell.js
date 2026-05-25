@@ -78,6 +78,7 @@ class GeoGebraStudioShell {
     }
 
     close() {
+        geogebraWorkbench.stopTrajectoryDemo();
         this.isOpen = false;
         this.overlay?.classList.remove('open');
         this.overlay?.classList.add('hidden');

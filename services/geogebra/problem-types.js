@@ -139,6 +139,28 @@ function buildCircleChordMidpointLocusPlan(facts) {
     };
     const locusRadius = radius / 2;
     const locusEquation = `${formatSquaredTerm('x', locusCenter.x)} + ${formatSquaredTerm('y', locusCenter.y)} = ${formatNumber(locusRadius ** 2)}`;
+    const viewport = {
+        xmin: center.x - radius - 1,
+        ymin: center.y - radius - 1,
+        xmax: center.x + radius + 1,
+        ymax: center.y + radius + 1,
+        equalScale: true,
+    };
+    const demo = {
+        type: 'trace',
+        autoPlay: true,
+        movingObject: 'P',
+        tracedObject: 'M',
+        durationMs: 6500,
+        frameCount: 96,
+        path: {
+            type: 'circle',
+            center: { x: center.x, y: center.y },
+            radius,
+            startAngle: -90,
+            endAngle: 270,
+        },
+    };
 
     return {
         summary: `已按题意绘制圆心 ${circle.centerLabel}(${formatNumber(center.x)}, ${formatNumber(center.y)})、半径 ${formatNumber(radius)} 的圆，并构造弦 OP 的中点 M。M 的轨迹方程为 ${locusEquation}。`,
@@ -157,14 +179,14 @@ function buildCircleChordMidpointLocusPlan(facts) {
             'SetColor(M, 0.95, 0.35, 0.1)',
             'SetColor(locusM, 0, 0.55, 0.85)',
             'SetLineThickness(locusM, 5)',
-            'SetTrace(M, true)',
             'ShowLabel(O, true)',
             `ShowLabel(${circle.centerLabel}, true)`,
             'ShowLabel(P, true)',
             'ShowLabel(M, true)',
             'ShowLabel(K, true)',
-            `ZoomIn(${formatNumber(Math.min(-4, center.x - radius - 1))}, ${formatNumber(Math.min(-2, center.y - radius - 1))}, ${formatNumber(Math.max(4, center.x + radius + 1))}, ${formatNumber(Math.max(5, center.y + radius + 1))})`,
         ],
+        viewport,
+        demo,
         followUp: `拖动点 P，可以看到 M 始终落在以 (${formatNumber(locusCenter.x)}, ${formatNumber(locusCenter.y)}) 为圆心、${formatNumber(locusRadius)} 为半径的轨迹圆上。`,
         studioNotes: '确定性题型模板：圆上动点 P 关于原点 O 缩放 1/2 后得到中点 M，所以轨迹是原圆关于 O 的 1/2 缩放。',
         deterministic: true,

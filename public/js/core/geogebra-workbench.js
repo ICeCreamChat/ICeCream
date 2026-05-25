@@ -53,6 +53,10 @@ class GeoGebraWorkbench {
         geogebraStudio.saveSession();
     }
 
+    stopTrajectoryDemo() {
+        return geogebraStudio.stopTrajectoryDemo({ silent: true, refresh: false });
+    }
+
     render() {
         return geogebraStudio.render({
             status: this.status,

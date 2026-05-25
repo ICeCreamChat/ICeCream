@@ -78,6 +78,49 @@ function normalizeObjectNames(names = []) {
         : [];
 }
 
+function readFiniteNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function normalizeViewport(viewport = {}) {
+    const xmin = readFiniteNumber(viewport.xmin);
+    const ymin = readFiniteNumber(viewport.ymin);
+    const xmax = readFiniteNumber(viewport.xmax);
+    const ymax = readFiniteNumber(viewport.ymax);
+    if ([xmin, ymin, xmax, ymax].some(value => value === null)) return null;
+    if (xmax <= xmin || ymax <= ymin) return null;
+    return {
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        equalScale: viewport.equalScale !== false,
+    };
+}
+
+function expandBoundsToAspect(viewport, width, height) {
+    const targetAspect = Math.max(width, 1) / Math.max(height, 1);
+    const centerX = (viewport.xmin + viewport.xmax) / 2;
+    const centerY = (viewport.ymin + viewport.ymax) / 2;
+    let mathWidth = Math.max(viewport.xmax - viewport.xmin, 1);
+    let mathHeight = Math.max(viewport.ymax - viewport.ymin, 1);
+    const mathAspect = mathWidth / mathHeight;
+
+    if (mathAspect < targetAspect) {
+        mathWidth = mathHeight * targetAspect;
+    } else if (mathAspect > targetAspect) {
+        mathHeight = mathWidth / targetAspect;
+    }
+
+    return {
+        xmin: centerX - mathWidth / 2,
+        xmax: centerX + mathWidth / 2,
+        ymin: centerY - mathHeight / 2,
+        ymax: centerY + mathHeight / 2,
+    };
+}
+
 class GeoGebraCanvas {
     constructor() {
         this.scriptPromise = null;
@@ -92,6 +135,7 @@ class GeoGebraCanvas {
         this.resizeTimer = 0;
         this.geogebraRuntimeMode = 'direct';
         this.iframeWindow = null;
+        this.lastEqualScaleViewport = null;
     }
 
     async mount(containerId = 'geogebra-canvas-root') {
@@ -122,6 +166,7 @@ class GeoGebraCanvas {
         this.selectedObjectNames = [];
         this.geogebraRuntimeMode = 'direct';
         this.iframeWindow = null;
+        this.lastEqualScaleViewport = null;
         this.resetGlobalAppletState();
         const host = this.getHost(false);
         if (host) {
@@ -317,6 +362,9 @@ class GeoGebraCanvas {
             newConstruction: () => this.postIframeMessage('reset'),
             reset: () => this.postIframeMessage('reset'),
             setPerspective: (perspective) => this.postIframeMessage('perspective', { perspective }),
+            setCoordSystem: (xmin, xmax, ymin, ymax) => this.postIframeMessage('eval', {
+                command: `ZoomIn(${xmin}, ${ymin}, ${xmax}, ${ymax})`,
+            }),
             setSize: () => true,
             getPNGBase64: () => '',
             remove: () => {
@@ -487,6 +535,53 @@ class GeoGebraCanvas {
         return records;
     }
 
+    async fitBoundsEqualScale(viewport = {}, options = {}) {
+        const normalizedViewport = normalizeViewport(viewport);
+        if (!normalizedViewport) return false;
+        if (!normalizedViewport.equalScale) {
+            this.lastEqualScaleViewport = null;
+            return false;
+        }
+
+        await this.whenReady();
+        const api = this.getApi();
+        const host = this.getHost(false);
+        if (!api || !host) return false;
+
+        const width = Math.max(host.clientWidth || host.getBoundingClientRect?.().width || 0, 320);
+        const height = Math.max(host.clientHeight || host.getBoundingClientRect?.().height || 0, 320);
+        const fitted = expandBoundsToAspect(normalizedViewport, width, height);
+        if (options.remember !== false) {
+            this.lastEqualScaleViewport = normalizedViewport;
+        }
+
+        try {
+            if (typeof api.setCoordSystem === 'function') {
+                api.setCoordSystem(fitted.xmin, fitted.xmax, fitted.ymin, fitted.ymax);
+            } else if (typeof api.evalCommand === 'function') {
+                api.evalCommand(`ZoomIn(${fitted.xmin}, ${fitted.ymin}, ${fitted.xmax}, ${fitted.ymax})`);
+            }
+            if (typeof api.evalCommand === 'function') {
+                api.evalCommand('SetAxesRatio(1, 1)');
+            } else if (typeof api.asyncEvalCommandGetLabels === 'function') {
+                await api.asyncEvalCommandGetLabels('SetAxesRatio(1, 1)');
+            }
+            return true;
+        } catch {
+            try {
+                await this.executeCommand('SetAxesRatio(1, 1)');
+                return true;
+            } catch {
+                return false;
+            }
+        }
+    }
+
+    async reapplyEqualScaleViewport() {
+        if (!this.lastEqualScaleViewport) return false;
+        return this.fitBoundsEqualScale(this.lastEqualScaleViewport, { remember: false });
+    }
+
     readCanvas() {
         const api = this.getApi();
         if (!api) {
@@ -590,6 +685,7 @@ class GeoGebraCanvas {
             }
         }
         this.selectedObjectNames = [];
+        this.lastEqualScaleViewport = null;
     }
 
     resize() {
@@ -606,6 +702,9 @@ class GeoGebraCanvas {
             } catch {
                 // Rendering remains functional even if resize hooks are unavailable.
             }
+        }
+        if (this.lastEqualScaleViewport) {
+            void this.fitBoundsEqualScale(this.lastEqualScaleViewport, { remember: false });
         }
     }
 
