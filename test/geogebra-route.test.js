@@ -123,10 +123,14 @@ test('GeoGebra deterministic fallback handles circle chord midpoint locus when A
   assert.ok(payload.data.commands.includes('locusM = Circle(K, 1.5)'));
   assert.equal(payload.data.viewport?.equalScale, true);
   assert.equal(payload.data.demo?.type, 'timeline');
-  assert.equal(payload.data.demo?.autoPlay, true);
+  assert.equal(payload.data.demo?.mode, 'construction');
+  assert.equal(payload.data.demo?.autoPlay, false);
   assert.equal(payload.data.demo?.clearBeforePlay, true);
   assert.equal(payload.data.demo?.preserveAfterFinish, true);
   assert.equal(payload.data.demo?.durationMs, 8000);
+  assert.ok(Array.isArray(payload.data.demo?.initialState?.hidden));
+  assert.ok(Array.isArray(payload.data.demo?.stages));
+  assert.ok(payload.data.demo?.stages?.length >= 1);
   assert.equal(payload.data.demo?.tracks?.[0]?.kind, 'path-trace');
   assert.equal(payload.data.demo?.tracks?.[0]?.movingObject, 'P');
   assert.equal(payload.data.demo?.tracks?.[0]?.tracedObject, 'M');
@@ -181,6 +185,9 @@ test('GeoGebra deterministic fallback handles maximum angle problems when AI is 
   assert.ok(payload.data.commands.includes('P = (sqrt(12), 0)'));
   assert.ok(payload.data.commands.includes('alpha = Angle(A, P, B)'));
   assert.equal(payload.data.demo?.type, 'timeline');
+  assert.equal(payload.data.demo?.mode, 'construction');
+  assert.equal(payload.data.demo?.autoPlay, false);
+  assert.ok(Array.isArray(payload.data.demo?.stages));
 });
 
 test('GeoGebra plan returns readable error when AI unavailable and no template matches', async () => {
@@ -217,7 +224,10 @@ test('GeoGebra agent reply parser extracts viewport, facts, demo and needsClarif
   assert.deepEqual(parsedReply.facts.objects, ['点 A(0,0)', '点 B(4,0)']);
   assert.deepEqual(parsedReply.facts.goals, ['画三角形']);
   assert.equal(parsedReply.demo.type, 'timeline');
+  assert.equal(parsedReply.demo.mode, 'construction');
+  assert.equal(parsedReply.demo.autoPlay, false);
   assert.equal(parsedReply.demo.durationMs, 5000);
+  assert.ok(Array.isArray(parsedReply.demo.stages));
   assert.equal(parsedReply.demo.tracks[0].kind, 'path-trace');
   assert.equal(parsedReply.needsClarification, undefined);
 });

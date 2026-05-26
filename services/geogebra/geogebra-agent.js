@@ -209,10 +209,52 @@ function isSafeGeoGebraCommand(command) {
 function extractJsonObject(text) {
     const normalizedText = String(text || '').replace(/```json|```/gi, '').trim();
     const jsonMatch = normalizedText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-        throw new Error('GeoGebra Agent 没有返回 JSON');
+    if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]);
     }
-    return JSON.parse(jsonMatch[0]);
+    // Attempt to repair truncated JSON (AI output cut off by token limit)
+    const truncatedMatch = normalizedText.match(/\{[\s\S]+/);
+    if (truncatedMatch) {
+        const repaired = repairTruncatedJson(truncatedMatch[0]);
+        if (repaired) return repaired;
+    }
+    throw new Error('GeoGebra Agent 没有返回 JSON');
+}
+
+/**
+ * Attempt to parse truncated JSON by closing unclosed brackets/braces.
+ * This handles the common case where AI output is cut off mid-stream by token limits,
+ * resulting in valid JSON prefix followed by an abrupt end.
+ */
+function repairTruncatedJson(text) {
+    let candidate = text.trim();
+    // Remove trailing incomplete string (unmatched quote)
+    candidate = candidate.replace(/,\s*"[^"]*$/, '');
+    // Remove trailing comma
+    candidate = candidate.replace(/,\s*$/, '');
+    // Close unclosed brackets and braces
+    const stack = [];
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < candidate.length; i++) {
+        const ch = candidate[i];
+        if (escaped) { escaped = false; continue; }
+        if (ch === '\\' && inString) { escaped = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === '{') stack.push('}');
+        else if (ch === '[') stack.push(']');
+        else if (ch === '}' || ch === ']') stack.pop();
+    }
+    // If still inside a string, close it
+    if (inString) candidate += '"';
+    // Close all open brackets/braces in reverse order
+    while (stack.length) candidate += stack.pop();
+    try {
+        return JSON.parse(candidate);
+    } catch {
+        return null;
+    }
 }
 
 function normalizeViewport(viewport) {
@@ -245,36 +287,111 @@ function normalizeFacts(facts) {
 const ALLOWED_DEMO_TRACK_KINDS = new Set(['path-trace', 'command-at', 'set-visible']);
 const MAX_DEMO_DURATION = 30000;
 
+function normalizeDemoStringArray(values, limit = 80) {
+    if (!Array.isArray(values)) return [];
+    return values.map(value => String(value || '').trim()).filter(Boolean).slice(0, limit);
+}
+
+function normalizeDemoInitialState(initialState = {}) {
+    return {
+        visible: normalizeDemoStringArray(initialState.visible, 120),
+        hidden: normalizeDemoStringArray(initialState.hidden, 120),
+    };
+}
+
+function normalizeDemoStage(stage = {}, index = 0) {
+    if (!stage || typeof stage !== 'object') return null;
+    const durationMs = Number(stage.durationMs);
+    const actions = Array.isArray(stage.actions)
+        ? stage.actions.filter(action => action && ALLOWED_DEMO_TRACK_KINDS.has(action.kind)).slice(0, 16)
+        : [];
+    if (!actions.length) return null;
+    return {
+        id: String(stage.id || `stage-${index + 1}`).slice(0, 80),
+        title: String(stage.title || `阶段 ${index + 1}`).slice(0, 80),
+        summary: String(stage.summary || '').slice(0, 240),
+        durationMs: Number.isFinite(durationMs) && durationMs > 0 && durationMs <= MAX_DEMO_DURATION ? durationMs : 1800,
+        actions,
+    };
+}
+
+function normalizeDemoTracks(tracks, limit = 8) {
+    return Array.isArray(tracks)
+        ? tracks.filter(track => track && ALLOWED_DEMO_TRACK_KINDS.has(track.kind)).slice(0, limit)
+        : [];
+}
+
 function normalizeDemo(demo) {
     if (!demo || typeof demo !== 'object') return undefined;
     // Accept 'trace' shorthand (single path-trace track), convert to timeline
     if (demo.type === 'trace') {
         if (!demo.movingObject || !demo.tracedObject || !demo.path) return undefined;
-        return {
-            type: 'trace',
-            autoPlay: demo.autoPlay !== false,
-            durationMs: Math.min(Math.max(Number(demo.durationMs) || 6500, 1200), MAX_DEMO_DURATION),
+        const durationMs = Math.min(Math.max(Number(demo.durationMs) || 6500, 1200), MAX_DEMO_DURATION);
+        const track = {
+            kind: 'path-trace',
             movingObject: String(demo.movingObject),
             tracedObject: String(demo.tracedObject),
             path: demo.path,
-            frameCount: Number(demo.frameCount) || Number(demo.samples) || 240,
+            samples: Number(demo.frameCount) || Number(demo.samples) || 240,
+        };
+        return {
+            type: 'timeline',
+            mode: 'construction',
+            autoPlay: false,
+            clearBeforePlay: true,
+            preserveAfterFinish: true,
+            durationMs,
+            initialState: normalizeDemoInitialState(demo.initialState),
+            stages: [{
+                id: 'motion',
+                title: '动态观察',
+                summary: '观察动点运动和相关对象变化。',
+                durationMs,
+                actions: [track],
+            }],
+            tracks: [track],
         };
     }
     if (demo.type !== 'timeline') return undefined;
-    const durationMs = Number(demo.durationMs);
-    if (!Number.isFinite(durationMs) || durationMs <= 0 || durationMs > MAX_DEMO_DURATION) return undefined;
-    const tracks = Array.isArray(demo.tracks)
-        ? demo.tracks.filter(track => track && ALLOWED_DEMO_TRACK_KINDS.has(track.kind)).slice(0, 8)
+    const rawDurationMs = Number(demo.durationMs);
+    const durationMs = Number.isFinite(rawDurationMs) && rawDurationMs > 0
+        ? Math.min(rawDurationMs, MAX_DEMO_DURATION)
+        : 8000;
+    const tracks = normalizeDemoTracks(demo.tracks, 12);
+    const stages = Array.isArray(demo.stages)
+        ? demo.stages.map((stage, index) => normalizeDemoStage(stage, index)).filter(Boolean).slice(0, 12)
         : [];
-    if (!tracks.length) return undefined;
+    const normalizedStages = stages.length ? stages : (tracks.length ? [{
+        id: 'motion',
+        title: '动态观察',
+        summary: '观察动点运动和相关对象变化。',
+        durationMs,
+        actions: tracks,
+    }] : []);
+    if (!tracks.length && !normalizedStages.length) return undefined;
     return {
         type: 'timeline',
-        autoPlay: demo.autoPlay !== false,
+        mode: 'construction',
+        autoPlay: false,
         clearBeforePlay: demo.clearBeforePlay !== false,
         preserveAfterFinish: demo.preserveAfterFinish !== false,
         durationMs,
-        tracks,
+        initialState: normalizeDemoInitialState(demo.initialState),
+        stages: normalizedStages,
+        tracks: tracks.length ? tracks : normalizedStages.flatMap(stage => stage.actions || []),
     };
+}
+
+function normalizeGeoGebraPlanPayload(plan = {}) {
+    if (!plan || typeof plan !== 'object') return plan;
+    const normalizedPlan = { ...plan };
+    const normalizedDemo = normalizeDemo(plan.demo);
+    if (normalizedDemo) {
+        normalizedPlan.demo = normalizedDemo;
+    } else if ('demo' in normalizedPlan) {
+        delete normalizedPlan.demo;
+    }
+    return normalizedPlan;
 }
 
 /**
@@ -430,7 +547,7 @@ async function callChatCompletion(messages, { env = process.env, fetchImpl = fet
             model: env.DEEPSEEK_MODEL || 'deepseek-chat',
             messages,
             temperature: 0.2,
-            max_tokens: 2000,
+            max_tokens: 4096,
         }),
     });
 
@@ -484,8 +601,8 @@ async function requestGeoGebraCompletion(requestPayload, { mode, env = process.e
 
     // Some reasoning models (e.g. deepseek-v4-flash) intermittently return
     // empty content. Retry up to 2 more times with the same messages.
-    for (let retryCount = 0; !rawReply && retryCount < 2; retryCount++) {
-        console.warn(`[GeoGebra Agent] Empty AI response, retry ${retryCount + 1}/2...`);
+    for (let retryCount = 0; !rawReply && retryCount < 3; retryCount++) {
+        console.warn(`[GeoGebra Agent] Empty AI response, retry ${retryCount + 1}/3...`);
         rawReply = await callChatCompletion(messages, { env, fetchImpl });
     }
 
@@ -531,7 +648,7 @@ export async function createGeoGebraPlan(body = {}, options = {}) {
                 return {
                     success: true,
                     intent: 'geogebra',
-                    data: deterministicFallback,
+                    data: normalizeGeoGebraPlanPayload(deterministicFallback),
                 };
             }
             // No template match either — return AI result as-is (may have useful summary)
@@ -548,7 +665,7 @@ export async function createGeoGebraPlan(body = {}, options = {}) {
                 return {
                     success: true,
                     intent: 'geogebra',
-                    data: deterministicFallback,
+                    data: normalizeGeoGebraPlanPayload(deterministicFallback),
                 };
             }
             throw aiError;
@@ -561,7 +678,7 @@ export async function createGeoGebraPlan(body = {}, options = {}) {
         return {
             success: true,
             intent: 'geogebra',
-            data: deterministicPlan,
+            data: normalizeGeoGebraPlanPayload(deterministicPlan),
         };
     }
 
@@ -628,7 +745,7 @@ export async function createGeoGebraAgentStep(body = {}, options = {}) {
                     intent: 'geogebra',
                     data: {
                         status: 'execute',
-                        ...deterministicFallback,
+                        ...normalizeGeoGebraPlanPayload(deterministicFallback),
                     },
                 };
             }
@@ -653,7 +770,7 @@ export async function createGeoGebraAgentStep(body = {}, options = {}) {
                     intent: 'geogebra',
                     data: {
                         status: 'execute',
-                        ...deterministicFallback,
+                        ...normalizeGeoGebraPlanPayload(deterministicFallback),
                     },
                 };
             }
@@ -669,7 +786,7 @@ export async function createGeoGebraAgentStep(body = {}, options = {}) {
             intent: 'geogebra',
             data: {
                 status: 'execute',
-                ...deterministicPlan,
+                ...normalizeGeoGebraPlanPayload(deterministicPlan),
             },
         };
     }

@@ -6,14 +6,20 @@ const studioPath = new URL('../public/js/core/geogebra-studio.js', import.meta.u
 const workbenchPath = new URL('../public/js/core/geogebra-workbench.js', import.meta.url);
 const studioShellPath = new URL('../public/js/core/geogebra-studio-shell.js', import.meta.url);
 const canvasPath = new URL('../public/js/core/geogebra-canvas.js', import.meta.url);
+const studioViewPath = new URL('../public/js/core/geogebra-studio-view.js', import.meta.url);
+const timelinePlayerPath = new URL('../public/js/core/geogebra-timeline-player.js', import.meta.url);
+const advancedDrawerPath = new URL('../public/js/core/geogebra-advanced-drawer.js', import.meta.url);
 const mainStylesPath = new URL('../public/css/main.css', import.meta.url);
 const mobileStylesPath = new URL('../public/css/mobile.css', import.meta.url);
 
 test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => {
-  const [studioSource, workbenchSource, studioShellSource, mainStyles, mobileStyles] = await Promise.all([
+  const [studioSource, workbenchSource, studioShellSource, studioViewSource, timelinePlayerSource, advancedDrawerSource, mainStyles, mobileStyles] = await Promise.all([
     readFile(studioPath, 'utf8'),
     readFile(workbenchPath, 'utf8'),
     readFile(studioShellPath, 'utf8'),
+    readFile(studioViewPath, 'utf8'),
+    readFile(timelinePlayerPath, 'utf8'),
+    readFile(advancedDrawerPath, 'utf8'),
     readFile(mainStylesPath, 'utf8'),
     readFile(mobileStylesPath, 'utf8'),
   ]);
@@ -31,20 +37,35 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioSource, /\/api\/geogebra\/studio\/parse-image/);
   assert.match(studioSource, /renderDrawingAssistant/);
   assert.match(studioSource, /renderAdvancedTools/);
-  assert.match(studioSource, /data-geogebra-studio-action="draw-from-prompt"/);
-  assert.match(studioSource, /data-geogebra-studio-action="adjust-current-graph"/);
+  assert.match(studioSource, /geogebra-studio-view/);
+  assert.match(studioSource, /geogebra-timeline-player/);
+  assert.match(studioSource, /geogebra-advanced-drawer/);
+  assert.match(studioViewSource, /data-geogebra-studio-action="draw-from-prompt"/);
+  assert.match(studioViewSource, /data-geogebra-studio-action="redraw-from-prompt"/);
+  assert.match(studioViewSource, /data-geogebra-studio-action="adjust-current-graph"/);
   assert.match(studioSource, /data-geogebra-studio-action="play-demo"/);
   assert.match(studioSource, /data-geogebra-studio-action="pause-demo"/);
-  assert.match(studioSource, /data-geogebra-studio-action="clear-demo-trace"/);
+  assert.match(studioSource, /data-geogebra-studio-action="replay-demo"/);
+  assert.match(studioSource, /clearTrajectoryTrace/);
   assert.match(studioSource, /data-geogebra-studio-action="toggle-advanced-tools"/);
-  assert.ok(studioSource.includes('\u6f14\u793a\u8f68\u8ff9'));
+  assert.match(studioViewSource, /renderPresentationAssistant/);
+  assert.match(studioViewSource, /绘图助手/);
+  assert.match(studioViewSource, /播放演示/);
+  assert.match(timelinePlayerSource, /normalizeTimelineDemo/);
+  assert.match(timelinePlayerSource, /initialState/);
+  assert.match(timelinePlayerSource, /stages/);
+  assert.match(timelinePlayerSource, /construction/);
+  assert.match(timelinePlayerSource, /path-trace/);
+  assert.match(advancedDrawerSource, /renderAdvancedDrawer/);
+  assert.match(advancedDrawerSource, /geogebra-advanced-drawer/);
+  assert.ok(studioSource.includes('\u64ad\u653e\u6f14\u793a'));
   assert.ok(studioSource.includes('\u6682\u505c\u6f14\u793a'));
-  assert.ok(studioSource.includes('\u6e05\u9664\u8f68\u8ff9'));
-  assert.match(studioSource, /data-geogebra-prompt-input/);
-  assert.match(studioSource, /data-geogebra-advanced-tools/);
-  assert.match(studioSource, /绘图助手/);
-  assert.match(studioSource, /生成图形/);
-  assert.match(studioSource, /调整当前图/);
+  assert.match(studioSource, /clearTrajectoryTrace/);
+  assert.match(studioViewSource, /data-geogebra-prompt-input/);
+  assert.match(advancedDrawerSource, /data-geogebra-advanced-tools/);
+  assert.ok(studioViewSource.includes('\u7ed8\u56fe\u52a9\u624b'));
+  assert.ok(studioViewSource.includes('\u751f\u6210\u56fe\u5f62'));
+  assert.ok(studioViewSource.includes('\u8c03\u6574\u5f53\u524d\u56fe'));
   assert.match(studioSource, /高级工具/);
   assert.doesNotMatch(studioSource, /renderStudioMessages/);
   assert.doesNotMatch(studioSource, /renderProblemReview/);
@@ -58,7 +79,7 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioSource, /data-geogebra-studio-action="redo"/);
   assert.match(studioSource, /data-geogebra-studio-action="export"/);
   assert.match(studioSource, /data-geogebra-studio-action="export-courseware"/);
-  assert.match(studioSource, /data-geogebra-studio-action="upload-problem"/);
+  assert.match(studioViewSource, /data-geogebra-studio-action="upload-problem"/);
   assert.match(studioSource, /data-geogebra-studio-action="retry-problem-image"/);
   assert.match(studioSource, /parseProblemImage/);
   assert.ok(studioSource.includes('\u6309\u4fee\u6b63\u6587\u9898\u91cd\u65b0\u7ed8\u56fe'));
@@ -97,12 +118,16 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioSource, /runTimelineTrack/);
   assert.match(studioSource, /runPathTraceTrack/);
   assert.match(studioSource, /requestAnimationFrame/);
-  assert.match(studioSource, /SetValue\(\$\{movingObject\}, \(\$\{formatGeoGebraNumber\(x\)\}, \$\{formatGeoGebraNumber\(y\)\}\)\)/);
-  assert.match(studioSource, /normalizeTimelineNumber\(track\.samples,\s*240,\s*24,\s*600\)/);
+  assert.match(timelinePlayerSource, /SetValue\(\$\{movingObject\}, \(\$\{formatGeoGebraNumber\(x\)\}, \$\{formatGeoGebraNumber\(y\)\}\)\)/);
+  assert.match(timelinePlayerSource, /normalizeTimelineNumber\(track\.samples,\s*240,\s*24,\s*600\)/);
   assert.match(studioSource, /clearBeforePlay/);
   assert.match(studioSource, /preserveAfterFinish/);
   assert.match(studioSource, /StartAnimation\(\$\{movingObject\}, false\)/);
-  assert.match(studioSource, /planBody\.demo\?\.autoPlay/);
+  assert.doesNotMatch(studioSource, /planBody\.demo\?\.autoPlay\s*&&[\s\S]*runTrajectoryDemo/);
+  assert.match(studioSource, /applyDemoInitialState/);
+  assert.match(studioSource, /runTimelineDemo/);
+  assert.match(studioSource, /runTimelineStage/);
+  assert.match(studioSource, /replayTrajectoryDemo/);
   const drawingAssistantStart = studioSource.indexOf('\n    renderDrawingAssistant() {');
   assert.notEqual(drawingAssistantStart, -1);
   const drawingAssistantBody = studioSource.slice(
@@ -115,6 +140,8 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(mainStyles, /\.geogebra-studio-shell/);
   assert.match(mainStyles, /\.geogebra-drawing-assistant/);
   assert.match(mainStyles, /\.geogebra-assistant-scroll/);
+  assert.match(mainStyles, /\.geogebra-advanced-drawer/);
+  assert.match(mainStyles, /\.geogebra-playback-controls/);
   assert.match(mainStyles, /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(mainStyles, /\.geogebra-demo-controls/);
   assert.match(mainStyles, /\.geogebra-result-panel/);
@@ -130,6 +157,7 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(mobileStyles, /\.geogebra-studio-shell/);
   assert.match(mobileStyles, /\.geogebra-drawing-assistant/);
   assert.match(mobileStyles, /\.geogebra-result-panel/);
+  assert.match(mobileStyles, /\.geogebra-advanced-drawer/);
 });
 
 test('GeoGebra Studio stops trajectory demos on reset and shell close', async () => {

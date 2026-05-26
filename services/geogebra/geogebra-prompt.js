@@ -103,14 +103,44 @@ export const GEOGEBRA_SYSTEM_PROMPT = `
 demo 格式：
 {
   "type": "timeline",
-  "autoPlay": true,
-  "durationMs": 6000,
-  "tracks": [
+  "mode": "construction",
+  "autoPlay": false,
+  "durationMs": 8000,
+  "initialState": { "visible": ["O", "C", "c"], "hidden": ["P", "s", "M", "locusM"] },
+  "stages": [
     {
-      "kind": "path-trace",
-      "movingObject": "P",
-      "tracedObject": "M",
-      "path": { "type": "circle", "center": {"x":0,"y":3}, "radius": 3, "startAngle": 0, "endAngle": 360 }
+      "id": "known",
+      "title": "已知条件",
+      "summary": "先显示题目给出的点、圆、函数或约束。",
+      "durationMs": 1200,
+      "actions": [{ "kind": "set-visible", "timeMs": 0, "objects": ["O", "C", "c"], "visible": true }]
+    },
+    {
+      "id": "construct",
+      "title": "构造对象",
+      "summary": "逐步显示辅助对象和目标对象。",
+      "durationMs": 1600,
+      "actions": [{ "kind": "set-visible", "timeMs": 0, "objects": ["P", "s", "M"], "visible": true }]
+    },
+    {
+      "id": "observe",
+      "title": "动态观察",
+      "summary": "让动点运动，并让相关点留下轨迹。",
+      "durationMs": 5000,
+      "actions": [{
+        "kind": "path-trace",
+        "movingObject": "P",
+        "tracedObject": "M",
+        "path": { "type": "circle", "center": {"x":0,"y":3}, "radius": 3, "startAngle": -90, "endAngle": 270 },
+        "samples": 240
+      }]
+    },
+    {
+      "id": "conclusion",
+      "title": "显示结论",
+      "summary": "最后显示轨迹、方程或关键结论。",
+      "durationMs": 1200,
+      "actions": [{ "kind": "set-visible", "timeMs": 0, "objects": ["locusM"], "visible": true }]
     }
   ]
 }

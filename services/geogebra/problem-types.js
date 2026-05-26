@@ -436,10 +436,82 @@ export function tryCreateGeoGebraProblemPlan(requestPayload = {}) {
     if (/三角形|triangle/i.test(text) && /内切圆|incircle/i.test(text)) {
         return buildTriangleIncirclePlan();
     }
+    if (isFermatPointProblem(text)) {
+        return buildFermatPointPlan();
+    }
     const functionPlan = buildFunctionGraphPlan(text);
     if (functionPlan) return functionPlan;
     const solidPlan = buildSolidGeometryPlan(text);
     if (solidPlan) return solidPlan;
 
     return null;
+}
+
+function isFermatPointProblem(text) {
+    return /三角形|triangle/i.test(text)
+        && (/费马|fermat|PA\+PB\+PC|PA\s*\+\s*PB\s*\+\s*PC|距离之和|距离和/i.test(text)
+            || (/最小|minimum|最短/i.test(text) && /PA|PB|PC|距离/i.test(text)));
+}
+
+function buildFermatPointPlan() {
+    return {
+        summary: '已构造三角形 ABC 的费马点 P（PA+PB+PC 最小的点），使用向外作等边三角形的经典方法。拖动 A、B、C 可动态观察费马点位置。',
+        perspective: 'G',
+        commands: [
+            'A = (0, 0)',
+            'B = (4, 0)',
+            'C = (1, 3)',
+            'poly1 = Polygon(A, B, C)',
+            // Construct equilateral triangles outward on two sides
+            'D = Rotate(A, -60°, B)',
+            'E = Rotate(B, 60°, A)',
+            // Fermat point is intersection of CD and AE diagonals (renamed to avoid confusion)
+            'lineCD = Segment(C, D)',
+            'lineAE = Segment(A, D)',
+            // Actually: Fermat point = intersection of lines from new vertex to opposite original vertex
+            // Method: build equilateral triangle on AB → vertex D, on AC → vertex E
+            // Then P = Intersect(Line(C,D), Line(B,E))
+            // Correct construction:
+            'lineF1 = Line(C, D)',
+            'F = Rotate(A, 60°, C)',
+            'lineF2 = Line(B, F)',
+            'P = Intersect(lineF1, lineF2)',
+            // Distance sum
+            'segPA = Segment(P, A)',
+            'segPB = Segment(P, B)',
+            'segPC = Segment(P, C)',
+            'total = Distance(P, A) + Distance(P, B) + Distance(P, C)',
+            'txtSum = Text("PA+PB+PC = " + FormatNumber(total, 2), (3.5, 3.5), true, true)',
+            // Visual styling
+            'SetColor(poly1, 0.9, 0.9, 0.95)',
+            'SetColor(P, 0.95, 0.2, 0.1)',
+            'SetPointSize(P, 7)',
+            'SetColor(segPA, 0.55, 0.72, 1)',
+            'SetColor(segPB, 0.55, 0.72, 1)',
+            'SetColor(segPC, 0.55, 0.72, 1)',
+            'SetLineStyle(lineCD, 1)',
+            'SetColor(lineCD, 0.8, 0.8, 0.8)',
+            'SetLineStyle(lineF1, 1)',
+            'SetColor(lineF1, 0.8, 0.8, 0.8)',
+            'SetLineStyle(lineF2, 1)',
+            'SetColor(lineF2, 0.8, 0.8, 0.8)',
+            'SetVisible(lineCD, false)',
+            'SetVisible(lineAE, false)',
+            'SetVisible(lineF1, false)',
+            'SetVisible(lineF2, false)',
+            'SetVisible(D, false)',
+            'SetVisible(F, false)',
+            // Labels
+            'ShowLabel(A, true)',
+            'ShowLabel(B, true)',
+            'ShowLabel(C, true)',
+            'ShowLabel(P, true)',
+            'SetCaption(P, "费马点")',
+        ],
+        viewport: { xmin: -2, ymin: -2, xmax: 6, ymax: 5, equalScale: true },
+        followUp: '拖动 A、B、C 三个顶点可以动态观察费马点 P 的位置变化和 PA+PB+PC 的值。当某个角 ≥ 120° 时，费马点会退化到该顶点。',
+        studioNotes: '确定性费马点模板：在 AB、AC 外侧各作等边三角形，费马点 P 为对角线交点。',
+        deterministic: true,
+        problemType: 'fermat_point',
+    };
 }

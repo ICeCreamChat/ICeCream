@@ -1135,11 +1135,19 @@
         grid-template-columns: 1fr;
     }
 
+    .geogebra-assistant-secondary-actions {
+        grid-template-columns: 1fr;
+    }
+
     .geogebra-assistant-actions .manim-workbench-primary {
         grid-column: auto;
     }
 
     .geogebra-demo-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .geogebra-playback-controls {
         grid-template-columns: 1fr;
     }
 
@@ -1156,6 +1164,10 @@
         position: static;
         max-height: none;
         overflow: visible;
+    }
+
+    .geogebra-advanced-drawer {
+        width: 100%;
     }
 
     .geogebra-advanced-head {
