@@ -61,7 +61,7 @@ test('GeoGebra agent reply parser keeps only executable command strings', () => 
 
   assert.equal(parsedReply.summary, '完成');
   assert.equal(parsedReply.perspective, 'G');
-  assert.deepEqual(parsedReply.commands, ['A = (0, 0)', 'c = Circle(A, 2)']);
+  assert.deepEqual(parsedReply.commands, ['A = (0, 0)', 'c = Circle(A, 2)', 'ShowLabel(A, true)']);
 });
 
 test('GeoGebra Studio adjust request preserves selected objects and command history', () => {
@@ -104,7 +104,7 @@ test('GeoGebra image plan request combines OCR and visual context', () => {
   assert.equal(requestPayload.preferredPerspective, 'G');
 });
 
-test('GeoGebra deterministic planner handles circle chord midpoint locus problems exactly', async () => {
+test('GeoGebra deterministic fallback handles circle chord midpoint locus when AI is unavailable', async () => {
   const payload = await createGeoGebraPlan({
     message: '已知圆C是以C(0,3)为圆心、3为半径的圆。过原点O作圆C的任意弦OP,求OP的中点M的轨迹方程。',
   }, {
@@ -136,7 +136,7 @@ test('GeoGebra deterministic planner handles circle chord midpoint locus problem
   assert.equal(payload.data.demo?.tracks?.[0]?.path?.radius, 3);
 });
 
-test('GeoGebra image OCR text can trigger deterministic drawing without DeepSeek', async () => {
+test('GeoGebra image OCR text triggers deterministic fallback when AI is unavailable', async () => {
   const requestPayload = buildGeoGebraImagePlanBody({
     message: '请根据题目准确绘图',
   }, {
@@ -151,7 +151,7 @@ test('GeoGebra image OCR text can trigger deterministic drawing without DeepSeek
   assert.ok(payload.data.commands.includes('locusM = Circle(K, 1.5)'));
 });
 
-test('GeoGebra deterministic planner handles real OCR text without DeepSeek fallback', async () => {
+test('GeoGebra deterministic fallback handles real OCR text when AI is unavailable', async () => {
   const payload = await createGeoGebraPlan({
     message: REAL_LOCUS_PROBLEM_WITH_LATEX_ORIGIN,
   }, {
@@ -167,7 +167,7 @@ test('GeoGebra deterministic planner handles real OCR text without DeepSeek fall
   assert.ok(payload.data.commands.includes('locusM = Circle(K, 1.5)'));
 });
 
-test('GeoGebra deterministic planner handles maximum angle coordinate problems without DeepSeek fallback', async () => {
+test('GeoGebra deterministic fallback handles maximum angle problems when AI is unavailable', async () => {
   const payload = await createGeoGebraPlan({
     message: REAL_ANGLE_MAX_PROBLEM,
   }, {
@@ -181,6 +181,211 @@ test('GeoGebra deterministic planner handles maximum angle coordinate problems w
   assert.ok(payload.data.commands.includes('P = (sqrt(12), 0)'));
   assert.ok(payload.data.commands.includes('alpha = Angle(A, P, B)'));
   assert.equal(payload.data.demo?.type, 'timeline');
+});
+
+test('GeoGebra plan returns readable error when AI unavailable and no template matches', async () => {
+  await assert.rejects(
+    () => createGeoGebraPlan({ message: '随便帮我画一个好看的图' }, { env: {} }),
+    error => error.status === 503 && /AI 配置/.test(error.message),
+  );
+});
+
+test('GeoGebra agent reply parser extracts viewport, facts, demo and needsClarification', () => {
+  const parsedReply = parseGeoGebraAgentReply(JSON.stringify({
+    summary: '已生成三角形',
+    perspective: 'G',
+    commands: ['A = (0, 0)', 'B = (4, 0)'],
+    facts: {
+      objects: ['点 A(0,0)', '点 B(4,0)'],
+      constraints: [],
+      goals: ['画三角形'],
+      uncertainties: [],
+    },
+    viewport: { xmin: -2, ymin: -2, xmax: 6, ymax: 5, equalScale: true },
+    demo: {
+      type: 'timeline',
+      autoPlay: false,
+      clearBeforePlay: true,
+      preserveAfterFinish: true,
+      durationMs: 5000,
+      tracks: [{ kind: 'path-trace', movingObject: 'P', tracedObject: 'M', samples: 100, path: { type: 'circle' } }],
+    },
+    followUp: '可以拖动点',
+  }));
+
+  assert.deepEqual(parsedReply.viewport, { xmin: -2, ymin: -2, xmax: 6, ymax: 5, equalScale: true });
+  assert.deepEqual(parsedReply.facts.objects, ['点 A(0,0)', '点 B(4,0)']);
+  assert.deepEqual(parsedReply.facts.goals, ['画三角形']);
+  assert.equal(parsedReply.demo.type, 'timeline');
+  assert.equal(parsedReply.demo.durationMs, 5000);
+  assert.equal(parsedReply.demo.tracks[0].kind, 'path-trace');
+  assert.equal(parsedReply.needsClarification, undefined);
+});
+
+test('GeoGebra agent reply parser detects needsClarification', () => {
+  const parsedReply = parseGeoGebraAgentReply(JSON.stringify({
+    summary: '条件不足',
+    perspective: 'G',
+    needsClarification: true,
+    commands: [],
+    followUp: '请补充约束',
+  }));
+
+  assert.equal(parsedReply.needsClarification, true);
+  assert.equal(parsedReply.commands.length, 0);
+});
+
+test('GeoGebra agent reply parser rejects invalid viewport values', () => {
+  const parsedReply = parseGeoGebraAgentReply(JSON.stringify({
+    summary: '测试',
+    perspective: 'G',
+    commands: ['A = (0, 0)'],
+    viewport: { xmin: 5, ymin: 5, xmax: 2, ymax: 2 },
+  }));
+
+  assert.equal(parsedReply.viewport, undefined);
+});
+
+test('GeoGebra AI-first plan uses AI when config is available', async () => {
+  const originalBase = process.env.DEEPSEEK_API_BASE;
+  const originalKey = process.env.DEEPSEEK_API_KEY;
+  const originalModel = process.env.DEEPSEEK_MODEL;
+
+  const aiServer = createServer((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summary: 'AI 生成的三角形',
+              perspective: 'G',
+              commands: ['A = (0, 0)', 'B = (4, 0)', 'C = (2, 3)'],
+              facts: { objects: ['点 A', '点 B', '点 C'], constraints: [], goals: ['画三角形'], uncertainties: [] },
+              viewport: { xmin: -2, ymin: -2, xmax: 6, ymax: 5, equalScale: true },
+              followUp: '拖动顶点试试',
+            }),
+          },
+        }],
+      }));
+    });
+  });
+
+  const aiBase = await listen(aiServer);
+  process.env.DEEPSEEK_API_BASE = `${aiBase}/v1`;
+  process.env.DEEPSEEK_API_KEY = 'test-key';
+  process.env.DEEPSEEK_MODEL = 'deepseek-chat';
+
+  try {
+    // Even for a locus problem that matches a template, AI should be used when available
+    const payload = await createGeoGebraPlan({
+      message: '已知圆C是以C(0,3)为圆心、3为半径的圆。过原点O作圆C的任意弦OP,求OP的中点M的轨迹方程。',
+    });
+
+    assert.equal(payload.success, true);
+    assert.equal(payload.data.deterministic, undefined);
+    assert.equal(payload.data.summary, 'AI 生成的三角形');
+    assert.ok(payload.data.viewport);
+    assert.ok(payload.data.facts);
+  } finally {
+    await close(aiServer);
+    restoreEnv('DEEPSEEK_API_BASE', originalBase);
+    restoreEnv('DEEPSEEK_API_KEY', originalKey);
+    restoreEnv('DEEPSEEK_MODEL', originalModel);
+  }
+});
+
+test('GeoGebra JSON repair retry recovers from first non-JSON response', async () => {
+  const originalBase = process.env.DEEPSEEK_API_BASE;
+  const originalKey = process.env.DEEPSEEK_API_KEY;
+  const originalModel = process.env.DEEPSEEK_MODEL;
+  let requestCount = 0;
+
+  const aiServer = createServer((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      requestCount += 1;
+      res.setHeader('Content-Type', 'application/json');
+      if (requestCount === 1) {
+        // First response: invalid JSON
+        res.end(JSON.stringify({
+          choices: [{ message: { content: '好的，我来帮你画三角形。请看下面的结果。' } }],
+        }));
+      } else {
+        // Second response (repair): valid JSON
+        res.end(JSON.stringify({
+          choices: [{
+            message: {
+              content: JSON.stringify({
+                summary: '修复后的三角形',
+                perspective: 'G',
+                commands: ['A = (0, 0)', 'B = (3, 0)', 'C = (1, 2)'],
+                followUp: '拖动顶点',
+              }),
+            },
+          }],
+        }));
+      }
+    });
+  });
+
+  const aiBase = await listen(aiServer);
+  process.env.DEEPSEEK_API_BASE = `${aiBase}/v1`;
+  process.env.DEEPSEEK_API_KEY = 'test-key';
+  process.env.DEEPSEEK_MODEL = 'deepseek-chat';
+
+  try {
+    const payload = await createGeoGebraPlan({
+      message: '画一个三角形',
+    });
+
+    assert.equal(payload.success, true);
+    assert.equal(requestCount, 2);
+    assert.equal(payload.data.summary, '修复后的三角形');
+    assert.deepEqual(payload.data.commands, ['A = (0, 0)', 'B = (3, 0)', 'C = (1, 2)', 'ShowLabel(A, true)', 'ShowLabel(B, true)', 'ShowLabel(C, true)']);
+  } finally {
+    await close(aiServer);
+    restoreEnv('DEEPSEEK_API_BASE', originalBase);
+    restoreEnv('DEEPSEEK_API_KEY', originalKey);
+    restoreEnv('DEEPSEEK_MODEL', originalModel);
+  }
+});
+
+test('GeoGebra JSON repair retry returns readable error after two failures', async () => {
+  const originalBase = process.env.DEEPSEEK_API_BASE;
+  const originalKey = process.env.DEEPSEEK_API_KEY;
+  const originalModel = process.env.DEEPSEEK_MODEL;
+
+  const aiServer = createServer((req, res) => {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        choices: [{ message: { content: '这不是 JSON，只是自然语言回复。' } }],
+      }));
+    });
+  });
+
+  const aiBase = await listen(aiServer);
+  process.env.DEEPSEEK_API_BASE = `${aiBase}/v1`;
+  process.env.DEEPSEEK_API_KEY = 'test-key';
+  process.env.DEEPSEEK_MODEL = 'deepseek-chat';
+
+  try {
+    await assert.rejects(
+      () => createGeoGebraPlan({ message: '画一个三角形' }),
+      error => error.status === 502 && /没有返回可执行 JSON/.test(error.message),
+    );
+  } finally {
+    await close(aiServer);
+    restoreEnv('DEEPSEEK_API_BASE', originalBase);
+    restoreEnv('DEEPSEEK_API_KEY', originalKey);
+    restoreEnv('DEEPSEEK_MODEL', originalModel);
+  }
 });
 
 test('GeoGebra image plan rejects requests without an uploaded image', async () => {

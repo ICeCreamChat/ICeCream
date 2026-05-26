@@ -103,7 +103,25 @@ class GeoGebraWorkbench {
                 throw new Error(planPayload?.error || 'GeoGebra 规划失败');
             }
 
-            const planOutcome = await geogebraStudio.executePlanCommands(planPayload.data || {}, {
+            const planData = planPayload.data || {};
+
+            // Handle needsClarification: show followUp prompt, don't clear canvas
+            if (planData.needsClarification) {
+                geogebraStudio.latestSummary = planData.summary || '题目条件不足';
+                geogebraStudio.latestFollowUp = planData.followUp || '请补充题目条件后重试。';
+                geogebraStudio.latestError = '';
+                showToast(geogebraStudio.latestFollowUp, 'info');
+                return {
+                    success: true,
+                    needsClarification: true,
+                    summary: geogebraStudio.latestSummary,
+                    followUp: geogebraStudio.latestFollowUp,
+                    commands: [],
+                    commandHistory: geogebraStudio.getCommandHistory(),
+                };
+            }
+
+            const planOutcome = await geogebraStudio.executePlanCommands(planData, {
                 source: 'plan',
                 label: 'plan',
                 resetBeforeExecute: true,

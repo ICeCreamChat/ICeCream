@@ -36,7 +36,7 @@ test('GeoGebra agent-step request preserves canvas, selected objects and history
   assert.equal(request.commandHistory.length, 1);
 });
 
-test('GeoGebra agent-step returns execute for deterministic high confidence problems', async () => {
+test('GeoGebra agent-step returns execute for deterministic fallback when AI is unavailable', async () => {
   const payload = await createGeoGebraAgentStep({
     message: '已知圆C是以C(0,3)为圆心、3为半径的圆。过原点O作圆C的任意弦OP,求OP的中点M的轨迹方程。',
   }, { env: {} });
@@ -49,7 +49,7 @@ test('GeoGebra agent-step returns execute for deterministic high confidence prob
   assert.ok(payload.data.commands.includes('locusM = Circle(K, 1.5)'));
 });
 
-test('GeoGebra agent-step asks for clarification when no template and no AI are available', async () => {
+test('GeoGebra agent-step asks for clarification when no template and no AI available', async () => {
   const payload = await createGeoGebraAgentStep({
     message: '帮我画这道题',
   }, { env: {} });

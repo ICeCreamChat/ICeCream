@@ -604,18 +604,20 @@ class GeoGebraStudio {
                     <i data-lucide="rotate-ccw"></i>
                     <span>重置</span>
                 </button>
-                <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="export">
-                    <i data-lucide="image-down"></i>
-                    <span>导出</span>
-                </button>
-                <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="export-ggb">
-                    <i data-lucide="download"></i>
-                    <span>导出GGB</span>
-                </button>
-                <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="export-courseware">
-                    <i data-lucide="presentation"></i>
-                    <span>导出互动课件包</span>
-                </button>
+                <div class="geogebra-export-group">
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="export">
+                        <i data-lucide="image-down"></i>
+                        <span>导出图片</span>
+                    </button>
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="export-ggb">
+                        <i data-lucide="download"></i>
+                        <span>GGB</span>
+                    </button>
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="export-courseware">
+                        <i data-lucide="presentation"></i>
+                        <span>课件包</span>
+                    </button>
+                </div>
             </div>
         `;
     }
@@ -650,10 +652,6 @@ class GeoGebraStudio {
                             <i data-lucide="play"></i>
                             <span>生成图形</span>
                         </button>
-                        <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="replan-problem-text" ${this.busy ? 'disabled' : ''}>
-                            <i data-lucide="refresh-cw"></i>
-                            <span>重新绘图</span>
-                        </button>
                         <button type="button" class="manim-workbench-secondary geogebra-problem-upload" data-geogebra-studio-action="upload-problem" ${this.busy ? 'disabled' : ''}>
                             <i data-lucide="image-plus"></i>
                             <span>上传题目</span>
@@ -684,7 +682,10 @@ class GeoGebraStudio {
 
     renderDemoControls() {
         const hasDemo = Boolean(this.demoConfig);
-        const demoStatus = this.demoStatus || (hasDemo ? '可演示轨迹过程' : '生成轨迹题后可自动演示');
+        if (!hasDemo && !this.demoPlaying) {
+            return '';
+        }
+        const demoStatus = this.demoStatus || '可演示轨迹过程';
         return `
             <section class="geogebra-demo-controls" aria-label="GeoGebra 轨迹演示">
                 <div>
@@ -692,7 +693,7 @@ class GeoGebraStudio {
                     <small>${escapeHtml(demoStatus)}</small>
                 </div>
                 <div class="geogebra-demo-actions">
-                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="play-demo" ${hasDemo && !this.busy ? '' : 'disabled'}>
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="play-demo" ${!this.busy ? '' : 'disabled'}>
                         <i data-lucide="play"></i>
                         <span>演示轨迹</span>
                     </button>
@@ -700,13 +701,9 @@ class GeoGebraStudio {
                         <i data-lucide="pause"></i>
                         <span>暂停演示</span>
                     </button>
-                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="clear-demo-trace" ${hasDemo && !this.busy ? '' : 'disabled'}>
+                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="clear-demo-trace" ${!this.busy ? '' : 'disabled'}>
                         <i data-lucide="eraser"></i>
                         <span>清除轨迹</span>
-                    </button>
-                    <button type="button" class="manim-workbench-secondary" data-geogebra-studio-action="toggle-advanced-tools">
-                        <i data-lucide="panel-right-open"></i>
-                        <span>高级工具</span>
                     </button>
                 </div>
             </section>
@@ -721,6 +718,20 @@ class GeoGebraStudio {
                     <strong>绘图结果</strong>
                     <p>${escapeHtml(this.latestSummary)}</p>
                 </article>
+            `);
+        }
+        if (this.latestError) {
+            const failedCmd = this.commandHistory.filter(h => !h.success).slice(-1)[0];
+            cards.push(`
+                <article class="geogebra-result-card error">
+                    <strong>错误</strong>
+                    <p>${escapeHtml(this.latestError)}</p>
+                    ${failedCmd ? `<code>${escapeHtml(failedCmd.command)}</code>` : ''}
+                </article>
+                <button type="button" class="manim-workbench-secondary geogebra-studio-wide-action" data-geogebra-studio-action="draw-from-prompt">
+                    <i data-lucide="refresh-ccw"></i>
+                    <span>重试生成</span>
+                </button>
             `);
         }
         if (this.studioNotes || this.latestFollowUp || this.repairSummary || this.problemImageDescription) {
@@ -742,9 +753,16 @@ class GeoGebraStudio {
                 </button>
             `);
         }
+        // Advanced tools button always available at the bottom
+        cards.push(`
+            <button type="button" class="manim-workbench-secondary geogebra-studio-wide-action" data-geogebra-studio-action="toggle-advanced-tools">
+                <i data-lucide="panel-right-open"></i>
+                <span>高级工具</span>
+            </button>
+        `);
         return `
             <section class="geogebra-result-panel" aria-label="GeoGebra 绘图结果">
-                ${cards.length ? cards.join('') : '<div class="geogebra-result-placeholder">结果会显示在这里。</div>'}
+                ${cards.join('')}
             </section>
         `;
     }
@@ -2062,6 +2080,19 @@ class GeoGebraStudio {
             this.latestSummary = payload.data?.summary || '已重新生成绘图计划';
             this.latestFollowUp = payload.data?.followUp || '';
             this.studioNotes = payload.data?.studioNotes || '';
+            // When AI needs clarification or returns no commands, show follow-up
+            // without clearing the canvas.
+            const commands = payload.data?.commands || [];
+            if (payload.data?.needsClarification || !commands.length) {
+                this.problemParseStatus = payload.data?.needsClarification
+                    ? '题目条件不足，请补充信息后重试'
+                    : '未生成绘图命令，请尝试重新描述题目';
+                if (payload.data?.followUp) {
+                    showToast(payload.data.followUp, 'info');
+                }
+                this.saveSession();
+                return summarizeExecution([]);
+            }
             if (options.executeImmediately === false || !payload.data) {
                 this.problemParseStatus = '已按修正文题重新生成计划，等待确认绘图';
                 this.saveSession();

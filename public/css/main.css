@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ICeCream - 统一智能平台
  * Pro Max Glass Design System
  * Copyright (c) 2026 ICeCreamChat
@@ -1309,7 +1309,7 @@ body.light-mode .manim-workbench-panel {
 
 .geogebra-assistant-actions {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
 }
 
@@ -1420,6 +1420,23 @@ body.light-mode .manim-workbench-panel {
     color: #047857;
     border-color: rgba(16, 185, 129, 0.28);
     background: rgba(16, 185, 129, 0.10);
+}
+
+.geogebra-result-card.error {
+    color: #b91c1c;
+    border-color: rgba(239, 68, 68, 0.26);
+    background: rgba(254, 226, 226, 0.78);
+}
+
+.geogebra-result-card.error code {
+    display: block;
+    overflow: hidden;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: rgba(239, 68, 68, 0.08);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .geogebra-result-card strong,
@@ -1683,6 +1700,18 @@ body.light-mode .manim-workbench-panel {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+}
+
+.geogebra-export-group {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.geogebra-export-group .manim-workbench-secondary {
+    font-size: 11px;
+    min-height: 30px;
+    padding: 0 8px;
 }
 
 .geogebra-studio-note {

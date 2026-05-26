@@ -192,7 +192,18 @@ export function buildGeoGebraAgentStepRequest(body = {}) {
 function isSafeGeoGebraCommand(command) {
     const trimmedCommand = String(command || '').trim();
     if (!trimmedCommand || trimmedCommand.length > MAX_COMMAND_LENGTH) return false;
-    return !/(RunClickScript|RunUpdateScript|SetGlobalJavaScript|javascript:|ggbApplet|document\.|window\.|fetch\(|XMLHttpRequest|<script|eval\(|Function\(|localStorage|sessionStorage|cookie)/i.test(trimmedCommand);
+    // Block script injection
+    if (/(RunClickScript|RunUpdateScript|SetGlobalJavaScript|javascript:|ggbApplet|document\.|window\.|fetch\(|XMLHttpRequest|<script|eval\(|Function\(|localStorage|sessionStorage|cookie)/i.test(trimmedCommand)) {
+        return false;
+    }
+    // Reject pure natural language (no assignment, no function call, no coordinate)
+    // A valid command has at least one of: X = ..., Func(...), or (x, y)
+    if (!/[=()]/i.test(trimmedCommand)) return false;
+    // Reject markdown formatting
+    if (/^[#*`>-]/.test(trimmedCommand)) return false;
+    // Reject lines that are pure Chinese commentary
+    if (/^[\u4e00-\u9fff\s\uff0c\u3002\uff1a\uff1b\u3001\uff08\uff09]+$/.test(trimmedCommand)) return false;
+    return true;
 }
 
 function extractJsonObject(text) {
@@ -204,6 +215,116 @@ function extractJsonObject(text) {
     return JSON.parse(jsonMatch[0]);
 }
 
+function normalizeViewport(viewport) {
+    if (!viewport || typeof viewport !== 'object') return undefined;
+    const xmin = Number(viewport.xmin);
+    const ymin = Number(viewport.ymin);
+    const xmax = Number(viewport.xmax);
+    const ymax = Number(viewport.ymax);
+    if (![xmin, ymin, xmax, ymax].every(Number.isFinite)) return undefined;
+    if (xmin >= xmax || ymin >= ymax) return undefined;
+    return {
+        xmin,
+        ymin,
+        xmax,
+        ymax,
+        equalScale: Boolean(viewport.equalScale),
+    };
+}
+
+function normalizeFacts(facts) {
+    if (!facts || typeof facts !== 'object') return undefined;
+    return {
+        objects: Array.isArray(facts.objects) ? facts.objects.map(String).slice(0, 40) : [],
+        constraints: Array.isArray(facts.constraints) ? facts.constraints.map(String).slice(0, 40) : [],
+        goals: Array.isArray(facts.goals) ? facts.goals.map(String).slice(0, 20) : [],
+        uncertainties: Array.isArray(facts.uncertainties) ? facts.uncertainties.map(String).slice(0, 20) : [],
+    };
+}
+
+const ALLOWED_DEMO_TRACK_KINDS = new Set(['path-trace', 'command-at', 'set-visible']);
+const MAX_DEMO_DURATION = 30000;
+
+function normalizeDemo(demo) {
+    if (!demo || typeof demo !== 'object') return undefined;
+    // Accept 'trace' shorthand (single path-trace track), convert to timeline
+    if (demo.type === 'trace') {
+        if (!demo.movingObject || !demo.tracedObject || !demo.path) return undefined;
+        return {
+            type: 'trace',
+            autoPlay: demo.autoPlay !== false,
+            durationMs: Math.min(Math.max(Number(demo.durationMs) || 6500, 1200), MAX_DEMO_DURATION),
+            movingObject: String(demo.movingObject),
+            tracedObject: String(demo.tracedObject),
+            path: demo.path,
+            frameCount: Number(demo.frameCount) || Number(demo.samples) || 240,
+        };
+    }
+    if (demo.type !== 'timeline') return undefined;
+    const durationMs = Number(demo.durationMs);
+    if (!Number.isFinite(durationMs) || durationMs <= 0 || durationMs > MAX_DEMO_DURATION) return undefined;
+    const tracks = Array.isArray(demo.tracks)
+        ? demo.tracks.filter(track => track && ALLOWED_DEMO_TRACK_KINDS.has(track.kind)).slice(0, 8)
+        : [];
+    if (!tracks.length) return undefined;
+    return {
+        type: 'timeline',
+        autoPlay: demo.autoPlay !== false,
+        clearBeforePlay: demo.clearBeforePlay !== false,
+        preserveAfterFinish: demo.preserveAfterFinish !== false,
+        durationMs,
+        tracks,
+    };
+}
+
+/**
+ * Auto-inject ShowLabel(X, true) for key objects that were defined (X = ...)
+ * but lack a ShowLabel command. This handles AI truncation where ShowLabel
+ * commands at the end of the array are lost due to token limits.
+ *
+ * Only auto-labels "point-like" names (single uppercase letter or short names
+ * like O_circ, P1) to avoid cluttering the canvas with labels on polygons,
+ * segments, and helper constructions.
+ */
+function ensureLabelsForDefinedObjects(commands) {
+    // Collect all object names defined via "X = ..." assignments
+    const definedObjects = new Set();
+    // Pattern: "label = Expression" where label is a valid GeoGebra identifier
+    const assignmentPattern = /^([A-Za-z_]\w*)\s*=/;
+    for (const cmd of commands) {
+        const match = cmd.match(assignmentPattern);
+        if (match) {
+            definedObjects.add(match[1]);
+        }
+    }
+
+    // Collect all objects that already have ShowLabel, SetCaption, or SetLabelMode
+    const alreadyLabeled = new Set();
+    const labelPattern = /^(?:ShowLabel|SetCaption|SetLabelMode)\s*\(\s*([A-Za-z_]\w*)/i;
+    for (const cmd of commands) {
+        const match = cmd.match(labelPattern);
+        if (match) {
+            alreadyLabeled.add(match[1]);
+        }
+    }
+
+    // Determine which defined objects need auto-labeling
+    // Only auto-label point-like names: single uppercase letters, or short names
+    // that look like geometric points (A, B, C, P, O, M, A1, P1, O_circ, etc.)
+    const pointNamePattern = /^[A-Z]([_]?\w{0,6})?$/;
+    const injected = [];
+    for (const name of definedObjects) {
+        if (alreadyLabeled.has(name)) continue;
+        if (!pointNamePattern.test(name)) continue;
+        // Skip common non-point names (polygons, segments, circles, loci, text, angles)
+        if (/^(poly|seg|tri|circ|inc|loc|txt|ang|line|perp|pb|ab|func|eq)/i.test(name)) continue;
+        injected.push(`ShowLabel(${name}, true)`);
+    }
+
+    if (!injected.length) return commands;
+    return [...commands, ...injected];
+}
+
 export function parseGeoGebraAgentReply(replyText) {
     const parsedReply = extractJsonObject(replyText);
     const commands = Array.isArray(parsedReply.commands) ? parsedReply.commands : [];
@@ -213,14 +334,32 @@ export function parseGeoGebraAgentReply(replyText) {
         .filter(isSafeGeoGebraCommand)
         .slice(0, MAX_COMMANDS);
 
-    return {
+    // Auto-inject ShowLabel for defined objects that lack one (AI often truncates these)
+    const finalCommands = ensureLabelsForDefinedObjects(safeCommands);
+
+    const result = {
         summary: String(parsedReply.summary || 'GeoGebra 动态几何已生成').slice(0, 400),
         perspective: normalizePerspective(parsedReply.perspective),
-        commands: safeCommands,
+        commands: finalCommands,
         followUp: String(parsedReply.followUp || '').slice(0, 400),
         repairSummary: parsedReply.repairSummary ? String(parsedReply.repairSummary).slice(0, 400) : undefined,
         studioNotes: parsedReply.studioNotes ? String(parsedReply.studioNotes).slice(0, 400) : undefined,
     };
+
+    const viewport = normalizeViewport(parsedReply.viewport);
+    if (viewport) result.viewport = viewport;
+
+    const facts = normalizeFacts(parsedReply.facts);
+    if (facts) result.facts = facts;
+
+    const demo = normalizeDemo(parsedReply.demo);
+    if (demo) result.demo = demo;
+
+    if (parsedReply.needsClarification) {
+        result.needsClarification = true;
+    }
+
+    return result;
 }
 
 function inferCommandQueries(message) {
@@ -279,13 +418,7 @@ function buildAgentMessages(requestPayload, mode) {
     ];
 }
 
-async function requestGeoGebraCompletion(requestPayload, { mode, env = process.env, fetchImpl = fetch } = {}) {
-    if (!hasGeoGebraAiConfig(env)) {
-        const configError = new Error('DeepSeek 配置缺失，无法生成 GeoGebra 命令');
-        configError.status = 503;
-        throw configError;
-    }
-
+async function callChatCompletion(messages, { env = process.env, fetchImpl = fetch } = {}) {
     const apiBase = String(env.DEEPSEEK_API_BASE || '').replace(/\/$/, '');
     const completionResponse = await fetchImpl(`${apiBase}/chat/completions`, {
         method: 'POST',
@@ -295,9 +428,9 @@ async function requestGeoGebraCompletion(requestPayload, { mode, env = process.e
         },
         body: JSON.stringify({
             model: env.DEEPSEEK_MODEL || 'deepseek-chat',
-            messages: buildAgentMessages(requestPayload, mode),
+            messages,
             temperature: 0.2,
-            max_tokens: 1600,
+            max_tokens: 2000,
         }),
     });
 
@@ -308,12 +441,121 @@ async function requestGeoGebraCompletion(requestPayload, { mode, env = process.e
         throw aiError;
     }
 
-    const replyText = completionPayload.choices?.[0]?.message?.content || '';
-    return parseGeoGebraAgentReply(replyText);
+    const choice = completionPayload.choices?.[0]?.message;
+    const content = choice?.content || '';
+
+    // Some reasoning models (e.g. deepseek-v4-flash) put all output in
+    // reasoning_content and leave content empty. Extract usable JSON from
+    // reasoning_content when content is empty.
+    if (!content && choice?.reasoning_content) {
+        const reasoning = String(choice.reasoning_content);
+        const jsonMatch = reasoning.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            console.warn('[GeoGebra Agent] content empty, extracting JSON from reasoning_content');
+            return jsonMatch[0];
+        }
+    }
+
+    return content;
+}
+
+function buildJsonRepairMessages(rawReply, parseError) {
+    return [
+        {
+            role: 'system',
+            content: '你是 ICeCream GeoGebra Planner 的 JSON 修复助手。只输出一个符合契约的 JSON 对象。不要输出 Markdown。不要解释。不要使用代码块。',
+        },
+        {
+            role: 'user',
+            content: `上一条回复不是合法 JSON，解析错误如下：\n${String(parseError)}\n\n请只输出一个符合 ICeCream GeoGebra Planner 契约的 JSON 对象。\n\n上一条原始回复：\n${String(rawReply).slice(0, 2000)}`,
+        },
+    ];
+}
+
+async function requestGeoGebraCompletion(requestPayload, { mode, env = process.env, fetchImpl = fetch } = {}) {
+    if (!hasGeoGebraAiConfig(env)) {
+        const configError = new Error('DeepSeek 配置缺失，无法生成 GeoGebra 命令');
+        configError.status = 503;
+        throw configError;
+    }
+
+    const messages = buildAgentMessages(requestPayload, mode);
+    let rawReply = await callChatCompletion(messages, { env, fetchImpl });
+
+    // Some reasoning models (e.g. deepseek-v4-flash) intermittently return
+    // empty content. Retry up to 2 more times with the same messages.
+    for (let retryCount = 0; !rawReply && retryCount < 2; retryCount++) {
+        console.warn(`[GeoGebra Agent] Empty AI response, retry ${retryCount + 1}/2...`);
+        rawReply = await callChatCompletion(messages, { env, fetchImpl });
+    }
+
+    // First attempt: parse the raw reply
+    try {
+        return parseGeoGebraAgentReply(rawReply);
+    } catch (firstParseError) {
+        // JSON repair retry: one attempt
+        console.warn('[GeoGebra Agent] First JSON parse failed, attempting repair retry:', firstParseError.message);
+        console.warn('[GeoGebra Agent] Raw reply (first 500 chars):', String(rawReply).slice(0, 500));
+        try {
+            const repairMessages = buildJsonRepairMessages(rawReply, firstParseError.message);
+            const repairedReply = await callChatCompletion(repairMessages, { env, fetchImpl });
+            return parseGeoGebraAgentReply(repairedReply);
+        } catch (secondParseError) {
+            const readableError = new Error('GeoGebra Agent 没有返回可执行 JSON，请稍后重试或简化题目描述。');
+            readableError.status = 502;
+            throw readableError;
+        }
+    }
 }
 
 export async function createGeoGebraPlan(body = {}, options = {}) {
     const requestPayload = buildGeoGebraPlanRequest(body);
+    const env = options.env || process.env;
+
+    // AI-first: if AI is available, always use the general Planner
+    if (hasGeoGebraAiConfig(env)) {
+        try {
+            const planPayload = await requestGeoGebraCompletion(requestPayload, { ...options, mode: 'plan' });
+            // If AI returned commands or explicitly asked for clarification, use AI result
+            if (planPayload.commands.length > 0 || planPayload.needsClarification) {
+                return {
+                    success: true,
+                    intent: 'geogebra',
+                    data: planPayload,
+                };
+            }
+            // AI returned empty commands without clarification — try deterministic fallback
+            console.warn('[GeoGebra Agent] AI returned empty commands, trying deterministic fallback');
+            const deterministicFallback = tryCreateDeterministicGeoGebraPlan(requestPayload);
+            if (deterministicFallback) {
+                return {
+                    success: true,
+                    intent: 'geogebra',
+                    data: deterministicFallback,
+                };
+            }
+            // No template match either — return AI result as-is (may have useful summary)
+            return {
+                success: true,
+                intent: 'geogebra',
+                data: planPayload,
+            };
+        } catch (aiError) {
+            // AI failed entirely — try deterministic fallback before giving up
+            console.warn('[GeoGebra Agent] AI plan failed, trying deterministic fallback:', aiError.message);
+            const deterministicFallback = tryCreateDeterministicGeoGebraPlan(requestPayload);
+            if (deterministicFallback) {
+                return {
+                    success: true,
+                    intent: 'geogebra',
+                    data: deterministicFallback,
+                };
+            }
+            throw aiError;
+        }
+    }
+
+    // Fallback: deterministic template when AI is unavailable
     const deterministicPlan = tryCreateDeterministicGeoGebraPlan(requestPayload);
     if (deterministicPlan) {
         return {
@@ -322,12 +564,11 @@ export async function createGeoGebraPlan(body = {}, options = {}) {
             data: deterministicPlan,
         };
     }
-    const planPayload = await requestGeoGebraCompletion(requestPayload, { ...options, mode: 'plan' });
-    return {
-        success: true,
-        intent: 'geogebra',
-        data: planPayload,
-    };
+
+    // Neither AI nor template matched
+    const fallbackError = new Error('当前没有可用 AI 配置，且未匹配到已知题型模板。请配置 DeepSeek API 或简化题目描述。');
+    fallbackError.status = 503;
+    throw fallbackError;
 }
 
 export async function repairGeoGebraPlan(body = {}, options = {}) {
@@ -358,6 +599,69 @@ export async function adjustGeoGebraStudio(body = {}, options = {}) {
 
 export async function createGeoGebraAgentStep(body = {}, options = {}) {
     const requestPayload = buildGeoGebraAgentStepRequest(body);
+    const env = options.env || process.env;
+
+    // AI-first: if AI is available, always use the general Planner
+    if (hasGeoGebraAiConfig(env)) {
+        try {
+            const stepPayload = await requestGeoGebraCompletion(requestPayload, { ...options, mode: 'agent_step' });
+            // If AI returned commands or explicitly asked for clarification, use AI result
+            if (stepPayload.commands.length > 0 || stepPayload.needsClarification) {
+                const status = stepPayload.needsClarification ? 'clarify' : 'execute';
+                return {
+                    success: true,
+                    intent: 'geogebra',
+                    data: {
+                        status,
+                        ...stepPayload,
+                        manualReferences: searchGeoGebraManual(requestPayload.message, 5),
+                        classification: requestPayload.problem.classification,
+                    },
+                };
+            }
+            // AI returned empty commands without clarification — try deterministic fallback
+            console.warn('[GeoGebra Agent] AI agent-step returned empty commands, trying deterministic fallback');
+            const deterministicFallback = tryCreateDeterministicGeoGebraPlan(requestPayload);
+            if (deterministicFallback) {
+                return {
+                    success: true,
+                    intent: 'geogebra',
+                    data: {
+                        status: 'execute',
+                        ...deterministicFallback,
+                    },
+                };
+            }
+            // No template match — return AI result as 'clarify'
+            return {
+                success: true,
+                intent: 'geogebra',
+                data: {
+                    status: 'clarify',
+                    ...stepPayload,
+                    manualReferences: searchGeoGebraManual(requestPayload.message, 5),
+                    classification: requestPayload.problem.classification,
+                },
+            };
+        } catch (aiError) {
+            // AI failed entirely — try deterministic fallback before giving up
+            console.warn('[GeoGebra Agent] AI agent-step failed, trying deterministic fallback:', aiError.message);
+            const deterministicFallback = tryCreateDeterministicGeoGebraPlan(requestPayload);
+            if (deterministicFallback) {
+                return {
+                    success: true,
+                    intent: 'geogebra',
+                    data: {
+                        status: 'execute',
+                        ...deterministicFallback,
+                    },
+                };
+            }
+            throw aiError;
+        }
+    }
+
+    // Fallback: deterministic template when AI is unavailable
     const deterministicPlan = tryCreateDeterministicGeoGebraPlan(requestPayload);
     if (deterministicPlan) {
         return {
@@ -370,33 +674,19 @@ export async function createGeoGebraAgentStep(body = {}, options = {}) {
         };
     }
 
-    if (!hasGeoGebraAiConfig(options.env || process.env)) {
-        const manualReferences = searchGeoGebraManual(requestPayload.message, 5);
-        return {
-            success: true,
-            intent: 'geogebra',
-            data: {
-                status: 'clarify',
-                summary: '当前题目信息不足，暂时只进入确认步骤。',
-                perspective: requestPayload.preferredPerspective || 'G',
-                commands: [],
-                followUp: '请补充题目中的关键条件、坐标、半径、长度或目标对象；也可以先修正上传题目的 OCR 文本后再绘图。',
-                studioNotes: '未匹配到高置信确定性模板，且当前没有可用 AI 配置。',
-                manualReferences,
-                classification: requestPayload.problem.classification,
-            },
-        };
-    }
-
-    const stepPayload = await requestGeoGebraCompletion(requestPayload, { ...options, mode: 'agent_step' });
-    const status = stepPayload.commands.length ? 'execute' : 'clarify';
+    // No AI and no template match
+    const manualReferences = searchGeoGebraManual(requestPayload.message, 5);
     return {
         success: true,
         intent: 'geogebra',
         data: {
-            status,
-            ...stepPayload,
-            manualReferences: searchGeoGebraManual(requestPayload.message, 5),
+            status: 'clarify',
+            summary: '当前题目信息不足，暂时只进入确认步骤。',
+            perspective: requestPayload.preferredPerspective || 'G',
+            commands: [],
+            followUp: '请补充题目中的关键条件、坐标、半径、长度或目标对象；也可以先修正上传题目的 OCR 文本后再绘图。',
+            studioNotes: '当前没有可用 AI 配置，且未匹配到已知题型模板。',
+            manualReferences,
             classification: requestPayload.problem.classification,
         },
     };
