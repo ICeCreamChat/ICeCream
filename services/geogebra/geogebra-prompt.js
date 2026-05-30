@@ -150,6 +150,15 @@ track 类型：
 - command-at：在指定时间执行命令。{ "kind": "command-at", "timeMs": 2000, "commands": ["SetColor(seg1, 255, 0, 0)"] }
 - set-visible：在指定时间显示/隐藏对象。{ "kind": "set-visible", "timeMs": 0, "objects": ["helper"], "visible": false }
 
+=== 通用 Planner 约束补充 ===
+- 不要针对题面猜一个静态最终图；必须先给 facts，再给 constructionPlan，再给 commands，再给 demo.stages。
+- constructionPlan 是课堂构造顺序，不是自然语言长解答。每步包含 id、title、summary、objects、commands。
+- 最值题、参数点变化题、函数参数观察题优先使用 move-point，不要用 path-trace 假装轨迹。
+- move-point 格式：{ "kind": "move-point", "movingObject": "Q", "path": { "type": "segment", "from": {"x":0.3,"y":0}, "to": {"x":8,"y":0} }, "samples": 240 }。
+- 轨迹题才使用 path-trace；构造显隐使用 set-visible；阶段性强调或补充对象使用 command-at。
+- 涉及“锐角/acute angle”时，角对象必须表示题目要求的非反角；必要时添加 validation: { "angles": [{ "object": "alpha", "kind": "acute" }] }。
+- 如果题意不确定，返回 needsClarification: true，不要输出看似成功但数学含义不确定的 commands。
+
 不需要动画时不返回 demo 字段。
 
 === 输出格式 ===

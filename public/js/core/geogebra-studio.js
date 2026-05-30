@@ -1,6 +1,7 @@
 import { escapeHtml, showToast } from '../utils/helpers.js';
 import { geogebraCanvas } from './geogebra-canvas.js';
 import { renderAdvancedDrawer } from './geogebra-advanced-drawer.js';
+import { runGeoGebraAutomatedCheck } from './geogebra-automated-check.js';
 import { renderPresentationAssistant } from './geogebra-studio-view.js';
 import {
     buildInitialStateCommands,
@@ -196,6 +197,7 @@ class GeoGebraStudio {
         this.latestError = '';
         this.studioNotes = '';
         this.latestViewport = null;
+        this.latestAutomatedCheck = null;
         this.demoConfig = null;
         this.demoPlaying = false;
         this.demoStatus = '';
@@ -261,6 +263,7 @@ class GeoGebraStudio {
         this.latestError = '';
         this.studioNotes = '';
         this.latestViewport = null;
+        this.latestAutomatedCheck = null;
         this.demoConfig = null;
         this.demoPlaying = false;
         this.demoStatus = '';
@@ -507,6 +510,10 @@ class GeoGebraStudio {
                 </button>
             `);
         }
+        const automatedCheckCard = this.renderAutomatedCheckCard();
+        if (automatedCheckCard) {
+            cards.push(automatedCheckCard);
+        }
         if (this.studioNotes || this.latestFollowUp || this.repairSummary || this.problemImageDescription) {
             cards.push(`
                 <details class="geogebra-result-card geogebra-result-details">
@@ -537,6 +544,27 @@ class GeoGebraStudio {
             <section class="geogebra-result-panel" aria-label="GeoGebra 绘图结果">
                 ${cards.join('')}
             </section>
+        `;
+    }
+
+    renderAutomatedCheckCard() {
+        const check = this.latestAutomatedCheck;
+        if (!check) return '';
+        const statusClass = check.status === 'failed' ? 'error' : (check.status === 'passed' ? 'success' : 'warning');
+        const visibleItems = (check.items || []).slice(0, 6);
+        return `
+            <article class="geogebra-result-card geogebra-automated-check ${statusClass}">
+                <strong>自动化检查</strong>
+                <p>${escapeHtml(check.summary || '')}</p>
+                <ul class="geogebra-check-list">
+                    ${visibleItems.map(item => `
+                        <li data-status="${escapeHtml(item.status || 'warning')}">
+                            <span>${escapeHtml(item.label || item.id || 'check')}</span>
+                            <small>${escapeHtml(item.message || '')}</small>
+                        </li>
+                    `).join('')}
+                </ul>
+            </article>
         `;
     }
 
@@ -1446,9 +1474,27 @@ class GeoGebraStudio {
         }
     }
 
+    async runMovePointTrack(track, timelineProgress, state = {}) {
+        const duration = Math.max((track.endMs || 0) - (track.startMs || 0), 1);
+        const elapsed = Math.min(Math.max(timelineProgress.elapsedMs - (track.startMs || 0), 0), duration);
+        const progress = elapsed / duration;
+        const samples = Math.max(track.samples || 240, 1);
+        const frame = Math.min(samples, Math.floor(progress * samples));
+        if (state.lastFrame === frame) return;
+        state.lastFrame = frame;
+        const point = pointOnDemoPath(track.path, frame / samples);
+        if (point) {
+            await geogebraCanvas.executeCommand(buildSetPointCommand(track.movingObject, point.x, point.y));
+        }
+    }
+
     async runTimelineTrack(track, timelineProgress, state = {}) {
         if (track.kind === 'path-trace') {
             await this.runPathTraceTrack(track, timelineProgress, state);
+            return;
+        }
+        if (track.kind === 'move-point') {
+            await this.runMovePointTrack(track, timelineProgress, state);
             return;
         }
         if (track.kind === 'command-at') {
@@ -1572,6 +1618,7 @@ class GeoGebraStudio {
     async executePlanCommands(planBody = {}, options = {}) {
         this.busy = true;
         this.latestError = '';
+        this.latestAutomatedCheck = null;
         this.refresh();
         try {
             await this.stopTrajectoryDemo({ silent: true, refresh: false });
@@ -1630,6 +1677,35 @@ class GeoGebraStudio {
                 this.demoConfig = normalizeTimelineDemo(planBody.demo);
                 if (this.demoConfig) {
                     await this.applyDemoInitialState(this.demoConfig);
+                }
+            }
+            if (!summary.failedRecord && options.enableAutomatedCheck !== false) {
+                await waitForStudioFrame();
+                const canvasAfterCheck = this.refreshCanvasState();
+                const automatedCheck = runGeoGebraAutomatedCheck({
+                    planBody,
+                    records: summary.records,
+                    canvasSnapshot: canvasAfterCheck,
+                    demoConfig: this.demoConfig,
+                    latestViewport: this.latestViewport,
+                    problemText: this.problemReviewText || planBody.problemText || planBody.reviewText || '',
+                });
+                this.latestAutomatedCheck = automatedCheck;
+                if (automatedCheck.status === 'failed') {
+                    const failedRecord = {
+                        command: '[automated check]',
+                        success: false,
+                        label: 'automated_check',
+                        error: automatedCheck.summary,
+                        source: options.source || 'plan',
+                        createdAt: new Date().toISOString(),
+                    };
+                    this.commandHistory.push(failedRecord);
+                    this.commandHistory = compactHistory(this.commandHistory);
+                    summary.records = [...summary.records, failedRecord];
+                    summary.failedRecord = failedRecord;
+                    summary.success = false;
+                    this.latestError = automatedCheck.summary;
                 }
             }
             return summary;

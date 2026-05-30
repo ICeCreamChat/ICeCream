@@ -284,7 +284,7 @@ function normalizeFacts(facts) {
     };
 }
 
-const ALLOWED_DEMO_TRACK_KINDS = new Set(['path-trace', 'command-at', 'set-visible']);
+const ALLOWED_DEMO_TRACK_KINDS = new Set(['path-trace', 'move-point', 'command-at', 'set-visible']);
 const MAX_DEMO_DURATION = 30000;
 
 function normalizeDemoStringArray(values, limit = 80) {
@@ -382,6 +382,44 @@ function normalizeDemo(demo) {
     };
 }
 
+function normalizeConstructionPlan(constructionPlan) {
+    if (!Array.isArray(constructionPlan)) return undefined;
+    const steps = constructionPlan
+        .map((step, index) => {
+            if (!step || typeof step !== 'object') return null;
+            const objects = Array.isArray(step.objects)
+                ? step.objects.map(objectName => String(objectName || '').trim()).filter(Boolean).slice(0, 40)
+                : [];
+            const commands = Array.isArray(step.commands)
+                ? step.commands.map(command => String(command || '').trim()).filter(isSafeGeoGebraCommand).slice(0, 20)
+                : [];
+            return {
+                id: String(step.id || `step-${index + 1}`).slice(0, 80),
+                title: String(step.title || `step ${index + 1}`).slice(0, 120),
+                summary: String(step.summary || '').slice(0, 300),
+                objects,
+                commands,
+            };
+        })
+        .filter(Boolean)
+        .slice(0, 16);
+    return steps.length ? steps : undefined;
+}
+
+function normalizeValidation(validation) {
+    if (!validation || typeof validation !== 'object') return undefined;
+    const angles = Array.isArray(validation.angles)
+        ? validation.angles
+            .map(item => ({
+                object: String(item?.object || item?.name || '').trim().slice(0, 80),
+                kind: String(item?.kind || item?.type || '').trim().toLowerCase().slice(0, 40),
+            }))
+            .filter(item => item.object && item.kind)
+            .slice(0, 20)
+        : [];
+    return angles.length ? { angles } : undefined;
+}
+
 function normalizeGeoGebraPlanPayload(plan = {}) {
     if (!plan || typeof plan !== 'object') return plan;
     const normalizedPlan = { ...plan };
@@ -390,6 +428,18 @@ function normalizeGeoGebraPlanPayload(plan = {}) {
         normalizedPlan.demo = normalizedDemo;
     } else if ('demo' in normalizedPlan) {
         delete normalizedPlan.demo;
+    }
+    const constructionPlan = normalizeConstructionPlan(plan.constructionPlan);
+    if (constructionPlan) {
+        normalizedPlan.constructionPlan = constructionPlan;
+    } else if ('constructionPlan' in normalizedPlan) {
+        delete normalizedPlan.constructionPlan;
+    }
+    const validation = normalizeValidation(plan.validation);
+    if (validation) {
+        normalizedPlan.validation = validation;
+    } else if ('validation' in normalizedPlan) {
+        delete normalizedPlan.validation;
     }
     return normalizedPlan;
 }
@@ -471,6 +521,12 @@ export function parseGeoGebraAgentReply(replyText) {
 
     const demo = normalizeDemo(parsedReply.demo);
     if (demo) result.demo = demo;
+
+    const constructionPlan = normalizeConstructionPlan(parsedReply.constructionPlan);
+    if (constructionPlan) result.constructionPlan = constructionPlan;
+
+    const validation = normalizeValidation(parsedReply.validation || parsedReply.checks);
+    if (validation) result.validation = validation;
 
     if (parsedReply.needsClarification) {
         result.needsClarification = true;

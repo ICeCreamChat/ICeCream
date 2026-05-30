@@ -9,17 +9,19 @@ const canvasPath = new URL('../public/js/core/geogebra-canvas.js', import.meta.u
 const studioViewPath = new URL('../public/js/core/geogebra-studio-view.js', import.meta.url);
 const timelinePlayerPath = new URL('../public/js/core/geogebra-timeline-player.js', import.meta.url);
 const advancedDrawerPath = new URL('../public/js/core/geogebra-advanced-drawer.js', import.meta.url);
+const automatedCheckPath = new URL('../public/js/core/geogebra-automated-check.js', import.meta.url);
 const mainStylesPath = new URL('../public/css/main.css', import.meta.url);
 const mobileStylesPath = new URL('../public/css/mobile.css', import.meta.url);
 
 test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => {
-  const [studioSource, workbenchSource, studioShellSource, studioViewSource, timelinePlayerSource, advancedDrawerSource, mainStyles, mobileStyles] = await Promise.all([
+  const [studioSource, workbenchSource, studioShellSource, studioViewSource, timelinePlayerSource, advancedDrawerSource, automatedCheckSource, mainStyles, mobileStyles] = await Promise.all([
     readFile(studioPath, 'utf8'),
     readFile(workbenchPath, 'utf8'),
     readFile(studioShellPath, 'utf8'),
     readFile(studioViewPath, 'utf8'),
     readFile(timelinePlayerPath, 'utf8'),
     readFile(advancedDrawerPath, 'utf8'),
+    readFile(automatedCheckPath, 'utf8'),
     readFile(mainStylesPath, 'utf8'),
     readFile(mobileStylesPath, 'utf8'),
   ]);
@@ -40,6 +42,10 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(studioSource, /geogebra-studio-view/);
   assert.match(studioSource, /geogebra-timeline-player/);
   assert.match(studioSource, /geogebra-advanced-drawer/);
+  assert.match(studioSource, /geogebra-automated-check/);
+  assert.match(studioSource, /runGeoGebraAutomatedCheck/);
+  assert.match(studioSource, /latestAutomatedCheck/);
+  assert.match(studioSource, /renderAutomatedCheckCard/);
   assert.match(studioViewSource, /data-geogebra-studio-action="draw-from-prompt"/);
   assert.match(studioViewSource, /data-geogebra-studio-action="redraw-from-prompt"/);
   assert.match(studioViewSource, /data-geogebra-studio-action="adjust-current-graph"/);
@@ -56,8 +62,14 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(timelinePlayerSource, /stages/);
   assert.match(timelinePlayerSource, /construction/);
   assert.match(timelinePlayerSource, /path-trace/);
+  assert.match(timelinePlayerSource, /move-point/);
+  assert.match(studioSource, /runMovePointTrack/);
   assert.match(advancedDrawerSource, /renderAdvancedDrawer/);
   assert.match(advancedDrawerSource, /geogebra-advanced-drawer/);
+  assert.match(automatedCheckSource, /collectPlanObjectReferences/);
+  assert.match(automatedCheckSource, /runGeoGebraAutomatedCheck/);
+  assert.match(automatedCheckSource, /move-point/);
+  assert.match(automatedCheckSource, /angle/);
   assert.ok(studioSource.includes('\u64ad\u653e\u6f14\u793a'));
   assert.ok(studioSource.includes('\u6682\u505c\u6f14\u793a'));
   assert.match(studioSource, /clearTrajectoryTrace/);
@@ -146,6 +158,8 @@ test('GeoGebra Studio exposes a maintainable adjustment workbench', async () => 
   assert.match(mainStyles, /\.geogebra-demo-controls/);
   assert.match(mainStyles, /\.geogebra-result-panel/);
   assert.match(mainStyles, /\.geogebra-result-card/);
+  assert.match(mainStyles, /\.geogebra-automated-check/);
+  assert.match(mainStyles, /\.geogebra-check-list/);
   assert.doesNotMatch(mainStyles, /\.geogebra-result-card\s*\{[\s\S]*?max-height:\s*180px/);
   assert.match(mainStyles, /\.geogebra-recognized-problem/);
   assert.match(mainStyles, /\.geogebra-problem-upload/);

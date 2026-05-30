@@ -187,14 +187,13 @@ function buildPositiveXAxisMaximumAnglePlan(facts) {
     };
     const demo = {
         type: 'timeline',
-        autoPlay: true,
+        autoPlay: false,
         clearBeforePlay: true,
         preserveAfterFinish: true,
         durationMs: 6500,
         tracks: [{
-            kind: 'path-trace',
+            kind: 'move-point',
             movingObject: 'Q',
-            tracedObject: 'Q',
             samples: 240,
             path: {
                 type: 'polyline',
@@ -222,8 +221,8 @@ function buildPositiveXAxisMaximumAnglePlan(facts) {
             `optB = Segment(P, ${secondLabel})`,
             `candA = Segment(Q, ${firstLabel})`,
             `candB = Segment(Q, ${secondLabel})`,
-            `alpha = Angle(${firstLabel}, P, ${secondLabel})`,
-            `beta = Angle(${firstLabel}, Q, ${secondLabel})`,
+            `angP = Angle(${secondLabel}, P, ${firstLabel})`,
+            `angQ = Angle(${secondLabel}, Q, ${firstLabel})`,
             'SetColor(positiveXAxis, 0.35, 0.35, 0.35)',
             'SetColor(P, 0.95, 0.35, 0.1)',
             'SetColor(Q, 0, 0.55, 0.85)',
@@ -231,7 +230,7 @@ function buildPositiveXAxisMaximumAnglePlan(facts) {
             'SetColor(optB, 0.1, 0.35, 0.95)',
             'SetColor(candA, 0.55, 0.72, 1)',
             'SetColor(candB, 0.55, 0.72, 1)',
-            'SetColor(alpha, 0.95, 0.35, 0.1)',
+            'SetColor(angP, 0.95, 0.35, 0.1)',
             'SetLineThickness(optA, 5)',
             'SetLineThickness(optB, 5)',
             'ShowLabel(O, true)',
@@ -239,10 +238,16 @@ function buildPositiveXAxisMaximumAnglePlan(facts) {
             `ShowLabel(${secondLabel}, true)`,
             'ShowLabel(P, true)',
             'ShowLabel(Q, true)',
-            'ShowLabel(alpha, true)',
+            'ShowLabel(angP, true)',
         ],
         viewport,
+        constructionPlan: [
+            { id: 'known', title: 'Known points and constraint axis', objects: ['O', 'X', firstLabel, secondLabel, 'positiveXAxis'] },
+            { id: 'vary', title: 'Move candidate point on positive x-axis', objects: ['Q', 'candA', 'candB', 'angQ'] },
+            { id: 'conclusion', title: 'Show maximum angle point', objects: ['P', 'optA', 'optB', 'angP'] },
+        ],
         demo,
+        validation: { angles: [{ object: 'angP', kind: 'acute' }, { object: 'angQ', kind: 'acute' }] },
         followUp: `演示点 Q 在 x 轴正半轴上移动时，∠${firstLabel}Q${secondLabel} 先增大后减小；最优点 P 的横坐标为 √(${formatNumber(product)}) = ${exactX}。`,
         studioNotes: '确定性题型模板：两点在 y 轴正向、动点 P 在 x 轴正半轴，最大化 ∠APB。由 tan∠APB = x(b-a)/(x^2+ab) 得 x^2=ab。',
         deterministic: true,
@@ -273,7 +278,7 @@ function buildCircleChordMidpointLocusPlan(facts) {
     };
     const demo = {
         type: 'timeline',
-        autoPlay: true,
+        autoPlay: false,
         clearBeforePlay: true,
         preserveAfterFinish: true,
         durationMs: 8000,

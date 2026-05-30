@@ -183,11 +183,15 @@ test('GeoGebra deterministic fallback handles maximum angle problems when AI is 
   assert.equal(payload.data.problemType, 'angle_max_on_positive_x_axis');
   assert.match(payload.data.summary, /P = \(2√3, 0\)/);
   assert.ok(payload.data.commands.includes('P = (sqrt(12), 0)'));
-  assert.ok(payload.data.commands.includes('alpha = Angle(A, P, B)'));
+  assert.ok(payload.data.commands.includes('angP = Angle(B, P, A)'));
+  assert.ok(Array.isArray(payload.data.constructionPlan));
   assert.equal(payload.data.demo?.type, 'timeline');
   assert.equal(payload.data.demo?.mode, 'construction');
   assert.equal(payload.data.demo?.autoPlay, false);
   assert.ok(Array.isArray(payload.data.demo?.stages));
+  assert.equal(payload.data.demo?.tracks?.[0]?.kind, 'move-point');
+  assert.equal(payload.data.demo?.tracks?.[0]?.movingObject, 'Q');
+  assert.equal(payload.data.validation?.angles?.[0]?.object, 'angP');
 });
 
 test('GeoGebra plan returns readable error when AI unavailable and no template matches', async () => {
@@ -209,14 +213,29 @@ test('GeoGebra agent reply parser extracts viewport, facts, demo and needsClarif
       uncertainties: [],
     },
     viewport: { xmin: -2, ymin: -2, xmax: 6, ymax: 5, equalScale: true },
+    constructionPlan: [
+      { id: 'known', title: 'Show known points', objects: ['A', 'B'] },
+      { id: 'vary', title: 'Move point Q', objects: ['Q', 'alpha'] },
+    ],
     demo: {
       type: 'timeline',
       autoPlay: false,
       clearBeforePlay: true,
       preserveAfterFinish: true,
       durationMs: 5000,
-      tracks: [{ kind: 'path-trace', movingObject: 'P', tracedObject: 'M', samples: 100, path: { type: 'circle' } }],
+      stages: [{
+        id: 'vary',
+        title: 'Move point Q',
+        durationMs: 5000,
+        actions: [{
+          kind: 'move-point',
+          movingObject: 'Q',
+          samples: 180,
+          path: { type: 'segment', from: { x: 0.3, y: 0 }, to: { x: 8, y: 0 } },
+        }],
+      }],
     },
+    validation: { angles: [{ object: 'alpha', kind: 'acute' }] },
     followUp: '可以拖动点',
   }));
 
@@ -228,7 +247,12 @@ test('GeoGebra agent reply parser extracts viewport, facts, demo and needsClarif
   assert.equal(parsedReply.demo.autoPlay, false);
   assert.equal(parsedReply.demo.durationMs, 5000);
   assert.ok(Array.isArray(parsedReply.demo.stages));
-  assert.equal(parsedReply.demo.tracks[0].kind, 'path-trace');
+  assert.equal(parsedReply.demo.tracks[0].kind, 'move-point');
+  assert.equal(parsedReply.demo.tracks[0].movingObject, 'Q');
+  assert.equal(parsedReply.demo.tracks[0].samples, 180);
+  assert.deepEqual(parsedReply.constructionPlan[0].objects, ['A', 'B']);
+  assert.equal(parsedReply.validation.angles[0].object, 'alpha');
+  assert.equal(parsedReply.validation.angles[0].kind, 'acute');
   assert.equal(parsedReply.needsClarification, undefined);
 });
 

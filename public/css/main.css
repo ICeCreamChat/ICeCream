@@ -1437,6 +1437,13 @@ body.light-mode .manim-workbench-panel {
     background: rgba(254, 226, 226, 0.78);
 }
 
+.geogebra-result-card.warning,
+.geogebra-automated-check.warning {
+    color: #92400e;
+    border-color: rgba(245, 158, 11, 0.28);
+    background: rgba(254, 243, 199, 0.82);
+}
+
 .geogebra-result-card.error code {
     display: block;
     overflow: hidden;
@@ -1458,6 +1465,31 @@ body.light-mode .manim-workbench-panel {
 .geogebra-result-card p {
     margin: 0;
     color: inherit;
+    overflow-wrap: anywhere;
+}
+
+.geogebra-check-list {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.geogebra-check-list li {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.geogebra-check-list span {
+    color: var(--text-primary);
+    font-weight: 760;
+}
+
+.geogebra-check-list small {
+    color: inherit;
+    line-height: 1.45;
     overflow-wrap: anywhere;
 }
 

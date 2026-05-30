@@ -157,6 +157,19 @@ export function normalizeTimelineTrack(track = {}, timelineDurationMs = 8000) {
             samples: Math.round(normalizeTimelineNumber(track.samples, 240, 24, 600)),
         };
     }
+    if (track.kind === 'move-point') {
+        const movingObject = String(track.movingObject || '').trim();
+        const path = normalizeDemoPath(track.path);
+        if (!movingObject || !path) return null;
+        return {
+            kind: 'move-point',
+            movingObject,
+            path,
+            startMs: normalizeTimelineNumber(track.startMs, 0, 0, timelineDurationMs),
+            endMs: normalizeTimelineNumber(track.endMs, timelineDurationMs, 0, timelineDurationMs),
+            samples: Math.round(normalizeTimelineNumber(track.samples, 240, 24, 600)),
+        };
+    }
     if (track.kind === 'command-at') {
         const commands = normalizeCommands(track.commands || track.command);
         if (!commands.length) return null;
@@ -220,7 +233,7 @@ function flattenStageActions(stages) {
     let cursor = 0;
     stages.forEach(stage => {
         stage.actions.forEach(action => {
-            if (action.kind === 'path-trace') {
+            if (action.kind === 'path-trace' || action.kind === 'move-point') {
                 flattened.push({
                     ...action,
                     startMs: cursor + (action.startMs || 0),

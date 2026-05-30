@@ -49,7 +49,7 @@ test('GeoGebra deterministic template draws circle chord midpoint locus exactly'
   });
   assert.deepEqual(plan.demo, {
     type: 'timeline',
-    autoPlay: true,
+    autoPlay: false,
     clearBeforePlay: true,
     preserveAfterFinish: true,
     durationMs: 8000,
@@ -87,7 +87,7 @@ test('GeoGebra deterministic template handles real OCR text with LaTeX origin ma
     assert.ok(plan.commands.includes('locusM = Circle(K, 1.5)'));
     assert.equal(plan.viewport?.equalScale, true);
     assert.equal(plan.demo?.type, 'timeline');
-    assert.equal(plan.demo?.autoPlay, true);
+    assert.equal(plan.demo?.autoPlay, false);
     assert.equal(plan.demo?.tracks?.[0]?.kind, 'path-trace');
     assert.equal(plan.demo?.tracks?.[0]?.samples, 240);
     assert.equal(plan.demo?.tracks?.[0]?.path?.type, 'circle');
@@ -108,14 +108,16 @@ test('GeoGebra deterministic template handles positive x-axis maximum angle prob
   assert.ok(plan.commands.includes('A = (0, 2)'));
   assert.ok(plan.commands.includes('B = (0, 6)'));
   assert.ok(plan.commands.includes('P = (sqrt(12), 0)'));
-  assert.ok(plan.commands.includes('alpha = Angle(A, P, B)'));
+  assert.ok(plan.commands.includes('angP = Angle(B, P, A)'));
+  assert.ok(Array.isArray(plan.constructionPlan));
   assert.equal(plan.viewport?.equalScale, true);
   assert.equal(plan.demo?.type, 'timeline');
-  assert.equal(plan.demo?.tracks?.[0]?.kind, 'path-trace');
+  assert.equal(plan.demo?.autoPlay, false);
+  assert.equal(plan.demo?.tracks?.[0]?.kind, 'move-point');
   assert.equal(plan.demo?.tracks?.[0]?.movingObject, 'Q');
-  assert.equal(plan.demo?.tracks?.[0]?.tracedObject, 'Q');
   assert.equal(plan.demo?.tracks?.[0]?.path?.type, 'polyline');
   assert.deepEqual(plan.demo?.tracks?.[0]?.path?.points?.at(-1), { x: 3.464102, y: 0 });
+  assert.equal(plan.validation?.angles?.[0]?.object, 'angP');
 });
 
 test('GeoGebra problem templates cover common geometry families without guessing unknowns', () => {
