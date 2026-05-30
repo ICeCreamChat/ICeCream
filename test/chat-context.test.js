@@ -23,3 +23,13 @@ test('message handler sends chat context only for text chat requests', async () 
   assert.match(source, /mode\s*===\s*['"]chat['"]\s*\|\|\s*mode\s*===\s*['"]auto['"]/);
   assert.match(source, /!imageBase64/);
 });
+
+test('message handler preserves solver solution and warns when solver metadata is incomplete', async () => {
+  const source = await readFile(messageHandlerPath, 'utf8');
+
+  assert.match(source, /case\s+['"]solver['"]/);
+  assert.match(source, /data\.solution\s*\|\|\s*['"]解题完成['"]/);
+  assert.match(source, /solverMeta/);
+  assert.match(source, /completed\s*===\s*false/);
+  assert.match(source, /本次回答可能仍未完整/);
+});

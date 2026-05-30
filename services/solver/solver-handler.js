@@ -111,7 +111,8 @@ export async function handleSolve(req, res) {
                     extractedText: ocrResult.text || '',
                     imageDescription: visionResult.description || '',
                     diagramBase64: diagramBase64 || null,
-                    solution: deepseekResult.answer || ''
+                    solution: deepseekResult.answer || '',
+                    solverMeta: deepseekResult.solverMeta || null
                 }
             });
         }
@@ -131,7 +132,8 @@ export async function handleSolve(req, res) {
                 extractedText: message,
                 imageDescription: null,
                 diagramBase64: null,
-                solution: deepseekResult.answer || ''
+                solution: deepseekResult.answer || '',
+                solverMeta: deepseekResult.solverMeta || null
             }
         });
     } catch (error) {

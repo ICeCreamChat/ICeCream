@@ -1672,7 +1672,14 @@ class MessageHandler {
                 break;
 
             case 'solver':
-                const solutionText = data.solution || '解题完成';
+                let solutionText = data.solution || '解题完成';
+                const solverMeta = data.solverMeta || null;
+                if (
+                    solverMeta?.completed === false
+                    && !solutionText.includes('本次回答可能仍未完整')
+                ) {
+                    solutionText += '\n\n> ⚠️ 本次回答可能仍未完整，请重新生成或简化题目。';
+                }
                 // Construct context data for the panel
                 // Priority: MinerU extracted diagram ONLY.
                 // If MinerU fails (no diagram found), we prefer NO image in the panel over the original clutter.

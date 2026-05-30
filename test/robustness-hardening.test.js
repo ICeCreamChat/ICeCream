@@ -44,6 +44,7 @@ async function withGateway(run, env = {}) {
     DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
     DEEPSEEK_MODEL: process.env.DEEPSEEK_MODEL,
     DEEPSEEK_CHAT_MODEL: process.env.DEEPSEEK_CHAT_MODEL,
+    SOLVER_DEEPSEEK_MAX_TOKENS: process.env.SOLVER_DEEPSEEK_MAX_TOKENS,
   };
 
   for (const [key, value] of Object.entries(env)) {
@@ -346,6 +347,157 @@ test('POST /api/chat/stream gracefully returns upstream errors as SSE payload', 
       DEEPSEEK_API_KEY: 'test-key',
       DEEPSEEK_MODEL: 'test-model',
     });
+  } finally {
+    await close(aiServer);
+  }
+});
+
+test('POST /api/solver automatically continues truncated answers and returns solver metadata', async () => {
+  const calls = [];
+  const aiServer = createAiServer(({ res, body }) => {
+    calls.push(body);
+    res.setHeader('Content-Type', 'application/json');
+    if (calls.length === 1) {
+      res.end(JSON.stringify({
+        choices: [{
+          finish_reason: 'length',
+          message: {
+            content: '**第一步：模型判断**\n三角恒等式综合题。\n\n**第三步：详细步骤**\n由条件可得若干角度范围。\n5. 再检查',
+          },
+        }],
+        usage: { prompt_tokens: 10, completion_tokens: 2000, total_tokens: 2010 },
+      }));
+      return;
+    }
+
+    res.end(JSON.stringify({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: '继续上一步：确认符号后可排除矛盾分支。\n\n**第四步：最终答案**\n最终答案为 C。',
+        },
+      }],
+      usage: { prompt_tokens: 12, completion_tokens: 80, total_tokens: 92 },
+    }));
+  });
+
+  const aiBase = await listen(aiServer);
+  try {
+    await withGateway(async appBase => {
+      const response = await fetch(`${appBase}/api/solver`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: '若 sin 2α = √5/5，求 α+β。' }),
+      });
+
+      const payload = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal(payload.success, true);
+      assert.match(payload.data.solution, /再检查/);
+      assert.match(payload.data.solution, /最终答案为 C/);
+      assert.doesNotMatch(payload.data.solution, /本次回答可能仍未完整/);
+      assert.equal(payload.data.solverMeta.continuationCount, 1);
+      assert.equal(payload.data.solverMeta.completed, true);
+      assert.equal(payload.data.solverMeta.finishReason, 'stop');
+    }, {
+      DEEPSEEK_API_BASE: aiBase,
+      DEEPSEEK_API_KEY: 'test-key',
+      DEEPSEEK_MODEL: 'test-model',
+      SOLVER_DEEPSEEK_MAX_TOKENS: undefined,
+    });
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].max_tokens, 8192);
+    assert.match(calls[1].messages.at(-1).content, /从上一段中断处继续/);
+  } finally {
+    await close(aiServer);
+  }
+});
+
+test('POST /api/solver continues when answer lacks final answer and ends mid-thought', async () => {
+  const calls = [];
+  const aiServer = createAiServer(({ res, body }) => {
+    calls.push(body);
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: calls.length === 1
+            ? '**第一步：模型判断**\n函数最值题。\n\n**第三步：详细步骤**\n先求导，再判断单调性，因此我们还需要判断'
+            : '**第四步：最终答案**\n最大值为 6。',
+        },
+      }],
+      usage: { prompt_tokens: 5, completion_tokens: 20, total_tokens: 25 },
+    }));
+  });
+
+  const aiBase = await listen(aiServer);
+  try {
+    await withGateway(async appBase => {
+      const response = await fetch(`${appBase}/api/solver`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: '求函数最大值。' }),
+      });
+
+      const payload = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal(payload.success, true);
+      assert.match(payload.data.solution, /最大值为 6/);
+      assert.equal(payload.data.solverMeta.continuationCount, 1);
+      assert.equal(payload.data.solverMeta.completed, true);
+    }, {
+      DEEPSEEK_API_BASE: aiBase,
+      DEEPSEEK_API_KEY: 'test-key',
+      DEEPSEEK_MODEL: 'test-model',
+    });
+
+    assert.equal(calls.length, 2);
+  } finally {
+    await close(aiServer);
+  }
+});
+
+test('POST /api/solver uses configurable solver max tokens without extra continuation for complete answers', async () => {
+  const calls = [];
+  const aiServer = createAiServer(({ res, body }) => {
+    calls.push(body);
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
+      choices: [{
+        finish_reason: 'stop',
+        message: {
+          content: '**第一步：模型判断**\n选择题。\n\n**第四步：最终答案**\n选 A。',
+        },
+      }],
+      usage: { prompt_tokens: 4, completion_tokens: 10, total_tokens: 14 },
+    }));
+  });
+
+  const aiBase = await listen(aiServer);
+  try {
+    await withGateway(async appBase => {
+      const response = await fetch(`${appBase}/api/solver`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: '选择题，选什么？' }),
+      });
+
+      const payload = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal(payload.success, true);
+      assert.equal(payload.data.solverMeta.continuationCount, 0);
+      assert.equal(payload.data.solverMeta.completed, true);
+    }, {
+      DEEPSEEK_API_BASE: aiBase,
+      DEEPSEEK_API_KEY: 'test-key',
+      DEEPSEEK_MODEL: 'test-model',
+      SOLVER_DEEPSEEK_MAX_TOKENS: '6000',
+    });
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].max_tokens, 6000);
   } finally {
     await close(aiServer);
   }
