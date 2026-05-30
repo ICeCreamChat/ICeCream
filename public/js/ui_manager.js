@@ -11,6 +11,9 @@ const UiManager = {
         this.contextImageEl = document.getElementById('context-image');
         this.contextTextEl = document.getElementById('context-text');
         this.imageContainer = this.contextPanel ? this.contextPanel.querySelector('.context-image-container') : null;
+        if (this.contextImageEl) {
+            this.contextImageEl.onerror = () => this.hideContextImage();
+        }
 
         // Define mobile context sync function
         window.updateMobileContext = (imageUrl, text) => {
@@ -18,6 +21,10 @@ const UiManager = {
             const mobileText = document.getElementById('mobile-context-text');
 
             if (mobileImage) {
+                mobileImage.onerror = () => {
+                    mobileImage.removeAttribute('src');
+                    mobileImage.style.display = 'none';
+                };
                 mobileImage.src = imageUrl || '';
                 mobileImage.style.display = imageUrl ? 'block' : 'none';
             }
@@ -30,6 +37,14 @@ const UiManager = {
                 }
             }
         };
+    },
+
+    hideContextImage() {
+        if (this.imageContainer) this.imageContainer.style.display = 'none';
+        if (this.contextImageEl) {
+            this.contextImageEl.removeAttribute('src');
+            this.contextImageEl.onclick = null;
+        }
     },
 
     /**
@@ -64,8 +79,7 @@ const UiManager = {
                 }
             }
         } else {
-            if (this.imageContainer) this.imageContainer.style.display = 'none';
-            if (this.contextImageEl) this.contextImageEl.src = '';
+            this.hideContextImage();
         }
 
         // Text Handling - Use SmartRenderer for adaptive content

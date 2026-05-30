@@ -498,6 +498,21 @@ class MessageHandler {
         return sessionManager.getChatContext();
     }
 
+    normalizeContextImageSource(imageSource) {
+        const value = typeof imageSource === 'string' ? imageSource.trim() : '';
+        if (!value) return null;
+        if (
+            value.startsWith('data:image/') ||
+            value.startsWith('blob:') ||
+            /^https?:\/\//i.test(value) ||
+            value.startsWith('/')
+        ) {
+            return value;
+        }
+        console.warn('[Solver] Ignoring unsafe context image source');
+        return null;
+    }
+
     /**
      * 发送消息到服务器
      * @param {string} message - 消息内容
@@ -1680,17 +1695,16 @@ class MessageHandler {
                 ) {
                     solutionText += '\n\n> ⚠️ 本次回答可能仍未完整，请重新生成或简化题目。';
                 }
-                // Construct context data for the panel
-                // Priority: MinerU extracted diagram ONLY.
-                // If MinerU fails (no diagram found), we prefer NO image in the panel over the original clutter.
-                let panelImage = data.diagramBase64 || null;
+                // Construct context data for the panel.
+                // Priority: best available cropped diagram; never pass local file paths to the browser.
+                let panelImage = this.normalizeContextImageSource(data.diagramBase64);
                 let panelText = data.extractedText || "（题目内容识别中...）";
 
                 // Fallback: Only use original image if OCR seems to have failed AND no diagram
                 const isOCRFailed = panelText.includes('OCR 失败') || panelText.includes('无法识别') || panelText.trim().length < 5;
                 if (isOCRFailed && !panelImage && originalImage) {
                     console.warn("[Solver] OCR 似乎失败，启用原图兜底模式");
-                    panelImage = originalImage;
+                    panelImage = this.normalizeContextImageSource(originalImage);
                     panelText += "\n\n> ⚠️ **自动回退模式**：由于文字识别遇到问题，已为您显示原始图片。";
                 }
 

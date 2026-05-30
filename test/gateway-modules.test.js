@@ -155,3 +155,18 @@ test('ensureDirectory creates missing module-owned directories', async () => {
     const info = await stat(nested);
     assert.equal(info.isDirectory(), true);
 });
+
+test('seating OCR reuses the shared MinerU zip downloader', async () => {
+    const source = await readFile(new URL('../gateway/services/ocr.js', import.meta.url), 'utf8');
+
+    assert.match(source, /fetchMineruZipWithRetry/);
+    assert.match(source, /canAttemptMineruDownload/);
+    assert.doesNotMatch(source, /fetch\(extractResult\.full_zip_url\)/);
+});
+
+test('solver diagram detection checks MinerU availability before running Layer 0', async () => {
+    const source = await readFile(new URL('../services/solver/diagram-detector.js', import.meta.url), 'utf8');
+
+    assert.match(source, /canAttemptMineruDownload/);
+    assert.match(source, /MinerU .*cooldown|MinerU.*冷却|MinerU.*unavailable/);
+});

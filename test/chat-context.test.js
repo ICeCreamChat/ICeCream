@@ -4,6 +4,7 @@ import test from 'node:test';
 
 const sessionManagerPath = new URL('../public/js/core/session-manager.js', import.meta.url);
 const messageHandlerPath = new URL('../public/js/core/message-handler.js', import.meta.url);
+const uiManagerPath = new URL('../public/js/ui_manager.js', import.meta.url);
 
 test('session manager exposes current chat context with assistant role mapping', async () => {
   const source = await readFile(sessionManagerPath, 'utf8');
@@ -32,4 +33,22 @@ test('message handler preserves solver solution and warns when solver metadata i
   assert.match(source, /solverMeta/);
   assert.match(source, /completed\s*===\s*false/);
   assert.match(source, /本次回答可能仍未完整/);
+});
+
+test('solver context panel accepts only browser-safe image sources', async () => {
+  const source = await readFile(messageHandlerPath, 'utf8');
+
+  assert.match(source, /normalizeContextImageSource\s*\(/);
+  assert.match(source, /data:image\//);
+  assert.match(source, /blob:/);
+  assert.match(source, /https\?:/);
+  assert.match(source, /panelImage\s*=\s*this\.normalizeContextImageSource\(data\.diagramBase64\)/);
+});
+
+test('UI manager hides the context image when browser loading fails', async () => {
+  const source = await readFile(uiManagerPath, 'utf8');
+
+  assert.match(source, /onerror/);
+  assert.match(source, /imageContainer\.style\.display\s*=\s*['"]none['"]/);
+  assert.match(source, /contextImageEl\.removeAttribute\(['"]src['"]\)/);
 });

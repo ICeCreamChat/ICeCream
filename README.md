@@ -117,7 +117,7 @@ npm run build:studio
 | 页面和基础 Gateway | Node Gateway | `PORT` 可选 | 可以正常访问静态页面和健康检查。 |
 | AI 对话 | Node Gateway | `DEEPSEEK_API_KEY`、`DEEPSEEK_API_BASE`、`DEEPSEEK_MODEL` | 对话接口不可用或返回配置错误。 |
 | 流式对话 | Node Gateway | 同 AI 对话 | 流式接口不可用或降级失败。 |
-| 图片解题和 OCR | Node Gateway | `SILICONFLOW_API_KEY`、`SILICONFLOW_API_BASE`、`SILICONFLOW_VLM_MODEL`，`MINERU_API_KEY` 可选 | 图片识别、文档解析相关能力不可用。 |
+| 图片解题和 OCR | Node Gateway | `SILICONFLOW_API_KEY`、`SILICONFLOW_API_BASE`、`SILICONFLOW_VLM_MODEL`，`MINERU_API_KEY` 可选；MinerU 下载预算和冷却期可配 `MINERU_DOWNLOAD_BUDGET_MS`、`MINERU_FAILURE_COOLDOWN_MS` | 图片识别、文档解析相关能力不可用。 |
 | Manim 动画 | Node Gateway、Manim 服务 | `MANIM_SERVICE_URL`、`MANIM_SERVICE_TOKEN` 可选，通常也需要 `DEEPSEEK_API_KEY` | 动画生成、渲染和 Studio 相关能力不可用。 |
 | GeoGebra 动态几何 | Node Gateway、本地浏览器资源 | 离线画布和 Studio 不需要新增变量；AI 命令规划、Studio 调整复用 `DEEPSEEK_API_KEY`、`DEEPSEEK_API_BASE`、`DEEPSEEK_MODEL` | 无 Key 时画布和手写命令仍可用，主输入框生成命令、Studio AI 调整和失败修复不可用。 |
 | 座位规划基础能力 | Node Gateway | 无强制外部 Key | 本地规则和基础预览可用，AI 辅助能力受限。 |
@@ -143,6 +143,26 @@ Node Gateway :3000
 ```
 
 Gateway 是浏览器唯一需要直接访问的本地入口。Manim、Timefold 和外部模型服务都由 Gateway 统一适配。GeoGebra 不新增独立后端进程，浏览器从 `public/vendor/geogebra/` 加载离线 HTML5 运行时，Gateway 只负责命令搜索、AI 规划、Studio 调整和失败修复。
+
+## MinerU CDN 和跨环境部署
+
+MinerU 云解析成功后还需要从 `cdn-mineru.openxlab.org.cn` 下载结果 zip。ICeCream 保持 MinerU 优先：能直连就使用 MinerU；如果服务器、国内外网络或 Fake-IP 环境导致 CDN 不可达，会自动进入短期冷却并降级到后续视觉识别层，不要求部署机器必须配置代理。
+
+默认配置：
+
+```env
+MINERU_DOWNLOAD_BUDGET_MS=35000
+MINERU_DOWNLOAD_RETRIES=2
+MINERU_FAILURE_COOLDOWN_MS=600000
+```
+
+如果本机或服务器有可用代理，并且希望提高 MinerU CDN 命中率，可以额外配置：
+
+```env
+MINERU_DOWNLOAD_PROXY=http://127.0.0.1:7890
+```
+
+该代理只用于 MinerU 结果包下载，不影响 DeepSeek、SiliconFlow、Manim 或 GeoGebra。代理不是部署必需项；未配置代理且检测到 `198.18.x.x` 或 TLS/网络失败时，系统会快速跳过 MinerU zip 下载并继续解题或座位表 OCR。
 
 ## GeoGebra 互动课件包和 PPT
 

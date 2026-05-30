@@ -1,9 +1,20 @@
 ﻿import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
+import { mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import { createGatewayApp } from '../gateway/app.js';
 import { validateGatewayEnv } from '../gateway/config/environment.js';
+import { convertCroppedDiagramToDataUrl } from '../services/solver/diagram-detector.js';
+import {
+  fetchMineruZipWithRetry,
+  getMineruDownloadAvailability,
+  resetMineruDownloadAvailability,
+  resolveMineruDownloadPolicy,
+} from '../services/solver/mineru-download.js';
 
 function listen(server) {
   return new Promise(resolve => {
@@ -516,6 +527,202 @@ test('POST /api/solver rejects unrecognized base64 image', async () => {
     assert.equal(payload.success, false);
     assert.match(payload.error, /无法识别的图片格式|图片过大/);
   });
+});
+
+test('solver diagram conversion returns browser-safe data URLs and removes cropped files', async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), 'icecream-cropped-diagram-'));
+  const croppedPath = path.join(tempDir, 'cropped_test.png');
+  const onePixelPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+    'base64',
+  );
+  await writeFile(croppedPath, onePixelPng);
+
+  const dataUrl = await convertCroppedDiagramToDataUrl(croppedPath, { cleanup: true });
+
+  assert.match(dataUrl, /^data:image\/png;base64,/);
+  await assert.rejects(stat(croppedPath), /ENOENT/);
+});
+
+test('MinerU zip download retries transient TLS failures before succeeding', async () => {
+  let attempts = 0;
+  const zipBytes = Buffer.from([80, 75, 3, 4]);
+
+  const buffer = await fetchMineruZipWithRetry('https://cdn-mineru.openxlab.org.cn/demo/result.zip', {
+    maxAttempts: 3,
+    baseDelayMs: 0,
+    timeoutMs: 100,
+    lookupImpl: async () => ({ address: '203.0.113.10' }),
+    fetchImpl: async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        throw new Error('Client network socket disconnected before secure TLS connection was established');
+      }
+      return {
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => zipBytes.buffer.slice(zipBytes.byteOffset, zipBytes.byteOffset + zipBytes.byteLength),
+      };
+    },
+  });
+
+  assert.equal(attempts, 3);
+  assert.deepEqual([...buffer], [...zipBytes]);
+});
+
+test('MinerU zip download uses MINERU_DOWNLOAD_PROXY before generic proxy variables', async () => {
+  const zipBytes = Buffer.from([80, 75, 3, 4]);
+  let forwardedAgent;
+
+  await fetchMineruZipWithRetry('https://cdn-mineru.openxlab.org.cn/demo/result.zip', {
+    maxAttempts: 1,
+    timeoutMs: 100,
+    env: {
+      MINERU_DOWNLOAD_PROXY: 'http://mineru-proxy.local:7890',
+      HTTPS_PROXY: 'http://generic-proxy.local:7890',
+    },
+    proxyAgentFactory: proxyUrl => ({ proxyUrl }),
+    fetchImpl: async (_url, init) => {
+      forwardedAgent = init.agent;
+      return {
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => zipBytes.buffer.slice(zipBytes.byteOffset, zipBytes.byteOffset + zipBytes.byteLength),
+      };
+    },
+  });
+
+  assert.deepEqual(forwardedAgent, { proxyUrl: 'http://mineru-proxy.local:7890' });
+});
+
+test('MinerU zip download falls back to HTTPS_PROXY when no MinerU-specific proxy is set', async () => {
+  const zipBytes = Buffer.from([80, 75, 3, 4]);
+  let forwardedAgent;
+
+  await fetchMineruZipWithRetry('https://cdn-mineru.openxlab.org.cn/demo/result.zip', {
+    maxAttempts: 1,
+    timeoutMs: 100,
+    env: {
+      HTTPS_PROXY: 'http://generic-proxy.local:7890',
+    },
+    proxyAgentFactory: proxyUrl => ({ proxyUrl }),
+    fetchImpl: async (_url, init) => {
+      forwardedAgent = init.agent;
+      return {
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => zipBytes.buffer.slice(zipBytes.byteOffset, zipBytes.byteOffset + zipBytes.byteLength),
+      };
+    },
+  });
+
+  assert.deepEqual(forwardedAgent, { proxyUrl: 'http://generic-proxy.local:7890' });
+});
+
+test('MinerU zip download skips fake-ip CDN without proxy instead of retrying', async () => {
+  resetMineruDownloadAvailability();
+  let attempts = 0;
+
+  await assert.rejects(
+    fetchMineruZipWithRetry('https://cdn-mineru.openxlab.org.cn/demo/result.zip', {
+      maxAttempts: 3,
+      baseDelayMs: 0,
+      timeoutMs: 100,
+      cooldownMs: 600000,
+      nowMs: 1000,
+      env: {},
+      lookupImpl: async () => ({ address: '198.18.0.143' }),
+      fetchImpl: async () => {
+        attempts += 1;
+        throw new Error('should not fetch fake-ip CDN without proxy');
+      },
+    }),
+    /Fake-IP|MINERU_CDN_FAKE_IP_NO_PROXY|代理/,
+  );
+
+  assert.equal(attempts, 0);
+  assert.equal(getMineruDownloadAvailability({ nowMs: 1001 }).available, false);
+  assert.equal(getMineruDownloadAvailability({ nowMs: 1001 }).reason, 'fake-ip-no-proxy');
+  resetMineruDownloadAvailability();
+});
+
+test('MinerU zip download cooldown skips repeated attempts until the cooldown expires', async () => {
+  resetMineruDownloadAvailability();
+  const zipBytes = Buffer.from([80, 75, 3, 4]);
+  let attempts = 0;
+
+  await assert.rejects(
+    fetchMineruZipWithRetry('https://cdn-mineru.openxlab.org.cn/demo/result.zip', {
+      maxAttempts: 1,
+      baseDelayMs: 0,
+      timeoutMs: 100,
+      cooldownMs: 600000,
+      nowMs: 1000,
+      env: {},
+      lookupImpl: async () => ({ address: '203.0.113.10' }),
+      fetchImpl: async () => {
+        attempts += 1;
+        throw new Error('Client network socket disconnected before secure TLS connection was established');
+      },
+    }),
+    /secure TLS connection/,
+  );
+
+  await assert.rejects(
+    fetchMineruZipWithRetry('https://cdn-mineru.openxlab.org.cn/demo/result.zip', {
+      maxAttempts: 1,
+      baseDelayMs: 0,
+      timeoutMs: 100,
+      cooldownMs: 600000,
+      nowMs: 2000,
+      env: {},
+      lookupImpl: async () => ({ address: '203.0.113.10' }),
+      fetchImpl: async () => {
+        attempts += 1;
+        throw new Error('should not retry during cooldown');
+      },
+    }),
+    /cooldown|冷却|MINERU_DOWNLOAD_COOLDOWN/,
+  );
+
+  assert.equal(attempts, 1);
+  assert.equal(getMineruDownloadAvailability({ nowMs: 2000 }).available, false);
+
+  const buffer = await fetchMineruZipWithRetry('https://cdn-mineru.openxlab.org.cn/demo/result.zip', {
+    maxAttempts: 1,
+    baseDelayMs: 0,
+    timeoutMs: 100,
+    cooldownMs: 600000,
+    nowMs: 602000,
+    env: {},
+    lookupImpl: async () => ({ address: '203.0.113.10' }),
+    fetchImpl: async () => {
+      attempts += 1;
+      return {
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => zipBytes.buffer.slice(zipBytes.byteOffset, zipBytes.byteOffset + zipBytes.byteLength),
+      };
+    },
+  });
+
+  assert.equal(attempts, 2);
+  assert.deepEqual([...buffer], [...zipBytes]);
+  assert.equal(getMineruDownloadAvailability({ nowMs: 602001 }).available, true);
+  resetMineruDownloadAvailability();
+});
+
+test('MinerU zip download policy defaults keep retries inside a bounded budget', () => {
+  const policy = resolveMineruDownloadPolicy({
+    MINERU_DOWNLOAD_BUDGET_MS: '',
+    MINERU_DOWNLOAD_RETRIES: '',
+    MINERU_FAILURE_COOLDOWN_MS: '',
+  });
+
+  assert.equal(policy.budgetMs, 35000);
+  assert.equal(policy.maxAttempts, 2);
+  assert.equal(policy.cooldownMs, 600000);
+  assert.ok(policy.timeoutMs <= 17500);
 });
 
 test('POST /api/tools/seating/plan returns failure when upstream AI is non-2xx', async () => {

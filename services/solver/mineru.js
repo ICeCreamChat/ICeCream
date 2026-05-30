@@ -10,28 +10,23 @@ import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
 import { CONFIG } from './config.js';
+import { fetchMineruZipWithRetry } from './mineru-download.js';
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+export { fetchMineruZipWithRetry };
 
-export async function downloadAndExtractMineruImages(zipUrl) {
+export async function downloadAndExtractMineruImages(zipUrl, options = {}) {
     console.log('[MinerU] 下载并提取图片...');
     try {
-        const response = await fetch(zipUrl);
-        if (!response.ok) {
-            console.log('[MinerU] 下载 zip 失败:', response.status);
-            return null;
-        }
-
-        // Dynamic import for adm-zip (optional dependency)
         let AdmZip;
         try {
             AdmZip = (await import('adm-zip')).default;
-        } catch (e) {
+        } catch {
             console.log('[MinerU] adm-zip 未安装，跳过 zip 解析');
             return null;
         }
 
-        const buffer = Buffer.from(await response.arrayBuffer());
+        const buffer = await fetchMineruZipWithRetry(zipUrl, options);
         const zip = new AdmZip(buffer);
         const entries = zip.getEntries();
 
@@ -41,7 +36,6 @@ export async function downloadAndExtractMineruImages(zipUrl) {
                 console.log('[MinerU] 找到图片:', entry.entryName);
                 const imageBuffer = entry.getData();
 
-                // Simple processing: flatten background to white + normalize
                 const processedBuffer = await sharp(imageBuffer)
                     .flatten({ background: { r: 255, g: 255, b: 255 } })
                     .normalize()
@@ -55,8 +49,9 @@ export async function downloadAndExtractMineruImages(zipUrl) {
 
         console.log('[MinerU] zip 中未找到图片');
         return null;
-    } catch (e) {
-        console.log('[MinerU] 提取图片失败:', e.message);
+    } catch (error) {
+        console.log('[MinerU] 提取图片失败:', error.message);
+        console.warn('[MinerU] 结果包下载失败，已降级到 Qwen Grounding');
         return null;
     }
 }
@@ -74,7 +69,6 @@ export async function parseWithMinerU(imagePath) {
     };
 
     try {
-        // Step 1: Get Upload Link
         const fileName = path.basename(imagePath);
         const batchRes = await fetch(`${baseUrl}/api/v4/file-urls/batch`, {
             method: 'POST',
@@ -95,7 +89,6 @@ export async function parseWithMinerU(imagePath) {
         const uploadUrl = batchData.data.file_urls[0];
         console.log('[MinerU Cloud] Batch ID:', batchId);
 
-        // Step 2: Upload File
         const fileBuffer = fs.readFileSync(imagePath);
         let uploadRes;
         let uploadAttempts = 0;
@@ -110,8 +103,8 @@ export async function parseWithMinerU(imagePath) {
 
                 if (uploadRes.ok) break;
                 console.log(`[MinerU Cloud] 上传失败 (尝试 ${uploadAttempts + 1}/${maxUploadAttempts}): ${uploadRes.status}`);
-            } catch (err) {
-                console.log(`[MinerU Cloud] 上传网络错误 (尝试 ${uploadAttempts + 1}/${maxUploadAttempts}): ${err.message}`);
+            } catch (error) {
+                console.log(`[MinerU Cloud] 上传网络错误 (尝试 ${uploadAttempts + 1}/${maxUploadAttempts}): ${error.message}`);
             }
 
             uploadAttempts++;
@@ -122,7 +115,6 @@ export async function parseWithMinerU(imagePath) {
 
         if (!uploadRes || !uploadRes.ok) return null;
 
-        // Step 3: Poll Results
         const maxWait = 60000;
         const pollInterval = 3000;
         let waited = 0;
@@ -150,17 +142,18 @@ export async function parseWithMinerU(imagePath) {
                     zipUrl: extractResult.full_zip_url,
                     state: 'done'
                 };
-            } else if (extractResult.state === 'failed') {
+            }
+
+            if (extractResult.state === 'failed') {
                 console.log('[MinerU Cloud] 解析失败:', extractResult.err_msg);
                 return null;
             }
         }
         return null;
-
-    } catch (e) {
-        console.warn(`[MinerU Cloud] Error: ${e.message}`);
+    } catch (error) {
+        console.warn(`[MinerU Cloud] Error: ${error.message}`);
         return null;
     }
 }
 
-export default { parseWithMinerU, downloadAndExtractMineruImages };
+export default { parseWithMinerU, downloadAndExtractMineruImages, fetchMineruZipWithRetry };

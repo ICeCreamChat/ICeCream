@@ -3,6 +3,11 @@ import fetch from 'node-fetch';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
+import {
+    canAttemptMineruDownload,
+    fetchMineruZipWithRetry,
+    getMineruDownloadAvailability,
+} from '../../services/solver/mineru-download.js';
 
 dotenv.config();
 
@@ -158,6 +163,10 @@ export async function recognizeWithPaddle(imageBuffer, mimeType = 'image/jpeg') 
 export async function recognizeWithMinerU(imageBuffer, filename = 'image.png') {
     if (!MINERU_KEY) throw new Error('Missing MINERU_API_KEY');
     if (!MINERU_ENABLED) throw new Error('MinerU is disabled');
+    if (!canAttemptMineruDownload()) {
+        const mineruStatus = getMineruDownloadAvailability();
+        throw new Error(`MinerU unavailable/cooldown: ${mineruStatus.reason || 'unknown'}`);
+    }
 
     const baseUrl = MINERU_URL;
     const headers = {
@@ -263,8 +272,9 @@ export async function recognizeWithMinerU(imageBuffer, filename = 'image.png') {
                         return '[MinerU extraction done but cannot parse zip]';
                     }
 
-                    const zipRes = await fetch(extractResult.full_zip_url);
-                    const zipBuffer = Buffer.from(await zipRes.arrayBuffer());
+                    const zipBuffer = await fetchMineruZipWithRetry(extractResult.full_zip_url, {
+                        logger: console,
+                    });
                     const zip = new AdmZip(zipBuffer);
                     const entries = zip.getEntries();
                     // Find markdown file in zip
