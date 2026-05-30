@@ -325,6 +325,22 @@ class SessionManager {
     getMessages() {
         return this.messages;
     }
+
+    /**
+     * 获取当前问答上下文，供后端继续同一会话内的前后文。
+     * @returns {Array<{role: string, content: string}>} 最近 40 条 user/assistant 文本消息
+     */
+    getChatContext() {
+        return this.messages
+            .map(message => {
+                const sourceRole = message?.role;
+                const role = sourceRole === 'bot' ? 'assistant' : sourceRole;
+                const content = typeof message?.content === 'string' ? message.content.trim() : '';
+                return { role, content };
+            })
+            .filter(({ role, content }) => (role === 'user' || role === 'assistant') && content)
+            .slice(-40);
+    }
 }
 
 // 导出单例

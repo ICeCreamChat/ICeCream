@@ -9,6 +9,7 @@ import { modeSwitcher } from './mode-switcher.js';
 import { intentConfirm } from './intent-confirm.js';
 import { geogebraWorkbench } from './geogebra-workbench.js';
 import { getAnimationEngine, setAnimationEngine } from './animation-engine-state.js';
+import { sessionManager } from './session-manager.js';
 
 /**
  * 消息处理器类
@@ -382,6 +383,7 @@ class MessageHandler {
 
         const selectedMode = options.routeMode || modeSwitcher.getMode();
         const hasImage = Boolean(this.pendingImage);
+        const chatContext = this.getChatContextForSend(selectedMode, message, hasImage);
 
         if (!options.skipRouteGuard) {
             const targetMode = this.getCrossTaskTarget(selectedMode, message, hasImage);
@@ -455,7 +457,7 @@ class MessageHandler {
                 return;
             }
 
-            const response = await this.sendToServer(message, imageForServer, mode);
+            const response = await this.sendToServer(message, imageForServer, mode, chatContext);
 
             if (response.needConfirmation) {
                 // Attach the pending image to the data passed to intentConfirm so it can be re-sent
@@ -483,6 +485,19 @@ class MessageHandler {
         this.addMessage('bot', geogebraWorkbench.formatChatReply(outcome));
     }
 
+    getChatContextForSend(mode, message = '', hasImage = false) {
+        if (hasImage) return [];
+        if (!(mode === 'chat' || mode === 'auto')) return [];
+        if (mode === 'auto' && (
+            this.looksLikeSolverRequest(message, false) ||
+            this.looksLikeManimRequest(message) ||
+            this.looksLikeGeoGebraRequest(message)
+        )) {
+            return [];
+        }
+        return sessionManager.getChatContext();
+    }
+
     /**
      * 发送消息到服务器
      * @param {string} message - 消息内容
@@ -490,7 +505,7 @@ class MessageHandler {
      * @param {string|null} modeOverride - 本次发送使用的任务模式
      * @returns {Promise<Object>} 服务器响应
      */
-    async sendToServer(message, imageBase64 = null, modeOverride = null) {
+    async sendToServer(message, imageBase64 = null, modeOverride = null, chatContext = []) {
         const mode = modeOverride || modeSwitcher.getMode();
         devLog.info('发送消息', { mode, msgLen: message.length, hasImage: !!imageBase64 });
 
@@ -499,6 +514,15 @@ class MessageHandler {
 
         if (mode !== 'auto') {
             formData.append('mode', mode);
+        }
+
+        if (
+            !imageBase64 &&
+            (mode === 'chat' || mode === 'auto') &&
+            Array.isArray(chatContext) &&
+            chatContext.length > 0
+        ) {
+            formData.append('messages', JSON.stringify(chatContext));
         }
 
         if (imageBase64) {

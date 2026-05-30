@@ -13,17 +13,73 @@ const SYSTEM_PROMPT = `你是 ICeCream，一个友好、智能的 AI 助手。�
 请用中文回复，保持友好和专业。如果用户想要生成动画或解题，建议他们使用对应的模式。`;
 
 const MAX_MESSAGE_LENGTH = 10000;
-const MAX_HISTORY_MESSAGES = 20;
+const MAX_HISTORY_MESSAGES = 40;
+const MAX_CONTEXT_MESSAGE_LENGTH = 4000;
+const MAX_CONTEXT_TOTAL_LENGTH = 30000;
 
-function normalizeMessages(messages) {
-    const source = Array.isArray(messages) ? messages : [];
-    return source
+function parseMessagesInput(messages) {
+    if (Array.isArray(messages)) {
+        return messages;
+    }
+
+    if (typeof messages === 'string' && messages.trim()) {
+        try {
+            const parsed = JSON.parse(messages);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+
+    return [];
+}
+
+function normalizeMessageContent(content) {
+    const value = typeof content === 'string' ? content : String(content || '');
+    return value.length > MAX_CONTEXT_MESSAGE_LENGTH
+        ? value.slice(0, MAX_CONTEXT_MESSAGE_LENGTH)
+        : value;
+}
+
+function limitTotalContextLength(messages) {
+    const result = [];
+    let totalLength = 0;
+
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const item = messages[index];
+        const contentLength = item.content.length;
+        if (totalLength + contentLength > MAX_CONTEXT_TOTAL_LENGTH) {
+            break;
+        }
+        result.unshift(item);
+        totalLength += contentLength;
+    }
+
+    return result;
+}
+
+function normalizeMessages(messages, currentMessage = '') {
+    const source = parseMessagesInput(messages);
+    const normalized = source
         .filter(item => item && (item.role === 'user' || item.role === 'assistant'))
         .map(item => ({
             role: item.role,
-            content: typeof item.content === 'string' ? item.content : String(item.content || ''),
+            content: normalizeMessageContent(item.content),
         }))
+        .filter(item => item.content.trim())
         .slice(-MAX_HISTORY_MESSAGES);
+
+    const normalizedCurrent = typeof currentMessage === 'string' ? currentMessage.trim() : '';
+    const lastMessage = normalized.at(-1);
+    if (
+        normalizedCurrent &&
+        lastMessage?.role === 'user' &&
+        lastMessage.content.trim() === normalizedCurrent
+    ) {
+        normalized.pop();
+    }
+
+    return limitTotalContextLength(normalized);
 }
 
 /**
@@ -32,10 +88,10 @@ function normalizeMessages(messages) {
 export async function handleChat(req, res) {
     try {
         const { message, messages = [] } = req.body;
-        const safeMessages = normalizeMessages(messages);
         const normalizedMessage = typeof message === 'string' ? message : String(message || '');
+        const safeMessages = normalizeMessages(messages, normalizedMessage);
 
-        if (!normalizedMessage && (!messages || messages.length === 0)) {
+        if (!normalizedMessage && safeMessages.length === 0) {
             return res.status(400).json({
                 success: false,
                 error: '消息不能为空'
@@ -127,8 +183,8 @@ export async function handleChatStream(req, res) {
 
     try {
         const { message, messages = [] } = req.body;
-        const safeMessages = normalizeMessages(messages);
         const normalizedMessage = typeof message === 'string' ? message : String(message || '');
+        const safeMessages = normalizeMessages(messages, normalizedMessage);
 
         if (normalizedMessage && normalizedMessage.length > MAX_MESSAGE_LENGTH) {
             return res.status(400).json({
