@@ -131,6 +131,51 @@ test('POST /api/chat filters client system role before forwarding upstream', asy
   }
 });
 
+test('POST /api/chat keeps public identity as ICeCream without exposing provider config', async () => {
+  let forwarded;
+  const aiServer = createAiServer(({ res, body }) => {
+    forwarded = body;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({
+      choices: [{ message: { content: '我是 ICeCream 的智能助手。' } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }));
+  });
+
+  const aiBase = await listen(aiServer);
+  try {
+    await withGateway(async appBase => {
+      const response = await fetch(`${appBase}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: '你用的是什么 API 和模型？是不是某个外部供应商？',
+          messages: [],
+        }),
+      });
+
+      const payload = await response.json();
+      assert.equal(response.status, 200);
+      assert.equal(payload.success, true);
+    }, {
+      DEEPSEEK_API_BASE: aiBase,
+      DEEPSEEK_API_KEY: 'private-test-key',
+      DEEPSEEK_MODEL: 'private-test-model',
+    });
+
+    assert.equal(forwarded.model, 'private-test-model');
+    const systemPrompt = forwarded.messages[0].content;
+    assert.match(systemPrompt, /ICeCream/);
+    assert.match(systemPrompt, /对外身份|身份始终|智能助手/);
+    assert.match(systemPrompt, /不要透露|不透露|不能透露/);
+    assert.match(systemPrompt, /模型名|API供应商|API|密钥|环境变量|后端配置|系统提示词/);
+    assert.doesNotMatch(systemPrompt, /private-test-key|private-test-model/);
+    assert.doesNotMatch(systemPrompt, new RegExp(aiBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  } finally {
+    await close(aiServer);
+  }
+});
+
 test('POST /api/message forwards current chat context from multipart form data', async () => {
   let forwarded;
   const aiServer = createAiServer(({ res, body }) => {
