@@ -114,18 +114,25 @@ export function securityHeaders(req, res, next) {
     next();
 }
 
-export function buildCorsOptions() {
-    const configuredOrigins = (process.env.CORS_ORIGIN || '')
+export function buildCorsOptions(env = process.env) {
+    const configuredOrigins = (env.CORS_ORIGIN || '')
         .split(',')
         .map(origin => origin.trim())
         .filter(Boolean);
+    const gatewayPort = String(env.PORT || '3000').trim();
+    const defaultOrigins = new Set([
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+    ]);
+
+    if (gatewayPort) {
+        defaultOrigins.add(`http://localhost:${gatewayPort}`);
+        defaultOrigins.add(`http://127.0.0.1:${gatewayPort}`);
+    }
 
     const allowedOrigins = configuredOrigins.length > 0
         ? configuredOrigins
-        : [
-            'http://localhost:3000',
-            'http://127.0.0.1:3000',
-        ];
+        : [...defaultOrigins];
 
     return {
         origin(origin, callback) {

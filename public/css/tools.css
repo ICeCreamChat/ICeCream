@@ -145,6 +145,18 @@
     filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
     position: relative;
     z-index: 1;
+    width: 44px;
+    height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.app-card-icon .lucide {
+    width: 38px;
+    height: 38px;
+    color: var(--accent-color);
+    filter: drop-shadow(var(--accent-glow));
 }
 
 .app-card-title {
@@ -247,6 +259,14 @@
     height: 24px;
     color: var(--accent-color);
     filter: drop-shadow(var(--accent-glow));
+}
+
+.tool-title-icon {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .tool-ai-status {

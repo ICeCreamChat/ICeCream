@@ -65,7 +65,7 @@ router.get('/health', async (req, res) => {
         status: 'ok',
         service: 'Classroom Tools',
         version: '2.0.0',
-        tools: ['seating', 'sound', 'picker', 'vote'],
+        tools: ['seating', 'timetable', 'picker', 'vote'],
         services: { timefold }
     });
 });

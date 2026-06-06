@@ -31,6 +31,8 @@ Thumbs.db
 # Uploads
 uploads/*
 !uploads/.gitkeep
+data/timetable/*
+!data/timetable/.gitkeep
 
 # Manim outputs
 manim-service/media/

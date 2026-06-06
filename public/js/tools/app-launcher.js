@@ -12,11 +12,11 @@ const TOOLS_CONFIG = [
         module: 'seating-planner'
     },
     {
-        id: 'sound',
-        icon: '🔊',
-        title: '噪音检测',
-        desc: '实时音量监控',
-        module: 'sound-monitor'
+        id: 'timetable',
+        lucide: 'calendar-check',
+        title: '智能排课',
+        desc: '导入任课 · 一键生成',
+        module: 'timetable-planner'
     },
     {
         id: 'picker',
@@ -69,7 +69,7 @@ class AppLauncher {
                 <div class="app-grid">
                     ${TOOLS_CONFIG.map(tool => `
                         <div class="app-card" data-tool="${tool.id}">
-                            <span class="app-card-icon">${tool.icon}</span>
+                            <span class="app-card-icon">${this._renderToolIcon(tool)}</span>
                             <h3 class="app-card-title">${tool.title}</h3>
                             <p class="app-card-desc">${tool.desc}</p>
                         </div>
@@ -155,7 +155,7 @@ class AppLauncher {
         this.toolContainer.innerHTML = `
             <div class="tool-header">
                 <div class="tool-title">
-                    <span>${tool.icon}</span>
+                    <span class="tool-title-icon">${this._renderToolIcon(tool)}</span>
                     <span>${tool.title}</span>
                     ${this._renderToolAiStatus()}
                 </div>
@@ -225,6 +225,13 @@ class AppLauncher {
                 </div>
             `;
         }
+    }
+
+    _renderToolIcon(tool) {
+        if (tool.lucide) {
+            return `<i data-lucide="${tool.lucide}"></i>`;
+        }
+        return tool.icon || '';
     }
 
     _currentAiStatus() {

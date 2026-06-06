@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { sanitizeHtml } from '../public/js/utils/sanitize.js';
 import {
+  buildCorsOptions,
   isAllowedImageMime,
   sanitizeUploadFilename,
 } from '../gateway/security.js';
@@ -28,6 +29,20 @@ test('upload filenames are basename-only and image uploads are whitelisted', () 
   assert.equal(isAllowedImageMime('image/jpeg'), true);
   assert.equal(isAllowedImageMime('image/svg+xml'), false);
   assert.equal(isAllowedImageMime('application/javascript'), false);
+});
+
+test('default CORS origins include the configured local gateway port', async () => {
+  const options = buildCorsOptions({ PORT: '3001' });
+  const checkOrigin = origin => new Promise((resolve, reject) => {
+    options.origin(origin, (error, allowed) => {
+      if (error) reject(error);
+      else resolve(allowed);
+    });
+  });
+
+  assert.equal(await checkOrigin('http://127.0.0.1:3001'), true);
+  assert.equal(await checkOrigin('http://localhost:3001'), true);
+  await assert.rejects(checkOrigin('https://example.com'), /Not allowed by CORS/);
 });
 
 test('Manim render payload forwards stable client id', () => {
