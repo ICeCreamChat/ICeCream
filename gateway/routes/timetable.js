@@ -7,6 +7,7 @@ import { createTimetableStore } from '../services/timetable-store.js';
 import {
     applyScheduleAdjustment,
     normalizeTimetableProject,
+    validateTimetableProjectForSolve,
 } from '../services/timetable-scheduler.js';
 import {
     solveTimetableWithTimefold,
@@ -99,6 +100,16 @@ router.post('/rules', async (req, res) => {
 router.post('/schedule/run', async (req, res) => {
     try {
         const current = await store().loadProject();
+        const validation = validateTimetableProjectForSolve(current);
+        if (!validation.ok) {
+            fail(res, new Error(validation.message), 422, {
+                project: current,
+                schedule: current.schedule,
+                reason: validation.reason,
+                solverStats: current.schedule?.solverStats || null,
+            });
+            return;
+        }
         const result = await solveTimetableWithTimefold({ project: current });
         await store().saveProject(result.project);
         ok(res, { project: result.project, schedule: result.schedule });
@@ -118,13 +129,19 @@ router.post('/schedule/run', async (req, res) => {
 });
 
 router.post('/schedule/adjust', async (req, res) => {
+    let current = null;
     try {
-        const current = await store().loadProject();
+        current = await store().loadProject();
         const result = applyScheduleAdjustment(current, req.body || {});
         await store().saveProject(result.project);
         ok(res, { project: result.project, schedule: result.schedule });
     } catch (error) {
-        fail(res, error);
+        fail(res, error, 400, {
+            project: current,
+            schedule: current?.schedule || null,
+            reason: 'adjustment_failed',
+            solverStats: current?.schedule?.solverStats || null,
+        });
     }
 });
 

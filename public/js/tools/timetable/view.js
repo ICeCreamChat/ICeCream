@@ -1,0 +1,521 @@
+import {
+    dayName,
+    ensureOwnerSelection,
+    getConflictSummary,
+    getOwners,
+    getPreparedness,
+    getScore,
+    getSlotsAt,
+    getSolveStatus,
+    getSlotDetails,
+    ownerLabel,
+    slotHasConflict,
+    totalPlannedLessons,
+} from './selectors.js';
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    })[char]);
+}
+
+function escapeAttr(value) {
+    return escapeHtml(value);
+}
+
+function renderSelect(id, items, labelFor, selectedValue = '') {
+    return `
+        <select id="${escapeAttr(id)}">
+            ${items.map(item => `
+                <option value="${escapeAttr(item.id)}" ${item.id === selectedValue ? 'selected' : ''}>${escapeHtml(labelFor(item))}</option>
+            `).join('')}
+        </select>
+    `;
+}
+
+function renderOwnerSelect(owners, selectedOwnerId) {
+    return `
+        <select id="tt-owner-select">
+            ${owners.map(owner => `
+                <option value="${escapeAttr(owner.id)}" ${owner.id === selectedOwnerId ? 'selected' : ''}>${escapeHtml(ownerLabel(owner))}</option>
+            `).join('')}
+        </select>
+    `;
+}
+
+function renderMetric(label, value, tone = '') {
+    return `<div class="tt-metric ${tone ? `tt-metric--${tone}` : ''}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+}
+
+export function renderWorkbench(state) {
+    if (!state.project) {
+        return `<div class="tt-loading">${state.loading ? '正在加载排课项目...' : escapeHtml(state.message || '暂无排课数据')}</div>`;
+    }
+
+    state.selectedOwnerId = ensureOwnerSelection(state);
+    return `
+        <div class="tt-workbench">
+            ${renderTopbar(state)}
+            <aside class="tt-sidebar">
+                ${renderWorkflow(state)}
+            </aside>
+            <section class="tt-schedule-panel">
+                ${renderSchedulePanel(state)}
+            </section>
+            <aside class="tt-inspector">
+                ${renderInspector(state)}
+            </aside>
+        </div>
+    `;
+}
+
+function renderTopbar(state) {
+    const { project } = state;
+    const status = getSolveStatus(project, state.lastFailure);
+    const preparedness = getPreparedness(project);
+    const message = state.message || preparedness.message;
+    return `
+        <header class="tt-topbar">
+            <div class="tt-title-block">
+                <span class="tt-eyebrow">教务排课工作台</span>
+                <h2>${escapeHtml(project.schoolName)}</h2>
+                <p>${escapeHtml(project.term)} · ${project.weekdays}天 x ${project.periodsPerDay}节</p>
+            </div>
+            <div class="tt-topbar-metrics" aria-label="排课状态">
+                ${renderMetric('来源', status.sourceLabel, status.source === 'timefold_solver' ? 'ok' : '')}
+                ${renderMetric('已排', `${status.placed}/${status.total}`)}
+                ${renderMetric('硬冲突', status.hardConflicts, status.hardConflicts ? 'warn' : 'ok')}
+                ${renderMetric('未排', status.unplaced, status.unplaced ? 'warn' : 'ok')}
+            </div>
+            <div class="tt-message ${state.lastFailure ? 'tt-message--warn' : ''}">
+                ${state.lastFailure ? '<i data-lucide="shield-alert"></i><span>旧课表已保留</span>' : '<i data-lucide="info"></i>'}
+                <span>${escapeHtml(message)}</span>
+            </div>
+        </header>
+    `;
+}
+
+function renderWorkflow(state) {
+    return `
+        <div class="tt-workflow">
+            ${renderProjectSection(state)}
+            ${renderImportSection(state)}
+            ${renderRulesSection(state)}
+            ${renderSolveSection(state)}
+            ${renderExportSection()}
+        </div>
+    `;
+}
+
+function renderProjectSection(state) {
+    const { project } = state;
+    return `
+        <section class="tt-section" data-workflow-step="data">
+            <div class="tt-section-title">
+                <h3><i data-lucide="school"></i><span>项目</span></h3>
+                <button class="tt-icon-btn" id="tt-save-project" type="button" title="保存项目" aria-label="保存项目"><i data-lucide="save"></i></button>
+            </div>
+            <form id="tt-project-form" class="tt-form-grid">
+                <label><span>学校</span><input name="schoolName" value="${escapeAttr(project.schoolName)}"></label>
+                <label><span>学期</span><input name="term" value="${escapeAttr(project.term)}"></label>
+                <label><span>周天数</span><input name="weekdays" type="number" min="1" max="7" value="${project.weekdays}"></label>
+                <label><span>日节数</span><input name="periodsPerDay" type="number" min="1" max="12" value="${project.periodsPerDay}"></label>
+            </form>
+        </section>
+    `;
+}
+
+function renderImportSection(state) {
+    const { project } = state;
+    return `
+        <section class="tt-section" data-workflow-step="data">
+            <div class="tt-section-title">
+                <h3><i data-lucide="database"></i><span>任课数据</span></h3>
+                <span class="tt-chip">${project.lessonPlans.length} 条</span>
+            </div>
+            <textarea id="tt-import-text" class="tt-import-text" spellcheck="false" placeholder="年级,班级,课程,教师,周课时,连堂"></textarea>
+            <div class="tt-action-row">
+                <label class="tt-file-btn" title="选择任课文件">
+                    <i data-lucide="paperclip"></i>
+                    <span>文件</span>
+                    <input id="tt-import-file" type="file" accept=".csv,.txt,.xlsx,.xls">
+                </label>
+                <button class="tt-btn" id="tt-fill-sample" type="button"><i data-lucide="wand-sparkles"></i><span>示例</span></button>
+                <button class="tt-btn tt-btn--primary" id="tt-import-roster" type="button"><i data-lucide="upload"></i><span>导入</span></button>
+            </div>
+            ${renderPlanTable(project)}
+        </section>
+    `;
+}
+
+function renderRulesSection(state) {
+    const { project } = state;
+    const hard = project.rules?.hardRules || {};
+    const soft = project.rules?.softRules || {};
+    return `
+        <section class="tt-section" data-workflow-step="rules">
+            <div class="tt-section-title">
+                <h3><i data-lucide="sliders-horizontal"></i><span>约束</span></h3>
+                <button class="tt-icon-btn" id="tt-save-rules" type="button" title="保存约束" aria-label="保存约束"><i data-lucide="save"></i></button>
+            </div>
+            <div class="tt-form-grid">
+                <label><span>教师不可排</span>${renderSelect('tt-rule-teacher', project.teachers, item => item.name)}</label>
+                <label><span>节次</span><input id="tt-rule-teacher-slots" placeholder="1-1, 3-5"></label>
+                <label><span>班级不可排</span>${renderSelect('tt-rule-class', project.classes, ownerLabel)}</label>
+                <label><span>节次</span><input id="tt-rule-class-slots" placeholder="2-4, 5-7"></label>
+            </div>
+            <div class="tt-rule-block">
+                <span class="tt-rule-title">上午优先</span>
+                <div class="tt-chip-grid">
+                    ${project.subjects.map(subject => `
+                        <label class="tt-check-chip">
+                            <input type="checkbox" data-morning-subject value="${escapeAttr(subject.id)}" ${soft.morningSubjects?.includes(subject.id) ? 'checked' : ''}>
+                            <span>${escapeHtml(subject.name)}</span>
+                        </label>
+                    `).join('') || '<span class="tt-muted">导入课程后可设置</span>'}
+                </div>
+            </div>
+            <div class="tt-rule-block">
+                <span class="tt-rule-title">锁定课节</span>
+                <div class="tt-form-grid">
+                    <label><span>班级</span>${renderSelect('tt-lock-class', project.classes, ownerLabel)}</label>
+                    <label><span>课程</span>${renderSelect('tt-lock-subject', project.subjects, item => item.name)}</label>
+                    <label><span>教师</span>${renderSelect('tt-lock-teacher', project.teachers, item => item.name)}</label>
+                    <label><span>周几</span><input id="tt-lock-day" type="number" min="1" max="${project.weekdays}" value="1"></label>
+                    <label><span>第几节</span><input id="tt-lock-period" type="number" min="1" max="${project.periodsPerDay}" value="1"></label>
+                </div>
+                <button class="tt-btn" id="tt-add-lock" type="button"><i data-lucide="lock"></i><span>添加锁定</span></button>
+                <div class="tt-lock-list">${(hard.lockedSlots || []).map((slot, index) => renderLockedSlot(project, slot, index)).join('') || '<span class="tt-muted">暂无锁定课节</span>'}</div>
+            </div>
+        </section>
+    `;
+}
+
+function renderSolveSection(state) {
+    const { project } = state;
+    const readiness = getPreparedness(project);
+    const score = getScore(project);
+    const placed = score.placedLessons ?? 0;
+    const total = score.totalLessons ?? totalPlannedLessons(project);
+    const scaleMessage = solveScaleMessage(project);
+    return `
+        <section class="tt-section tt-section--solve" data-workflow-step="solve">
+            <div class="tt-section-title">
+                <h3><i data-lucide="sparkles"></i><span>求解</span></h3>
+                <span class="tt-chip ${readiness.ready ? 'tt-chip--ok' : 'tt-chip--warn'}">${readiness.ready ? '就绪' : '待准备'}</span>
+            </div>
+            <p class="tt-compact-copy">${placed}/${total} 已排 · ${score.hardConflicts ?? 0} 硬冲突</p>
+            <p class="tt-compact-copy">${escapeHtml(readiness.message)}</p>
+            ${scaleMessage ? `<p class="tt-compact-copy tt-compact-copy--warn">${escapeHtml(scaleMessage)}</p>` : ''}
+        </section>
+    `;
+}
+
+function solveScaleMessage(project) {
+    const total = totalPlannedLessons(project);
+    if (total >= 300) return `${total} 课时，可能需要数分钟。`;
+    return '';
+}
+
+function renderExportSection() {
+    return `
+        <section class="tt-section" data-workflow-step="review">
+            <div class="tt-section-title">
+                <h3><i data-lucide="download"></i><span>导出</span></h3>
+            </div>
+            <div class="tt-export-grid">
+                <button class="tt-export-btn" data-export-type="class" type="button" title="导出班级课表"><i data-lucide="table"></i><span>班级</span></button>
+                <button class="tt-export-btn" data-export-type="teacher" type="button" title="导出教师课表"><i data-lucide="users"></i><span>教师</span></button>
+                <button class="tt-export-btn" data-export-type="master" type="button" title="导出总课表"><i data-lucide="layout-grid"></i><span>总表</span></button>
+                <button class="tt-export-btn" data-export-type="plans" type="button" title="导出任课信息"><i data-lucide="file-spreadsheet"></i><span>任课</span></button>
+            </div>
+        </section>
+    `;
+}
+
+export function renderSchedulePanel(state) {
+    const owners = getOwners(state.project, state.viewMode);
+    const readiness = getPreparedness(state.project);
+    return `
+        <div class="tt-schedule-toolbar">
+            <div class="tt-schedule-view-controls">
+                <div class="tt-segment" role="group" aria-label="课表视图">
+                    <button class="${state.viewMode === 'class' ? 'is-active' : ''}" type="button" data-view-mode="class">班级</button>
+                    <button class="${state.viewMode === 'teacher' ? 'is-active' : ''}" type="button" data-view-mode="teacher">教师</button>
+                    <button class="${state.viewMode === 'master' ? 'is-active' : ''}" type="button" data-view-mode="master">总表</button>
+                </div>
+                ${state.viewMode === 'master'
+                    ? '<span class="tt-board-title">全校总课表</span>'
+                    : renderOwnerSelect(owners, state.selectedOwnerId)}
+            </div>
+            <div class="tt-schedule-actions">
+                ${solveScaleMessage(state.project) ? `<span class="tt-chip tt-chip--warn">${escapeHtml(solveScaleMessage(state.project))}</span>` : ''}
+                <span class="tt-chip ${readiness.ready ? 'tt-chip--ok' : 'tt-chip--warn'}">${readiness.ready ? '可生成' : '待准备'}</span>
+                <button class="tt-run-btn" id="tt-run-schedule" type="button" ${state.loading || !readiness.ready ? 'disabled' : ''}>
+                    <i data-lucide="${state.loading ? 'loader-2' : 'play'}"></i><span>${state.loading ? '正在求解' : 'Timefold 生成'}</span>
+                </button>
+            </div>
+        </div>
+        <div class="tt-schedule-scroll">
+            ${renderScheduleGrid(state)}
+        </div>
+    `;
+}
+
+function renderScheduleGrid(state) {
+    const slots = state.project.schedule?.slots || [];
+    if (!slots.length) {
+        if ((state.project.lessonPlans || []).length) {
+            return renderEmptyScheduleGrid(state);
+        }
+        return `
+            <div class="tt-empty">
+                <i data-lucide="calendar-plus"></i>
+                <strong>等待任课数据</strong>
+                <span>先在左侧导入课程、教师、班级和周课时。</span>
+            </div>
+        `;
+    }
+
+    const days = Array.from({ length: state.project.weekdays }, (_, index) => index + 1);
+    const periods = Array.from({ length: state.project.periodsPerDay }, (_, index) => index + 1);
+    return `
+        <div class="tt-schedule-body">
+            <div class="tt-schedule-grid" style="--tt-days:${state.project.weekdays}">
+                <div class="tt-grid-head">节次</div>
+                ${days.map(day => `<div class="tt-grid-head">周${dayName(day)}</div>`).join('')}
+                ${periods.map(period => `
+                    <div class="tt-period">第${period}节</div>
+                    ${days.map(day => renderScheduleCell(state, day, period)).join('')}
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderEmptyScheduleGrid(state) {
+    const days = Array.from({ length: state.project.weekdays }, (_, index) => index + 1);
+    const periods = Array.from({ length: state.project.periodsPerDay }, (_, index) => index + 1);
+    return `
+        <div class="tt-schedule-body">
+            <div class="tt-schedule-grid" style="--tt-days:${state.project.weekdays}">
+                <div class="tt-grid-head">节次</div>
+                ${days.map(day => `<div class="tt-grid-head">周${dayName(day)}</div>`).join('')}
+                ${periods.map(period => `
+                    <div class="tt-period">第${period}节</div>
+                    ${days.map(day => `
+                        <div class="tt-cell tt-main-empty-cell" data-day="${day}" data-period="${period}">
+                            <span>待排</span>
+                        </div>
+                    `).join('')}
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderUnscheduledPlanQueue(state) {
+    const project = state.project;
+    const scheduledPlanIds = new Set((project.schedule?.slots || []).map(slot => slot.lessonPlanId).filter(Boolean));
+    const plans = (project.lessonPlans || []).filter(plan => !scheduledPlanIds.has(plan.id));
+    const rows = plans.slice(0, 18).map(plan => {
+        const klass = project.classes.find(item => item.id === plan.classId);
+        const subject = project.subjects.find(item => item.id === plan.subjectId);
+        const teacher = project.teachers.find(item => item.id === plan.teacherId);
+        return `
+            <div class="tt-plan-queue-item" style="--subject-color:${escapeAttr(subject?.color || '#2563eb')}">
+                <strong>${escapeHtml(subject?.name || plan.subjectName || plan.subjectId)}</strong>
+                <span>${escapeHtml(klass ? `${klass.grade}${klass.name}` : plan.className || plan.classId)} · ${escapeHtml(teacher?.name || plan.teacherName || plan.teacherId)}</span>
+                <em>${plan.weeklyHours} 节${plan.blockPreference === 'double' ? ' · 双连堂' : plan.blockPreference === 'mixed' ? ' · 混合连堂' : ''}</em>
+            </div>
+        `;
+    }).join('');
+    return `
+        <section class="tt-plan-queue" aria-label="待排课程">
+            <div class="tt-plan-queue-header">
+                <span>待排课程</span>
+                <strong>${plans.length}</strong>
+            </div>
+            <div class="tt-plan-queue-list">
+                ${rows || '<span class="tt-muted">所有课程已进入课表。</span>'}
+            </div>
+        </section>
+    `;
+}
+
+function renderScheduleCell(state, day, period) {
+    const slots = getSlotsAt(state.project, state.viewMode, state.selectedOwnerId, day, period);
+    return `
+        <div class="tt-cell" data-day="${day}" data-period="${period}">
+            ${slots.map(slot => renderSlot(state, slot)).join('')}
+        </div>
+    `;
+}
+
+function renderSlot(state, slot) {
+    const detail = getSlotDetails(state.project, slot.id);
+    const subject = detail?.subject;
+    const blockId = slot.blockId || '';
+    const conflict = slotHasConflict(state.project, slot);
+    const primary = state.viewMode === 'teacher'
+        ? `${subject?.name || slot.subjectId} · ${detail?.classLabel || slot.classId}`
+        : state.viewMode === 'master'
+            ? `${detail?.classLabel || slot.classId} · ${subject?.name || slot.subjectId}`
+            : `${subject?.name || slot.subjectId} · ${detail?.teacherNames || slot.teacherId}`;
+    const secondary = state.viewMode === 'master'
+        ? detail?.teacherNames || slot.teacherId
+        : detail?.timeLabel || `周${dayName(slot.day)} 第${slot.period}节`;
+    return `
+        <button class="tt-slot ${slot.locked ? 'is-locked' : ''} ${conflict ? 'has-conflict' : ''} ${state.selectedSlotId === slot.id ? 'is-selected' : ''}"
+            draggable="true"
+            data-slot-id="${escapeAttr(slot.id)}"
+            data-block-id="${escapeAttr(blockId)}"
+            type="button"
+            style="--subject-color:${escapeAttr(subject?.color || '#2563eb')}">
+            <strong>${escapeHtml(primary)}</strong>
+            <span>${escapeHtml(secondary)}</span>
+            <em>${slot.blockId ? `连堂 ${Number(slot.blockIndex || 0) + 1}/${slot.blockSize}` : '单节'}${slot.locked ? ' · 锁定' : ''}</em>
+        </button>
+    `;
+}
+
+export function renderInspector(state) {
+    const status = getSolveStatus(state.project, state.lastFailure);
+    const selectedDetail = getSlotDetails(state.project, state.selectedSlotId);
+    return `
+        <div class="tt-inspector-stack">
+            ${selectedDetail ? renderSlotInspector(state) : renderPlanningInspector(state)}
+            ${selectedDetail ? '' : renderUnscheduledPlanQueue(state)}
+            ${renderConflictPanel(state)}
+            <section class="tt-inspector-section">
+                <div class="tt-section-title">
+                    <h3><i data-lucide="activity"></i><span>求解详情</span></h3>
+                </div>
+                <div class="tt-detail-list">
+                    <span><b>来源</b>${escapeHtml(status.sourceLabel)}</span>
+                    <span><b>完成率</b>${escapeHtml(status.completeness)}</span>
+                    <span><b>硬冲突</b>${escapeHtml(status.hardConflicts)}</span>
+                    <span><b>未排课时</b>${escapeHtml(status.unplaced)}</span>
+                    ${state.lastFailure?.solverStats?.lessonCount ? `<span><b>课时数</b>${escapeHtml(state.lastFailure.solverStats.lessonCount)}</span>` : ''}
+                    ${state.lastFailure?.solverStats?.timeoutSeconds ? `<span><b>超时上限</b>${escapeHtml(state.lastFailure.solverStats.timeoutSeconds)} 秒</span>` : ''}
+                    ${state.lastFailure ? `<span class="is-warning"><b>失败处理</b>旧课表已保留</span>` : ''}
+                </div>
+            </section>
+        </div>
+    `;
+}
+
+function renderPlanningInspector(state) {
+    const status = getSolveStatus(state.project, state.lastFailure);
+    const owners = getOwners(state.project, state.viewMode);
+    const selectedOwner = owners.find(owner => owner.id === state.selectedOwnerId) || owners[0] || {};
+    const viewLabel = state.viewMode === 'teacher' ? '教师视图' : state.viewMode === 'master' ? '总表视图' : '班级视图';
+    const scaleMessage = solveScaleMessage(state.project);
+    return `
+        <section class="tt-inspector-section tt-inspector-overview">
+            <div class="tt-section-title">
+                <h3><i data-lucide="mouse-pointer-click"></i><span>审查入口</span></h3>
+            </div>
+            <div class="tt-detail-list">
+                <span><b>当前视图</b>${escapeHtml(viewLabel)}</span>
+                <span><b>当前对象</b>${escapeHtml(ownerLabel(selectedOwner) || '全校')}</span>
+                <span><b>已排课时</b>${escapeHtml(`${status.placed}/${status.total}`)}</span>
+                <span><b>状态</b>${escapeHtml(state.loading ? '正在求解' : status.sourceLabel)}</span>
+                ${scaleMessage ? `<span class="is-warning"><b>规模提示</b>${escapeHtml(scaleMessage)}</span>` : ''}
+                ${state.lastFailure ? `<span class="is-warning"><b>失败原因</b>${escapeHtml(state.lastFailure.message || 'Timefold 求解失败，旧课表已保留。')}</span>` : ''}
+            </div>
+        </section>
+    `;
+}
+
+function renderSlotInspector(state) {
+    const detail = getSlotDetails(state.project, state.selectedSlotId);
+    if (!detail) {
+        return `
+            <section class="tt-inspector-section tt-inspector-empty">
+                <i data-lucide="mouse-pointer-click"></i>
+                <span>选择课节后查看教师、教室、连堂、锁定与冲突状态。</span>
+            </section>
+        `;
+    }
+
+    return `
+        <section class="tt-inspector-section">
+            <div class="tt-section-title">
+                <h3><i data-lucide="panel-right"></i><span>课节检查</span></h3>
+            </div>
+            <div class="tt-slot-detail">
+                <strong>${escapeHtml(detail.subject?.name || detail.slot.subjectId)}</strong>
+                <span>${escapeHtml(detail.classLabel)} · ${escapeHtml(detail.teacherNames)} · ${escapeHtml(detail.timeLabel)}</span>
+                <span>${escapeHtml(detail.blockLabel)} · ${detail.slot.locked ? '已锁定' : '可调整'} · ${detail.hasConflict ? '有冲突' : '无冲突'}</span>
+                ${detail.slot.roomId ? `<span>教室：${escapeHtml(detail.slot.roomId)}</span>` : ''}
+            </div>
+            <div class="tt-action-row">
+                <button class="tt-btn" id="tt-lock-selected" type="button">
+                    <i data-lucide="${detail.slot.locked ? 'unlock' : 'lock'}"></i><span>${detail.slot.locked ? '解锁整段' : '锁定整段'}</span>
+                </button>
+                <button class="tt-btn tt-btn--danger" id="tt-clear-selected" type="button">
+                    <i data-lucide="trash-2"></i><span>清空整段</span>
+                </button>
+            </div>
+        </section>
+    `;
+}
+
+function renderConflictPanel(state) {
+    const schedule = state.project.schedule || {};
+    const summary = getConflictSummary(schedule);
+    const conflicts = schedule.conflicts || [];
+    return `
+        <section class="tt-inspector-section">
+            <div class="tt-section-title">
+                <h3><i data-lucide="triangle-alert"></i><span>冲突</span></h3>
+                <span class="tt-chip ${summary.total ? 'tt-chip--warn' : 'tt-chip--ok'}">${summary.total}</span>
+            </div>
+            <div class="tt-conflict-summary">
+                ${summary.items.map(item => `<span>${escapeHtml(item.label)} ${item.count}</span>`).join('') || '<span>无硬冲突</span>'}
+            </div>
+            <div class="tt-conflict-list">
+                ${conflicts.slice(0, 5).map(conflict => `
+                    <div class="tt-conflict">
+                        <i data-lucide="alert-circle"></i>
+                        <span>${escapeHtml(conflict.message || conflict.reason || conflict.type)}</span>
+                    </div>
+                `).join('') || '<span class="tt-muted">当前课表没有冲突。</span>'}
+            </div>
+        </section>
+    `;
+}
+
+function renderPlanTable(project) {
+    const rows = (project.lessonPlans || []).slice(0, 12).map(plan => {
+        const klass = project.classes.find(item => item.id === plan.classId);
+        const subject = project.subjects.find(item => item.id === plan.subjectId);
+        const teacher = project.teachers.find(item => item.id === plan.teacherId);
+        return `
+            <div class="tt-plan-row">
+                <span>${escapeHtml(klass ? `${klass.grade}${klass.name}` : plan.className || plan.classId)}</span>
+                <span class="tt-subject-dot" style="--subject-color:${escapeAttr(subject?.color || '#2563eb')}">${escapeHtml(subject?.name || plan.subjectName || plan.subjectId)}</span>
+                <span>${escapeHtml(teacher?.name || plan.teacherName || plan.teacherId)}</span>
+                <strong>${plan.weeklyHours}</strong>
+            </div>
+        `;
+    }).join('');
+    return `<div class="tt-plan-list">${rows || '<span class="tt-muted">暂无任课信息</span>'}</div>`;
+}
+
+function renderLockedSlot(project, slot, index) {
+    const klass = project.classes.find(item => item.id === slot.classId);
+    const subject = project.subjects.find(item => item.id === slot.subjectId);
+    const teacher = project.teachers.find(item => item.id === slot.teacherId);
+    return `
+        <div class="tt-lock-item">
+            <span>${escapeHtml(klass ? `${klass.grade}${klass.name}` : slot.classId)} · ${escapeHtml(subject?.name || slot.subjectId)} · ${escapeHtml(teacher?.name || slot.teacherId)} · ${slot.day}-${slot.period}</span>
+            <button type="button" data-remove-lock="${index}" title="移除锁定" aria-label="移除锁定课节"><i data-lucide="x"></i></button>
+        </div>
+    `;
+}

@@ -9,6 +9,8 @@ cd /d "%SCRIPT_DIR%"
 set "GATEWAY_PORT=3000"
 set "TIMEFOLD_PORT=8081"
 set "MANIM_PORT=8001"
+if not defined TIMETABLE_SOLVER_TIMEOUT set "TIMETABLE_SOLVER_TIMEOUT=660"
+if not defined TIMETABLE_SOLVER_SPENT_LIMIT set "TIMETABLE_SOLVER_SPENT_LIMIT=600s"
 
 echo.
 echo   ICeCream Dev Server
@@ -88,7 +90,20 @@ if "%JAVA_OK%"=="1" (
     echo [WARN] Java not found. Timefold will be disabled and seating will use local fallback.
 )
 
-if "!TIMEFOLD_ENABLED!"=="1" if not exist "solver\target\quarkus-app\quarkus-run.jar" (
+set "TIMEFOLD_REBUILD=0"
+set "TIMEFOLD_JAR=solver\target\quarkus-app\quarkus-run.jar"
+if "!TIMEFOLD_ENABLED!"=="1" (
+    if not exist "!TIMEFOLD_JAR!" (
+        set "TIMEFOLD_REBUILD=1"
+    ) else (
+        for /f %%R in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$jar = Get-Item 'solver\target\quarkus-app\quarkus-run.jar'; $sources = @(Get-ChildItem -Path 'solver\src\main' -Recurse -File -ErrorAction SilentlyContinue; Get-Item 'solver\pom.xml' -ErrorAction SilentlyContinue); $newest = $sources | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1; if ($newest -and $newest.LastWriteTimeUtc -gt $jar.LastWriteTimeUtc) { '1' } else { '0' }"') do set "TIMEFOLD_REBUILD=%%R"
+    )
+)
+
+if "!TIMEFOLD_ENABLED!"=="1" if "!TIMEFOLD_REBUILD!"=="1" (
+    echo [Cleanup] Releasing Timefold before rebuild...
+    call :free_port %TIMEFOLD_PORT%
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 1" >nul
     echo [Setup] Building Timefold solver with Maven Wrapper...
     pushd "solver"
     call mvnw.cmd -q package -DskipTests
@@ -105,6 +120,7 @@ if /i "%~1"=="--check" (
     echo      Gateway:  enabled
     if "!TIMEFOLD_ENABLED!"=="1" (
         echo      Timefold: enabled
+        echo      Timetable solver timeout: %TIMETABLE_SOLVER_TIMEOUT%s wait / %TIMETABLE_SOLVER_SPENT_LIMIT% solver
     ) else (
         echo      Timefold: disabled
     )
@@ -136,6 +152,7 @@ echo   :                                                           :
 echo   :    Frontend:  http://localhost:%GATEWAY_PORT%                       :
 if "!TIMEFOLD_ENABLED!"=="1" (
 echo   :    Timefold:  http://localhost:%TIMEFOLD_PORT%                       :
+echo   :    Timetable solver timeout: %TIMETABLE_SOLVER_TIMEOUT%s / %TIMETABLE_SOLVER_SPENT_LIMIT%              :
 ) else (
 echo   :    Timefold:  disabled, local seating fallback active      :
 )

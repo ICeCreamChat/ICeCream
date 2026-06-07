@@ -77,6 +77,18 @@ class TimetableConstraintProviderTest {
     }
 
     @Test
+    void roomRequirementRejectsRoomsOutsideAllowedRoomList() {
+        LessonAssignment wrongRoom = lesson("a", "lp1", "c1", "science", List.of("t1"), slot("1-1", 1, 1));
+        wrongRoom.setRequiresRoom(true);
+        wrongRoom.setAllowedRoomIds(List.of("lab-a"));
+        wrongRoom.setRoom(room("gym", false));
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::roomRequirement)
+                .given(wrongRoom)
+                .penalizesBy(1);
+    }
+
+    @Test
     void consecutiveBlockRequiresSameDayAndAdjacentOrderedPeriods() {
         LessonAssignment first = lesson("a", "lp1", "c1", "math", List.of("t1"), slot("1-1", 1, 1));
         LessonAssignment second = lesson("b", "lp1", "c1", "math", List.of("t1"), slot("1-3", 1, 3));

@@ -5,8 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { createGatewayApp } from '../gateway/app.js';
+import { summarizeScheduleConflicts } from '../gateway/services/timetable-conflicts.js';
 import { parseTimetableRosterText } from '../gateway/services/timetable-import.js';
 import { createTimetableStore } from '../gateway/services/timetable-store.js';
+import { validateTimetableProjectForSolve } from '../gateway/services/timetable-validation.js';
 import {
     applyScheduleAdjustment,
     createDefaultTimetableProject,
@@ -115,6 +117,71 @@ test('timetable scheduler returns explainable unplaced lessons when constraints 
     assert.equal(result.schedule.unplaced.length, 1);
     assert.match(result.schedule.unplaced[0].reason, /没有可用节次|教师/);
     assert.ok(result.schedule.conflicts.some(conflict => conflict.type === 'unplaced'));
+});
+
+test('solve preflight explains missing timetable data before calling Timefold', () => {
+    const empty = createDefaultTimetableProject({
+        teachers: [],
+        classes: [],
+        subjects: [],
+        lessonPlans: [],
+    });
+
+    const validation = validateTimetableProjectForSolve(empty);
+
+    assert.equal(validation.ok, false);
+    assert.equal(validation.reason, 'missing_lesson_plans');
+    assert.match(validation.message, /任课数据/);
+});
+
+test('conflict summary groups hard failures for the workbench inspector', () => {
+    const project = sampleProject({
+        schedule: {
+            id: 'conflict_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            slots: [
+                {
+                    id: 'a',
+                    day: 1,
+                    period: 1,
+                    classId: 'c1',
+                    subjectId: 'math',
+                    teacherId: 't_math',
+                    teacherIds: ['t_math'],
+                    lessonPlanId: 'lp1',
+                    locked: false,
+                },
+                {
+                    id: 'b',
+                    day: 1,
+                    period: 1,
+                    classId: 'c2',
+                    subjectId: 'math',
+                    teacherId: 't_math',
+                    teacherIds: ['t_math'],
+                    lessonPlanId: 'lp3',
+                    locked: false,
+                },
+            ],
+            lockedSlots: [],
+            conflicts: [
+                { type: 'teacher-conflict', severity: 'hard', message: '教师同节冲突' },
+                { type: 'teacher-conflict', severity: 'hard', message: '教师同节冲突' },
+                { type: 'unplaced', severity: 'hard', message: '有课时未排入课表' },
+            ],
+            unplaced: [{ lessonPlanId: 'lp4', reason: '有课时未排入课表' }],
+            score: { hardConflicts: 3, unplacedLessons: 1, placedLessons: 2, totalLessons: 11, completeness: 18 },
+        },
+    });
+
+    const summary = summarizeScheduleConflicts(project.schedule);
+
+    assert.deepEqual(summary.counts, {
+        'teacher-conflict': 2,
+        unplaced: 1,
+    });
+    assert.equal(summary.hardCount, 3);
+    assert.equal(summary.items[0].label, '教师冲突');
 });
 
 test('manual adjustment preserves unplaced conflicts after partial schedules change', () => {
@@ -436,6 +503,162 @@ test('timetable API does not overwrite the stored schedule when Timefold is unav
             delete process.env.TIMEFOLD_SOLVER_URL;
         } else {
             process.env.TIMEFOLD_SOLVER_URL = previousSolverUrl;
+        }
+    }
+});
+
+test('timetable API returns timeout reason and keeps the stored schedule when Timefold times out', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
+    const previousTimetableTimeout = process.env.TIMETABLE_SOLVER_TIMEOUT;
+    const previousTimefoldTimeout = process.env.TIMEFOLD_SOLVER_TIMEOUT;
+    const nativeFetch = globalThis.fetch;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-api-timeout-'));
+    process.env.TIMEFOLD_SOLVER_URL = 'http://timefold.timeout';
+    process.env.TIMETABLE_SOLVER_TIMEOUT = '660';
+    delete process.env.TIMEFOLD_SOLVER_TIMEOUT;
+
+    const store = createTimetableStore();
+    const existing = sampleProject({
+        schedule: {
+            id: 'old_timeout_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            slots: [{
+                id: 'old_timeout_slot',
+                day: 1,
+                period: 1,
+                classId: 'c1',
+                subjectId: 'math',
+                teacherId: 't_math',
+                teacherIds: ['t_math'],
+                lessonPlanId: 'lp1',
+                locked: false,
+            }],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 11, completeness: 9 },
+        },
+    });
+    await store.saveProject(existing);
+
+    const timeoutError = new Error('request timed out');
+    timeoutError.name = 'TimeoutError';
+    globalThis.fetch = async (url, options = {}) => {
+        const target = String(url);
+        if (!target.startsWith('http://timefold.timeout')) {
+            return nativeFetch(url, options);
+        }
+        throw timeoutError;
+    };
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const runResponse = await fetch(`${baseUrl}/api/tools/timetable/schedule/run`, { method: 'POST' });
+        const runPayload = await runResponse.json();
+
+        assert.equal(runResponse.status, 504);
+        assert.equal(runPayload.success, false);
+        assert.equal(runPayload.data.reason, 'timeout');
+        assert.equal(runPayload.data.schedule.id, 'old_timeout_schedule');
+        assert.equal(runPayload.data.solverStats.lessonCount, 11);
+        assert.equal(runPayload.data.solverStats.timeoutSeconds, 660);
+
+        const stored = await store.loadProject();
+        assert.equal(stored.schedule.id, 'old_timeout_schedule');
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        globalThis.fetch = nativeFetch;
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+        if (previousSolverUrl === undefined) {
+            delete process.env.TIMEFOLD_SOLVER_URL;
+        } else {
+            process.env.TIMEFOLD_SOLVER_URL = previousSolverUrl;
+        }
+        if (previousTimetableTimeout === undefined) {
+            delete process.env.TIMETABLE_SOLVER_TIMEOUT;
+        } else {
+            process.env.TIMETABLE_SOLVER_TIMEOUT = previousTimetableTimeout;
+        }
+        if (previousTimefoldTimeout === undefined) {
+            delete process.env.TIMEFOLD_SOLVER_TIMEOUT;
+        } else {
+            process.env.TIMEFOLD_SOLVER_TIMEOUT = previousTimefoldTimeout;
+        }
+    }
+});
+
+test('timetable API returns the saved schedule and does not persist failed manual adjustments', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-adjust-fail-'));
+
+    const store = createTimetableStore();
+    const existing = sampleProject({
+        schedule: {
+            id: 'adjust_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            slots: [{
+                id: 'locked_slot',
+                day: 1,
+                period: 1,
+                classId: 'c1',
+                subjectId: 'math',
+                teacherId: 't_math',
+                teacherIds: ['t_math'],
+                lessonPlanId: 'lp1',
+                locked: true,
+            }],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 11, completeness: 9 },
+        },
+    });
+    await store.saveProject(existing);
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const adjustResponse = await fetch(`${baseUrl}/api/tools/timetable/schedule/adjust`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'move', slotId: 'locked_slot', day: 2, period: 2 }),
+        });
+        const payload = await adjustResponse.json();
+
+        assert.equal(adjustResponse.status, 400);
+        assert.equal(payload.success, false);
+        assert.equal(payload.data.schedule.id, 'adjust_schedule');
+        assert.equal(payload.data.reason, 'adjustment_failed');
+
+        const stored = await store.loadProject();
+        assert.equal(stored.schedule.id, 'adjust_schedule');
+        assert.deepEqual(stored.schedule.slots.map(slot => [slot.id, slot.day, slot.period]), [['locked_slot', 1, 1]]);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
         }
     }
 });

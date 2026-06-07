@@ -6,7 +6,7 @@ import {
     slotKey,
 } from './timetable-scheduler.js';
 
-const DEFAULT_TIMEOUT_MS = 125000;
+const DEFAULT_TIMEOUT_MS = 660000;
 const POLL_INTERVAL_MS = 500;
 const NONE_ROOM_ID = '__NONE__';
 
@@ -48,6 +48,32 @@ function sleep(ms) {
     });
 }
 
+function totalLessonHours(project = {}) {
+    return (project.lessonPlans || []).reduce((sum, plan) => sum + (Number.parseInt(plan.weeklyHours, 10) || 0), 0);
+}
+
+function isTimeoutLikeError(error) {
+    const name = String(error?.name || '').toLowerCase();
+    const message = String(error?.message || '').toLowerCase();
+    return name === 'timeouterror'
+        || name === 'aborterror'
+        || message.includes('timed out')
+        || message.includes('timeout')
+        || message.includes('aborted');
+}
+
+function buildTimeoutStats({ project, problem, jobId, status, startedAt, timeout }) {
+    return {
+        jobId: jobId || null,
+        solverStatus: status?.solverStatus || null,
+        lessonCount: totalLessonHours(project),
+        assignmentCount: problem?.lessonAssignments?.length || 0,
+        timeoutMs: timeout,
+        timeoutSeconds: Math.round(timeout / 1000),
+        durationMs: Date.now() - startedAt,
+    };
+}
+
 async function parseJsonResponse(response, fallback = {}) {
     const text = await response.text();
     if (!text) return fallback;
@@ -65,6 +91,13 @@ async function fetchJson(fetchImpl, url, options, timeout) {
     });
     const payload = await parseJsonResponse(response);
     if (!response.ok) {
+        if (response.status === 404 && String(url).includes('/timetable-solutions')) {
+            throw new TimetableTimefoldError(
+                'Timefold timetable endpoint is missing. Rebuild or restart the solver service.',
+                'endpoint_missing',
+                404,
+            );
+        }
         throw new TimetableTimefoldError(
             payload?.error || `Timefold request failed with HTTP ${response.status}`,
             'http_error',
@@ -341,6 +374,7 @@ export async function solveTimetableWithTimefold({
     const startedAt = Date.now();
     const problem = buildTimetableProblem(project);
     let jobId = null;
+    let status = null;
 
     const remaining = () => Math.max(1, deadline - Date.now());
 
@@ -355,7 +389,7 @@ export async function solveTimetableWithTimefold({
             throw new TimetableTimefoldError('Timefold did not return a timetable jobId', 'invalid_response', 503);
         }
 
-        let status = created;
+        status = created;
         while (Date.now() < deadline) {
             status = await fetchJson(fetchClient, `${solverUrl}/timetable-solutions/${encodeURIComponent(jobId)}/status`, {
                 method: 'GET',
@@ -366,9 +400,7 @@ export async function solveTimetableWithTimefold({
 
         if (status.solverStatus !== 'NOT_SOLVING') {
             throw new TimetableTimefoldError('Timefold timetable solve timed out', 'timeout', 504, {
-                jobId,
-                solverStatus: status.solverStatus || null,
-                durationMs: Date.now() - startedAt,
+                ...buildTimeoutStats({ project, problem, jobId, status, startedAt, timeout }),
             });
         }
         if (Number(status.hardScore ?? 0) < 0) {
@@ -398,6 +430,19 @@ export async function solveTimetableWithTimefold({
             schedule,
             problem,
         };
+    } catch (error) {
+        if (error instanceof TimetableTimefoldError) {
+            throw error;
+        }
+        if (isTimeoutLikeError(error)) {
+            throw new TimetableTimefoldError(
+                'Timefold timetable solve timed out',
+                'timeout',
+                504,
+                buildTimeoutStats({ project, problem, jobId, status, startedAt, timeout }),
+            );
+        }
+        throw error;
     } finally {
         if (jobId) {
             fetchClient(`${solverUrl}/timetable-solutions/${encodeURIComponent(jobId)}`, { method: 'DELETE' }).catch(() => {});

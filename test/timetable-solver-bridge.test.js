@@ -119,6 +119,41 @@ test('solveTimetableWithTimefold rejects unavailable solver before mutating proj
     }), error => error instanceof TimetableTimefoldError && error.reason === 'not_configured' && error.status === 503);
 });
 
+test('solveTimetableWithTimefold explains missing timetable endpoint on stale solver jars', async () => {
+    const fetchImpl = async () => jsonResponse({}, 404);
+
+    await assert.rejects(() => solveTimetableWithTimefold({
+        project: sampleProject(),
+        env: { TIMEFOLD_SOLVER_URL: 'http://solver', TIMETABLE_SOLVER_TIMEOUT: '2' },
+        fetchImpl,
+    }), error => (
+        error instanceof TimetableTimefoldError
+        && error.reason === 'endpoint_missing'
+        && error.status === 404
+        && /timetable endpoint/i.test(error.message)
+    ));
+});
+
+test('solveTimetableWithTimefold maps request aborts to timeout metadata', async () => {
+    const timeoutError = new Error('request timed out');
+    timeoutError.name = 'TimeoutError';
+
+    await assert.rejects(() => solveTimetableWithTimefold({
+        project: sampleProject(),
+        env: { TIMEFOLD_SOLVER_URL: 'http://solver' },
+        fetchImpl: async () => {
+            throw timeoutError;
+        },
+    }), error => (
+        error instanceof TimetableTimefoldError
+        && error.reason === 'timeout'
+        && error.status === 504
+        && error.solverStats.lessonCount === 3
+        && error.solverStats.timeoutSeconds === 660
+        && Number.isInteger(error.solverStats.durationMs)
+    ));
+});
+
 test('solveTimetableWithTimefold rejects hard-score violations and terminates jobs', async () => {
     const calls = [];
     const fetchImpl = async (url, options = {}) => {

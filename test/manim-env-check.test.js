@@ -166,3 +166,23 @@ test('Manim startup entry points run the environment checker before service laun
   assert.doesNotMatch(rootMain, /register_agent_routes/);
   assert.match(agentRoutes, /\/agent\/stream/);
 });
+
+test('dev.bat rebuilds Timefold when solver sources are newer than the packaged jar', async () => {
+  const devBatch = await readFile(new URL('../dev.bat', import.meta.url), 'utf8');
+
+  assert.match(devBatch, /TIMEFOLD_REBUILD/);
+  assert.match(devBatch, /quarkus-run\.jar/);
+  assert.match(devBatch, /LastWriteTimeUtc/);
+  assert.match(devBatch, /solver\\src\\main/);
+  assert.match(devBatch, /solver\\pom\.xml/);
+});
+
+test('dev.bat exposes timetable solver timeout defaults without overwriting user settings', async () => {
+  const devBatch = await readFile(new URL('../dev.bat', import.meta.url), 'utf8');
+  const solverProperties = await readFile(new URL('../solver/src/main/resources/application.properties', import.meta.url), 'utf8');
+
+  assert.match(devBatch, /if not defined TIMETABLE_SOLVER_TIMEOUT set "TIMETABLE_SOLVER_TIMEOUT=660"/);
+  assert.match(devBatch, /if not defined TIMETABLE_SOLVER_SPENT_LIMIT set "TIMETABLE_SOLVER_SPENT_LIMIT=600s"/);
+  assert.match(devBatch, /Timetable solver timeout:/);
+  assert.match(solverProperties, /quarkus\.timefold\.solver\."timetable"\.termination\.spent-limit=\$\{TIMETABLE_SOLVER_SPENT_LIMIT:600s\}/);
+});
