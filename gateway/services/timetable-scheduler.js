@@ -499,6 +499,18 @@ function buildScore(project, slots, unplaced, conflicts) {
     };
 }
 
+function buildUnplacedConflicts(unplaced = []) {
+    return unplaced.map(item => ({
+        type: 'unplaced',
+        severity: 'hard',
+        message: item.reason,
+        lessonPlanId: item.lessonPlanId,
+        classId: item.classId,
+        subjectId: item.subjectId,
+        teacherId: item.teacherId,
+    }));
+}
+
 export function runTimetableScheduler(input = {}) {
     const project = normalizeTimetableProject(input);
     const maps = getEntityMaps(project);
@@ -551,17 +563,7 @@ export function runTimetableScheduler(input = {}) {
         }
     }
 
-    for (const item of unplaced) {
-        conflicts.push({
-            type: 'unplaced',
-            severity: 'hard',
-            message: item.reason,
-            lessonPlanId: item.lessonPlanId,
-            classId: item.classId,
-            subjectId: item.subjectId,
-            teacherId: item.teacherId,
-        });
-    }
+    conflicts.push(...buildUnplacedConflicts(unplaced));
 
     const detected = detectScheduleConflicts(project, slots);
     conflicts.push(...detected);
@@ -617,13 +619,17 @@ export function applyScheduleAdjustment(input = {}, adjustment = {}) {
         throw new Error('未知的课表调整类型');
     }
 
-    const conflicts = detectScheduleConflicts(project, schedule.slots);
+    const unplaced = schedule.unplaced || [];
+    const conflicts = [
+        ...buildUnplacedConflicts(unplaced),
+        ...detectScheduleConflicts(project, schedule.slots),
+    ];
     schedule.conflicts = conflicts;
     schedule.lockedSlots = schedule.slots.filter(slot => slot.locked);
-    schedule.score = buildScore(project, schedule.slots, schedule.unplaced || [], conflicts);
+    schedule.score = buildScore(project, schedule.slots, unplaced, conflicts);
 
     return {
-        success: conflicts.length === 0,
+        success: conflicts.length === 0 && unplaced.length === 0,
         project: { ...project, schedule },
         schedule,
     };

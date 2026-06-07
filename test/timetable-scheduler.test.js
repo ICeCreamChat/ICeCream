@@ -117,6 +117,42 @@ test('timetable scheduler returns explainable unplaced lessons when constraints 
     assert.ok(result.schedule.conflicts.some(conflict => conflict.type === 'unplaced'));
 });
 
+test('manual adjustment preserves unplaced conflicts after partial schedules change', () => {
+    const project = sampleProject({
+        weekdays: 1,
+        periodsPerDay: 1,
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [
+            { id: 'c1', grade: 'G7', name: '1' },
+            { id: 'c2', grade: 'G7', name: '2' },
+        ],
+        subjects: [{ id: 'math', name: 'Math', priority: 100, color: '#14b8a6' }],
+        lessonPlans: [
+            { id: 'lp1', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+            { id: 'lp2', classId: 'c2', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+    });
+    const generated = runTimetableScheduler(project);
+    const placed = generated.schedule.slots[0];
+
+    assert.equal(generated.success, false);
+    assert.equal(generated.schedule.unplaced.length, 1);
+    assert.ok(generated.schedule.conflicts.some(conflict => conflict.type === 'unplaced'));
+
+    const adjusted = applyScheduleAdjustment({ ...project, schedule: generated.schedule }, {
+        type: 'lock',
+        slotId: placed.id,
+        locked: true,
+    });
+
+    assert.equal(adjusted.success, false);
+    assert.equal(adjusted.schedule.unplaced.length, 1);
+    assert.ok(adjusted.schedule.conflicts.some(conflict => conflict.type === 'unplaced'));
+    assert.equal(adjusted.schedule.score.unplacedLessons, 1);
+    assert.equal(adjusted.schedule.score.hardConflicts, 1);
+});
+
 test('manual adjustment moves, locks and clears timetable slots with validation', () => {
     const result = runTimetableScheduler(sampleProject());
     const first = result.schedule.slots.find(slot => !slot.locked && slot.teacherId === 't_math');
