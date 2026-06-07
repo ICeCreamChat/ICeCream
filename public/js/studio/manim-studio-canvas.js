@@ -47823,8 +47823,7 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
     ["manual", ui.manual],
     ["add_text", ui.addText],
     ["add_formula", ui.addFormula],
-    ["add_arrow", ui.addArrow],
-    ["delete", ui.delete]
+    ["add_arrow", ui.addArrow]
   ];
   var typeLabels = {
     text: ui.text,
@@ -48026,6 +48025,15 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
       if (!objectId) return;
       set((state) => ({
         newObjects: state.newObjects.map((item) => String(item.id) === objectId ? { ...item, text: String(text || ""), label: String(text || "") || item.label } : item),
+        statusMessage: ui.pending
+      }));
+    },
+    removeNewObject: (id) => {
+      const objectId = String(id || "");
+      if (!objectId) return;
+      set((state) => ({
+        newObjects: state.newObjects.filter((item) => String(item.id) !== objectId),
+        selectedObjectIds: state.selectedObjectIds.filter((item) => String(item) !== objectId),
         statusMessage: ui.pending
       }));
     },
@@ -48523,7 +48531,7 @@ For more info see: https://github.com/konvajs/react-konva/issues/194
       if (!editor) return true;
       const store = useCanvasStore.getState();
       if (cancel) {
-        store.markDeleted([editor.objectId]);
+        store.removeNewObject(editor.objectId);
         setInlineEditor(null);
         return true;
       }
