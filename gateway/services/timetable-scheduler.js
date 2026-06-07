@@ -87,6 +87,16 @@ function normalizeSlotList(values = []) {
     return result;
 }
 
+function normalizeIdList(values = []) {
+    const raw = Array.isArray(values) ? values : [values];
+    const result = [];
+    for (const value of raw) {
+        const id = cleanText(value, 80);
+        if (id && !result.includes(id)) result.push(id);
+    }
+    return result;
+}
+
 function intInRange(value, fallback, min, max) {
     const num = Number.parseInt(value, 10);
     if (!Number.isInteger(num)) return fallback;
@@ -125,14 +135,22 @@ function normalizeSubject(raw = {}, index = 0) {
 function normalizeLessonPlan(raw = {}, index = 0) {
     const weeklyHours = Math.max(0, Math.min(60, Number.parseInt(raw.weeklyHours ?? raw.hours, 10) || 0));
     const blockPreference = ['single', 'double', 'mixed'].includes(raw.blockPreference) ? raw.blockPreference : 'single';
+    const teacherIds = normalizeIdList(raw.teacherIds);
+    const teacherId = cleanText(raw.teacherId, 80) || teacherIds[0] || '';
+    if (teacherId && !teacherIds.includes(teacherId)) teacherIds.unshift(teacherId);
+    const allowedRoomIds = normalizeIdList(raw.allowedRoomIds);
+    const roomId = cleanText(raw.roomId, 80) || allowedRoomIds[0] || null;
+    if (roomId && !allowedRoomIds.includes(roomId)) allowedRoomIds.unshift(roomId);
     return {
         id: cleanText(raw.id, 80) || `lp_${index + 1}`,
         classId: cleanText(raw.classId, 80),
         subjectId: cleanText(raw.subjectId, 80),
-        teacherId: cleanText(raw.teacherId, 80),
+        teacherId,
+        teacherIds,
         weeklyHours,
         blockPreference,
-        roomId: cleanText(raw.roomId, 80) || null,
+        roomId,
+        allowedRoomIds,
         className: cleanText(raw.className, 80),
         subjectName: cleanText(raw.subjectName, 80),
         teacherName: cleanText(raw.teacherName, 80),
@@ -187,6 +205,7 @@ function normalizeSchedule(raw) {
     return {
         id: cleanText(raw.id, 80) || `schedule_${Date.now()}`,
         generatedAt: raw.generatedAt || new Date().toISOString(),
+        source: cleanText(raw.source, 80) || null,
         slots: raw.slots.map(slot => ({
             id: cleanText(slot.id, 120),
             day: Number.parseInt(slot.day, 10),
@@ -194,14 +213,19 @@ function normalizeSchedule(raw) {
             classId: cleanText(slot.classId, 80),
             subjectId: cleanText(slot.subjectId, 80),
             teacherId: cleanText(slot.teacherId, 80),
+            teacherIds: normalizeIdList(slot.teacherIds),
             lessonPlanId: cleanText(slot.lessonPlanId, 80),
             roomId: cleanText(slot.roomId, 80) || null,
+            blockId: cleanText(slot.blockId, 120) || null,
+            blockIndex: Number.isInteger(Number(slot.blockIndex)) ? Number(slot.blockIndex) : 0,
+            blockSize: Math.max(1, Number.parseInt(slot.blockSize, 10) || 1),
             locked: Boolean(slot.locked),
         })).filter(slot => slot.id && slot.classId && slot.subjectId && slot.teacherId && Number.isInteger(slot.day) && Number.isInteger(slot.period)),
         lockedSlots: Array.isArray(raw.lockedSlots) ? raw.lockedSlots : [],
         conflicts: Array.isArray(raw.conflicts) ? raw.conflicts : [],
         unplaced: Array.isArray(raw.unplaced) ? raw.unplaced : [],
         score: raw.score || {},
+        solverStats: raw.solverStats || null,
     };
 }
 
@@ -251,26 +275,36 @@ function createUsage() {
     };
 }
 
+function slotTeacherIds(slot) {
+    const ids = normalizeIdList(slot?.teacherIds);
+    if (slot?.teacherId && !ids.includes(slot.teacherId)) ids.unshift(slot.teacherId);
+    return ids;
+}
+
 function addUsage(usage, slot) {
     const key = slotKey(slot.day, slot.period);
-    usage.teacher.add(`${slot.teacherId}:${key}`);
+    for (const teacherId of slotTeacherIds(slot)) usage.teacher.add(`${teacherId}:${key}`);
     usage.class.add(`${slot.classId}:${key}`);
     if (slot.roomId) usage.room.add(`${slot.roomId}:${key}`);
     const csd = `${slot.classId}:${slot.subjectId}:${slot.day}`;
     usage.classSubjectDay.set(csd, (usage.classSubjectDay.get(csd) || 0) + 1);
-    const td = `${slot.teacherId}:${slot.day}`;
-    usage.teacherDay.set(td, (usage.teacherDay.get(td) || 0) + 1);
+    for (const teacherId of slotTeacherIds(slot)) {
+        const td = `${teacherId}:${slot.day}`;
+        usage.teacherDay.set(td, (usage.teacherDay.get(td) || 0) + 1);
+    }
 }
 
 function removeUsage(usage, slot) {
     const key = slotKey(slot.day, slot.period);
-    usage.teacher.delete(`${slot.teacherId}:${key}`);
+    for (const teacherId of slotTeacherIds(slot)) usage.teacher.delete(`${teacherId}:${key}`);
     usage.class.delete(`${slot.classId}:${key}`);
     if (slot.roomId) usage.room.delete(`${slot.roomId}:${key}`);
     const csd = `${slot.classId}:${slot.subjectId}:${slot.day}`;
     usage.classSubjectDay.set(csd, Math.max(0, (usage.classSubjectDay.get(csd) || 0) - 1));
-    const td = `${slot.teacherId}:${slot.day}`;
-    usage.teacherDay.set(td, Math.max(0, (usage.teacherDay.get(td) || 0) - 1));
+    for (const teacherId of slotTeacherIds(slot)) {
+        const td = `${teacherId}:${slot.day}`;
+        usage.teacherDay.set(td, Math.max(0, (usage.teacherDay.get(td) || 0) - 1));
+    }
 }
 
 function teacherUnavailable(project, teacherId) {
@@ -291,16 +325,17 @@ function isMorning(project, period) {
 
 function canUseSlot(project, usage, slot, options = {}) {
     const key = slotKey(slot.day, slot.period);
+    const teacherIds = slotTeacherIds(slot);
     if (slot.day < 1 || slot.day > project.weekdays || slot.period < 1 || slot.period > project.periodsPerDay) {
         return { ok: false, reason: '节次超出当前作息范围' };
     }
-    if (teacherUnavailable(project, slot.teacherId).has(key)) {
+    if (teacherIds.some(teacherId => teacherUnavailable(project, teacherId).has(key))) {
         return { ok: false, reason: '教师不可排时间' };
     }
     if (classUnavailable(project, slot.classId).has(key)) {
         return { ok: false, reason: '班级不可排时间' };
     }
-    if (!options.ignoreTeacher && usage.teacher.has(`${slot.teacherId}:${key}`)) {
+    if (!options.ignoreTeacher && teacherIds.some(teacherId => usage.teacher.has(`${teacherId}:${key}`))) {
         return { ok: false, reason: '教师同节已有课程' };
     }
     if (!options.ignoreClass && usage.class.has(`${slot.classId}:${key}`)) {
@@ -358,7 +393,9 @@ function candidateScore(project, usage, slots, task, candidate) {
     }
 
     score += (usage.classSubjectDay.get(`${task.classId}:${task.subjectId}:${candidate.day}`) || 0) * 16;
-    score += (usage.teacherDay.get(`${task.teacherId}:${candidate.day}`) || 0) * 2;
+    for (const teacherId of slotTeacherIds(task)) {
+        score += (usage.teacherDay.get(`${teacherId}:${candidate.day}`) || 0) * 2;
+    }
     score += getExistingAdjacentPenalty(slots, task, candidate.day, candidate.period, task.blockSize);
     score -= (subject?.priority || 50) / 100;
 
@@ -378,8 +415,10 @@ function expandLessonPlanTasks(project, placedCountByPlan) {
                 classId: plan.classId,
                 subjectId: plan.subjectId,
                 teacherId: plan.teacherId,
+                teacherIds: plan.teacherIds,
                 roomId: plan.roomId || null,
                 blockSize,
+                blockId: blockSize > 1 ? `${plan.id}_block_${blockIndex}` : null,
             });
             remaining -= blockSize;
         };
@@ -408,8 +447,12 @@ function makeSlot(task, day, period, index = 0, locked = false) {
         classId: task.classId,
         subjectId: task.subjectId,
         teacherId: task.teacherId,
+        teacherIds: slotTeacherIds(task),
         lessonPlanId: task.lessonPlanId || null,
         roomId: task.roomId || null,
+        blockId: task.blockId || null,
+        blockIndex: index,
+        blockSize: Math.max(1, task.blockSize || 1),
         locked,
     };
 }
@@ -427,6 +470,7 @@ function seedLockedSlots(project, usage, maps) {
             classId: locked.classId,
             subjectId: locked.subjectId,
             teacherId: locked.teacherId,
+            teacherIds: plan?.teacherIds || [locked.teacherId],
             roomId: locked.roomId || plan?.roomId || null,
             blockSize: 1,
         };
@@ -448,7 +492,7 @@ function seedLockedSlots(project, usage, maps) {
     return { slots, conflicts, placedCountByPlan };
 }
 
-export function detectScheduleConflicts(project, slots = []) {
+function detectScheduleConflictsLegacy(project, slots = []) {
     const conflicts = [];
     const teacher = new Map();
     const klass = new Map();
@@ -483,7 +527,44 @@ export function detectScheduleConflicts(project, slots = []) {
     return conflicts;
 }
 
-function buildScore(project, slots, unplaced, conflicts) {
+export function detectScheduleConflicts(project, slots = []) {
+    const conflicts = [];
+    const teacher = new Map();
+    const klass = new Map();
+    const room = new Map();
+
+    for (const slot of slots) {
+        const key = slotKey(slot.day, slot.period);
+        const classKey = `${slot.classId}:${key}`;
+        const roomKey = slot.roomId ? `${slot.roomId}:${key}` : null;
+
+        for (const teacherId of slotTeacherIds(slot)) {
+            const teacherKey = `${teacherId}:${key}`;
+            if (teacher.has(teacherKey)) {
+                conflicts.push({ type: 'teacher-conflict', severity: 'hard', slot, message: '教师同节冲突' });
+            }
+            teacher.set(teacherKey, slot);
+        }
+        if (klass.has(classKey)) {
+            conflicts.push({ type: 'class-conflict', severity: 'hard', slot, message: '班级同节冲突' });
+        }
+        if (roomKey && room.has(roomKey)) {
+            conflicts.push({ type: 'room-conflict', severity: 'hard', slot, message: '教室同节冲突' });
+        }
+
+        klass.set(classKey, slot);
+        if (roomKey) room.set(roomKey, slot);
+
+        const check = canUseSlot(project, createUsage(), slot, { ignoreTeacher: true, ignoreClass: true, ignoreRoom: true });
+        if (!check.ok) {
+            conflicts.push({ type: 'availability-conflict', severity: 'hard', slot, message: check.reason });
+        }
+    }
+
+    return conflicts;
+}
+
+export function buildTimetableScore(project, slots, unplaced, conflicts) {
     const totalLessons = project.lessonPlans.reduce((sum, plan) => sum + plan.weeklyHours, 0);
     const placedLessons = slots.length;
     const hardConflicts = conflicts.filter(conflict => conflict.severity === 'hard').length;
@@ -520,7 +601,11 @@ export function runTimetableScheduler(input = {}) {
     const unplaced = [];
     const conflicts = [...seeded.conflicts];
 
-    const invalidPlans = project.lessonPlans.filter(plan => !maps.classes.has(plan.classId) || !maps.subjects.has(plan.subjectId) || !maps.teachers.has(plan.teacherId));
+    const invalidPlans = project.lessonPlans.filter(plan => (
+        !maps.classes.has(plan.classId)
+        || !maps.subjects.has(plan.subjectId)
+        || !slotTeacherIds(plan).every(teacherId => maps.teachers.has(teacherId))
+    ));
     for (const plan of invalidPlans) {
         unplaced.push({
             lessonPlanId: plan.id,
@@ -575,7 +660,7 @@ export function runTimetableScheduler(input = {}) {
         lockedSlots: slots.filter(slot => slot.locked),
         conflicts,
         unplaced,
-        score: buildScore(project, slots, unplaced, conflicts),
+        score: buildTimetableScore(project, slots, unplaced, conflicts),
     };
 
     return {
@@ -589,6 +674,25 @@ function rebuildUsage(slots, excludeSlotId = null) {
     const usage = createUsage();
     for (const slot of slots) {
         if (slot.id !== excludeSlotId) addUsage(usage, slot);
+    }
+    return usage;
+}
+
+function blockSlotIndexes(schedule, slot) {
+    if (!slot?.blockId || slot.blockSize <= 1) {
+        const index = schedule.slots.findIndex(item => item.id === slot?.id);
+        return index < 0 ? [] : [index];
+    }
+    return schedule.slots
+        .map((item, index) => (item.blockId === slot.blockId ? index : -1))
+        .filter(index => index >= 0)
+        .sort((left, right) => (schedule.slots[left].blockIndex || 0) - (schedule.slots[right].blockIndex || 0));
+}
+
+function rebuildUsageExcludingIds(slots, excludedIds = new Set()) {
+    const usage = createUsage();
+    for (const slot of slots) {
+        if (!excludedIds.has(slot.id)) addUsage(usage, slot);
     }
     return usage;
 }
@@ -626,7 +730,7 @@ export function applyScheduleAdjustment(input = {}, adjustment = {}) {
     ];
     schedule.conflicts = conflicts;
     schedule.lockedSlots = schedule.slots.filter(slot => slot.locked);
-    schedule.score = buildScore(project, schedule.slots, unplaced, conflicts);
+    schedule.score = buildTimetableScore(project, schedule.slots, unplaced, conflicts);
 
     return {
         success: conflicts.length === 0 && unplaced.length === 0,

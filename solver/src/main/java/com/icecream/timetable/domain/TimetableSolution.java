@@ -1,4 +1,4 @@
-package com.icecream.seating.domain;
+package com.icecream.timetable.domain;
 
 import ai.timefold.solver.core.api.domain.solution.PlanningEntityCollectionProperty;
 import ai.timefold.solver.core.api.domain.solution.PlanningScore;
@@ -11,26 +11,28 @@ import java.util.ArrayList;
 import java.util.List;
 
 @PlanningSolution
-public class SeatingSolution {
+public class TimetableSolution {
 
     private String jobId;
     private String name;
 
     @ProblemFactCollectionProperty
-    @ValueRangeProvider(id = "seatRange")
-    private List<Seat> seats = new ArrayList<>();
+    @ValueRangeProvider(id = "timeSlotRange")
+    private List<TimeSlot> timeSlots = new ArrayList<>();
+
+    @ProblemFactCollectionProperty
+    @ValueRangeProvider(id = "roomRange")
+    private List<Room> rooms = new ArrayList<>();
 
     @PlanningEntityCollectionProperty
-    private List<StudentAssignment> students = new ArrayList<>();
-
-    private SeatingConstraintConfig config = new SeatingConstraintConfig();
+    private List<LessonAssignment> lessonAssignments = new ArrayList<>();
 
     @PlanningScore
     private HardSoftScore score;
 
     private String solverStatus;
 
-    public SeatingSolution() {
+    public TimetableSolution() {
     }
 
     public String getJobId() {
@@ -49,28 +51,28 @@ public class SeatingSolution {
         this.name = name;
     }
 
-    public List<Seat> getSeats() {
-        return seats;
+    public List<TimeSlot> getTimeSlots() {
+        return timeSlots;
     }
 
-    public void setSeats(List<Seat> seats) {
-        this.seats = seats == null ? new ArrayList<>() : seats;
+    public void setTimeSlots(List<TimeSlot> timeSlots) {
+        this.timeSlots = timeSlots == null ? new ArrayList<>() : timeSlots;
     }
 
-    public List<StudentAssignment> getStudents() {
-        return students;
+    public List<Room> getRooms() {
+        return rooms;
     }
 
-    public void setStudents(List<StudentAssignment> students) {
-        this.students = students == null ? new ArrayList<>() : students;
+    public void setRooms(List<Room> rooms) {
+        this.rooms = rooms == null ? new ArrayList<>() : rooms;
     }
 
-    public SeatingConstraintConfig getConfig() {
-        return config;
+    public List<LessonAssignment> getLessonAssignments() {
+        return lessonAssignments;
     }
 
-    public void setConfig(SeatingConstraintConfig config) {
-        this.config = config == null ? new SeatingConstraintConfig() : config;
+    public void setLessonAssignments(List<LessonAssignment> lessonAssignments) {
+        this.lessonAssignments = lessonAssignments == null ? new ArrayList<>() : lessonAssignments;
     }
 
     public HardSoftScore getScore() {

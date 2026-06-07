@@ -6,6 +6,7 @@ import com.icecream.seating.domain.SeatingConstraintConfig;
 import com.icecream.seating.domain.SeatingSolution;
 import com.icecream.seating.domain.SolverJob;
 import jakarta.inject.Inject;
+import jakarta.inject.Named;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
@@ -30,6 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SeatingSolverResource {
 
     @Inject
+    @Named("seating")
     SolverManager<SeatingSolution, String> solverManager;
 
     private final Map<String, SeatingSolution> bestSolutions = new ConcurrentHashMap<>();

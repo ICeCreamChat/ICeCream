@@ -213,7 +213,42 @@ test('timetable store persists project data atomically in a local data directory
 
 test('timetable API exposes bootstrap, project save, import and scheduling flow', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
+    const previousTimetableTimeout = process.env.TIMETABLE_SOLVER_TIMEOUT;
+    const nativeFetch = globalThis.fetch;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-api-'));
+    process.env.TIMEFOLD_SOLVER_URL = 'http://timefold.test';
+    process.env.TIMETABLE_SOLVER_TIMEOUT = '2';
+
+    let postedProblem = null;
+    globalThis.fetch = async (url, options = {}) => {
+        const target = String(url);
+        if (!target.startsWith('http://timefold.test')) {
+            return nativeFetch(url, options);
+        }
+        if (options.method === 'POST' && target.endsWith('/timetable-solutions')) {
+            postedProblem = JSON.parse(options.body);
+            return jsonResponse({ jobId: 'tt-job-1', solverStatus: 'SOLVING_ACTIVE' }, 202);
+        }
+        if (target.endsWith('/status')) {
+            return jsonResponse({ jobId: 'tt-job-1', solverStatus: 'NOT_SOLVING', hardScore: 0, softScore: -4, score: '0hard/-4soft' });
+        }
+        if (options.method === 'DELETE') {
+            return jsonResponse({}, 204);
+        }
+        return jsonResponse({
+            jobId: 'tt-job-1',
+            solverStatus: 'NOT_SOLVING',
+            hardScore: 0,
+            softScore: -4,
+            score: '0hard/-4soft',
+            lessonAssignments: postedProblem.lessonAssignments.map((assignment, index) => ({
+                ...assignment,
+                timeSlot: index < 3 ? `1-${index + 1}` : `2-${index - 2}`,
+                room: '__NONE__',
+            })),
+        });
+    };
 
     const app = createGatewayApp({ isDev: false });
     const server = app.listen(0, '127.0.0.1');
@@ -251,7 +286,77 @@ test('timetable API exposes bootstrap, project save, import and scheduling flow'
             method: 'POST',
         }).then(res => res.json());
         assert.equal(runRes.success, true);
+        assert.equal(runRes.data.schedule.source, 'timefold_solver');
         assert.equal(runRes.data.schedule.score.hardConflicts, 0);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        globalThis.fetch = nativeFetch;
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+        if (previousSolverUrl === undefined) {
+            delete process.env.TIMEFOLD_SOLVER_URL;
+        } else {
+            process.env.TIMEFOLD_SOLVER_URL = previousSolverUrl;
+        }
+        if (previousTimetableTimeout === undefined) {
+            delete process.env.TIMETABLE_SOLVER_TIMEOUT;
+        } else {
+            process.env.TIMETABLE_SOLVER_TIMEOUT = previousTimetableTimeout;
+        }
+    }
+});
+
+test('timetable API does not overwrite the stored schedule when Timefold is unavailable', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-api-fail-'));
+    delete process.env.TIMEFOLD_SOLVER_URL;
+
+    const store = createTimetableStore();
+    const existing = sampleProject({
+        schedule: {
+            id: 'old_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            slots: [{
+                id: 'old_slot',
+                day: 1,
+                period: 1,
+                classId: 'c1',
+                subjectId: 'math',
+                teacherId: 't_math',
+                lessonPlanId: 'lp1',
+                locked: false,
+            }],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 11, completeness: 9 },
+        },
+    });
+    await store.saveProject(existing);
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const runResponse = await fetch(`${baseUrl}/api/tools/timetable/schedule/run`, { method: 'POST' });
+        const runPayload = await runResponse.json();
+
+        assert.equal(runResponse.status, 503);
+        assert.equal(runPayload.success, false);
+        assert.equal(runPayload.data.schedule.id, 'old_schedule');
+
+        const stored = await store.loadProject();
+        assert.equal(stored.schedule.id, 'old_schedule');
     } finally {
         await new Promise(resolve => server.close(resolve));
         if (previousDataDir === undefined) {
@@ -259,5 +364,20 @@ test('timetable API exposes bootstrap, project save, import and scheduling flow'
         } else {
             process.env.TIMETABLE_DATA_DIR = previousDataDir;
         }
+        if (previousSolverUrl === undefined) {
+            delete process.env.TIMEFOLD_SOLVER_URL;
+        } else {
+            process.env.TIMEFOLD_SOLVER_URL = previousSolverUrl;
+        }
     }
 });
+
+function jsonResponse(payload, status = 200) {
+    return {
+        ok: status >= 200 && status < 300,
+        status,
+        async text() {
+            return status === 204 ? '' : JSON.stringify(payload);
+        },
+    };
+}
