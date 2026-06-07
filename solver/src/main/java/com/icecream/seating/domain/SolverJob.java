@@ -4,15 +4,15 @@ public class SolverJob {
 
     private String jobId;
     private String name;
-    private Integer hardScore;
-    private Integer softScore;
+    private Long hardScore;
+    private Long softScore;
     private String score;
     private String solverStatus;
 
     public SolverJob() {
     }
 
-    public SolverJob(String jobId, String name, Integer hardScore, Integer softScore, String score, String solverStatus) {
+    public SolverJob(String jobId, String name, Long hardScore, Long softScore, String score, String solverStatus) {
         this.jobId = jobId;
         this.name = name;
         this.hardScore = hardScore;
@@ -48,19 +48,19 @@ public class SolverJob {
         this.name = name;
     }
 
-    public Integer getHardScore() {
+    public Long getHardScore() {
         return hardScore;
     }
 
-    public void setHardScore(Integer hardScore) {
+    public void setHardScore(Long hardScore) {
         this.hardScore = hardScore;
     }
 
-    public Integer getSoftScore() {
+    public Long getSoftScore() {
         return softScore;
     }
 
-    public void setSoftScore(Integer softScore) {
+    public void setSoftScore(Long softScore) {
         this.softScore = softScore;
     }
 

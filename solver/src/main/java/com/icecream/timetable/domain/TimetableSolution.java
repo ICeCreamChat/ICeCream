@@ -83,11 +83,11 @@ public class TimetableSolution {
         this.score = score;
     }
 
-    public Integer getHardScore() {
+    public Long getHardScore() {
         return score == null ? null : score.hardScore();
     }
 
-    public Integer getSoftScore() {
+    public Long getSoftScore() {
         return score == null ? null : score.softScore();
     }
 

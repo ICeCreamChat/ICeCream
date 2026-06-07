@@ -30,7 +30,10 @@ class TimetablePlanner {
         if (options.raw) return response;
         const payload = await response.json();
         if (!response.ok || payload.success === false) {
-            throw new Error(payload.error || '请求失败');
+            const error = new Error(payload.error || 'Request failed');
+            error.payload = payload;
+            error.status = response.status;
+            throw error;
         }
         return payload.data;
     }
@@ -229,7 +232,13 @@ class TimetablePlanner {
                 ? `生成完成，还有 ${result.schedule.score.unplacedLessons} 节未排`
                 : '课表已生成';
         } catch (error) {
-            this.message = error.message;
+            if (error.payload?.data?.project) {
+                this.project = error.payload.data.project;
+                this.ensureOwnerSelection();
+            }
+            this.message = error.payload?.data?.reason === 'not_configured'
+                ? 'Timefold solver is not available; previous schedule was kept'
+                : `Timefold scheduling failed; previous schedule was kept${error.message ? `: ${error.message}` : ''}`;
         } finally {
             this.loading = false;
             this.renderShell();

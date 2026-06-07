@@ -32,7 +32,7 @@ public class SeatingSolverResource {
 
     @Inject
     @Named("seating")
-    SolverManager<SeatingSolution, String> solverManager;
+    SolverManager<SeatingSolution> solverManager;
 
     private final Map<String, SeatingSolution> bestSolutions = new ConcurrentHashMap<>();
 

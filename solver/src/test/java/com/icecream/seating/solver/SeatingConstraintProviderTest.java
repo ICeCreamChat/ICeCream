@@ -1,6 +1,6 @@
 package com.icecream.seating.solver;
 
-import ai.timefold.solver.test.api.score.stream.ConstraintVerifier;
+import ai.timefold.solver.core.api.score.stream.test.ConstraintVerifier;
 import com.icecream.seating.domain.Seat;
 import com.icecream.seating.domain.SeatingConstraintConfig;
 import com.icecream.seating.domain.SeatingSolution;

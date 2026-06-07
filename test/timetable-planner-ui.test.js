@@ -40,6 +40,8 @@ test('timetable planner keeps schedule operations inside the board surface', asy
   assert.match(source, /data-view-mode="master"/);
   assert.match(source, /id="tt-lock-selected"/);
   assert.match(source, /id="tt-clear-selected"/);
+  assert.match(source, /error\.payload = payload/);
+  assert.match(source, /previous schedule was kept/);
   assert.match(source, /data-export-type="class"/);
   assert.match(source, /data-export-type="teacher"/);
   assert.match(source, /data-export-type="master"/);

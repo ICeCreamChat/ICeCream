@@ -181,6 +181,74 @@ test('manual adjustment moves, locks and clears timetable slots with validation'
     assert.equal(cleared.schedule.slots.some(slot => slot.id === first.id), false);
 });
 
+test('manual adjustment applies move, lock and clear to an entire block', () => {
+    const project = sampleProject({
+        schedule: {
+            id: 'block_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            slots: [
+                {
+                    id: 'block_0',
+                    day: 1,
+                    period: 1,
+                    classId: 'c1',
+                    subjectId: 'math',
+                    teacherId: 't_math',
+                    teacherIds: ['t_math'],
+                    lessonPlanId: 'lp1',
+                    blockId: 'lp1_block_1',
+                    blockIndex: 0,
+                    blockSize: 2,
+                    locked: false,
+                },
+                {
+                    id: 'block_1',
+                    day: 1,
+                    period: 2,
+                    classId: 'c1',
+                    subjectId: 'math',
+                    teacherId: 't_math',
+                    teacherIds: ['t_math'],
+                    lessonPlanId: 'lp1',
+                    blockId: 'lp1_block_1',
+                    blockIndex: 1,
+                    blockSize: 2,
+                    locked: false,
+                },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 2, totalLessons: 11, completeness: 18 },
+        },
+    });
+
+    const moved = applyScheduleAdjustment(project, {
+        type: 'move',
+        slotId: 'block_1',
+        day: 2,
+        period: 4,
+    });
+    const movedBlock = moved.schedule.slots
+        .filter(slot => slot.blockId === 'lp1_block_1')
+        .sort((left, right) => left.blockIndex - right.blockIndex);
+
+    assert.deepEqual(movedBlock.map(slot => [slot.day, slot.period]), [[2, 3], [2, 4]]);
+
+    const locked = applyScheduleAdjustment({ ...project, schedule: moved.schedule }, {
+        type: 'lock',
+        slotId: 'block_0',
+        locked: true,
+    });
+    assert.equal(locked.schedule.slots.filter(slot => slot.blockId === 'lp1_block_1').every(slot => slot.locked), true);
+
+    const cleared = applyScheduleAdjustment({ ...project, schedule: locked.schedule }, {
+        type: 'clear',
+        slotId: 'block_0',
+    });
+    assert.equal(cleared.schedule.slots.some(slot => slot.blockId === 'lp1_block_1'), false);
+});
+
 test('timetable roster parser imports teachers, classes, subjects and lesson plans', () => {
     const parsed = parseTimetableRosterText(`
 年级,班级,课程,教师,周课时,连堂

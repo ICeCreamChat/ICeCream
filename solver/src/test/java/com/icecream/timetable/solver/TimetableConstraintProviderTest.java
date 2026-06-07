@@ -1,6 +1,6 @@
 package com.icecream.timetable.solver;
 
-import ai.timefold.solver.test.api.score.stream.ConstraintVerifier;
+import ai.timefold.solver.core.api.score.stream.test.ConstraintVerifier;
 import com.icecream.timetable.domain.LessonAssignment;
 import com.icecream.timetable.domain.Room;
 import com.icecream.timetable.domain.TimeSlot;

@@ -7,8 +7,11 @@ import { createTimetableStore } from '../services/timetable-store.js';
 import {
     applyScheduleAdjustment,
     normalizeTimetableProject,
-    runTimetableScheduler,
 } from '../services/timetable-scheduler.js';
+import {
+    solveTimetableWithTimefold,
+    TimetableTimefoldError,
+} from '../services/timetable-solver-bridge.js';
 
 const router = express.Router();
 const upload = multer({
@@ -24,10 +27,11 @@ function ok(res, data) {
     return res.json({ success: true, data });
 }
 
-function fail(res, error, status = 400) {
+function fail(res, error, status = 400, data = undefined) {
     return res.status(status).json({
         success: false,
         error: error.message || String(error),
+        ...(data === undefined ? {} : { data }),
     });
 }
 
@@ -95,10 +99,20 @@ router.post('/rules', async (req, res) => {
 router.post('/schedule/run', async (req, res) => {
     try {
         const current = await store().loadProject();
-        const result = runTimetableScheduler(current);
+        const result = await solveTimetableWithTimefold({ project: current });
         await store().saveProject(result.project);
         ok(res, { project: result.project, schedule: result.schedule });
     } catch (error) {
+        if (error instanceof TimetableTimefoldError) {
+            const current = await store().loadProject();
+            fail(res, error, error.status || 503, {
+                project: current,
+                schedule: current.schedule,
+                solverStats: error.solverStats || null,
+                reason: error.reason,
+            });
+            return;
+        }
         fail(res, error, 500);
     }
 });

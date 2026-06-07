@@ -4,8 +4,8 @@ public class TimetableSolverJob {
 
     private String jobId;
     private String name;
-    private Integer hardScore;
-    private Integer softScore;
+    private Long hardScore;
+    private Long softScore;
     private String score;
     private String solverStatus;
     private int assignmentCount;
@@ -13,7 +13,7 @@ public class TimetableSolverJob {
     public TimetableSolverJob() {
     }
 
-    public TimetableSolverJob(String jobId, String name, Integer hardScore, Integer softScore,
+    public TimetableSolverJob(String jobId, String name, Long hardScore, Long softScore,
                               String score, String solverStatus, int assignmentCount) {
         this.jobId = jobId;
         this.name = name;
@@ -52,19 +52,19 @@ public class TimetableSolverJob {
         this.name = name;
     }
 
-    public Integer getHardScore() {
+    public Long getHardScore() {
         return hardScore;
     }
 
-    public void setHardScore(Integer hardScore) {
+    public void setHardScore(Long hardScore) {
         this.hardScore = hardScore;
     }
 
-    public Integer getSoftScore() {
+    public Long getSoftScore() {
         return softScore;
     }
 
-    public void setSoftScore(Integer softScore) {
+    public void setSoftScore(Long softScore) {
         this.softScore = softScore;
     }
 

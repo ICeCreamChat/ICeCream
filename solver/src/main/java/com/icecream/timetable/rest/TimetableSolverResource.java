@@ -33,7 +33,7 @@ public class TimetableSolverResource {
 
     @Inject
     @Named("timetable")
-    SolverManager<TimetableSolution, String> solverManager;
+    SolverManager<TimetableSolution> solverManager;
 
     private final Map<String, TimetableSolution> bestSolutions = new ConcurrentHashMap<>();
 
