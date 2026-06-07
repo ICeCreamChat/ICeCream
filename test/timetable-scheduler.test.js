@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,10 @@ import test from 'node:test';
 import { createGatewayApp } from '../gateway/app.js';
 import { summarizeScheduleConflicts } from '../gateway/services/timetable-conflicts.js';
 import { parseTimetableRosterText } from '../gateway/services/timetable-import.js';
+import {
+    getTimetableOptimizationJob,
+    resetTimetableOptimizationJobs,
+} from '../gateway/services/timetable-optimization-jobs.js';
 import { createTimetableStore } from '../gateway/services/timetable-store.js';
 import { validateTimetableProjectForSolve } from '../gateway/services/timetable-validation.js';
 import {
@@ -62,6 +67,20 @@ function sampleProject(overrides = {}) {
     });
 }
 
+function largeTimetableProject() {
+    return JSON.parse(readFileSync(new URL('../data/timetable/projects.json', import.meta.url), 'utf8')).project;
+}
+
+async function waitFor(predicate, timeoutMs = 1000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const value = await predicate();
+        if (value) return value;
+        await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    return predicate();
+}
+
 function assertNoTeacherOrClassConflicts(slots) {
     const teacherSlots = new Set();
     const classSlots = new Set();
@@ -79,6 +98,7 @@ test('timetable scheduler creates a reproducible conflict-free schedule', () => 
     const result = runTimetableScheduler(sampleProject());
 
     assert.equal(result.success, true);
+    assert.equal(result.schedule.source, 'fast_constructed');
     assert.equal(result.schedule.slots.length, 11);
     assert.equal(result.schedule.score.hardConflicts, 0);
     assert.equal(result.schedule.score.unplacedLessons, 0);
@@ -91,6 +111,22 @@ test('timetable scheduler creates a reproducible conflict-free schedule', () => 
     );
     assert.equal(result.schedule.slots.some(slot => slot.teacherId === 't_math' && slot.day === 1 && slot.period === 1), false);
     assert.equal(result.schedule.slots.some(slot => slot.classId === 'c2' && slot.day === 1 && slot.period === 1), false);
+});
+
+test('fast timetable scheduler handles the 690 lesson project without Timefold', () => {
+    const project = largeTimetableProject();
+    const startedAt = Date.now();
+
+    const result = runTimetableScheduler(project);
+
+    assert.equal(result.success, true);
+    assert.equal(result.schedule.source, 'fast_constructed');
+    assert.equal(result.schedule.slots.length, 690);
+    assert.equal(result.schedule.score.totalLessons, 690);
+    assert.equal(result.schedule.score.unplacedLessons, 0);
+    assert.equal(result.schedule.score.hardConflicts, 0);
+    assert.ok(Date.now() - startedAt < 15000, 'fast scheduler should complete under the local 15s budget');
+    assertNoTeacherOrClassConflicts(result.schedule.slots);
 });
 
 test('timetable scheduler returns explainable unplaced lessons when constraints are impossible', () => {
@@ -421,8 +457,10 @@ test('timetable API exposes bootstrap, project save, import and scheduling flow'
             method: 'POST',
         }).then(res => res.json());
         assert.equal(runRes.success, true);
-        assert.equal(runRes.data.schedule.source, 'timefold_solver');
+        assert.equal(runRes.data.schedule.source, 'fast_constructed');
         assert.equal(runRes.data.schedule.score.hardConflicts, 0);
+        assert.equal(runRes.data.schedule.score.unplacedLessons, 0);
+        assert.equal(runRes.data.solverJob?.phase, 'timefold_optimization');
     } finally {
         await new Promise(resolve => server.close(resolve));
         globalThis.fetch = nativeFetch;
@@ -444,7 +482,7 @@ test('timetable API exposes bootstrap, project save, import and scheduling flow'
     }
 });
 
-test('timetable API does not overwrite the stored schedule when Timefold is unavailable', async () => {
+test('timetable API saves a fast schedule when Timefold is unavailable', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-api-fail-'));
@@ -486,12 +524,13 @@ test('timetable API does not overwrite the stored schedule when Timefold is unav
         const runResponse = await fetch(`${baseUrl}/api/tools/timetable/schedule/run`, { method: 'POST' });
         const runPayload = await runResponse.json();
 
-        assert.equal(runResponse.status, 503);
-        assert.equal(runPayload.success, false);
-        assert.equal(runPayload.data.schedule.id, 'old_schedule');
+        assert.equal(runResponse.status, 200);
+        assert.equal(runPayload.success, true);
+        assert.equal(runPayload.data.schedule.source, 'fast_constructed');
+        assert.equal(runPayload.data.solverJob, null);
 
         const stored = await store.loadProject();
-        assert.equal(stored.schedule.id, 'old_schedule');
+        assert.equal(stored.schedule.source, 'fast_constructed');
     } finally {
         await new Promise(resolve => server.close(resolve));
         if (previousDataDir === undefined) {
@@ -507,7 +546,7 @@ test('timetable API does not overwrite the stored schedule when Timefold is unav
     }
 });
 
-test('timetable API returns timeout reason and keeps the stored schedule when Timefold times out', async () => {
+test('background Timefold timeout keeps the saved fast schedule and exposes job status', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
     const previousTimetableTimeout = process.env.TIMETABLE_SOLVER_TIMEOUT;
@@ -515,8 +554,9 @@ test('timetable API returns timeout reason and keeps the stored schedule when Ti
     const nativeFetch = globalThis.fetch;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-api-timeout-'));
     process.env.TIMEFOLD_SOLVER_URL = 'http://timefold.timeout';
-    process.env.TIMETABLE_SOLVER_TIMEOUT = '660';
+    process.env.TIMETABLE_SOLVER_TIMEOUT = '1';
     delete process.env.TIMEFOLD_SOLVER_TIMEOUT;
+    resetTimetableOptimizationJobs();
 
     const store = createTimetableStore();
     const existing = sampleProject({
@@ -565,15 +605,24 @@ test('timetable API returns timeout reason and keeps the stored schedule when Ti
         const runResponse = await fetch(`${baseUrl}/api/tools/timetable/schedule/run`, { method: 'POST' });
         const runPayload = await runResponse.json();
 
-        assert.equal(runResponse.status, 504);
-        assert.equal(runPayload.success, false);
-        assert.equal(runPayload.data.reason, 'timeout');
-        assert.equal(runPayload.data.schedule.id, 'old_timeout_schedule');
-        assert.equal(runPayload.data.solverStats.lessonCount, 11);
-        assert.equal(runPayload.data.solverStats.timeoutSeconds, 660);
+        assert.equal(runResponse.status, 200);
+        assert.equal(runPayload.success, true);
+        assert.equal(runPayload.data.schedule.source, 'fast_constructed');
+        assert.equal(runPayload.data.solverJob.phase, 'timefold_optimization');
+
+        const job = await waitFor(() => {
+            const current = getTimetableOptimizationJob(runPayload.data.solverJob.jobId);
+            return current?.status === 'failed' ? current : null;
+        }, 1500);
+        assert.equal(job.reason, 'timeout');
+        assert.equal(job.accepted, false);
+
+        const jobResponse = await fetch(`${baseUrl}/api/tools/timetable/schedule/jobs/${runPayload.data.solverJob.jobId}`).then(res => res.json());
+        assert.equal(jobResponse.success, true);
+        assert.equal(jobResponse.data.job.status, 'failed');
 
         const stored = await store.loadProject();
-        assert.equal(stored.schedule.id, 'old_timeout_schedule');
+        assert.equal(stored.schedule.source, 'fast_constructed');
     } finally {
         await new Promise(resolve => server.close(resolve));
         globalThis.fetch = nativeFetch;

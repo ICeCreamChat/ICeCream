@@ -146,3 +146,55 @@ test('timetable workbench keeps solving in the board and pending plans in the in
   assert.match(styles, /\.tt-plan-queue\s*{/);
   assert.match(styles, /\.tt-main-empty-cell\s*{/);
 });
+
+test('timetable workbench shows fast generation and background optimization status in Chinese', async () => {
+  const state = sampleWorkbenchState({
+    solverJob: {
+      jobId: 'tt-opt-1',
+      phase: 'timefold_optimization',
+      status: 'running',
+      accepted: false,
+    },
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'fast-1',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'fast_constructed',
+        slots: [{
+          id: 'slot-1',
+          day: 1,
+          period: 1,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+          locked: false,
+        }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 3, completeness: 33 },
+        solverStats: { phase: 'fast_construct', status: 'accepted', lessonCount: 3 },
+      },
+    }),
+  });
+
+  const panel = renderSchedulePanel(state);
+  const inspector = renderInspector(state);
+
+  assert.match(panel, /快速生成/);
+  assert.match(panel, /Timefold 优化中/);
+  assert.match(inspector, /后台优化/);
+  assert.match(inspector, /快速课表/);
+  assert.doesNotMatch(panel + inspector, /姝ｅ湪|鏁欏姟|璇捐〃|鎺掕/);
+});

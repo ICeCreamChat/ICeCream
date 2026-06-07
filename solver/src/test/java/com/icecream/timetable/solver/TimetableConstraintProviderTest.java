@@ -109,6 +109,36 @@ class TimetableConstraintProviderTest {
                 .hasNoImpact();
     }
 
+    @Test
+    void teacherLunchBridgePenalizesTeacherAcrossNoon() {
+        LessonAssignment morningLast = lesson("a", "lp1", "c1", "math", List.of("t1"), slot("1-3", 1, 3, true));
+        LessonAssignment afternoonFirst = lesson("b", "lp2", "c2", "english", List.of("t1"), slot("1-4", 1, 4, false));
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::teacherLunchBridge)
+                .given(morningLast, afternoonFirst)
+                .penalizesBy(4);
+    }
+
+    @Test
+    void teacherGapPenalizesNonContinuousLessonsInSameHalfDay() {
+        LessonAssignment first = lesson("a", "lp1", "c1", "math", List.of("t1"), slot("1-1", 1, 1, true));
+        LessonAssignment third = lesson("b", "lp2", "c2", "english", List.of("t1"), slot("1-3", 1, 3, true));
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::teacherGap)
+                .given(first, third)
+                .penalizesBy(2);
+    }
+
+    @Test
+    void sameCourseHalfDaySplitPenalizesSameClassSubjectAcrossMorningAndAfternoon() {
+        LessonAssignment morning = lesson("a", "lp1", "c1", "math", List.of("t1"), slot("1-2", 1, 2, true));
+        LessonAssignment afternoon = lesson("b", "lp1", "c1", "math", List.of("t2"), slot("1-5", 1, 5, false));
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::sameCourseHalfDaySplit)
+                .given(morning, afternoon)
+                .penalizesBy(5);
+    }
+
     private static LessonAssignment lesson(String id, String planId, String classId, String subjectId,
                                            List<String> teacherIds, TimeSlot timeSlot) {
         LessonAssignment assignment = new LessonAssignment();
@@ -125,11 +155,15 @@ class TimetableConstraintProviderTest {
     }
 
     private static TimeSlot slot(String id, int weekday, int lessonIndex) {
+        return slot(id, weekday, lessonIndex, lessonIndex <= 2);
+    }
+
+    private static TimeSlot slot(String id, int weekday, int lessonIndex, boolean morning) {
         TimeSlot slot = new TimeSlot();
         slot.setId(id);
         slot.setWeekday(weekday);
         slot.setLessonIndex(lessonIndex);
-        slot.setMorning(lessonIndex <= 2);
+        slot.setMorning(morning);
         return slot;
     }
 
