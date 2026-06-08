@@ -241,3 +241,67 @@ test('timetable workbench shows fast generation and background optimization stat
   assert.match(inspector, /快速课表/);
   assert.doesNotMatch(panel + inspector, /姝ｅ湪|鏁欏姟|璇捐〃|鎺掕/);
 });
+test('timetable data setup uses active day and period chips instead of school term fields', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'Hidden School',
+      term: 'Hidden Term',
+      weekdays: 5,
+      periodsPerDay: 7,
+      activeWeekdays: [1, 3, 5],
+      activePeriods: [1, 4, 7],
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: null,
+    }),
+  });
+
+  const html = renderWorkbench(state);
+  const panel = renderSchedulePanel(state);
+
+  assert.doesNotMatch(html, /name="schoolName"/);
+  assert.doesNotMatch(html, /name="term"/);
+  assert.match(html, /data-active-weekday="1"[^>]*checked/);
+  assert.match(html, /data-active-weekday="3"[^>]*checked/);
+  assert.match(html, /data-active-period="4"[^>]*checked/);
+  assert.match(html, /class="tt-roster-stats"/);
+  assert.match(html, /id="tt-clear-roster"/);
+  assert.doesNotMatch(html, /class="tt-plan-list"/);
+  assert.doesNotMatch(html, /class="tt-plan-row"/);
+  assert.match(html, /id="tt-rule-prompt"/);
+  assert.match(html, /id="tt-parse-rules"/);
+  assert.match(html, /id="tt-confirm-rule-draft"/);
+  assert.match(html, /id="tt-add-bulk-rule"/);
+  assert.match(html, /id="tt-clear-rules"/);
+
+  assert.match(panel, /style="--tt-days:3"/);
+  assert.match(panel, /data-day="1"/);
+  assert.match(panel, /data-day="3"/);
+  assert.doesNotMatch(panel, /data-day="2"/);
+  assert.match(panel, /data-period="4"/);
+  assert.doesNotMatch(panel, /data-period="2"/);
+});
+
+test('timetable inspector surfaces data and AI rule audit summaries', () => {
+  const state = sampleWorkbenchState({
+    ruleDraftPreview: [{
+      id: 'draft-1',
+      type: 'teacher_unavailable',
+      targetName: 'Math Teacher',
+      slots: ['3-4'],
+      priority: 'hard',
+      description: 'Teacher unavailable',
+      status: 'ready',
+    }],
+    ruleWarnings: ['Unknown class ignored'],
+  });
+
+  const inspector = renderInspector(state);
+
+  assert.match(inspector, /class="tt-audit-grid"/);
+  assert.match(inspector, /tt-rule-preview-item/);
+  assert.match(inspector, /Unknown class ignored/);
+});

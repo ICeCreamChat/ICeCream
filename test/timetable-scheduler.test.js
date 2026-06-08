@@ -17,6 +17,7 @@ import { validateTimetableProjectForSolve } from '../gateway/services/timetable-
 import {
     applyScheduleAdjustment,
     createDefaultTimetableProject,
+    normalizeTimetableProject,
     runTimetableScheduler,
 } from '../gateway/services/timetable-scheduler.js';
 
@@ -93,6 +94,58 @@ function assertNoTeacherOrClassConflicts(slots) {
         classSlots.add(classKey);
     }
 }
+
+test('timetable project normalizes active weekdays and active periods from legacy shape', () => {
+    const legacy = normalizeTimetableProject({ weekdays: 3, periodsPerDay: 4 });
+    assert.deepEqual(legacy.activeWeekdays, [1, 2, 3]);
+    assert.deepEqual(legacy.activePeriods, [1, 2, 3, 4]);
+
+    const narrowed = normalizeTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [3, 1, 3, 9, 0],
+        activePeriods: [7, 2, 2, 12, 13],
+    });
+
+    assert.deepEqual(narrowed.activeWeekdays, [1, 3]);
+    assert.deepEqual(narrowed.activePeriods, [2, 7, 12]);
+    assert.equal(narrowed.weekdays, 3);
+    assert.equal(narrowed.periodsPerDay, 12);
+});
+
+test('fast timetable scheduler only places lessons inside active day and period selections', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [2, 4],
+        activePeriods: [3, 5],
+        teachers: [
+            { id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_pe', name: 'PE Teacher', subjects: ['pe'], unavailableSlots: [] },
+        ],
+        classes: [
+            { id: 'c1', grade: 'G7', name: '1' },
+            { id: 'c2', grade: 'G7', name: '2' },
+        ],
+        subjects: [
+            { id: 'math', name: 'Math', priority: 90, color: '#2563eb' },
+            { id: 'pe', name: 'PE', priority: 30, color: '#16a34a' },
+        ],
+        lessonPlans: [
+            { id: 'lp1', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 },
+            { id: 'lp2', classId: 'c2', subjectId: 'pe', teacherId: 't_pe', weeklyHours: 2 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = runTimetableScheduler(project);
+
+    assert.equal(result.success, true);
+    assert.equal(result.schedule.slots.length, 4);
+    assert.deepEqual([...new Set(result.schedule.slots.map(slot => slot.day))].sort((a, b) => a - b), [2, 4]);
+    assert.deepEqual([...new Set(result.schedule.slots.map(slot => slot.period))].sort((a, b) => a - b), [3, 5]);
+    assert.equal(result.schedule.score.hardConflicts, 0);
+});
 
 test('timetable scheduler creates a reproducible conflict-free schedule', () => {
     const result = runTimetableScheduler(sampleProject());
