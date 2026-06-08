@@ -193,6 +193,21 @@ function normalizeRuleMap(raw = {}) {
     return result;
 }
 
+function normalizeSubjectPreferredPeriods(raw = {}) {
+    const result = {};
+    for (const [key, value] of Object.entries(raw || {})) {
+        const subjectId = cleanText(key, 80);
+        if (!subjectId || !value || typeof value !== 'object') continue;
+        const prefer = normalizeSlotList(value.prefer || value.preferred || value.slots);
+        const avoid = normalizeSlotList(value.avoid || value.blocked || value.disliked);
+        const weight = Math.max(1, Math.min(100, Number.parseInt(value.weight, 10) || 20));
+        if (prefer.length || avoid.length) {
+            result[subjectId] = { prefer, avoid, weight };
+        }
+    }
+    return result;
+}
+
 function normalizeLockedSlots(values = []) {
     return (Array.isArray(values) ? values : [])
         .map((item, index) => ({
@@ -222,7 +237,7 @@ function normalizeRules(raw = {}) {
                 ? softRules.morningSubjects.map(value => cleanText(value, 80)).filter(Boolean)
                 : [],
             balancedTeacherLoad: softRules.balancedTeacherLoad !== false,
-            subjectPreferredPeriods: softRules.subjectPreferredPeriods || {},
+            subjectPreferredPeriods: normalizeSubjectPreferredPeriods(softRules.subjectPreferredPeriods),
         },
     };
 }
