@@ -15,6 +15,8 @@ import {
 import { bindGridInteractions } from './grid-interactions.js';
 import {
     ensureOwnerSelection,
+    getActivePeriods,
+    getActiveWeekdays,
 } from './selectors.js';
 import {
     cloneValue,
@@ -26,6 +28,7 @@ export class TimetablePlannerController {
     constructor() {
         this.state = createTimetablePlannerState();
         this.jobPollTimer = null;
+        this.rosterImportFile = null;
     }
 
     async init(container) {
@@ -58,6 +61,117 @@ export class TimetablePlannerController {
     applyProject(project) {
         this.state.project = project;
         this.state.selectedOwnerId = ensureOwnerSelection(this.state);
+        this.syncRangeDraftFromProject();
+    }
+
+    defaultWorkflowOpenSections() {
+        if (!this.state.project) return ['data'];
+        if (!(this.state.project.lessonPlans || []).length) return ['data'];
+        if ((this.state.ruleDraftPreview || []).length || (this.state.ruleWarnings || []).length) return ['rules'];
+        if ((this.state.project.schedule?.slots || []).length) return ['solve'];
+        return ['data'];
+    }
+
+    toggleWorkflowSection(section) {
+        const current = new Set(Array.isArray(this.state.workflowOpenSections)
+            ? this.state.workflowOpenSections
+            : this.defaultWorkflowOpenSections());
+        if (current.has(section)) {
+            current.delete(section);
+        } else {
+            current.add(section);
+        }
+        this.state.workflowOpenSections = [...current];
+        this.render();
+    }
+
+    syncRangeDraftFromProject() {
+        if (!this.state.project) {
+            this.state.rangeDraft = null;
+            return;
+        }
+        this.state.rangeDraft = {
+            activeWeekdays: getActiveWeekdays(this.state.project),
+            activePeriods: getActivePeriods(this.state.project),
+        };
+    }
+
+    updateRangeDraftFromForm() {
+        if (!this.state.container) return;
+        const payload = readProjectForm(this.state.container);
+        this.state.rangeDraft = {
+            activeWeekdays: payload.activeWeekdays,
+            activePeriods: payload.activePeriods,
+        };
+    }
+
+    resetRangeDraft() {
+        this.syncRangeDraftFromProject();
+        this.render();
+    }
+
+    rangePayloadFromDraft() {
+        const activeWeekdays = [...(this.state.rangeDraft?.activeWeekdays || getActiveWeekdays(this.state.project))].sort((left, right) => left - right);
+        const activePeriods = [...(this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        return {
+            activeWeekdays,
+            activePeriods,
+            weekdays: activeWeekdays.length ? Math.max(...activeWeekdays) : 5,
+            periodsPerDay: activePeriods.length ? Math.max(...activePeriods) : 7,
+        };
+    }
+
+    async applyRangeDraft() {
+        this.updateRangeDraftFromForm();
+        await this.saveProject(this.rangePayloadFromDraft());
+    }
+
+    updateBulkRuleDraftFromForm() {
+        if (!this.state.container) return;
+        const form = readBulkRuleForm(this.state.container);
+        this.state.bulkRuleDraft = {
+            ...(this.state.bulkRuleDraft || {}),
+            days: form.days,
+            periods: form.periods,
+        };
+    }
+
+    setCheckedValues(selector, values) {
+        const selected = new Set(values.map(Number));
+        this.state.container?.querySelectorAll(selector).forEach(input => {
+            input.checked = selected.has(Number(input.value));
+        });
+    }
+
+    applyRangePreset(kind, preset) {
+        const values = kind === 'weekdays'
+            ? preset === 'workdays'
+                ? [1, 2, 3, 4, 5]
+                : preset === 'all'
+                    ? [1, 2, 3, 4, 5, 6, 7]
+                    : getActiveWeekdays(this.state.project)
+            : preset === 'first7'
+                ? [1, 2, 3, 4, 5, 6, 7]
+                : preset === 'all'
+                    ? Array.from({ length: 12 }, (_, index) => index + 1)
+                    : getActivePeriods(this.state.project);
+        this.setCheckedValues(kind === 'weekdays' ? '[data-active-weekday]' : '[data-active-period]', values);
+        this.updateRangeDraftFromForm();
+    }
+
+    applyBulkPreset(kind, preset) {
+        const activeValues = kind === 'days' ? getActiveWeekdays(this.state.project) : getActivePeriods(this.state.project);
+        const values = preset === 'clear'
+            ? []
+            : kind === 'days'
+                ? preset === 'workdays'
+                    ? activeValues.filter(value => value <= 5)
+                    : activeValues
+                : preset === 'first7'
+                    ? activeValues.filter(value => value <= 7)
+                    : activeValues;
+        this.setCheckedValues(kind === 'days' ? '[data-bulk-day]' : '[data-bulk-period]', values);
+        this.updateBulkRuleDraftFromForm();
     }
 
     clearOptimizationPolling() {
@@ -71,6 +185,56 @@ export class TimetablePlannerController {
         this.state.ruleDraft = null;
         this.state.ruleDraftPreview = [];
         this.state.ruleWarnings = [];
+    }
+
+    readRosterImportText() {
+        return this.state.container?.querySelector('#tt-roster-import-text')?.value ?? this.state.rosterImport?.text ?? '';
+    }
+
+    resetRosterImport() {
+        this.rosterImportFile = null;
+        this.state.rosterImport = {
+            open: false,
+            mode: 'file',
+            fileName: '',
+            text: '',
+        };
+    }
+
+    openRosterImport(mode = 'file') {
+        this.state.rosterImport = {
+            ...(this.state.rosterImport || {}),
+            open: true,
+            mode: mode === 'text' ? 'text' : 'file',
+        };
+        this.render();
+    }
+
+    closeRosterImport() {
+        this.resetRosterImport();
+        this.render();
+    }
+
+    setRosterImportMode(mode) {
+        this.state.rosterImport = {
+            ...(this.state.rosterImport || {}),
+            open: true,
+            mode: mode === 'text' ? 'text' : 'file',
+            text: this.readRosterImportText(),
+        };
+        this.render();
+    }
+
+    selectRosterImportFile(file) {
+        this.rosterImportFile = file || null;
+        this.state.rosterImport = {
+            ...(this.state.rosterImport || {}),
+            open: true,
+            mode: 'file',
+            fileName: file?.name || '',
+            text: this.readRosterImportText(),
+        };
+        this.render();
     }
 
     startOptimizationPolling(job) {
@@ -119,11 +283,11 @@ export class TimetablePlannerController {
         }
     }
 
-    async saveProject() {
+    async saveProject(payload = null) {
         try {
             const result = await requestTimetable('/project', {
                 method: 'POST',
-                body: JSON.stringify(readProjectForm(this.state.container)),
+                body: JSON.stringify(payload || readProjectForm(this.state.container)),
             });
             this.applyProject(result.project);
             this.clearOptimizationPolling();
@@ -136,20 +300,31 @@ export class TimetablePlannerController {
     }
 
     fillSample() {
-        const textarea = this.state.container.querySelector('#tt-import-text');
-        if (textarea) textarea.value = sampleRosterText();
+        this.state.rosterImport = {
+            ...(this.state.rosterImport || {}),
+            open: true,
+            mode: 'text',
+            text: sampleRosterText(),
+        };
+        this.render();
     }
 
-    async importRoster() {
+    async confirmRosterImport() {
+        const text = this.readRosterImportText();
+        await this.importRoster({
+            file: this.state.rosterImport?.mode === 'file' ? this.rosterImportFile : null,
+            text,
+        });
+    }
+
+    async importRoster({ file = null, text = '' } = {}) {
         try {
-            const file = this.state.container.querySelector('#tt-import-file')?.files?.[0];
             let options;
             if (file) {
                 const body = new FormData();
                 body.append('file', file);
                 options = { method: 'POST', body };
             } else {
-                const text = this.state.container.querySelector('#tt-import-text')?.value || '';
                 options = { method: 'POST', body: JSON.stringify({ text }) };
             }
             const result = await requestTimetable('/roster/import', options);
@@ -159,6 +334,7 @@ export class TimetablePlannerController {
             this.clearOptimizationPolling();
             this.state.solverJob = null;
             this.clearRuleDraft();
+            this.resetRosterImport();
             this.setMessage(`已导入 ${result.import.count} 条任课信息。`);
         } catch (error) {
             this.handleError(error);

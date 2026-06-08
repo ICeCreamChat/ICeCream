@@ -242,7 +242,7 @@ test('timetable workbench shows fast generation and background optimization stat
   assert.match(inspector, /快速课表/);
   assert.doesNotMatch(panel + inspector, /姝ｅ湪|鏁欏姟|璇捐〃|鎺掕/);
 });
-test('timetable data setup uses active day and period chips instead of school term fields', () => {
+test('timetable data setup uses collapsible groups and compact active range dropdowns', () => {
   const state = sampleWorkbenchState({
     project: createDefaultTimetableProject({
       schoolName: 'Hidden School',
@@ -265,11 +265,24 @@ test('timetable data setup uses active day and period chips instead of school te
 
   assert.doesNotMatch(html, /name="schoolName"/);
   assert.doesNotMatch(html, /name="term"/);
+  assert.match(html, /data-tt-section-toggle="data"/);
+  assert.match(html, /data-tt-section-toggle="rules"/);
+  assert.match(html, /data-tt-section-toggle="solve"/);
+  assert.match(html, /class="[^"]*tt-workflow-panel[^"]*"/);
+  assert.match(html, /class="[^"]*tt-workflow-body[^"]*"/);
+  assert.match(html, /id="tt-range-weekdays-trigger"/);
+  assert.match(html, /id="tt-range-periods-trigger"/);
+  assert.match(html, /id="tt-apply-range"/);
+  assert.match(html, /data-tt-popover-close/);
   assert.match(html, /data-active-weekday="1"[^>]*checked/);
   assert.match(html, /data-active-weekday="3"[^>]*checked/);
   assert.match(html, /data-active-period="4"[^>]*checked/);
+  assert.doesNotMatch(html, /tt-chip-grid--range/);
   assert.match(html, /class="tt-roster-stats"/);
   assert.match(html, /id="tt-clear-roster"/);
+  assert.match(html, /id="tt-reopen-roster-import"/);
+  assert.doesNotMatch(html, /id="tt-import-text"/);
+  assert.doesNotMatch(html, /id="tt-import-roster"/);
   assert.doesNotMatch(html, /class="tt-plan-list"/);
   assert.doesNotMatch(html, /class="tt-plan-row"/);
   assert.match(html, /id="tt-rule-prompt"/);
@@ -277,6 +290,10 @@ test('timetable data setup uses active day and period chips instead of school te
   assert.match(html, /id="tt-confirm-rule-draft"/);
   assert.match(html, /id="tt-add-bulk-rule"/);
   assert.match(html, /id="tt-clear-rules"/);
+  assert.match(html, /id="tt-bulk-days-trigger"/);
+  assert.match(html, /id="tt-bulk-periods-trigger"/);
+  assert.match(html, /data-bulk-day="1"/);
+  assert.match(html, /data-bulk-period="4"/);
 
   assert.match(panel, /style="--tt-days:3"/);
   assert.match(panel, /data-day="1"/);
@@ -284,6 +301,101 @@ test('timetable data setup uses active day and period chips instead of school te
   assert.doesNotMatch(panel, /data-day="2"/);
   assert.match(panel, /data-period="4"/);
   assert.doesNotMatch(panel, /data-period="2"/);
+});
+
+test('timetable roster import is opened from a data card instead of permanent sidebar controls', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [],
+      classes: [],
+      subjects: [],
+      lessonPlans: [],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: null,
+    }),
+  });
+
+  const closed = renderWorkbench(state);
+  assert.match(closed, /id="tt-open-roster-import"/);
+  assert.match(closed, /class="[^"]*tt-roster-entry[^"]*"/);
+  assert.match(closed, /data-roster-import-trigger/);
+  assert.doesNotMatch(closed, /id="tt-import-text"/);
+  assert.doesNotMatch(closed, /id="tt-import-file"/);
+  assert.doesNotMatch(closed, /id="tt-import-roster"/);
+  assert.doesNotMatch(closed, /id="tt-roster-import-dialog"/);
+
+  const open = renderWorkbench({
+    ...state,
+    rosterImport: {
+      open: true,
+      mode: 'text',
+      fileName: '',
+      text: '',
+    },
+  });
+  assert.match(open, /id="tt-roster-import-dialog"/);
+  assert.match(open, /id="tt-roster-import-file"/);
+  assert.match(open, /id="tt-roster-import-text"/);
+  assert.match(open, /id="tt-fill-roster-sample"/);
+  assert.match(open, /id="tt-cancel-roster-import"/);
+  assert.match(open, /id="tt-confirm-roster-import"/);
+  assert.match(open, /data-roster-import-mode="file"/);
+  assert.match(open, /data-roster-import-mode="text"/);
+});
+
+test('timetable roster import controller exposes modal workflow methods and bindings', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const stateSource = await readFile(new URL('state.js', moduleRoot), 'utf8');
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(stateSource, /rosterImport:\s*{/);
+  assert.match(controllerSource, /openRosterImport\(/);
+  assert.match(controllerSource, /closeRosterImport\(/);
+  assert.match(controllerSource, /setRosterImportMode\(/);
+  assert.match(controllerSource, /selectRosterImportFile\(/);
+  assert.match(controllerSource, /confirmRosterImport\(/);
+  assert.match(controllerSource, /new FormData\(\)/);
+  assert.match(controllerSource, /#tt-roster-import-text/);
+  assert.match(interactionSource, /data-roster-import-trigger/);
+  assert.match(interactionSource, /#tt-reopen-roster-import/);
+  assert.match(interactionSource, /#tt-confirm-roster-import/);
+  assert.match(interactionSource, /#tt-cancel-roster-import/);
+  assert.match(interactionSource, /#tt-roster-import-file/);
+  assert.match(interactionSource, /\[data-roster-import-mode\]/);
+  assert.match(styles, /\.tt-dialog-overlay/);
+  assert.match(styles, /\.tt-roster-import-dialog/);
+  assert.match(styles, /\.tt-import-dropzone/);
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
+});
+
+test('timetable left sidebar range workflow is manually applied and keeps checkbox edits local', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+  const stateSource = await readFile(new URL('state.js', moduleRoot), 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(stateSource, /workflowOpenSections/);
+  assert.match(stateSource, /rangeDraft/);
+  assert.match(stateSource, /bulkRuleDraft/);
+  assert.match(controllerSource, /toggleWorkflowSection\(/);
+  assert.match(controllerSource, /updateRangeDraftFromForm\(/);
+  assert.match(controllerSource, /resetRangeDraft\(/);
+  assert.match(controllerSource, /applyRangeDraft\(/);
+  assert.match(interactionSource, /data-tt-section-toggle/);
+  assert.match(interactionSource, /#tt-apply-range/);
+  assert.match(interactionSource, /applyRangeDraft\(/);
+  assert.match(interactionSource, /\[data-active-weekday\]/);
+  assert.match(interactionSource, /\[data-active-period\]/);
+  assert.doesNotMatch(interactionSource, /\[data-active-weekday\][\s\S]{0,160}saveProject\(/);
+  assert.doesNotMatch(interactionSource, /\[data-active-period\][\s\S]{0,160}saveProject\(/);
+  assert.match(styles, /\.tt-workflow-panel/);
+  assert.match(styles, /\.tt-range-summary-grid/);
+  assert.match(styles, /\.tt-multi-select/);
+  assert.match(styles, /\.tt-multi-select-popover/);
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-multi-select-popover/);
 });
 
 test('timetable inspector surfaces data and AI rule audit summaries', () => {

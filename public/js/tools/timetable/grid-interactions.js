@@ -1,7 +1,53 @@
 export function bindGridInteractions(container, controller, state) {
+    container.querySelectorAll('[data-tt-section-toggle]').forEach(button => {
+        button.addEventListener('click', () => controller.toggleWorkflowSection(button.dataset.ttSectionToggle));
+    });
+    container.querySelector('#tt-apply-range')?.addEventListener('click', () => controller.applyRangeDraft());
+    container.querySelector('#tt-reset-range')?.addEventListener('click', () => controller.resetRangeDraft());
     container.querySelector('#tt-save-project')?.addEventListener('click', () => controller.saveProject());
-    container.querySelector('#tt-fill-sample')?.addEventListener('click', () => controller.fillSample());
-    container.querySelector('#tt-import-roster')?.addEventListener('click', () => controller.importRoster());
+    container.querySelectorAll('[data-active-weekday], [data-active-period]').forEach(input => {
+        input.addEventListener('change', () => controller.updateRangeDraftFromForm());
+    });
+    container.querySelectorAll('[data-range-preset]').forEach(button => {
+        button.addEventListener('click', () => {
+            const [kind, preset] = button.dataset.rangePreset.split(':');
+            controller.applyRangePreset(kind, preset);
+        });
+    });
+    container.querySelectorAll('[data-bulk-day], [data-bulk-period]').forEach(input => {
+        input.addEventListener('change', () => controller.updateBulkRuleDraftFromForm());
+    });
+    container.querySelectorAll('[data-bulk-preset]').forEach(button => {
+        button.addEventListener('click', () => {
+            const [kind, preset] = button.dataset.bulkPreset.split(':');
+            controller.applyBulkPreset(kind, preset);
+        });
+    });
+    container.querySelectorAll('[data-tt-popover-close]').forEach(button => {
+        button.addEventListener('click', () => button.closest('details')?.removeAttribute('open'));
+    });
+    container.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            container.querySelectorAll('details.tt-multi-select[open]').forEach(details => details.removeAttribute('open'));
+        }
+    });
+    container.querySelectorAll('[data-roster-import-trigger]').forEach(button => {
+        button.addEventListener('click', () => controller.openRosterImport('file'));
+    });
+    container.querySelector('#tt-reopen-roster-import')?.addEventListener('click', () => controller.openRosterImport('file'));
+    container.querySelector('#tt-fill-roster-sample')?.addEventListener('click', () => controller.fillSample());
+    container.querySelector('#tt-confirm-roster-import')?.addEventListener('click', () => controller.confirmRosterImport());
+    container.querySelector('#tt-cancel-roster-import')?.addEventListener('click', () => controller.closeRosterImport());
+    container.querySelector('#tt-cancel-roster-import-secondary')?.addEventListener('click', () => controller.closeRosterImport());
+    container.querySelector('#tt-roster-import-file')?.addEventListener('change', event => {
+        controller.selectRosterImportFile(event.target.files?.[0] || null);
+    });
+    container.querySelectorAll('[data-roster-import-mode]').forEach(button => {
+        button.addEventListener('click', () => controller.setRosterImportMode(button.dataset.rosterImportMode));
+    });
+    container.querySelector('[data-roster-import-close]')?.addEventListener('click', event => {
+        if (event.target === event.currentTarget) controller.closeRosterImport();
+    });
     container.querySelector('#tt-clear-roster')?.addEventListener('click', () => controller.clearRoster());
     container.querySelector('#tt-save-rules')?.addEventListener('click', () => controller.saveRules());
     container.querySelector('#tt-parse-rules')?.addEventListener('click', () => controller.parseRules());
@@ -9,7 +55,9 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-add-bulk-rule')?.addEventListener('click', () => controller.addBulkRule());
     container.querySelector('#tt-clear-rules')?.addEventListener('click', () => controller.clearRules());
     container.querySelector('#tt-add-lock')?.addEventListener('click', () => controller.addLockedSlot());
-    container.querySelector('#tt-run-schedule')?.addEventListener('click', () => controller.runSchedule());
+    container.querySelectorAll('#tt-run-schedule, [data-run-schedule]').forEach(button => {
+        button.addEventListener('click', () => controller.runSchedule());
+    });
 
     container.querySelector('#tt-owner-select')?.addEventListener('change', event => {
         state.selectedOwnerId = event.target.value;

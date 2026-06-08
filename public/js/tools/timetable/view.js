@@ -70,10 +70,10 @@ const PERIOD_OPTIONS = Array.from({ length: 12 }, (_, index) => ({
     label: `第${index + 1}节`,
 }));
 
-function renderRangeChips({ items, activeValues, dataAttr }) {
+function renderCheckList({ items, activeValues, dataAttr }) {
     const active = new Set(activeValues.map(Number));
     return `
-        <div class="tt-chip-grid tt-chip-grid--range">
+        <div class="tt-check-list">
             ${items.map(item => `
                 <label class="tt-check-chip">
                     <input type="checkbox" ${dataAttr}="${item.value}" value="${item.value}" ${active.has(item.value) ? 'checked' : ''}>
@@ -81,6 +81,101 @@ function renderRangeChips({ items, activeValues, dataAttr }) {
                 </label>
             `).join('')}
         </div>
+    `;
+}
+
+function isContiguous(values) {
+    return values.every((value, index) => index === 0 || value === values[index - 1] + 1);
+}
+
+function summarizeWeekdays(values = []) {
+    const sorted = [...values].map(Number).sort((left, right) => left - right);
+    if (!sorted.length) return '未选择';
+    if (sorted.length === 5 && sorted.every((value, index) => value === index + 1)) return '周一-周五';
+    if (sorted.length === 7) return '全周';
+    if (sorted.length > 2 && isContiguous(sorted)) return `周${dayName(sorted[0])}-周${dayName(sorted[sorted.length - 1])}`;
+    if (sorted.length > 4) return `${sorted.length} 天`;
+    return sorted.map(value => `周${dayName(value)}`).join('、');
+}
+
+function summarizePeriods(values = []) {
+    const sorted = [...values].map(Number).sort((left, right) => left - right);
+    if (!sorted.length) return '未选择';
+    if (sorted.length > 1 && isContiguous(sorted)) return `第${sorted[0]}-${sorted[sorted.length - 1]}节`;
+    if (sorted.length > 4) return `${sorted.length} 节`;
+    return sorted.map(value => `第${value}节`).join('、');
+}
+
+function renderPresetButtons(items, attr) {
+    return `
+        <div class="tt-preset-row">
+            ${items.map(item => `<button type="button" ${attr}="${escapeAttr(item.value)}">${escapeHtml(item.label)}</button>`).join('')}
+        </div>
+    `;
+}
+
+function renderMultiSelect({
+    id,
+    triggerId,
+    title,
+    summary,
+    items,
+    activeValues,
+    dataAttr,
+    presets = [],
+    presetAttr = 'data-range-preset',
+}) {
+    return `
+        <details class="tt-multi-select" data-tt-multi-select="${escapeAttr(id)}">
+            <summary class="tt-multi-select-trigger" id="${escapeAttr(triggerId)}">
+                <span>${escapeHtml(title)}</span>
+                <strong>${escapeHtml(summary)}</strong>
+                <i data-lucide="chevron-down"></i>
+            </summary>
+            <div class="tt-multi-select-popover">
+                <div class="tt-popover-header">
+                    <strong>${escapeHtml(title)}</strong>
+                    <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-tt-popover-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+                </div>
+                ${presets.length ? renderPresetButtons(presets, presetAttr) : ''}
+                ${renderCheckList({ items, activeValues, dataAttr })}
+                <div class="tt-popover-actions">
+                    <button class="tt-btn" type="button" data-tt-popover-close><i data-lucide="check"></i><span>完成</span></button>
+                </div>
+            </div>
+        </details>
+    `;
+}
+
+function getRangeDraft(state) {
+    return {
+        activeWeekdays: state.rangeDraft?.activeWeekdays || getActiveWeekdays(state.project),
+        activePeriods: state.rangeDraft?.activePeriods || getActivePeriods(state.project),
+    };
+}
+
+function defaultWorkflowOpenSections(state) {
+    if (Array.isArray(state.workflowOpenSections)) return new Set(state.workflowOpenSections);
+    if (!(state.project?.lessonPlans || []).length) return new Set(['data']);
+    if ((state.ruleDraftPreview || []).length || (state.ruleWarnings || []).length) return new Set(['rules']);
+    if ((state.project?.schedule?.slots || []).length) return new Set(['solve']);
+    return new Set(['data']);
+}
+
+function renderWorkflowPanel({ id, icon, title, chip = '', open, content }) {
+    return `
+        <section class="tt-section tt-workflow-panel ${open ? 'is-open' : ''}" data-workflow-step="${escapeAttr(id)}">
+            <button class="tt-section-title tt-workflow-toggle" type="button" data-tt-section-toggle="${escapeAttr(id)}" aria-expanded="${open ? 'true' : 'false'}">
+                <h3><i data-lucide="${escapeAttr(icon)}"></i><span>${escapeHtml(title)}</span></h3>
+                <span class="tt-workflow-title-meta">
+                    ${chip ? `<span class="tt-chip">${escapeHtml(chip)}</span>` : ''}
+                    <i data-lucide="chevron-down"></i>
+                </span>
+            </button>
+            <div class="tt-workflow-body" ${open ? '' : 'hidden'}>
+                ${content}
+            </div>
+        </section>
     `;
 }
 
@@ -102,6 +197,7 @@ export function renderWorkbench(state) {
             <aside class="tt-inspector">
                 ${renderInspector(state)}
             </aside>
+            ${renderRosterImportDialog(state)}
         </div>
     `;
 }
@@ -135,38 +231,86 @@ function renderTopbar(state) {
 }
 
 function renderWorkflow(state) {
+    const openSections = defaultWorkflowOpenSections(state);
+    const stats = getRosterStats(state.project);
+    const rules = getRuleSummary(state.project);
+    const readiness = getPreparedness(state.project);
     return `
         <div class="tt-workflow">
-            ${renderProjectSection(state)}
-            ${renderImportSection(state)}
-            ${renderRulesSection(state)}
-            ${renderSolveSection(state)}
-            ${renderExportSection()}
+            ${renderWorkflowPanel({
+                id: 'data',
+                icon: 'database',
+                title: '数据准备',
+                chip: `${stats.planCount} 条`,
+                open: openSections.has('data'),
+                content: `${renderProjectSection(state)}${renderImportSection(state)}`,
+            })}
+            ${renderWorkflowPanel({
+                id: 'rules',
+                icon: 'brain-circuit',
+                title: 'AI 约束',
+                chip: `${rules.total} 条`,
+                open: openSections.has('rules'),
+                content: renderRulesSection(state),
+            })}
+            ${renderWorkflowPanel({
+                id: 'solve',
+                icon: 'sparkles',
+                title: '生成导出',
+                chip: readiness.ready ? '就绪' : '待准备',
+                open: openSections.has('solve'),
+                content: `${renderSolveSection(state)}${renderExportSection()}`,
+            })}
         </div>
     `;
 }
 
 function renderProjectSection(state) {
     const { project } = state;
-    const activeWeekdays = getActiveWeekdays(project);
-    const activePeriods = getActivePeriods(project);
+    const { activeWeekdays, activePeriods } = getRangeDraft(state);
     return `
-        <section class="tt-section" data-workflow-step="data">
-            <div class="tt-section-title">
-                <h3><i data-lucide="calendar-days"></i><span>排课范围</span></h3>
-                <button class="tt-icon-btn" id="tt-save-project" type="button" title="保存范围" aria-label="保存范围"><i data-lucide="save"></i></button>
+        <div class="tt-setup-card" data-workflow-step="data">
+            <div class="tt-subsection-title">
+                <h4><i data-lucide="calendar-days"></i><span>排课范围</span></h4>
+                <span class="tt-chip">${activeWeekdays.length} 天 · ${activePeriods.length} 节</span>
             </div>
             <form id="tt-project-form" class="tt-range-form">
-                <div class="tt-rule-block">
-                    <span class="tt-rule-title">可用周几</span>
-                    ${renderRangeChips({ items: WEEKDAY_OPTIONS, activeValues: activeWeekdays, dataAttr: 'data-active-weekday' })}
+                <div class="tt-action-row tt-range-actions">
+                    <button class="tt-btn" id="tt-reset-range" type="button"><i data-lucide="rotate-ccw"></i><span>恢复已保存</span></button>
+                    <button class="tt-btn tt-btn--primary" id="tt-apply-range" type="button"><i data-lucide="check"></i><span>应用范围</span></button>
                 </div>
-                <div class="tt-rule-block">
-                    <span class="tt-rule-title">可用节次</span>
-                    ${renderRangeChips({ items: PERIOD_OPTIONS, activeValues: activePeriods, dataAttr: 'data-active-period' })}
+                <div class="tt-range-summary-grid">
+                    ${renderMultiSelect({
+                        id: 'range-weekdays',
+                        triggerId: 'tt-range-weekdays-trigger',
+                        title: '可用周几',
+                        summary: summarizeWeekdays(activeWeekdays),
+                        items: WEEKDAY_OPTIONS,
+                        activeValues: activeWeekdays,
+                        dataAttr: 'data-active-weekday',
+                        presets: [
+                            { value: 'weekdays:workdays', label: '工作日' },
+                            { value: 'weekdays:all', label: '全周' },
+                            { value: 'weekdays:saved', label: '恢复已保存' },
+                        ],
+                    })}
+                    ${renderMultiSelect({
+                        id: 'range-periods',
+                        triggerId: 'tt-range-periods-trigger',
+                        title: '可用节次',
+                        summary: summarizePeriods(activePeriods),
+                        items: PERIOD_OPTIONS,
+                        activeValues: activePeriods,
+                        dataAttr: 'data-active-period',
+                        presets: [
+                            { value: 'periods:first7', label: '第1-7节' },
+                            { value: 'periods:all', label: '全部节次' },
+                            { value: 'periods:saved', label: '恢复已保存' },
+                        ],
+                    })}
                 </div>
             </form>
-        </section>
+        </div>
     `;
 }
 
@@ -175,30 +319,65 @@ function renderImportSection(state) {
     const stats = getRosterStats(project);
     const hasRoster = stats.planCount > 0;
     return `
-        <section class="tt-section" data-workflow-step="data">
-            <div class="tt-section-title">
-                <h3><i data-lucide="database"></i><span>任课数据</span></h3>
+        <div class="tt-setup-card" data-workflow-step="data">
+            <div class="tt-subsection-title">
+                <h4><i data-lucide="file-input"></i><span>任课数据</span></h4>
                 <span class="tt-chip">${stats.planCount} 条</span>
             </div>
-            ${hasRoster ? renderRosterStats(stats) : `
-                <div class="tt-empty-card">
-                    <i data-lucide="file-input"></i>
-                    <strong>等待导入任课数据</strong>
-                    <span>导入年级、班级、课程、教师和周课时后再生成统计。</span>
+            ${hasRoster ? `
+                ${renderRosterStats(stats)}
+                <div class="tt-action-row">
+                    <button class="tt-btn" id="tt-reopen-roster-import" type="button"><i data-lucide="refresh-cw"></i><span>重新导入</span></button>
+                    <button class="tt-btn tt-btn--danger" id="tt-clear-roster" type="button"><i data-lucide="trash-2"></i><span>清空</span></button>
                 </div>
+            ` : `
+                <button class="tt-empty-card tt-roster-entry" id="tt-open-roster-import" data-roster-import-trigger type="button">
+                    <i data-lucide="file-input"></i>
+                    <strong>导入任课数据</strong>
+                    <span>导入年级、班级、课程、教师和周课时后再生成统计。</span>
+                </button>
             `}
-            <textarea id="tt-import-text" class="tt-import-text" spellcheck="false" placeholder="年级,班级,课程,教师,周课时,连堂"></textarea>
-            <div class="tt-action-row">
-                <label class="tt-file-btn" title="选择任课文件">
-                    <i data-lucide="paperclip"></i>
-                    <span>文件</span>
-                    <input id="tt-import-file" type="file" accept=".csv,.txt,.xlsx,.xls">
+        </div>
+    `;
+}
+
+function renderRosterImportDialog(state) {
+    const dialog = state.rosterImport || {};
+    if (!dialog.open) return '';
+    const mode = dialog.mode === 'text' ? 'text' : 'file';
+    const fileName = dialog.fileName || '选择 CSV / TXT / Excel 文件';
+    return `
+        <div class="tt-dialog-overlay" data-roster-import-close>
+            <section class="tt-roster-import-dialog" id="tt-roster-import-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-roster-import-title">
+                <div class="tt-dialog-header">
+                    <div>
+                        <span class="tt-eyebrow">任课数据</span>
+                        <h3 id="tt-roster-import-title">导入任课数据</h3>
+                        <p>支持文件上传或粘贴文本，确认后生成统计并清空旧课表。</p>
+                    </div>
+                    <button class="tt-icon-btn" id="tt-cancel-roster-import" type="button" title="关闭导入" aria-label="关闭导入"><i data-lucide="x"></i></button>
+                </div>
+                <div class="tt-segment tt-import-mode-tabs" role="group" aria-label="导入方式">
+                    <button class="${mode === 'file' ? 'is-active' : ''}" type="button" data-roster-import-mode="file">上传文件</button>
+                    <button class="${mode === 'text' ? 'is-active' : ''}" type="button" data-roster-import-mode="text">粘贴文本</button>
+                </div>
+                <label class="tt-import-dropzone ${mode === 'file' ? 'is-active' : ''}">
+                    <i data-lucide="upload-cloud"></i>
+                    <strong>${escapeHtml(fileName)}</strong>
+                    <span>.csv / .txt / .xlsx / .xls</span>
+                    <input id="tt-roster-import-file" type="file" accept=".csv,.txt,.xlsx,.xls">
                 </label>
-                <button class="tt-btn" id="tt-fill-sample" type="button"><i data-lucide="wand-sparkles"></i><span>示例</span></button>
-                <button class="tt-btn tt-btn--primary" id="tt-import-roster" type="button"><i data-lucide="upload"></i><span>导入</span></button>
-                ${hasRoster ? '<button class="tt-btn tt-btn--danger" id="tt-clear-roster" type="button"><i data-lucide="trash-2"></i><span>清空</span></button>' : ''}
-            </div>
-        </section>
+                <div class="tt-rule-block ${mode === 'text' ? 'is-active' : ''}">
+                    <span class="tt-rule-title">粘贴任课数据</span>
+                    <textarea id="tt-roster-import-text" class="tt-import-text" spellcheck="false" placeholder="年级,班级,课程,教师,周课时,连堂">${escapeHtml(dialog.text || '')}</textarea>
+                </div>
+                <div class="tt-dialog-actions">
+                    <button class="tt-btn" id="tt-fill-roster-sample" type="button"><i data-lucide="wand-sparkles"></i><span>示例</span></button>
+                    <button class="tt-btn" id="tt-cancel-roster-import-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
+                    <button class="tt-btn tt-btn--primary" id="tt-confirm-roster-import" type="button"><i data-lucide="upload"></i><span>确认导入</span></button>
+                </div>
+            </section>
+        </div>
     `;
 }
 
@@ -228,14 +407,8 @@ function renderRosterStats(stats) {
 function renderRulesSection(state) {
     const { project } = state;
     const hard = project.rules?.hardRules || {};
-    const soft = project.rules?.softRules || {};
-    const ruleSummary = getRuleSummary(project);
     return `
-        <section class="tt-section" data-workflow-step="rules">
-            <div class="tt-section-title">
-                <h3><i data-lucide="brain-circuit"></i><span>AI 约束</span></h3>
-                <span class="tt-chip">${ruleSummary.total} 条</span>
-            </div>
+        <div class="tt-rule-stack" data-workflow-step="rules">
             <div class="tt-rule-block">
                 <span class="tt-rule-title">自然语言描述</span>
                 <textarea id="tt-rule-prompt" class="tt-import-text tt-rule-prompt" spellcheck="false" placeholder="例如：王老师周三下午不要排课，语数英尽量上午，七年级1班周五第7节不要排"></textarea>
@@ -248,7 +421,7 @@ function renderRulesSection(state) {
             </div>
             <div class="tt-rule-block">
                 <span class="tt-rule-title">批量手动编辑</span>
-                ${renderBulkRuleEditor(project)}
+                ${renderBulkRuleEditor(state)}
             </div>
             <div class="tt-rule-block">
                 <span class="tt-rule-title">锁定课节</span>
@@ -262,7 +435,7 @@ function renderRulesSection(state) {
                 <button class="tt-btn" id="tt-add-lock" type="button"><i data-lucide="lock"></i><span>添加锁定</span></button>
                 <div class="tt-lock-list">${(hard.lockedSlots || []).map((slot, index) => renderLockedSlot(project, slot, index)).join('') || '<span class="tt-muted">暂无锁定课节</span>'}</div>
             </div>
-        </section>
+        </div>
     `;
 }
 
@@ -315,7 +488,13 @@ function renderBulkTargets(project) {
     `).join('');
 }
 
-function renderBulkRuleEditor(project) {
+function renderBulkRuleEditor(state) {
+    const project = state.project;
+    const bulkDraft = state.bulkRuleDraft || {};
+    const bulkDays = bulkDraft.days || [];
+    const bulkPeriods = bulkDraft.periods || [];
+    const dayItems = getActiveWeekdays(project).map(value => ({ value, label: `周${dayName(value)}` }));
+    const periodItems = getActivePeriods(project).map(value => ({ value, label: `第${value}节` }));
     return `
         <div class="tt-form-grid">
             <label><span>规则类型</span>
@@ -328,10 +507,38 @@ function renderBulkRuleEditor(project) {
         </div>
         ${renderBulkTargets(project)}
         <div class="tt-bulk-range">
-            <span class="tt-rule-title">周几</span>
-            ${renderRangeChips({ items: getActiveWeekdays(project).map(value => ({ value, label: `周${dayName(value)}` })), activeValues: [], dataAttr: 'data-bulk-day' })}
-            <span class="tt-rule-title">节次</span>
-            ${renderRangeChips({ items: getActivePeriods(project).map(value => ({ value, label: `第${value}节` })), activeValues: [], dataAttr: 'data-bulk-period' })}
+            <div class="tt-range-summary-grid">
+                ${renderMultiSelect({
+                    id: 'bulk-days',
+                    triggerId: 'tt-bulk-days-trigger',
+                    title: '规则周几',
+                    summary: summarizeWeekdays(bulkDays),
+                    items: dayItems,
+                    activeValues: bulkDays,
+                    dataAttr: 'data-bulk-day',
+                    presetAttr: 'data-bulk-preset',
+                    presets: [
+                        { value: 'days:workdays', label: '工作日' },
+                        { value: 'days:all', label: '当前全部' },
+                        { value: 'days:clear', label: '清空' },
+                    ],
+                })}
+                ${renderMultiSelect({
+                    id: 'bulk-periods',
+                    triggerId: 'tt-bulk-periods-trigger',
+                    title: '规则节次',
+                    summary: summarizePeriods(bulkPeriods),
+                    items: periodItems,
+                    activeValues: bulkPeriods,
+                    dataAttr: 'data-bulk-period',
+                    presetAttr: 'data-bulk-preset',
+                    presets: [
+                        { value: 'periods:first7', label: '第1-7节' },
+                        { value: 'periods:all', label: '当前全部' },
+                        { value: 'periods:clear', label: '清空' },
+                    ],
+                })}
+            </div>
         </div>
         <button class="tt-btn" id="tt-add-bulk-rule" type="button"><i data-lucide="list-plus"></i><span>添加批量规则</span></button>
     `;
@@ -353,6 +560,9 @@ function renderSolveSection(state) {
             <p class="tt-compact-copy">${placed}/${total} 已排 · ${score.hardConflicts ?? 0} 硬冲突</p>
             <p class="tt-compact-copy">${escapeHtml(readiness.message)}</p>
             ${scaleMessage ? `<p class="tt-compact-copy tt-compact-copy--warn">${escapeHtml(scaleMessage)}</p>` : ''}
+            <button class="tt-btn tt-btn--primary" data-run-schedule type="button" ${state.loading || !readiness.ready ? 'disabled' : ''}>
+                <i data-lucide="${state.loading ? 'loader-2' : 'play'}"></i><span>${state.loading ? '快速生成中' : '快速生成'}</span>
+            </button>
         </section>
     `;
 }

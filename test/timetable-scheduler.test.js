@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -69,7 +68,55 @@ function sampleProject(overrides = {}) {
 }
 
 function largeTimetableProject() {
-    return JSON.parse(readFileSync(new URL('../data/timetable/projects.json', import.meta.url), 'utf8')).project;
+    const subjects = [
+        { id: 'chinese', name: 'Chinese', priority: 100, color: '#14b8a6', weeklyHours: 4 },
+        { id: 'math', name: 'Math', priority: 95, color: '#60a5fa', weeklyHours: 4 },
+        { id: 'english', name: 'English', priority: 90, color: '#f59e0b', weeklyHours: 4 },
+        { id: 'history', name: 'History', priority: 65, color: '#f97316', weeklyHours: 4 },
+        { id: 'geography', name: 'Geography', priority: 60, color: '#a78bfa', weeklyHours: 4 },
+        { id: 'pe', name: 'PE', priority: 30, color: '#06b6d4', weeklyHours: 3 },
+    ];
+    const classes = Array.from({ length: 30 }, (_, index) => ({
+        id: `c${index + 1}`,
+        grade: 'G7',
+        name: `${index + 1}`,
+    }));
+    const teachers = [];
+    const lessonPlans = [];
+
+    for (const klass of classes) {
+        for (const subject of subjects) {
+            const teacherId = `t_${subject.id}_${klass.id}`;
+            teachers.push({
+                id: teacherId,
+                name: `${subject.name} ${klass.name}`,
+                subjects: [subject.id],
+                unavailableSlots: [],
+            });
+            lessonPlans.push({
+                id: `lp_${klass.id}_${subject.id}`,
+                classId: klass.id,
+                subjectId: subject.id,
+                teacherId,
+                weeklyHours: subject.weeklyHours,
+                blockPreference: subject.id === 'pe' ? 'double' : 'single',
+            });
+        }
+    }
+
+    return createDefaultTimetableProject({
+        schoolName: 'ICeCream School',
+        term: '2026',
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers,
+        classes,
+        subjects,
+        lessonPlans,
+        rules: { hardRules: {}, softRules: { morningSubjects: ['chinese', 'math', 'english'] } },
+    });
 }
 
 async function waitFor(predicate, timeoutMs = 1000) {
