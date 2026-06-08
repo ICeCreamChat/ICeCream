@@ -15,6 +15,10 @@ import {
     getTimetableOptimizationJob,
     resetTimetableOptimizationJobs,
 } from '../gateway/services/timetable-optimization-jobs.js';
+import {
+    parseTimetableRules,
+    TimetableRuleParseError,
+} from '../gateway/services/timetable-rule-parser.js';
 import { createTimetableStore } from '../gateway/services/timetable-store.js';
 import { validateTimetableProjectForSolve } from '../gateway/services/timetable-validation.js';
 import {
@@ -196,6 +200,43 @@ test('fast timetable scheduler only places lessons inside active day and period 
     assert.equal(result.schedule.slots.every(slot => [2, 4].includes(slot.day)), true);
     assert.equal(result.schedule.slots.every(slot => [3, 5].includes(slot.period)), true);
     assert.equal(result.schedule.score.hardConflicts, 0);
+});
+
+test('fast timetable scheduler scores subject preferred and avoided periods', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 2,
+        activeWeekdays: [1],
+        activePeriods: [1, 2],
+        teachers: [
+            { id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_pe', name: 'PE Teacher', subjects: ['pe'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [
+            { id: 'math', name: 'Math', priority: 90, color: '#2563eb' },
+            { id: 'pe', name: 'PE', priority: 30, color: '#16a34a' },
+        ],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1, roomId: 'room-a' },
+            { id: 'lp_pe', classId: 'c1', subjectId: 'pe', teacherId: 't_pe', weeklyHours: 1 },
+        ],
+        rules: {
+            hardRules: {},
+            softRules: {
+                subjectPreferredPeriods: {
+                    math: { prefer: ['1-2'], avoid: ['1-1'], weight: 40 },
+                },
+            },
+        },
+    });
+
+    const result = runTimetableScheduler(project);
+    const math = result.schedule.slots.find(slot => slot.subjectId === 'math');
+
+    assert.equal(result.success, true);
+    assert.equal(math.day, 1);
+    assert.equal(math.period, 2);
 });
 
 test('timetable scheduler creates a reproducible conflict-free schedule', () => {
@@ -471,7 +512,7 @@ test('timetable roster parser imports teachers, classes, subjects and lesson pla
     assert.equal(parsed.lessonPlans.find(plan => plan.subjectName === '体育').blockPreference, 'double');
 });
 
-function makeTimetableWorkbook(rows) {
+function makeTimetableWorkbook(rows, { sheetName = 'Sheet1' } = {}) {
     const zip = new AdmZip();
     const strings = [];
     const stringIndex = new Map();
@@ -493,6 +534,30 @@ function makeTimetableWorkbook(rows) {
             ${row.map((cell, columnIndex) => `<c r="${columnName(columnIndex)}${rowIndex + 1}" t="s"><v>${getStringIndex(cell)}</v></c>`).join('')}
         </row>
     `).join('');
+    zip.addFile('[Content_Types].xml', Buffer.from(`
+        <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+            <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+            <Default Extension="xml" ContentType="application/xml"/>
+            <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+            <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+            <Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>
+        </Types>
+    `));
+    zip.addFile('_rels/.rels', Buffer.from(`
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+        </Relationships>
+    `));
+    zip.addFile('xl/workbook.xml', Buffer.from(`
+        <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+            <sheets><sheet name="${xmlEscape(sheetName)}" sheetId="1" r:id="rId1"/></sheets>
+        </workbook>
+    `));
+    zip.addFile('xl/_rels/workbook.xml.rels', Buffer.from(`
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+            <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+        </Relationships>
+    `));
     zip.addFile('xl/sharedStrings.xml', Buffer.from(`<sst>${strings.map(value => `<si><t>${xmlEscape(value)}</t></si>`).join('')}</sst>`));
     zip.addFile('xl/worksheets/sheet1.xml', Buffer.from(`<worksheet><sheetData>${sheetRows}</sheetData></worksheet>`));
     return zip.toBuffer();
@@ -512,6 +577,114 @@ test('timetable roster preview parses Excel draft rows with teachers and rooms b
     assert.equal(preview.draftRows[0].roomName, 'Lab 1、Lab 2');
     assert.equal(preview.stats.planCount, 1);
     assert.equal(preview.issues.filter(issue => issue.severity === 'error').length, 0);
+});
+
+test('timetable AI rules parser derives local suggestions from roster Excel when AI is unavailable', async () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [
+            { id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_english', name: 'English Teacher', subjects: ['english'], unavailableSlots: [] },
+            { id: 't_pe', name: 'PE Teacher', subjects: ['pe'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [
+            { id: 'math', name: 'Math', priority: 90, color: '#2563eb' },
+            { id: 'english', name: 'English', priority: 90, color: '#60a5fa' },
+            { id: 'pe', name: 'PE', priority: 30, color: '#16a34a' },
+        ],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = await parseTimetableRules({
+        file: {
+            filename: 'teacher-roster.xlsx',
+            buffer: makeTimetableWorkbook([
+                ['grade', 'class', 'subject', 'teacher', 'hours', 'block'],
+                ['G7', '1', 'Math', 'Math Teacher', '5', 'single'],
+                ['G7', '1', 'English', 'English Teacher', '4', 'single'],
+                ['G7', '1', 'PE', 'PE Teacher', '3', 'mixed'],
+            ]),
+        },
+        project,
+        env: {},
+    });
+
+    assert.equal(result.inputType, 'xlsx_roster');
+    assert.equal(result.source, 'local_roster_fallback');
+    assert.equal(result.contextStats.totalLessons, 12);
+    assert.deepEqual(result.draftRules.softRules.morningSubjects.sort(), ['english', 'math']);
+    assert.ok(result.previewItems.some(item => item.type === 'subject_morning' && item.status === 'ready'));
+    assert.ok(result.previewItems.some(item => item.type === 'block_protection' && item.status === 'suggestion'));
+    assert.ok(result.unsupportedItems.length >= 1);
+});
+
+test('timetable AI rules parser sends constraint Excel to AI and maps preferred period rules', async () => {
+    const project = sampleProject({
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+    });
+    let observedPrompt = '';
+
+    const result = await parseTimetableRules({
+        file: {
+            filename: 'constraints.xlsx',
+            buffer: makeTimetableWorkbook([
+                ['rule name', 'type', 'target', 'slots', 'natural language constraint'],
+                ['Math later', 'subject_preferred_periods', 'Math', '1-2', 'Math should be at Monday period 2.'],
+                ['PE not first', 'subject_avoid_periods', 'PE', '1-1', 'PE should avoid Monday period 1.'],
+            ], { sheetName: 'AIConstraints' }),
+        },
+        project,
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        fetchImpl: async (url, options = {}) => {
+            assert.equal(String(url), 'http://ai.test/chat/completions');
+            const request = JSON.parse(options.body);
+            observedPrompt = JSON.stringify(request.messages);
+            return jsonResponse({
+                choices: [{
+                    message: {
+                        content: JSON.stringify({
+                            constraints: [
+                                { type: 'subject_preferred_periods', targetId: 'math', slots: ['1-2'], priority: 'soft', reason: 'Preferred time' },
+                                { type: 'subject_avoid_periods', targetId: 'pe', slots: ['1-1'], priority: 'soft', reason: 'Avoid early PE' },
+                                { type: 'teacher_load_balance', target: 'Math Teacher', priority: 'soft', reason: 'Balance workload' },
+                            ],
+                        }),
+                    },
+                }],
+            });
+        },
+    });
+
+    assert.equal(result.inputType, 'xlsx_constraints');
+    assert.equal(result.source, 'ai');
+    assert.match(observedPrompt, /Math should be at Monday period 2/);
+    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.math.prefer, ['1-2']);
+    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.avoid, ['1-1']);
+    assert.ok(result.previewItems.some(item => item.type === 'teacher_load_balance' && item.status === 'suggestion'));
+    assert.ok(result.unsupportedItems.some(item => item.type === 'teacher_load_balance'));
+});
+
+test('timetable constraint Excel requires AI when it is not a roster table', async () => {
+    await assert.rejects(
+        () => parseTimetableRules({
+            file: {
+                filename: 'constraints.xlsx',
+                buffer: makeTimetableWorkbook([
+                    ['rule name', 'natural language constraint'],
+                    ['Teacher unavailable', 'Math Teacher cannot teach Monday period 1.'],
+                ], { sheetName: 'AIConstraints' }),
+            },
+            project: sampleProject(),
+            env: {},
+        }),
+        error => error instanceof TimetableRuleParseError && error.reason === 'ai_not_configured',
+    );
 });
 
 test('timetable store persists project data atomically in a local data directory', async () => {
@@ -1097,6 +1270,86 @@ test('timetable rules parse API returns an editable AI draft without saving it',
         const confirmed = await confirmResponse.json();
         assert.equal(confirmResponse.status, 200);
         assert.deepEqual(confirmed.data.project.rules.hardRules.teacherUnavailable.t_math, ['3-4']);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        globalThis.fetch = nativeFetch;
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+        if (previousApiKey === undefined) {
+            delete process.env.DEEPSEEK_API_KEY;
+        } else {
+            process.env.DEEPSEEK_API_KEY = previousApiKey;
+        }
+        if (previousApiBase === undefined) {
+            delete process.env.DEEPSEEK_API_BASE;
+        } else {
+            process.env.DEEPSEEK_API_BASE = previousApiBase;
+        }
+    }
+});
+
+test('timetable rules parse API accepts multipart Excel without saving the draft', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousApiKey = process.env.DEEPSEEK_API_KEY;
+    const previousApiBase = process.env.DEEPSEEK_API_BASE;
+    const nativeFetch = globalThis.fetch;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-rules-xlsx-'));
+    process.env.DEEPSEEK_API_KEY = 'test-key';
+    process.env.DEEPSEEK_API_BASE = 'http://ai.test';
+
+    const store = createTimetableStore();
+    await store.saveProject(sampleProject({
+        rules: { hardRules: {}, softRules: {} },
+    }));
+
+    globalThis.fetch = async (url, options = {}) => {
+        const target = String(url);
+        if (!target.startsWith('http://ai.test')) return nativeFetch(url, options);
+        return jsonResponse({
+            choices: [{
+                message: {
+                    content: JSON.stringify({
+                        constraints: [
+                            { type: 'subject_preferred_periods', targetId: 'math', slots: ['2-1'], priority: 'soft', reason: 'Prefer Monday' },
+                        ],
+                    }),
+                },
+            }],
+        });
+    };
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const form = new FormData();
+        form.append('file', new Blob([makeTimetableWorkbook([
+            ['rule name', 'natural language constraint'],
+            ['Math preferred', 'Math should prefer Tuesday period 1.'],
+        ], { sheetName: 'AIConstraints' })]), 'constraints.xlsx');
+
+        const response = await fetch(`${baseUrl}/api/tools/timetable/rules/parse`, {
+            method: 'POST',
+            body: form,
+        });
+        const payload = await response.json();
+
+        assert.equal(response.status, 200);
+        assert.equal(payload.success, true);
+        assert.equal(payload.data.inputType, 'xlsx_constraints');
+        assert.deepEqual(payload.data.draftRules.softRules.subjectPreferredPeriods.math.prefer, ['2-1']);
+
+        const stored = await store.loadProject();
+        assert.deepEqual(stored.rules.softRules.subjectPreferredPeriods || {}, {});
     } finally {
         await new Promise(resolve => server.close(resolve));
         globalThis.fetch = nativeFetch;

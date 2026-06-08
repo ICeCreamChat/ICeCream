@@ -163,12 +163,13 @@ router.post('/rules', async (req, res) => {
     }
 });
 
-router.post('/rules/parse', async (req, res) => {
+router.post('/rules/parse', upload.single('file'), async (req, res) => {
     let current = null;
     try {
         current = await store().loadProject();
         const parsed = await parseTimetableRules({
             text: req.body?.text || '',
+            file: req.file ? { buffer: req.file.buffer, filename: req.file.originalname } : null,
             project: current,
         });
         ok(res, parsed);

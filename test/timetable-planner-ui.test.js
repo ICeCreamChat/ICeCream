@@ -297,6 +297,9 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.doesNotMatch(html, /class="tt-plan-list"/);
   assert.doesNotMatch(html, /class="tt-plan-row"/);
   assert.match(html, /id="tt-rule-prompt"/);
+  assert.match(html, /id="tt-rule-file"/);
+  assert.match(html, /accept="\.xlsx,\.xls"/);
+  assert.match(html, /id="tt-rule-file-name"/);
   assert.match(html, /id="tt-parse-rules"/);
   assert.match(html, /id="tt-confirm-rule-draft"/);
   assert.match(html, /id="tt-add-bulk-rule"/);
@@ -436,6 +439,54 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-roster-review-table/);
   assert.match(styles, /\.tt-roster-review-row--error/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
+});
+
+test('timetable AI rules support Excel file upload and rich preview metadata', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const stateSource = await readFile(new URL('state.js', moduleRoot), 'utf8');
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  const state = sampleWorkbenchState({
+    ruleFileName: 'constraints.xlsx',
+    ruleDraftInputType: 'xlsx_constraints',
+    ruleContextStats: { classCount: 30, teacherCount: 62, subjectCount: 14, totalLessons: 900 },
+    ruleDraftPreview: [{
+      id: 'draft-1',
+      type: 'subject_preferred_periods',
+      targetName: 'Math',
+      slots: ['1-2'],
+      priority: 'soft',
+      status: 'ready',
+      description: 'Prefer period',
+    }, {
+      id: 'draft-2',
+      type: 'teacher_load_balance',
+      targetName: 'All teachers',
+      slots: [],
+      priority: 'soft',
+      status: 'suggestion',
+      description: 'Suggestion only',
+    }],
+  });
+  const html = renderWorkbench(state);
+
+  assert.match(html, /constraints\.xlsx/);
+  assert.match(html, /xlsx_constraints/);
+  assert.match(html, /subject_preferred_periods/);
+  assert.match(html, /teacher_load_balance/);
+  assert.match(html, /suggestion/);
+  assert.match(html, /30/);
+  assert.match(stateSource, /ruleFileName/);
+  assert.match(stateSource, /ruleDraftInputType/);
+  assert.match(stateSource, /ruleContextStats/);
+  assert.match(stateSource, /ruleUnsupportedItems/);
+  assert.match(controllerSource, /selectRuleParseFile\(/);
+  assert.match(controllerSource, /this\.ruleParseFile/);
+  assert.match(controllerSource, /body\.append\('file', this\.ruleParseFile\)/);
+  assert.match(interactionSource, /#tt-rule-file/);
+  assert.match(interactionSource, /selectRuleParseFile/);
+  assert.match(styles, /\.tt-rule-file-entry/);
 });
 
 test('timetable left sidebar range workflow applies only from the range popover done button', async () => {
