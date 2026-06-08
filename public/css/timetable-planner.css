@@ -1,56 +1,75 @@
 .tt-workbench {
+    --tt-primary: #0891b2;
+    --tt-primary-hover: #06b6d4;
+    --tt-primary-glow: 0 0 20px rgba(8, 145, 178, 0.35);
+    --tt-success: #10b981;
+    --tt-warning: #f59e0b;
+    --tt-danger: #ef4444;
     --tt-bg-page: transparent;
-    --tt-bg-panel: var(--glass-panel);
-    --tt-bg-soft: color-mix(in srgb, var(--glass-panel) 76%, var(--pm-surface, var(--bg-base)) 24%);
-    --tt-bg-input: color-mix(in srgb, var(--glass-panel) 82%, var(--bg-base) 18%);
-    --tt-border: var(--glass-border);
-    --tt-border-strong: color-mix(in srgb, var(--accent-color) 34%, var(--glass-border));
-    --tt-text: var(--text-primary);
-    --tt-muted: var(--text-secondary);
-    --tt-primary: var(--accent-color);
-    --tt-primary-strong: color-mix(in srgb, var(--accent-color) 82%, var(--pm-primary, #3b82f6) 18%);
-    --tt-success: var(--manim-studio-success);
-    --tt-warning: var(--manim-studio-warning);
-    --tt-danger: var(--manim-studio-error);
-    --tt-shadow: var(--shadow-depth);
+    --tt-bg-base: #0f172a;
+    --tt-bg-panel: rgba(30, 41, 59, 0.85);
+    --tt-bg-soft: rgba(51, 65, 85, 0.9);
+    --tt-bg-input: rgba(15, 23, 42, 0.6);
+    --tt-border: rgba(148, 163, 184, 0.15);
+    --tt-border-strong: rgba(148, 163, 184, 0.3);
+    --tt-text: #f1f5f9;
+    --tt-text-secondary: #cbd5e1;
+    --tt-muted: #94a3b8;
+    --tt-space-xs: 4px;
+    --tt-space-sm: 8px;
+    --tt-space-md: 16px;
+    --tt-space-lg: 24px;
+    --tt-radius-sm: 6px;
+    --tt-radius-md: 10px;
+    --tt-radius-lg: 16px;
+    --tt-radius-xl: 20px;
+    --tt-transition-fast: 150ms ease;
+    --tt-transition-normal: 200ms ease;
     display: grid;
     grid-template-columns: 300px minmax(520px, 1fr) 300px;
     grid-template-rows: auto minmax(0, 1fr);
     grid-template-areas:
         "topbar topbar topbar"
         "sidebar schedule inspector";
-    gap: 12px;
+    gap: var(--tt-space-md);
     height: 100%;
     min-height: 0;
-    padding: 12px;
+    padding: 0;
     background: var(--tt-bg-page);
     color: var(--tt-text);
-    font-family: var(--font-heading, Inter, system-ui, sans-serif);
+    font-family: var(--font-heading, 'Inter', system-ui, sans-serif);
+}
+
+body.light-mode .tt-workbench {
+    --tt-bg-base: #f8fafc;
+    --tt-bg-panel: rgba(255, 255, 255, 0.9);
+    --tt-bg-soft: rgba(241, 245, 249, 0.9);
+    --tt-bg-input: rgba(241, 245, 249, 0.8);
+    --tt-border: rgba(15, 23, 42, 0.1);
+    --tt-border-strong: rgba(15, 23, 42, 0.2);
+    --tt-text: #0f172a;
+    --tt-text-secondary: #334155;
+    --tt-muted: #64748b;
 }
 
 .tt-loading {
     display: grid;
     place-items: center;
     min-height: 320px;
-    color: var(--text-secondary);
+    color: var(--tt-muted);
     font-size: 0.95rem;
 }
 
 .tt-topbar {
     grid-area: topbar;
-    display: grid;
-    grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 0.9fr);
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
-    min-height: 56px;
-    padding: 8px 10px;
-    background: color-mix(in srgb, var(--tt-bg-panel) 88%, transparent);
+    gap: var(--tt-space-md);
+    padding: var(--tt-space-sm) var(--tt-space-md);
+    background: var(--tt-bg-panel);
     border: 1px solid var(--tt-border);
-    border-top: 1px solid var(--glass-highlight);
-    border-radius: 8px;
-    box-shadow: var(--tt-shadow);
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
+    border-radius: var(--tt-radius-md);
 }
 
 .tt-sidebar,
@@ -59,17 +78,13 @@
     min-height: 0;
     background: var(--tt-bg-panel);
     border: 1px solid var(--tt-border);
-    border-top: 1px solid var(--glass-highlight);
-    border-radius: 8px;
-    box-shadow: var(--tt-shadow);
-    backdrop-filter: var(--glass-blur);
-    -webkit-backdrop-filter: var(--glass-blur);
+    border-radius: var(--tt-radius-lg);
 }
 
 .tt-sidebar {
     grid-area: sidebar;
     overflow: auto;
-    padding: 10px;
+    padding: var(--tt-space-md);
 }
 
 .tt-schedule-panel {
@@ -77,16 +92,17 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
-    padding: 10px;
+    padding: var(--tt-space-md);
 }
 
 .tt-inspector {
     grid-area: inspector;
     overflow: auto;
-    padding: 10px;
+    padding: var(--tt-space-md);
 }
 
 .tt-title-block {
+    flex: 1 1 220px;
     min-width: 0;
 }
 
@@ -98,17 +114,17 @@
 
 .tt-eyebrow {
     display: block;
-    margin-bottom: 3px;
+    margin-bottom: 2px;
     font-size: 0.74rem;
-    font-weight: 750;
+    font-weight: 700;
 }
 
 .tt-title-block h2 {
     margin: 0;
     overflow: hidden;
     color: var(--tt-text);
-    font-size: 1.08rem;
-    font-weight: 800;
+    font-size: 1.05rem;
+    font-weight: 700;
     letter-spacing: 0;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -118,7 +134,7 @@
 .tt-compact-copy {
     margin: 4px 0 0;
     color: var(--tt-muted);
-    font-size: 0.82rem;
+    font-size: 0.8rem;
 }
 
 .tt-compact-copy--warn {
@@ -126,17 +142,27 @@
 }
 
 .tt-topbar-metrics {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(64px, 1fr));
+    display: flex;
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 6px;
 }
 
 .tt-metric {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 180px;
+    min-height: 24px;
     min-width: 0;
-    padding: 7px 8px;
-    background: var(--tt-bg-soft);
-    border: 1px solid var(--tt-border);
-    border-radius: 6px;
+    padding: 2px 8px;
+    overflow: hidden;
+    background: rgba(148, 163, 184, 0.1);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-muted);
+    font-size: 0.78rem;
+    line-height: 1.35;
 }
 
 .tt-metric span,
@@ -149,13 +175,12 @@
 
 .tt-metric span {
     color: var(--tt-muted);
-    font-size: 0.7rem;
+    font-size: 0.72rem;
 }
 
 .tt-metric strong {
-    margin-top: 2px;
     color: var(--tt-text);
-    font-size: 0.9rem;
+    font-size: 0.78rem;
 }
 
 .tt-metric--ok strong {
@@ -171,10 +196,13 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 7px;
+    gap: 6px;
+    flex: 0 1 320px;
     min-width: 0;
+    margin-left: auto;
     color: var(--tt-muted);
-    font-size: 0.84rem;
+    font-size: 0.78rem;
+    line-height: 1.35;
 }
 
 .tt-message span:last-child {
@@ -185,23 +213,23 @@
 }
 
 .tt-message .lucide {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     flex: 0 0 auto;
 }
 
 .tt-workflow,
 .tt-inspector-stack {
     display: grid;
-    gap: 10px;
+    gap: var(--tt-space-md);
 }
 
 .tt-section,
 .tt-inspector-section {
     display: grid;
-    gap: 8px;
+    gap: var(--tt-space-sm);
     min-width: 0;
-    padding-bottom: 10px;
+    padding-bottom: var(--tt-space-md);
     border-bottom: 1px solid var(--tt-border);
 }
 
@@ -214,17 +242,19 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--tt-space-sm);
+    padding-bottom: var(--tt-space-sm);
+    border-bottom: 1px solid var(--tt-border);
 }
 
 .tt-section-title h3 {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
+    gap: var(--tt-space-sm);
     margin: 0;
-    color: var(--tt-text);
-    font-size: 0.9rem;
-    font-weight: 800;
+    color: var(--tt-text-secondary);
+    font-size: 0.88rem;
+    font-weight: 700;
 }
 
 .tt-section-title .lucide,
@@ -241,16 +271,16 @@
 .tt-form-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    gap: var(--tt-space-sm);
 }
 
 .tt-form-grid label {
     display: grid;
-    gap: 5px;
+    gap: 6px;
     min-width: 0;
     color: var(--tt-muted);
     font-size: 0.74rem;
-    font-weight: 750;
+    font-weight: 700;
 }
 
 .tt-form-grid input,
@@ -261,10 +291,11 @@
     min-width: 0;
     background: var(--tt-bg-input);
     border: 1px solid var(--tt-border);
-    border-radius: 6px;
+    border-radius: var(--tt-radius-sm);
     color: var(--tt-text);
     font-family: inherit;
     outline: none;
+    transition: border-color var(--tt-transition-fast), background var(--tt-transition-fast);
 }
 
 .tt-form-grid input,
@@ -280,7 +311,7 @@
 .tt-schedule-toolbar select:focus,
 .tt-import-text:focus {
     border-color: var(--tt-primary);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tt-primary) 18%, transparent);
+    box-shadow: none;
 }
 
 .tt-import-text {
@@ -288,7 +319,7 @@
     max-height: 220px;
     resize: vertical;
     padding: 9px 10px;
-    font-family: var(--font-mono, "JetBrains Mono", monospace);
+    font-family: inherit;
     font-size: 0.78rem;
     line-height: 1.45;
 }
@@ -297,7 +328,7 @@
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 7px;
+    gap: var(--tt-space-sm);
 }
 
 .tt-btn,
@@ -308,18 +339,18 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    min-height: 34px;
-    padding: 0 10px;
+    gap: var(--tt-space-sm);
+    min-height: 36px;
+    padding: 0 12px;
     border: 1px solid var(--tt-border);
-    border-radius: 6px;
+    border-radius: var(--tt-radius-md);
     background: var(--tt-bg-soft);
     color: var(--tt-text);
     font-family: inherit;
     font-size: 0.82rem;
-    font-weight: 750;
+    font-weight: 700;
     cursor: pointer;
-    transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+    transition: all var(--tt-transition-fast);
 }
 
 .tt-btn:hover:not(:disabled),
@@ -329,6 +360,7 @@
 .tt-icon-btn:hover {
     border-color: var(--tt-primary);
     color: var(--tt-primary);
+    box-shadow: var(--tt-primary-glow);
 }
 
 .tt-btn:disabled,
@@ -338,27 +370,26 @@
 }
 
 .tt-icon-btn {
-    width: 30px;
+    width: 40px;
+    height: 40px;
     padding: 0;
 }
 
 .tt-btn--primary,
 .tt-run-btn {
-    background: var(--accent-gradient);
+    background: linear-gradient(135deg, var(--tt-primary), #0e7490);
     border-color: var(--tt-primary);
     color: #fff;
-    box-shadow: 0 0 18px color-mix(in srgb, var(--tt-primary) 18%, transparent);
 }
 
 .tt-btn--primary:hover:not(:disabled),
 .tt-run-btn:hover:not(:disabled) {
-    background: linear-gradient(135deg, var(--tt-primary-strong), var(--tt-primary));
+    background: linear-gradient(135deg, var(--tt-primary-hover), var(--tt-primary));
     color: #fff;
-    transform: translateY(-1px);
 }
 
 .tt-btn--danger {
-    border-color: rgba(185, 28, 28, 0.34);
+    border-color: rgba(239, 68, 68, 0.34);
     color: var(--tt-danger);
 }
 
@@ -377,14 +408,15 @@
 .tt-chip {
     display: inline-flex;
     align-items: center;
-    min-height: 22px;
-    padding: 0 8px;
-    background: var(--tt-bg-soft);
-    border: 1px solid var(--tt-border);
-    border-radius: 6px;
+    gap: 6px;
+    min-height: 24px;
+    padding: 2px 8px;
+    background: rgba(148, 163, 184, 0.1);
+    border-radius: var(--tt-radius-sm);
     color: var(--tt-muted);
     font-size: 0.74rem;
-    font-weight: 750;
+    font-weight: 700;
+    line-height: 1.35;
 }
 
 .tt-chip--ok {
@@ -397,8 +429,8 @@
 
 .tt-rule-block {
     display: grid;
-    gap: 7px;
-    padding-top: 8px;
+    gap: var(--tt-space-sm);
+    padding-top: var(--tt-space-sm);
     border-top: 1px solid var(--tt-border);
 }
 
@@ -410,20 +442,21 @@
 .tt-chip-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
+    gap: var(--tt-space-sm);
 }
 
 .tt-check-chip {
     display: flex;
     align-items: center;
-    gap: 7px;
-    min-height: 32px;
-    padding: 0 8px;
-    background: var(--tt-bg-soft);
+    gap: var(--tt-space-sm);
+    min-height: 34px;
+    padding: 0 10px;
+    background: var(--tt-bg-input);
     border: 1px solid var(--tt-border);
-    border-radius: 6px;
-    color: var(--tt-text);
+    border-radius: var(--tt-radius-md);
+    color: var(--tt-text-secondary);
     font-size: 0.8rem;
+    transition: background var(--tt-transition-fast);
 }
 
 .tt-check-chip input {
@@ -435,7 +468,7 @@
 .tt-lock-list {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: var(--tt-space-sm);
 }
 
 .tt-lock-item {
@@ -445,9 +478,9 @@
     max-width: 100%;
     min-height: 28px;
     padding: 0 5px 0 8px;
-    background: rgba(180, 83, 9, 0.12);
-    border: 1px solid rgba(180, 83, 9, 0.28);
-    border-radius: 8px;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.28);
+    border-radius: var(--tt-radius-md);
     color: var(--tt-text);
     font-size: 0.74rem;
 }
@@ -476,7 +509,7 @@
 
 .tt-plan-list {
     display: grid;
-    gap: 5px;
+    gap: 6px;
     max-height: 178px;
     overflow: auto;
 }
@@ -488,10 +521,10 @@
     gap: 6px;
     min-height: 30px;
     padding: 5px 7px;
-    background: var(--tt-bg-soft);
+    background: var(--tt-bg-input);
     border: 1px solid var(--tt-border);
-    border-radius: 6px;
-    color: var(--tt-text);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-text-secondary);
     font-size: 0.74rem;
 }
 
@@ -515,7 +548,7 @@
 .tt-export-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 6px;
+    gap: var(--tt-space-sm);
 }
 
 .tt-export-btn {
@@ -530,17 +563,17 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 10px;
+    gap: var(--tt-space-md);
     flex: 0 0 auto;
     min-height: 40px;
-    padding-bottom: 8px;
+    padding-bottom: var(--tt-space-sm);
 }
 
 .tt-schedule-view-controls,
 .tt-schedule-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--tt-space-sm);
     min-width: 0;
 }
 
@@ -551,23 +584,24 @@
 .tt-segment {
     display: inline-grid;
     grid-template-columns: repeat(3, minmax(70px, 1fr));
-    gap: 4px;
-    padding: 3px;
-    background: var(--tt-bg-soft);
+    gap: var(--tt-space-xs);
+    padding: var(--tt-space-xs);
+    background: var(--tt-bg-input);
     border: 1px solid var(--tt-border);
-    border-radius: 8px;
+    border-radius: var(--tt-radius-md);
 }
 
 .tt-segment button {
     min-height: 30px;
     padding: 0 9px;
     border: 1px solid transparent;
-    border-radius: 6px;
+    border-radius: var(--tt-radius-sm);
     background: transparent;
     color: var(--tt-muted);
     font-size: 0.8rem;
-    font-weight: 800;
+    font-weight: 700;
     cursor: pointer;
+    transition: all var(--tt-transition-fast);
 }
 
 .tt-segment button:hover,
@@ -580,7 +614,7 @@
 .tt-board-title {
     color: var(--tt-muted);
     font-size: 0.84rem;
-    font-weight: 750;
+    font-weight: 700;
 }
 
 .tt-schedule-toolbar select {
@@ -591,8 +625,9 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
+    background: var(--tt-bg-base);
     border: 1px solid var(--tt-border);
-    border-radius: 8px;
+    border-radius: var(--tt-radius-lg);
 }
 
 .tt-schedule-body {
@@ -616,7 +651,7 @@
 .tt-grid-head,
 .tt-period,
 .tt-cell {
-    background: var(--tt-bg-panel);
+    background: var(--tt-bg-base);
 }
 
 .tt-grid-head,
@@ -627,7 +662,7 @@
     min-height: 36px;
     color: var(--tt-muted);
     font-size: 0.74rem;
-    font-weight: 850;
+    font-weight: 700;
 }
 
 .tt-grid-head {
@@ -657,12 +692,12 @@
     content: "";
     min-height: 58px;
     border: 1px dashed var(--tt-border);
-    border-radius: 6px;
+    border-radius: var(--tt-radius-sm);
 }
 
 .tt-cell.is-drop-target,
 .tt-cell:hover {
-    background: rgba(37, 99, 235, 0.08);
+    background: rgba(8, 145, 178, 0.12);
 }
 
 .tt-main-empty-cell {
@@ -677,18 +712,18 @@
     align-items: center;
     min-height: 22px;
     padding: 0 7px;
-    background: var(--tt-bg-soft);
+    background: var(--tt-bg-input);
     border: 1px dashed var(--tt-border-strong);
-    border-radius: 6px;
+    border-radius: var(--tt-radius-sm);
 }
 
 .tt-plan-queue {
     display: grid;
     grid-template-rows: auto minmax(0, auto);
-    gap: 8px;
+    gap: var(--tt-space-sm);
     min-height: 0;
     min-width: 0;
-    padding-bottom: 10px;
+    padding-bottom: var(--tt-space-md);
     border-bottom: 1px solid var(--tt-border);
 }
 
@@ -709,7 +744,7 @@
 .tt-plan-queue-list {
     display: grid;
     align-content: start;
-    gap: 6px;
+    gap: var(--tt-space-sm);
     min-height: 0;
     max-height: 300px;
     overflow: auto;
@@ -722,8 +757,9 @@
     padding: 7px 8px 7px 11px;
     border: 1px solid var(--tt-border);
     border-left: 4px solid var(--subject-color, var(--tt-primary));
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--subject-color, var(--tt-primary)) 8%, var(--tt-bg-panel));
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-input);
+    transition: border-color var(--tt-transition-fast), transform var(--tt-transition-fast);
 }
 
 .tt-plan-queue-item strong,
@@ -757,20 +793,22 @@
     overflow: hidden;
     border: 1px solid var(--tt-border);
     border-left: 4px solid var(--subject-color, var(--tt-primary));
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--subject-color, var(--tt-primary)) 10%, var(--tt-bg-panel));
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-input);
     color: var(--tt-text);
     text-align: left;
     cursor: grab;
+    transition: border-color var(--tt-transition-fast), transform var(--tt-transition-fast), box-shadow var(--tt-transition-fast);
 }
 
 .tt-slot:hover,
 .tt-slot.is-selected {
     border-color: var(--tt-primary);
+    box-shadow: var(--tt-primary-glow);
 }
 
 .tt-slot.has-conflict {
-    box-shadow: inset 0 0 0 1px rgba(180, 83, 9, 0.45);
+    box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.45);
 }
 
 .tt-slot.is-locked::after {
@@ -831,7 +869,7 @@
 .tt-conflict-summary,
 .tt-conflict-list {
     display: grid;
-    gap: 6px;
+    gap: var(--tt-space-sm);
     min-width: 0;
 }
 
@@ -859,8 +897,8 @@
 .tt-detail-list span {
     display: flex;
     justify-content: space-between;
-    gap: 10px;
-    padding: 5px 0;
+    gap: var(--tt-space-sm);
+    padding: 6px 0;
     border-bottom: 1px solid var(--tt-border);
 }
 
@@ -878,10 +916,10 @@
 
 .tt-conflict-summary span {
     min-height: 24px;
-    padding: 3px 7px;
-    background: var(--tt-bg-soft);
+    padding: 3px 8px;
+    background: rgba(148, 163, 184, 0.1);
     border: 1px solid var(--tt-border);
-    border-radius: 6px;
+    border-radius: var(--tt-radius-sm);
     color: var(--tt-muted);
     font-size: 0.74rem;
 }

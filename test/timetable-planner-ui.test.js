@@ -84,26 +84,39 @@ test('timetable planner uses the seating-style control panel and board layout', 
   assert.match(styles, /\.tt-sidebar\s*{[^}]*overflow:\s*auto/s);
   assert.match(styles, /\.tt-schedule-scroll\s*{[^}]*overflow:\s*auto/s);
   assert.match(styles, /\.tt-inspector\s*{/);
-  assert.doesNotMatch(styles, /--tt-bg-base:\s*#0f172a/);
-  assert.doesNotMatch(styles, /border-radius:\s*(1[0-9]|[2-9][0-9])px/);
+  assert.match(styles, /--tt-bg-base:\s*#0f172a/);
   assert.match(styles, /@media \(max-width:\s*980px\)[\s\S]*\.tt-workbench\s*{[^}]*grid-template-areas:\s*"topbar"\s*"sidebar"\s*"schedule"\s*"inspector"/s);
 });
 
-test('timetable styles inherit the ICeCream tool tokens and fonts', async () => {
+test('timetable styles mirror the seating planner theme and font system', async () => {
   const styles = await readFile(stylePath, 'utf8');
 
   assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-bg-page:\s*transparent/s);
-  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-bg-panel:\s*var\(--glass-panel/s);
-  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-border:\s*var\(--glass-border/s);
-  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-primary:\s*var\(--accent-color/s);
-  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-shadow:\s*var\(--shadow-depth/s);
-  assert.match(styles, /\.tt-workbench\s*{[^}]*var\(--pm-surface/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-primary:\s*#0891b2/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-primary-hover:\s*#06b6d4/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-primary-glow:\s*0 0 20px rgba\(8,\s*145,\s*178,\s*0\.35\)/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-bg-base:\s*#0f172a/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-bg-panel:\s*rgba\(30,\s*41,\s*59,\s*0\.85\)/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-bg-input:\s*rgba\(15,\s*23,\s*42,\s*0\.6\)/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-border:\s*rgba\(148,\s*163,\s*184,\s*0\.15\)/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-radius-lg:\s*16px/s);
+  assert.match(styles, /body\.light-mode\s+\.tt-workbench\s*{[^}]*--tt-bg-panel:\s*rgba\(255,\s*255,\s*255,\s*0\.9\)/s);
   assert.match(styles, /\.tt-workbench\s*{[^}]*font-family:\s*var\(--font-heading/s);
-  assert.match(styles, /\.tt-import-text\s*{[^}]*font-family:\s*var\(--font-mono/s);
-  assert.match(styles, /\.tt-topbar\s*{[^}]*min-height:\s*56px/s);
+  assert.match(styles, /\.tt-import-text\s*{[^}]*font-family:\s*inherit/s);
+  assert.match(styles, /\.tt-topbar\s*{[^}]*display:\s*flex/s);
+  assert.match(styles, /\.tt-topbar\s*{[^}]*flex-wrap:\s*wrap/s);
+  assert.match(styles, /\.tt-topbar\s*{[^}]*background:\s*var\(--tt-bg-panel\)/s);
+  assert.match(styles, /\.tt-topbar\s*{[^}]*border-radius:\s*var\(--tt-radius-md\)/s);
+  assert.match(styles, /\.tt-sidebar,[\s\S]*?\.tt-inspector\s*{[^}]*border-radius:\s*var\(--tt-radius-lg\)/s);
+  assert.match(styles, /\.tt-btn,[\s\S]*?\.tt-icon-btn\s*{[^}]*transition:\s*all var\(--tt-transition-fast\)/s);
+  assert.match(styles, /\.tt-chip\s*{[^}]*background:\s*rgba\(148,\s*163,\s*184,\s*0\.1\)/s);
 
   assert.doesNotMatch(styles, /--tt-bg-page:\s*#f6f7f9/i);
   assert.doesNotMatch(styles, /--tt-bg-page:\s*#111827/i);
+  assert.doesNotMatch(styles, /--tt-bg-panel:\s*var\(--glass-panel/i);
+  assert.doesNotMatch(styles, /--tt-shadow:\s*var\(--shadow-depth/i);
+  assert.doesNotMatch(styles, /var\(--accent-gradient/i);
+  assert.doesNotMatch(styles, /var\(--font-mono/i);
   assert.doesNotMatch(styles, /body:not\(\.light-mode\)\s+\.tt-workbench/);
 });
 
