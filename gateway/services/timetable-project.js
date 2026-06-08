@@ -15,6 +15,8 @@ const DEFAULT_PROJECT = {
     term: '2026-2027 第一学期',
     weekdays: 5,
     periodsPerDay: 7,
+    activeWeekdays: [1, 2, 3, 4, 5],
+    activePeriods: [1, 2, 3, 4, 5, 6, 7],
     teachers: [],
     classes: [],
     subjects: [],
@@ -101,6 +103,31 @@ function intInRange(value, fallback, min, max) {
     const num = Number.parseInt(value, 10);
     if (!Number.isInteger(num)) return fallback;
     return Math.max(min, Math.min(max, num));
+}
+
+function rangeList(max) {
+    return Array.from({ length: Math.max(0, max) }, (_, index) => index + 1);
+}
+
+function normalizeNumberList(values, fallback, min, max) {
+    const raw = Array.isArray(values) ? values : [];
+    const normalized = raw
+        .map(value => Number.parseInt(value, 10))
+        .filter(value => Number.isInteger(value) && value >= min && value <= max);
+    const source = normalized.length ? normalized : fallback;
+    return [...new Set(source)].sort((left, right) => left - right);
+}
+
+export function getActiveWeekdays(project = {}) {
+    return normalizeNumberList(project.activeWeekdays, rangeList(intInRange(project.weekdays, DEFAULT_PROJECT.weekdays, 1, 7)), 1, 7);
+}
+
+export function getActivePeriods(project = {}) {
+    return normalizeNumberList(project.activePeriods, rangeList(intInRange(project.periodsPerDay, DEFAULT_PROJECT.periodsPerDay, 1, 12)), 1, 12);
+}
+
+export function isActiveTimetableSlot(project = {}, day, period) {
+    return getActiveWeekdays(project).includes(Number(day)) && getActivePeriods(project).includes(Number(period));
 }
 
 function normalizeTeacher(raw = {}, index = 0) {
@@ -236,6 +263,12 @@ export function normalizeSchedule(raw) {
 
 export function normalizeTimetableProject(raw = {}) {
     const base = { ...DEFAULT_PROJECT, ...raw };
+    const legacyWeekdays = intInRange(base.weekdays, DEFAULT_PROJECT.weekdays, 1, 7);
+    const legacyPeriodsPerDay = intInRange(base.periodsPerDay, DEFAULT_PROJECT.periodsPerDay, 1, 12);
+    const hasActiveWeekdays = Object.prototype.hasOwnProperty.call(raw, 'activeWeekdays');
+    const hasActivePeriods = Object.prototype.hasOwnProperty.call(raw, 'activePeriods');
+    const activeWeekdays = normalizeNumberList(hasActiveWeekdays ? raw.activeWeekdays : [], rangeList(legacyWeekdays), 1, 7);
+    const activePeriods = normalizeNumberList(hasActivePeriods ? raw.activePeriods : [], rangeList(legacyPeriodsPerDay), 1, 12);
     const teachers = (Array.isArray(base.teachers) ? base.teachers : []).map(normalizeTeacher);
     const classes = (Array.isArray(base.classes) ? base.classes : []).map(normalizeClass);
     const subjects = (Array.isArray(base.subjects) ? base.subjects : []).map(normalizeSubject);
@@ -245,8 +278,10 @@ export function normalizeTimetableProject(raw = {}) {
         id: cleanText(base.id, 80) || 'default',
         schoolName: cleanText(base.schoolName, 80) || DEFAULT_PROJECT.schoolName,
         term: cleanText(base.term, 80) || DEFAULT_PROJECT.term,
-        weekdays: intInRange(base.weekdays, DEFAULT_PROJECT.weekdays, 1, 7),
-        periodsPerDay: intInRange(base.periodsPerDay, DEFAULT_PROJECT.periodsPerDay, 1, 12),
+        weekdays: Math.max(...activeWeekdays),
+        periodsPerDay: Math.max(...activePeriods),
+        activeWeekdays,
+        activePeriods,
         teachers,
         classes,
         subjects,
@@ -258,7 +293,7 @@ export function normalizeTimetableProject(raw = {}) {
 }
 
 export function createDefaultTimetableProject(overrides = {}) {
-    return normalizeTimetableProject({ ...DEFAULT_PROJECT, ...overrides });
+    return normalizeTimetableProject(overrides);
 }
 
 export function getTimetableEntityMaps(project) {

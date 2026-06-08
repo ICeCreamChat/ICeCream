@@ -80,6 +80,16 @@ test('buildTimetableProblem expands lessons, blocks, multi-teachers and hard rul
     assert.deepEqual(pe.allowedRoomIds, ['gym']);
 });
 
+test('buildTimetableProblem only exposes active timetable slots to Timefold', () => {
+    const problem = buildTimetableProblem(sampleProject({
+        activeWeekdays: [1, 3],
+        activePeriods: [2, 4],
+    }));
+
+    assert.deepEqual(problem.timeSlots.map(slot => slot.id), ['1-2', '1-4', '3-2', '3-4']);
+    assert.equal(problem.timeSlots.every(slot => slot.morning === (slot.lessonIndex === 2)), true);
+});
+
 test('transformTimetableSolutionToSchedule keeps current schedule shape and solver metadata', () => {
     const project = sampleProject();
     const problem = buildTimetableProblem(project);

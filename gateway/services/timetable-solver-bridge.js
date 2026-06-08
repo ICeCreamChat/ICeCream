@@ -2,6 +2,8 @@ import {
     buildTimetableScore,
     createDefaultTimetableProject,
     detectScheduleConflicts,
+    getActivePeriods,
+    getActiveWeekdays,
     normalizeTimetableProject,
     slotKey,
 } from './timetable-scheduler.js';
@@ -133,13 +135,15 @@ function collectRooms(project) {
 
 function buildTimeSlots(project) {
     const result = [];
-    for (let day = 1; day <= project.weekdays; day++) {
-        for (let period = 1; period <= project.periodsPerDay; period++) {
+    const activePeriods = getActivePeriods(project);
+    const morningPeriods = new Set(activePeriods.slice(0, Math.max(1, Math.ceil(activePeriods.length / 2))));
+    for (const day of getActiveWeekdays(project)) {
+        for (const period of activePeriods) {
             result.push({
                 id: slotKey(day, period),
                 weekday: day,
                 lessonIndex: period,
-                morning: period <= Math.max(1, Math.ceil(project.periodsPerDay / 2)),
+                morning: morningPeriods.has(period),
             });
         }
     }

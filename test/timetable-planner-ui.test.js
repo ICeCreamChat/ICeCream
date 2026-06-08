@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { createDefaultTimetableProject } from '../gateway/services/timetable-scheduler.js';
 import {
+  renderWorkbench,
   renderInspector,
   renderSchedulePanel,
 } from '../public/js/tools/timetable/view.js';

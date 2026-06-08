@@ -5,6 +5,8 @@ import {
     detectScheduleConflicts,
 } from './timetable-conflicts.js';
 import {
+    getActivePeriods,
+    getActiveWeekdays,
     getTimetableEntityMaps,
     normalizeTimetableProject,
     slotTeacherIds,
@@ -15,7 +17,27 @@ import {
 } from './timetable-score.js';
 
 function isMorning(project, period) {
-    return period <= Math.max(1, Math.ceil(project.periodsPerDay / 2));
+    const periods = getActivePeriods(project);
+    const morningPeriods = new Set(periods.slice(0, Math.max(1, Math.ceil(periods.length / 2))));
+    return morningPeriods.has(Number(period));
+}
+
+function getActiveSlotPairs(project) {
+    const slots = [];
+    for (const day of getActiveWeekdays(project)) {
+        for (const period of getActivePeriods(project)) {
+            slots.push({ day, period });
+        }
+    }
+    return slots;
+}
+
+function hasConsecutiveActivePeriods(project, startPeriod, blockSize) {
+    const activePeriods = new Set(getActivePeriods(project));
+    for (let offset = 0; offset < blockSize; offset++) {
+        if (!activePeriods.has(startPeriod + offset)) return false;
+    }
+    return true;
 }
 
 function blockFits(project, usage, task, day, period) {
@@ -32,8 +54,9 @@ function blockFits(project, usage, task, day, period) {
 
 function getCandidateBlocks(project, usage, task) {
     const candidates = [];
-    for (let day = 1; day <= project.weekdays; day++) {
-        for (let period = 1; period <= project.periodsPerDay - task.blockSize + 1; period++) {
+    for (const day of getActiveWeekdays(project)) {
+        for (const period of getActivePeriods(project)) {
+            if (!hasConsecutiveActivePeriods(project, period, task.blockSize)) continue;
             const check = blockFits(project, usage, task, day, period);
             if (check.ok) candidates.push({ day, period });
         }
@@ -275,7 +298,8 @@ function expandSingleTeacherEdgeTasks(project) {
 function buildFastEdgeColoredSchedule(project) {
     if (!hasSimpleEdgeColoringShape(project)) return null;
 
-    const periodCount = project.weekdays * project.periodsPerDay;
+    const timetableSlots = getActiveSlotPairs(project);
+    const periodCount = timetableSlots.length;
     const realClassIds = project.classes.map(item => item.id).sort();
     const realTeacherIds = project.teachers.map(item => item.id).sort();
     const tasks = expandSingleTeacherEdgeTasks(project);
@@ -323,8 +347,7 @@ function buildFastEdgeColoredSchedule(project) {
     for (let color = 0; color < periodCount; color++) {
         const matching = findPerfectMatching(leftIds, rightIds, counts);
         if (!matching) return null;
-        const day = Math.floor(color / project.periodsPerDay) + 1;
-        const period = (color % project.periodsPerDay) + 1;
+        const { day, period } = timetableSlots[color];
 
         for (const leftId of leftIds) {
             const rightId = matching.get(leftId);

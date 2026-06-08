@@ -6,10 +6,15 @@ import { parseTimetableRosterFile, parseTimetableRosterText } from '../services/
 import { createTimetableStore } from '../services/timetable-store.js';
 import {
     applyScheduleAdjustment,
+    createDefaultTimetableProject,
     normalizeTimetableProject,
     runTimetableScheduler,
     validateTimetableProjectForSolve,
 } from '../services/timetable-scheduler.js';
+import {
+    parseTimetableRules,
+    TimetableRuleParseError,
+} from '../services/timetable-rule-parser.js';
 import {
     createTimetableOptimizationJob,
     getTimetableOptimizationJob,
@@ -41,6 +46,13 @@ function hasTimefoldSolverConfigured(env = process.env) {
     return Boolean(String(env.TIMEFOLD_SOLVER_URL || '').trim());
 }
 
+function sameNumberList(left = [], right = []) {
+    return Array.isArray(left)
+        && Array.isArray(right)
+        && left.length === right.length
+        && left.every((value, index) => Number(value) === Number(right[index]));
+}
+
 router.get('/bootstrap', async (req, res) => {
     try {
         const project = await store().loadProject();
@@ -53,11 +65,40 @@ router.get('/bootstrap', async (req, res) => {
 router.post('/project', async (req, res) => {
     try {
         const current = await store().loadProject();
-        const project = normalizeTimetableProject({
+        let project = normalizeTimetableProject({
             ...current,
             ...req.body,
             rules: req.body.rules || current.rules,
             schedule: req.body.schedule === undefined ? current.schedule : req.body.schedule,
+        });
+        if (
+            !sameNumberList(current.activeWeekdays, project.activeWeekdays)
+            || !sameNumberList(current.activePeriods, project.activePeriods)
+        ) {
+            project = normalizeTimetableProject({ ...project, schedule: null });
+        }
+        const saved = await store().saveProject(project);
+        ok(res, { project: saved });
+    } catch (error) {
+        fail(res, error);
+    }
+});
+
+router.post('/roster/clear', async (req, res) => {
+    try {
+        const current = await store().loadProject();
+        const defaults = createDefaultTimetableProject({
+            activeWeekdays: current.activeWeekdays,
+            activePeriods: current.activePeriods,
+        });
+        const project = normalizeTimetableProject({
+            ...current,
+            teachers: [],
+            classes: [],
+            subjects: [],
+            lessonPlans: [],
+            rules: defaults.rules,
+            schedule: null,
         });
         const saved = await store().saveProject(project);
         ok(res, { project: saved });
@@ -99,6 +140,24 @@ router.post('/rules', async (req, res) => {
         ok(res, { project: saved });
     } catch (error) {
         fail(res, error);
+    }
+});
+
+router.post('/rules/parse', async (req, res) => {
+    let current = null;
+    try {
+        current = await store().loadProject();
+        const parsed = await parseTimetableRules({
+            text: req.body?.text || '',
+            project: current,
+        });
+        ok(res, parsed);
+    } catch (error) {
+        const status = error instanceof TimetableRuleParseError ? error.status : 500;
+        fail(res, error, status, {
+            project: current,
+            reason: error.reason || 'rules_parse_failed',
+        });
     }
 });
 

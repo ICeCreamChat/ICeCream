@@ -11,6 +11,9 @@ export function createTimetablePlannerState(overrides = {}) {
         message: '',
         lastFailure: null,
         solverJob: null,
+        ruleDraft: null,
+        ruleDraftPreview: [],
+        ruleWarnings: [],
         ...overrides,
     };
 }

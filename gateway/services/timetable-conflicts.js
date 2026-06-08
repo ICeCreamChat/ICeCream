@@ -1,4 +1,5 @@
 import {
+    isActiveTimetableSlot,
     slotKey,
     slotTeacherIds,
 } from './timetable-project.js';
@@ -60,6 +61,9 @@ export function canUseSlot(project, usage, slot, options = {}) {
     const teacherIds = slotTeacherIds(slot);
 
     if (slot.day < 1 || slot.day > project.weekdays || slot.period < 1 || slot.period > project.periodsPerDay) {
+        return { ok: false, reason: '节次超出当前作息范围' };
+    }
+    if (!isActiveTimetableSlot(project, slot.day, slot.period)) {
         return { ok: false, reason: '节次超出当前作息范围' };
     }
     if (teacherIds.some(teacherId => teacherUnavailable(project, teacherId).has(key))) {

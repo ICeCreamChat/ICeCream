@@ -1,7 +1,10 @@
 export {
     cleanText,
     createDefaultTimetableProject,
+    getActivePeriods,
+    getActiveWeekdays,
     getTimetableEntityMaps,
+    isActiveTimetableSlot,
     makeTimetableId,
     normalizeIdList,
     normalizeSchedule,

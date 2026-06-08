@@ -3,9 +3,12 @@ import {
     requestTimetable,
 } from './api.js';
 import {
+    buildBulkRules,
     exportName,
     readLockedSlotForm,
+    readBulkRuleForm,
     readProjectForm,
+    readRulePrompt,
     readRulesForm,
     sampleRosterText,
 } from './forms.js';
@@ -64,6 +67,12 @@ export class TimetablePlannerController {
         }
     }
 
+    clearRuleDraft() {
+        this.state.ruleDraft = null;
+        this.state.ruleDraftPreview = [];
+        this.state.ruleWarnings = [];
+    }
+
     startOptimizationPolling(job) {
         this.clearOptimizationPolling();
         if (!job?.jobId || !['queued', 'running'].includes(job.status)) return;
@@ -119,6 +128,7 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.clearRuleDraft();
             this.setMessage('项目已保存。');
         } catch (error) {
             this.handleError(error);
@@ -148,7 +158,23 @@ export class TimetablePlannerController {
             this.state.selectedSlotId = '';
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.clearRuleDraft();
             this.setMessage(`已导入 ${result.import.count} 条任课信息。`);
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+
+    async clearRoster() {
+        try {
+            const result = await requestTimetable('/roster/clear', { method: 'POST' });
+            this.applyProject(result.project);
+            this.state.viewMode = 'class';
+            this.state.selectedSlotId = '';
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
+            this.clearRuleDraft();
+            this.setMessage('任课数据已清空。');
         } catch (error) {
             this.handleError(error);
         }
@@ -164,7 +190,81 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.clearRuleDraft();
             this.setMessage('约束已保存。');
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+
+    async parseRules() {
+        try {
+            const result = await requestTimetable('/rules/parse', {
+                method: 'POST',
+                body: JSON.stringify({ text: readRulePrompt(this.state.container) }),
+            });
+            this.state.ruleDraft = result.draftRules;
+            this.state.ruleDraftPreview = result.previewItems || [];
+            this.state.ruleWarnings = result.warnings || [];
+            this.setMessage('AI 约束已解析，请确认草稿。');
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+
+    async confirmRuleDraft() {
+        if (!this.state.ruleDraft) {
+            this.setMessage('请先解析约束草稿。');
+            return;
+        }
+        try {
+            const result = await requestTimetable('/rules', {
+                method: 'POST',
+                body: JSON.stringify({ rules: this.state.ruleDraft }),
+            });
+            this.applyProject(result.project);
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
+            this.clearRuleDraft();
+            this.setMessage('AI 约束已确认。');
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+
+    async addBulkRule() {
+        try {
+            const form = readBulkRuleForm(this.state.container);
+            if (!form.targetIds.length) throw new Error('请先选择规则对象。');
+            if (form.type !== 'subject_morning' && (!form.days.length || !form.periods.length)) {
+                throw new Error('请先选择周几和节次。');
+            }
+            const rules = buildBulkRules(this.state.project, form);
+            const result = await requestTimetable('/rules', {
+                method: 'POST',
+                body: JSON.stringify({ rules }),
+            });
+            this.applyProject(result.project);
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
+            this.clearRuleDraft();
+            this.setMessage('批量规则已添加。');
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+
+    async clearRules() {
+        try {
+            const result = await requestTimetable('/rules', {
+                method: 'POST',
+                body: JSON.stringify({ rules: { hardRules: {}, softRules: {} } }),
+            });
+            this.applyProject(result.project);
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
+            this.clearRuleDraft();
+            this.setMessage('约束已清空。');
         } catch (error) {
             this.handleError(error);
         }
@@ -183,6 +283,7 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.clearRuleDraft();
             this.setMessage('锁定课节已添加。');
         } catch (error) {
             this.handleError(error);
@@ -201,6 +302,7 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.clearRuleDraft();
             this.setMessage('锁定课节已移除。');
         } catch (error) {
             this.handleError(error);
@@ -241,6 +343,7 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.clearRuleDraft();
             if (payload.type === 'clear') this.state.selectedSlotId = '';
             this.setMessage(result.schedule.conflicts.length ? '已调整，当前仍有冲突。' : '已调整。');
         } catch (error) {

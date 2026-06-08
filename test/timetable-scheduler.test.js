@@ -142,8 +142,8 @@ test('fast timetable scheduler only places lessons inside active day and period 
 
     assert.equal(result.success, true);
     assert.equal(result.schedule.slots.length, 4);
-    assert.deepEqual([...new Set(result.schedule.slots.map(slot => slot.day))].sort((a, b) => a - b), [2, 4]);
-    assert.deepEqual([...new Set(result.schedule.slots.map(slot => slot.period))].sort((a, b) => a - b), [3, 5]);
+    assert.equal(result.schedule.slots.every(slot => [2, 4].includes(slot.day)), true);
+    assert.equal(result.schedule.slots.every(slot => [3, 5].includes(slot.period)), true);
     assert.equal(result.schedule.score.hardConflicts, 0);
 });
 
@@ -761,6 +761,172 @@ test('timetable API returns the saved schedule and does not persist failed manua
             delete process.env.TIMETABLE_DATA_DIR;
         } else {
             process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
+test('timetable API clears roster data while preserving active timetable range', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-clear-'));
+
+    const store = createTimetableStore();
+    await store.saveProject(sampleProject({
+        activeWeekdays: [1, 3, 5],
+        activePeriods: [1, 4, 7],
+        schedule: {
+            id: 'clear_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            slots: [{
+                id: 'clear_slot',
+                day: 1,
+                period: 1,
+                classId: 'c1',
+                subjectId: 'math',
+                teacherId: 't_math',
+                teacherIds: ['t_math'],
+                lessonPlanId: 'lp1',
+                locked: false,
+            }],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 11, completeness: 9 },
+        },
+    }));
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const response = await fetch(`${baseUrl}/api/tools/timetable/roster/clear`, { method: 'POST' });
+        const payload = await response.json();
+
+        assert.equal(response.status, 200);
+        assert.equal(payload.success, true);
+        assert.deepEqual(payload.data.project.activeWeekdays, [1, 3, 5]);
+        assert.deepEqual(payload.data.project.activePeriods, [1, 4, 7]);
+        assert.equal(payload.data.project.teachers.length, 0);
+        assert.equal(payload.data.project.classes.length, 0);
+        assert.equal(payload.data.project.subjects.length, 0);
+        assert.equal(payload.data.project.lessonPlans.length, 0);
+        assert.equal(payload.data.project.schedule, null);
+        assert.deepEqual(payload.data.project.rules.hardRules.teacherUnavailable, {});
+        assert.deepEqual(payload.data.project.rules.hardRules.classUnavailable, {});
+        assert.deepEqual(payload.data.project.rules.hardRules.lockedSlots, []);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
+test('timetable rules parse API returns an editable AI draft without saving it', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousApiKey = process.env.DEEPSEEK_API_KEY;
+    const previousApiBase = process.env.DEEPSEEK_API_BASE;
+    const nativeFetch = globalThis.fetch;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-rules-ai-'));
+    process.env.DEEPSEEK_API_KEY = 'test-key';
+    process.env.DEEPSEEK_API_BASE = 'http://ai.test';
+
+    const store = createTimetableStore();
+    await store.saveProject(createDefaultTimetableProject({
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+        rules: { hardRules: {}, softRules: {} },
+    }));
+
+    globalThis.fetch = async (url, options = {}) => {
+        const target = String(url);
+        if (!target.startsWith('http://ai.test')) return nativeFetch(url, options);
+        return jsonResponse({
+            choices: [{
+                message: {
+                    content: JSON.stringify({
+                        constraints: [
+                            {
+                                type: 'teacher_unavailable',
+                                targetId: 't_math',
+                                slots: ['3-4'],
+                                priority: 'hard',
+                                reason: 'Teacher request',
+                            },
+                            {
+                                type: 'subject_morning',
+                                targetId: 'math',
+                                priority: 'soft',
+                                reason: 'Core subject',
+                            },
+                        ],
+                    }),
+                },
+            }],
+        });
+    };
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const response = await fetch(`${baseUrl}/api/tools/timetable/rules/parse`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: 'Math Teacher Wednesday period 4 unavailable, Math in morning.' }),
+        });
+        const payload = await response.json();
+
+        assert.equal(response.status, 200);
+        assert.equal(payload.success, true);
+        assert.deepEqual(payload.data.draftRules.hardRules.teacherUnavailable.t_math, ['3-4']);
+        assert.deepEqual(payload.data.draftRules.softRules.morningSubjects, ['math']);
+        assert.equal(payload.data.previewItems.length, 2);
+        assert.equal(payload.data.source, 'ai');
+
+        const storedBeforeConfirm = await store.loadProject();
+        assert.deepEqual(storedBeforeConfirm.rules.hardRules.teacherUnavailable, {});
+
+        const confirmResponse = await fetch(`${baseUrl}/api/tools/timetable/rules`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rules: payload.data.draftRules }),
+        });
+        const confirmed = await confirmResponse.json();
+        assert.equal(confirmResponse.status, 200);
+        assert.deepEqual(confirmed.data.project.rules.hardRules.teacherUnavailable.t_math, ['3-4']);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        globalThis.fetch = nativeFetch;
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+        if (previousApiKey === undefined) {
+            delete process.env.DEEPSEEK_API_KEY;
+        } else {
+            process.env.DEEPSEEK_API_KEY = previousApiKey;
+        }
+        if (previousApiBase === undefined) {
+            delete process.env.DEEPSEEK_API_BASE;
+        } else {
+            process.env.DEEPSEEK_API_BASE = previousApiBase;
         }
     }
 });

@@ -12,6 +12,10 @@ const REASON_MESSAGES = {
     invalid_lesson_plan_refs: '任课数据引用了不存在的班级、课程或教师。',
     insufficient_slots: '总课时超过当前作息容量。',
     adjustment_failed: '调整失败，旧课表已保留。',
+    ai_not_configured: 'AI 约束解析未配置，请先配置 API Key。',
+    empty_prompt: '请先输入要解析的约束。',
+    ai_invalid_json: 'AI 解析结果格式异常，请调整描述后重试。',
+    ai_failed: 'AI 约束解析失败，请稍后重试。',
 };
 
 export async function requestTimetable(path, options = {}) {

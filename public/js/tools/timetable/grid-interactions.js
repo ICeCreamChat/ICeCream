@@ -2,7 +2,12 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-save-project')?.addEventListener('click', () => controller.saveProject());
     container.querySelector('#tt-fill-sample')?.addEventListener('click', () => controller.fillSample());
     container.querySelector('#tt-import-roster')?.addEventListener('click', () => controller.importRoster());
+    container.querySelector('#tt-clear-roster')?.addEventListener('click', () => controller.clearRoster());
     container.querySelector('#tt-save-rules')?.addEventListener('click', () => controller.saveRules());
+    container.querySelector('#tt-parse-rules')?.addEventListener('click', () => controller.parseRules());
+    container.querySelector('#tt-confirm-rule-draft')?.addEventListener('click', () => controller.confirmRuleDraft());
+    container.querySelector('#tt-add-bulk-rule')?.addEventListener('click', () => controller.addBulkRule());
+    container.querySelector('#tt-clear-rules')?.addEventListener('click', () => controller.clearRules());
     container.querySelector('#tt-add-lock')?.addEventListener('click', () => controller.addLockedSlot());
     container.querySelector('#tt-run-schedule')?.addEventListener('click', () => controller.runSchedule());
 

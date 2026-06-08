@@ -1,5 +1,10 @@
 import AdmZip from 'adm-zip';
 
+import {
+    getActivePeriods,
+    getActiveWeekdays,
+} from './timetable-project.js';
+
 export const TIMETABLE_XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 function xml(value) {
@@ -87,12 +92,14 @@ function sheetRowsForSchedule(project, mode) {
     const slots = project.schedule?.slots || [];
     const owners = mode === 'teacher' ? project.teachers : mode === 'master' ? [{ id: 'all', name: '总课表' }] : project.classes;
     const weekdayNames = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-    const rows = [['对象/节次', ...weekdayNames.slice(0, project.weekdays).flatMap(day => Array.from({ length: project.periodsPerDay }, (_, index) => `${day} 第${index + 1}节`))]];
+    const activeWeekdays = getActiveWeekdays(project);
+    const activePeriods = getActivePeriods(project);
+    const rows = [['对象/节次', ...activeWeekdays.flatMap(day => activePeriods.map(period => `${weekdayNames[day - 1] || `周${day}`} 第${period}节`))]];
 
     for (const owner of owners) {
         const row = [mode === 'class' ? `${owner.grade}${owner.name}` : owner.name];
-        for (let day = 1; day <= project.weekdays; day++) {
-            for (let period = 1; period <= project.periodsPerDay; period++) {
+        for (const day of activeWeekdays) {
+            for (const period of activePeriods) {
                 const found = slots.filter(slot => slot.day === day && slot.period === period)
                     .filter(slot => mode === 'teacher' ? slot.teacherId === owner.id : mode === 'class' ? slot.classId === owner.id : true);
                 row.push(found.map(slot => lessonLabel(project, slot, mode)).join('\n'));

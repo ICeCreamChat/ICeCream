@@ -1,4 +1,6 @@
 import {
+    getActivePeriods,
+    getActiveWeekdays,
     getTimetableEntityMaps,
     normalizeTimetableProject,
     slotTeacherIds,
@@ -37,7 +39,7 @@ export function validateTimetableProjectForSolve(input = {}) {
     }
 
     const totalLessons = project.lessonPlans.reduce((sum, plan) => sum + plan.weeklyHours, 0);
-    const classCapacity = project.weekdays * project.periodsPerDay * project.classes.length;
+    const classCapacity = getActiveWeekdays(project).length * getActivePeriods(project).length * project.classes.length;
     if (totalLessons > classCapacity) {
         return result(false, 'insufficient_slots', '总课时超过当前作息容量，请增加天数/节次或减少课时。', {
             totalLessons,

@@ -21,14 +21,27 @@ export function parseSlotInput(value = '') {
         .filter(item => /^\d+-\d+$/.test(item));
 }
 
+function checkedNumbers(container, selector) {
+    return [...container.querySelectorAll(`${selector}:checked`)]
+        .map(item => Number(item.value))
+        .filter(value => Number.isInteger(value))
+        .sort((left, right) => left - right);
+}
+
+function checkedValues(container, selector) {
+    return [...container.querySelectorAll(`${selector}:checked`)]
+        .map(item => item.value)
+        .filter(Boolean);
+}
+
 export function readProjectForm(container) {
-    const form = container.querySelector('#tt-project-form');
-    const data = new FormData(form);
+    const activeWeekdays = checkedNumbers(container, '[data-active-weekday]');
+    const activePeriods = checkedNumbers(container, '[data-active-period]');
     return {
-        schoolName: data.get('schoolName'),
-        term: data.get('term'),
-        weekdays: Number(data.get('weekdays')),
-        periodsPerDay: Number(data.get('periodsPerDay')),
+        activeWeekdays,
+        activePeriods,
+        weekdays: activeWeekdays.length ? Math.max(...activeWeekdays) : 5,
+        periodsPerDay: activePeriods.length ? Math.max(...activePeriods) : 7,
     };
 }
 
@@ -39,15 +52,62 @@ export function readRulesForm(container, project) {
     rules.hardRules.teacherUnavailable = { ...(rules.hardRules.teacherUnavailable || {}) };
     rules.hardRules.classUnavailable = { ...(rules.hardRules.classUnavailable || {}) };
 
-    const teacherId = container.querySelector('#tt-rule-teacher')?.value;
-    const teacherSlots = parseSlotInput(container.querySelector('#tt-rule-teacher-slots')?.value);
-    const classId = container.querySelector('#tt-rule-class')?.value;
-    const classSlots = parseSlotInput(container.querySelector('#tt-rule-class-slots')?.value);
     const morningSubjects = [...container.querySelectorAll('[data-morning-subject]:checked')].map(item => item.value);
 
-    if (teacherId) rules.hardRules.teacherUnavailable[teacherId] = teacherSlots;
-    if (classId) rules.hardRules.classUnavailable[classId] = classSlots;
-    rules.softRules.morningSubjects = morningSubjects;
+    if (morningSubjects.length) rules.softRules.morningSubjects = morningSubjects;
+    return rules;
+}
+
+export function readRulePrompt(container) {
+    return container.querySelector('#tt-rule-prompt')?.value || '';
+}
+
+export function readBulkRuleForm(container) {
+    const type = container.querySelector('#tt-bulk-rule-type')?.value || 'teacher_unavailable';
+    const targetType = type === 'class_unavailable' ? 'class' : type === 'subject_morning' ? 'subject' : 'teacher';
+    return {
+        type,
+        targetIds: checkedValues(container, `[data-bulk-target][data-bulk-target-type="${targetType}"]`),
+        days: checkedNumbers(container, '[data-bulk-day]'),
+        periods: checkedNumbers(container, '[data-bulk-period]'),
+    };
+}
+
+function slotKeys(days, periods) {
+    const result = [];
+    for (const day of days) {
+        for (const period of periods) result.push(`${day}-${period}`);
+    }
+    return result;
+}
+
+function mergeSlots(map, id, slots) {
+    if (!id || !slots.length) return;
+    map[id] = [...new Set([...(map[id] || []), ...slots])].sort();
+}
+
+export function buildBulkRules(project, form) {
+    const rules = cloneValue(project.rules || { hardRules: {}, softRules: {} });
+    rules.hardRules = rules.hardRules || {};
+    rules.softRules = rules.softRules || {};
+    rules.hardRules.teacherUnavailable = { ...(rules.hardRules.teacherUnavailable || {}) };
+    rules.hardRules.classUnavailable = { ...(rules.hardRules.classUnavailable || {}) };
+    rules.hardRules.lockedSlots = [...(rules.hardRules.lockedSlots || [])];
+    rules.softRules.morningSubjects = [...(rules.softRules.morningSubjects || [])];
+
+    if (form.type === 'subject_morning') {
+        for (const subjectId of form.targetIds) {
+            if (!rules.softRules.morningSubjects.includes(subjectId)) rules.softRules.morningSubjects.push(subjectId);
+        }
+        return rules;
+    }
+
+    const slots = slotKeys(form.days, form.periods);
+    if (form.type === 'class_unavailable') {
+        for (const classId of form.targetIds) mergeSlots(rules.hardRules.classUnavailable, classId, slots);
+    } else {
+        for (const teacherId of form.targetIds) mergeSlots(rules.hardRules.teacherUnavailable, teacherId, slots);
+    }
     return rules;
 }
 
