@@ -272,7 +272,9 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.match(html, /class="[^"]*tt-workflow-body[^"]*"/);
   assert.match(html, /id="tt-range-weekdays-trigger"/);
   assert.match(html, /id="tt-range-periods-trigger"/);
-  assert.match(html, /id="tt-apply-range"/);
+  assert.doesNotMatch(html, /id="tt-apply-range"/);
+  assert.doesNotMatch(html, /id="tt-reset-range"/);
+  assert.match(html, /data-range-apply/);
   assert.match(html, /data-tt-popover-close/);
   assert.match(html, /data-active-weekday="1"[^>]*checked/);
   assert.match(html, /data-active-weekday="3"[^>]*checked/);
@@ -371,7 +373,7 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
 });
 
-test('timetable left sidebar range workflow is manually applied and keeps checkbox edits local', async () => {
+test('timetable left sidebar range workflow applies only from the range popover done button', async () => {
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
   const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
   const stateSource = await readFile(new URL('state.js', moduleRoot), 'utf8');
@@ -382,10 +384,11 @@ test('timetable left sidebar range workflow is manually applied and keeps checkb
   assert.match(stateSource, /bulkRuleDraft/);
   assert.match(controllerSource, /toggleWorkflowSection\(/);
   assert.match(controllerSource, /updateRangeDraftFromForm\(/);
-  assert.match(controllerSource, /resetRangeDraft\(/);
   assert.match(controllerSource, /applyRangeDraft\(/);
   assert.match(interactionSource, /data-tt-section-toggle/);
-  assert.match(interactionSource, /#tt-apply-range/);
+  assert.doesNotMatch(interactionSource, /#tt-apply-range/);
+  assert.doesNotMatch(interactionSource, /#tt-reset-range/);
+  assert.match(interactionSource, /\[data-range-apply\]/);
   assert.match(interactionSource, /applyRangeDraft\(/);
   assert.match(interactionSource, /\[data-active-weekday\]/);
   assert.match(interactionSource, /\[data-active-period\]/);

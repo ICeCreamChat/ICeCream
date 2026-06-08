@@ -105,11 +105,6 @@ export class TimetablePlannerController {
         };
     }
 
-    resetRangeDraft() {
-        this.syncRangeDraftFromProject();
-        this.render();
-    }
-
     rangePayloadFromDraft() {
         const activeWeekdays = [...(this.state.rangeDraft?.activeWeekdays || getActiveWeekdays(this.state.project))].sort((left, right) => left - right);
         const activePeriods = [...(this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project))].sort((left, right) => left - right);

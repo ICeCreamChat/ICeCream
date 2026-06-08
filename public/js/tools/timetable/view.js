@@ -124,6 +124,7 @@ function renderMultiSelect({
     dataAttr,
     presets = [],
     presetAttr = 'data-range-preset',
+    doneAttr = 'data-tt-popover-close',
 }) {
     return `
         <details class="tt-multi-select" data-tt-multi-select="${escapeAttr(id)}">
@@ -140,7 +141,7 @@ function renderMultiSelect({
                 ${presets.length ? renderPresetButtons(presets, presetAttr) : ''}
                 ${renderCheckList({ items, activeValues, dataAttr })}
                 <div class="tt-popover-actions">
-                    <button class="tt-btn" type="button" data-tt-popover-close><i data-lucide="check"></i><span>完成</span></button>
+                    <button class="tt-btn" type="button" ${doneAttr}><i data-lucide="check"></i><span>完成</span></button>
                 </div>
             </div>
         </details>
@@ -275,10 +276,6 @@ function renderProjectSection(state) {
                 <span class="tt-chip">${activeWeekdays.length} 天 · ${activePeriods.length} 节</span>
             </div>
             <form id="tt-project-form" class="tt-range-form">
-                <div class="tt-action-row tt-range-actions">
-                    <button class="tt-btn" id="tt-reset-range" type="button"><i data-lucide="rotate-ccw"></i><span>恢复已保存</span></button>
-                    <button class="tt-btn tt-btn--primary" id="tt-apply-range" type="button"><i data-lucide="check"></i><span>应用范围</span></button>
-                </div>
                 <div class="tt-range-summary-grid">
                     ${renderMultiSelect({
                         id: 'range-weekdays',
@@ -291,8 +288,8 @@ function renderProjectSection(state) {
                         presets: [
                             { value: 'weekdays:workdays', label: '工作日' },
                             { value: 'weekdays:all', label: '全周' },
-                            { value: 'weekdays:saved', label: '恢复已保存' },
                         ],
+                        doneAttr: 'data-range-apply',
                     })}
                     ${renderMultiSelect({
                         id: 'range-periods',
@@ -305,8 +302,8 @@ function renderProjectSection(state) {
                         presets: [
                             { value: 'periods:first7', label: '第1-7节' },
                             { value: 'periods:all', label: '全部节次' },
-                            { value: 'periods:saved', label: '恢复已保存' },
                         ],
+                        doneAttr: 'data-range-apply',
                     })}
                 </div>
             </form>

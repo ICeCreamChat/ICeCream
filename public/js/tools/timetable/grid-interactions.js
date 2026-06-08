@@ -2,8 +2,6 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelectorAll('[data-tt-section-toggle]').forEach(button => {
         button.addEventListener('click', () => controller.toggleWorkflowSection(button.dataset.ttSectionToggle));
     });
-    container.querySelector('#tt-apply-range')?.addEventListener('click', () => controller.applyRangeDraft());
-    container.querySelector('#tt-reset-range')?.addEventListener('click', () => controller.resetRangeDraft());
     container.querySelector('#tt-save-project')?.addEventListener('click', () => controller.saveProject());
     container.querySelectorAll('[data-active-weekday], [data-active-period]').forEach(input => {
         input.addEventListener('change', () => controller.updateRangeDraftFromForm());
@@ -21,6 +19,12 @@ export function bindGridInteractions(container, controller, state) {
         button.addEventListener('click', () => {
             const [kind, preset] = button.dataset.bulkPreset.split(':');
             controller.applyBulkPreset(kind, preset);
+        });
+    });
+    container.querySelectorAll('[data-range-apply]').forEach(button => {
+        button.addEventListener('click', () => {
+            button.closest('details')?.removeAttribute('open');
+            controller.applyRangeDraft();
         });
     });
     container.querySelectorAll('[data-tt-popover-close]').forEach(button => {
