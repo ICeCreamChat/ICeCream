@@ -14,6 +14,10 @@ export function createTimetablePlannerState(overrides = {}) {
         ruleDraft: null,
         ruleDraftPreview: [],
         ruleWarnings: [],
+        ruleFileName: '',
+        ruleDraftInputType: '',
+        ruleContextStats: null,
+        ruleUnsupportedItems: [],
         workflowOpenSections: null,
         rangeDraft: null,
         bulkRuleDraft: {

@@ -502,6 +502,11 @@ function renderRulesSection(state) {
             <div class="tt-rule-block">
                 <span class="tt-rule-title">自然语言描述</span>
                 <textarea id="tt-rule-prompt" class="tt-import-text tt-rule-prompt" spellcheck="false" placeholder="例如：王老师周三下午不要排课，语数英尽量上午，七年级1班周五第7节不要排"></textarea>
+                <label class="tt-rule-file-entry">
+                    <i data-lucide="file-spreadsheet"></i>
+                    <span id="tt-rule-file-name">${escapeHtml(state.ruleFileName || '上传约束/任课 XLSX')}</span>
+                    <input id="tt-rule-file" type="file" accept=".xlsx,.xls">
+                </label>
                 <div class="tt-action-row">
                     <button class="tt-btn tt-btn--primary" id="tt-parse-rules" type="button"><i data-lucide="sparkles"></i><span>AI 解析</span></button>
                     <button class="tt-btn" id="tt-confirm-rule-draft" type="button" ${state.ruleDraft ? '' : 'disabled'}><i data-lucide="check"></i><span>确认草稿</span></button>
@@ -540,15 +545,27 @@ function renderNumberSelect(id, values, labelFor) {
 function renderRulePreview(state) {
     const items = state.ruleDraftPreview || [];
     const warnings = state.ruleWarnings || [];
+    const inputType = state.ruleDraftInputType || '';
+    const stats = state.ruleContextStats || null;
     if (!items.length && !warnings.length) {
         return '<div class="tt-rule-preview"><span class="tt-muted">AI 解析后会在这里预览，确认后才会保存。</span></div>';
     }
     return `
         <div class="tt-rule-preview">
+            ${inputType || stats ? `
+                <div class="tt-rule-preview-meta">
+                    ${inputType ? `<span class="tt-chip">${escapeHtml(inputType)}</span>` : ''}
+                    ${stats?.classCount !== undefined ? `<span>${escapeHtml(stats.classCount)} 班</span>` : ''}
+                    ${stats?.teacherCount !== undefined ? `<span>${escapeHtml(stats.teacherCount)} 教师</span>` : ''}
+                    ${stats?.subjectCount !== undefined ? `<span>${escapeHtml(stats.subjectCount)} 课程</span>` : ''}
+                    ${stats?.totalLessons !== undefined ? `<span>${escapeHtml(stats.totalLessons)} 课时</span>` : ''}
+                    ${stats?.rowCount !== undefined ? `<span>${escapeHtml(stats.rowCount)} 条</span>` : ''}
+                </div>
+            ` : ''}
             ${items.map(item => `
                 <div class="tt-rule-preview-item">
                     <strong>${escapeHtml(item.targetName || item.targetId || item.type)}</strong>
-                    <span>${escapeHtml(item.type)} · ${escapeHtml(item.priority || 'hard')} · ${escapeHtml((item.slots || []).join(', ') || '全局')}</span>
+                    <span>${escapeHtml(item.type)} · ${escapeHtml(item.priority || 'hard')} · ${escapeHtml(item.status || 'ready')} · ${escapeHtml((item.slots || []).join(', ') || '全局')}</span>
                     ${item.description ? `<em>${escapeHtml(item.description)}</em>` : ''}
                 </div>
             `).join('')}

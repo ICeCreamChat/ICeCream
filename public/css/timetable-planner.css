@@ -636,6 +636,15 @@ button.tt-section-title {
     gap: var(--tt-space-sm);
 }
 
+.tt-rule-preview-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+}
+
 .tt-rule-preview-item,
 .tt-rule-warning {
     display: grid;
@@ -680,6 +689,35 @@ button.tt-section-title {
 
 .tt-rule-preview--compact .tt-rule-preview-item {
     padding: 7px 8px;
+}
+
+.tt-rule-file-entry {
+    display: flex;
+    align-items: center;
+    gap: var(--tt-space-sm);
+    padding: 9px 10px;
+    border: 1px dashed var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    background: var(--tt-bg-input);
+    color: var(--tt-text-secondary);
+    cursor: pointer;
+    transition: var(--tt-transition);
+}
+
+.tt-rule-file-entry:hover {
+    border-color: var(--tt-primary);
+    color: var(--tt-text);
+    box-shadow: 0 0 0 1px rgba(8, 145, 178, 0.18);
+}
+
+.tt-rule-file-entry .lucide {
+    width: 16px;
+    height: 16px;
+    color: var(--tt-primary);
+}
+
+.tt-rule-file-entry input {
+    display: none;
 }
 
 .tt-bulk-target-group,

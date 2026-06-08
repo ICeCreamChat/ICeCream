@@ -65,6 +65,9 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-append-roster-rows')?.addEventListener('click', () => controller.appendRosterReviewRows());
     container.querySelector('#tt-clear-roster')?.addEventListener('click', () => controller.clearRoster());
     container.querySelector('#tt-save-rules')?.addEventListener('click', () => controller.saveRules());
+    container.querySelector('#tt-rule-file')?.addEventListener('change', event => {
+        controller.selectRuleParseFile(event.target.files?.[0] || null);
+    });
     container.querySelector('#tt-parse-rules')?.addEventListener('click', () => controller.parseRules());
     container.querySelector('#tt-confirm-rule-draft')?.addEventListener('click', () => controller.confirmRuleDraft());
     container.querySelector('#tt-add-bulk-rule')?.addEventListener('click', () => controller.addBulkRule());

@@ -29,6 +29,7 @@ export class TimetablePlannerController {
         this.state = createTimetablePlannerState();
         this.jobPollTimer = null;
         this.rosterImportFile = null;
+        this.ruleParseFile = null;
         this.rosterDraftCounter = 0;
     }
 
@@ -181,6 +182,17 @@ export class TimetablePlannerController {
         this.state.ruleDraft = null;
         this.state.ruleDraftPreview = [];
         this.state.ruleWarnings = [];
+        this.state.ruleDraftInputType = '';
+        this.state.ruleContextStats = null;
+        this.state.ruleUnsupportedItems = [];
+        this.state.ruleFileName = '';
+        this.ruleParseFile = null;
+    }
+
+    selectRuleParseFile(file) {
+        this.ruleParseFile = file || null;
+        this.state.ruleFileName = file?.name || '';
+        this.render();
     }
 
     readRosterImportText() {
@@ -617,13 +629,26 @@ export class TimetablePlannerController {
 
     async parseRules() {
         try {
-            const result = await requestTimetable('/rules/parse', {
-                method: 'POST',
-                body: JSON.stringify({ text: readRulePrompt(this.state.container) }),
-            });
+            let options;
+            if (this.ruleParseFile) {
+                const body = new FormData();
+                body.append('file', this.ruleParseFile);
+                const text = readRulePrompt(this.state.container);
+                if (text) body.append('text', text);
+                options = { method: 'POST', body };
+            } else {
+                options = {
+                    method: 'POST',
+                    body: JSON.stringify({ text: readRulePrompt(this.state.container) }),
+                };
+            }
+            const result = await requestTimetable('/rules/parse', options);
             this.state.ruleDraft = result.draftRules;
             this.state.ruleDraftPreview = result.previewItems || [];
             this.state.ruleWarnings = result.warnings || [];
+            this.state.ruleDraftInputType = result.inputType || '';
+            this.state.ruleContextStats = result.contextStats || null;
+            this.state.ruleUnsupportedItems = result.unsupportedItems || [];
             this.setMessage('AI 约束已解析，请确认草稿。');
         } catch (error) {
             this.handleError(error);

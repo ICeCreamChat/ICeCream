@@ -77,6 +77,9 @@ function candidateScore(project, usage, slots, task, candidate) {
     const subject = project.subjects.find(item => item.id === task.subjectId);
     const subjectName = subject?.name || '';
     const morningSubjects = new Set(project.rules.softRules.morningSubjects || []);
+    const preferredPeriods = project.rules.softRules.subjectPreferredPeriods?.[task.subjectId] || null;
+    const candidateKey = `${candidate.day}-${candidate.period}`;
+    const preferenceWeight = Math.max(1, Math.min(100, Number.parseInt(preferredPeriods?.weight, 10) || 20));
     let score = candidate.day * 0.2 + candidate.period * 0.1;
 
     if (morningSubjects.has(task.subjectId) || /语文|数学|英语|外语/.test(subjectName)) {
@@ -90,6 +93,8 @@ function candidateScore(project, usage, slots, task, candidate) {
     for (const teacherId of slotTeacherIds(task)) {
         score += (usage.teacherDay.get(`${teacherId}:${candidate.day}`) || 0) * 2;
     }
+    if (preferredPeriods?.prefer?.includes(candidateKey)) score -= preferenceWeight;
+    if (preferredPeriods?.avoid?.includes(candidateKey)) score += preferenceWeight;
     score += getExistingAdjacentPenalty(slots, task, candidate.day, candidate.period, task.blockSize);
     score -= (subject?.priority || 50) / 100;
 
