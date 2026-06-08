@@ -1,18 +1,18 @@
 .tt-workbench {
-    --tt-bg-page: #f6f7f9;
-    --tt-bg-panel: #ffffff;
-    --tt-bg-soft: #eef2f7;
-    --tt-bg-input: #ffffff;
-    --tt-border: #d6dbe3;
-    --tt-border-strong: #a9b2c0;
-    --tt-text: #172033;
-    --tt-muted: #647084;
-    --tt-primary: #2563eb;
-    --tt-primary-strong: #1d4ed8;
-    --tt-success: #15803d;
-    --tt-warning: #b45309;
-    --tt-danger: #b91c1c;
-    --tt-shadow: 0 8px 24px rgba(23, 32, 51, 0.08);
+    --tt-bg-page: transparent;
+    --tt-bg-panel: var(--glass-panel);
+    --tt-bg-soft: color-mix(in srgb, var(--glass-panel) 76%, var(--pm-surface, var(--bg-base)) 24%);
+    --tt-bg-input: color-mix(in srgb, var(--glass-panel) 82%, var(--bg-base) 18%);
+    --tt-border: var(--glass-border);
+    --tt-border-strong: color-mix(in srgb, var(--accent-color) 34%, var(--glass-border));
+    --tt-text: var(--text-primary);
+    --tt-muted: var(--text-secondary);
+    --tt-primary: var(--accent-color);
+    --tt-primary-strong: color-mix(in srgb, var(--accent-color) 82%, var(--pm-primary, #3b82f6) 18%);
+    --tt-success: var(--manim-studio-success);
+    --tt-warning: var(--manim-studio-warning);
+    --tt-danger: var(--manim-studio-error);
+    --tt-shadow: var(--shadow-depth);
     display: grid;
     grid-template-columns: 300px minmax(520px, 1fr) 300px;
     grid-template-rows: auto minmax(0, 1fr);
@@ -28,18 +28,6 @@
     font-family: var(--font-heading, Inter, system-ui, sans-serif);
 }
 
-body:not(.light-mode) .tt-workbench {
-    --tt-bg-page: #111827;
-    --tt-bg-panel: #1f2937;
-    --tt-bg-soft: #263243;
-    --tt-bg-input: #111827;
-    --tt-border: #3b4556;
-    --tt-border-strong: #657286;
-    --tt-text: #eef2f7;
-    --tt-muted: #a8b1c0;
-    --tt-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
-}
-
 .tt-loading {
     display: grid;
     place-items: center;
@@ -53,13 +41,16 @@ body:not(.light-mode) .tt-workbench {
     display: grid;
     grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 0.9fr);
     align-items: center;
-    gap: 12px;
-    min-height: 72px;
-    padding: 10px 12px;
-    background: var(--tt-bg-panel);
+    gap: 10px;
+    min-height: 56px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--tt-bg-panel) 88%, transparent);
     border: 1px solid var(--tt-border);
+    border-top: 1px solid var(--glass-highlight);
     border-radius: 8px;
     box-shadow: var(--tt-shadow);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
 }
 
 .tt-sidebar,
@@ -68,8 +59,11 @@ body:not(.light-mode) .tt-workbench {
     min-height: 0;
     background: var(--tt-bg-panel);
     border: 1px solid var(--tt-border);
+    border-top: 1px solid var(--glass-highlight);
     border-radius: 8px;
     box-shadow: var(--tt-shadow);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
 }
 
 .tt-sidebar {
@@ -269,6 +263,7 @@ body:not(.light-mode) .tt-workbench {
     border: 1px solid var(--tt-border);
     border-radius: 6px;
     color: var(--tt-text);
+    font-family: inherit;
     outline: none;
 }
 
@@ -285,7 +280,7 @@ body:not(.light-mode) .tt-workbench {
 .tt-schedule-toolbar select:focus,
 .tt-import-text:focus {
     border-color: var(--tt-primary);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tt-primary) 18%, transparent);
 }
 
 .tt-import-text {
@@ -320,9 +315,11 @@ body:not(.light-mode) .tt-workbench {
     border-radius: 6px;
     background: var(--tt-bg-soft);
     color: var(--tt-text);
+    font-family: inherit;
     font-size: 0.82rem;
     font-weight: 750;
     cursor: pointer;
+    transition: border-color 0.16s ease, color 0.16s ease, background 0.16s ease, transform 0.16s ease;
 }
 
 .tt-btn:hover:not(:disabled),
@@ -347,15 +344,17 @@ body:not(.light-mode) .tt-workbench {
 
 .tt-btn--primary,
 .tt-run-btn {
-    background: var(--tt-primary);
+    background: var(--accent-gradient);
     border-color: var(--tt-primary);
     color: #fff;
+    box-shadow: 0 0 18px color-mix(in srgb, var(--tt-primary) 18%, transparent);
 }
 
 .tt-btn--primary:hover:not(:disabled),
 .tt-run-btn:hover:not(:disabled) {
-    background: var(--tt-primary-strong);
+    background: linear-gradient(135deg, var(--tt-primary-strong), var(--tt-primary));
     color: #fff;
+    transform: translateY(-1px);
 }
 
 .tt-btn--danger {

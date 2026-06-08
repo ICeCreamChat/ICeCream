@@ -221,6 +221,16 @@ function solveScaleMessage(project) {
     return '';
 }
 
+function optimizationStatusLabel(job) {
+    if (!job) return '';
+    if (job.status === 'queued' || job.status === 'running') return 'Timefold 优化中';
+    if (job.status === 'completed' && job.accepted) return 'Timefold 已优化';
+    if (job.status === 'completed') return '已保留快速课表';
+    if (job.status === 'failed') return 'Timefold 未完成';
+    if (job.status === 'skipped') return '已保留当前课表';
+    return '后台优化';
+}
+
 function renderExportSection() {
     return `
         <section class="tt-section" data-workflow-step="review">
@@ -240,6 +250,7 @@ function renderExportSection() {
 export function renderSchedulePanel(state) {
     const owners = getOwners(state.project, state.viewMode);
     const readiness = getPreparedness(state.project);
+    const optimizationLabel = optimizationStatusLabel(state.solverJob);
     return `
         <div class="tt-schedule-toolbar">
             <div class="tt-schedule-view-controls">
@@ -253,10 +264,11 @@ export function renderSchedulePanel(state) {
                     : renderOwnerSelect(owners, state.selectedOwnerId)}
             </div>
             <div class="tt-schedule-actions">
+                ${optimizationLabel ? `<span class="tt-chip ${state.solverJob?.status === 'failed' ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(optimizationLabel)}</span>` : ''}
                 ${solveScaleMessage(state.project) ? `<span class="tt-chip tt-chip--warn">${escapeHtml(solveScaleMessage(state.project))}</span>` : ''}
                 <span class="tt-chip ${readiness.ready ? 'tt-chip--ok' : 'tt-chip--warn'}">${readiness.ready ? '可生成' : '待准备'}</span>
                 <button class="tt-run-btn" id="tt-run-schedule" type="button" ${state.loading || !readiness.ready ? 'disabled' : ''}>
-                    <i data-lucide="${state.loading ? 'loader-2' : 'play'}"></i><span>${state.loading ? '正在求解' : 'Timefold 生成'}</span>
+                    <i data-lucide="${state.loading ? 'loader-2' : 'play'}"></i><span>${state.loading ? '快速生成中' : '快速生成'}</span>
                 </button>
             </div>
         </div>
@@ -391,6 +403,7 @@ export function renderInspector(state) {
             ${selectedDetail ? renderSlotInspector(state) : renderPlanningInspector(state)}
             ${selectedDetail ? '' : renderUnscheduledPlanQueue(state)}
             ${renderConflictPanel(state)}
+            ${renderOptimizationPanel(state)}
             <section class="tt-inspector-section">
                 <div class="tt-section-title">
                     <h3><i data-lucide="activity"></i><span>求解详情</span></h3>
@@ -409,6 +422,35 @@ export function renderInspector(state) {
     `;
 }
 
+function renderOptimizationPanel(state) {
+    const job = state.solverJob;
+    const schedule = state.project?.schedule || null;
+    if (!job && schedule?.source !== 'fast_constructed') return '';
+    const label = optimizationStatusLabel(job);
+    const statusText = job
+        ? label
+        : '等待下一次 Timefold 优化';
+    const sourceText = schedule?.source === 'fast_constructed'
+        ? '快速课表'
+        : schedule?.source === 'timefold_solver'
+            ? 'Timefold'
+            : '未生成';
+    return `
+        <section class="tt-inspector-section">
+            <div class="tt-section-title">
+                <h3><i data-lucide="refresh-cw"></i><span>后台优化</span></h3>
+                ${job ? `<span class="tt-chip ${job.status === 'failed' ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(job.status)}</span>` : ''}
+            </div>
+            <div class="tt-detail-list">
+                <span><b>当前课表</b>${escapeHtml(sourceText)}</span>
+                <span><b>优化状态</b>${escapeHtml(statusText)}</span>
+                ${job?.reason ? `<span class="is-warning"><b>处理结果</b>${escapeHtml(job.reason)}</span>` : ''}
+                ${job?.solverStats?.lessonCount ? `<span><b>课时数</b>${escapeHtml(job.solverStats.lessonCount)}</span>` : ''}
+            </div>
+        </section>
+    `;
+}
+
 function renderPlanningInspector(state) {
     const status = getSolveStatus(state.project, state.lastFailure);
     const owners = getOwners(state.project, state.viewMode);
@@ -424,7 +466,7 @@ function renderPlanningInspector(state) {
                 <span><b>当前视图</b>${escapeHtml(viewLabel)}</span>
                 <span><b>当前对象</b>${escapeHtml(ownerLabel(selectedOwner) || '全校')}</span>
                 <span><b>已排课时</b>${escapeHtml(`${status.placed}/${status.total}`)}</span>
-                <span><b>状态</b>${escapeHtml(state.loading ? '正在求解' : status.sourceLabel)}</span>
+                <span><b>状态</b>${escapeHtml(state.loading ? '快速生成中' : status.sourceLabel)}</span>
                 ${scaleMessage ? `<span class="is-warning"><b>规模提示</b>${escapeHtml(scaleMessage)}</span>` : ''}
                 ${state.lastFailure ? `<span class="is-warning"><b>失败原因</b>${escapeHtml(state.lastFailure.message || 'Timefold 求解失败，旧课表已保留。')}</span>` : ''}
             </div>

@@ -22,6 +22,7 @@ import { renderWorkbench } from './view.js';
 export class TimetablePlannerController {
     constructor() {
         this.state = createTimetablePlannerState();
+        this.jobPollTimer = null;
     }
 
     async init(container) {
@@ -30,6 +31,7 @@ export class TimetablePlannerController {
     }
 
     destroy() {
+        this.clearOptimizationPolling();
         this.state.container = null;
     }
 
@@ -53,6 +55,41 @@ export class TimetablePlannerController {
     applyProject(project) {
         this.state.project = project;
         this.state.selectedOwnerId = ensureOwnerSelection(this.state);
+    }
+
+    clearOptimizationPolling() {
+        if (this.jobPollTimer) {
+            clearTimeout(this.jobPollTimer);
+            this.jobPollTimer = null;
+        }
+    }
+
+    startOptimizationPolling(job) {
+        this.clearOptimizationPolling();
+        if (!job?.jobId || !['queued', 'running'].includes(job.status)) return;
+        this.jobPollTimer = setTimeout(() => {
+            this.refreshOptimizationJob(job.jobId);
+        }, 1200);
+    }
+
+    async refreshOptimizationJob(jobId) {
+        try {
+            const result = await requestTimetable(`/schedule/jobs/${encodeURIComponent(jobId)}`);
+            this.state.solverJob = result.job;
+            if (result.job.status === 'completed' && result.job.accepted) {
+                const data = await requestTimetable('/bootstrap');
+                this.applyProject(data.project);
+                this.state.message = 'Timefold 优化已应用。';
+            } else if (result.job.status === 'completed') {
+                this.state.message = '快速课表已保留。';
+            } else if (result.job.status === 'failed') {
+                this.state.message = 'Timefold 优化未完成，快速课表已保留。';
+            }
+            this.render();
+            this.startOptimizationPolling(result.job);
+        } catch {
+            this.clearOptimizationPolling();
+        }
     }
 
     async load() {
@@ -80,6 +117,8 @@ export class TimetablePlannerController {
                 body: JSON.stringify(readProjectForm(this.state.container)),
             });
             this.applyProject(result.project);
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
             this.setMessage('项目已保存。');
         } catch (error) {
             this.handleError(error);
@@ -107,6 +146,8 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.state.viewMode = 'class';
             this.state.selectedSlotId = '';
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
             this.setMessage(`已导入 ${result.import.count} 条任课信息。`);
         } catch (error) {
             this.handleError(error);
@@ -121,6 +162,8 @@ export class TimetablePlannerController {
                 body: JSON.stringify({ rules }),
             });
             this.applyProject(result.project);
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
             this.setMessage('约束已保存。');
         } catch (error) {
             this.handleError(error);
@@ -138,6 +181,8 @@ export class TimetablePlannerController {
                 body: JSON.stringify({ rules }),
             });
             this.applyProject(result.project);
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
             this.setMessage('锁定课节已添加。');
         } catch (error) {
             this.handleError(error);
@@ -154,6 +199,8 @@ export class TimetablePlannerController {
                 body: JSON.stringify({ rules }),
             });
             this.applyProject(result.project);
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
             this.setMessage('锁定课节已移除。');
         } catch (error) {
             this.handleError(error);
@@ -169,10 +216,14 @@ export class TimetablePlannerController {
             this.state.viewMode = 'class';
             this.state.selectedOwnerId = this.state.project.classes[0]?.id || this.state.project.teachers[0]?.id || '';
             this.state.selectedSlotId = '';
+            this.state.solverJob = result.solverJob || null;
             this.state.message = result.schedule.score.unplacedLessons
-                ? `生成完成，还有 ${result.schedule.score.unplacedLessons} 节未排。`
-                : '课表已生成。';
+                ? `快速生成完成，还有 ${result.schedule.score.unplacedLessons} 节未排。`
+                : result.solverJob
+                    ? '快速课表已生成，Timefold 正在后台优化。'
+                    : '快速课表已生成。';
             this.state.lastFailure = null;
+            this.startOptimizationPolling(result.solverJob);
         } catch (error) {
             this.handleError(error, { keepFailure: true });
         } finally {
@@ -188,6 +239,8 @@ export class TimetablePlannerController {
                 body: JSON.stringify(payload),
             });
             this.applyProject(result.project);
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
             if (payload.type === 'clear') this.state.selectedSlotId = '';
             this.setMessage(result.schedule.conflicts.length ? '已调整，当前仍有冲突。' : '已调整。');
         } catch (error) {

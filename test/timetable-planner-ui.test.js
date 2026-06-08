@@ -89,6 +89,24 @@ test('timetable planner uses the seating-style control panel and board layout', 
   assert.match(styles, /@media \(max-width:\s*980px\)[\s\S]*\.tt-workbench\s*{[^}]*grid-template-areas:\s*"topbar"\s*"sidebar"\s*"schedule"\s*"inspector"/s);
 });
 
+test('timetable styles inherit the ICeCream tool tokens and fonts', async () => {
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-bg-page:\s*transparent/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-bg-panel:\s*var\(--glass-panel/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-border:\s*var\(--glass-border/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-primary:\s*var\(--accent-color/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*--tt-shadow:\s*var\(--shadow-depth/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*var\(--pm-surface/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*font-family:\s*var\(--font-heading/s);
+  assert.match(styles, /\.tt-import-text\s*{[^}]*font-family:\s*var\(--font-mono/s);
+  assert.match(styles, /\.tt-topbar\s*{[^}]*min-height:\s*56px/s);
+
+  assert.doesNotMatch(styles, /--tt-bg-page:\s*#f6f7f9/i);
+  assert.doesNotMatch(styles, /--tt-bg-page:\s*#111827/i);
+  assert.doesNotMatch(styles, /body:not\(\.light-mode\)\s+\.tt-workbench/);
+});
+
 test('timetable planner keeps schedule operations inside the board surface', async () => {
   const viewSource = await readFile(new URL('view.js', moduleRoot), 'utf8');
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
@@ -110,6 +128,18 @@ test('timetable planner keeps schedule operations inside the board surface', asy
   assert.match(controllerSource, /normalizeApiError/);
   assert.match(interactionSource, /bindGridInteractions/);
   assert.match(interactionSource, /blockId/);
+});
+
+test('timetable controller clears stale optimization jobs after saved data changes', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const mutatingMethods = ['saveProject', 'importRoster', 'saveRules', 'adjustSlot'];
+
+  for (const methodName of mutatingMethods) {
+    assert.match(
+      controllerSource,
+      new RegExp(`async\\s+${methodName}\\([^)]*\\)\\s*{[\\s\\S]*?this\\.clearOptimizationPolling\\(\\);[\\s\\S]*?this\\.state\\.solverJob\\s*=\\s*null;`),
+    );
+  }
 });
 
 test('timetable workbench keeps solving in the board and pending plans in the inspector', async () => {

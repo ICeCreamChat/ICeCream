@@ -143,7 +143,13 @@ export function getSolveStatus(project, lastFailure = null) {
     const source = project?.schedule?.source;
     return {
         source,
-        sourceLabel: source === 'timefold_solver' ? 'Timefold' : source === 'diagnostic_local' ? '本地诊断' : '未生成',
+        sourceLabel: source === 'timefold_solver'
+            ? 'Timefold'
+            : source === 'fast_constructed'
+                ? '快速课表'
+                : source === 'diagnostic_local'
+                    ? '本地诊断'
+                    : '未生成',
         placed: score.placedLessons ?? 0,
         total: score.totalLessons ?? totalPlannedLessons(project),
         completeness: score.completeness == null ? '-' : `${score.completeness}%`,

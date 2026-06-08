@@ -10,6 +10,7 @@ export function createTimetablePlannerState(overrides = {}) {
         loading: false,
         message: '',
         lastFailure: null,
+        solverJob: null,
         ...overrides,
     };
 }

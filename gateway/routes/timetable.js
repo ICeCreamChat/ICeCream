@@ -7,12 +7,13 @@ import { createTimetableStore } from '../services/timetable-store.js';
 import {
     applyScheduleAdjustment,
     normalizeTimetableProject,
+    runTimetableScheduler,
     validateTimetableProjectForSolve,
 } from '../services/timetable-scheduler.js';
 import {
-    solveTimetableWithTimefold,
-    TimetableTimefoldError,
-} from '../services/timetable-solver-bridge.js';
+    createTimetableOptimizationJob,
+    getTimetableOptimizationJob,
+} from '../services/timetable-optimization-jobs.js';
 
 const router = express.Router();
 const upload = multer({
@@ -34,6 +35,10 @@ function fail(res, error, status = 400, data = undefined) {
         error: error.message || String(error),
         ...(data === undefined ? {} : { data }),
     });
+}
+
+function hasTimefoldSolverConfigured(env = process.env) {
+    return Boolean(String(env.TIMEFOLD_SOLVER_URL || '').trim());
 }
 
 router.get('/bootstrap', async (req, res) => {
@@ -99,7 +104,8 @@ router.post('/rules', async (req, res) => {
 
 router.post('/schedule/run', async (req, res) => {
     try {
-        const current = await store().loadProject();
+        const timetableStore = store();
+        const current = await timetableStore.loadProject();
         const validation = validateTimetableProjectForSolve(current);
         if (!validation.ok) {
             fail(res, new Error(validation.message), 422, {
@@ -110,22 +116,38 @@ router.post('/schedule/run', async (req, res) => {
             });
             return;
         }
-        const result = await solveTimetableWithTimefold({ project: current });
-        await store().saveProject(result.project);
-        ok(res, { project: result.project, schedule: result.schedule });
-    } catch (error) {
-        if (error instanceof TimetableTimefoldError) {
-            const current = await store().loadProject();
-            fail(res, error, error.status || 503, {
+        const fastResult = runTimetableScheduler(current);
+        if (!fastResult.success) {
+            fail(res, new Error('快速排课未能生成完整课表，旧课表已保留。'), 422, {
                 project: current,
                 schedule: current.schedule,
-                solverStats: error.solverStats || null,
-                reason: error.reason,
+                reason: 'fast_construct_failed',
+                solverStats: fastResult.schedule?.solverStats || null,
             });
             return;
         }
+
+        const saved = await timetableStore.saveProject(fastResult.project);
+        const solverJob = hasTimefoldSolverConfigured()
+            ? createTimetableOptimizationJob({
+                project: saved,
+                schedule: saved.schedule,
+                store: timetableStore,
+            })
+            : null;
+        ok(res, { project: saved, schedule: saved.schedule, solverJob });
+    } catch (error) {
         fail(res, error, 500);
     }
+});
+
+router.get('/schedule/jobs/:jobId', (req, res) => {
+    const job = getTimetableOptimizationJob(req.params.jobId);
+    if (!job) {
+        fail(res, new Error('排课优化任务不存在。'), 404, { job: null, reason: 'job_not_found' });
+        return;
+    }
+    ok(res, { job });
 });
 
 router.post('/schedule/adjust', async (req, res) => {

@@ -149,7 +149,7 @@ test('solveTimetableWithTimefold maps request aborts to timeout metadata', async
         && error.reason === 'timeout'
         && error.status === 504
         && error.solverStats.lessonCount === 3
-        && error.solverStats.timeoutSeconds === 660
+        && error.solverStats.timeoutSeconds === 210
         && Number.isInteger(error.solverStats.durationMs)
     ));
 });

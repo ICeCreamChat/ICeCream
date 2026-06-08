@@ -6,7 +6,7 @@ import {
     slotKey,
 } from './timetable-scheduler.js';
 
-const DEFAULT_TIMEOUT_MS = 660000;
+const DEFAULT_TIMEOUT_MS = 210000;
 const POLL_INTERVAL_MS = 500;
 const NONE_ROOM_ID = '__NONE__';
 
@@ -186,7 +186,7 @@ function blockSizesForPlan(plan) {
     return sizes;
 }
 
-function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pinnedTimeSlotId, project }) {
+function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pinnedTimeSlotId, initialSlot, project }) {
     const subject = project.subjects.find(item => item.id === plan.subjectId);
     const teacherIds = teacherIdsForPlan(plan);
     const allowedRoomIds = unique([...(plan.allowedRoomIds || []), plan.roomId]);
@@ -198,6 +198,8 @@ function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pi
         subjectId: plan.subjectId,
         teacherId: teacherIds[0] || plan.teacherId,
         teacherIds,
+        timeSlot: initialSlot ? slotKey(initialSlot.day, initialSlot.period) : null,
+        room: initialSlot?.roomId || NONE_ROOM_ID,
         pinnedTimeSlotId: pinnedTimeSlotId || null,
         blockedTimeSlotIds: blockedSlotsForPlan(project, plan),
         allowedRoomIds,
@@ -211,16 +213,37 @@ function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pi
     };
 }
 
+function buildInitialSlotQueues(project) {
+    const queues = new Map();
+    for (const slot of project.schedule?.slots || []) {
+        if (!slot.lessonPlanId) continue;
+        if (!queues.has(slot.lessonPlanId)) queues.set(slot.lessonPlanId, []);
+        queues.get(slot.lessonPlanId).push(slot);
+    }
+    for (const queue of queues.values()) {
+        queue.sort((left, right) => (
+            left.day - right.day
+            || left.period - right.period
+            || (left.blockIndex || 0) - (right.blockIndex || 0)
+            || left.id.localeCompare(right.id)
+        ));
+    }
+    return queues;
+}
+
 function buildLessonAssignments(project) {
     const assignments = [];
+    const initialSlotQueues = buildInitialSlotQueues(project);
     for (const plan of project.lessonPlans) {
         const lockedSlots = lockedSlotsForPlan(project, plan);
+        const initialSlots = initialSlotQueues.get(plan.id) || [];
         let sequence = 0;
         let blockNumber = 0;
         for (const blockSize of blockSizesForPlan(plan)) {
             blockNumber += 1;
             for (let blockIndex = 0; blockIndex < blockSize; blockIndex++) {
                 const locked = lockedSlots[sequence];
+                const initialSlot = initialSlots[sequence] || null;
                 assignments.push(makeAssignment({
                     plan,
                     sequence,
@@ -228,6 +251,7 @@ function buildLessonAssignments(project) {
                     blockSize,
                     blockIndex,
                     pinnedTimeSlotId: locked ? slotKey(locked.day, locked.period) : null,
+                    initialSlot,
                     project,
                 }));
                 sequence += 1;

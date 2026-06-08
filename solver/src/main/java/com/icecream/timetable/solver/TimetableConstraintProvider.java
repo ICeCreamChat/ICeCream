@@ -25,6 +25,9 @@ public class TimetableConstraintProvider implements ConstraintProvider {
                 practicalSubjectsLater(factory),
                 teacherDailyLoad(factory),
                 classDailyLoad(factory),
+                teacherLunchBridge(factory),
+                teacherGap(factory),
+                sameCourseHalfDaySplit(factory),
         };
     }
 
@@ -126,5 +129,46 @@ public class TimetableConstraintProvider implements ConstraintProvider {
                         && left.sharesClassWith(right))
                 .penalize(HardSoftScore.ONE_SOFT)
                 .asConstraint("Class daily load");
+    }
+
+    Constraint teacherLunchBridge(ConstraintFactory factory) {
+        return factory.forEachUniquePair(LessonAssignment.class)
+                .filter(TimetableConstraintProvider::isTeacherLunchBridge)
+                .penalize(HardSoftScore.ONE_SOFT, (left, right) -> 4)
+                .asConstraint("Teacher lunch bridge");
+    }
+
+    Constraint teacherGap(ConstraintFactory factory) {
+        return factory.forEachUniquePair(LessonAssignment.class)
+                .filter((left, right) -> teacherGapPenalty(left, right) > 0)
+                .penalize(HardSoftScore.ONE_SOFT, TimetableConstraintProvider::teacherGapPenalty)
+                .asConstraint("Teacher gap");
+    }
+
+    Constraint sameCourseHalfDaySplit(ConstraintFactory factory) {
+        return factory.forEachUniquePair(LessonAssignment.class)
+                .filter(TimetableConstraintProvider::isSameCourseHalfDaySplit)
+                .penalize(HardSoftScore.ONE_SOFT, (left, right) -> 5)
+                .asConstraint("Same course half-day split");
+    }
+
+    private static boolean isTeacherLunchBridge(LessonAssignment left, LessonAssignment right) {
+        return left.sameTeacherDay(right)
+                && left.getTimeSlot().isMorning() != right.getTimeSlot().isMorning()
+                && Math.abs(left.getTimeSlot().getLessonIndex() - right.getTimeSlot().getLessonIndex()) == 1;
+    }
+
+    private static int teacherGapPenalty(LessonAssignment left, LessonAssignment right) {
+        if (!left.sameTeacherDay(right)
+                || left.getTimeSlot().isMorning() != right.getTimeSlot().isMorning()) {
+            return 0;
+        }
+        int gap = Math.abs(left.getTimeSlot().getLessonIndex() - right.getTimeSlot().getLessonIndex()) - 1;
+        return Math.max(0, gap * 2);
+    }
+
+    private static boolean isSameCourseHalfDaySplit(LessonAssignment left, LessonAssignment right) {
+        return left.sameClassSubjectDay(right)
+                && left.getTimeSlot().isMorning() != right.getTimeSlot().isMorning();
     }
 }

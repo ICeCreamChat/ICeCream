@@ -181,8 +181,8 @@ test('dev.bat exposes timetable solver timeout defaults without overwriting user
   const devBatch = await readFile(new URL('../dev.bat', import.meta.url), 'utf8');
   const solverProperties = await readFile(new URL('../solver/src/main/resources/application.properties', import.meta.url), 'utf8');
 
-  assert.match(devBatch, /if not defined TIMETABLE_SOLVER_TIMEOUT set "TIMETABLE_SOLVER_TIMEOUT=660"/);
-  assert.match(devBatch, /if not defined TIMETABLE_SOLVER_SPENT_LIMIT set "TIMETABLE_SOLVER_SPENT_LIMIT=600s"/);
+  assert.match(devBatch, /if not defined TIMETABLE_SOLVER_TIMEOUT set "TIMETABLE_SOLVER_TIMEOUT=210"/);
+  assert.match(devBatch, /if not defined TIMETABLE_SOLVER_SPENT_LIMIT set "TIMETABLE_SOLVER_SPENT_LIMIT=180s"/);
   assert.match(devBatch, /Timetable solver timeout:/);
-  assert.match(solverProperties, /quarkus\.timefold\.solver\."timetable"\.termination\.spent-limit=\$\{TIMETABLE_SOLVER_SPENT_LIMIT:600s\}/);
+  assert.match(solverProperties, /quarkus\.timefold\.solver\."timetable"\.termination\.spent-limit=\$\{TIMETABLE_SOLVER_SPENT_LIMIT:180s\}/);
 });
