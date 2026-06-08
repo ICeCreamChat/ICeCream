@@ -291,6 +291,7 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.match(html, /class="tt-roster-stats"/);
   assert.match(html, /id="tt-clear-roster"/);
   assert.match(html, /id="tt-reopen-roster-import"/);
+  assert.match(html, /id="tt-edit-roster"/);
   assert.doesNotMatch(html, /id="tt-import-text"/);
   assert.doesNotMatch(html, /id="tt-import-roster"/);
   assert.doesNotMatch(html, /class="tt-plan-list"/);
@@ -349,10 +350,51 @@ test('timetable roster import is opened from a data card instead of permanent si
   assert.match(open, /id="tt-roster-import-file"/);
   assert.match(open, /id="tt-roster-import-text"/);
   assert.match(open, /id="tt-fill-roster-sample"/);
+  assert.match(open, /id="tt-start-empty-roster-review"/);
   assert.match(open, /id="tt-cancel-roster-import"/);
-  assert.match(open, /id="tt-confirm-roster-import"/);
+  assert.match(open, /id="tt-preview-roster-import"/);
+  assert.doesNotMatch(open, /id="tt-roster-review-table"/);
   assert.match(open, /data-roster-import-mode="file"/);
   assert.match(open, /data-roster-import-mode="text"/);
+
+  const review = renderWorkbench({
+    ...state,
+    rosterImport: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      fileName: '',
+      text: '',
+      draftRows: [{
+        id: 'draft_1',
+        grade: 'G7',
+        className: '1',
+        subjectName: 'Math',
+        teacherName: 'Alice/Bob',
+        weeklyHours: 4,
+        blockPreference: 'double',
+        roomName: 'Lab A/Lab B',
+        issues: [],
+      }],
+      stats: { classCount: 1, teacherCount: 2, subjectCount: 1, planCount: 1, totalLessons: 4, blockLessons: 4, fixedRoomCount: 2, issueCount: 0 },
+      issues: [],
+      warnings: [],
+    },
+  });
+  assert.match(review, /id="tt-roster-review-table"/);
+  assert.match(review, /data-roster-review-row="draft_1"/);
+  assert.match(review, /data-roster-field="grade"/);
+  assert.match(review, /data-roster-field="className"/);
+  assert.match(review, /data-roster-field="subjectName"/);
+  assert.match(review, /data-roster-field="teacherName"/);
+  assert.match(review, /data-roster-field="weeklyHours"/);
+  assert.match(review, /data-roster-field="blockPreference"/);
+  assert.match(review, /data-roster-field="roomName"/);
+  assert.match(review, /data-roster-delete-row="draft_1"/);
+  assert.match(review, /id="tt-add-roster-review-row"/);
+  assert.match(review, /id="tt-roster-bulk-text"/);
+  assert.match(review, /id="tt-append-roster-rows"/);
+  assert.match(review, /id="tt-confirm-roster-import"/);
 });
 
 test('timetable roster import controller exposes modal workflow methods and bindings', async () => {
@@ -366,18 +408,33 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(controllerSource, /closeRosterImport\(/);
   assert.match(controllerSource, /setRosterImportMode\(/);
   assert.match(controllerSource, /selectRosterImportFile\(/);
+  assert.match(controllerSource, /previewRosterImport\(/);
+  assert.match(controllerSource, /startEmptyRosterReview\(/);
+  assert.match(controllerSource, /openRosterEditor\(/);
+  assert.match(controllerSource, /updateRosterReviewField\(/);
+  assert.match(controllerSource, /appendRosterReviewRows\(/);
+  assert.match(controllerSource, /deleteRosterReviewRow\(/);
   assert.match(controllerSource, /confirmRosterImport\(/);
   assert.match(controllerSource, /new FormData\(\)/);
   assert.match(controllerSource, /#tt-roster-import-text/);
   assert.match(interactionSource, /data-roster-import-trigger/);
   assert.match(interactionSource, /#tt-reopen-roster-import/);
+  assert.match(interactionSource, /#tt-edit-roster/);
+  assert.match(interactionSource, /#tt-preview-roster-import/);
+  assert.match(interactionSource, /#tt-start-empty-roster-review/);
   assert.match(interactionSource, /#tt-confirm-roster-import/);
   assert.match(interactionSource, /#tt-cancel-roster-import/);
   assert.match(interactionSource, /#tt-roster-import-file/);
+  assert.match(interactionSource, /\[data-roster-field\]/);
+  assert.match(interactionSource, /\[data-roster-delete-row\]/);
+  assert.match(interactionSource, /#tt-add-roster-review-row/);
+  assert.match(interactionSource, /#tt-append-roster-rows/);
   assert.match(interactionSource, /\[data-roster-import-mode\]/);
   assert.match(styles, /\.tt-dialog-overlay/);
   assert.match(styles, /\.tt-roster-import-dialog/);
   assert.match(styles, /\.tt-import-dropzone/);
+  assert.match(styles, /\.tt-roster-review-table/);
+  assert.match(styles, /\.tt-roster-review-row--error/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
 });
 

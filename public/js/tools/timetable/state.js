@@ -22,9 +22,15 @@ export function createTimetablePlannerState(overrides = {}) {
         },
         rosterImport: {
             open: false,
+            step: 'input',
             mode: 'file',
             fileName: '',
             text: '',
+            draftRows: [],
+            stats: null,
+            warnings: [],
+            issues: [],
+            hasBlockingIssues: false,
         },
         ...overrides,
     };

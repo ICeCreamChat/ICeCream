@@ -2,7 +2,13 @@ import express from 'express';
 import multer from 'multer';
 
 import { buildTimetableExportXlsx, TIMETABLE_XLSX_MIME } from '../services/timetable-export.js';
-import { parseTimetableRosterFile, parseTimetableRosterText } from '../services/timetable-import.js';
+import {
+    buildTimetableRosterFromRows,
+    parseTimetableRosterFile,
+    parseTimetableRosterText,
+    previewTimetableRosterFile,
+    previewTimetableRosterText,
+} from '../services/timetable-import.js';
 import { createTimetableStore } from '../services/timetable-store.js';
 import {
     applyScheduleAdjustment,
@@ -107,12 +113,26 @@ router.post('/roster/clear', async (req, res) => {
     }
 });
 
+router.post('/roster/preview', upload.single('file'), async (req, res) => {
+    try {
+        const current = await store().loadProject();
+        const preview = req.file
+            ? previewTimetableRosterFile({ buffer: req.file.buffer, filename: req.file.originalname }, { project: current })
+            : previewTimetableRosterText(req.body?.text || '', { project: current });
+        ok(res, preview);
+    } catch (error) {
+        fail(res, error);
+    }
+});
+
 router.post('/roster/import', upload.single('file'), async (req, res) => {
     try {
-        const parsed = req.file
-            ? parseTimetableRosterFile({ buffer: req.file.buffer, filename: req.file.originalname })
-            : parseTimetableRosterText(req.body?.text || '');
         const current = await store().loadProject();
+        const parsed = Array.isArray(req.body?.rows)
+            ? buildTimetableRosterFromRows(req.body.rows, { project: current })
+            : req.file
+                ? parseTimetableRosterFile({ buffer: req.file.buffer, filename: req.file.originalname }, { project: current })
+                : parseTimetableRosterText(req.body?.text || '', { project: current });
         const project = normalizeTimetableProject({
             ...current,
             teachers: parsed.teachers,

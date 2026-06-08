@@ -3,10 +3,14 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import AdmZip from 'adm-zip';
 
 import { createGatewayApp } from '../gateway/app.js';
 import { summarizeScheduleConflicts } from '../gateway/services/timetable-conflicts.js';
-import { parseTimetableRosterText } from '../gateway/services/timetable-import.js';
+import {
+    parseTimetableRosterText,
+    previewTimetableRosterFile,
+} from '../gateway/services/timetable-import.js';
 import {
     getTimetableOptimizationJob,
     resetTimetableOptimizationJobs,
@@ -467,6 +471,49 @@ test('timetable roster parser imports teachers, classes, subjects and lesson pla
     assert.equal(parsed.lessonPlans.find(plan => plan.subjectName === '体育').blockPreference, 'double');
 });
 
+function makeTimetableWorkbook(rows) {
+    const zip = new AdmZip();
+    const strings = [];
+    const stringIndex = new Map();
+    const xmlEscape = value => String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    const getStringIndex = value => {
+        const key = String(value ?? '');
+        if (!stringIndex.has(key)) {
+            stringIndex.set(key, strings.length);
+            strings.push(key);
+        }
+        return stringIndex.get(key);
+    };
+    const columnName = index => String.fromCharCode(65 + index);
+    const sheetRows = rows.map((row, rowIndex) => `
+        <row r="${rowIndex + 1}">
+            ${row.map((cell, columnIndex) => `<c r="${columnName(columnIndex)}${rowIndex + 1}" t="s"><v>${getStringIndex(cell)}</v></c>`).join('')}
+        </row>
+    `).join('');
+    zip.addFile('xl/sharedStrings.xml', Buffer.from(`<sst>${strings.map(value => `<si><t>${xmlEscape(value)}</t></si>`).join('')}</sst>`));
+    zip.addFile('xl/worksheets/sheet1.xml', Buffer.from(`<worksheet><sheetData>${sheetRows}</sheetData></worksheet>`));
+    return zip.toBuffer();
+}
+
+test('timetable roster preview parses Excel draft rows with teachers and rooms before saving', () => {
+    const preview = previewTimetableRosterFile({
+        filename: 'roster.xlsx',
+        buffer: makeTimetableWorkbook([
+            ['grade', 'class', 'subject', 'teacher', 'hours', 'block', 'room'],
+            ['G7', '1', 'Math', 'Alice/Bob', '4', 'double', 'Lab 1/Lab 2'],
+        ]),
+    });
+
+    assert.equal(preview.draftRows.length, 1);
+    assert.equal(preview.draftRows[0].teacherName, 'Alice、Bob');
+    assert.equal(preview.draftRows[0].roomName, 'Lab 1、Lab 2');
+    assert.equal(preview.stats.planCount, 1);
+    assert.equal(preview.issues.filter(issue => issue.severity === 'error').length, 0);
+});
+
 test('timetable store persists project data atomically in a local data directory', async () => {
     const dataDir = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-'));
     const store = createTimetableStore({ dataDir });
@@ -578,6 +625,99 @@ test('timetable API exposes bootstrap, project save, import and scheduling flow'
             delete process.env.TIMETABLE_SOLVER_TIMEOUT;
         } else {
             process.env.TIMETABLE_SOLVER_TIMEOUT = previousTimetableTimeout;
+        }
+    }
+});
+
+test('timetable roster preview does not save and reviewed rows replace the saved roster', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-roster-review-'));
+
+    const store = createTimetableStore();
+    await store.saveProject(sampleProject({
+        activeWeekdays: [1, 2, 3, 4],
+        activePeriods: [1, 2, 3, 4, 5, 6],
+        lessonPlans: [{
+            id: 'lp_old',
+            classId: 'c1',
+            subjectId: 'math',
+            teacherId: 't_math',
+            weeklyHours: 3,
+            blockPreference: 'single',
+        }],
+        schedule: {
+            id: 'old_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [{
+                id: 'old_slot',
+                day: 1,
+                period: 1,
+                classId: 'c1',
+                subjectId: 'math',
+                teacherId: 't_math',
+                lessonPlanId: 'lp_old',
+                locked: false,
+            }],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 3, completeness: 33 },
+        },
+    }));
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const previewPayload = await fetch(`${baseUrl}/api/tools/timetable/roster/preview`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                text: [
+                    'grade,class,subject,teacher,hours,block,room',
+                    'G8,2,Science,Alice/Bob,4,double,Lab A/Lab B',
+                    'G8,2,Art,Alice,2,single,',
+                ].join('\n'),
+            }),
+        }).then(res => res.json());
+
+        assert.equal(previewPayload.success, true);
+        assert.equal(previewPayload.data.draftRows.length, 2);
+        assert.equal(previewPayload.data.stats.teacherCount, 2);
+
+        const afterPreview = await store.loadProject();
+        assert.equal(afterPreview.lessonPlans.length, 1);
+        assert.equal(afterPreview.schedule.id, 'old_schedule');
+
+        const importPayload = await fetch(`${baseUrl}/api/tools/timetable/roster/import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rows: previewPayload.data.draftRows }),
+        }).then(res => res.json());
+
+        assert.equal(importPayload.success, true);
+        assert.equal(importPayload.data.project.lessonPlans.length, 2);
+        assert.equal(importPayload.data.project.schedule, null);
+        assert.deepEqual(importPayload.data.project.activeWeekdays, [1, 2, 3, 4]);
+        assert.equal(importPayload.data.project.subjects.some(subject => subject.name === 'Math'), false);
+
+        const science = importPayload.data.project.lessonPlans.find(plan => plan.subjectName === 'Science');
+        assert.deepEqual(science.teacherIds.map(id => importPayload.data.project.teachers.find(teacher => teacher.id === id)?.name), ['Alice', 'Bob']);
+        assert.deepEqual(science.allowedRoomIds, ['Lab A', 'Lab B']);
+        assert.equal(science.roomId, 'Lab A');
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
         }
     }
 });

@@ -329,6 +329,7 @@ function renderImportSection(state) {
                 ${renderRosterStats(stats)}
                 <div class="tt-action-row">
                     <button class="tt-btn" id="tt-reopen-roster-import" type="button"><i data-lucide="refresh-cw"></i><span>重新导入</span></button>
+                    <button class="tt-btn" id="tt-edit-roster" type="button"><i data-lucide="pencil"></i><span>编辑任课</span></button>
                     <button class="tt-btn tt-btn--danger" id="tt-clear-roster" type="button"><i data-lucide="trash-2"></i><span>清空</span></button>
                 </div>
             ` : `
@@ -347,38 +348,126 @@ function renderRosterImportDialog(state) {
     if (!dialog.open) return '';
     const mode = dialog.mode === 'text' ? 'text' : 'file';
     const fileName = dialog.fileName || '选择 CSV / TXT / Excel 文件';
+    const isReview = dialog.step === 'review';
     return `
         <div class="tt-dialog-overlay" data-roster-import-close>
             <section class="tt-roster-import-dialog" id="tt-roster-import-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-roster-import-title">
                 <div class="tt-dialog-header">
                     <div>
                         <span class="tt-eyebrow">任课数据</span>
-                        <h3 id="tt-roster-import-title">导入任课数据</h3>
-                        <p>支持文件上传或粘贴文本，确认后生成统计并清空旧课表。</p>
+                        <h3 id="tt-roster-import-title">${isReview ? '复核任课数据' : '导入任课数据'}</h3>
+                        <p>${isReview ? '检查解析后的任课表，可以增删改；确认后才会写入项目并清空旧课表。' : '上传文件、粘贴文本，或直接手动新增任课表。'}</p>
                     </div>
                     <button class="tt-icon-btn" id="tt-cancel-roster-import" type="button" title="关闭导入" aria-label="关闭导入"><i data-lucide="x"></i></button>
                 </div>
-                <div class="tt-segment tt-import-mode-tabs" role="group" aria-label="导入方式">
-                    <button class="${mode === 'file' ? 'is-active' : ''}" type="button" data-roster-import-mode="file">上传文件</button>
-                    <button class="${mode === 'text' ? 'is-active' : ''}" type="button" data-roster-import-mode="text">粘贴文本</button>
-                </div>
-                <label class="tt-import-dropzone ${mode === 'file' ? 'is-active' : ''}">
-                    <i data-lucide="upload-cloud"></i>
-                    <strong>${escapeHtml(fileName)}</strong>
-                    <span>.csv / .txt / .xlsx / .xls</span>
-                    <input id="tt-roster-import-file" type="file" accept=".csv,.txt,.xlsx,.xls">
-                </label>
-                <div class="tt-rule-block ${mode === 'text' ? 'is-active' : ''}">
-                    <span class="tt-rule-title">粘贴任课数据</span>
-                    <textarea id="tt-roster-import-text" class="tt-import-text" spellcheck="false" placeholder="年级,班级,课程,教师,周课时,连堂">${escapeHtml(dialog.text || '')}</textarea>
-                </div>
-                <div class="tt-dialog-actions">
-                    <button class="tt-btn" id="tt-fill-roster-sample" type="button"><i data-lucide="wand-sparkles"></i><span>示例</span></button>
-                    <button class="tt-btn" id="tt-cancel-roster-import-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
-                    <button class="tt-btn tt-btn--primary" id="tt-confirm-roster-import" type="button"><i data-lucide="upload"></i><span>确认导入</span></button>
-                </div>
+                ${isReview ? renderRosterReview(dialog) : renderRosterImportInput(dialog, mode, fileName)}
             </section>
         </div>
+    `;
+}
+
+function renderRosterImportInput(dialog, mode, fileName) {
+    return `
+        <div class="tt-segment tt-import-mode-tabs" role="group" aria-label="导入方式">
+            <button class="${mode === 'file' ? 'is-active' : ''}" type="button" data-roster-import-mode="file">上传文件</button>
+            <button class="${mode === 'text' ? 'is-active' : ''}" type="button" data-roster-import-mode="text">粘贴文本</button>
+        </div>
+        <label class="tt-import-dropzone ${mode === 'file' ? 'is-active' : ''}">
+            <i data-lucide="upload-cloud"></i>
+            <strong>${escapeHtml(fileName)}</strong>
+            <span>.csv / .txt / .xlsx / .xls</span>
+            <input id="tt-roster-import-file" type="file" accept=".csv,.txt,.xlsx,.xls">
+        </label>
+        <div class="tt-rule-block ${mode === 'text' ? 'is-active' : ''}">
+            <span class="tt-rule-title">粘贴任课数据</span>
+            <textarea id="tt-roster-import-text" class="tt-import-text" spellcheck="false" placeholder="年级,班级,课程,教师,周课时,连堂,教室">${escapeHtml(dialog.text || '')}</textarea>
+        </div>
+        <div class="tt-dialog-actions">
+            <button class="tt-btn" id="tt-fill-roster-sample" type="button"><i data-lucide="wand-sparkles"></i><span>示例</span></button>
+            <button class="tt-btn" id="tt-start-empty-roster-review" type="button"><i data-lucide="plus"></i><span>手动新增</span></button>
+            <button class="tt-btn" id="tt-cancel-roster-import-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
+            <button class="tt-btn tt-btn--primary" id="tt-preview-roster-import" type="button"><i data-lucide="file-search"></i><span>解析复核</span></button>
+        </div>
+    `;
+}
+
+function renderRosterReview(dialog) {
+    const rows = dialog.draftRows || [];
+    const issues = dialog.issues || [];
+    const blocking = Boolean(dialog.hasBlockingIssues || issues.some(issue => issue.severity === 'error'));
+    return `
+        ${dialog.stats ? renderRosterStats(dialog.stats) : ''}
+        ${issues.length ? `
+            <div class="tt-roster-review-issues">
+                ${issues.slice(0, 4).map(issue => `
+                    <div class="tt-rule-warning ${issue.severity === 'error' ? 'tt-rule-warning--error' : ''}">
+                        <i data-lucide="${issue.severity === 'error' ? 'alert-triangle' : 'info'}"></i>
+                        <span>${escapeHtml(issue.message)}</span>
+                    </div>
+                `).join('')}
+            </div>
+        ` : ''}
+        <div class="tt-roster-review-wrap">
+            <table class="tt-roster-review-table" id="tt-roster-review-table">
+                <thead>
+                    <tr>
+                        <th>年级</th>
+                        <th>班级</th>
+                        <th>课程</th>
+                        <th>教师</th>
+                        <th>周课时</th>
+                        <th>连堂</th>
+                        <th>教室</th>
+                        <th>问题</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map(row => renderRosterReviewRow(row)).join('')}
+                </tbody>
+            </table>
+        </div>
+        <div class="tt-roster-bulk-panel">
+            <textarea id="tt-roster-bulk-text" class="tt-import-text" spellcheck="false" placeholder="可粘贴多行任课数据并追加到复核表"></textarea>
+            <div class="tt-action-row tt-action-row--end">
+                <button class="tt-btn" id="tt-add-roster-review-row" type="button"><i data-lucide="plus"></i><span>新增行</span></button>
+                <button class="tt-btn" id="tt-append-roster-rows" type="button"><i data-lucide="list-plus"></i><span>追加粘贴</span></button>
+            </div>
+        </div>
+        <div class="tt-dialog-actions">
+            <button class="tt-btn" id="tt-cancel-roster-import-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
+            <button class="tt-btn tt-btn--primary" id="tt-confirm-roster-import" type="button" ${blocking ? 'disabled' : ''}><i data-lucide="check"></i><span>确认导入</span></button>
+        </div>
+    `;
+}
+
+function renderRosterReviewRow(row) {
+    const issues = row.issues || [];
+    const hasError = issues.some(issue => issue.severity === 'error');
+    const issueText = issues.map(issue => issue.message).join('；') || '无';
+    const input = (field, value, type = 'text') => `
+        <input class="tt-roster-review-field" data-roster-field="${escapeAttr(field)}" type="${escapeAttr(type)}" value="${escapeAttr(value ?? '')}">
+    `;
+    return `
+        <tr class="tt-roster-review-row ${hasError ? 'tt-roster-review-row--error' : ''}" data-roster-review-row="${escapeAttr(row.id)}">
+            <td>${input('grade', row.grade)}</td>
+            <td>${input('className', row.className)}</td>
+            <td>${input('subjectName', row.subjectName)}</td>
+            <td>${input('teacherName', row.teacherName)}</td>
+            <td>${input('weeklyHours', row.weeklyHours, 'number')}</td>
+            <td>
+                <select class="tt-roster-review-field" data-roster-field="blockPreference">
+                    <option value="single" ${row.blockPreference === 'single' ? 'selected' : ''}>单节</option>
+                    <option value="double" ${row.blockPreference === 'double' ? 'selected' : ''}>双连堂</option>
+                    <option value="mixed" ${row.blockPreference === 'mixed' ? 'selected' : ''}>混合</option>
+                </select>
+            </td>
+            <td>${input('roomName', row.roomName)}</td>
+            <td><span class="tt-roster-review-issue">${escapeHtml(issueText)}</span></td>
+            <td>
+                <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-roster-delete-row="${escapeAttr(row.id)}" title="删除此行" aria-label="删除此行"><i data-lucide="trash-2"></i></button>
+            </td>
+        </tr>
     `;
 }
 

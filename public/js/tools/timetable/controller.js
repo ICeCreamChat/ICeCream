@@ -29,6 +29,7 @@ export class TimetablePlannerController {
         this.state = createTimetablePlannerState();
         this.jobPollTimer = null;
         this.rosterImportFile = null;
+        this.rosterDraftCounter = 0;
     }
 
     async init(container) {
@@ -190,15 +191,21 @@ export class TimetablePlannerController {
         this.rosterImportFile = null;
         this.state.rosterImport = {
             open: false,
+            step: 'input',
             mode: 'file',
             fileName: '',
             text: '',
+            draftRows: [],
+            stats: null,
+            warnings: [],
+            issues: [],
+            hasBlockingIssues: false,
         };
     }
 
     openRosterImport(mode = 'file') {
         this.state.rosterImport = {
-            ...(this.state.rosterImport || {}),
+            ...createTimetablePlannerState().rosterImport,
             open: true,
             mode: mode === 'text' ? 'text' : 'file',
         };
@@ -214,6 +221,7 @@ export class TimetablePlannerController {
         this.state.rosterImport = {
             ...(this.state.rosterImport || {}),
             open: true,
+            step: 'input',
             mode: mode === 'text' ? 'text' : 'file',
             text: this.readRosterImportText(),
         };
@@ -225,6 +233,7 @@ export class TimetablePlannerController {
         this.state.rosterImport = {
             ...(this.state.rosterImport || {}),
             open: true,
+            step: 'input',
             mode: 'file',
             fileName: file?.name || '',
             text: this.readRosterImportText(),
@@ -298,24 +307,262 @@ export class TimetablePlannerController {
         this.state.rosterImport = {
             ...(this.state.rosterImport || {}),
             open: true,
+            step: 'input',
             mode: 'text',
             text: sampleRosterText(),
         };
         this.render();
     }
 
-    async confirmRosterImport() {
-        const text = this.readRosterImportText();
-        await this.importRoster({
-            file: this.state.rosterImport?.mode === 'file' ? this.rosterImportFile : null,
-            text,
+    nextRosterDraftId() {
+        this.rosterDraftCounter += 1;
+        return `draft_${Date.now()}_${this.rosterDraftCounter}`;
+    }
+
+    emptyRosterDraftRow() {
+        return {
+            id: this.nextRosterDraftId(),
+            grade: '',
+            className: '',
+            subjectName: '',
+            teacherName: '',
+            weeklyHours: '',
+            blockPreference: 'single',
+            roomName: '',
+            manual: true,
+            issues: [],
+        };
+    }
+
+    rosterRowsFromProject() {
+        const project = this.state.project || {};
+        const classes = new Map((project.classes || []).map(item => [item.id, item]));
+        const subjects = new Map((project.subjects || []).map(item => [item.id, item]));
+        const teachers = new Map((project.teachers || []).map(item => [item.id, item]));
+        return (project.lessonPlans || []).map(plan => {
+            const classItem = classes.get(plan.classId) || {};
+            const subject = subjects.get(plan.subjectId) || {};
+            const teacherIds = Array.isArray(plan.teacherIds) && plan.teacherIds.length ? plan.teacherIds : [plan.teacherId].filter(Boolean);
+            const roomNames = Array.isArray(plan.allowedRoomIds) && plan.allowedRoomIds.length ? plan.allowedRoomIds : [plan.roomId].filter(Boolean);
+            return {
+                id: plan.id || this.nextRosterDraftId(),
+                grade: plan.grade || classItem.grade || '',
+                className: plan.className || classItem.name || '',
+                subjectName: plan.subjectName || subject.name || '',
+                teacherName: teacherIds.map(id => teachers.get(id)?.name || id).filter(Boolean).join('、'),
+                weeklyHours: plan.weeklyHours || '',
+                blockPreference: plan.blockPreference || 'single',
+                roomName: roomNames.join('、'),
+                issues: [],
+            };
         });
     }
 
-    async importRoster({ file = null, text = '' } = {}) {
+    normalizeRosterDraftRow(row = {}, index = 0) {
+        return {
+            id: row.id || this.nextRosterDraftId(),
+            grade: String(row.grade ?? '').trim(),
+            className: String(row.className ?? '').trim(),
+            subjectName: String(row.subjectName ?? '').trim(),
+            teacherName: String(row.teacherName ?? '').trim(),
+            weeklyHours: String(row.weeklyHours ?? '').trim(),
+            blockPreference: ['single', 'double', 'mixed'].includes(row.blockPreference) ? row.blockPreference : 'single',
+            roomName: String(row.roomName ?? '').trim(),
+            manual: Boolean(row.manual),
+            issues: Array.isArray(row.issues) ? row.issues : [],
+        };
+    }
+
+    rosterDraftRowHasValue(row) {
+        return Boolean(row.manual) || ['grade', 'className', 'subjectName', 'teacherName', 'weeklyHours', 'roomName']
+            .some(field => String(row[field] ?? '').trim());
+    }
+
+    analyzeRosterDraftRows(rows = []) {
+        const draftRows = rows.map((row, index) => this.normalizeRosterDraftRow(row, index))
+            .filter(row => this.rosterDraftRowHasValue(row));
+        const issues = [];
+        const warnings = [];
+        const duplicateKeys = new Map();
+        const rowIssues = new Map();
+        const addIssue = (row, severity, field, message) => {
+            const issue = { rowId: row.id, severity, field, message };
+            issues.push(issue);
+            if (severity !== 'error') warnings.push(message);
+            if (!rowIssues.has(row.id)) rowIssues.set(row.id, []);
+            rowIssues.get(row.id).push(issue);
+        };
+        const split = value => String(value || '').split(/[、,，/／;；|]+/).map(item => item.trim()).filter(Boolean);
+
+        draftRows.forEach(row => {
+            const hours = Number(row.weeklyHours);
+            if (!row.className) addIssue(row, 'error', 'className', '请填写班级。');
+            if (!row.subjectName) addIssue(row, 'error', 'subjectName', '请填写课程。');
+            if (!row.teacherName) addIssue(row, 'error', 'teacherName', '请填写教师。');
+            if (!Number.isInteger(hours) || hours < 1 || hours > 60) addIssue(row, 'error', 'weeklyHours', '周课时需要在 1-60 之间。');
+            if (row.blockPreference === 'double' && Number.isInteger(hours) && hours > 0 && hours % 2 !== 0) {
+                addIssue(row, 'warning', 'blockPreference', '双连堂课时建议使用偶数。');
+            }
+            const key = [row.grade, row.className, row.subjectName, row.teacherName].join('|');
+            if (duplicateKeys.has(key)) addIssue(row, 'warning', 'subjectName', '存在重复任课，请确认是否需要合并。');
+            else duplicateKeys.set(key, row);
+        });
+
+        const classSet = new Set();
+        const teacherSet = new Set();
+        const subjectSet = new Set();
+        const roomSet = new Set();
+        let totalLessons = 0;
+        let blockLessons = 0;
+        draftRows.forEach(row => {
+            if (row.className) classSet.add(`${row.grade}-${row.className}`);
+            if (row.subjectName) subjectSet.add(row.subjectName);
+            split(row.teacherName).forEach(name => teacherSet.add(name));
+            split(row.roomName).forEach(name => roomSet.add(name));
+            const hours = Number(row.weeklyHours);
+            if (Number.isFinite(hours) && hours > 0) totalLessons += hours;
+            if (row.blockPreference === 'double') blockLessons += Number.isFinite(hours) && hours > 0 ? hours : 0;
+            if (row.blockPreference === 'mixed') blockLessons += Number.isFinite(hours) && hours > 0 ? Math.min(2, hours) : 0;
+        });
+
+        return {
+            draftRows: draftRows.map(row => ({ ...row, issues: rowIssues.get(row.id) || [] })),
+            stats: {
+                classCount: classSet.size,
+                teacherCount: teacherSet.size,
+                subjectCount: subjectSet.size,
+                planCount: draftRows.length,
+                totalLessons,
+                blockLessons,
+                fixedRoomCount: roomSet.size,
+                issueCount: issues.length,
+            },
+            warnings: [...new Set(warnings)],
+            issues,
+            hasBlockingIssues: issues.some(issue => issue.severity === 'error'),
+        };
+    }
+
+    setRosterReviewState(payload = {}) {
+        const analyzed = this.analyzeRosterDraftRows(payload.draftRows || []);
+        const issues = Array.isArray(payload.issues) && payload.issues.length ? payload.issues : analyzed.issues;
+        const warnings = Array.isArray(payload.warnings) && payload.warnings.length ? payload.warnings : analyzed.warnings;
+        this.state.rosterImport = {
+            ...(this.state.rosterImport || {}),
+            open: true,
+            step: 'review',
+            draftRows: (payload.draftRows || analyzed.draftRows).map((row, index) => this.normalizeRosterDraftRow(row, index)),
+            stats: payload.stats || analyzed.stats,
+            warnings,
+            issues,
+            hasBlockingIssues: Boolean(payload.hasBlockingIssues) || issues.some(issue => issue.severity === 'error'),
+        };
+    }
+
+    readRosterReviewRows() {
+        return [...(this.state.container?.querySelectorAll('[data-roster-review-row]') || [])].map(row => {
+            const value = field => row.querySelector(`[data-roster-field="${field}"]`)?.value?.trim() || '';
+            return {
+                id: row.dataset.rosterReviewRow || this.nextRosterDraftId(),
+                grade: value('grade'),
+                className: value('className'),
+                subjectName: value('subjectName'),
+                teacherName: value('teacherName'),
+                weeklyHours: value('weeklyHours'),
+                blockPreference: value('blockPreference') || 'single',
+                roomName: value('roomName'),
+            };
+        });
+    }
+
+    refreshRosterReviewFromRows(rows) {
+        this.setRosterReviewState(this.analyzeRosterDraftRows(rows));
+        this.render();
+    }
+
+    updateRosterReviewField() {
+        this.refreshRosterReviewFromRows(this.readRosterReviewRows());
+    }
+
+    addRosterReviewRow() {
+        this.refreshRosterReviewFromRows([...this.readRosterReviewRows(), this.emptyRosterDraftRow()]);
+    }
+
+    deleteRosterReviewRow(rowId) {
+        this.refreshRosterReviewFromRows(this.readRosterReviewRows().filter(row => row.id !== rowId));
+    }
+
+    async appendRosterReviewRows() {
+        const text = this.state.container?.querySelector('#tt-roster-bulk-text')?.value?.trim() || '';
+        if (!text) {
+            this.setMessage('请先粘贴要追加的任课数据。');
+            return;
+        }
+        try {
+            const result = await requestTimetable('/roster/preview', {
+                method: 'POST',
+                body: JSON.stringify({ text }),
+            });
+            this.refreshRosterReviewFromRows([...this.readRosterReviewRows(), ...(result.draftRows || [])]);
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+
+    async previewRosterImport() {
+        try {
+            const text = this.readRosterImportText();
+            let options;
+            if (this.state.rosterImport?.mode === 'file' && this.rosterImportFile) {
+                const body = new FormData();
+                body.append('file', this.rosterImportFile);
+                options = { method: 'POST', body };
+            } else {
+                options = { method: 'POST', body: JSON.stringify({ text }) };
+            }
+            const result = await requestTimetable('/roster/preview', options);
+            this.setRosterReviewState(result);
+            this.setMessage('任课数据已解析，请复核后确认导入。');
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+
+    startEmptyRosterReview() {
+        this.setRosterReviewState({ draftRows: [this.emptyRosterDraftRow()] });
+        this.render();
+    }
+
+    openRosterEditor() {
+        this.setRosterReviewState({ draftRows: this.rosterRowsFromProject() });
+        this.render();
+    }
+
+    async confirmRosterImport() {
+        if (this.state.rosterImport?.step !== 'review') {
+            await this.previewRosterImport();
+            return;
+        }
+        const analyzed = this.analyzeRosterDraftRows(this.readRosterReviewRows());
+        if (!analyzed.draftRows.length) {
+            this.setMessage('请至少保留一条任课数据。');
+            return;
+        }
+        if (analyzed.hasBlockingIssues) {
+            this.setRosterReviewState(analyzed);
+            this.render();
+            this.setMessage('请先修正任课复核表里的红色问题。');
+            return;
+        }
+        await this.importRoster({ rows: analyzed.draftRows });
+    }
+
+    async importRoster({ file = null, text = '', rows = null } = {}) {
         try {
             let options;
-            if (file) {
+            if (Array.isArray(rows)) {
+                options = { method: 'POST', body: JSON.stringify({ rows }) };
+            } else if (file) {
                 const body = new FormData();
                 body.append('file', file);
                 options = { method: 'POST', body };

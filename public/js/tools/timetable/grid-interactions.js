@@ -39,7 +39,10 @@ export function bindGridInteractions(container, controller, state) {
         button.addEventListener('click', () => controller.openRosterImport('file'));
     });
     container.querySelector('#tt-reopen-roster-import')?.addEventListener('click', () => controller.openRosterImport('file'));
+    container.querySelector('#tt-edit-roster')?.addEventListener('click', () => controller.openRosterEditor());
     container.querySelector('#tt-fill-roster-sample')?.addEventListener('click', () => controller.fillSample());
+    container.querySelector('#tt-preview-roster-import')?.addEventListener('click', () => controller.previewRosterImport());
+    container.querySelector('#tt-start-empty-roster-review')?.addEventListener('click', () => controller.startEmptyRosterReview());
     container.querySelector('#tt-confirm-roster-import')?.addEventListener('click', () => controller.confirmRosterImport());
     container.querySelector('#tt-cancel-roster-import')?.addEventListener('click', () => controller.closeRosterImport());
     container.querySelector('#tt-cancel-roster-import-secondary')?.addEventListener('click', () => controller.closeRosterImport());
@@ -52,6 +55,14 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('[data-roster-import-close]')?.addEventListener('click', event => {
         if (event.target === event.currentTarget) controller.closeRosterImport();
     });
+    container.querySelectorAll('[data-roster-field]').forEach(input => {
+        input.addEventListener('change', () => controller.updateRosterReviewField());
+    });
+    container.querySelectorAll('[data-roster-delete-row]').forEach(button => {
+        button.addEventListener('click', () => controller.deleteRosterReviewRow(button.dataset.rosterDeleteRow));
+    });
+    container.querySelector('#tt-add-roster-review-row')?.addEventListener('click', () => controller.addRosterReviewRow());
+    container.querySelector('#tt-append-roster-rows')?.addEventListener('click', () => controller.appendRosterReviewRows());
     container.querySelector('#tt-clear-roster')?.addEventListener('click', () => controller.clearRoster());
     container.querySelector('#tt-save-rules')?.addEventListener('click', () => controller.saveRules());
     container.querySelector('#tt-parse-rules')?.addEventListener('click', () => controller.parseRules());
