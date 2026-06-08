@@ -463,6 +463,10 @@ button.tt-section-title {
     display: none;
 }
 
+.tt-multi-select-trigger--summary-only {
+    grid-template-columns: minmax(0, 1fr) 16px;
+}
+
 .tt-multi-select-trigger strong,
 .tt-multi-select-trigger span {
     min-width: 0;

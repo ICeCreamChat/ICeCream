@@ -272,6 +272,14 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.match(html, /class="[^"]*tt-workflow-body[^"]*"/);
   assert.match(html, /id="tt-range-weekdays-trigger"/);
   assert.match(html, /id="tt-range-periods-trigger"/);
+  const weekdayTrigger = html.match(/<summary class="[^"]*" id="tt-range-weekdays-trigger">[\s\S]*?<\/summary>/)?.[0] || '';
+  const periodTrigger = html.match(/<summary class="[^"]*" id="tt-range-periods-trigger">[\s\S]*?<\/summary>/)?.[0] || '';
+  assert.match(weekdayTrigger, /tt-multi-select-trigger--summary-only/);
+  assert.match(periodTrigger, /tt-multi-select-trigger--summary-only/);
+  assert.doesNotMatch(weekdayTrigger, /<span>可用周几<\/span>/);
+  assert.doesNotMatch(periodTrigger, /<span>可用节次<\/span>/);
+  assert.match(weekdayTrigger, /<strong>/);
+  assert.match(periodTrigger, /<strong>/);
   assert.doesNotMatch(html, /id="tt-apply-range"/);
   assert.doesNotMatch(html, /id="tt-reset-range"/);
   assert.match(html, /data-range-apply/);

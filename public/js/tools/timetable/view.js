@@ -125,11 +125,13 @@ function renderMultiSelect({
     presets = [],
     presetAttr = 'data-range-preset',
     doneAttr = 'data-tt-popover-close',
+    summaryOnly = false,
 }) {
+    const triggerClass = `tt-multi-select-trigger${summaryOnly ? ' tt-multi-select-trigger--summary-only' : ''}`;
     return `
         <details class="tt-multi-select" data-tt-multi-select="${escapeAttr(id)}">
-            <summary class="tt-multi-select-trigger" id="${escapeAttr(triggerId)}">
-                <span>${escapeHtml(title)}</span>
+            <summary class="${triggerClass}" id="${escapeAttr(triggerId)}">
+                ${summaryOnly ? '' : `<span>${escapeHtml(title)}</span>`}
                 <strong>${escapeHtml(summary)}</strong>
                 <i data-lucide="chevron-down"></i>
             </summary>
@@ -290,6 +292,7 @@ function renderProjectSection(state) {
                             { value: 'weekdays:all', label: '全周' },
                         ],
                         doneAttr: 'data-range-apply',
+                        summaryOnly: true,
                     })}
                     ${renderMultiSelect({
                         id: 'range-periods',
@@ -304,6 +307,7 @@ function renderProjectSection(state) {
                             { value: 'periods:all', label: '全部节次' },
                         ],
                         doneAttr: 'data-range-apply',
+                        summaryOnly: true,
                     })}
                 </div>
             </form>
