@@ -200,8 +200,8 @@ export class TimetablePlannerController {
         this.state.ruleReview = createTimetablePlannerState().ruleReview;
     }
 
-    openRuleReview(mode = 'text') {
-        const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'text';
+    openRuleReview(mode = 'file') {
+        const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'file';
         const current = this.state.ruleReview || {};
         if ((current.draftRows || []).length) {
             this.state.ruleReview = {
@@ -217,6 +217,19 @@ export class TimetablePlannerController {
             open: true,
             step: nextMode === 'manual' ? 'manual' : 'input',
             mode: nextMode,
+        };
+        this.render();
+    }
+
+    startRuleReviewInput(mode = 'file') {
+        const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'file';
+        const current = this.state.ruleReview || {};
+        this.state.ruleReview = {
+            ...current,
+            open: true,
+            step: nextMode === 'manual' ? 'manual' : 'input',
+            mode: nextMode,
+            text: this.readRuleReviewText(),
         };
         this.render();
     }
@@ -318,6 +331,12 @@ export class TimetablePlannerController {
                 targetType: value('targetType'),
                 targetId: value('targetId'),
                 targetName: value('targetName'),
+                classId: value('classId'),
+                className: value('className'),
+                subjectId: value('subjectId'),
+                subjectName: value('subjectName'),
+                teacherId: value('teacherId'),
+                teacherName: value('teacherName'),
                 slots,
                 priority: value('priority') || 'hard',
                 status: value('status') || 'needs_review',
@@ -354,7 +373,13 @@ export class TimetablePlannerController {
     addManualRuleRows() {
         try {
             const form = readManualRuleBuilderForm(this.state.container);
-            if (!form.targets.length) throw new Error('请先选择规则对象。');
+            if (form.type === 'locked_slot') {
+                if (!form.targetGroups?.class?.length || !form.targetGroups?.subject?.length || !form.targetGroups?.teacher?.length) {
+                    throw new Error('请为锁定课节选择班级、课程和教师。');
+                }
+            } else if (!form.targets.length) {
+                throw new Error('请先选择规则对象。');
+            }
             if (form.type !== 'subject_morning' && (!form.days.length || !form.periods.length)) {
                 throw new Error('请先选择周几和节次。');
             }

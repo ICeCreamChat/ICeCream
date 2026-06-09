@@ -733,6 +733,20 @@ button.tt-section-title {
     font-size: 0.76rem;
 }
 
+.tt-rule-entry-card--action {
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    transition: var(--tt-transition);
+}
+
+.tt-rule-entry-card--action:hover,
+.tt-rule-entry-card--action:focus-visible {
+    border-color: var(--tt-primary);
+    color: var(--tt-text-secondary);
+    box-shadow: 0 0 0 1px rgba(8, 145, 178, 0.18);
+}
+
 .tt-rule-entry-card .lucide {
     width: 20px;
     height: 20px;

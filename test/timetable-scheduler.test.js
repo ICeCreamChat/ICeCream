@@ -839,6 +839,53 @@ test('timetable rule draft row normalization only saves effective valid rows', (
     assert.ok(result.warnings.some(warning => warning.includes('Unknown person')));
 });
 
+test('timetable rule draft row normalization saves locked slot review rows', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: [{
+            id: 'lock_1',
+            rawText: 'Lock Math Teacher for G7-1 Math on Tuesday period 3',
+            type: 'locked_slot',
+            targetType: 'locked_slot',
+            targetName: 'G7-1 / Math / Math Teacher',
+            classId: 'c1',
+            className: 'G7-1',
+            subjectId: 'math',
+            subjectName: 'Math',
+            teacherId: 't_math',
+            teacherName: 'Math Teacher',
+            slots: ['2-3'],
+            priority: 'hard',
+            status: 'effective',
+        }],
+    });
+
+    assert.equal(result.draftRows[0].status, 'effective');
+    assert.equal(result.draftRows[0].type, 'locked_slot');
+    assert.deepEqual(result.draftRules.hardRules.lockedSlots, [{
+        id: 'lock_1',
+        day: 2,
+        period: 3,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        lessonPlanId: 'lp_math',
+        roomId: null,
+    }]);
+});
+
 test('timetable constraint Excel requires AI when it is not a roster table', async () => {
     await assert.rejects(
         () => parseTimetableRules({

@@ -19,6 +19,7 @@ const MAX_RULE_FILE_BYTES = 5 * 1024 * 1024;
 const SUPPORTED_EFFECTIVE_TYPES = new Set([
     'teacher_unavailable',
     'class_unavailable',
+    'locked_slot',
     'subject_morning',
     'subject_preferred_periods',
     'subject_avoid_periods',
@@ -438,6 +439,7 @@ function targetTypeFor(type, row = {}) {
     if (row.targetType) return row.targetType;
     if (type === 'teacher_unavailable') return 'teacher';
     if (type === 'class_unavailable') return 'class';
+    if (type === 'locked_slot') return 'locked_slot';
     if (type.startsWith('subject_')) return 'subject';
     return 'global';
 }
@@ -473,6 +475,38 @@ function addSubjectPeriodPreference(rules, subjectId, { prefer = [], avoid = [],
     };
 }
 
+function parseFirstSlot(slots = []) {
+    const [first] = Array.isArray(slots) ? slots : [];
+    const match = String(first || '').match(/^(\d{1,2})-(\d{1,2})$/);
+    if (!match) return null;
+    return {
+        day: Number.parseInt(match[1], 10),
+        period: Number.parseInt(match[2], 10),
+    };
+}
+
+function findLockedLessonPlan(project, { classId, subjectId, teacherId }) {
+    return (project.lessonPlans || []).find(plan => (
+        plan.classId === classId
+        && plan.subjectId === subjectId
+        && (plan.teacherId === teacherId || plan.teacherIds?.includes(teacherId))
+    )) || null;
+}
+
+function addLockedSlot(rules, locked) {
+    if (!locked) return;
+    const keyFor = item => [
+        item.day,
+        item.period,
+        item.classId,
+        item.subjectId,
+        item.teacherId,
+        item.lessonPlanId || '',
+    ].join('|');
+    const existing = new Set((rules.hardRules.lockedSlots || []).map(keyFor));
+    if (!existing.has(keyFor(locked))) rules.hardRules.lockedSlots.push(locked);
+}
+
 function normalizeDraftRow(row = {}, index = 0, project = {}) {
     const type = normalizeConstraintType(row.type || row.ruleType);
     const slots = slotsFromConstraint(row, project);
@@ -486,6 +520,12 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
         targetType: targetTypeFor(type, row),
         targetId: asText(row.targetId || row.teacherId || row.classId || row.subjectId || '', 120),
         targetName: asText(row.targetName || row.target || row.teacher || row.teacherName || row.class || row.className || row.subject || row.subjectName || '', 200),
+        classId: asText(row.classId || '', 120),
+        className: asText(row.className || row.class || '', 200),
+        subjectId: asText(row.subjectId || '', 120),
+        subjectName: asText(row.subjectName || row.subject || '', 200),
+        teacherId: asText(row.teacherId || '', 120),
+        teacherName: asText(row.teacherName || row.teacher || '', 200),
         slots,
         days: parseDays(row.days || row.weekdays || '', project, []),
         periods: parsePeriods(row.periods || row.lessonIndexes || '', project, []),
@@ -557,6 +597,63 @@ export function normalizeTimetableRuleDraftRows({
                 };
                 unsupportedItems.push(previewFromRow(next));
                 return next;
+            }
+
+            if (row.type === 'locked_slot') {
+                const classTarget = findEntity(project.classes, {
+                    targetId: row.classId,
+                    targetName: row.className || row.targetName,
+                });
+                const subjectTarget = findEntity(project.subjects, {
+                    targetId: row.subjectId,
+                    targetName: row.subjectName || row.targetName,
+                });
+                const teacherTarget = findEntity(project.teachers, {
+                    targetId: row.teacherId,
+                    targetName: row.teacherName || row.targetName,
+                });
+                const slot = parseFirstSlot(row.slots);
+                if (!classTarget || !subjectTarget || !teacherTarget || !slot) {
+                    const reason = `${row.targetName || row.rawText || '锁定课节'} 缺少可匹配的班级、课程、教师或节次，请复核。`;
+                    warnings.push(reason);
+                    return {
+                        ...row,
+                        status: 'needs_review',
+                        targetType: 'locked_slot',
+                        warnings: [...row.warnings, reason],
+                    };
+                }
+                const plan = findLockedLessonPlan(project, {
+                    classId: classTarget.id,
+                    subjectId: subjectTarget.id,
+                    teacherId: teacherTarget.id,
+                });
+                const locked = {
+                    id: row.id,
+                    day: slot.day,
+                    period: slot.period,
+                    classId: classTarget.id,
+                    subjectId: subjectTarget.id,
+                    teacherId: teacherTarget.id,
+                    lessonPlanId: plan?.id || null,
+                    roomId: plan?.roomId || null,
+                };
+                addLockedSlot(rules, locked);
+                return {
+                    ...row,
+                    targetType: 'locked_slot',
+                    targetId: `${classTarget.id}:${subjectTarget.id}:${teacherTarget.id}`,
+                    targetName: `${entityLabel(classTarget)} / ${subjectTarget.name || subjectTarget.id} / ${teacherTarget.name || teacherTarget.id}`,
+                    classId: classTarget.id,
+                    className: entityLabel(classTarget),
+                    subjectId: subjectTarget.id,
+                    subjectName: subjectTarget.name || row.subjectName,
+                    teacherId: teacherTarget.id,
+                    teacherName: teacherTarget.name || row.teacherName,
+                    slots: [slotKey(slot.day, slot.period)],
+                    priority: 'hard',
+                    status: 'effective',
+                };
             }
 
             const target = findTarget(project, row, row.type);
@@ -637,7 +734,7 @@ function buildPrompt({ project, text, inputType = 'text', contextStats = null, c
             content: [
                 'You convert flexible Chinese school timetable constraints into strict JSON.',
                 'Return only JSON: {"constraints":[...],"warnings":[]}.',
-                'Supported effective types: teacher_unavailable, class_unavailable, subject_morning, subject_preferred_periods, subject_avoid_periods.',
+                'Supported effective types: teacher_unavailable, class_unavailable, locked_slot, subject_morning, subject_preferred_periods, subject_avoid_periods.',
                 'Suggestion-only types: teacher_load_balance, teacher_daily_limit, teacher_consecutive_limit, subject_spread, quality_subject_later, block_protection, class_daily_balance.',
                 'Each constraint should include type, targetId or target, days/periods or slots, priority, reason, confidence.',
                 'Slots must use "day-period", for example "3-4".',

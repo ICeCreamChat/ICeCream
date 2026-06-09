@@ -298,8 +298,10 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.doesNotMatch(html, /class="tt-plan-list"/);
   assert.doesNotMatch(html, /class="tt-plan-row"/);
   assert.match(html, /id="tt-open-rule-review"/);
-  assert.match(html, /id="tt-open-bulk-rule-review"/);
   assert.match(html, /id="tt-clear-rules"/);
+  assert.doesNotMatch(html, /id="tt-open-bulk-rule-review"/);
+  assert.doesNotMatch(html, /id="tt-add-lock"/);
+  assert.doesNotMatch(html, /class="tt-lock-list"/);
   assert.doesNotMatch(html, /id="tt-rule-prompt"/);
   assert.doesNotMatch(html, /id="tt-rule-file"/);
   assert.doesNotMatch(html, /id="tt-parse-rules"/);
@@ -511,8 +513,9 @@ test('timetable AI rules support Excel file upload and rich preview metadata', a
   assert.match(controllerSource, /readRuleReviewRows\(/);
   assert.match(controllerSource, /confirmRuleDraft\(/);
   assert.match(controllerSource, /\/rules\/normalize/);
-  assert.match(interactionSource, /#tt-open-rule-review/);
-  assert.match(interactionSource, /#tt-open-bulk-rule-review/);
+  assert.match(interactionSource, /#tt-open-rule-review[\s\S]{0,160}openRuleReview\('file'\)/);
+  assert.match(interactionSource, /#tt-reparse-rule-review/);
+  assert.doesNotMatch(interactionSource, /#tt-open-bulk-rule-review/);
   assert.match(interactionSource, /#tt-rule-review-file/);
   assert.match(interactionSource, /\[data-rule-review-field\]/);
   assert.match(interactionSource, /#tt-confirm-rule-review/);
@@ -602,6 +605,55 @@ test('timetable rule review keeps parsed drafts inside the modal and preserves t
   assert.equal(controller.state.ruleReview.step, 'review');
   assert.equal(controller.state.ruleReview.inputType, 'xlsx_constraints');
   assert.deepEqual(controller.state.ruleReview.draftRows, draftRows);
+});
+
+test('timetable AI rules sidebar opens the review center from a roster-style card', async () => {
+  const viewSource = await readFile(new URL('view.js', moduleRoot), 'utf8');
+  const state = sampleWorkbenchState({
+    ruleReview: {
+      open: false,
+      step: 'input',
+      mode: 'file',
+      fileName: '',
+      text: '',
+      draftRows: [],
+      inputType: '',
+      contextStats: null,
+      warnings: [],
+      unsupportedItems: [],
+      hasBlockingIssues: false,
+    },
+  });
+  const html = renderWorkbench(state);
+  const sidebar = html.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
+
+  assert.match(sidebar, /id="tt-open-rule-review"/);
+  assert.match(sidebar, /class="[^"]*tt-rule-entry-card[^"]*"/);
+  assert.doesNotMatch(sidebar, /id="tt-open-bulk-rule-review"/);
+  assert.doesNotMatch(sidebar, /id="tt-add-lock"/);
+  assert.doesNotMatch(sidebar, /tt-lock-list/);
+  assert.doesNotMatch(sidebar, /data-rule-review-mode="manual"/);
+  assert.match(viewSource, /value="locked_slot"/);
+
+  const manualDialog = renderWorkbench({
+    ...state,
+    ruleReview: {
+      ...state.ruleReview,
+      open: true,
+      step: 'manual',
+      mode: 'manual',
+    },
+  });
+  assert.match(manualDialog, /id="tt-rule-review-dialog"/);
+  assert.match(manualDialog, /id="tt-manual-rule-type"/);
+  assert.match(manualDialog, /value="locked_slot"/);
+
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.openRuleReview('file');
+  assert.equal(controller.state.ruleReview.open, true);
+  assert.equal(controller.state.ruleReview.step, 'input');
+  assert.equal(controller.state.ruleReview.mode, 'file');
 });
 
 test('timetable modal overlays do not close when the blank overlay is clicked', async () => {

@@ -497,40 +497,31 @@ function renderRosterStats(stats) {
 
 function renderRulesSection(state) {
     const { project } = state;
-    const hard = project.rules?.hardRules || {};
     const ruleSummary = getRuleSummary(project);
     const draftCount = state.ruleReview?.draftRows?.length || state.ruleDraftPreview?.length || 0;
     const warningCount = state.ruleReview?.warnings?.length || state.ruleWarnings?.length || 0;
+    const cardTitle = draftCount ? '继续复核约束草稿' : '导入 AI 约束';
+    const cardDescription = draftCount
+        ? '已有草稿会保留；进入复核表后继续编辑、删除或确认生效。'
+        : '上传 TXT/XLSX 或粘贴自然语言，解析后先复核再写入规则。';
+    const cardChip = draftCount ? `${draftCount} 条待复核` : '点击上传';
     return `
         <div class="tt-rule-stack" data-workflow-step="rules">
             <div class="tt-rule-block">
                 <span class="tt-rule-title">约束复核中心</span>
-                <div class="tt-rule-entry-card">
+                <button class="tt-rule-entry-card tt-rule-entry-card--action" id="tt-open-rule-review" type="button">
                     <i data-lucide="brain-circuit"></i>
                     <div>
-                        <strong>智能解析后复核生效</strong>
-                        <span>支持自然语言、TXT、XLSX；解析结果先进入复核表，确认后才写入规则。</span>
+                        <strong>${escapeHtml(cardTitle)}</strong>
+                        <span>${escapeHtml(cardDescription)}</span>
                     </div>
-                    <span class="tt-chip">${draftCount} 条草稿</span>
-                </div>
-                <div class="tt-action-row">
-                    <button class="tt-btn tt-btn--primary" id="tt-open-rule-review" type="button"><i data-lucide="sparkles"></i><span>智能解析</span></button>
-                    <button class="tt-btn" id="tt-open-bulk-rule-review" type="button"><i data-lucide="list-plus"></i><span>手动批量</span></button>
+                    <span class="tt-chip">${escapeHtml(cardChip)}</span>
+                </button>
+                ${renderRuleReviewStatus({ savedCount: ruleSummary.total, draftCount, warningCount })}
+                <div class="tt-action-row tt-action-row--compact">
+                    <button class="tt-btn" id="tt-reparse-rule-review" type="button"><i data-lucide="upload"></i><span>重新解析</span></button>
                     <button class="tt-btn tt-btn--danger" id="tt-clear-rules" type="button"><i data-lucide="trash-2"></i><span>清空规则</span></button>
                 </div>
-                ${renderRuleReviewStatus({ savedCount: ruleSummary.total, draftCount, warningCount })}
-            </div>
-            <div class="tt-rule-block">
-                <span class="tt-rule-title">锁定课节</span>
-                <div class="tt-form-grid">
-                    <label><span>班级</span>${renderSelect('tt-lock-class', project.classes, ownerLabel)}</label>
-                    <label><span>课程</span>${renderSelect('tt-lock-subject', project.subjects, item => item.name)}</label>
-                    <label><span>教师</span>${renderSelect('tt-lock-teacher', project.teachers, item => item.name)}</label>
-                    <label><span>周几</span>${renderNumberSelect('tt-lock-day', getActiveWeekdays(project), day => `周${dayName(day)}`)}</label>
-                    <label><span>第几节</span>${renderNumberSelect('tt-lock-period', getActivePeriods(project), period => `第${period}节`)}</label>
-                </div>
-                <button class="tt-btn" id="tt-add-lock" type="button"><i data-lucide="lock"></i><span>添加锁定</span></button>
-                <div class="tt-lock-list">${(hard.lockedSlots || []).map((slot, index) => renderLockedSlot(project, slot, index)).join('') || '<span class="tt-muted">暂无锁定课节</span>'}</div>
             </div>
         </div>
     `;
@@ -655,12 +646,14 @@ function renderManualRuleBuilder(state) {
                 <select id="tt-manual-rule-type">
                     <option value="teacher_unavailable">教师不可排</option>
                     <option value="class_unavailable">班级不可排</option>
+                    <option value="locked_slot">锁定课节</option>
                     <option value="subject_morning">课程上午优先</option>
                     <option value="subject_preferred_periods">课程偏好节次</option>
                     <option value="subject_avoid_periods">课程避开节次</option>
                 </select>
             </label>
         </div>
+        <p class="tt-muted">锁定课节会按所选班级、课程、教师和节次生成复核行，确认后才生效。</p>
         ${renderManualTargets(project)}
         <div class="tt-range-summary-grid">
             ${renderManualCheckGroup('适用周几', days, 'data-manual-rule-day')}
@@ -759,7 +752,7 @@ function renderRuleReviewRow(row = {}) {
     const warnings = row.warnings || [];
     const status = row.status || 'needs_review';
     const statusOptions = ['effective', 'needs_review', 'suggestion', 'unsupported', 'invalid', 'ignored'];
-    const typeOptions = ['teacher_unavailable', 'class_unavailable', 'subject_morning', 'subject_preferred_periods', 'subject_avoid_periods', 'teacher_load_balance', 'block_protection', 'subject_spread'];
+    const typeOptions = ['teacher_unavailable', 'class_unavailable', 'locked_slot', 'subject_morning', 'subject_preferred_periods', 'subject_avoid_periods', 'teacher_load_balance', 'block_protection', 'subject_spread'];
     const input = (field, value, type = 'text') => `
         <input class="tt-roster-review-field" data-rule-review-field="${escapeAttr(field)}" type="${escapeAttr(type)}" value="${escapeAttr(value ?? '')}">
     `;
@@ -772,6 +765,12 @@ function renderRuleReviewRow(row = {}) {
                 </select>
                 <input type="hidden" data-rule-review-field="targetType" value="${escapeAttr(row.targetType || '')}">
                 <input type="hidden" data-rule-review-field="targetId" value="${escapeAttr(row.targetId || '')}">
+                <input type="hidden" data-rule-review-field="classId" value="${escapeAttr(row.classId || '')}">
+                <input type="hidden" data-rule-review-field="className" value="${escapeAttr(row.className || '')}">
+                <input type="hidden" data-rule-review-field="subjectId" value="${escapeAttr(row.subjectId || '')}">
+                <input type="hidden" data-rule-review-field="subjectName" value="${escapeAttr(row.subjectName || '')}">
+                <input type="hidden" data-rule-review-field="teacherId" value="${escapeAttr(row.teacherId || '')}">
+                <input type="hidden" data-rule-review-field="teacherName" value="${escapeAttr(row.teacherName || '')}">
             </td>
             <td>${input('targetName', row.targetName || row.targetId || '')}</td>
             <td>${input('slots', (row.slots || []).join(', '))}</td>

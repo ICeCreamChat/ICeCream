@@ -21,7 +21,7 @@ export function createTimetablePlannerState(overrides = {}) {
         ruleReview: {
             open: false,
             step: 'input',
-            mode: 'text',
+            mode: 'file',
             fileName: '',
             text: '',
             draftRows: [],

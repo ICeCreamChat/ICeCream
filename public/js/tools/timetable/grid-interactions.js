@@ -62,8 +62,8 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-append-roster-rows')?.addEventListener('click', () => controller.appendRosterReviewRows());
     container.querySelector('#tt-clear-roster')?.addEventListener('click', () => controller.clearRoster());
     container.querySelector('#tt-save-rules')?.addEventListener('click', () => controller.saveRules());
-    container.querySelector('#tt-open-rule-review')?.addEventListener('click', () => controller.openRuleReview('text'));
-    container.querySelector('#tt-open-bulk-rule-review')?.addEventListener('click', () => controller.openRuleReview('manual'));
+    container.querySelector('#tt-open-rule-review')?.addEventListener('click', () => controller.openRuleReview('file'));
+    container.querySelector('#tt-reparse-rule-review')?.addEventListener('click', () => controller.startRuleReviewInput('file'));
     container.querySelector('#tt-rule-review-cancel')?.addEventListener('click', () => controller.closeRuleReview());
     container.querySelector('#tt-rule-review-cancel-secondary')?.addEventListener('click', () => controller.closeRuleReview());
     container.querySelectorAll('[data-rule-review-mode]').forEach(button => {
@@ -83,7 +83,6 @@ export function bindGridInteractions(container, controller, state) {
         button.addEventListener('click', () => controller.deleteRuleReviewRow(button.dataset.ruleReviewDeleteRow));
     });
     container.querySelector('#tt-clear-rules')?.addEventListener('click', () => controller.clearRules());
-    container.querySelector('#tt-add-lock')?.addEventListener('click', () => controller.addLockedSlot());
     container.querySelectorAll('#tt-run-schedule, [data-run-schedule]').forEach(button => {
         button.addEventListener('click', () => controller.runSchedule());
     });

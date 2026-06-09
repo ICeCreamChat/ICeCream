@@ -34,6 +34,14 @@ function checkedValues(container, selector) {
         .filter(Boolean);
 }
 
+function checkedTargets(container, targetType) {
+    return [...container.querySelectorAll(`[data-manual-rule-target][data-manual-rule-target-type="${targetType}"]:checked`)]
+        .map(input => ({
+            id: input.value,
+            name: input.dataset.targetName || input.value,
+        }));
+}
+
 export function readProjectForm(container) {
     const activeWeekdays = checkedNumbers(container, '[data-active-weekday]');
     const activePeriods = checkedNumbers(container, '[data-active-period]');
@@ -67,14 +75,17 @@ export function readRulePrompt(container) {
 export function readManualRuleBuilderForm(container) {
     const type = container.querySelector('#tt-manual-rule-type')?.value || 'teacher_unavailable';
     const targetType = type === 'class_unavailable' ? 'class' : type === 'subject_morning' || type.includes('subject_') ? 'subject' : 'teacher';
-    const targets = [...container.querySelectorAll(`[data-manual-rule-target][data-manual-rule-target-type="${targetType}"]:checked`)]
-        .map(input => ({
-            id: input.value,
-            name: input.dataset.targetName || input.value,
-        }));
+    const targetGroups = {
+        teacher: checkedTargets(container, 'teacher'),
+        class: checkedTargets(container, 'class'),
+        subject: checkedTargets(container, 'subject'),
+    };
+    const targets = type === 'locked_slot'
+        ? []
+        : targetGroups[targetType] || [];
     const days = checkedNumbers(container, '[data-manual-rule-day]');
     const periods = checkedNumbers(container, '[data-manual-rule-period]');
-    return { type, targetType, targets, days, periods };
+    return { type, targetType: type === 'locked_slot' ? 'locked_slot' : targetType, targets, targetGroups, days, periods };
 }
 
 function slotsFromDaysAndPeriods(days = [], periods = []) {
@@ -87,6 +98,46 @@ function slotsFromDaysAndPeriods(days = [], periods = []) {
 
 export function buildManualRuleDraftRows(form = {}) {
     const slots = slotsFromDaysAndPeriods(form.days, form.periods);
+    if (form.type === 'locked_slot') {
+        const rows = [];
+        const classes = form.targetGroups?.class || [];
+        const subjects = form.targetGroups?.subject || [];
+        const teachers = form.targetGroups?.teacher || [];
+        let index = 0;
+        for (const classItem of classes) {
+            for (const subject of subjects) {
+                for (const teacher of teachers) {
+                    for (const slot of slots) {
+                        rows.push({
+                            id: `manual_${Date.now()}_${index}`,
+                            source: 'manual',
+                            rawText: `锁定 ${classItem.name} ${subject.name} ${teacher.name} ${slot}`,
+                            type: 'locked_slot',
+                            targetType: 'locked_slot',
+                            targetId: `${classItem.id}:${subject.id}:${teacher.id}`,
+                            targetName: `${classItem.name} / ${subject.name} / ${teacher.name}`,
+                            classId: classItem.id,
+                            className: classItem.name,
+                            subjectId: subject.id,
+                            subjectName: subject.name,
+                            teacherId: teacher.id,
+                            teacherName: teacher.name,
+                            slots: [slot],
+                            days: form.days,
+                            periods: form.periods,
+                            priority: 'hard',
+                            status: 'effective',
+                            confidence: 1,
+                            description: '手动锁定课节',
+                            warnings: [],
+                        });
+                        index += 1;
+                    }
+                }
+            }
+        }
+        return rows;
+    }
     return (form.targets || []).map((target, index) => ({
         id: `manual_${Date.now()}_${index}`,
         source: 'manual',
