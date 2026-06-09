@@ -600,6 +600,28 @@ button.tt-section-title {
     font-size: 0.86rem;
 }
 
+.tt-empty-panel {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    padding: var(--tt-space-xl);
+    background: var(--tt-bg-input);
+    border: 1px dashed var(--tt-border-strong);
+    border-radius: var(--tt-radius-lg);
+    color: var(--tt-muted);
+    text-align: center;
+}
+
+.tt-empty-panel .lucide {
+    width: 28px;
+    height: 28px;
+    color: var(--tt-primary);
+}
+
+.tt-empty-panel strong {
+    color: var(--tt-text);
+}
+
 .tt-roster-stats,
 .tt-audit-grid {
     display: grid;
@@ -792,6 +814,49 @@ button.tt-section-title {
 
 .tt-rule-summary .is-warning {
     color: var(--tt-warning);
+}
+
+.tt-saved-rule-list {
+    display: grid;
+    gap: 6px;
+}
+
+.tt-saved-rule-item {
+    display: grid;
+    gap: 2px;
+    padding: 8px 10px;
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    color: var(--tt-text-secondary);
+    font-size: 0.74rem;
+}
+
+.tt-saved-rule-item strong {
+    color: var(--tt-text);
+    font-size: 0.8rem;
+}
+
+.tt-saved-rule-item span,
+.tt-saved-rule-list em {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-saved-rule-list em {
+    color: var(--tt-primary);
+    font-size: 0.72rem;
+    font-style: normal;
+    font-weight: 700;
+}
+
+.tt-saved-rule-table td small {
+    display: block;
+    margin-top: 2px;
+    color: var(--tt-muted);
+    font-size: 0.68rem;
 }
 
 .tt-bulk-target-group,
@@ -1064,6 +1129,245 @@ button.tt-section-title {
 
 .tt-rule-target-select {
     min-width: 120px;
+}
+
+/* ── AI 约束：卡片式内联面板 ── */
+.tt-rule-input-area {
+    display: flex;
+    flex-direction: column;
+    gap: var(--tt-space-sm);
+}
+
+.tt-rule-input-text {
+    min-height: 56px;
+    max-height: 120px;
+    resize: vertical;
+    font-family: inherit;
+    font-size: 0.78rem;
+    padding: var(--tt-space-sm);
+    border-radius: var(--tt-radius-md);
+    border: 1px solid var(--tt-border);
+    background: var(--tt-bg-input);
+    color: var(--tt-text);
+}
+
+.tt-rule-input-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--tt-space-xs);
+    flex-wrap: wrap;
+}
+
+.tt-rule-file-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-input);
+    color: var(--tt-text-secondary);
+    font-size: 0.72rem;
+    cursor: pointer;
+}
+
+.tt-rule-file-label input[type="file"] {
+    display: none;
+}
+
+.tt-pending-rules {
+    display: flex;
+    flex-direction: column;
+    gap: var(--tt-space-xs);
+}
+
+.tt-pending-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--tt-space-xs) 0;
+}
+
+.tt-pending-header strong {
+    font-size: 0.76rem;
+    color: var(--tt-text-secondary);
+}
+
+.tt-pending-batch {
+    display: flex;
+    gap: var(--tt-space-xs);
+}
+
+.tt-rule-card {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--tt-space-xs);
+    padding: var(--tt-space-sm);
+    border-radius: var(--tt-radius-md);
+    background: var(--tt-bg-panel);
+    border-left: 3px solid var(--tt-primary);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.tt-rule-card:hover {
+    background: var(--tt-bg-soft);
+}
+
+.tt-rule-card--hard {
+    border-left-color: var(--tt-danger);
+}
+
+.tt-rule-card--soft {
+    border-left-color: var(--tt-primary);
+}
+
+.tt-rule-card--suggestion {
+    border-left-color: var(--tt-muted);
+    opacity: 0.8;
+}
+
+.tt-rule-card--expanded {
+    grid-template-columns: 1fr;
+    cursor: default;
+}
+
+.tt-rule-card-head {
+    display: flex;
+    align-items: center;
+    gap: var(--tt-space-xs);
+}
+
+.tt-rule-card-type {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--tt-text);
+}
+
+.tt-confidence-badge {
+    font-size: 0.64rem;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.15);
+    color: var(--tt-muted);
+}
+
+.tt-rule-card-body {
+    display: flex;
+    align-items: baseline;
+    gap: var(--tt-space-xs);
+    font-size: 0.74rem;
+    color: var(--tt-text-secondary);
+}
+
+.tt-rule-card-body strong {
+    color: var(--tt-text);
+}
+
+.tt-rule-card-slots {
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+}
+
+.tt-rule-card-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--tt-space-xs);
+    justify-self: end;
+}
+
+.tt-rule-card-edit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--tt-space-xs);
+    margin: var(--tt-space-xs) 0;
+}
+
+.tt-rule-card-edit label {
+    display: flex;
+    align-items: center;
+    gap: var(--tt-space-xs);
+    font-size: 0.72rem;
+}
+
+.tt-rule-card-edit label > span {
+    min-width: 40px;
+    color: var(--tt-muted);
+}
+
+.tt-rule-card-raw {
+    font-size: 0.66rem;
+    color: var(--tt-muted);
+    padding-top: var(--tt-space-xs);
+}
+
+.tt-saved-rules {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tt-saved-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--tt-space-xs) 0;
+}
+
+.tt-saved-header strong {
+    font-size: 0.76rem;
+    color: var(--tt-text-secondary);
+}
+
+.tt-saved-rule-row {
+    display: flex;
+    align-items: center;
+    gap: var(--tt-space-xs);
+    padding: 4px var(--tt-space-sm);
+    border-radius: var(--tt-radius-sm);
+    font-size: 0.72rem;
+    background: transparent;
+    transition: background 0.1s;
+}
+
+.tt-saved-rule-row:hover {
+    background: var(--tt-bg-soft);
+}
+
+.tt-saved-rule-target {
+    font-weight: 600;
+    color: var(--tt-text);
+    flex: 0 0 auto;
+}
+
+.tt-saved-rule-desc {
+    color: var(--tt-muted);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-saved-rule-badge {
+    font-size: 0.6rem;
+    padding: 2px 6px;
+    border-radius: 999px;
+    font-weight: 700;
+}
+
+.tt-saved-rule-badge--hard {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--tt-danger);
+}
+
+.tt-saved-rule-badge--soft {
+    background: rgba(8, 145, 178, 0.15);
+    color: var(--tt-primary);
+}
+
+.tt-saved-rules-empty {
+    padding: var(--tt-space-md) 0;
+    text-align: center;
 }
 
 

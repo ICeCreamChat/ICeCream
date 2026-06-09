@@ -87,20 +87,261 @@ export function getRosterStats(project = {}) {
     };
 }
 
-export function getRuleSummary(project = {}) {
+function cloneValue(value) {
+    return JSON.parse(JSON.stringify(value ?? null));
+}
+
+function encodeRulePart(value = '') {
+    return encodeURIComponent(String(value ?? ''));
+}
+
+function decodeRulePart(value = '') {
+    return decodeURIComponent(String(value ?? ''));
+}
+
+function ruleId(type, ...parts) {
+    return [type, ...parts.map(encodeRulePart)].join('|');
+}
+
+function ruleTargetName(project, kind, id) {
+    const maps = entityMaps(project);
+    if (kind === 'teacher') return maps.teachers.get(id)?.name || id;
+    if (kind === 'class') return ownerLabel(maps.classes.get(id) || { id });
+    if (kind === 'subject') return maps.subjects.get(id)?.name || id;
+    return id || '';
+}
+
+function pushSlotRules(items, project, { type, source, targetKind, slotMap = {}, priority = 'hard', description = '' }) {
+    for (const [targetId, slots] of Object.entries(slotMap || {})) {
+        for (const slot of slots || []) {
+            items.push({
+                id: ruleId(type, targetId, slot),
+                type,
+                label: type,
+                targetName: ruleTargetName(project, targetKind, targetId),
+                targetId,
+                slots: [slot],
+                priority,
+                description,
+                source,
+            });
+        }
+    }
+}
+
+export function getSavedRuleItems(project = {}) {
+    project = project || {};
     const rules = project.rules || {};
     const hard = rules.hardRules || {};
     const soft = rules.softRules || {};
-    const teacherUnavailable = Object.values(hard.teacherUnavailable || {}).reduce((sum, slots) => sum + (slots || []).length, 0);
-    const classUnavailable = Object.values(hard.classUnavailable || {}).reduce((sum, slots) => sum + (slots || []).length, 0);
-    const lockedSlots = (hard.lockedSlots || []).length;
-    const morningSubjects = (soft.morningSubjects || []).length;
+    const items = [];
+
+    pushSlotRules(items, project, {
+        type: 'teacher_unavailable',
+        source: 'hardRules.teacherUnavailable',
+        targetKind: 'teacher',
+        slotMap: hard.teacherUnavailable,
+        priority: 'hard',
+        description: '教师不可排',
+    });
+    pushSlotRules(items, project, {
+        type: 'class_unavailable',
+        source: 'hardRules.classUnavailable',
+        targetKind: 'class',
+        slotMap: hard.classUnavailable,
+        priority: 'hard',
+        description: '班级不可排',
+    });
+
+    (hard.lockedSlots || []).forEach((slot, index) => {
+        const className = ruleTargetName(project, 'class', slot.classId);
+        const subjectName = ruleTargetName(project, 'subject', slot.subjectId);
+        const teacherName = ruleTargetName(project, 'teacher', slot.teacherId);
+        items.push({
+            id: ruleId('locked_slot', index),
+            type: 'locked_slot',
+            label: 'locked_slot',
+            targetName: [className, subjectName, teacherName].filter(Boolean).join(' / '),
+            targetId: slot.id || `${slot.classId}:${slot.subjectId}:${slot.teacherId}`,
+            slots: [`${slot.day}-${slot.period}`],
+            priority: 'hard',
+            description: '锁定课节',
+            source: 'hardRules.lockedSlots',
+        });
+    });
+
+    for (const subjectId of soft.morningSubjects || []) {
+        items.push({
+            id: ruleId('subject_morning', subjectId),
+            type: 'subject_morning',
+            label: 'subject_morning',
+            targetName: ruleTargetName(project, 'subject', subjectId),
+            targetId: subjectId,
+            slots: [],
+            priority: 'soft',
+            description: '课程上午优先',
+            source: 'softRules.morningSubjects',
+        });
+    }
+
+    for (const [subjectId, preference] of Object.entries(soft.subjectPreferredPeriods || {})) {
+        for (const slot of preference.prefer || []) {
+            items.push({
+                id: ruleId('subject_preferred_periods', subjectId, 'prefer', slot),
+                type: 'subject_preferred_periods',
+                label: 'subject_preferred_periods',
+                targetName: ruleTargetName(project, 'subject', subjectId),
+                targetId: subjectId,
+                slots: [slot],
+                priority: 'soft',
+                description: '课程偏好节次',
+                source: 'softRules.subjectPreferredPeriods.prefer',
+            });
+        }
+        for (const slot of preference.avoid || []) {
+            items.push({
+                id: ruleId('subject_avoid_periods', subjectId, 'avoid', slot),
+                type: 'subject_avoid_periods',
+                label: 'subject_avoid_periods',
+                targetName: ruleTargetName(project, 'subject', subjectId),
+                targetId: subjectId,
+                slots: [slot],
+                priority: 'soft',
+                description: '课程避开节次',
+                source: 'softRules.subjectPreferredPeriods.avoid',
+            });
+        }
+    }
+
+    for (const [teacherId, limits] of Object.entries(soft.teacherLimits || {})) {
+        if (Number.isInteger(Number(limits.daily))) {
+            items.push({
+                id: ruleId('teacher_daily_limit', teacherId),
+                type: 'teacher_daily_limit',
+                label: 'teacher_daily_limit',
+                targetName: ruleTargetName(project, 'teacher', teacherId),
+                targetId: teacherId,
+                slots: [],
+                priority: 'soft',
+                description: `每天最多 ${limits.daily} 节`,
+                source: 'softRules.teacherLimits.daily',
+            });
+        }
+        if (Number.isInteger(Number(limits.consecutive))) {
+            items.push({
+                id: ruleId('teacher_consecutive_limit', teacherId),
+                type: 'teacher_consecutive_limit',
+                label: 'teacher_consecutive_limit',
+                targetName: ruleTargetName(project, 'teacher', teacherId),
+                targetId: teacherId,
+                slots: [],
+                priority: 'soft',
+                description: `连续最多 ${limits.consecutive} 节`,
+                source: 'softRules.teacherLimits.consecutive',
+            });
+        }
+    }
+
+    for (const subjectId of soft.spreadSubjects || []) {
+        items.push({
+            id: ruleId('subject_spread', subjectId),
+            type: 'subject_spread',
+            label: 'subject_spread',
+            targetName: ruleTargetName(project, 'subject', subjectId),
+            targetId: subjectId,
+            slots: [],
+            priority: 'soft',
+            description: '同科分散',
+            source: 'softRules.spreadSubjects',
+        });
+    }
+
+    return items;
+}
+
+function removeFromSlotMap(map = {}, targetId, slot) {
+    const next = { ...(map || {}) };
+    next[targetId] = (next[targetId] || []).filter(item => item !== slot);
+    if (!next[targetId].length) delete next[targetId];
+    return next;
+}
+
+function removeFromSubjectPreference(subjectPreferredPeriods = {}, subjectId, bucket, slot) {
+    const next = cloneValue(subjectPreferredPeriods || {});
+    const current = next[subjectId] || { prefer: [], avoid: [], weight: 20 };
+    current[bucket] = (current[bucket] || []).filter(item => item !== slot);
+    current.prefer = current.prefer || [];
+    current.avoid = current.avoid || [];
+    if (!current.prefer.length && !current.avoid.length) {
+        delete next[subjectId];
+    } else {
+        next[subjectId] = current;
+    }
+    return next;
+}
+
+export function removeSavedRuleById(project = {}, id = '') {
+    const rules = cloneValue(project.rules || { hardRules: {}, softRules: {} });
+    rules.hardRules = rules.hardRules || {};
+    rules.softRules = rules.softRules || {};
+    const [type, ...encodedParts] = String(id).split('|');
+    const parts = encodedParts.map(decodeRulePart);
+
+    if (type === 'teacher_unavailable') {
+        rules.hardRules.teacherUnavailable = removeFromSlotMap(rules.hardRules.teacherUnavailable, parts[0], parts[1]);
+    } else if (type === 'class_unavailable') {
+        rules.hardRules.classUnavailable = removeFromSlotMap(rules.hardRules.classUnavailable, parts[0], parts[1]);
+    } else if (type === 'locked_slot') {
+        const index = Number.parseInt(parts[0], 10);
+        rules.hardRules.lockedSlots = (rules.hardRules.lockedSlots || []).filter((_, itemIndex) => itemIndex !== index);
+    } else if (type === 'subject_morning') {
+        rules.softRules.morningSubjects = (rules.softRules.morningSubjects || []).filter(item => item !== parts[0]);
+    } else if (type === 'subject_preferred_periods') {
+        rules.softRules.subjectPreferredPeriods = removeFromSubjectPreference(rules.softRules.subjectPreferredPeriods, parts[0], 'prefer', parts[2]);
+    } else if (type === 'subject_avoid_periods') {
+        rules.softRules.subjectPreferredPeriods = removeFromSubjectPreference(rules.softRules.subjectPreferredPeriods, parts[0], 'avoid', parts[2]);
+    } else if (type === 'teacher_daily_limit') {
+        const current = { ...(rules.softRules.teacherLimits?.[parts[0]] || {}) };
+        delete current.daily;
+        rules.softRules.teacherLimits = { ...(rules.softRules.teacherLimits || {}) };
+        if (Object.keys(current).length) rules.softRules.teacherLimits[parts[0]] = current;
+        else delete rules.softRules.teacherLimits[parts[0]];
+    } else if (type === 'teacher_consecutive_limit') {
+        const current = { ...(rules.softRules.teacherLimits?.[parts[0]] || {}) };
+        delete current.consecutive;
+        rules.softRules.teacherLimits = { ...(rules.softRules.teacherLimits || {}) };
+        if (Object.keys(current).length) rules.softRules.teacherLimits[parts[0]] = current;
+        else delete rules.softRules.teacherLimits[parts[0]];
+    } else if (type === 'subject_spread') {
+        rules.softRules.spreadSubjects = (rules.softRules.spreadSubjects || []).filter(item => item !== parts[0]);
+    }
+
+    return rules;
+}
+
+export function getRuleSummary(project = {}) {
+    const items = getSavedRuleItems(project);
+    const count = type => items.filter(item => item.type === type).length;
+    const teacherUnavailable = count('teacher_unavailable');
+    const classUnavailable = count('class_unavailable');
+    const lockedSlots = count('locked_slot');
+    const morningSubjects = count('subject_morning');
+    const subjectPreferredPeriods = count('subject_preferred_periods');
+    const subjectAvoidPeriods = count('subject_avoid_periods');
+    const teacherDailyLimits = count('teacher_daily_limit');
+    const teacherConsecutiveLimits = count('teacher_consecutive_limit');
+    const spreadSubjects = count('subject_spread');
     return {
         teacherUnavailable,
         classUnavailable,
         lockedSlots,
         morningSubjects,
-        total: teacherUnavailable + classUnavailable + lockedSlots + morningSubjects,
+        subjectPreferredPeriods,
+        subjectAvoidPeriods,
+        teacherDailyLimits,
+        teacherConsecutiveLimits,
+        spreadSubjects,
+        total: items.length,
     };
 }
 

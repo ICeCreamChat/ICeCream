@@ -8,6 +8,7 @@ import {
     getPreparedness,
     getRosterStats,
     getRuleSummary,
+    getSavedRuleItems,
     getScore,
     getSlotsAt,
     getSolveStatus,
@@ -237,7 +238,6 @@ export function renderWorkbench(state) {
                 ${renderInspector(state)}
             </aside>
             ${renderRosterImportDialog(state)}
-            ${renderRuleReviewDialog(state)}
         </div>
     `;
 }
@@ -533,32 +533,145 @@ function renderRosterStats(stats) {
 
 function renderRulesSection(state) {
     const { project } = state;
-    const ruleSummary = getRuleSummary(project);
-    const draftCount = state.ruleReview?.draftRows?.length || state.ruleDraftPreview?.length || 0;
-    const warningCount = state.ruleReview?.warnings?.length || state.ruleWarnings?.length || 0;
-    const cardTitle = draftCount ? '继续复核约束草稿' : '导入 AI 约束';
-    const cardDescription = draftCount
-        ? '已有草稿会保留；进入复核表后继续编辑、删除或确认生效。'
-        : '上传 TXT/XLSX 或粘贴自然语言，解析后先复核再写入规则。';
-    const cardChip = draftCount ? `${draftCount} 条待复核` : '点击上传';
+    const pending = state.pendingRules || [];
+    const savedItems = getSavedRuleItems(project);
+    const ruleInput = state.ruleInput || {};
+    const expandedId = state.expandedRuleId || null;
+
     return `
         <div class="tt-rule-stack" data-workflow-step="rules">
-            <div class="tt-rule-block">
-                <span class="tt-rule-title">约束复核中心</span>
-                <button class="tt-rule-entry-card tt-rule-entry-card--action" id="tt-open-rule-review" type="button">
-                    <i data-lucide="brain-circuit"></i>
-                    <div>
-                        <strong>${escapeHtml(cardTitle)}</strong>
-                        <span>${escapeHtml(cardDescription)}</span>
-                    </div>
-                    <span class="tt-chip">${escapeHtml(cardChip)}</span>
+            ${renderRuleInputArea(ruleInput)}
+            ${pending.length ? renderPendingCards(pending, expandedId, project) : ''}
+            ${renderSavedRuleList(savedItems)}
+        </div>
+    `;
+}
+
+function renderRuleInputArea(ruleInput = {}) {
+    const loading = ruleInput.loading;
+    return `
+        <div class="tt-rule-input-area" id="tt-rule-input-area">
+            <textarea id="tt-rule-input-text" class="tt-rule-input-text" spellcheck="false"
+                placeholder="描述排课约束，例如：王老师周三下午不排课，数学尽量上午"
+                ${loading ? 'disabled' : ''}>${escapeHtml(ruleInput.text || '')}</textarea>
+            <div class="tt-rule-input-actions">
+                <label class="tt-rule-file-label" ${loading ? 'disabled' : ''}>
+                    <i data-lucide="paperclip"></i>
+                    <span>${ruleInput.fileName ? escapeHtml(ruleInput.fileName) : '上传文件'}</span>
+                    <input id="tt-rule-input-file" type="file" accept=".txt,.csv,.xlsx,.xls" ${loading ? 'disabled' : ''}>
+                </label>
+                <button class="tt-btn tt-btn--primary tt-btn--sm" id="tt-rule-parse-btn" type="button" ${loading ? 'disabled' : ''}>
+                    <i data-lucide="${loading ? 'loader-2' : 'sparkles'}"></i>
+                    <span>${loading ? '解析中…' : 'AI 解析'}</span>
                 </button>
-                ${renderRuleReviewStatus({ savedCount: ruleSummary.total, draftCount, warningCount })}
-                <div class="tt-action-row tt-action-row--compact">
-                    <button class="tt-btn" id="tt-reparse-rule-review" type="button"><i data-lucide="upload"></i><span>重新解析</span></button>
-                    <button class="tt-btn tt-btn--danger" id="tt-clear-rules" type="button"><i data-lucide="trash-2"></i><span>清空规则</span></button>
+                <button class="tt-btn tt-btn--sm" id="tt-rule-manual-add-btn" type="button" ${loading ? 'disabled' : ''}>
+                    <i data-lucide="plus"></i>
+                    <span>手动添加</span>
+                </button>
+            </div>
+            <div class="tt-rule-examples" aria-label="示例约束">
+                ${[
+                    '王老师周三下午不要排课',
+                    '语数英尽量排上午',
+                    '李老师每天最多上3节',
+                    '体育课分散开',
+                ].map(example => `<button type="button" class="tt-rule-example-chip" data-rule-example="${escapeAttr(example)}">${escapeHtml(example)}</button>`).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderPendingCards(pending = [], expandedId = null, project = {}) {
+    return `
+        <div class="tt-pending-rules" id="tt-pending-rules">
+            <div class="tt-pending-header">
+                <strong>待确认 (${pending.length})</strong>
+                <div class="tt-pending-batch">
+                    <button class="tt-btn tt-btn--sm" id="tt-rule-accept-all" type="button"><i data-lucide="check-check"></i><span>全部接受</span></button>
+                    <button class="tt-btn tt-btn--sm tt-btn--ghost" id="tt-rule-reject-all" type="button"><i data-lucide="x"></i><span>全部拒绝</span></button>
                 </div>
             </div>
+            ${pending.map(rule => renderRuleCard(rule, expandedId === rule.id, project)).join('')}
+        </div>
+    `;
+}
+
+function renderRuleCard(rule = {}, expanded = false, project = {}) {
+    const priority = rule.priority || 'soft';
+    const status = rule.status || 'needs_review';
+    const type = rule.type || '';
+    const isSuggestion = ['suggestion', 'unsupported'].includes(status);
+    const borderClass = priority === 'hard' ? 'tt-rule-card--hard' : isSuggestion ? 'tt-rule-card--suggestion' : 'tt-rule-card--soft';
+    const confidence = rule.confidence !== null && rule.confidence !== undefined
+        ? `<span class="tt-confidence-badge">${Math.round(Number(rule.confidence) * 100)}%</span>` : '';
+
+    if (expanded) {
+        return `
+            <div class="tt-rule-card ${borderClass} tt-rule-card--expanded" data-rule-card="${escapeAttr(rule.id)}">
+                <div class="tt-rule-card-head">
+                    <span class="tt-rule-card-type">${escapeHtml(ruleTypeLabel(type))}</span>
+                    ${confidence}
+                </div>
+                <div class="tt-rule-card-edit">
+                    <label><span>对象</span>${renderRuleTargetField(rule, project)}</label>
+                    <label><span>节次</span><input class="tt-roster-review-field" data-pending-field="slots" type="text" value="${escapeAttr((rule.slots || []).join(', '))}" placeholder="如 3-4, 3-5"></label>
+                    <label><span>强弱</span>
+                        <select class="tt-roster-review-field" data-pending-field="priority">
+                            <option value="hard" ${priority === 'hard' ? 'selected' : ''}>硬性（必须）</option>
+                            <option value="soft" ${priority === 'soft' ? 'selected' : ''}>软性（尽量）</option>
+                        </select>
+                    </label>
+                    ${rule.rawText ? `<div class="tt-rule-card-raw"><small>原始：${escapeHtml(rule.rawText)}</small></div>` : ''}
+                </div>
+                <div class="tt-rule-card-actions">
+                    <button class="tt-btn tt-btn--primary tt-btn--sm" type="button" data-rule-accept="${escapeAttr(rule.id)}"><i data-lucide="check"></i><span>接受</span></button>
+                    <button class="tt-btn tt-btn--sm tt-btn--ghost" type="button" data-rule-reject="${escapeAttr(rule.id)}"><i data-lucide="x"></i><span>拒绝</span></button>
+                    <button class="tt-btn tt-btn--sm" type="button" data-rule-collapse="${escapeAttr(rule.id)}"><i data-lucide="chevron-up"></i><span>收起</span></button>
+                </div>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="tt-rule-card ${borderClass}" data-rule-card="${escapeAttr(rule.id)}">
+            <div class="tt-rule-card-head" data-rule-expand="${escapeAttr(rule.id)}">
+                <span class="tt-rule-card-type">${escapeHtml(ruleTypeLabel(type))}</span>
+                ${confidence}
+            </div>
+            <div class="tt-rule-card-body" data-rule-expand="${escapeAttr(rule.id)}">
+                <strong>${escapeHtml(rule.targetName || rule.targetId || '-')}</strong>
+                ${(rule.slots || []).length ? `<span class="tt-rule-card-slots">${escapeHtml(rule.slots.join(', '))}</span>` : ''}
+                ${isSuggestion ? `<em class="tt-muted">${escapeHtml(ruleStatusLabel(status))}</em>` : ''}
+            </div>
+            <div class="tt-rule-card-actions">
+                ${isSuggestion
+                    ? `<button class="tt-btn tt-btn--sm tt-btn--ghost" type="button" data-rule-reject="${escapeAttr(rule.id)}">忽略</button>`
+                    : `<button class="tt-btn tt-btn--primary tt-btn--sm" type="button" data-rule-accept="${escapeAttr(rule.id)}"><i data-lucide="check"></i></button>
+                       <button class="tt-btn tt-btn--sm tt-btn--ghost" type="button" data-rule-reject="${escapeAttr(rule.id)}"><i data-lucide="x"></i></button>`
+                }
+            </div>
+        </div>
+    `;
+}
+
+function renderSavedRuleList(items = []) {
+    if (!items.length) {
+        return `<div class="tt-saved-rules-empty"><span class="tt-muted">暂无已生效约束</span></div>`;
+    }
+    return `
+        <div class="tt-saved-rules" id="tt-saved-rules">
+            <div class="tt-saved-header">
+                <strong>已生效 (${items.length})</strong>
+                <button class="tt-btn tt-btn--sm tt-btn--ghost tt-btn--danger" id="tt-clear-rules" type="button">清空</button>
+            </div>
+            ${items.map(item => `
+                <div class="tt-saved-rule-row" data-saved-rule="${escapeAttr(item.id)}">
+                    <span class="tt-saved-rule-target">${escapeHtml(item.targetName || '-')}</span>
+                    <span class="tt-saved-rule-desc">${escapeHtml(ruleTypeLabel(item.type))}</span>
+                    <span class="tt-saved-rule-badge tt-saved-rule-badge--${item.priority === 'hard' ? 'hard' : 'soft'}">${item.priority === 'hard' ? '硬' : '软'}</span>
+                    <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-saved-rule-delete="${escapeAttr(item.id)}" title="删除" aria-label="删除"><i data-lucide="x"></i></button>
+                </div>
+            `).join('')}
         </div>
     `;
 }
@@ -624,19 +737,71 @@ function renderRuleReviewDialog(state) {
     if (!dialog.open) return '';
     const mode = dialog.mode || 'text';
     const isReview = dialog.step === 'review';
+    const isSaved = dialog.step === 'saved';
     return `
         <div class="tt-dialog-overlay" data-rule-review-close>
             <section class="tt-rule-review-dialog" id="tt-rule-review-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-rule-review-title">
                 <div class="tt-dialog-header">
                     <div>
                         <span class="tt-eyebrow">AI 约束</span>
-                        <h3 id="tt-rule-review-title">${isReview ? '复核约束草稿' : '约束复核中心'}</h3>
-                        <p>${isReview ? '只会保存状态为可生效的规则；建议项和未支持项仅供审查。' : '上传 TXT/XLSX、粘贴自然语言，或手动批量新增规则，全部先进入复核表。'}</p>
+                        <h3 id="tt-rule-review-title">${isSaved ? '已生效规则' : isReview ? '复核约束草稿' : '约束复核中心'}</h3>
+                        <p>${isSaved ? '这些规则已经写入项目，并会参与下一次排课。' : isReview ? '只会保存状态为可生效的规则；建议项和未支持项仅供审查。' : '上传 TXT/XLSX、粘贴自然语言，或手动批量新增规则，全部先进入复核表。'}</p>
                     </div>
                     <button class="tt-icon-btn" id="tt-rule-review-cancel" type="button" title="关闭约束复核" aria-label="关闭约束复核"><i data-lucide="x"></i></button>
                 </div>
-                ${isReview ? renderRuleReviewTable(dialog, state.project) : renderRuleReviewInput(state, dialog, mode)}
+                ${isSaved ? renderSavedRulesTable(state.project) : isReview ? renderRuleReviewTable(dialog, state.project) : renderRuleReviewInput(state, dialog, mode)}
             </section>
+        </div>
+    `;
+}
+
+function renderSavedRulesTable(project = {}) {
+    const items = getSavedRuleItems(project);
+    if (!items.length) {
+        return `
+            <div class="tt-empty-panel">
+                <i data-lucide="clipboard-check"></i>
+                <strong>暂无已生效规则</strong>
+                <span>上传或粘贴 AI 约束，复核确认后会显示在这里。</span>
+            </div>
+            <div class="tt-dialog-actions">
+                <button class="tt-btn" id="tt-saved-rule-add" type="button"><i data-lucide="plus"></i><span>新增约束</span></button>
+                <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>关闭</span></button>
+            </div>
+        `;
+    }
+    return `
+        <div class="tt-roster-review-wrap">
+            <table class="tt-rule-review-table tt-saved-rule-table" id="tt-saved-rule-table">
+                <thead>
+                    <tr>
+                        <th>类型</th>
+                        <th>对象</th>
+                        <th>节次</th>
+                        <th>强弱</th>
+                        <th>说明</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${items.map(item => `
+                        <tr class="tt-saved-rule-row" data-saved-rule-row="${escapeAttr(item.id)}">
+                            <td><strong>${escapeHtml(ruleTypeLabel(item.type))}</strong><small>${escapeHtml(item.type)}</small></td>
+                            <td>${escapeHtml(item.targetName || '-')}</td>
+                            <td>${escapeHtml((item.slots || []).join(', ') || '全局')}</td>
+                            <td>${escapeHtml(item.priority === 'hard' ? '硬性' : '软性')}</td>
+                            <td>${escapeHtml(item.description || item.source || '')}</td>
+                            <td>
+                                <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-saved-rule-delete="${escapeAttr(item.id)}" title="删除已生效规则" aria-label="删除已生效规则"><i data-lucide="trash-2"></i></button>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+        <div class="tt-dialog-actions">
+            <button class="tt-btn" id="tt-saved-rule-add" type="button"><i data-lucide="plus"></i><span>新增约束</span></button>
+            <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>关闭</span></button>
         </div>
     `;
 }

@@ -18,6 +18,8 @@ import {
     ensureOwnerSelection,
     getActivePeriods,
     getActiveWeekdays,
+    getSavedRuleItems,
+    removeSavedRuleById,
 } from './selectors.js';
 import {
     cloneValue,
@@ -212,6 +214,16 @@ export class TimetablePlannerController {
             this.render();
             return;
         }
+        if (getSavedRuleItems(this.state.project).length) {
+            this.state.ruleReview = {
+                ...createTimetablePlannerState().ruleReview,
+                open: true,
+                step: 'saved',
+                mode: nextMode,
+            };
+            this.render();
+            return;
+        }
         this.state.ruleReview = {
             ...createTimetablePlannerState().ruleReview,
             open: true,
@@ -274,17 +286,162 @@ export class TimetablePlannerController {
 
     fillRuleExample(example = '') {
         if (!example) return;
-        const current = this.readRuleReviewText().trim();
+        const current = this.getRuleInputText().trim();
         const next = current ? `${current}\n${example}` : example;
-        this.state.ruleReview = {
-            ...(this.state.ruleReview || {}),
-            open: true,
-            step: 'input',
-            mode: 'text',
-            text: next,
+        this.state.ruleInput = { ...(this.state.ruleInput || {}), text: next };
+        // legacy sync
+        this.state.ruleReview = { ...(this.state.ruleReview || {}), text: next };
+        this.render();
+    }
+
+    getRuleInputText() {
+        return this.state.container?.querySelector('#tt-rule-input-text')?.value ?? this.state.ruleInput?.text ?? '';
+    }
+
+    // ── 新卡片式 AI 约束交互 ──
+
+    async parseRulesInline() {
+        const text = this.getRuleInputText().trim();
+        if (!text && !this.ruleReviewFile) {
+            this.setMessage('请输入约束描述或上传文件。');
+            return;
+        }
+        this.state.ruleInput = { ...(this.state.ruleInput || {}), loading: true };
+        this.render();
+        try {
+            let options;
+            if (this.ruleReviewFile) {
+                const body = new FormData();
+                body.append('file', this.ruleReviewFile);
+                if (text) body.append('text', text);
+                options = { method: 'POST', body };
+            } else {
+                options = { method: 'POST', body: JSON.stringify({ text }) };
+            }
+            const result = await requestTimetable('/rules/parse', options);
+            const rows = result.draftRows || [];
+            this.state.pendingRules = [...rows, ...(this.state.pendingRules || [])];
+            this.state.ruleInput = { text: '', fileName: '', loading: false };
+            this.ruleReviewFile = null;
+            // legacy sync
+            this.setRuleReviewState(result);
+            this.setMessage(rows.length
+                ? `已解析 ${rows.length} 条约束，请逐条确认。`
+                : '未能解析出可用约束，请调整描述后重试。');
+        } catch (error) {
+            this.state.ruleInput = { ...(this.state.ruleInput || {}), loading: false };
+            this.handleError(error);
+        }
+    }
+
+    selectRuleInputFile(file) {
+        this.ruleReviewFile = file || null;
+        this.state.ruleInput = {
+            ...(this.state.ruleInput || {}),
+            fileName: file?.name || '',
         };
         this.render();
     }
+
+    expandRuleCard(ruleId) {
+        this.state.expandedRuleId = this.state.expandedRuleId === ruleId ? null : ruleId;
+        this.render();
+    }
+
+    collapseRuleCard() {
+        this.state.expandedRuleId = null;
+        this.render();
+    }
+
+    async acceptRule(ruleId) {
+        const pending = this.state.pendingRules || [];
+        const rule = pending.find(item => item.id === ruleId);
+        if (!rule) return;
+        try {
+            const normalized = await requestTimetable('/rules/normalize', {
+                method: 'POST',
+                body: JSON.stringify({ draftRows: [rule] }),
+            });
+            const effectiveRows = (normalized.draftRows || []).filter(row => row.status === 'effective');
+            if (!effectiveRows.length) {
+                this.setMessage('该条规则无法生效，请展开编辑后重试。');
+                return;
+            }
+            await requestTimetable('/rules', {
+                method: 'POST',
+                body: JSON.stringify({ rules: normalized.draftRules }),
+            });
+            await this.refreshProject();
+            this.state.pendingRules = pending.filter(item => item.id !== ruleId);
+            if (this.state.expandedRuleId === ruleId) this.state.expandedRuleId = null;
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
+            this.setMessage('约束已生效。');
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+
+    rejectRule(ruleId) {
+        this.state.pendingRules = (this.state.pendingRules || []).filter(item => item.id !== ruleId);
+        if (this.state.expandedRuleId === ruleId) this.state.expandedRuleId = null;
+        this.render();
+    }
+
+    async acceptAllRules() {
+        const pending = (this.state.pendingRules || []).filter(
+            item => !['suggestion', 'unsupported'].includes(item.status),
+        );
+        if (!pending.length) {
+            this.setMessage('没有可直接接受的约束。');
+            return;
+        }
+        try {
+            const normalized = await requestTimetable('/rules/normalize', {
+                method: 'POST',
+                body: JSON.stringify({ draftRows: pending }),
+            });
+            const effectiveCount = (normalized.draftRows || []).filter(row => row.status === 'effective').length;
+            if (!effectiveCount) {
+                this.setMessage('这些约束都无法自动生效，请逐条编辑。');
+                return;
+            }
+            await requestTimetable('/rules', {
+                method: 'POST',
+                body: JSON.stringify({ rules: normalized.draftRules }),
+            });
+            await this.refreshProject();
+            const acceptedIds = new Set(pending.map(item => item.id));
+            this.state.pendingRules = (this.state.pendingRules || []).filter(item => !acceptedIds.has(item.id));
+            this.state.expandedRuleId = null;
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
+            this.setMessage(`已接受 ${effectiveCount} 条约束。`);
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+
+    rejectAllRules() {
+        this.state.pendingRules = [];
+        this.state.expandedRuleId = null;
+        this.render();
+    }
+
+    addManualRule() {
+        const rule = this.emptyRuleDraftRow();
+        this.state.pendingRules = [rule, ...(this.state.pendingRules || [])];
+        this.state.expandedRuleId = rule.id;
+        this.render();
+    }
+
+    async refreshProject() {
+        try {
+            const result = await requestTimetable('/bootstrap');
+            this.applyProject(result.project);
+        } catch { /* silent */ }
+    }
+
 
     setRuleReviewState(payload = {}) {
         const draftRows = Array.isArray(payload.draftRows) ? payload.draftRows : [];
@@ -905,6 +1062,12 @@ export class TimetablePlannerController {
                 this.clearOptimizationPolling();
                 this.state.solverJob = null;
                 this.clearRuleDraft();
+                this.state.ruleReview = {
+                    ...createTimetablePlannerState().ruleReview,
+                    open: true,
+                    step: 'saved',
+                    mode: 'file',
+                };
                 this.setMessage('约束已确认生效。');
                 return;
             } catch (error) {
@@ -925,7 +1088,41 @@ export class TimetablePlannerController {
             this.clearOptimizationPolling();
             this.state.solverJob = null;
             this.clearRuleDraft();
+            this.state.ruleReview = {
+                ...createTimetablePlannerState().ruleReview,
+                open: true,
+                step: 'saved',
+                mode: 'file',
+            };
             this.setMessage('AI 约束已确认。');
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+
+    async removeSavedRule(ruleId) {
+        try {
+            const rules = removeSavedRuleById(this.state.project, ruleId);
+            const result = await requestTimetable('/rules', {
+                method: 'POST',
+                body: JSON.stringify({ rules }),
+            });
+            this.applyProject(result.project);
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
+            this.state.ruleDraft = null;
+            this.state.ruleDraftPreview = [];
+            this.state.ruleWarnings = [];
+            this.state.ruleDraftInputType = '';
+            this.state.ruleContextStats = null;
+            this.state.ruleUnsupportedItems = [];
+            this.state.ruleReview = {
+                ...createTimetablePlannerState().ruleReview,
+                open: true,
+                step: 'saved',
+                mode: 'file',
+            };
+            this.setMessage('已删除一条约束。');
         } catch (error) {
             this.handleError(error);
         }

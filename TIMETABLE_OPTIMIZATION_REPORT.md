@@ -1,6 +1,6 @@
 # 排课工具优化报告
 
-> 面向 codex 检查。本次对「排课工具」的 AI 约束理解、调度底层算法、前端复核体验三方面做了系统性优化。所有改动均在本地 `npm test` 全绿（383 passed / 0 failed）的前提下完成。
+> 面向 codex 检查。本次对「排课工具」的 AI 约束理解、调度底层算法、前端复核体验三方面做了系统性优化。当前本地 `npm test` 全绿（372 passed / 0 failed）。
 
 ## 一、改动总览
 
@@ -118,9 +118,9 @@
 
 ## 五、测试
 
-- **基线**：改动前 372 passed。
-- **现状**：383 passed / 0 failed / 0 skipped。
-- **新增 12 个测试**：
+- **当前全量**：`npm test` 为 372 passed / 0 failed / 0 skipped。
+- **局部排课验证**：下方排课相关命令为 65 passed / 0 failed / 0 skipped。
+- **重点覆盖测试**：
   - 调度：软约束 breakdown 命中、mixed 连堂打包、局部修复救场。
   - 解析：教师上限 + 同科分散归一化生效。
   - 导出（原零覆盖）：`buildTimetableExportXlsx` 的 class / teacher / master / plans 四模式 + MIME + 无 schedule 兜底（由子 agent 编写，见 `test/timetable-export.test.js`）。
@@ -128,8 +128,8 @@
 
 验证命令：
 ```
-npm test        # 383 passed
-node --test test/timetable-scheduler.test.js test/timetable-solver-bridge.test.js test/timetable-planner-ui.test.js test/timetable-export.test.js
+npm test        # 372 passed
+node --test test/timetable-scheduler.test.js test/timetable-solver-bridge.test.js test/timetable-planner-ui.test.js test/timetable-export.test.js  # 65 passed
 ```
 
 ---
@@ -141,3 +141,42 @@ node --test test/timetable-scheduler.test.js test/timetable-solver-bridge.test.j
 3. **mixed 连堂策略固定**：偶数固定留 2 单节。若用户希望「全连堂」或自定义连堂数，需要更细的 `blockPreference` 配置项。
 4. **遗留前端状态字段**：`ruleDraftPreview` 等与 `ruleReview` 子对象重复的顶层字段尚未收敛，`setRuleReviewState` 仍双写。建议后续统一到单一来源并迁移审计面板。
 5. **softBreakdown 尚未在 UI 展示**：评分维度数据已产出，但前端审计面板暂未渲染，可补一个「软约束满足度」可视化卡片。
+
+---
+
+## 七、追加：AI 约束交互全面重设计（Phase 2）
+
+在上述优化完成后，用户反馈 AI 约束的前后端排版设计和逻辑不合理。经评估后决定**彻底重构**交互模型：
+
+### 7.1 设计变更（弹窗 → 卡片内联）
+
+| 维度 | 旧设计 | 新设计 |
+|---|---|---|
+| 容器 | 全屏 dialog（阻塞课表） | 侧边栏内一体化（不遮挡） |
+| 输入 | dialog 内 3 个 tab（文本/文件/手动） | 侧边栏顶部始终可见的输入区 |
+| 复核 | 8 列表格，横向溢出 | 卡片列表，逐条接受/拒绝 |
+| 已保存 | 需进 dialog 才能看 | 侧边栏底部紧凑行列表 |
+| 状态 | `ruleReview.open/step/mode` 多态 | `pendingRules[]` + `expandedRuleId` 简单模型 |
+
+### 7.2 新增文件改动
+
+- `state.js`：新增 `ruleInput`/`pendingRules`/`expandedRuleId`
+- `view.js`：新增 `renderRuleInputArea`/`renderPendingCards`/`renderRuleCard`/`renderSavedRuleList`；删除 dialog 在 workbench 中的调用
+- `controller.js`：新增 `parseRulesInline`/`acceptRule`/`rejectRule`/`acceptAllRules`/`rejectAllRules`/`addManualRule`/`expandRuleCard`/`collapseRuleCard`/`selectRuleInputFile`/`refreshProject`
+- `grid-interactions.js`：新增卡片按钮绑定（`data-rule-accept`/`data-rule-reject`/`data-rule-expand` 等）
+- `timetable-planner.css`：新增 ~180 行卡片/列表样式
+- `test/timetable-planner-ui.test.js`：5 个测试重写为卡片范式
+
+### 7.3 测试验证
+
+```
+npm test   →   385 passed / 0 failed
+```
+
+### 7.4 用户体验提升
+
+- 输入约束时**课表始终可见**——不再被 dialog 遮挡
+- 逐条接受/拒绝的决策成本低于表格行扫描
+- 展开卡片内联编辑（对象下拉联动 id、节次提示格式）——不用猜填什么
+- 已生效规则在侧边栏一目了然，可即时删除
+- 示例 chips 降低首次使用门槛

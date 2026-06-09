@@ -62,10 +62,39 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-append-roster-rows')?.addEventListener('click', () => controller.appendRosterReviewRows());
     container.querySelector('#tt-clear-roster')?.addEventListener('click', () => controller.clearRoster());
     container.querySelector('#tt-save-rules')?.addEventListener('click', () => controller.saveRules());
+
+    // ── AI 约束：卡片式内联交互 ──
+    container.querySelector('#tt-rule-parse-btn')?.addEventListener('click', () => controller.parseRulesInline());
+    container.querySelector('#tt-rule-input-file')?.addEventListener('change', event => {
+        controller.selectRuleInputFile(event.target.files?.[0] || null);
+    });
+    container.querySelector('#tt-rule-manual-add-btn')?.addEventListener('click', () => controller.addManualRule());
+    container.querySelectorAll('[data-rule-example]').forEach(button => {
+        button.addEventListener('click', () => controller.fillRuleExample(button.dataset.ruleExample));
+    });
+    container.querySelector('#tt-rule-accept-all')?.addEventListener('click', () => controller.acceptAllRules());
+    container.querySelector('#tt-rule-reject-all')?.addEventListener('click', () => controller.rejectAllRules());
+    container.querySelectorAll('[data-rule-accept]').forEach(button => {
+        button.addEventListener('click', () => controller.acceptRule(button.dataset.ruleAccept));
+    });
+    container.querySelectorAll('[data-rule-reject]').forEach(button => {
+        button.addEventListener('click', () => controller.rejectRule(button.dataset.ruleReject));
+    });
+    container.querySelectorAll('[data-rule-expand]').forEach(el => {
+        el.addEventListener('click', () => controller.expandRuleCard(el.dataset.ruleExpand));
+    });
+    container.querySelectorAll('[data-rule-collapse]').forEach(button => {
+        button.addEventListener('click', () => controller.collapseRuleCard());
+    });
+    container.querySelectorAll('[data-saved-rule-delete]').forEach(button => {
+        button.addEventListener('click', () => controller.removeSavedRule(button.dataset.savedRuleDelete));
+    });
+    // legacy dialog bindings (kept for backward compat with old code paths)
     container.querySelector('#tt-open-rule-review')?.addEventListener('click', () => controller.openRuleReview('file'));
     container.querySelector('#tt-reparse-rule-review')?.addEventListener('click', () => controller.startRuleReviewInput('file'));
     container.querySelector('#tt-rule-review-cancel')?.addEventListener('click', () => controller.closeRuleReview());
     container.querySelector('#tt-rule-review-cancel-secondary')?.addEventListener('click', () => controller.closeRuleReview());
+    container.querySelector('#tt-saved-rule-add')?.addEventListener('click', () => controller.startRuleReviewInput('file'));
     container.querySelectorAll('[data-rule-review-mode]').forEach(button => {
         button.addEventListener('click', () => controller.setRuleReviewMode(button.dataset.ruleReviewMode));
     });
@@ -73,9 +102,6 @@ export function bindGridInteractions(container, controller, state) {
         controller.selectRuleReviewFile(event.target.files?.[0] || null);
     });
     container.querySelector('#tt-rule-review-parse')?.addEventListener('click', () => controller.parseRules());
-    container.querySelectorAll('[data-rule-example]').forEach(button => {
-        button.addEventListener('click', () => controller.fillRuleExample(button.dataset.ruleExample));
-    });
     container.querySelector('#tt-add-manual-rule-rows')?.addEventListener('click', () => controller.addManualRuleRows());
     container.querySelector('#tt-confirm-rule-review')?.addEventListener('click', () => controller.confirmRuleDraft());
     container.querySelector('#tt-add-rule-review-row')?.addEventListener('click', () => controller.addRuleReviewRow());

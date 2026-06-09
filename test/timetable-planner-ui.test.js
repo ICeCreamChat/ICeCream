@@ -5,6 +5,11 @@ import test from 'node:test';
 import { createDefaultTimetableProject } from '../gateway/services/timetable-scheduler.js';
 import { TimetablePlannerController } from '../public/js/tools/timetable/controller.js';
 import {
+  getRuleSummary,
+  getSavedRuleItems,
+  removeSavedRuleById,
+} from '../public/js/tools/timetable/selectors.js';
+import {
   renderWorkbench,
   renderInspector,
   renderSchedulePanel,
@@ -297,8 +302,9 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.doesNotMatch(html, /id="tt-import-roster"/);
   assert.doesNotMatch(html, /class="tt-plan-list"/);
   assert.doesNotMatch(html, /class="tt-plan-row"/);
-  assert.match(html, /id="tt-open-rule-review"/);
-  assert.match(html, /id="tt-clear-rules"/);
+  // New card-based inline AI constraint UI: parse button and manual add button
+  assert.match(html, /id="tt-rule-parse-btn"/);
+  assert.match(html, /id="tt-rule-manual-add-btn"/);
   assert.doesNotMatch(html, /id="tt-open-bulk-rule-review"/);
   assert.doesNotMatch(html, /id="tt-add-lock"/);
   assert.doesNotMatch(html, /class="tt-lock-list"/);
@@ -449,82 +455,83 @@ test('timetable AI rules support Excel file upload and rich preview metadata', a
   const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
+  // New design: pending rules from an xlsx parse appear as inline cards
   const state = sampleWorkbenchState({
-    ruleReview: {
-      open: true,
-      step: 'review',
-      mode: 'file',
-      fileName: 'constraints.xlsx',
-      draftRows: [{
-        id: 'draft-1',
-        rawText: 'Math should prefer Monday period 2',
-        type: 'subject_preferred_periods',
-        targetType: 'subject',
-        targetName: 'Math',
-        targetId: 'math',
-        slots: ['1-2'],
-        priority: 'soft',
-        status: 'effective',
-        confidence: 0.92,
-        description: 'Prefer period',
-        warnings: [],
-      }, {
-        id: 'draft-2',
-        rawText: 'Balance teacher workload',
-        type: 'teacher_load_balance',
-        targetType: 'global',
-        targetName: 'All teachers',
-        slots: [],
-        priority: 'soft',
-        status: 'suggestion',
-        confidence: 0.78,
-        description: 'Suggestion only',
-        warnings: [],
-      }],
-      inputType: 'xlsx_constraints',
-      contextStats: { classCount: 30, teacherCount: 62, subjectCount: 14, totalLessons: 900 },
-      warnings: ['Unsupported suggestion shown for review'],
-      unsupportedItems: [],
-    },
+    ruleInput: { text: '', fileName: 'constraints.xlsx', loading: false },
+    pendingRules: [{
+      id: 'draft-1',
+      rawText: 'Math should prefer Monday period 2',
+      type: 'subject_preferred_periods',
+      targetType: 'subject',
+      targetName: 'Math',
+      targetId: 'math',
+      slots: ['1-2'],
+      priority: 'soft',
+      status: 'effective',
+      confidence: 0.92,
+      description: 'Prefer period',
+      warnings: [],
+    }, {
+      id: 'draft-2',
+      rawText: 'Balance teacher workload',
+      type: 'teacher_load_balance',
+      targetType: 'global',
+      targetName: 'All teachers',
+      slots: [],
+      priority: 'soft',
+      status: 'suggestion',
+      confidence: 0.78,
+      description: 'Suggestion only',
+      warnings: [],
+    }],
+    expandedRuleId: null,
   });
   const html = renderWorkbench(state);
 
-  assert.match(html, /id="tt-rule-review-dialog"/);
-  assert.match(html, /id="tt-rule-review-table"/);
-  assert.match(html, /data-rule-review-row="draft-1"/);
-  assert.match(html, /data-rule-review-field="type"/);
-  assert.match(html, /data-rule-review-field="targetName"/);
-  assert.match(html, /data-rule-review-field="slots"/);
-  assert.match(html, /data-rule-review-field="priority"/);
-  assert.match(html, /data-rule-review-field="status"/);
-  assert.match(html, /id="tt-confirm-rule-review"/);
+  // Inline card-based UI renders pending cards and input area
+  assert.match(html, /id="tt-rule-input-area"/);
+  assert.match(html, /id="tt-pending-rules"/);
+  assert.match(html, /data-rule-card="draft-1"/);
+  assert.match(html, /data-rule-card="draft-2"/);
+  assert.match(html, /data-rule-accept="draft-1"/);
+  assert.match(html, /data-rule-reject="draft-1"/);
+  assert.match(html, /data-rule-expand="draft-1"/);
+  assert.match(html, /id="tt-rule-accept-all"/);
+  assert.match(html, /id="tt-rule-reject-all"/);
   assert.match(html, /constraints\.xlsx/);
-  assert.match(html, /xlsx_constraints/);
-  assert.match(html, /subject_preferred_periods/);
-  assert.match(html, /teacher_load_balance/);
-  assert.match(html, /suggestion/);
-  assert.match(html, /30/);
-  assert.match(stateSource, /ruleReview:\s*{/);
-  assert.match(controllerSource, /openRuleReview\(/);
-  assert.match(controllerSource, /closeRuleReview\(/);
-  assert.match(controllerSource, /setRuleReviewMode\(/);
-  assert.match(controllerSource, /selectRuleReviewFile\(/);
-  assert.match(controllerSource, /parseRules\(/);
-  assert.match(controllerSource, /readRuleReviewRows\(/);
-  assert.match(controllerSource, /confirmRuleDraft\(/);
+  assert.match(html, /subject_preferred_periods|课程偏好节次/);
+  assert.match(html, /teacher_load_balance|教师负载均衡/);
+  assert.match(html, /suggestion|建议/);
+  // File input supports xlsx
+  assert.match(html, /id="tt-rule-input-file"/);
+  assert.match(html, /accept="[^"]*\.xlsx/);
+  // State shape includes ruleInput and pendingRules
+  assert.match(stateSource, /ruleInput:\s*{/);
+  assert.match(stateSource, /pendingRules:\s*\[/);
+  // Controller exposes card-based methods plus legacy dialog methods
+  assert.match(controllerSource, /parseRulesInline\(/);
+  assert.match(controllerSource, /acceptRule\(/);
+  assert.match(controllerSource, /rejectRule\(/);
+  assert.match(controllerSource, /acceptAllRules\(/);
+  assert.match(controllerSource, /rejectAllRules\(/);
+  assert.match(controllerSource, /selectRuleInputFile\(/);
+  assert.match(controllerSource, /expandRuleCard\(/);
   assert.match(controllerSource, /\/rules\/normalize/);
-  assert.match(interactionSource, /#tt-open-rule-review[\s\S]{0,160}openRuleReview\('file'\)/);
-  assert.match(interactionSource, /#tt-reparse-rule-review/);
+  // Interactions bind the new card buttons
+  assert.match(interactionSource, /#tt-rule-parse-btn/);
+  assert.match(interactionSource, /#tt-rule-input-file/);
+  assert.match(interactionSource, /#tt-rule-manual-add-btn/);
+  assert.match(interactionSource, /\[data-rule-accept\]/);
+  assert.match(interactionSource, /\[data-rule-reject\]/);
+  assert.match(interactionSource, /\[data-rule-expand\]/);
+  assert.match(interactionSource, /\[data-saved-rule-delete\]/);
   assert.doesNotMatch(interactionSource, /#tt-open-bulk-rule-review/);
-  assert.match(interactionSource, /#tt-rule-review-file/);
-  assert.match(interactionSource, /\[data-rule-review-field\]/);
-  assert.match(interactionSource, /#tt-confirm-rule-review/);
-  assert.match(styles, /\.tt-rule-review-dialog/);
-  assert.match(styles, /\.tt-rule-review-table/);
+  assert.match(styles, /\.tt-rule-card/);
+  assert.match(styles, /\.tt-pending-rules|\.tt-saved-rules/);
 });
 
-test('timetable rule review keeps parsed drafts inside the modal and preserves them when closed', async () => {
-  const draftRows = [{
+test('timetable rule review keeps parsed drafts as inline pending cards and preserves them across renders', async () => {
+  const pendingRules = [{
     id: 'draft-1',
     rawText: 'All teachers should be balanced',
     type: 'teacher_load_balance',
@@ -551,109 +558,194 @@ test('timetable rule review keeps parsed drafts inside the modal and preserves t
     warnings: [],
   }];
   const state = sampleWorkbenchState({
-    ruleReview: {
-      open: false,
-      step: 'review',
-      mode: 'file',
-      fileName: 'constraints.xlsx',
-      text: '',
-      draftRows,
-      inputType: 'xlsx_constraints',
-      contextStats: { rowCount: 22, teacherCount: 62 },
-      warnings: ['Review warning'],
-      unsupportedItems: [],
-      hasBlockingIssues: false,
-    },
-    ruleDraftPreview: draftRows,
-    ruleWarnings: ['Review warning'],
-    ruleDraftInputType: 'xlsx_constraints',
-    ruleContextStats: { rowCount: 22, teacherCount: 62 },
+    pendingRules,
+    expandedRuleId: null,
+    ruleInput: { text: '', fileName: '', loading: false },
   });
 
-  const closedHtml = renderWorkbench(state);
-  const sidebar = closedHtml.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
+  // Pending cards are rendered inline in the sidebar
+  const html = renderWorkbench(state);
+  const sidebar = html.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
 
-  assert.match(sidebar, /tt-rule-entry-card/);
-  assert.match(sidebar, /2/);
-  assert.doesNotMatch(sidebar, /xlsx_constraints/);
-  assert.doesNotMatch(sidebar, /teacher_load_balance/);
-  assert.doesNotMatch(sidebar, /subject_preferred_periods/);
-  assert.doesNotMatch(sidebar, /class="tt-rule-preview-item"/);
-  assert.doesNotMatch(closedHtml, /id="tt-rule-review-dialog"/);
+  assert.match(sidebar, /id="tt-pending-rules"/);
+  assert.match(sidebar, /data-rule-card="draft-1"/);
+  assert.match(sidebar, /data-rule-card="draft-2"/);
+  assert.match(sidebar, /待确认 \(2\)/);
+  // Suggestion card is rendered with reject (ignore) only
+  assert.match(sidebar, /data-rule-reject="draft-1"/);
+  // Effective card shows accept and reject
+  assert.match(sidebar, /data-rule-accept="draft-2"/);
+  assert.match(sidebar, /data-rule-reject="draft-2"/);
+  // No dialog overlay
+  assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
 
-  const openHtml = renderWorkbench({
-    ...state,
-    ruleReview: { ...state.ruleReview, open: true },
-  });
-  assert.match(openHtml, /id="tt-rule-review-dialog"/);
-  assert.match(openHtml, /xlsx_constraints/);
-  assert.match(openHtml, /teacher_load_balance/);
-  assert.match(openHtml, /subject_preferred_periods/);
+  // Re-rendering with a different expanded state preserves pending rules
+  const expandedHtml = renderWorkbench({ ...state, expandedRuleId: 'draft-2' });
+  assert.match(expandedHtml, /data-rule-card="draft-2"/);
+  assert.match(expandedHtml, /tt-rule-card--expanded/);
+  assert.match(expandedHtml, /data-pending-field="slots"/);
+  assert.match(expandedHtml, /data-pending-field="priority"/);
 
+  // Controller: rejectRule removes one card, others persist
   const controller = new TimetablePlannerController();
   controller.render = () => {};
-  controller.state.ruleReview = { ...state.ruleReview, open: true };
-  controller.closeRuleReview();
+  controller.state.pendingRules = [...pendingRules];
+  controller.rejectRule('draft-1');
+  assert.equal(controller.state.pendingRules.length, 1);
+  assert.equal(controller.state.pendingRules[0].id, 'draft-2');
 
-  assert.equal(controller.state.ruleReview.open, false);
-  assert.equal(controller.state.ruleReview.step, 'review');
-  assert.equal(controller.state.ruleReview.inputType, 'xlsx_constraints');
-  assert.deepEqual(controller.state.ruleReview.draftRows, draftRows);
+  // Controller: rejectAllRules clears all pending
+  controller.state.pendingRules = [...pendingRules];
+  controller.rejectAllRules();
+  assert.equal(controller.state.pendingRules.length, 0);
 
-  controller.openRuleReview('text');
-  assert.equal(controller.state.ruleReview.open, true);
-  assert.equal(controller.state.ruleReview.step, 'review');
-  assert.equal(controller.state.ruleReview.inputType, 'xlsx_constraints');
-  assert.deepEqual(controller.state.ruleReview.draftRows, draftRows);
+  // Controller: addManualRule prepends a new card and expands it
+  controller.addManualRule();
+  assert.equal(controller.state.pendingRules.length, 1);
+  assert.equal(controller.state.expandedRuleId, controller.state.pendingRules[0].id);
 });
 
-test('timetable AI rules sidebar opens the review center from a roster-style card', async () => {
+test('timetable AI rules sidebar renders inline input area with examples and file upload', async () => {
   const viewSource = await readFile(new URL('view.js', moduleRoot), 'utf8');
   const state = sampleWorkbenchState({
-    ruleReview: {
-      open: false,
-      step: 'input',
-      mode: 'file',
-      fileName: '',
-      text: '',
-      draftRows: [],
-      inputType: '',
-      contextStats: null,
-      warnings: [],
-      unsupportedItems: [],
-      hasBlockingIssues: false,
-    },
+    pendingRules: [],
+    expandedRuleId: null,
+    ruleInput: { text: '', fileName: '', loading: false },
   });
   const html = renderWorkbench(state);
   const sidebar = html.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
 
-  assert.match(sidebar, /id="tt-open-rule-review"/);
-  assert.match(sidebar, /class="[^"]*tt-rule-entry-card[^"]*"/);
+  // Inline input area is present in the sidebar rules section
+  assert.match(sidebar, /id="tt-rule-input-area"/);
+  assert.match(sidebar, /id="tt-rule-input-text"/);
+  assert.match(sidebar, /id="tt-rule-input-file"/);
+  assert.match(sidebar, /id="tt-rule-parse-btn"/);
+  assert.match(sidebar, /id="tt-rule-manual-add-btn"/);
+  // Example chips are rendered
+  assert.match(sidebar, /data-rule-example=/);
+  // No obsolete dialog or card entry pattern
   assert.doesNotMatch(sidebar, /id="tt-open-bulk-rule-review"/);
   assert.doesNotMatch(sidebar, /id="tt-add-lock"/);
   assert.doesNotMatch(sidebar, /tt-lock-list/);
-  assert.doesNotMatch(sidebar, /data-rule-review-mode="manual"/);
+  assert.doesNotMatch(sidebar, /tt-rule-entry-card/);
+  // No dialog rendered when no pending rules and no open state
+  assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
+  // view.js contains the locked_slot option in the manual rule builder
   assert.match(viewSource, /value="locked_slot"/);
 
-  const manualDialog = renderWorkbench({
-    ...state,
-    ruleReview: {
-      ...state.ruleReview,
-      open: true,
-      step: 'manual',
-      mode: 'manual',
-    },
-  });
-  assert.match(manualDialog, /id="tt-rule-review-dialog"/);
-  assert.match(manualDialog, /id="tt-manual-rule-type"/);
-  assert.match(manualDialog, /value="locked_slot"/);
-
+  // Controller: fillRuleExample sets the ruleInput text
   const controller = new TimetablePlannerController();
   controller.render = () => {};
-  controller.openRuleReview('file');
-  assert.equal(controller.state.ruleReview.open, true);
-  assert.equal(controller.state.ruleReview.step, 'input');
-  assert.equal(controller.state.ruleReview.mode, 'file');
+  controller.fillRuleExample('体育课分散开');
+  assert.equal(controller.state.ruleInput.text, '体育课分散开');
+
+  // Controller: selectRuleInputFile updates state
+  controller.selectRuleInputFile({ name: 'rules.xlsx' });
+  assert.equal(controller.state.ruleInput.fileName, 'rules.xlsx');
+
+  // Controller: expandRuleCard and collapseRuleCard toggle state
+  controller.state.pendingRules = [{ id: 'r1', type: 'test', slots: [], status: 'effective' }];
+  controller.expandRuleCard('r1');
+  assert.equal(controller.state.expandedRuleId, 'r1');
+  controller.collapseRuleCard();
+  assert.equal(controller.state.expandedRuleId, null);
+});
+
+test('timetable saved AI rules remain visible after confirmation', () => {
+  const project = createDefaultTimetableProject({
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [
+      { id: 'math', name: 'Math', priority: 90, color: '#2563eb' },
+      { id: 'pe', name: 'PE', priority: 30, color: '#22c55e' },
+    ],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+    rules: {
+      hardRules: {
+        teacherUnavailable: { t_math: ['3-4'] },
+        classUnavailable: { c1: ['5-7'] },
+        lockedSlots: [{ id: 'lock_1', day: 2, period: 3, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' }],
+      },
+      softRules: {
+        morningSubjects: ['math'],
+        subjectPreferredPeriods: { math: { prefer: ['1-1'], avoid: ['5-7'], weight: 20 } },
+        teacherLimits: { t_math: { daily: 3, consecutive: 2 } },
+        spreadSubjects: ['pe'],
+      },
+    },
+    schedule: null,
+  });
+
+  const savedItems = getSavedRuleItems(project);
+  const summary = getRuleSummary(project);
+
+  assert.equal(savedItems.length, 9);
+  assert.equal(summary.total, 9);
+  assert.ok(savedItems.some(item => item.type === 'subject_preferred_periods' && item.slots.includes('1-1')));
+  assert.ok(savedItems.some(item => item.type === 'teacher_daily_limit' && item.targetName === 'Math Teacher'));
+  assert.ok(savedItems.some(item => item.type === 'subject_spread' && item.targetName === 'PE'));
+
+  // Saved rules render inline in the sidebar as a saved rule list
+  const html = renderWorkbench(sampleWorkbenchState({
+    project,
+    pendingRules: [],
+    expandedRuleId: null,
+    ruleInput: { text: '', fileName: '', loading: false },
+  }));
+  const sidebar = html.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
+
+  // New card-based saved rules section
+  assert.match(sidebar, /id="tt-saved-rules"/);
+  assert.match(sidebar, /9/);
+  assert.match(html, /data-saved-rule-delete=/);
+  assert.match(html, /data-saved-rule="/);
+  assert.match(html, /id="tt-clear-rules"/);
+  // Rule type labels are visible
+  assert.match(html, /教师每日上限|teacher_daily_limit/);
+  assert.match(html, /同科分散|subject_spread/);
+});
+
+test('timetable saved AI rules can be removed one at a time without clearing others', () => {
+  const project = createDefaultTimetableProject({
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+    rules: {
+      hardRules: {
+        teacherUnavailable: { t_math: ['3-4', '4-5'] },
+        lockedSlots: [{ id: 'lock_1', day: 2, period: 3, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' }],
+      },
+      softRules: {
+        morningSubjects: ['math'],
+        subjectPreferredPeriods: { math: { prefer: ['1-1'], avoid: ['5-7'], weight: 20 } },
+      },
+    },
+  });
+
+  const items = getSavedRuleItems(project);
+  const teacherRule = items.find(item => item.type === 'teacher_unavailable' && item.slots.includes('3-4'));
+  const preferredRule = items.find(item => item.type === 'subject_preferred_periods');
+  const lockedRule = items.find(item => item.type === 'locked_slot');
+  const morningRule = items.find(item => item.type === 'subject_morning');
+
+  const withoutTeacher = removeSavedRuleById(project, teacherRule.id);
+  assert.deepEqual(withoutTeacher.hardRules.teacherUnavailable.t_math, ['4-5']);
+
+  const withoutPreferred = removeSavedRuleById({ ...project, rules: withoutTeacher }, preferredRule.id);
+  assert.deepEqual(withoutPreferred.softRules.subjectPreferredPeriods.math.prefer, []);
+  assert.deepEqual(withoutPreferred.softRules.subjectPreferredPeriods.math.avoid, ['5-7']);
+
+  const withoutLocked = removeSavedRuleById({ ...project, rules: withoutPreferred }, lockedRule.id);
+  assert.deepEqual(withoutLocked.hardRules.lockedSlots, []);
+
+  const withoutMorning = removeSavedRuleById({ ...project, rules: withoutLocked }, morningRule.id);
+  assert.deepEqual(withoutMorning.softRules.morningSubjects, []);
+  assert.deepEqual(withoutMorning.hardRules.teacherUnavailable.t_math, ['4-5']);
 });
 
 test('timetable modal overlays do not close when the blank overlay is clicked', async () => {
