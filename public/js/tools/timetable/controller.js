@@ -205,11 +205,13 @@ export class TimetablePlannerController {
     openRuleReview(mode = 'file') {
         const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'file';
         const current = this.state.ruleReview || {};
-        if ((current.draftRows || []).length) {
+        const draftRows = (current.draftRows || []).length ? (current.draftRows || []) : (this.state.pendingRules || []);
+        if (draftRows.length) {
             this.state.ruleReview = {
                 ...current,
                 open: true,
                 step: 'review',
+                draftRows,
             };
             this.render();
             return;
@@ -286,11 +288,16 @@ export class TimetablePlannerController {
 
     fillRuleExample(example = '') {
         if (!example) return;
-        const current = this.getRuleInputText().trim();
+        const current = this.readRuleReviewText().trim();
         const next = current ? `${current}\n${example}` : example;
         this.state.ruleInput = { ...(this.state.ruleInput || {}), text: next };
-        // legacy sync
-        this.state.ruleReview = { ...(this.state.ruleReview || {}), text: next };
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || createTimetablePlannerState().ruleReview),
+            open: true,
+            step: 'input',
+            mode: 'text',
+            text: next,
+        };
         this.render();
     }
 

@@ -238,6 +238,7 @@ export function renderWorkbench(state) {
                 ${renderInspector(state)}
             </aside>
             ${renderRosterImportDialog(state)}
+            ${renderRuleReviewDialog(state)}
         </div>
     `;
 }
@@ -533,16 +534,41 @@ function renderRosterStats(stats) {
 
 function renderRulesSection(state) {
     const { project } = state;
-    const pending = state.pendingRules || [];
     const savedItems = getSavedRuleItems(project);
-    const ruleInput = state.ruleInput || {};
-    const expandedId = state.expandedRuleId || null;
+    const review = state.ruleReview || {};
+    const draftRows = (review.draftRows || []).length ? (review.draftRows || []) : (state.pendingRules || []);
+    const savedCount = savedItems.length;
+    const draftCount = draftRows.length;
+    const warningCount = (review.warnings || state.ruleWarnings || []).length + (review.unsupportedItems || []).length;
+    const cardTitle = draftCount ? '继续复核约束草稿' : savedCount ? '查看已生效规则' : '导入 AI 约束';
+    const cardDescription = draftCount
+        ? '草稿已保留，进入复核表后确认生效。'
+        : savedCount
+            ? '查看、删除或重新解析已生效规则。'
+            : '上传 TXT/XLSX 或粘贴自然语言，复核后生效。';
+    const cardMeta = draftCount
+        ? `${draftCount} 条草稿`
+        : savedCount
+            ? `${savedCount} 条规则`
+            : '待导入';
 
     return `
         <div class="tt-rule-stack" data-workflow-step="rules">
-            ${renderRuleInputArea(ruleInput)}
-            ${pending.length ? renderPendingCards(pending, expandedId, project) : ''}
-            ${renderSavedRuleList(savedItems)}
+            <button class="tt-rule-entry-card tt-rule-entry-card--action" id="tt-open-rule-review" type="button">
+                <i data-lucide="brain-circuit"></i>
+                <span>
+                    <strong>${escapeHtml(cardTitle)}</strong>
+                    <span>${escapeHtml(cardDescription)}</span>
+                </span>
+                <span class="tt-chip">${escapeHtml(cardMeta)}</span>
+            </button>
+            ${renderRuleReviewStatus({ savedCount, draftCount, warningCount })}
+            ${(savedCount || draftCount || warningCount) ? `
+                <div class="tt-action-row tt-action-row--compact">
+                    <button class="tt-btn" id="tt-reparse-rule-review" type="button"><i data-lucide="upload"></i><span>重新解析</span></button>
+                    <button class="tt-btn tt-btn--danger" id="tt-clear-rules" type="button"><i data-lucide="trash-2"></i><span>清空规则</span></button>
+                </div>
+            ` : ''}
         </div>
     `;
 }
