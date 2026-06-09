@@ -16,6 +16,7 @@ import {
     resetTimetableOptimizationJobs,
 } from '../gateway/services/timetable-optimization-jobs.js';
 import {
+    normalizeTimetableRuleDraftRows,
     parseTimetableRules,
     TimetableRuleParseError,
 } from '../gateway/services/timetable-rule-parser.js';
@@ -623,10 +624,57 @@ test('timetable AI rules parser derives local suggestions from roster Excel when
     assert.ok(result.unsupportedItems.length >= 1);
 });
 
+test('timetable AI rules parser falls back to reviewable roster suggestions when AI returns no constraints', async () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [],
+        classes: [],
+        subjects: [],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = await parseTimetableRules({
+        file: {
+            filename: 'teacher-roster.xlsx',
+            buffer: makeTimetableWorkbook([
+                ['grade', 'class', 'subject', 'teacher', 'hours', 'block'],
+                ['G7', '1', 'Math', 'Math Teacher', '5', 'single'],
+                ['G7', '1', 'English', 'English Teacher', '4', 'single'],
+                ['G7', '1', 'PE', 'PE Teacher', '3', 'mixed'],
+            ]),
+        },
+        project,
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        fetchImpl: async () => jsonResponse({
+            choices: [{
+                message: {
+                    content: JSON.stringify({
+                        constraints: [],
+                        warnings: ['Roster is incomplete, review manually.'],
+                    }),
+                },
+            }],
+        }),
+    });
+
+    assert.equal(result.inputType, 'xlsx_roster');
+    assert.equal(result.source, 'local_roster_fallback');
+    assert.equal(result.contextStats.totalLessons, 12);
+    assert.ok(result.draftRows.length > 0);
+    assert.ok(result.previewItems.some(item => item.type === 'subject_morning'));
+    assert.ok(result.previewItems.some(item => item.type === 'block_protection'));
+    assert.ok(result.warnings.some(warning => warning.includes('Roster is incomplete')));
+});
+
 test('timetable AI rules parser sends constraint Excel to AI and maps preferred period rules', async () => {
     const project = sampleProject({
         activeWeekdays: [1, 2, 3, 4, 5],
         activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        rules: { hardRules: {}, softRules: {} },
     });
     let observedPrompt = '';
 
@@ -668,6 +716,127 @@ test('timetable AI rules parser sends constraint Excel to AI and maps preferred 
     assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.avoid, ['1-1']);
     assert.ok(result.previewItems.some(item => item.type === 'teacher_load_balance' && item.status === 'suggestion'));
     assert.ok(result.unsupportedItems.some(item => item.type === 'teacher_load_balance'));
+});
+
+test('timetable AI rules parser recognizes the local AI constraint workbook as constraints', async () => {
+    const project = sampleProject({
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        rules: { hardRules: {}, softRules: {} },
+    });
+    const workbook = await readFile(path.join(process.cwd(), 'AI排课约束建议.xlsx'));
+    let observedPrompt = '';
+
+    const result = await parseTimetableRules({
+        file: {
+            filename: 'AI排课约束建议.xlsx',
+            buffer: workbook,
+        },
+        project,
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        fetchImpl: async (url, options = {}) => {
+            assert.equal(String(url), 'http://ai.test/chat/completions');
+            observedPrompt = JSON.stringify(JSON.parse(options.body).messages);
+            return jsonResponse({
+                choices: [{
+                    message: {
+                        content: JSON.stringify({
+                            constraints: [
+                                { type: 'subject_morning', targetId: 'math', priority: 'soft', reason: '主科上午优先' },
+                                { type: 'subject_preferred_periods', targetId: 'pe', slots: ['1-5', '2-5'], priority: 'soft', reason: '体育分散到后半天' },
+                                { type: 'teacher_load_balance', target: '全部教师', priority: 'soft', reason: '高负载教师需要均衡' },
+                            ],
+                            warnings: ['复杂质量建议仅作为复核建议展示'],
+                        }),
+                    },
+                }],
+            });
+        },
+    });
+
+    assert.equal(result.inputType, 'xlsx_constraints');
+    assert.equal(result.contextStats.sheetName, 'AI约束建议');
+    assert.ok(result.contextStats.rowCount >= 10);
+    assert.ok(result.draftRows.length >= 3);
+    assert.match(observedPrompt, /同一位教师同一时间只能给一个班上课/);
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
+    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.prefer, ['1-5', '2-5']);
+    assert.ok(result.draftRows.some(row => row.status === 'suggestion' && row.type === 'teacher_load_balance'));
+});
+
+test('timetable AI rules parser locally extracts obvious text rules when AI is unavailable', async () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = await parseTimetableRules({
+        text: 'Math Teacher 周三第4节不要排，Math 尽量上午。',
+        project,
+        env: {},
+    });
+
+    assert.equal(result.inputType, 'text');
+    assert.equal(result.source, 'local_text');
+    assert.deepEqual(result.draftRules.hardRules.teacherUnavailable.t_math, ['3-4']);
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
+    assert.equal(result.draftRows.filter(row => row.status === 'effective').length, 2);
+});
+
+test('timetable rule draft row normalization only saves effective valid rows', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: [{
+            id: 'row_1',
+            rawText: 'Math Teacher cannot teach Wednesday period 4',
+            type: 'teacher_unavailable',
+            targetType: 'teacher',
+            targetId: 't_math',
+            targetName: 'Math Teacher',
+            slots: ['3-4'],
+            priority: 'hard',
+            status: 'effective',
+        }, {
+            id: 'row_2',
+            rawText: 'Balance teacher workload',
+            type: 'teacher_load_balance',
+            targetName: '全部教师',
+            priority: 'soft',
+            status: 'suggestion',
+        }, {
+            id: 'row_3',
+            rawText: 'Unknown person Friday period 1',
+            type: 'teacher_unavailable',
+            targetName: 'Unknown person',
+            slots: ['5-1'],
+            priority: 'hard',
+            status: 'needs_review',
+        }],
+    });
+
+    assert.deepEqual(result.draftRules.hardRules.teacherUnavailable.t_math, ['3-4']);
+    assert.equal(result.draftRows.find(row => row.id === 'row_2').status, 'suggestion');
+    assert.equal(result.draftRows.find(row => row.id === 'row_3').status, 'needs_review');
+    assert.ok(result.warnings.some(warning => warning.includes('Unknown person')));
 });
 
 test('timetable constraint Excel requires AI when it is not a roster table', async () => {
@@ -1367,6 +1536,69 @@ test('timetable rules parse API accepts multipart Excel without saving the draft
             delete process.env.DEEPSEEK_API_BASE;
         } else {
             process.env.DEEPSEEK_API_BASE = previousApiBase;
+        }
+    }
+});
+
+test('timetable rules normalize API converts review rows without saving rules', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-rules-normalize-'));
+
+    const store = createTimetableStore();
+    await store.saveProject(createDefaultTimetableProject({
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    }));
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const response = await fetch(`${baseUrl}/api/tools/timetable/rules/normalize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                draftRows: [{
+                    id: 'review_1',
+                    type: 'teacher_unavailable',
+                    targetType: 'teacher',
+                    targetId: 't_math',
+                    targetName: 'Math Teacher',
+                    slots: ['3-4'],
+                    priority: 'hard',
+                    status: 'effective',
+                }, {
+                    id: 'review_2',
+                    type: 'teacher_load_balance',
+                    targetName: 'All teachers',
+                    priority: 'soft',
+                    status: 'suggestion',
+                }],
+            }),
+        });
+        const payload = await response.json();
+
+        assert.equal(response.status, 200);
+        assert.deepEqual(payload.data.draftRules.hardRules.teacherUnavailable.t_math, ['3-4']);
+        assert.equal(payload.data.draftRows.find(row => row.id === 'review_2').status, 'suggestion');
+
+        const stored = await store.loadProject();
+        assert.deepEqual(stored.rules.hardRules.teacherUnavailable, {});
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
         }
     }
 });

@@ -201,6 +201,7 @@ export function renderWorkbench(state) {
                 ${renderInspector(state)}
             </aside>
             ${renderRosterImportDialog(state)}
+            ${renderRuleReviewDialog(state)}
         </div>
     `;
 }
@@ -497,26 +498,27 @@ function renderRosterStats(stats) {
 function renderRulesSection(state) {
     const { project } = state;
     const hard = project.rules?.hardRules || {};
+    const ruleSummary = getRuleSummary(project);
+    const draftCount = state.ruleReview?.draftRows?.length || state.ruleDraftPreview?.length || 0;
+    const warningCount = state.ruleReview?.warnings?.length || state.ruleWarnings?.length || 0;
     return `
         <div class="tt-rule-stack" data-workflow-step="rules">
             <div class="tt-rule-block">
-                <span class="tt-rule-title">自然语言描述</span>
-                <textarea id="tt-rule-prompt" class="tt-import-text tt-rule-prompt" spellcheck="false" placeholder="例如：王老师周三下午不要排课，语数英尽量上午，七年级1班周五第7节不要排"></textarea>
-                <label class="tt-rule-file-entry">
-                    <i data-lucide="file-spreadsheet"></i>
-                    <span id="tt-rule-file-name">${escapeHtml(state.ruleFileName || '上传约束/任课 XLSX')}</span>
-                    <input id="tt-rule-file" type="file" accept=".xlsx,.xls">
-                </label>
+                <span class="tt-rule-title">约束复核中心</span>
+                <div class="tt-rule-entry-card">
+                    <i data-lucide="brain-circuit"></i>
+                    <div>
+                        <strong>智能解析后复核生效</strong>
+                        <span>支持自然语言、TXT、XLSX；解析结果先进入复核表，确认后才写入规则。</span>
+                    </div>
+                    <span class="tt-chip">${draftCount} 条草稿</span>
+                </div>
                 <div class="tt-action-row">
-                    <button class="tt-btn tt-btn--primary" id="tt-parse-rules" type="button"><i data-lucide="sparkles"></i><span>AI 解析</span></button>
-                    <button class="tt-btn" id="tt-confirm-rule-draft" type="button" ${state.ruleDraft ? '' : 'disabled'}><i data-lucide="check"></i><span>确认草稿</span></button>
+                    <button class="tt-btn tt-btn--primary" id="tt-open-rule-review" type="button"><i data-lucide="sparkles"></i><span>智能解析</span></button>
+                    <button class="tt-btn" id="tt-open-bulk-rule-review" type="button"><i data-lucide="list-plus"></i><span>手动批量</span></button>
                     <button class="tt-btn tt-btn--danger" id="tt-clear-rules" type="button"><i data-lucide="trash-2"></i><span>清空规则</span></button>
                 </div>
-                ${renderRulePreview(state)}
-            </div>
-            <div class="tt-rule-block">
-                <span class="tt-rule-title">批量手动编辑</span>
-                ${renderBulkRuleEditor(state)}
+                ${renderRuleReviewStatus({ savedCount: ruleSummary.total, draftCount, warningCount })}
             </div>
             <div class="tt-rule-block">
                 <span class="tt-rule-title">锁定课节</span>
@@ -539,6 +541,22 @@ function renderNumberSelect(id, values, labelFor) {
         <select id="${escapeAttr(id)}">
             ${values.map(value => `<option value="${value}">${escapeHtml(labelFor(value))}</option>`).join('')}
         </select>
+    `;
+}
+
+function renderRuleReviewStatus({ savedCount = 0, draftCount = 0, warningCount = 0 } = {}) {
+    const status = draftCount
+        ? `${draftCount} 条待复核`
+        : savedCount
+            ? '规则已生效'
+            : '等待解析';
+    return `
+        <div class="tt-rule-summary">
+            <span><b>已保存</b>${escapeHtml(savedCount)} 条</span>
+            <span><b>待复核</b>${escapeHtml(draftCount)} 条</span>
+            <span class="${warningCount ? 'is-warning' : ''}"><b>警告</b>${escapeHtml(warningCount)} 条</span>
+            <em>${escapeHtml(status)}</em>
+        </div>
     `;
 }
 
@@ -574,7 +592,84 @@ function renderRulePreview(state) {
     `;
 }
 
-function renderBulkTargets(project) {
+function renderRuleReviewDialog(state) {
+    const dialog = state.ruleReview || {};
+    if (!dialog.open) return '';
+    const mode = dialog.mode || 'text';
+    const isReview = dialog.step === 'review';
+    return `
+        <div class="tt-dialog-overlay" data-rule-review-close>
+            <section class="tt-rule-review-dialog" id="tt-rule-review-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-rule-review-title">
+                <div class="tt-dialog-header">
+                    <div>
+                        <span class="tt-eyebrow">AI 约束</span>
+                        <h3 id="tt-rule-review-title">${isReview ? '复核约束草稿' : '约束复核中心'}</h3>
+                        <p>${isReview ? '只会保存状态为可生效的规则；建议项和未支持项仅供审查。' : '上传 TXT/XLSX、粘贴自然语言，或手动批量新增规则，全部先进入复核表。'}</p>
+                    </div>
+                    <button class="tt-icon-btn" id="tt-rule-review-cancel" type="button" title="关闭约束复核" aria-label="关闭约束复核"><i data-lucide="x"></i></button>
+                </div>
+                ${isReview ? renderRuleReviewTable(dialog) : renderRuleReviewInput(state, dialog, mode)}
+            </section>
+        </div>
+    `;
+}
+
+function renderRuleReviewInput(state, dialog, mode) {
+    const fileName = dialog.fileName || '选择 TXT / XLSX 约束文件';
+    return `
+        <div class="tt-segment tt-import-mode-tabs" role="group" aria-label="约束来源">
+            <button class="${mode === 'text' ? 'is-active' : ''}" type="button" data-rule-review-mode="text">自然语言</button>
+            <button class="${mode === 'file' ? 'is-active' : ''}" type="button" data-rule-review-mode="file">上传文件</button>
+            <button class="${mode === 'manual' ? 'is-active' : ''}" type="button" data-rule-review-mode="manual">手动批量</button>
+        </div>
+        <div class="tt-rule-block ${mode === 'text' ? 'is-active' : ''}">
+            <span class="tt-rule-title">自然语言描述</span>
+            <textarea id="tt-rule-review-text" class="tt-import-text tt-rule-prompt" spellcheck="false" placeholder="例如：王老师周三下午不要排课，语数英尽量上午，七年级1班周五第7节不要排">${escapeHtml(dialog.text || '')}</textarea>
+        </div>
+        <label class="tt-import-dropzone ${mode === 'file' ? 'is-active' : ''}">
+            <i data-lucide="upload-cloud"></i>
+            <strong>${escapeHtml(fileName)}</strong>
+            <span>.txt / .csv / .xlsx / .xls</span>
+            <input id="tt-rule-review-file" type="file" accept=".txt,.csv,.xlsx,.xls">
+        </label>
+        <div class="tt-rule-block ${mode === 'manual' ? 'is-active' : ''}">
+            <span class="tt-rule-title">手动批量新增</span>
+            ${renderManualRuleBuilder(state)}
+        </div>
+        <div class="tt-dialog-actions">
+            <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
+            ${mode === 'manual'
+                ? '<button class="tt-btn tt-btn--primary" id="tt-add-manual-rule-rows" type="button"><i data-lucide="list-plus"></i><span>生成复核行</span></button>'
+                : '<button class="tt-btn tt-btn--primary" id="tt-rule-review-parse" type="button"><i data-lucide="sparkles"></i><span>AI 解析</span></button>'}
+        </div>
+    `;
+}
+
+function renderManualRuleBuilder(state) {
+    const project = state.project;
+    const days = getActiveWeekdays(project).map(value => ({ value, label: `周${dayName(value)}` }));
+    const periods = getActivePeriods(project).map(value => ({ value, label: `第${value}节` }));
+    return `
+        <div class="tt-form-grid">
+            <label><span>规则类型</span>
+                <select id="tt-manual-rule-type">
+                    <option value="teacher_unavailable">教师不可排</option>
+                    <option value="class_unavailable">班级不可排</option>
+                    <option value="subject_morning">课程上午优先</option>
+                    <option value="subject_preferred_periods">课程偏好节次</option>
+                    <option value="subject_avoid_periods">课程避开节次</option>
+                </select>
+            </label>
+        </div>
+        ${renderManualTargets(project)}
+        <div class="tt-range-summary-grid">
+            ${renderManualCheckGroup('适用周几', days, 'data-manual-rule-day')}
+            ${renderManualCheckGroup('适用节次', periods, 'data-manual-rule-period')}
+        </div>
+    `;
+}
+
+function renderManualTargets(project) {
     const groups = [
         ['teacher', '教师', project.teachers || [], item => item.name],
         ['class', '班级', project.classes || [], ownerLabel],
@@ -584,70 +679,122 @@ function renderBulkTargets(project) {
         <div class="tt-bulk-target-group">
             <span>${label}</span>
             <div class="tt-chip-grid">
-                ${items.map(item => `
-                    <label class="tt-check-chip">
-                        <input type="checkbox" data-bulk-target data-bulk-target-type="${type}" value="${escapeAttr(item.id)}">
-                        <span>${escapeHtml(labelFor(item))}</span>
-                    </label>
-                `).join('') || '<span class="tt-muted">暂无数据</span>'}
+                ${items.map(item => {
+                    const labelText = labelFor(item);
+                    return `
+                        <label class="tt-check-chip">
+                            <input type="checkbox" data-manual-rule-target data-manual-rule-target-type="${type}" data-target-name="${escapeAttr(labelText)}" value="${escapeAttr(item.id)}">
+                            <span>${escapeHtml(labelText)}</span>
+                        </label>
+                    `;
+                }).join('') || '<span class="tt-muted">暂无数据</span>'}
             </div>
         </div>
     `).join('');
 }
 
-function renderBulkRuleEditor(state) {
-    const project = state.project;
-    const bulkDraft = state.bulkRuleDraft || {};
-    const bulkDays = bulkDraft.days || [];
-    const bulkPeriods = bulkDraft.periods || [];
-    const dayItems = getActiveWeekdays(project).map(value => ({ value, label: `周${dayName(value)}` }));
-    const periodItems = getActivePeriods(project).map(value => ({ value, label: `第${value}节` }));
+function renderManualCheckGroup(title, items, attr) {
     return `
-        <div class="tt-form-grid">
-            <label><span>规则类型</span>
-                <select id="tt-bulk-rule-type">
-                    <option value="teacher_unavailable">教师不可排</option>
-                    <option value="class_unavailable">班级不可排</option>
-                    <option value="subject_morning">课程上午优先</option>
-                </select>
-            </label>
+        <div class="tt-rule-manual-checks">
+            <span>${escapeHtml(title)}</span>
+            ${renderCheckList({ items, activeValues: items.map(item => item.value), dataAttr: attr })}
         </div>
-        ${renderBulkTargets(project)}
-        <div class="tt-bulk-range">
-            <div class="tt-range-summary-grid">
-                ${renderMultiSelect({
-                    id: 'bulk-days',
-                    triggerId: 'tt-bulk-days-trigger',
-                    title: '规则周几',
-                    summary: summarizeWeekdays(bulkDays),
-                    items: dayItems,
-                    activeValues: bulkDays,
-                    dataAttr: 'data-bulk-day',
-                    presetAttr: 'data-bulk-preset',
-                    presets: [
-                        { value: 'days:workdays', label: '工作日' },
-                        { value: 'days:all', label: '当前全部' },
-                        { value: 'days:clear', label: '清空' },
-                    ],
-                })}
-                ${renderMultiSelect({
-                    id: 'bulk-periods',
-                    triggerId: 'tt-bulk-periods-trigger',
-                    title: '规则节次',
-                    summary: summarizePeriods(bulkPeriods),
-                    items: periodItems,
-                    activeValues: bulkPeriods,
-                    dataAttr: 'data-bulk-period',
-                    presetAttr: 'data-bulk-preset',
-                    presets: [
-                        { value: 'periods:first7', label: '第1-7节' },
-                        { value: 'periods:all', label: '当前全部' },
-                        { value: 'periods:clear', label: '清空' },
-                    ],
-                })}
+    `;
+}
+
+function renderRuleReviewTable(dialog) {
+    const rows = dialog.draftRows || [];
+    const warnings = dialog.warnings || [];
+    const stats = dialog.contextStats || null;
+    return `
+        ${stats ? `
+            <div class="tt-rule-preview-meta">
+                ${dialog.inputType ? `<span class="tt-chip">${escapeHtml(dialog.inputType)}</span>` : ''}
+                ${dialog.fileName ? `<span>${escapeHtml(dialog.fileName)}</span>` : ''}
+                ${stats.sheetName ? `<span>${escapeHtml(stats.sheetName)}</span>` : ''}
+                ${stats.rowCount !== undefined ? `<span>${escapeHtml(stats.rowCount)} 行</span>` : ''}
+                ${stats.classCount !== undefined ? `<span>${escapeHtml(stats.classCount)} 班</span>` : ''}
+                ${stats.teacherCount !== undefined ? `<span>${escapeHtml(stats.teacherCount)} 教师</span>` : ''}
+                ${stats.totalLessons !== undefined ? `<span>${escapeHtml(stats.totalLessons)} 课时</span>` : ''}
             </div>
+        ` : ''}
+        ${warnings.length ? `
+            <div class="tt-roster-review-issues">
+                ${warnings.slice(0, 5).map(warning => `
+                    <div class="tt-rule-warning">
+                        <i data-lucide="triangle-alert"></i>
+                        <span>${escapeHtml(warning)}</span>
+                    </div>
+                `).join('')}
+            </div>
+        ` : ''}
+        <div class="tt-roster-review-wrap">
+            <table class="tt-rule-review-table" id="tt-rule-review-table">
+                <thead>
+                    <tr>
+                        <th>原始内容</th>
+                        <th>类型</th>
+                        <th>对象</th>
+                        <th>节次</th>
+                        <th>强弱</th>
+                        <th>状态</th>
+                        <th>说明</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map(row => renderRuleReviewRow(row)).join('')}
+                </tbody>
+            </table>
         </div>
-        <button class="tt-btn" id="tt-add-bulk-rule" type="button"><i data-lucide="list-plus"></i><span>添加批量规则</span></button>
+        <div class="tt-dialog-actions">
+            <button class="tt-btn" id="tt-add-rule-review-row" type="button"><i data-lucide="plus"></i><span>新增行</span></button>
+            <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
+            <button class="tt-btn tt-btn--primary" id="tt-confirm-rule-review" type="button" ${rows.length ? '' : 'disabled'}><i data-lucide="check"></i><span>确认生效</span></button>
+        </div>
+    `;
+}
+
+function renderRuleReviewRow(row = {}) {
+    const warnings = row.warnings || [];
+    const status = row.status || 'needs_review';
+    const statusOptions = ['effective', 'needs_review', 'suggestion', 'unsupported', 'invalid', 'ignored'];
+    const typeOptions = ['teacher_unavailable', 'class_unavailable', 'subject_morning', 'subject_preferred_periods', 'subject_avoid_periods', 'teacher_load_balance', 'block_protection', 'subject_spread'];
+    const input = (field, value, type = 'text') => `
+        <input class="tt-roster-review-field" data-rule-review-field="${escapeAttr(field)}" type="${escapeAttr(type)}" value="${escapeAttr(value ?? '')}">
+    `;
+    return `
+        <tr class="tt-rule-review-row tt-rule-review-row--${escapeAttr(status)}" data-rule-review-row="${escapeAttr(row.id)}">
+            <td>${input('rawText', row.rawText || row.description || '')}</td>
+            <td>
+                <select class="tt-roster-review-field" data-rule-review-field="type">
+                    ${typeOptions.map(type => `<option value="${type}" ${row.type === type ? 'selected' : ''}>${type}</option>`).join('')}
+                </select>
+                <input type="hidden" data-rule-review-field="targetType" value="${escapeAttr(row.targetType || '')}">
+                <input type="hidden" data-rule-review-field="targetId" value="${escapeAttr(row.targetId || '')}">
+            </td>
+            <td>${input('targetName', row.targetName || row.targetId || '')}</td>
+            <td>${input('slots', (row.slots || []).join(', '))}</td>
+            <td>
+                <select class="tt-roster-review-field" data-rule-review-field="priority">
+                    <option value="hard" ${row.priority === 'hard' ? 'selected' : ''}>hard</option>
+                    <option value="soft" ${row.priority === 'soft' ? 'selected' : ''}>soft</option>
+                </select>
+            </td>
+            <td>
+                <select class="tt-roster-review-field" data-rule-review-field="status">
+                    ${statusOptions.map(item => `<option value="${item}" ${status === item ? 'selected' : ''}>${item}</option>`).join('')}
+                </select>
+                ${row.confidence !== null && row.confidence !== undefined ? `<span class="tt-confidence">${Math.round(Number(row.confidence) * 100)}%</span>` : ''}
+            </td>
+            <td>
+                ${input('description', row.description || warnings.join('；'))}
+                ${warnings.length ? `<span class="tt-rule-row-warning">${escapeHtml(warnings.join('；'))}</span>` : ''}
+            </td>
+            <td>
+                <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-rule-review-delete-row="${escapeAttr(row.id)}" title="删除规则行" aria-label="删除规则行"><i data-lucide="trash-2"></i></button>
+            </td>
+        </tr>
     `;
 }
 

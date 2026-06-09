@@ -18,6 +18,7 @@ import {
     validateTimetableProjectForSolve,
 } from '../services/timetable-scheduler.js';
 import {
+    normalizeTimetableRuleDraftRows,
     parseTimetableRules,
     TimetableRuleParseError,
 } from '../services/timetable-rule-parser.js';
@@ -178,6 +179,26 @@ router.post('/rules/parse', upload.single('file'), async (req, res) => {
         fail(res, error, status, {
             project: current,
             reason: error.reason || 'rules_parse_failed',
+        });
+    }
+});
+
+router.post('/rules/normalize', async (req, res) => {
+    let current = null;
+    try {
+        current = await store().loadProject();
+        const normalized = normalizeTimetableRuleDraftRows({
+            project: current,
+            draftRows: req.body?.draftRows || req.body?.rows || [],
+            source: req.body?.source || 'review',
+            inputType: req.body?.inputType || 'review',
+            contextStats: req.body?.contextStats || null,
+        });
+        ok(res, normalized);
+    } catch (error) {
+        fail(res, error, 400, {
+            project: current,
+            reason: 'rules_normalize_failed',
         });
     }
 });

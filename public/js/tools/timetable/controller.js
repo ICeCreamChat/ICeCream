@@ -3,9 +3,10 @@ import {
     requestTimetable,
 } from './api.js';
 import {
-    buildBulkRules,
+    buildManualRuleDraftRows,
     exportName,
     readLockedSlotForm,
+    readManualRuleBuilderForm,
     readBulkRuleForm,
     readProjectForm,
     readRulePrompt,
@@ -29,8 +30,9 @@ export class TimetablePlannerController {
         this.state = createTimetablePlannerState();
         this.jobPollTimer = null;
         this.rosterImportFile = null;
-        this.ruleParseFile = null;
+        this.ruleReviewFile = null;
         this.rosterDraftCounter = 0;
+        this.ruleDraftCounter = 0;
     }
 
     async init(container) {
@@ -186,13 +188,186 @@ export class TimetablePlannerController {
         this.state.ruleContextStats = null;
         this.state.ruleUnsupportedItems = [];
         this.state.ruleFileName = '';
-        this.ruleParseFile = null;
+        this.resetRuleReview();
     }
 
     selectRuleParseFile(file) {
-        this.ruleParseFile = file || null;
+        this.selectRuleReviewFile(file);
+    }
+
+    resetRuleReview() {
+        this.ruleReviewFile = null;
+        this.state.ruleReview = createTimetablePlannerState().ruleReview;
+    }
+
+    openRuleReview(mode = 'text') {
+        const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'text';
+        const current = this.state.ruleReview || {};
+        if ((current.draftRows || []).length) {
+            this.state.ruleReview = {
+                ...current,
+                open: true,
+                step: 'review',
+            };
+            this.render();
+            return;
+        }
+        this.state.ruleReview = {
+            ...createTimetablePlannerState().ruleReview,
+            open: true,
+            step: nextMode === 'manual' ? 'manual' : 'input',
+            mode: nextMode,
+        };
+        this.render();
+    }
+
+    closeRuleReview() {
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || createTimetablePlannerState().ruleReview),
+            open: false,
+        };
+        this.render();
+    }
+
+    setRuleReviewMode(mode) {
+        const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'text';
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || {}),
+            open: true,
+            step: nextMode === 'manual' ? 'manual' : 'input',
+            mode: nextMode,
+            text: this.readRuleReviewText(),
+        };
+        this.render();
+    }
+
+    selectRuleReviewFile(file) {
+        this.ruleReviewFile = file || null;
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || {}),
+            open: true,
+            step: 'input',
+            mode: 'file',
+            fileName: file?.name || '',
+            text: this.readRuleReviewText(),
+        };
         this.state.ruleFileName = file?.name || '';
         this.render();
+    }
+
+    readRuleReviewText() {
+        return this.state.container?.querySelector('#tt-rule-review-text')?.value ?? this.state.ruleReview?.text ?? '';
+    }
+
+    setRuleReviewState(payload = {}) {
+        const draftRows = Array.isArray(payload.draftRows) ? payload.draftRows : [];
+        const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
+        const hasBlockingIssues = draftRows.some(row => ['invalid'].includes(row.status));
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || {}),
+            open: true,
+            step: 'review',
+            mode: this.state.ruleReview?.mode || 'text',
+            fileName: this.state.ruleReview?.fileName || this.state.ruleFileName || '',
+            text: this.readRuleReviewText(),
+            draftRows,
+            inputType: payload.inputType || this.state.ruleReview?.inputType || '',
+            contextStats: payload.contextStats || null,
+            warnings,
+            unsupportedItems: payload.unsupportedItems || [],
+            hasBlockingIssues,
+        };
+        this.state.ruleDraft = payload.draftRules || this.state.ruleDraft;
+        this.state.ruleDraftPreview = payload.previewItems || draftRows;
+        this.state.ruleWarnings = warnings;
+        this.state.ruleDraftInputType = payload.inputType || '';
+        this.state.ruleContextStats = payload.contextStats || null;
+        this.state.ruleUnsupportedItems = payload.unsupportedItems || [];
+    }
+
+    nextRuleDraftId() {
+        this.ruleDraftCounter += 1;
+        return `rule_${Date.now()}_${this.ruleDraftCounter}`;
+    }
+
+    emptyRuleDraftRow() {
+        return {
+            id: this.nextRuleDraftId(),
+            rawText: '',
+            type: 'teacher_unavailable',
+            targetType: 'teacher',
+            targetId: '',
+            targetName: '',
+            slots: [],
+            priority: 'hard',
+            status: 'needs_review',
+            confidence: null,
+            description: '',
+            warnings: [],
+        };
+    }
+
+    readRuleReviewRows() {
+        return [...(this.state.container?.querySelectorAll('[data-rule-review-row]') || [])].map(row => {
+            const value = field => row.querySelector(`[data-rule-review-field="${field}"]`)?.value?.trim() || '';
+            const slots = value('slots').split(/[,，;；、\s]+/).map(item => item.trim()).filter(Boolean);
+            return {
+                id: row.dataset.ruleReviewRow || this.nextRuleDraftId(),
+                rawText: value('rawText'),
+                type: value('type') || 'teacher_unavailable',
+                targetType: value('targetType'),
+                targetId: value('targetId'),
+                targetName: value('targetName'),
+                slots,
+                priority: value('priority') || 'hard',
+                status: value('status') || 'needs_review',
+                description: value('description'),
+            };
+        });
+    }
+
+    refreshRuleReviewFromRows(rows = []) {
+        this.setRuleReviewState({
+            draftRows: rows,
+            inputType: this.state.ruleReview?.inputType || 'manual',
+            contextStats: this.state.ruleReview?.contextStats || null,
+            warnings: this.state.ruleReview?.warnings || [],
+            unsupportedItems: this.state.ruleReview?.unsupportedItems || [],
+            draftRules: this.state.ruleDraft,
+            previewItems: rows,
+        });
+        this.render();
+    }
+
+    updateRuleReviewField() {
+        this.refreshRuleReviewFromRows(this.readRuleReviewRows());
+    }
+
+    deleteRuleReviewRow(rowId) {
+        this.refreshRuleReviewFromRows(this.readRuleReviewRows().filter(row => row.id !== rowId));
+    }
+
+    addRuleReviewRow() {
+        this.refreshRuleReviewFromRows([...this.readRuleReviewRows(), this.emptyRuleDraftRow()]);
+    }
+
+    addManualRuleRows() {
+        try {
+            const form = readManualRuleBuilderForm(this.state.container);
+            if (!form.targets.length) throw new Error('请先选择规则对象。');
+            if (form.type !== 'subject_morning' && (!form.days.length || !form.periods.length)) {
+                throw new Error('请先选择周几和节次。');
+            }
+            const rows = buildManualRuleDraftRows(form);
+            this.setRuleReviewState({
+                draftRows: [...(this.state.ruleReview?.draftRows || []), ...rows],
+                inputType: 'manual',
+                source: 'manual',
+            });
+            this.setMessage('手动规则已加入复核表。');
+        } catch (error) {
+            this.handleError(error);
+        }
     }
 
     readRosterImportText() {
@@ -629,10 +804,11 @@ export class TimetablePlannerController {
 
     async parseRules() {
         try {
+            const review = this.state.ruleReview || {};
             let options;
-            if (this.ruleParseFile) {
+            if (review.mode === 'file' && this.ruleReviewFile) {
                 const body = new FormData();
-                body.append('file', this.ruleParseFile);
+                body.append('file', this.ruleReviewFile);
                 const text = readRulePrompt(this.state.container);
                 if (text) body.append('text', text);
                 options = { method: 'POST', body };
@@ -643,6 +819,9 @@ export class TimetablePlannerController {
                 };
             }
             const result = await requestTimetable('/rules/parse', options);
+            this.setRuleReviewState(result);
+            this.setMessage('AI 约束已解析，请在复核表确认后生效。');
+            return;
             this.state.ruleDraft = result.draftRules;
             this.state.ruleDraftPreview = result.previewItems || [];
             this.state.ruleWarnings = result.warnings || [];
@@ -656,6 +835,40 @@ export class TimetablePlannerController {
     }
 
     async confirmRuleDraft() {
+        const rows = this.state.ruleReview?.step === 'review'
+            ? this.readRuleReviewRows()
+            : this.state.ruleReview?.draftRows || [];
+        if (rows.length) {
+            try {
+                const normalized = await requestTimetable('/rules/normalize', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        draftRows: rows,
+                        inputType: this.state.ruleReview?.inputType || 'review',
+                        contextStats: this.state.ruleReview?.contextStats || null,
+                    }),
+                });
+                this.setRuleReviewState(normalized);
+                const effectiveCount = (normalized.draftRows || []).filter(row => row.status === 'effective').length;
+                if (!effectiveCount) {
+                    this.setMessage('复核表里没有可生效规则，请先修正对象或节次。');
+                    return;
+                }
+                const result = await requestTimetable('/rules', {
+                    method: 'POST',
+                    body: JSON.stringify({ rules: normalized.draftRules }),
+                });
+                this.applyProject(result.project);
+                this.clearOptimizationPolling();
+                this.state.solverJob = null;
+                this.clearRuleDraft();
+                this.setMessage('约束已确认生效。');
+                return;
+            } catch (error) {
+                this.handleError(error);
+                return;
+            }
+        }
         if (!this.state.ruleDraft) {
             this.setMessage('请先解析约束草稿。');
             return;
@@ -676,6 +889,8 @@ export class TimetablePlannerController {
     }
 
     async addBulkRule() {
+        this.openRuleReview('manual');
+        return;
         try {
             const form = readBulkRuleForm(this.state.container);
             if (!form.targetIds.length) throw new Error('请先选择规则对象。');

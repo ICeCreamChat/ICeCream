@@ -720,6 +720,66 @@ button.tt-section-title {
     display: none;
 }
 
+.tt-rule-entry-card {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--tt-space-sm);
+    padding: 10px 12px;
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    color: var(--tt-muted);
+    font-size: 0.76rem;
+}
+
+.tt-rule-entry-card .lucide {
+    width: 20px;
+    height: 20px;
+    color: var(--tt-primary);
+}
+
+.tt-rule-entry-card strong {
+    display: block;
+    color: var(--tt-text);
+    font-size: 0.86rem;
+}
+
+.tt-rule-entry-card span {
+    min-width: 0;
+}
+
+.tt-rule-summary {
+    display: grid;
+    gap: 6px;
+    padding: 9px 10px;
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    color: var(--tt-text-secondary);
+    font-size: 0.74rem;
+}
+
+.tt-rule-summary span {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--tt-space-sm);
+}
+
+.tt-rule-summary b {
+    color: var(--tt-muted);
+}
+
+.tt-rule-summary em {
+    color: var(--tt-primary);
+    font-style: normal;
+    font-weight: 800;
+}
+
+.tt-rule-summary .is-warning {
+    color: var(--tt-warning);
+}
+
 .tt-bulk-target-group,
 .tt-bulk-range {
     display: grid;
@@ -743,7 +803,8 @@ button.tt-section-title {
     backdrop-filter: blur(8px);
 }
 
-.tt-roster-import-dialog {
+.tt-roster-import-dialog,
+.tt-rule-review-dialog {
     display: grid;
     gap: var(--tt-space-md);
     width: min(640px, 100%);
@@ -755,6 +816,10 @@ button.tt-section-title {
     border-radius: var(--tt-radius-lg);
     color: var(--tt-text);
     box-shadow: 0 24px 60px rgba(2, 6, 23, 0.38);
+}
+
+.tt-rule-review-dialog {
+    width: min(1120px, 100%);
 }
 
 .tt-dialog-header {
@@ -829,7 +894,9 @@ button.tt-section-title {
 }
 
 .tt-roster-import-dialog .tt-import-dropzone:not(.is-active),
-.tt-roster-import-dialog .tt-rule-block:not(.is-active) {
+.tt-roster-import-dialog .tt-rule-block:not(.is-active),
+.tt-rule-review-dialog .tt-import-dropzone:not(.is-active),
+.tt-rule-review-dialog .tt-rule-block:not(.is-active) {
     display: none;
 }
 
@@ -863,15 +930,26 @@ button.tt-section-title {
     font-size: 0.76rem;
 }
 
+.tt-rule-review-table {
+    width: 100%;
+    min-width: 1180px;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.74rem;
+}
+
 .tt-roster-review-table th,
-.tt-roster-review-table td {
+.tt-roster-review-table td,
+.tt-rule-review-table th,
+.tt-rule-review-table td {
     padding: 7px 6px;
     border-bottom: 1px solid var(--tt-border);
     text-align: left;
     vertical-align: middle;
 }
 
-.tt-roster-review-table th {
+.tt-roster-review-table th,
+.tt-rule-review-table th {
     position: sticky;
     top: 0;
     z-index: 1;
@@ -880,12 +958,23 @@ button.tt-section-title {
     font-weight: 800;
 }
 
-.tt-roster-review-table tbody tr:last-child td {
+.tt-roster-review-table tbody tr:last-child td,
+.tt-rule-review-table tbody tr:last-child td {
     border-bottom: 0;
 }
 
 .tt-roster-review-row--error td {
     background: rgba(239, 68, 68, 0.08);
+}
+
+.tt-rule-review-row--needs_review td,
+.tt-rule-review-row--invalid td {
+    background: rgba(245, 158, 11, 0.08);
+}
+
+.tt-rule-review-row--suggestion td,
+.tt-rule-review-row--unsupported td {
+    background: rgba(148, 163, 184, 0.08);
 }
 
 .tt-roster-review-field {
@@ -914,6 +1003,29 @@ button.tt-section-title {
     color: var(--tt-muted);
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.tt-rule-row-warning,
+.tt-confidence {
+    display: block;
+    margin-top: 4px;
+    color: var(--tt-warning);
+    font-size: 0.68rem;
+}
+
+.tt-confidence {
+    color: var(--tt-muted);
+}
+
+.tt-rule-manual-checks {
+    display: grid;
+    gap: var(--tt-space-sm);
+}
+
+.tt-rule-manual-checks > span {
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+    font-weight: 800;
 }
 
 .tt-rule-warning--error {
@@ -1620,7 +1732,8 @@ button.tt-section-title {
         padding: 10px;
     }
 
-    .tt-roster-import-dialog {
+    .tt-roster-import-dialog,
+    .tt-rule-review-dialog {
         width: 100%;
         max-height: calc(100vh - 20px);
         border-radius: var(--tt-radius-lg) var(--tt-radius-lg) var(--tt-radius-md) var(--tt-radius-md);

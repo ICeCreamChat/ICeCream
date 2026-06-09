@@ -59,7 +59,51 @@ export function readRulesForm(container, project) {
 }
 
 export function readRulePrompt(container) {
-    return container.querySelector('#tt-rule-prompt')?.value || '';
+    return container.querySelector('#tt-rule-review-text')?.value
+        || container.querySelector('#tt-rule-prompt')?.value
+        || '';
+}
+
+export function readManualRuleBuilderForm(container) {
+    const type = container.querySelector('#tt-manual-rule-type')?.value || 'teacher_unavailable';
+    const targetType = type === 'class_unavailable' ? 'class' : type === 'subject_morning' || type.includes('subject_') ? 'subject' : 'teacher';
+    const targets = [...container.querySelectorAll(`[data-manual-rule-target][data-manual-rule-target-type="${targetType}"]:checked`)]
+        .map(input => ({
+            id: input.value,
+            name: input.dataset.targetName || input.value,
+        }));
+    const days = checkedNumbers(container, '[data-manual-rule-day]');
+    const periods = checkedNumbers(container, '[data-manual-rule-period]');
+    return { type, targetType, targets, days, periods };
+}
+
+function slotsFromDaysAndPeriods(days = [], periods = []) {
+    const slots = [];
+    for (const day of days) {
+        for (const period of periods) slots.push(`${day}-${period}`);
+    }
+    return slots;
+}
+
+export function buildManualRuleDraftRows(form = {}) {
+    const slots = slotsFromDaysAndPeriods(form.days, form.periods);
+    return (form.targets || []).map((target, index) => ({
+        id: `manual_${Date.now()}_${index}`,
+        source: 'manual',
+        rawText: `${target.name} ${form.type}`,
+        type: form.type,
+        targetType: form.targetType,
+        targetId: target.id,
+        targetName: target.name,
+        slots: form.type === 'subject_morning' ? [] : slots,
+        days: form.days,
+        periods: form.periods,
+        priority: form.type.startsWith('subject_') ? 'soft' : 'hard',
+        status: 'effective',
+        confidence: 1,
+        description: '手动批量新增',
+        warnings: [],
+    }));
 }
 
 export function readBulkRuleForm(container) {

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createDefaultTimetableProject } from '../gateway/services/timetable-scheduler.js';
+import { TimetablePlannerController } from '../public/js/tools/timetable/controller.js';
 import {
   renderWorkbench,
   renderInspector,
@@ -296,18 +297,17 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.doesNotMatch(html, /id="tt-import-roster"/);
   assert.doesNotMatch(html, /class="tt-plan-list"/);
   assert.doesNotMatch(html, /class="tt-plan-row"/);
-  assert.match(html, /id="tt-rule-prompt"/);
-  assert.match(html, /id="tt-rule-file"/);
-  assert.match(html, /accept="\.xlsx,\.xls"/);
-  assert.match(html, /id="tt-rule-file-name"/);
-  assert.match(html, /id="tt-parse-rules"/);
-  assert.match(html, /id="tt-confirm-rule-draft"/);
-  assert.match(html, /id="tt-add-bulk-rule"/);
+  assert.match(html, /id="tt-open-rule-review"/);
+  assert.match(html, /id="tt-open-bulk-rule-review"/);
   assert.match(html, /id="tt-clear-rules"/);
-  assert.match(html, /id="tt-bulk-days-trigger"/);
-  assert.match(html, /id="tt-bulk-periods-trigger"/);
-  assert.match(html, /data-bulk-day="1"/);
-  assert.match(html, /data-bulk-period="4"/);
+  assert.doesNotMatch(html, /id="tt-rule-prompt"/);
+  assert.doesNotMatch(html, /id="tt-rule-file"/);
+  assert.doesNotMatch(html, /id="tt-parse-rules"/);
+  assert.doesNotMatch(html, /id="tt-confirm-rule-draft"/);
+  assert.doesNotMatch(html, /id="tt-add-bulk-rule"/);
+  assert.doesNotMatch(html, /id="tt-bulk-rule-type"/);
+  assert.doesNotMatch(html, /id="tt-bulk-days-trigger"/);
+  assert.doesNotMatch(html, /id="tt-bulk-periods-trigger"/);
 
   assert.match(panel, /style="--tt-days:3"/);
   assert.match(panel, /data-day="1"/);
@@ -448,45 +448,167 @@ test('timetable AI rules support Excel file upload and rich preview metadata', a
   const styles = await readFile(stylePath, 'utf8');
 
   const state = sampleWorkbenchState({
-    ruleFileName: 'constraints.xlsx',
-    ruleDraftInputType: 'xlsx_constraints',
-    ruleContextStats: { classCount: 30, teacherCount: 62, subjectCount: 14, totalLessons: 900 },
-    ruleDraftPreview: [{
-      id: 'draft-1',
-      type: 'subject_preferred_periods',
-      targetName: 'Math',
-      slots: ['1-2'],
-      priority: 'soft',
-      status: 'ready',
-      description: 'Prefer period',
-    }, {
-      id: 'draft-2',
-      type: 'teacher_load_balance',
-      targetName: 'All teachers',
-      slots: [],
-      priority: 'soft',
-      status: 'suggestion',
-      description: 'Suggestion only',
-    }],
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'file',
+      fileName: 'constraints.xlsx',
+      draftRows: [{
+        id: 'draft-1',
+        rawText: 'Math should prefer Monday period 2',
+        type: 'subject_preferred_periods',
+        targetType: 'subject',
+        targetName: 'Math',
+        targetId: 'math',
+        slots: ['1-2'],
+        priority: 'soft',
+        status: 'effective',
+        confidence: 0.92,
+        description: 'Prefer period',
+        warnings: [],
+      }, {
+        id: 'draft-2',
+        rawText: 'Balance teacher workload',
+        type: 'teacher_load_balance',
+        targetType: 'global',
+        targetName: 'All teachers',
+        slots: [],
+        priority: 'soft',
+        status: 'suggestion',
+        confidence: 0.78,
+        description: 'Suggestion only',
+        warnings: [],
+      }],
+      inputType: 'xlsx_constraints',
+      contextStats: { classCount: 30, teacherCount: 62, subjectCount: 14, totalLessons: 900 },
+      warnings: ['Unsupported suggestion shown for review'],
+      unsupportedItems: [],
+    },
   });
   const html = renderWorkbench(state);
 
+  assert.match(html, /id="tt-rule-review-dialog"/);
+  assert.match(html, /id="tt-rule-review-table"/);
+  assert.match(html, /data-rule-review-row="draft-1"/);
+  assert.match(html, /data-rule-review-field="type"/);
+  assert.match(html, /data-rule-review-field="targetName"/);
+  assert.match(html, /data-rule-review-field="slots"/);
+  assert.match(html, /data-rule-review-field="priority"/);
+  assert.match(html, /data-rule-review-field="status"/);
+  assert.match(html, /id="tt-confirm-rule-review"/);
   assert.match(html, /constraints\.xlsx/);
   assert.match(html, /xlsx_constraints/);
   assert.match(html, /subject_preferred_periods/);
   assert.match(html, /teacher_load_balance/);
   assert.match(html, /suggestion/);
   assert.match(html, /30/);
-  assert.match(stateSource, /ruleFileName/);
-  assert.match(stateSource, /ruleDraftInputType/);
-  assert.match(stateSource, /ruleContextStats/);
-  assert.match(stateSource, /ruleUnsupportedItems/);
-  assert.match(controllerSource, /selectRuleParseFile\(/);
-  assert.match(controllerSource, /this\.ruleParseFile/);
-  assert.match(controllerSource, /body\.append\('file', this\.ruleParseFile\)/);
-  assert.match(interactionSource, /#tt-rule-file/);
-  assert.match(interactionSource, /selectRuleParseFile/);
-  assert.match(styles, /\.tt-rule-file-entry/);
+  assert.match(stateSource, /ruleReview:\s*{/);
+  assert.match(controllerSource, /openRuleReview\(/);
+  assert.match(controllerSource, /closeRuleReview\(/);
+  assert.match(controllerSource, /setRuleReviewMode\(/);
+  assert.match(controllerSource, /selectRuleReviewFile\(/);
+  assert.match(controllerSource, /parseRules\(/);
+  assert.match(controllerSource, /readRuleReviewRows\(/);
+  assert.match(controllerSource, /confirmRuleDraft\(/);
+  assert.match(controllerSource, /\/rules\/normalize/);
+  assert.match(interactionSource, /#tt-open-rule-review/);
+  assert.match(interactionSource, /#tt-open-bulk-rule-review/);
+  assert.match(interactionSource, /#tt-rule-review-file/);
+  assert.match(interactionSource, /\[data-rule-review-field\]/);
+  assert.match(interactionSource, /#tt-confirm-rule-review/);
+  assert.match(styles, /\.tt-rule-review-dialog/);
+  assert.match(styles, /\.tt-rule-review-table/);
+});
+
+test('timetable rule review keeps parsed drafts inside the modal and preserves them when closed', async () => {
+  const draftRows = [{
+    id: 'draft-1',
+    rawText: 'All teachers should be balanced',
+    type: 'teacher_load_balance',
+    targetType: 'global',
+    targetName: 'All teachers',
+    slots: [],
+    priority: 'soft',
+    status: 'suggestion',
+    confidence: 0.7,
+    description: 'Suggestion only',
+    warnings: [],
+  }, {
+    id: 'draft-2',
+    rawText: 'Math should prefer Monday period 2',
+    type: 'subject_preferred_periods',
+    targetType: 'subject',
+    targetName: 'Math',
+    targetId: 'math',
+    slots: ['1-2'],
+    priority: 'soft',
+    status: 'effective',
+    confidence: 0.9,
+    description: 'Prefer period',
+    warnings: [],
+  }];
+  const state = sampleWorkbenchState({
+    ruleReview: {
+      open: false,
+      step: 'review',
+      mode: 'file',
+      fileName: 'constraints.xlsx',
+      text: '',
+      draftRows,
+      inputType: 'xlsx_constraints',
+      contextStats: { rowCount: 22, teacherCount: 62 },
+      warnings: ['Review warning'],
+      unsupportedItems: [],
+      hasBlockingIssues: false,
+    },
+    ruleDraftPreview: draftRows,
+    ruleWarnings: ['Review warning'],
+    ruleDraftInputType: 'xlsx_constraints',
+    ruleContextStats: { rowCount: 22, teacherCount: 62 },
+  });
+
+  const closedHtml = renderWorkbench(state);
+  const sidebar = closedHtml.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
+
+  assert.match(sidebar, /tt-rule-entry-card/);
+  assert.match(sidebar, /2/);
+  assert.doesNotMatch(sidebar, /xlsx_constraints/);
+  assert.doesNotMatch(sidebar, /teacher_load_balance/);
+  assert.doesNotMatch(sidebar, /subject_preferred_periods/);
+  assert.doesNotMatch(sidebar, /class="tt-rule-preview-item"/);
+  assert.doesNotMatch(closedHtml, /id="tt-rule-review-dialog"/);
+
+  const openHtml = renderWorkbench({
+    ...state,
+    ruleReview: { ...state.ruleReview, open: true },
+  });
+  assert.match(openHtml, /id="tt-rule-review-dialog"/);
+  assert.match(openHtml, /xlsx_constraints/);
+  assert.match(openHtml, /teacher_load_balance/);
+  assert.match(openHtml, /subject_preferred_periods/);
+
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.ruleReview = { ...state.ruleReview, open: true };
+  controller.closeRuleReview();
+
+  assert.equal(controller.state.ruleReview.open, false);
+  assert.equal(controller.state.ruleReview.step, 'review');
+  assert.equal(controller.state.ruleReview.inputType, 'xlsx_constraints');
+  assert.deepEqual(controller.state.ruleReview.draftRows, draftRows);
+
+  controller.openRuleReview('text');
+  assert.equal(controller.state.ruleReview.open, true);
+  assert.equal(controller.state.ruleReview.step, 'review');
+  assert.equal(controller.state.ruleReview.inputType, 'xlsx_constraints');
+  assert.deepEqual(controller.state.ruleReview.draftRows, draftRows);
+});
+
+test('timetable modal overlays do not close when the blank overlay is clicked', async () => {
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+
+  assert.doesNotMatch(interactionSource, /\[data-rule-review-close\][\s\S]{0,220}closeRuleReview\(/);
+  assert.doesNotMatch(interactionSource, /\[data-roster-import-close\][\s\S]{0,220}closeRosterImport\(/);
 });
 
 test('timetable left sidebar range workflow applies only from the range popover done button', async () => {
