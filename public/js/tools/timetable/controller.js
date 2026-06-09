@@ -272,6 +272,20 @@ export class TimetablePlannerController {
         return this.state.container?.querySelector('#tt-rule-review-text')?.value ?? this.state.ruleReview?.text ?? '';
     }
 
+    fillRuleExample(example = '') {
+        if (!example) return;
+        const current = this.readRuleReviewText().trim();
+        const next = current ? `${current}\n${example}` : example;
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || {}),
+            open: true,
+            step: 'input',
+            mode: 'text',
+            text: next,
+        };
+        this.render();
+    }
+
     setRuleReviewState(payload = {}) {
         const draftRows = Array.isArray(payload.draftRows) ? payload.draftRows : [];
         const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
@@ -324,12 +338,20 @@ export class TimetablePlannerController {
         return [...(this.state.container?.querySelectorAll('[data-rule-review-row]') || [])].map(row => {
             const value = field => row.querySelector(`[data-rule-review-field="${field}"]`)?.value?.trim() || '';
             const slots = value('slots').split(/[,，;；、\s]+/).map(item => item.trim()).filter(Boolean);
+            // When the target is a bound dropdown, sync targetId from the selected option
+            // so the saved id always matches the displayed name.
+            const targetSelect = row.querySelector('[data-rule-target-select]');
+            let targetId = value('targetId');
+            if (targetSelect) {
+                const option = targetSelect.options[targetSelect.selectedIndex];
+                targetId = option?.dataset?.targetId || '';
+            }
             return {
                 id: row.dataset.ruleReviewRow || this.nextRuleDraftId(),
                 rawText: value('rawText'),
                 type: value('type') || 'teacher_unavailable',
                 targetType: value('targetType'),
-                targetId: value('targetId'),
+                targetId,
                 targetName: value('targetName'),
                 classId: value('classId'),
                 className: value('className'),
@@ -845,15 +867,11 @@ export class TimetablePlannerController {
             }
             const result = await requestTimetable('/rules/parse', options);
             this.setRuleReviewState(result);
-            this.setMessage('AI 约束已解析，请在复核表确认后生效。');
-            return;
-            this.state.ruleDraft = result.draftRules;
-            this.state.ruleDraftPreview = result.previewItems || [];
-            this.state.ruleWarnings = result.warnings || [];
-            this.state.ruleDraftInputType = result.inputType || '';
-            this.state.ruleContextStats = result.contextStats || null;
-            this.state.ruleUnsupportedItems = result.unsupportedItems || [];
-            this.setMessage('AI 约束已解析，请确认草稿。');
+            const total = (result.draftRows || []).length;
+            const effective = (result.draftRows || []).filter(row => row.status === 'effective').length;
+            this.setMessage(total
+                ? `已解析 ${total} 条约束（${effective} 条可直接生效），请在复核表确认。`
+                : '未能解析出可用约束，请调整描述后重试。');
         } catch (error) {
             this.handleError(error);
         }
@@ -908,30 +926,6 @@ export class TimetablePlannerController {
             this.state.solverJob = null;
             this.clearRuleDraft();
             this.setMessage('AI 约束已确认。');
-        } catch (error) {
-            this.handleError(error);
-        }
-    }
-
-    async addBulkRule() {
-        this.openRuleReview('manual');
-        return;
-        try {
-            const form = readBulkRuleForm(this.state.container);
-            if (!form.targetIds.length) throw new Error('请先选择规则对象。');
-            if (form.type !== 'subject_morning' && (!form.days.length || !form.periods.length)) {
-                throw new Error('请先选择周几和节次。');
-            }
-            const rules = buildBulkRules(this.state.project, form);
-            const result = await requestTimetable('/rules', {
-                method: 'POST',
-                body: JSON.stringify({ rules }),
-            });
-            this.applyProject(result.project);
-            this.clearOptimizationPolling();
-            this.state.solverJob = null;
-            this.clearRuleDraft();
-            this.setMessage('批量规则已添加。');
         } catch (error) {
             this.handleError(error);
         }

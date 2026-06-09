@@ -1031,6 +1031,42 @@ button.tt-section-title {
     color: var(--tt-muted);
 }
 
+.tt-field-hint {
+    display: block;
+    margin-top: 4px;
+    color: var(--tt-muted);
+    font-size: 0.66rem;
+}
+
+.tt-rule-examples {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--tt-space-xs);
+    margin-top: var(--tt-space-sm);
+}
+
+.tt-rule-example-chip {
+    padding: 4px 10px;
+    border: 1px solid var(--tt-border-strong);
+    border-radius: 999px;
+    background: var(--tt-bg-soft);
+    color: var(--tt-text-secondary);
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+
+.tt-rule-example-chip:hover {
+    border-color: var(--tt-primary);
+    color: var(--tt-text);
+}
+
+.tt-rule-target-select {
+    min-width: 120px;
+}
+
+
 .tt-rule-manual-checks {
     display: grid;
     gap: var(--tt-space-sm);

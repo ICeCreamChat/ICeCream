@@ -208,6 +208,29 @@ function normalizeSubjectPreferredPeriods(raw = {}) {
     return result;
 }
 
+// 教师每日/连续节次上限：{ teacherId: { daily?: n, consecutive?: n } }
+function normalizeTeacherLimits(raw = {}) {
+    const result = {};
+    for (const [key, value] of Object.entries(raw || {})) {
+        const teacherId = cleanText(key, 80);
+        if (!teacherId || !value || typeof value !== 'object') continue;
+        const daily = Number.parseInt(value.daily ?? value.dailyLimit ?? value.maxPerDay, 10);
+        const consecutive = Number.parseInt(value.consecutive ?? value.consecutiveLimit ?? value.maxConsecutive, 10);
+        const entry = {};
+        if (Number.isInteger(daily) && daily > 0) entry.daily = Math.min(12, daily);
+        if (Number.isInteger(consecutive) && consecutive > 0) entry.consecutive = Math.min(12, consecutive);
+        if (Object.keys(entry).length) result[teacherId] = entry;
+    }
+    return result;
+}
+
+// 需要在一周内分散开（避免同天扎堆）的课程 id 列表
+function normalizeSpreadSubjects(values = []) {
+    return Array.isArray(values)
+        ? [...new Set(values.map(value => cleanText(value, 80)).filter(Boolean))]
+        : [];
+}
+
 function normalizeLockedSlots(values = []) {
     return (Array.isArray(values) ? values : [])
         .map((item, index) => ({
@@ -238,6 +261,8 @@ function normalizeRules(raw = {}) {
                 : [],
             balancedTeacherLoad: softRules.balancedTeacherLoad !== false,
             subjectPreferredPeriods: normalizeSubjectPreferredPeriods(softRules.subjectPreferredPeriods),
+            teacherLimits: normalizeTeacherLimits(softRules.teacherLimits),
+            spreadSubjects: normalizeSpreadSubjects(softRules.spreadSubjects),
         },
     };
 }

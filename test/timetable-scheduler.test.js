@@ -301,6 +301,96 @@ test('timetable scheduler returns explainable unplaced lessons when constraints 
     assert.ok(result.schedule.conflicts.some(conflict => conflict.type === 'unplaced'));
 });
 
+test('fast scheduler reports real soft-rule satisfaction breakdown', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 4,
+        activeWeekdays: [1],
+        activePeriods: [1, 2, 3, 4],
+        teachers: [
+            { id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_pe', name: 'PE Teacher', subjects: ['pe'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [
+            { id: 'math', name: '数学', priority: 90, color: '#2563eb' },
+            { id: 'pe', name: '体育', priority: 30, color: '#16a34a' },
+        ],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+            { id: 'lp_pe', classId: 'c1', subjectId: 'pe', teacherId: 't_pe', weeklyHours: 1 },
+        ],
+        rules: { hardRules: {}, softRules: { morningSubjects: ['math'] } },
+    });
+
+    const result = runTimetableScheduler(project);
+
+    assert.equal(result.success, true);
+    // morning subject (math) should land in the first half of the day
+    const mathSlot = result.schedule.slots.find(slot => slot.subjectId === 'math');
+    assert.ok(mathSlot.period <= 2, 'math should be scheduled in the morning half');
+    assert.equal(result.schedule.score.softBreakdown.morningSubjects, 100);
+    assert.ok(result.schedule.score.softSatisfaction >= 0 && result.schedule.score.softSatisfaction <= 100);
+});
+
+test('fast scheduler packs mixed block preference into double blocks', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 4,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4],
+        teachers: [{ id: 't_sci', name: 'Science', subjects: ['sci'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'sci', name: '科学', priority: 50, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp_sci', classId: 'c1', subjectId: 'sci', teacherId: 't_sci', weeklyHours: 6, blockPreference: 'mixed' },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = runTimetableScheduler(project);
+
+    assert.equal(result.success, true);
+    assert.equal(result.schedule.slots.length, 6);
+    // 6 hours of mixed should become 2+2+1+1: two distinct double blocks
+    const blockIds = new Set(result.schedule.slots.filter(slot => slot.blockId).map(slot => slot.blockId));
+    assert.equal(blockIds.size, 2, 'mixed 6h should produce two double blocks');
+    const blockSlots = result.schedule.slots.filter(slot => slot.blockSize === 2);
+    assert.equal(blockSlots.length, 4, 'four slots should belong to double blocks');
+});
+
+test('local repair rescues an otherwise unplaced lesson by relocating a blocker', () => {
+    // Two classes share one teacher across a 2x2 grid. A naive greedy that fills
+    // greedily could strand the last lesson; repair should relocate to fit all four.
+    const project = createDefaultTimetableProject({
+        weekdays: 2,
+        periodsPerDay: 2,
+        activeWeekdays: [1, 2],
+        activePeriods: [1, 2],
+        teachers: [
+            { id: 't_a', name: 'A', subjects: ['s1'], unavailableSlots: [] },
+            { id: 't_b', name: 'B', subjects: ['s2'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: 'G', name: '1' }],
+        subjects: [
+            { id: 's1', name: 'S1', priority: 50, color: '#2563eb' },
+            { id: 's2', name: 'S2', priority: 50, color: '#16a34a' },
+        ],
+        lessonPlans: [
+            { id: 'lp1', classId: 'c1', subjectId: 's1', teacherId: 't_a', weeklyHours: 2 },
+            { id: 'lp2', classId: 'c1', subjectId: 's2', teacherId: 't_b', weeklyHours: 2 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = runTimetableScheduler(project);
+
+    assert.equal(result.success, true);
+    assert.equal(result.schedule.slots.length, 4);
+    assert.equal(result.schedule.score.unplacedLessons, 0);
+    assertNoTeacherOrClassConflicts(result.schedule.slots);
+});
+
 test('solve preflight explains missing timetable data before calling Timefold', () => {
     const empty = createDefaultTimetableProject({
         teachers: [],
@@ -837,6 +927,48 @@ test('timetable rule draft row normalization only saves effective valid rows', (
     assert.equal(result.draftRows.find(row => row.id === 'row_2').status, 'suggestion');
     assert.equal(result.draftRows.find(row => row.id === 'row_3').status, 'needs_review');
     assert.ok(result.warnings.some(warning => warning.includes('Unknown person')));
+});
+
+test('timetable rule draft row normalization saves teacher limits and subject spread', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'pe', name: '体育', priority: 30, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: [{
+            id: 'row_1',
+            rawText: 'Math Teacher at most 3 lessons per day',
+            type: 'teacher_daily_limit',
+            targetType: 'teacher',
+            targetId: 't_math',
+            targetName: 'Math Teacher',
+            limit: 3,
+            priority: 'soft',
+            status: 'effective',
+        }, {
+            id: 'row_2',
+            rawText: 'PE should be spread across the week',
+            type: 'subject_spread',
+            targetType: 'subject',
+            targetId: 'pe',
+            targetName: '体育',
+            priority: 'soft',
+            status: 'effective',
+        }],
+    });
+
+    assert.deepEqual(result.draftRules.softRules.teacherLimits.t_math, { daily: 3 });
+    assert.ok(result.draftRules.softRules.spreadSubjects.includes('pe'));
+    assert.equal(result.draftRows.filter(row => row.status === 'effective').length, 2);
 });
 
 test('timetable rule draft row normalization saves locked slot review rows', () => {

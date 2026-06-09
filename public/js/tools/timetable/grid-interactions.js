@@ -73,6 +73,9 @@ export function bindGridInteractions(container, controller, state) {
         controller.selectRuleReviewFile(event.target.files?.[0] || null);
     });
     container.querySelector('#tt-rule-review-parse')?.addEventListener('click', () => controller.parseRules());
+    container.querySelectorAll('[data-rule-example]').forEach(button => {
+        button.addEventListener('click', () => controller.fillRuleExample(button.dataset.ruleExample));
+    });
     container.querySelector('#tt-add-manual-rule-rows')?.addEventListener('click', () => controller.addManualRuleRows());
     container.querySelector('#tt-confirm-rule-review')?.addEventListener('click', () => controller.confirmRuleDraft());
     container.querySelector('#tt-add-rule-review-row')?.addEventListener('click', () => controller.addRuleReviewRow());

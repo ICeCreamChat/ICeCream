@@ -23,18 +23,17 @@ const SUPPORTED_EFFECTIVE_TYPES = new Set([
     'subject_morning',
     'subject_preferred_periods',
     'subject_avoid_periods',
+    'teacher_daily_limit',
+    'teacher_consecutive_limit',
+    'subject_spread',
 ]);
 
 const SUGGESTION_ONLY_TYPES = new Set([
     'teacher_load_balance',
-    'teacher_daily_limit',
-    'teacher_consecutive_limit',
-    'subject_spread',
     'quality_subject_later',
     'block_protection',
     'class_daily_balance',
     'class_subject_spread',
-    'same_subject_spread',
 ]);
 
 const STATUS_LABELS = new Set(['effective', 'ready', 'needs_review', 'suggestion', 'unsupported', 'invalid', 'ignored']);
@@ -316,9 +315,11 @@ function normalizeConstraintType(value) {
     if (['subjectmorning', '课程上午优先', '主科上午', '上午优先', 'morning_subject', 'subject_prefer_morning'].includes(compact)) return 'subject_morning';
     if (['subjectpreferperiods', 'subjectpreferredperiods', '课程偏好节次', '课程优先节次', 'subject_prefer_periods', 'subject_preferred_slots'].includes(compact)) return 'subject_preferred_periods';
     if (['subjectavoidperiods', '课程避开节次', 'subject_avoid_slots'].includes(compact)) return 'subject_avoid_periods';
+    if (/教师.*每[天日].*(最多|上限|不超过)|teacher.*dail?y?.*(limit|max)/.test(text)) return 'teacher_daily_limit';
+    if (/教师.*(连续|连堂|连排).*(最多|上限|不超过|限制)|teacher.*consecutive/.test(text)) return 'teacher_consecutive_limit';
+    if (/(同科|同一?门?课|同学科).*(分散|不要?连?排?在?同一?天|错开)|subject.*spread/.test(text)) return 'subject_spread';
     if (/教师.*(均衡|负载)|teacher.*load/.test(text)) return 'teacher_load_balance';
     if (/连堂.*(保护|不可拆)|block/.test(text)) return 'block_protection';
-    if (/同科.*分散|subject.*spread/.test(text)) return 'subject_spread';
     return text;
 }
 
@@ -475,6 +476,22 @@ function addSubjectPeriodPreference(rules, subjectId, { prefer = [], avoid = [],
     };
 }
 
+function addTeacherLimit(rules, teacherId, { daily, consecutive } = {}) {
+    if (!teacherId) return;
+    rules.softRules.teacherLimits = { ...(rules.softRules.teacherLimits || {}) };
+    const current = { ...(rules.softRules.teacherLimits[teacherId] || {}) };
+    if (Number.isInteger(daily) && daily > 0) current.daily = Math.min(12, daily);
+    if (Number.isInteger(consecutive) && consecutive > 0) current.consecutive = Math.min(12, consecutive);
+    if (Object.keys(current).length) rules.softRules.teacherLimits[teacherId] = current;
+}
+
+function addSpreadSubject(rules, subjectId) {
+    if (!subjectId) return;
+    const current = rules.softRules.spreadSubjects || [];
+    if (!current.includes(subjectId)) current.push(subjectId);
+    rules.softRules.spreadSubjects = current;
+}
+
 function parseFirstSlot(slots = []) {
     const [first] = Array.isArray(slots) ? slots : [];
     const match = String(first || '').match(/^(\d{1,2})-(\d{1,2})$/);
@@ -535,6 +552,7 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
         description: asText(row.description || row.reason || row.note || '', 500),
         warnings: Array.isArray(row.warnings) ? row.warnings.map(item => asText(item, 200)).filter(Boolean) : [],
         weight: Number.parseInt(row.weight, 10) || undefined,
+        limit: Number.parseInt(row.limit ?? row.value ?? row.max ?? row.count, 10) || undefined,
     };
 }
 
@@ -562,6 +580,8 @@ function emptyRulesFrom(project) {
     rules.softRules = rules.softRules || {};
     rules.softRules.morningSubjects = [...(rules.softRules.morningSubjects || [])];
     rules.softRules.subjectPreferredPeriods = { ...(rules.softRules.subjectPreferredPeriods || {}) };
+    rules.softRules.teacherLimits = { ...(rules.softRules.teacherLimits || {}) };
+    rules.softRules.spreadSubjects = [...(rules.softRules.spreadSubjects || [])];
     return rules;
 }
 
@@ -704,6 +724,28 @@ export function normalizeTimetableRuleDraftRows({
                 return { ...row, targetType, targetId: target.id, targetName: target.name || row.targetName, status: 'effective' };
             }
 
+            if (row.type === 'teacher_daily_limit' || row.type === 'teacher_consecutive_limit') {
+                const teacher = findEntity(project.teachers, row);
+                const limit = Number.parseInt(row.limit ?? row.weight ?? row.value, 10);
+                if (!teacher || !Number.isInteger(limit) || limit <= 0) {
+                    const reason = `${row.targetName || row.targetId || '教师'} 缺少可匹配教师或有效的节数上限，请复核。`;
+                    warnings.push(reason);
+                    return { ...row, status: 'needs_review', targetType: 'teacher', warnings: [...row.warnings, reason] };
+                }
+                addTeacherLimit(rules, teacher.id, row.type === 'teacher_daily_limit' ? { daily: limit } : { consecutive: limit });
+                return { ...row, targetType: 'teacher', targetId: teacher.id, targetName: teacher.name || row.targetName, priority: 'soft', status: 'effective' };
+            }
+
+            if (row.type === 'subject_spread') {
+                if (!target) {
+                    const reason = `${row.targetName || row.targetId || '课程'} 缺少可匹配课程，请复核。`;
+                    warnings.push(reason);
+                    return { ...row, status: 'needs_review', targetType: 'subject', warnings: [...row.warnings, reason] };
+                }
+                addSpreadSubject(rules, target.id);
+                return { ...row, targetType: 'subject', targetId: target.id, targetName: target.name || row.targetName, priority: 'soft', status: 'effective' };
+            }
+
             return { ...row, status: 'unsupported' };
         });
 
@@ -732,13 +774,34 @@ function buildPrompt({ project, text, inputType = 'text', contextStats = null, c
         {
             role: 'system',
             content: [
-                'You convert flexible Chinese school timetable constraints into strict JSON.',
-                'Return only JSON: {"constraints":[...],"warnings":[]}.',
-                'Supported effective types: teacher_unavailable, class_unavailable, locked_slot, subject_morning, subject_preferred_periods, subject_avoid_periods.',
-                'Suggestion-only types: teacher_load_balance, teacher_daily_limit, teacher_consecutive_limit, subject_spread, quality_subject_later, block_protection, class_daily_balance.',
-                'Each constraint should include type, targetId or target, days/periods or slots, priority, reason, confidence.',
-                'Slots must use "day-period", for example "3-4".',
-                'If a document describes general built-in facts such as teacher/class conflict, mark it as suggestion-only instead of inventing unsupported hard rules.',
+                '你是中文中小学排课约束解析助手。把用户用自然语言（可能口语化、不规范）描述的排课要求，转换成严格的 JSON。',
+                '只输出 JSON 对象，不要任何解释文字，格式：{"constraints":[...],"warnings":[]}。',
+                '',
+                '【可生效约束类型】（会真正影响排课，请尽量归类到这些）：',
+                '- teacher_unavailable：某教师在某些时间不能上课。需 targetId/target + slots（或 days+periods）。priority=hard。',
+                '- class_unavailable：某班级在某些时间不排课。需 targetId/target + slots。priority=hard。',
+                '- locked_slot：把某班某课某师固定在某个具体时间。需 class/subject/teacher + 单个 slot。priority=hard。',
+                '- subject_morning：某课程优先排在上午。需 targetId/target（课程）。priority=soft。',
+                '- subject_preferred_periods：某课程偏好某些节次。需课程 + slots/periods。priority=soft。',
+                '- subject_avoid_periods：某课程避开某些节次。需课程 + slots/periods。priority=soft。',
+                '- teacher_daily_limit：某教师每天最多上几节。需教师 + limit（整数）。priority=soft。',
+                '- teacher_consecutive_limit：某教师最多连续上几节。需教师 + limit（整数）。priority=soft。',
+                '- subject_spread：某课程一周内要分散，不要同一天扎堆。需课程。priority=soft。',
+                '',
+                '【仅建议类型】（暂不写入排课，仅供复核展示）：teacher_load_balance, block_protection, class_daily_balance, quality_subject_later。无法确定或属于通用常识（如"教师不能同时在两个班"）时，归到这里或写进 warnings，不要编造硬约束。',
+                '',
+                '【字段规范】：',
+                '- slots 用 "day-period" 字符串，day 为周几(1-7)，period 为第几节，例如周三第4节="3-4"。',
+                '- 也可用 days:[1,2] + periods:[3,4] 让系统自动展开。',
+                '- target 用教师/班级/课程的名称（从下方上下文里匹配），匹配不到就照原文填，targetId 留空。',
+                '- 每条约束包含：type, target(或targetId), slots或days/periods, priority, limit(仅上限类), reason(中文原因), confidence(0-1)。',
+                '',
+                '【示例】',
+                '输入："王老师周三下午都没空" → {"type":"teacher_unavailable","target":"王老师","days":[3],"periods":[5,6,7],"priority":"hard","reason":"王老师周三下午不可排","confidence":0.95}',
+                '输入："数学尽量排上午" → {"type":"subject_morning","target":"数学","priority":"soft","reason":"数学优先上午","confidence":0.9}',
+                '输入："李老师每天最多上3节课" → {"type":"teacher_daily_limit","target":"李老师","limit":3,"priority":"soft","reason":"控制李老师每日工作量","confidence":0.9}',
+                '输入："体育不要连着上两节" → {"type":"teacher_consecutive_limit"或"subject_spread","target":"体育","limit":1,"priority":"soft","reason":"体育课分散","confidence":0.8}',
+                '输入："美术第一节不要排" → {"type":"subject_avoid_periods","target":"美术","periods":[1],"priority":"soft","reason":"美术避开第一节","confidence":0.85}',
             ].join('\n'),
         },
         {
@@ -816,6 +879,7 @@ function rowsFromAiConstraints(constraints = [], { inputRows = [], source = 'ai'
             description: constraint.reason || constraint.description || constraint.note || '',
             warnings: [],
             weight: constraint.weight,
+            limit: constraint.limit ?? constraint.value ?? constraint.max ?? constraint.maxPerDay ?? constraint.maxConsecutive,
         };
     });
 }
@@ -984,6 +1048,32 @@ function localTextConstraints(project, text) {
                     confidence: 0.86,
                 });
             }
+            // 每天最多 N 节
+            const dailyMatch = sentence.match(/每[天日].*?(?:最多|不超过|不多于|上限)\s*(\d{1,2})\s*节/);
+            if (sentence.includes(teacher.name) && dailyMatch) {
+                constraints.push({
+                    type: 'teacher_daily_limit',
+                    targetId: teacher.id,
+                    target: teacher.name,
+                    limit: Number.parseInt(dailyMatch[1], 10),
+                    priority: 'soft',
+                    reason: sentence,
+                    confidence: 0.82,
+                });
+            }
+            // 最多连续 N 节 / 不要连上
+            const consecutiveMatch = sentence.match(/(?:连续|连排|连堂).*?(?:最多|不超过|不多于)\s*(\d{1,2})\s*节/);
+            if (sentence.includes(teacher.name) && consecutiveMatch) {
+                constraints.push({
+                    type: 'teacher_consecutive_limit',
+                    targetId: teacher.id,
+                    target: teacher.name,
+                    limit: Number.parseInt(consecutiveMatch[1], 10),
+                    priority: 'soft',
+                    reason: sentence,
+                    confidence: 0.8,
+                });
+            }
         });
         project.classes.forEach(klass => {
             const label = entityLabel(klass);
@@ -1052,7 +1142,7 @@ function localTextConstraints(project, text) {
 
     const seen = new Set();
     return constraints.filter(item => {
-        const key = JSON.stringify([item.type, item.targetId, item.slots || []]);
+        const key = JSON.stringify([item.type, item.targetId, item.slots || [], item.limit ?? null]);
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
