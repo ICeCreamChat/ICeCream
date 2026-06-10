@@ -59,6 +59,35 @@ class TimetableSolverResourceTest {
                 .statusCode(204);
     }
 
+    @Test
+    void jobLifecycleKeepsPinnedInitialLessonTime() throws InterruptedException {
+        String jobId = given()
+                .contentType(ContentType.JSON)
+                .body(pinnedProblem())
+                .when().post("/timetable-solutions")
+                .then()
+                .statusCode(202)
+                .body("jobId", notNullValue())
+                .extract().path("jobId");
+
+        Map<String, Object> status = waitUntilDone(jobId);
+        assertEquals("NOT_SOLVING", status.get("solverStatus"));
+        assertEquals(0, status.get("hardScore"));
+
+        given()
+                .when().get("/timetable-solutions/{jobId}", jobId)
+                .then()
+                .statusCode(200)
+                .body("hardScore", equalTo(0))
+                .body("lessonAssignments.find { it.id == 'lp_math_1' }.timeSlot", equalTo("1-1"))
+                .body("lessonAssignments.find { it.id == 'lp_math_1' }.pinnedTimeSlotId", equalTo("1-1"));
+
+        given()
+                .when().delete("/timetable-solutions/{jobId}", jobId)
+                .then()
+                .statusCode(204);
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> waitUntilDone(String jobId) throws InterruptedException {
         Map<String, Object> status = null;
@@ -94,6 +123,23 @@ class TimetableSolverResourceTest {
         );
     }
 
+    private static Map<String, Object> pinnedProblem() {
+        return Map.of(
+                "name", "pinned-rest-test",
+                "timeSlots", List.of(
+                        slot("1-1", 1, 1),
+                        slot("1-2", 1, 2),
+                        slot("2-1", 2, 1)
+                ),
+                "rooms", List.of(Map.of("id", "__NONE__", "name", "None", "none", true)),
+                "lessonAssignments", List.of(
+                        pinnedLesson("lp_math_1", "lp_math", "c1", "math", "t1", 0, "1-1"),
+                        lesson("lp_cn_1", "lp_cn", "c1", "chinese", "t2", 0),
+                        lesson("lp_pe_1", "lp_pe", "c2", "pe", "t3", 0)
+                )
+        );
+    }
+
     private static Map<String, Object> slot(String id, int weekday, int lessonIndex) {
         return Map.of(
                 "id", id,
@@ -113,6 +159,29 @@ class TimetableSolverResourceTest {
                 entry("teacherId", teacherId),
                 entry("teacherIds", List.of(teacherId)),
                 entry("sequence", sequence),
+                entry("blockIndex", 0),
+                entry("blockSize", 1),
+                entry("blockedTimeSlotIds", List.of()),
+                entry("allowedRoomIds", List.of()),
+                entry("requiresRoom", false),
+                entry("subjectPriority", 95),
+                entry("preferMorning", true),
+                entry("preferLater", false)
+        );
+    }
+
+    private static Map<String, Object> pinnedLesson(String id, String planId, String classId, String subjectId,
+                                                    String teacherId, int sequence, String timeSlotId) {
+        return Map.ofEntries(
+                entry("id", id),
+                entry("lessonPlanId", planId),
+                entry("classId", classId),
+                entry("subjectId", subjectId),
+                entry("teacherId", teacherId),
+                entry("teacherIds", List.of(teacherId)),
+                entry("sequence", sequence),
+                entry("timeSlot", timeSlotId),
+                entry("pinnedTimeSlotId", timeSlotId),
                 entry("blockIndex", 0),
                 entry("blockSize", 1),
                 entry("blockedTimeSlotIds", List.of()),

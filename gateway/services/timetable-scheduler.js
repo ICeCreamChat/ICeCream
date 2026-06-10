@@ -47,4 +47,5 @@ export {
 
 export {
     validateTimetableProjectForSolve,
+    validateTimetablePublication,
 } from './timetable-validation.js';

@@ -6,9 +6,13 @@ import {
     detectScheduleConflicts,
     getActivePeriods,
     getActiveWeekdays,
+    isActiveTimetableSlot,
     normalizeTimetableProject,
     slotKey,
 } from './timetable-scheduler.js';
+import {
+    validateTimetablePublication,
+} from './timetable-validation.js';
 
 const DEFAULT_TIMEOUT_MS = 210000;
 const POLL_INTERVAL_MS = 500;
@@ -72,6 +76,8 @@ function buildTimeoutStats({ project, problem, jobId, status, startedAt, timeout
         solverStatus: status?.solverStatus || null,
         lessonCount: totalLessonHours(project),
         assignmentCount: problem?.lessonAssignments?.length || 0,
+        initialSolutionUsed: hasInitialSolution(problem),
+        pinnedCount: countPinnedAssignments(problem),
         timeoutMs: timeout,
         timeoutSeconds: Math.round(timeout / 1000),
         durationMs: Date.now() - startedAt,
@@ -162,15 +168,113 @@ function blockedSlotsForPlan(project, plan) {
     return [...blocked].sort();
 }
 
+function lockedBlockStartPeriod(project, slot, blockSize) {
+    const day = Number(slot.day);
+    const period = Number(slot.period);
+    for (let start = period; start >= period - blockSize + 1; start -= 1) {
+        let fits = true;
+        for (let offset = 0; offset < blockSize; offset += 1) {
+            if (!isActiveTimetableSlot(project, day, start + offset)) {
+                fits = false;
+                break;
+            }
+        }
+        if (fits) return start;
+    }
+    return period;
+}
+
+function expandLockedSlotsForPlan(project, plan) {
+    const activePeriods = new Set(getActivePeriods(project));
+    const matchPlan = slot => {
+        if (slot.lessonPlanId) return slot.lessonPlanId === plan.id;
+        return slot.classId === plan.classId
+            && slot.subjectId === plan.subjectId
+            && teacherIdsForPlan(plan).includes(slot.teacherId);
+    };
+    const result = [];
+    const seen = new Set();
+    const consumedRules = new Set();
+    let placedHours = 0;
+    const matchingSlots = (project.rules?.hardRules?.lockedSlots || [])
+        .filter(matchPlan)
+        .sort((left, right) => Number(left.day) - Number(right.day) || Number(left.period) - Number(right.period));
+
+    for (const slot of matchingSlots) {
+        const ruleKey = `${Number(slot.day)}|${Number(slot.period)}`;
+        if (consumedRules.has(ruleKey)) continue;
+        const blockSize = nextLockedBlockSizeForPlan(plan, placedHours);
+        let accepted = 0;
+        const startPeriod = lockedBlockStartPeriod(project, slot, blockSize);
+        for (let offset = 0; offset < blockSize; offset += 1) {
+            const day = Number(slot.day);
+            const period = startPeriod + offset;
+            if (!isActiveTimetableSlot(project, day, period) || !activePeriods.has(period)) continue;
+            const key = `${day}|${period}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            consumedRules.add(key);
+            accepted += 1;
+            result.push({
+                ...slot,
+                day,
+                period,
+            });
+        }
+        placedHours += accepted;
+    }
+
+    return result.sort((left, right) => left.day - right.day || left.period - right.period);
+}
+
 function lockedSlotsForPlan(project, plan) {
-    return (project.rules?.hardRules?.lockedSlots || [])
-        .filter(slot => {
-            if (slot.lessonPlanId) return slot.lessonPlanId === plan.id;
-            return slot.classId === plan.classId
-                && slot.subjectId === plan.subjectId
-                && teacherIdsForPlan(plan).includes(slot.teacherId);
-        })
-        .sort((left, right) => left.day - right.day || left.period - right.period);
+    return expandLockedSlotsForPlan(project, plan);
+}
+
+function protectedInitialSlotIds(initialSlots = []) {
+    const protectedBlockIds = new Set();
+    initialSlots.forEach(slot => {
+        if ((slot.locked || slot.manuallyAdjusted) && slot.blockId) {
+            protectedBlockIds.add(slot.blockId);
+        }
+    });
+    const ids = new Set();
+    initialSlots.forEach(slot => {
+        if (slot.locked || slot.manuallyAdjusted || (slot.blockId && protectedBlockIds.has(slot.blockId))) {
+            ids.add(slot.id);
+        }
+    });
+    return ids;
+}
+
+function slotFromLockedRule(ruleSlot, fallbackSlot = null) {
+    if (!ruleSlot) return fallbackSlot;
+    return {
+        ...(fallbackSlot || {}),
+        day: ruleSlot.day,
+        period: ruleSlot.period,
+        roomId: ruleSlot.roomId || fallbackSlot?.roomId || null,
+        locked: true,
+    };
+}
+
+function takeInitialSlotForLocked(initialSlots, locked, usedIndexes) {
+    if (!locked) return null;
+    const index = initialSlots.findIndex((slot, slotIndex) => (
+        !usedIndexes.has(slotIndex)
+        && slot.day === locked.day
+        && slot.period === locked.period
+    ));
+    if (index < 0) return null;
+    usedIndexes.add(index);
+    return initialSlots[index];
+}
+
+function takeNextInitialSlot(initialSlots, usedIndexes) {
+    const index = initialSlots.findIndex((slot, slotIndex) => !usedIndexes.has(slotIndex));
+    if (index < 0) return null;
+    usedIndexes.add(index);
+    return initialSlots[index];
 }
 
 function blockSizesForPlan(plan) {
@@ -182,14 +286,30 @@ function blockSizesForPlan(plan) {
             remaining -= 2;
         }
     } else if (plan.blockPreference === 'mixed' && remaining >= 4) {
-        sizes.push(2);
-        remaining -= 2;
+        // Match the fast scheduler: keep a couple of single periods alongside
+        // doubles, e.g. 6h -> 2+2+1+1 and 5h -> 2+2+1.
+        const singles = remaining % 2 === 0 ? 2 : 1;
+        let doubleBudget = remaining - singles;
+        while (doubleBudget >= 2) {
+            sizes.push(2);
+            doubleBudget -= 2;
+            remaining -= 2;
+        }
     }
     while (remaining > 0) {
         sizes.push(1);
         remaining -= 1;
     }
     return sizes;
+}
+
+function nextLockedBlockSizeForPlan(plan, placedHours = 0) {
+    let consumed = 0;
+    for (const size of blockSizesForPlan(plan)) {
+        if (placedHours < consumed + size) return size;
+        consumed += size;
+    }
+    return 1;
 }
 
 function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pinnedTimeSlotId, initialSlot, project }) {
@@ -207,6 +327,7 @@ function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pi
         timeSlot: initialSlot ? slotKey(initialSlot.day, initialSlot.period) : null,
         room: initialSlot?.roomId || NONE_ROOM_ID,
         pinnedTimeSlotId: pinnedTimeSlotId || null,
+        manuallyAdjusted: Boolean(initialSlot?.manuallyAdjusted),
         blockedTimeSlotIds: blockedSlotsForPlan(project, plan),
         allowedRoomIds,
         requiresRoom: allowedRoomIds.length > 0,
@@ -243,20 +364,31 @@ function buildLessonAssignments(project) {
     for (const plan of project.lessonPlans) {
         const lockedSlots = lockedSlotsForPlan(project, plan);
         const initialSlots = initialSlotQueues.get(plan.id) || [];
+        const protectedIds = protectedInitialSlotIds(initialSlots);
+        const usedInitialIndexes = new Set();
         let sequence = 0;
         let blockNumber = 0;
         for (const blockSize of blockSizesForPlan(plan)) {
             blockNumber += 1;
             for (let blockIndex = 0; blockIndex < blockSize; blockIndex++) {
                 const locked = lockedSlots[sequence];
-                const initialSlot = initialSlots[sequence] || null;
+                const lockedInitialSlot = takeInitialSlotForLocked(initialSlots, locked, usedInitialIndexes);
+                const currentInitialSlot = lockedInitialSlot || takeNextInitialSlot(initialSlots, usedInitialIndexes);
+                const rulePinnedTimeSlotId = locked ? slotKey(locked.day, locked.period) : null;
+                const protectedPinnedTimeSlotId = currentInitialSlot && protectedIds.has(currentInitialSlot.id)
+                    ? slotKey(currentInitialSlot.day, currentInitialSlot.period)
+                    : null;
+                const pinnedTimeSlotId = rulePinnedTimeSlotId || protectedPinnedTimeSlotId;
+                const initialSlot = rulePinnedTimeSlotId
+                    ? slotFromLockedRule(locked, currentInitialSlot)
+                    : currentInitialSlot;
                 assignments.push(makeAssignment({
                     plan,
                     sequence,
                     blockNumber,
                     blockSize,
                     blockIndex,
-                    pinnedTimeSlotId: locked ? slotKey(locked.day, locked.period) : null,
+                    pinnedTimeSlotId,
                     initialSlot,
                     project,
                 }));
@@ -274,6 +406,21 @@ export function buildTimetableProblem(input = {}) {
         timeSlots: buildTimeSlots(project),
         rooms: collectRooms(project),
         lessonAssignments: buildLessonAssignments(project),
+    };
+}
+
+function countPinnedAssignments(problem = {}) {
+    return (problem.lessonAssignments || []).filter(assignment => assignment.pinnedTimeSlotId).length;
+}
+
+function hasInitialSolution(problem = {}) {
+    return (problem.lessonAssignments || []).some(assignment => idOfPlanningValue(assignment.timeSlot));
+}
+
+function solverStatsForProblem(problem = {}) {
+    return {
+        initialSolutionUsed: hasInitialSolution(problem),
+        pinnedCount: countPinnedAssignments(problem),
     };
 }
 
@@ -305,6 +452,7 @@ function assignmentToSlot(assignment) {
         blockIndex: Number.isInteger(Number(assignment.blockIndex)) ? Number(assignment.blockIndex) : 0,
         blockSize: Math.max(1, Number.parseInt(assignment.blockSize, 10) || 1),
         locked: Boolean(assignment.pinnedTimeSlotId),
+        manuallyAdjusted: Boolean(assignment.manuallyAdjusted),
     };
 }
 
@@ -343,7 +491,7 @@ export function transformTimetableSolutionToSchedule(inputProject = {}, solution
     const audit = auditTimetableProject(project);
     const qualityIssues = buildTimetableQualityIssues(project, slots);
 
-    return {
+    const schedule = {
         id: `schedule_${Date.now()}`,
         generatedAt: new Date().toISOString(),
         source: 'timefold_solver',
@@ -362,8 +510,50 @@ export function transformTimetableSolutionToSchedule(inputProject = {}, solution
             softScore: Number(solution.softScore ?? stats.softScore ?? 0),
             durationMs: stats.durationMs ?? null,
             solverStatus: solution.solverStatus || stats.solverStatus || null,
+            initialSolutionUsed: Boolean(stats.initialSolutionUsed),
+            pinnedCount: Number(stats.pinnedCount || 0),
+            accepted: stats.accepted ?? null,
+            reason: stats.reason || null,
         },
     };
+    schedule.publication = validateTimetablePublication({ ...project, schedule });
+    return schedule;
+}
+
+function assertPinnedAssignmentsPreserved(problem, solution, stats = {}) {
+    const pinnedById = new Map();
+    for (const assignment of problem.lessonAssignments || []) {
+        if (assignment.pinnedTimeSlotId) pinnedById.set(assignment.id, assignment.pinnedTimeSlotId);
+    }
+    if (!pinnedById.size) return;
+
+    const moved = [];
+    for (const assignment of solution.lessonAssignments || []) {
+        const pinnedTimeSlotId = pinnedById.get(assignment.id);
+        if (!pinnedTimeSlotId) continue;
+        if (idOfPlanningValue(assignment.timeSlot) !== pinnedTimeSlotId) {
+            moved.push({
+                assignmentId: assignment.id,
+                expected: pinnedTimeSlotId,
+                actual: idOfPlanningValue(assignment.timeSlot) || null,
+            });
+        }
+    }
+    if (!moved.length) return;
+
+    throw new TimetableTimefoldError(
+        'Timefold moved pinned timetable assignments',
+        'pinned_slot_moved',
+        422,
+        {
+            ...stats,
+            ...solverStatsForProblem(problem),
+            accepted: false,
+            reason: 'pinned_slot_moved',
+            movedPinnedCount: moved.length,
+            movedPinnedAssignments: moved,
+        },
+    );
 }
 
 function assertSolvedSchedule(schedule) {
@@ -407,6 +597,7 @@ export async function solveTimetableWithTimefold({
     const deadline = Date.now() + timeout;
     const startedAt = Date.now();
     const problem = buildTimetableProblem(project);
+    const problemStats = solverStatsForProblem(problem);
     let jobId = null;
     let status = null;
 
@@ -445,16 +636,24 @@ export async function solveTimetableWithTimefold({
                 softScore: Number(status.softScore ?? 0),
                 durationMs: Date.now() - startedAt,
                 solverStatus: status.solverStatus || null,
+                ...problemStats,
+                accepted: false,
+                reason: 'hard_score_violation',
             });
         }
 
         const solution = await fetchJson(fetchClient, `${solverUrl}/timetable-solutions/${encodeURIComponent(jobId)}`, {
             method: 'GET',
         }, remaining());
-        const schedule = transformTimetableSolutionToSchedule(project, solution, {
+        const solutionStats = {
             ...status,
+            ...problemStats,
             jobId,
             durationMs: Date.now() - startedAt,
+        };
+        assertPinnedAssignmentsPreserved(problem, solution, solutionStats);
+        const schedule = transformTimetableSolutionToSchedule(project, solution, {
+            ...solutionStats,
         });
         assertSolvedSchedule(schedule);
         const normalizedProject = normalizeTimetableProject(project);

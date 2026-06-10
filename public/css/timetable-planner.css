@@ -873,8 +873,43 @@ button.tt-section-title {
     box-shadow: 0 24px 60px rgba(2, 6, 23, 0.38);
 }
 
+.tt-publish-dialog {
+    display: grid;
+    gap: var(--tt-space-md);
+    width: min(560px, 100%);
+    max-height: min(720px, calc(100vh - 48px));
+    overflow: auto;
+    padding: var(--tt-space-md);
+    background: var(--tt-bg-panel);
+    border: 1px solid var(--tt-border-strong);
+    border-radius: var(--tt-radius-lg);
+    color: var(--tt-text);
+    box-shadow: 0 24px 60px rgba(2, 6, 23, 0.38);
+}
+
 .tt-rule-review-dialog {
     width: min(1120px, 100%);
+}
+
+.tt-publish-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--tt-space-xs);
+}
+
+.tt-publish-summary span {
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-soft);
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+}
+
+.tt-publish-summary b {
+    display: block;
+    color: var(--tt-text);
 }
 
 .tt-dialog-header {
@@ -1568,6 +1603,12 @@ button.tt-section-title {
     gap: var(--tt-space-sm);
 }
 
+.tt-publication-actions {
+    display: grid;
+    gap: var(--tt-space-sm);
+    margin-bottom: var(--tt-space-md);
+}
+
 .tt-btn,
 .tt-run-btn,
 .tt-export-btn,
@@ -1601,7 +1642,8 @@ button.tt-section-title {
 }
 
 .tt-btn:disabled,
-.tt-run-btn:disabled {
+.tt-run-btn:disabled,
+.tt-export-btn:disabled {
     opacity: 0.62;
     cursor: not-allowed;
 }
@@ -2151,6 +2193,138 @@ button.tt-section-title {
 
 .tt-detail-list .is-warning {
     color: var(--tt-warning);
+}
+
+.tt-fingerprint {
+    font-variant-numeric: tabular-nums;
+}
+
+.tt-publication-diff,
+.tt-publication-history {
+    display: grid;
+    gap: var(--tt-space-xs);
+    margin-top: var(--tt-space-sm);
+    padding-top: var(--tt-space-sm);
+    border-top: 1px solid var(--tt-border);
+}
+
+.tt-publication-diff-head,
+.tt-publication-diff-item,
+.tt-publication-history-head,
+.tt-publication-history-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 4px var(--tt-space-xs);
+    align-items: center;
+    min-width: 0;
+}
+
+.tt-publication-history-item {
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.tt-publication-history-item:hover strong,
+.tt-publication-history-item:hover span {
+    color: var(--tt-primary);
+}
+
+.tt-publication-diff-head strong,
+.tt-publication-diff-item strong,
+.tt-publication-history-head strong,
+.tt-publication-history-item strong {
+    color: var(--tt-text);
+    font-size: 0.78rem;
+}
+
+.tt-publication-diff-head span,
+.tt-publication-diff-item span,
+.tt-publication-diff-item em,
+.tt-publication-history-head span,
+.tt-publication-history-item span {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-publication-diff-item em {
+    grid-column: 2;
+    color: var(--tt-warning);
+}
+
+.tt-publication-history-dialog {
+    width: min(720px, 100%);
+}
+
+.tt-publication-history-detail {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--tt-space-xs);
+}
+
+.tt-publication-history-detail span {
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-muted);
+    font-size: 0.76rem;
+}
+
+.tt-publication-history-detail b {
+    display: block;
+    margin-bottom: 2px;
+    color: var(--tt-text);
+    font-size: 0.74rem;
+}
+
+.tt-publication-history-slots {
+    display: grid;
+    gap: var(--tt-space-xs);
+    max-height: 280px;
+    overflow: auto;
+    padding-right: 2px;
+}
+
+.tt-publication-history-slot {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: var(--tt-space-xs);
+    align-items: center;
+    padding: 8px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-input);
+}
+
+.tt-publication-history-slot strong,
+.tt-publication-history-slot span,
+.tt-publication-history-slot em {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-publication-history-slot strong {
+    color: var(--tt-text);
+    font-size: 0.78rem;
+}
+
+.tt-publication-history-slot span,
+.tt-publication-history-slot em {
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+    font-style: normal;
 }
 
 .tt-conflict-summary {

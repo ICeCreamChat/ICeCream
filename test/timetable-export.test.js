@@ -114,6 +114,71 @@ test('master timetable export produces a single combined sheet', () => {
     assert.match(workbook.combined, /陈老师/);
 });
 
+test('published timetable export carries publication metadata and validation summary', () => {
+    const project = scheduledProject();
+    const publishedProject = {
+        ...project,
+        schedule: {
+            ...project.schedule,
+            publication: {
+                ok: true,
+                reason: 'ready',
+                summary: {
+                    totalLessons: project.schedule.score.totalLessons,
+                    placedLessons: project.schedule.score.placedLessons,
+                    unplacedLessons: 0,
+                    hardConflicts: 0,
+                },
+                blockingIssues: [],
+                warnings: [
+                    { type: 'manual_adjusted', message: '课表包含手动调整，发布前建议复核锁定课节。' },
+                    { type: 'restored_published_draft' },
+                ],
+                reviewItems: [],
+            },
+            published: {
+                status: 'published',
+                version: 3,
+                publishedAt: '2026-06-10T08:00:00.000Z',
+                scheduleId: project.schedule.id,
+                note: '教务处发布给七年级使用',
+                snapshot: {
+                    scheduleId: project.schedule.id,
+                    generatedAt: project.schedule.generatedAt,
+                    source: project.schedule.source,
+                    slotCount: project.schedule.slots.length,
+                    fingerprint: '9f2d7c5b4a8e1d0c3b6a594837261504fdecba98765432100123456789abcdef',
+                    score: project.schedule.score,
+                    publicationSummary: {
+                        totalLessons: project.schedule.score.totalLessons,
+                        placedLessons: project.schedule.score.placedLessons,
+                        unplacedLessons: 0,
+                        hardConflicts: 0,
+                    },
+                    slots: project.schedule.slots,
+                },
+            },
+        },
+    };
+    const workbook = readWorkbook(buildTimetableExportXlsx(publishedProject, { type: 'class', published: true }));
+
+    assert.match(workbook.combined, /发布信息/);
+    assert.match(workbook.combined, /发布版本/);
+    assert.match(workbook.combined, /V3/);
+    assert.match(workbook.combined, /发布时间/);
+    assert.match(workbook.combined, /2026-06-10T08:00:00.000Z/);
+    assert.match(workbook.combined, /发布备注/);
+    assert.match(workbook.combined, /教务处发布给七年级使用/);
+    assert.match(workbook.combined, /发布指纹/);
+    assert.match(workbook.combined, /9f2d7c5b4a8e1d0c3b6a594837261504fdecba98765432100123456789abcdef/);
+    assert.match(workbook.combined, /发布校验/);
+    assert.match(workbook.combined, /已通过/);
+    assert.match(workbook.combined, /硬冲突/);
+    assert.match(workbook.combined, /未排课时/);
+    assert.match(workbook.combined, /恢复发布版/);
+    assert.doesNotMatch(workbook.combined, /restored_published_draft/);
+});
+
 test('lesson plan export lists roster columns and plan rows', () => {
     const project = scheduledProject();
     const workbook = readWorkbook(buildTimetableExportXlsx(project, { type: 'plans' }));

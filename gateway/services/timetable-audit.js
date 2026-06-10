@@ -43,6 +43,30 @@ function countPlanHoursBy(project, getKeys) {
     return counts;
 }
 
+function planRoomPool(plan = {}) {
+    const rooms = Array.isArray(plan.allowedRoomIds) && plan.allowedRoomIds.length
+        ? plan.allowedRoomIds
+        : [plan.roomId].filter(Boolean);
+    return [...new Set(rooms)].sort();
+}
+
+function countRoomDemandPools(project) {
+    const counts = new Map();
+    for (const plan of project.lessonPlans || []) {
+        const pool = planRoomPool(plan);
+        if (!pool.length) continue;
+        const key = pool.join('|');
+        const current = counts.get(key) || {
+            id: key,
+            rooms: pool,
+            load: 0,
+        };
+        current.load += Number(plan.weeklyHours || 0);
+        counts.set(key, current);
+    }
+    return [...counts.values()];
+}
+
 function requiredDoubleBlocks(plan = {}) {
     const hours = Math.max(0, Number(plan.weeklyHours || 0));
     if (plan.blockPreference === 'double') return Math.floor(hours / 2);
@@ -102,7 +126,6 @@ export function auditTimetableProject(input = {}) {
 
     const classHours = countPlanHoursBy(project, plan => [plan.classId]);
     const teacherHours = countPlanHoursBy(project, plan => slotTeacherIds(plan));
-    const roomHours = countPlanHoursBy(project, plan => [plan.roomId].filter(Boolean));
     const classBottlenecks = [];
     const teacherBottlenecks = [];
     const roomBottlenecks = [];
@@ -141,14 +164,16 @@ export function auditTimetableProject(input = {}) {
         }
     }
 
-    for (const [roomId, load] of roomHours) {
-        const capacity = activeSlotsPerOwner;
+    for (const pool of countRoomDemandPools(project)) {
+        const roomId = pool.rooms.join(' / ');
+        const load = pool.load;
+        const capacity = activeSlotsPerOwner * Math.max(1, pool.rooms.length);
         const utilization = capacity ? Math.round((load / capacity) * 100) : 0;
-        roomBottlenecks.push({ id: roomId, name: roomId, load, capacity, utilization });
+        roomBottlenecks.push({ id: pool.id, name: roomId, rooms: pool.rooms, load, capacity, utilization });
         if (load > capacity) {
-            blockingIssues.push(issue('room_capacity', '固定教室课时超过可用节次。', { roomId, load, capacity }));
+            blockingIssues.push(issue('room_capacity', '固定教室课时超过可用节次。', { roomId, rooms: pool.rooms, load, capacity }));
         } else if (utilization >= 90) {
-            warnings.push(issue('room_load', '固定教室使用接近满载。', { roomId, utilization }));
+            warnings.push(issue('room_load', '固定教室使用接近满载。', { roomId, rooms: pool.rooms, utilization }));
         }
     }
 

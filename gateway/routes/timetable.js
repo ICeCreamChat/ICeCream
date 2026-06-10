@@ -17,6 +17,7 @@ import {
     normalizeTimetableProject,
     runTimetableScheduler,
     validateTimetableProjectForSolve,
+    validateTimetablePublication,
 } from '../services/timetable-scheduler.js';
 import {
     normalizeTimetableRuleDraftRows,
@@ -27,6 +28,17 @@ import {
     createTimetableOptimizationJob,
     getTimetableOptimizationJob,
 } from '../services/timetable-optimization-jobs.js';
+import {
+    buildPublishedSnapshot,
+    findPublishedHistoryEntry,
+    nextPublishedHistory,
+    nextPublishVersion,
+    publicationEntryWithVerifiedFingerprint,
+    PUBLICATION_FINGERPRINT_MISMATCH,
+    PUBLICATION_FINGERPRINT_MISMATCH_MESSAGE,
+    resolvePublishedRestoreEntry,
+    verifyPublishedSnapshotFingerprint,
+} from '../services/timetable-publication.js';
 
 const router = express.Router();
 const upload = multer({
@@ -59,6 +71,211 @@ function sameNumberList(left = [], right = []) {
         && Array.isArray(right)
         && left.length === right.length
         && left.every((value, index) => Number(value) === Number(right[index]));
+}
+
+function scheduleFromPublishedSnapshot(current = {}, entry = {}) {
+    const snapshot = entry.snapshot || {};
+    const now = new Date().toISOString();
+    const slots = (snapshot.slots || []).map((slot, index) => ({
+        id: slot.id || `restored_${entry.version || 'history'}_${index + 1}`,
+        day: slot.day,
+        period: slot.period,
+        classId: slot.classId,
+        subjectId: slot.subjectId,
+        teacherId: slot.teacherId,
+        teacherIds: slot.teacherIds || [],
+        lessonPlanId: slot.lessonPlanId,
+        roomId: slot.roomId || null,
+        blockId: slot.blockId || null,
+        blockIndex: slot.blockIndex || 0,
+        blockSize: slot.blockSize || 1,
+        locked: Boolean(slot.locked),
+        manuallyAdjusted: Boolean(slot.manuallyAdjusted),
+    }));
+    return {
+        ...current.schedule,
+        id: `schedule_restored_${entry.version || 'history'}_${Date.now()}`,
+        generatedAt: now,
+        source: 'published_history_restored',
+        slots,
+        lockedSlots: slots.filter(slot => slot.locked),
+        conflicts: [],
+        unplaced: [],
+        audit: null,
+        qualityIssues: [],
+        score: snapshot.score || {},
+        solverStats: {
+            phase: 'published_history_restore',
+            status: 'restored',
+            strategy: 'published_history_restore',
+            accepted: true,
+            reason: null,
+            restoredVersion: Number.parseInt(entry.version, 10) || null,
+            restoredScheduleId: entry.scheduleId || snapshot.scheduleId || null,
+        },
+        published: mergeBackfilledPublishedEntry(current.schedule?.published, entry),
+    };
+}
+
+function mergeBackfilledPublishedEntry(published = null, entry = {}) {
+    if (!published) return null;
+    const entryVersion = Number.parseInt(entry.version, 10);
+    const currentVersion = Number.parseInt(published.version, 10);
+    const history = Array.isArray(published.history)
+        ? published.history.map(item => (
+            Number.parseInt(item.version, 10) === entryVersion
+                ? { ...item, ...entry }
+                : item
+        ))
+        : [];
+    const currentPatch = Number.isInteger(entryVersion) && entryVersion === currentVersion
+        ? {
+            fingerprint: entry.fingerprint || entry.snapshot?.fingerprint || published.fingerprint || '',
+            snapshot: entry.snapshot || published.snapshot,
+        }
+        : {};
+    return {
+        ...published,
+        ...currentPatch,
+        ...(history.length ? { history } : {}),
+        status: 'draft_changed',
+    };
+}
+
+function publishedEntryBackfilledForExport(published = null, entry = {}) {
+    if (!published) return null;
+    const entryVersion = Number.parseInt(entry.version, 10);
+    const currentVersion = Number.parseInt(published.version, 10);
+    const history = Array.isArray(published.history)
+        ? published.history.map(item => (
+            Number.parseInt(item.version, 10) === entryVersion
+                ? { ...item, ...entry }
+                : item
+        ))
+        : [];
+    const currentPatch = Number.isInteger(entryVersion) && entryVersion === currentVersion
+        ? {
+            fingerprint: entry.fingerprint || entry.snapshot?.fingerprint || published.fingerprint || '',
+            snapshot: entry.snapshot || published.snapshot,
+        }
+        : {};
+    return {
+        ...published,
+        ...currentPatch,
+        ...(history.length ? { history } : {}),
+    };
+}
+
+function canonicalPublishedSlot(slot = {}) {
+    return JSON.stringify({
+        id: slot.id || '',
+        day: Number(slot.day || 0),
+        period: Number(slot.period || 0),
+        classId: slot.classId || '',
+        subjectId: slot.subjectId || '',
+        teacherId: slot.teacherId || '',
+        teacherIds: [...new Set([...(slot.teacherIds || []), slot.teacherId].filter(Boolean))].sort(),
+        lessonPlanId: slot.lessonPlanId || '',
+        roomId: slot.roomId || '',
+        blockId: slot.blockId || '',
+        blockIndex: Number(slot.blockIndex || 0),
+        blockSize: Number(slot.blockSize || 1),
+        locked: Boolean(slot.locked),
+        manuallyAdjusted: Boolean(slot.manuallyAdjusted),
+    });
+}
+
+function scheduleDiffersFromPublishedSnapshot(schedule = {}) {
+    const published = schedule?.published || null;
+    const snapshotSlots = published?.snapshot?.slots || [];
+    const currentSlots = schedule?.slots || [];
+    if (published?.status !== 'published' || !snapshotSlots.length) return false;
+    if (snapshotSlots.length !== currentSlots.length) return true;
+    const snapshotKeys = snapshotSlots.map(canonicalPublishedSlot).sort();
+    const currentKeys = currentSlots.map(canonicalPublishedSlot).sort();
+    return snapshotKeys.some((key, index) => key !== currentKeys[index]);
+}
+
+function projectMarkedDraftChanged(project = {}) {
+    return normalizeTimetableProject({
+        ...project,
+        schedule: project.schedule
+            ? {
+                ...project.schedule,
+                published: {
+                    ...project.schedule.published,
+                    status: 'draft_changed',
+                },
+            }
+            : project.schedule,
+    });
+}
+
+function splitExportType(type = 'class') {
+    const value = String(type || 'class');
+    if (value.startsWith('published_')) {
+        return {
+            type: value.slice('published_'.length) || 'class',
+            published: true,
+        };
+    }
+    return { type: value, published: false };
+}
+
+function projectWithPublishedSnapshot(project = {}, version = null) {
+    const selectedEntry = publicationEntryWithVerifiedFingerprint(resolvePublishedRestoreEntry(project.schedule?.published, version));
+    const historyEntry = version ? selectedEntry : null;
+    const snapshot = selectedEntry?.snapshot || project.schedule?.published?.snapshot;
+    if (!snapshot?.slots?.length) return null;
+    const projectedPublished = selectedEntry
+        ? {
+            ...(project.schedule?.published || {}),
+            status: 'published',
+            version: Number.parseInt(selectedEntry.version, 10) || selectedEntry.version || project.schedule?.published?.version,
+            publishedAt: selectedEntry.publishedAt || project.schedule?.published?.publishedAt || null,
+            scheduleId: selectedEntry.scheduleId || snapshot.scheduleId || project.schedule?.published?.scheduleId || null,
+            note: selectedEntry.note || '',
+            fingerprint: selectedEntry.fingerprint || snapshot.fingerprint || '',
+            snapshot,
+        }
+        : project.schedule?.published
+            ? { ...project.schedule.published, status: 'published', fingerprint: project.schedule.published.fingerprint || snapshot.fingerprint || '' }
+            : null;
+    return normalizeTimetableProject({
+        ...project,
+        schedule: {
+            ...project.schedule,
+            id: snapshot.scheduleId || project.schedule.id,
+            generatedAt: snapshot.generatedAt || project.schedule.generatedAt,
+            source: historyEntry ? 'published_history_snapshot' : 'published_snapshot',
+            slots: snapshot.slots,
+            lockedSlots: snapshot.slots.filter(slot => slot.locked),
+            conflicts: [],
+            unplaced: [],
+            score: snapshot.score || {},
+            publication: {
+                ok: true,
+                reason: historyEntry ? 'published_history_snapshot' : 'published_snapshot',
+                summary: snapshot.publicationSummary || {},
+                blockingIssues: [],
+                warnings: [],
+                reviewItems: [],
+            },
+            published: projectedPublished,
+        },
+    });
+}
+
+function failPublicationFingerprintMismatch(res, current, verification) {
+    return fail(res, new Error(PUBLICATION_FINGERPRINT_MISMATCH_MESSAGE), 409, {
+        project: current,
+        schedule: current?.schedule || null,
+        reason: PUBLICATION_FINGERPRINT_MISMATCH,
+        fingerprint: {
+            expected: verification.expected || '',
+            actual: verification.actual || '',
+        },
+    });
 }
 
 router.get('/bootstrap', async (req, res) => {
@@ -272,13 +489,330 @@ router.post('/schedule/adjust', async (req, res) => {
     }
 });
 
+router.post('/schedule/publish', async (req, res) => {
+    try {
+        const timetableStore = store();
+        const current = await timetableStore.loadProject();
+        const publication = validateTimetablePublication(current);
+        if (!publication.ok) {
+            const project = normalizeTimetableProject({
+                ...current,
+                schedule: current.schedule ? { ...current.schedule, publication } : current.schedule,
+            });
+            await timetableStore.saveProject(project);
+            fail(res, new Error(publication.message), 422, {
+                project,
+                schedule: project.schedule,
+                reason: publication.reason,
+                publication,
+            });
+            return;
+        }
+        const note = String(req.body?.note || '').trim().slice(0, 200);
+        const currentPublished = current.schedule?.published || null;
+        const archivedPublished = (
+            currentPublished?.status === 'published'
+            && !currentPublished?.snapshot?.slots?.length
+        )
+            ? {
+                ...currentPublished,
+                fingerprint: currentPublished.fingerprint || '',
+                snapshot: buildPublishedSnapshot(current.schedule, publication),
+            }
+            : currentPublished;
+        const history = nextPublishedHistory(archivedPublished);
+        const snapshot = buildPublishedSnapshot(current.schedule, publication);
+        const publishedSchedule = {
+            ...current.schedule,
+            source: 'published',
+            published: {
+                status: 'published',
+                version: nextPublishVersion(current.schedule),
+                publishedAt: new Date().toISOString(),
+                scheduleId: current.schedule.id,
+                note,
+                fingerprint: snapshot.fingerprint,
+                snapshot,
+                history,
+            },
+        };
+        const finalPublication = validateTimetablePublication({
+            ...current,
+            schedule: publishedSchedule,
+        });
+        const project = normalizeTimetableProject({
+            ...current,
+            schedule: {
+                ...publishedSchedule,
+                publication: finalPublication,
+            },
+        });
+        const saved = await timetableStore.saveProject(project);
+        ok(res, { project: saved, schedule: saved.schedule, publication: saved.schedule.publication });
+    } catch (error) {
+        fail(res, error, 500);
+    }
+});
+
+router.post('/schedule/published/restore', async (req, res) => {
+    try {
+        const timetableStore = store();
+        const current = await timetableStore.loadProject();
+        const requestedVersion = req.body?.version;
+        let restoreSourceProject = current;
+        let rawEntry = resolvePublishedRestoreEntry(restoreSourceProject.schedule?.published, requestedVersion);
+        if (
+            (requestedVersion === undefined || requestedVersion === null || String(requestedVersion).trim() === '')
+            && restoreSourceProject.schedule?.published?.status === 'published'
+            && !rawEntry?.snapshot
+        ) {
+            const publication = validateTimetablePublication(restoreSourceProject);
+            if (!publication.ok) {
+                const project = normalizeTimetableProject({
+                    ...restoreSourceProject,
+                    schedule: restoreSourceProject.schedule
+                        ? { ...restoreSourceProject.schedule, publication }
+                        : restoreSourceProject.schedule,
+                });
+                await timetableStore.saveProject(project);
+                fail(res, new Error(publication.message), 422, {
+                    project,
+                    schedule: project.schedule,
+                    reason: publication.reason,
+                    publication,
+                });
+                return;
+            }
+            const snapshot = buildPublishedSnapshot(restoreSourceProject.schedule, publication);
+            restoreSourceProject = normalizeTimetableProject({
+                ...restoreSourceProject,
+                schedule: {
+                    ...restoreSourceProject.schedule,
+                    publication,
+                    published: {
+                        ...restoreSourceProject.schedule.published,
+                        fingerprint: snapshot.fingerprint,
+                        snapshot,
+                    },
+                },
+            });
+            restoreSourceProject = await timetableStore.saveProject(restoreSourceProject);
+            rawEntry = resolvePublishedRestoreEntry(restoreSourceProject.schedule?.published, requestedVersion);
+        }
+        if (
+            !rawEntry?.snapshot?.slots?.length
+            && (requestedVersion === undefined || requestedVersion === null || String(requestedVersion).trim() === '')
+            && current.schedule?.published?.status === 'draft_changed'
+            && Number.parseInt(current.schedule?.published?.version, 10) > 0
+            && !current.schedule?.published?.snapshot?.slots?.length
+        ) {
+            fail(res, new Error('上一版发布快照缺失，当前只能重新发布，暂时无法恢复发布版。'), 422, {
+                project: current,
+                schedule: current.schedule,
+                reason: 'published_snapshot_missing',
+            });
+            return;
+        }
+        if (!rawEntry?.snapshot?.slots?.length) {
+            fail(res, new Error('没有找到可恢复的发布历史版本。'), 404, {
+                project: current,
+                schedule: current.schedule,
+                reason: 'published_history_not_found',
+            });
+            return;
+        }
+        const fingerprint = verifyPublishedSnapshotFingerprint(rawEntry);
+        if (!fingerprint.ok) {
+            failPublicationFingerprintMismatch(res, restoreSourceProject, fingerprint);
+            return;
+        }
+        const entry = publicationEntryWithVerifiedFingerprint(rawEntry);
+        const restoredSchedule = scheduleFromPublishedSnapshot(restoreSourceProject, entry);
+        let project = normalizeTimetableProject({
+            ...restoreSourceProject,
+            schedule: restoredSchedule,
+        });
+        const publication = validateTimetablePublication(project);
+        project = normalizeTimetableProject({
+            ...project,
+            schedule: {
+                ...project.schedule,
+                publication,
+            },
+        });
+        const saved = await timetableStore.saveProject(project);
+        ok(res, {
+            project: saved,
+            schedule: saved.schedule,
+            publication: saved.schedule.publication,
+            restoredVersion: Number.parseInt(entry.version, 10) || null,
+        });
+    } catch (error) {
+        fail(res, error, 500);
+    }
+});
+
 router.post('/export', async (req, res) => {
     try {
-        const current = await store().loadProject();
-        const type = req.body?.type || req.query?.type || 'class';
-        const buffer = buildTimetableExportXlsx(current, { type });
-        const name = type === 'teacher' ? '教师课表' : type === 'plans' ? '任课信息' : type === 'master' ? '总课表' : '班级课表';
-        const filename = encodeURIComponent(`${name}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        const timetableStore = store();
+        const current = await timetableStore.loadProject();
+        const requested = splitExportType(req.body?.type || req.query?.type || 'class');
+        const publishedVersion = req.body?.publishedVersion || req.query?.publishedVersion || null;
+        const type = requested.type;
+        let exportProject = current;
+        if (requested.published) {
+            if (publishedVersion && !findPublishedHistoryEntry(current.schedule?.published, publishedVersion)) {
+                fail(res, new Error('没有找到可导出的发布历史版本。'), 404, {
+                    project: current,
+                    schedule: current.schedule,
+                    reason: 'published_history_not_found',
+                });
+                return;
+            }
+            let publishedSourceProject = current;
+            let publishedEntry = resolvePublishedRestoreEntry(publishedSourceProject.schedule?.published, publishedVersion);
+            if (
+                !publishedVersion
+                && publishedSourceProject.schedule?.published?.status === 'published'
+                && !publishedEntry?.snapshot
+            ) {
+                const publication = validateTimetablePublication(publishedSourceProject);
+                if (!publication.ok) {
+                    const project = normalizeTimetableProject({
+                        ...publishedSourceProject,
+                        schedule: publishedSourceProject.schedule
+                            ? { ...publishedSourceProject.schedule, publication }
+                            : publishedSourceProject.schedule,
+                    });
+                    await timetableStore.saveProject(project);
+                    fail(res, new Error(publication.message), 422, {
+                        project,
+                        schedule: project.schedule,
+                        reason: publication.reason,
+                        publication,
+                    });
+                    return;
+                }
+                const snapshot = buildPublishedSnapshot(publishedSourceProject.schedule, publication);
+                publishedSourceProject = normalizeTimetableProject({
+                    ...publishedSourceProject,
+                    schedule: {
+                        ...publishedSourceProject.schedule,
+                        publication,
+                        published: {
+                            ...publishedSourceProject.schedule.published,
+                            fingerprint: snapshot.fingerprint,
+                            snapshot,
+                        },
+                    },
+                });
+                publishedSourceProject = await timetableStore.saveProject(publishedSourceProject);
+                publishedEntry = resolvePublishedRestoreEntry(publishedSourceProject.schedule?.published, publishedVersion);
+            }
+            if (publishedEntry) {
+                const fingerprint = verifyPublishedSnapshotFingerprint(publishedEntry);
+                if (!fingerprint.ok) {
+                    failPublicationFingerprintMismatch(res, publishedSourceProject, fingerprint);
+                    return;
+                }
+            }
+            exportProject = projectWithPublishedSnapshot(publishedSourceProject, publishedVersion);
+            if (!exportProject) {
+                fail(res, new Error('没有可导出的已发布课表快照。'), 422, {
+                    project: current,
+                    schedule: current.schedule,
+                    reason: 'published_snapshot_missing',
+                });
+                return;
+            }
+        } else if (type !== 'plans') {
+            if (
+                current.schedule?.published?.status === 'draft_changed'
+                || scheduleDiffersFromPublishedSnapshot(current.schedule)
+            ) {
+                const project = current.schedule?.published?.status === 'draft_changed'
+                    ? current
+                    : projectMarkedDraftChanged(current);
+                if (project !== current) await timetableStore.saveProject(project);
+                fail(res, new Error('当前课表已改动，请重新发布后再导出正式课表。'), 422, {
+                    project,
+                    schedule: project.schedule,
+                    reason: 'publication_draft_changed',
+                    publication: project.schedule.publication || null,
+                });
+                return;
+            }
+            const publication = validateTimetablePublication(exportProject);
+            if (!publication.ok) {
+                const project = normalizeTimetableProject({
+                    ...exportProject,
+                    schedule: exportProject.schedule ? { ...exportProject.schedule, publication } : exportProject.schedule,
+                });
+                await timetableStore.saveProject(project);
+                fail(res, new Error(publication.message), 422, {
+                    project,
+                    schedule: project.schedule,
+                    reason: publication.reason,
+                    publication,
+                });
+                return;
+            }
+            if (current.schedule?.published?.status !== 'published') {
+                fail(res, new Error('请先发布课表后导出正式课表。'), 422, {
+                    project: current,
+                    schedule: current.schedule,
+                    reason: 'publication_required',
+                    publication,
+                });
+                return;
+            }
+            const currentPublishedEntry = current.schedule?.published?.status === 'published'
+                ? resolvePublishedRestoreEntry(current.schedule.published)
+                : null;
+            if (!currentPublishedEntry?.snapshot) {
+                const snapshot = buildPublishedSnapshot(current.schedule, publication);
+                exportProject = normalizeTimetableProject({
+                    ...current,
+                    schedule: {
+                        ...current.schedule,
+                        publication,
+                        published: {
+                            ...current.schedule.published,
+                            fingerprint: snapshot.fingerprint,
+                            snapshot,
+                        },
+                    },
+                });
+                exportProject = await timetableStore.saveProject(exportProject);
+            } else {
+                const fingerprint = verifyPublishedSnapshotFingerprint(currentPublishedEntry);
+                if (!fingerprint.ok) {
+                    failPublicationFingerprintMismatch(res, current, fingerprint);
+                    return;
+                }
+                const verifiedEntry = publicationEntryWithVerifiedFingerprint(currentPublishedEntry);
+                if (
+                    verifiedEntry?.fingerprint
+                    && (
+                        current.schedule.published.fingerprint !== verifiedEntry.fingerprint
+                        || current.schedule.published.snapshot?.fingerprint !== verifiedEntry.fingerprint
+                    )
+                ) {
+                    exportProject = normalizeTimetableProject({
+                        ...current,
+                        schedule: {
+                            ...current.schedule,
+                            published: publishedEntryBackfilledForExport(current.schedule.published, verifiedEntry),
+                        },
+                    });
+                }
+            }
+        }
+        const buffer = buildTimetableExportXlsx(exportProject, { type });
+        const versionSuffix = requested.published && publishedVersion ? `_V${Number.parseInt(publishedVersion, 10) || publishedVersion}` : '';
+        const namePrefix = requested.published ? '已发布' : '';
+        const name = type === 'teacher' ? `${namePrefix}教师课表` : type === 'plans' ? '任课信息' : type === 'master' ? `${namePrefix}总课表` : `${namePrefix}班级课表`;
+        const filename = encodeURIComponent(`${name}${versionSuffix}_${new Date().toISOString().slice(0, 10)}.xlsx`);
         res.setHeader('Content-Type', TIMETABLE_XLSX_MIME);
         res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${filename}`);
         res.send(buffer);

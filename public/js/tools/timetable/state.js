@@ -64,6 +64,23 @@ export function createTimetablePlannerState(overrides = {}) {
             issues: [],
             hasBlockingIssues: false,
         },
+        publishDialog: {
+            open: false,
+            note: '',
+            loading: false,
+        },
+        restoreDialog: {
+            open: false,
+            mode: '',
+            version: null,
+            targetLabel: '',
+            summary: null,
+            loading: false,
+        },
+        publicationHistoryDialog: {
+            open: false,
+            version: null,
+        },
         ...overrides,
     };
 }

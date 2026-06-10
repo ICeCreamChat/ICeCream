@@ -90,6 +90,213 @@ test('buildTimetableProblem only exposes active timetable slots to Timefold', ()
     assert.equal(problem.timeSlots.every(slot => slot.morning === (slot.lessonIndex === 2)), true);
 });
 
+test('buildTimetableProblem mirrors fast scheduler mixed block splitting', () => {
+    const problem = buildTimetableProblem(sampleProject({
+        lessonPlans: [
+            {
+                id: 'lp_sci',
+                classId: 'c1',
+                subjectId: 'math',
+                teacherId: 't_math',
+                weeklyHours: 6,
+                blockPreference: 'mixed',
+            },
+        ],
+        rules: { hardRules: { lockedSlots: [], teacherUnavailable: {}, classUnavailable: {} }, softRules: {} },
+        schedule: null,
+    }));
+
+    const assignments = problem.lessonAssignments.filter(assignment => assignment.lessonPlanId === 'lp_sci');
+    const doubleBlocks = new Set(assignments.filter(assignment => assignment.blockSize === 2).map(assignment => assignment.blockId));
+    const singleAssignments = assignments.filter(assignment => assignment.blockSize === 1);
+
+    assert.equal(assignments.length, 6);
+    assert.deepEqual(assignments.map(assignment => assignment.blockSize), [2, 2, 2, 2, 1, 1]);
+    assert.equal(doubleBlocks.size, 2);
+    assert.equal(singleAssignments.length, 2);
+});
+
+test('buildTimetableProblem sends current schedule as initial solution and pins protected slots', () => {
+    const project = sampleProject({
+        rules: { hardRules: { lockedSlots: [], teacherUnavailable: {}, classUnavailable: {} }, softRules: {} },
+        schedule: {
+            id: 'manual-schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'manual_adjusted',
+            slots: [
+                {
+                    id: 'math_1',
+                    day: 1,
+                    period: 1,
+                    classId: 'c1',
+                    subjectId: 'math',
+                    teacherId: 't_math',
+                    teacherIds: ['t_math', 't_helper'],
+                    lessonPlanId: 'lp_math',
+                    blockId: 'lp_math_block_1',
+                    blockIndex: 0,
+                    blockSize: 2,
+                    locked: true,
+                },
+                {
+                    id: 'math_2',
+                    day: 1,
+                    period: 2,
+                    classId: 'c1',
+                    subjectId: 'math',
+                    teacherId: 't_math',
+                    teacherIds: ['t_math', 't_helper'],
+                    lessonPlanId: 'lp_math',
+                    blockId: 'lp_math_block_1',
+                    blockIndex: 1,
+                    blockSize: 2,
+                    locked: true,
+                },
+                {
+                    id: 'pe_1',
+                    day: 3,
+                    period: 1,
+                    classId: 'c1',
+                    subjectId: 'pe',
+                    teacherId: 't_pe',
+                    teacherIds: ['t_pe'],
+                    lessonPlanId: 'lp_pe',
+                    roomId: 'gym',
+                    manuallyAdjusted: true,
+                },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 3, totalLessons: 3, completeness: 100 },
+        },
+    });
+
+    const problem = buildTimetableProblem(project);
+    const math = problem.lessonAssignments.filter(assignment => assignment.lessonPlanId === 'lp_math');
+    const pe = problem.lessonAssignments.find(assignment => assignment.lessonPlanId === 'lp_pe');
+
+    assert.deepEqual(math.map(assignment => assignment.timeSlot), ['1-1', '1-2']);
+    assert.deepEqual(math.map(assignment => assignment.pinnedTimeSlotId), ['1-1', '1-2']);
+    assert.equal(pe.timeSlot, '3-1');
+    assert.equal(pe.room, 'gym');
+    assert.equal(pe.pinnedTimeSlotId, '3-1');
+});
+
+test('buildTimetableProblem protects an entire double block when one block slot is locked by rule', () => {
+    const project = sampleProject({
+        lessonPlans: [
+            {
+                id: 'lp_math',
+                classId: 'c1',
+                subjectId: 'math',
+                teacherId: 't_math',
+                teacherIds: ['t_math', 't_helper'],
+                weeklyHours: 2,
+                blockPreference: 'double',
+            },
+        ],
+        rules: {
+            hardRules: {
+                lockedSlots: [
+                    { day: 2, period: 3, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+                ],
+                teacherUnavailable: {},
+                classUnavailable: {},
+            },
+            softRules: {},
+        },
+        schedule: null,
+    });
+
+    const problem = buildTimetableProblem(project);
+    const math = problem.lessonAssignments
+        .filter(assignment => assignment.lessonPlanId === 'lp_math')
+        .sort((left, right) => left.blockIndex - right.blockIndex);
+
+    assert.equal(math.length, 2);
+    assert.deepEqual(math.map(assignment => assignment.pinnedTimeSlotId), ['2-3', '2-4']);
+    assert.deepEqual(math.map(assignment => assignment.timeSlot), ['2-3', '2-4']);
+    assert.equal(new Set(math.map(assignment => assignment.blockId)).size, 1);
+});
+
+test('buildTimetableProblem anchors a locked double block backward from the last active period', () => {
+    const project = sampleProject({
+        periodsPerDay: 5,
+        activePeriods: [1, 2, 3, 4, 5],
+        lessonPlans: [
+            {
+                id: 'lp_math',
+                classId: 'c1',
+                subjectId: 'math',
+                teacherId: 't_math',
+                teacherIds: ['t_math', 't_helper'],
+                weeklyHours: 2,
+                blockPreference: 'double',
+            },
+        ],
+        rules: {
+            hardRules: {
+                lockedSlots: [
+                    { day: 2, period: 5, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+                ],
+                teacherUnavailable: {},
+                classUnavailable: {},
+            },
+            softRules: {},
+        },
+        schedule: null,
+    });
+
+    const problem = buildTimetableProblem(project);
+    const math = problem.lessonAssignments
+        .filter(assignment => assignment.lessonPlanId === 'lp_math')
+        .sort((left, right) => left.blockIndex - right.blockIndex);
+
+    assert.equal(math.length, 2);
+    assert.deepEqual(math.map(assignment => assignment.pinnedTimeSlotId), ['2-4', '2-5']);
+    assert.deepEqual(math.map(assignment => assignment.timeSlot), ['2-4', '2-5']);
+});
+
+test('buildTimetableProblem deduplicates locked cells that belong to the same double block', () => {
+    const project = sampleProject({
+        periodsPerDay: 5,
+        activePeriods: [1, 2, 3, 4, 5],
+        lessonPlans: [
+            {
+                id: 'lp_math',
+                classId: 'c1',
+                subjectId: 'math',
+                teacherId: 't_math',
+                teacherIds: ['t_math', 't_helper'],
+                weeklyHours: 4,
+                blockPreference: 'double',
+            },
+        ],
+        rules: {
+            hardRules: {
+                lockedSlots: [
+                    { day: 2, period: 4, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+                    { day: 2, period: 3, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+                ],
+                teacherUnavailable: {},
+                classUnavailable: {},
+            },
+            softRules: {},
+        },
+        schedule: null,
+    });
+
+    const problem = buildTimetableProblem(project);
+    const math = problem.lessonAssignments
+        .filter(assignment => assignment.lessonPlanId === 'lp_math')
+        .sort((left, right) => left.sequence - right.sequence);
+
+    assert.equal(math.length, 4);
+    assert.deepEqual(math.map(assignment => assignment.pinnedTimeSlotId), ['2-3', '2-4', null, null]);
+    assert.deepEqual(math.map(assignment => assignment.timeSlot), ['2-3', '2-4', null, null]);
+});
+
 test('transformTimetableSolutionToSchedule keeps current schedule shape and solver metadata', () => {
     const project = sampleProject();
     const problem = buildTimetableProblem(project);
@@ -120,6 +327,42 @@ test('transformTimetableSolutionToSchedule keeps current schedule shape and solv
     assert.deepEqual(schedule.slots.find(slot => slot.lessonPlanId === 'lp_pe').roomId, 'gym');
     assert.deepEqual(schedule.slots.find(slot => slot.lessonPlanId === 'lp_math').teacherIds, ['t_math', 't_helper']);
     assert.equal(schedule.slots.filter(slot => slot.blockId).length, 2);
+});
+
+test('solveTimetableWithTimefold rejects solutions that move pinned assignments', async () => {
+    let postedProblem = null;
+    const fetchImpl = async (url, options = {}) => {
+        const target = String(url);
+        if (options.method === 'POST') {
+            postedProblem = JSON.parse(options.body);
+            return jsonResponse({ jobId: 'job-pinned', solverStatus: 'SOLVING_ACTIVE' }, 202);
+        }
+        if (target.endsWith('/status')) {
+            return jsonResponse({ jobId: 'job-pinned', solverStatus: 'NOT_SOLVING', hardScore: 0, softScore: 20 }, 200);
+        }
+        if (options.method === 'DELETE') return jsonResponse({}, 204);
+        return jsonResponse({
+            jobId: 'job-pinned',
+            solverStatus: 'NOT_SOLVING',
+            hardScore: 0,
+            softScore: 20,
+            lessonAssignments: postedProblem.lessonAssignments.map(assignment => ({
+                ...assignment,
+                timeSlot: assignment.pinnedTimeSlotId ? '4-4' : (assignment.timeSlot || '1-1'),
+                room: assignment.room || '__NONE__',
+            })),
+        }, 200);
+    };
+
+    await assert.rejects(() => solveTimetableWithTimefold({
+        project: sampleProject(),
+        env: { TIMEFOLD_SOLVER_URL: 'http://solver', TIMETABLE_SOLVER_TIMEOUT: '2' },
+        fetchImpl,
+    }), error => (
+        error instanceof TimetableTimefoldError
+        && error.reason === 'pinned_slot_moved'
+        && error.solverStats.pinnedCount > 0
+    ));
 });
 
 test('solveTimetableWithTimefold rejects unavailable solver before mutating project', async () => {

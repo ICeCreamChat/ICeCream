@@ -5,8 +5,10 @@ import test from 'node:test';
 import { createDefaultTimetableProject } from '../gateway/services/timetable-scheduler.js';
 import { TimetablePlannerController } from '../public/js/tools/timetable/controller.js';
 import {
+  getPublishedScheduleDiff,
   getRuleSummary,
   getSavedRuleItems,
+  getSolveStatus,
   removeSavedRuleById,
 } from '../public/js/tools/timetable/selectors.js';
 import {
@@ -41,6 +43,15 @@ function sampleWorkbenchState(overrides = {}) {
     lastFailure: null,
     ...overrides,
   };
+}
+
+function buttonTag(html, marker) {
+  const markerIndex = html.indexOf(marker);
+  assert.notEqual(markerIndex, -1, `expected button marker ${marker}`);
+  const start = html.lastIndexOf('<button', markerIndex);
+  const end = html.indexOf('>', markerIndex);
+  assert.ok(start >= 0 && end > start, `expected button tag for ${marker}`);
+  return html.slice(start, end + 1);
 }
 
 test('timetable planner is assembled from workbench modules', async () => {
@@ -152,7 +163,15 @@ test('timetable planner keeps schedule operations inside the board surface', asy
 
 test('timetable controller clears stale optimization jobs after saved data changes', async () => {
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
-  const mutatingMethods = ['saveProject', 'importRoster', 'saveRules', 'adjustSlot'];
+  const mutatingMethods = [
+    'saveProject',
+    'importRoster',
+    'saveRules',
+    'adjustSlot',
+    'confirmPublishSchedule',
+    'restorePublicationHistoryVersion',
+    'restoreLatestPublishedSnapshot',
+  ];
 
   for (const methodName of mutatingMethods) {
     assert.match(
@@ -242,9 +261,1369 @@ test('timetable inspector renders scheduling audit and quality suggestions', () 
   const inspector = renderInspector(state);
 
   assert.match(inspector, /Math Teacher load is high/);
+  assert.match(inspector, /教师负载/);
   assert.match(inspector, /Math Teacher has too many consecutive lessons/);
-  assert.match(inspector, /teacherConsecutive/);
-  assert.match(inspector, /classDailyBalance/);
+  assert.match(inspector, /教师连续课/);
+  assert.match(inspector, /班级日负载/);
+  assert.doesNotMatch(inspector, /teacher_load/);
+  assert.doesNotMatch(inspector, /teacherConsecutive/);
+  assert.doesNotMatch(inspector, /classDailyBalance/);
+});
+
+test('timetable inspector shows publication readiness before export', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'publish-check',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'fast_constructed',
+        slots: [{
+          id: 'slot-1',
+          day: 1,
+          period: 1,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+        }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [{ lessonPlanId: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', reason: 'missing slots' }],
+        publication: {
+          ok: false,
+          reason: 'publication_blocked',
+          blockingIssues: [{ type: 'incomplete_schedule', message: '还有课时未排入课表。' }],
+          warnings: [{ type: 'manual_review', message: '请教务复核。' }],
+          reviewItems: [
+            { type: 'teacher_load', severity: 'warning', targetKind: 'teacher', targetName: 'Math Teacher', message: 'Math Teacher 负载接近满载。' },
+            { type: 'incomplete_schedule', severity: 'error', targetKind: 'class', targetName: 'G7 1', message: 'G7 1 还有 2 节未排。' },
+          ],
+          summary: { totalLessons: 3, placedLessons: 1, unplacedLessons: 2, hardConflicts: 0 },
+        },
+        score: { hardConflicts: 0, unplacedLessons: 2, placedLessons: 1, totalLessons: 3, completeness: 33 },
+      },
+    }),
+  });
+
+  const inspector = renderInspector(state);
+
+  assert.match(inspector, /发布前校验/);
+  assert.match(inspector, /不可发布/);
+  assert.match(inspector, /未排课时/);
+  assert.match(inspector, /教务复核/);
+  assert.doesNotMatch(inspector, /incomplete_schedule/);
+  assert.doesNotMatch(inspector, /manual_review/);
+  assert.match(inspector, /Math Teacher 负载接近满载/);
+  assert.match(inspector, /G7 1 还有 2 节未排/);
+  assert.match(inspector, /1\/3/);
+});
+
+test('timetable workflow exposes publish action and published status', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'publish-ready',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'fast_constructed',
+        slots: [{
+          id: 'slot-1',
+          day: 1,
+          period: 1,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+        }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        publication: {
+          ok: true,
+          reason: 'ready',
+          blockingIssues: [],
+          warnings: [],
+          reviewItems: [],
+          summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+        },
+        score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      },
+    }),
+  });
+
+  const html = renderWorkbench(state);
+
+  assert.match(html, /id="tt-publish-schedule"/);
+  assert.match(html, /data-publish-schedule/);
+  assert.match(html, /发布课表/);
+  assert.match(html, /未发布/);
+  assert.doesNotMatch(html, /id="tt-publish-schedule"[^>]*disabled/);
+});
+
+test('timetable publish uses a confirmation dialog with editable note', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+  const closed = renderWorkbench(sampleWorkbenchState());
+  const open = renderWorkbench(sampleWorkbenchState({
+    publishDialog: {
+      open: true,
+      note: '教务主任确认',
+      loading: false,
+    },
+  }));
+
+  assert.match(closed, /id="tt-publish-schedule"/);
+  assert.doesNotMatch(closed, /id="tt-publish-dialog"/);
+  assert.match(open, /id="tt-publish-dialog"/);
+  assert.match(open, /id="tt-publish-note"/);
+  assert.match(open, /教务主任确认/);
+  assert.match(open, /id="tt-confirm-publish"/);
+  assert.match(controllerSource, /openPublishDialog\(/);
+  assert.match(controllerSource, /confirmPublishSchedule\(/);
+  assert.match(controllerSource, /JSON\.stringify\(\{\s*note\s*:\s*this\.state\.publishDialog\?\.note/s);
+  assert.doesNotMatch(controllerSource, /JSON\.stringify\(\{\s*note:\s*''\s*\}\)/);
+  assert.match(interactionSource, /#tt-publish-schedule[\s\S]*openPublishDialog\(\)/);
+  assert.match(interactionSource, /#tt-confirm-publish[\s\S]*confirmPublishSchedule\(\)/);
+});
+
+test('timetable restore published actions use a confirmation dialog with overwrite summary', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'draft-changed',
+      generatedAt: '2026-01-03T00:00:00.000Z',
+      source: 'manual_adjusted',
+      slots: [{
+        id: 'slot-current-1',
+        day: 2,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [],
+        reviewItems: [],
+        summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'draft_changed',
+        version: 2,
+        publishedAt: '2026-01-03T08:00:00.000Z',
+        scheduleId: 'published-current',
+        note: '第二次发布',
+        fingerprint: '2222222222222222222222222222222222222222222222222222222222222222',
+        snapshot: {
+          scheduleId: 'published-current',
+          slotCount: 1,
+          fingerprint: '2222222222222222222222222222222222222222222222222222222222222222',
+          score: { completeness: 100 },
+          publicationSummary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+          slots: [{
+            id: 'slot-published-1',
+            day: 1,
+            period: 1,
+            classId: 'c1',
+            subjectId: 'math',
+            teacherId: 't_math',
+            teacherIds: ['t_math'],
+            lessonPlanId: 'lp_math',
+          }],
+        },
+        history: [{
+          version: 1,
+          publishedAt: '2026-01-01T08:00:00.000Z',
+          scheduleId: 'published-v1',
+          note: '第一次发布',
+          fingerprint: '1111111111111111111111111111111111111111111111111111111111111111',
+          snapshot: {
+            scheduleId: 'published-v1',
+            slotCount: 1,
+            fingerprint: '1111111111111111111111111111111111111111111111111111111111111111',
+            score: { completeness: 100 },
+            publicationSummary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+            slots: [{
+              id: 'slot-v1-1',
+              day: 1,
+              period: 1,
+              classId: 'c1',
+              subjectId: 'math',
+              teacherId: 't_math',
+              teacherIds: ['t_math'],
+              lessonPlanId: 'lp_math',
+            }],
+          },
+        }],
+      },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+    },
+  });
+
+  const closed = renderWorkbench(sampleWorkbenchState({ project }));
+  const open = renderWorkbench(sampleWorkbenchState({
+    project,
+    restoreDialog: {
+      open: true,
+      mode: 'latest',
+      version: 2,
+      loading: false,
+      targetLabel: '发布版 V2',
+      summary: { moved: 1, changed: 0, added: 0, removed: 0, total: 1 },
+    },
+  }));
+
+  assert.doesNotMatch(closed, /id="tt-restore-dialog"/);
+  assert.match(open, /id="tt-restore-dialog"/);
+  assert.match(open, /恢复发布版/);
+  assert.match(open, /发布版 V2/);
+  assert.match(open, /当前草稿将被覆盖/);
+  assert.match(open, /移动 1/);
+  assert.match(open, /id="tt-confirm-restore"/);
+  assert.match(controllerSource, /openRestoreDialog\(/);
+  assert.match(controllerSource, /confirmRestoreSchedule\(/);
+  assert.match(controllerSource, /restorePublicationHistoryVersion\([^)]*\)\s*\{/);
+  assert.match(controllerSource, /restoreLatestPublishedSnapshot\(\)\s*\{/);
+  assert.doesNotMatch(controllerSource, /requestTimetable\('\/schedule\/published\/restore'[\s\S]*restorePublicationHistoryVersion\(/);
+  assert.match(interactionSource, /#tt-restore-publication-history[\s\S]*openRestoreDialog/);
+  assert.match(interactionSource, /#tt-restore-published-snapshot[\s\S]*openRestoreDialog/);
+  assert.match(interactionSource, /#tt-confirm-restore[\s\S]*confirmRestoreSchedule/);
+});
+
+test('timetable publish confirmation surfaces review warnings before publishing', () => {
+  const open = renderWorkbench(sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'publish-with-warnings',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'fast_constructed',
+        slots: [{
+          id: 'slot-1',
+          day: 1,
+          period: 1,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+        }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        publication: {
+          ok: true,
+          reason: 'ready',
+          blockingIssues: [],
+          warnings: [{
+            type: 'publication_fingerprint_mismatch',
+            targetName: '发布历史 V1',
+            message: '发布快照校验失败，请重新发布后再导出或恢复。',
+          }],
+          reviewItems: [{
+            type: 'teacher_load',
+            severity: 'warning',
+            targetKind: 'teacher',
+            targetName: 'Math Teacher',
+            message: 'Math Teacher 负载接近满载。',
+          }],
+          summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+        },
+        score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      },
+    }),
+    publishDialog: {
+      open: true,
+      note: '',
+      loading: false,
+    },
+  }));
+
+  assert.match(open, /id="tt-publish-dialog"/);
+  assert.match(open, /发布提醒/);
+  assert.match(open, /发布历史 V1/);
+  assert.match(open, /发布快照校验失败/);
+  assert.match(open, /Math Teacher/);
+  assert.match(open, /负载接近满载/);
+  assert.doesNotMatch(open, /publication_fingerprint_mismatch/);
+  assert.doesNotMatch(open, /teacher_load/);
+});
+
+test('timetable publish confirmation surfaces published snapshot backfill warning in human text', () => {
+  const open = renderWorkbench(sampleWorkbenchState({
+    schedule: {
+      id: 'publish-with-backfill-warning',
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      source: 'published',
+      slots: [{
+        id: 'slot-1',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [{
+          type: 'published_snapshot_backfill_needed',
+          targetName: '发布快照',
+          message: '当前已发布版本缺少发布快照，系统会在导出、恢复或重新发布前自动补修。',
+        }],
+        reviewItems: [{
+          type: 'published_snapshot_backfill_needed',
+          severity: 'warning',
+          targetKind: 'schedule',
+          targetName: '发布快照',
+          message: '当前已发布版本缺少发布快照，系统会在导出、恢复或重新发布前自动补修。',
+        }],
+        summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'published',
+        version: 1,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'publish-with-backfill-warning',
+        note: 'legacy publish',
+      },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+    },
+    publishDialog: {
+      open: true,
+      note: '',
+      loading: false,
+    },
+  }));
+
+  assert.match(open, /id="tt-publish-dialog"/);
+  assert.match(open, /发布快照/);
+  assert.match(open, /自动补修/);
+  assert.doesNotMatch(open, /published_snapshot_backfill_needed/);
+});
+
+test('timetable workflow disables official exports when published draft changed', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'draft-changed',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'manual_adjusted',
+        slots: [{
+          id: 'slot-1',
+          day: 1,
+          period: 1,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+        }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        publication: {
+          ok: true,
+          reason: 'ready',
+          blockingIssues: [],
+          warnings: [],
+          reviewItems: [],
+          summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+        },
+        published: {
+          status: 'draft_changed',
+          version: 1,
+          publishedAt: '2026-01-02T08:00:00.000Z',
+          scheduleId: 'published-1',
+          note: '教务处确认发布',
+          snapshot: {
+            scheduleId: 'published-1',
+            slotCount: 1,
+            score: { completeness: 100 },
+            slots: [{
+              id: 'slot-1',
+              day: 1,
+              period: 1,
+              classId: 'c1',
+              subjectId: 'math',
+              teacherId: 't_math',
+              teacherIds: ['t_math'],
+              lessonPlanId: 'lp_math',
+            }],
+          },
+        },
+        score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      },
+    }),
+  });
+
+  const html = renderWorkbench(state);
+
+  assert.match(html, /草稿已变化/);
+  assert.match(html, /请重新发布后导出正式课表/);
+  assert.match(html, /data-export-type="class"[^>]*disabled/);
+  assert.match(html, /data-export-type="teacher"[^>]*disabled/);
+  assert.match(html, /data-export-type="master"[^>]*disabled/);
+  assert.match(html, /导出发布版/);
+  assert.match(html, /data-export-type="published_class"/);
+  assert.match(html, /data-export-type="published_teacher"/);
+  assert.match(html, /data-export-type="published_master"/);
+  assert.doesNotMatch(html, /data-export-type="plans"[^>]*disabled/);
+});
+
+test('timetable workflow explains missing published snapshot when a changed draft cannot restore the published version', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'draft-changed-missing-published-snapshot',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'manual_adjusted',
+        slots: [{
+          id: 'slot-1',
+          day: 1,
+          period: 1,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+        }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        publication: {
+          ok: true,
+          reason: 'ready',
+          blockingIssues: [],
+          warnings: [{
+            type: 'published_snapshot_missing',
+            targetName: '发布快照',
+            message: '上一版发布快照缺失，当前只能重新发布，暂时无法恢复或导出发布版。',
+          }],
+          reviewItems: [{
+            type: 'published_snapshot_missing',
+            severity: 'warning',
+            targetKind: 'schedule',
+            targetName: '发布快照',
+            message: '上一版发布快照缺失，当前只能重新发布，暂时无法恢复或导出发布版。',
+          }],
+          summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+        },
+        published: {
+          status: 'draft_changed',
+          version: 1,
+          publishedAt: '2026-01-02T08:00:00.000Z',
+          scheduleId: 'published-1',
+          note: '教务处确认发布',
+        },
+        score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      },
+    }),
+  });
+
+  const html = renderWorkbench(state);
+  const inspector = renderInspector(state);
+
+  assert.match(html, /草稿已变化/);
+  assert.doesNotMatch(html, /data-export-type="published_class"/);
+  assert.doesNotMatch(html, /id="tt-restore-published-snapshot"/);
+  assert.match(html, /上一版发布快照缺失/);
+  assert.match(inspector, /发布快照/);
+  assert.match(inspector, /暂时无法恢复或导出发布版/);
+  assert.doesNotMatch(html, /published_snapshot_missing/);
+});
+
+test('timetable workflow treats published status with slot drift as draft changed', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'published-drift',
+      generatedAt: '2026-01-03T00:00:00.000Z',
+      source: 'published',
+      slots: [{
+        id: 'slot-1',
+        day: 2,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [],
+        reviewItems: [],
+        summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'published',
+        version: 1,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-1',
+        note: '教务处确认发布',
+        snapshot: {
+          scheduleId: 'published-1',
+          slotCount: 1,
+          score: { completeness: 100 },
+          slots: [{
+            id: 'slot-1',
+            day: 1,
+            period: 1,
+            classId: 'c1',
+            subjectId: 'math',
+            teacherId: 't_math',
+            teacherIds: ['t_math'],
+            lessonPlanId: 'lp_math',
+          }],
+        },
+      },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+    },
+  });
+  const html = renderWorkbench(sampleWorkbenchState({ project }));
+  const status = getSolveStatus(project);
+
+  assert.equal(status.sourceLabel, '草稿已变化');
+  assert.match(html, /草稿已变化/);
+  assert.doesNotMatch(html, /<span>来源<\/span><strong>已发布<\/strong>/);
+  assert.match(html, /<span>来源<\/span><strong>草稿已变化<\/strong>/);
+  assert.match(html, /发布差异/);
+  assert.match(html, /请重新发布后导出正式课表/);
+  assert.match(buttonTag(html, 'data-export-type="class"'), /disabled/);
+  assert.match(buttonTag(html, 'data-export-type="teacher"'), /disabled/);
+  assert.match(buttonTag(html, 'data-export-type="master"'), /disabled/);
+});
+
+test('timetable workflow disables official exports until the schedule is published', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'ready-unpublished',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [{
+        id: 'slot-1',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [],
+        reviewItems: [],
+        summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: null,
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+    },
+  });
+  const html = renderWorkbench(sampleWorkbenchState({ project }));
+
+  assert.match(html, /请先发布课表后导出正式课表/);
+  assert.match(buttonTag(html, 'data-export-type="class"'), /disabled/);
+  assert.match(buttonTag(html, 'data-export-type="teacher"'), /disabled/);
+  assert.match(buttonTag(html, 'data-export-type="master"'), /disabled/);
+  assert.doesNotMatch(buttonTag(html, 'data-export-type="plans"'), /disabled/);
+});
+
+test('timetable workflow disables published snapshot export and restore when fingerprint is known bad', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'bad-published-snapshot',
+        generatedAt: '2026-01-03T00:00:00.000Z',
+        source: 'manual_adjusted',
+        slots: [{
+          id: 'slot-1',
+          day: 2,
+          period: 1,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+        }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        publication: {
+          ok: true,
+          reason: 'ready',
+          blockingIssues: [],
+          warnings: [{
+            type: 'publication_fingerprint_mismatch',
+            targetName: '发布快照',
+            message: '发布快照校验失败，请重新发布后再导出或恢复。',
+          }],
+          reviewItems: [{
+            type: 'publication_fingerprint_mismatch',
+            severity: 'warning',
+            targetKind: 'schedule',
+            targetName: '发布快照',
+            message: '发布快照校验失败，请重新发布后再导出或恢复。',
+          }],
+          summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+        },
+        published: {
+          status: 'draft_changed',
+          version: 1,
+          publishedAt: '2026-01-02T08:00:00.000Z',
+          scheduleId: 'published-1',
+          note: '教务处确认发布',
+          fingerprint: 'badbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadb',
+          snapshot: {
+            scheduleId: 'published-1',
+            slotCount: 1,
+            fingerprint: 'badbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadb',
+            score: { completeness: 100 },
+            slots: [{
+              id: 'slot-1',
+              day: 1,
+              period: 1,
+              classId: 'c1',
+              subjectId: 'math',
+              teacherId: 't_math',
+              teacherIds: ['t_math'],
+              lessonPlanId: 'lp_math',
+            }],
+          },
+        },
+        score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      },
+    }),
+  });
+
+  const html = renderWorkbench(state);
+
+  assert.match(buttonTag(html, 'data-export-type="published_class"'), /disabled/);
+  assert.match(buttonTag(html, 'data-export-type="published_teacher"'), /disabled/);
+  assert.match(buttonTag(html, 'data-export-type="published_master"'), /disabled/);
+  assert.match(buttonTag(html, 'id="tt-restore-published-snapshot"'), /disabled/);
+  assert.match(html, /发布快照校验失败，请重新发布后再导出或恢复。/);
+  assert.match(buttonTag(html, 'id="tt-publish-schedule"'), /data-publish-schedule/);
+  assert.doesNotMatch(buttonTag(html, 'id="tt-publish-schedule"'), /disabled/);
+  assert.doesNotMatch(html, /publication_fingerprint_mismatch/);
+});
+
+test('timetable inspector explains published and changed draft states', () => {
+  const publishedProject = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'published-1',
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      source: 'published',
+      slots: [],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [],
+        reviewItems: [],
+        summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'published',
+        version: 1,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-1',
+        note: '教务处确认发布',
+        fingerprint: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+        snapshot: {
+          scheduleId: 'published-1',
+          generatedAt: '2026-01-01T00:00:00.000Z',
+          source: 'fast_constructed',
+          slotCount: 12,
+          fingerprint: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+          score: { completeness: 100 },
+          publicationSummary: { totalLessons: 12, placedLessons: 12, unplacedLessons: 0, hardConflicts: 0 },
+          slots: [],
+        },
+        history: [{
+          version: 1,
+          publishedAt: '2026-01-01T08:00:00.000Z',
+          scheduleId: 'published-0',
+          note: '第一次发布',
+          fingerprint: 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+          snapshot: {
+            scheduleId: 'published-0',
+            slotCount: 10,
+            fingerprint: 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+            score: { completeness: 100 },
+            publicationSummary: { totalLessons: 10, placedLessons: 10, unplacedLessons: 0, hardConflicts: 0 },
+            slots: [],
+          },
+        }],
+      },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+    },
+  });
+
+  const publishedInspector = renderInspector(sampleWorkbenchState({ project: publishedProject }));
+  const changedInspector = renderInspector(sampleWorkbenchState({
+    project: {
+      ...publishedProject,
+      schedule: {
+        ...publishedProject.schedule,
+        published: {
+          ...publishedProject.schedule.published,
+          status: 'draft_changed',
+        },
+      },
+    },
+  }));
+  const restoredInspector = renderInspector(sampleWorkbenchState({
+    project: {
+      ...publishedProject,
+      schedule: {
+        ...publishedProject.schedule,
+        source: 'published_history_restored',
+        publication: {
+          ...publishedProject.schedule.publication,
+          warnings: [{
+            type: 'restored_published_draft',
+            message: '当前草稿来自恢复发布版，重新发布前建议教务复核。',
+          }],
+          reviewItems: [{
+            type: 'restored_published_draft',
+            severity: 'warning',
+            targetKind: 'schedule',
+            targetName: '恢复发布版',
+            message: '当前草稿来自恢复发布版，重新发布前建议教务复核。',
+          }],
+          summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+        },
+        published: {
+          ...publishedProject.schedule.published,
+          status: 'draft_changed',
+        },
+      },
+    },
+  }));
+
+  assert.match(publishedInspector, /发布状态/);
+  assert.match(publishedInspector, /已发布 V1/);
+  assert.match(publishedInspector, /来源<\/b>已发布/);
+  assert.match(publishedInspector, /教务处确认发布/);
+  assert.match(publishedInspector, /发布指纹/);
+  assert.match(publishedInspector, /1234567890ab/);
+  assert.match(publishedInspector, /发布快照/);
+  assert.match(publishedInspector, /12 节/);
+  assert.match(publishedInspector, /发布历史/);
+  assert.match(publishedInspector, /V1/);
+  assert.match(publishedInspector, /第一次发布/);
+  assert.match(publishedInspector, /10 节/);
+  assert.match(changedInspector, /草稿已变化/);
+  assert.match(changedInspector, /发布已失效/);
+  assert.match(restoredInspector, /恢复发布版/);
+  assert.match(restoredInspector, /重新发布前建议教务复核/);
+  assert.doesNotMatch(restoredInspector, /restored_published_draft/);
+
+  const fingerprintFailedInspector = renderInspector(sampleWorkbenchState({
+    project: {
+      ...publishedProject,
+      schedule: {
+        ...publishedProject.schedule,
+        publication: {
+          ...publishedProject.schedule.publication,
+          ok: true,
+          reason: 'ready',
+          warnings: [{
+            type: 'publication_fingerprint_mismatch',
+            targetName: '发布快照',
+            message: '发布快照校验失败，请重新发布后再导出或恢复。',
+          }],
+          reviewItems: [{
+            type: 'publication_fingerprint_mismatch',
+            severity: 'warning',
+            targetKind: 'schedule',
+            targetName: '发布快照',
+            message: '发布快照校验失败，请重新发布后再导出或恢复。',
+          }],
+          summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+        },
+      },
+    },
+  }));
+  assert.match(fingerprintFailedInspector, /发布快照校验/);
+  assert.match(fingerprintFailedInspector, /重新发布后再导出或恢复/);
+  assert.doesNotMatch(fingerprintFailedInspector, /publication_fingerprint_mismatch/);
+});
+
+test('timetable publication history opens a detail dialog for snapshot review', async () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'published-current',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [],
+        reviewItems: [],
+        summary: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'published',
+        version: 2,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-current',
+        note: '第二次发布',
+        fingerprint: '2222222222222222222222222222222222222222222222222222222222222222',
+        snapshot: { scheduleId: 'published-current', slotCount: 2, fingerprint: '2222222222222222222222222222222222222222222222222222222222222222', slots: [] },
+        history: [{
+          version: 1,
+          publishedAt: '2026-01-01T08:00:00.000Z',
+          scheduleId: 'published-v1',
+          note: '第一次发布',
+          fingerprint: '1111111111111111111111111111111111111111111111111111111111111111',
+          snapshot: {
+            scheduleId: 'published-v1',
+            slotCount: 2,
+            fingerprint: '1111111111111111111111111111111111111111111111111111111111111111',
+            score: { completeness: 100 },
+            publicationSummary: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0 },
+            slots: [
+              {
+                id: 'slot-v1-1',
+                day: 1,
+                period: 1,
+                classId: 'c1',
+                subjectId: 'math',
+                teacherId: 't_math',
+                teacherIds: ['t_math'],
+                lessonPlanId: 'lp_math',
+              },
+            ],
+          },
+        }],
+      },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 2, totalLessons: 2, completeness: 100 },
+    },
+  });
+  const state = sampleWorkbenchState({
+    project,
+    publicationHistoryDialog: { open: true, version: 1 },
+  });
+  const html = renderWorkbench(state);
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+
+  assert.match(html, /data-publication-history-version="1"/);
+  assert.match(html, /id="tt-publication-history-dialog"/);
+  assert.match(html, /V1/);
+  assert.match(html, /published-v1/);
+  assert.match(html, /发布指纹/);
+  assert.match(html, /111111111111/);
+  assert.match(html, /Math Teacher/);
+  assert.match(html, /1-1/);
+  assert.match(html, /id="tt-restore-publication-history"/);
+  assert.match(html, /data-export-history-type="published_class"/);
+  assert.match(html, /data-export-history-type="published_teacher"/);
+  assert.match(html, /data-export-history-type="published_master"/);
+  assert.match(controllerSource, /openPublicationHistoryDialog\(/);
+  assert.match(controllerSource, /closePublicationHistoryDialog\(/);
+  assert.match(controllerSource, /restorePublicationHistoryVersion\(/);
+  assert.match(controllerSource, /openRestoreDialog\(/);
+  assert.match(controllerSource, /confirmRestoreSchedule\(/);
+  assert.match(controllerSource, /publishedVersion/);
+  assert.match(controllerSource, /requestTimetable\('\/schedule\/published\/restore'/);
+  assert.match(interactionSource, /data-publication-history-version[\s\S]*openPublicationHistoryDialog/);
+  assert.match(interactionSource, /#tt-restore-publication-history[\s\S]*openRestoreDialog/);
+  assert.match(interactionSource, /data-export-history-type[\s\S]*export\(button\.dataset\.exportHistoryType/);
+  assert.match(interactionSource, /#tt-close-publication-history[\s\S]*closePublicationHistoryDialog/);
+});
+
+test('timetable publication history disables export and restore when history fingerprint is known bad', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'published-current',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [{
+          type: 'publication_fingerprint_mismatch',
+          targetName: '发布历史 V1',
+          message: '发布快照校验失败，请重新发布后再导出或恢复。',
+        }],
+        reviewItems: [{
+          type: 'publication_fingerprint_mismatch',
+          severity: 'warning',
+          targetKind: 'schedule',
+          targetName: '发布历史 V1',
+          message: '发布快照校验失败，请重新发布后再导出或恢复。',
+        }],
+        summary: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'published',
+        version: 2,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-current',
+        note: '第二次发布',
+        fingerprint: '2222222222222222222222222222222222222222222222222222222222222222',
+        snapshot: {
+          scheduleId: 'published-current',
+          slotCount: 2,
+          fingerprint: '2222222222222222222222222222222222222222222222222222222222222222',
+          slots: [],
+        },
+        history: [{
+          version: 1,
+          publishedAt: '2026-01-01T08:00:00.000Z',
+          scheduleId: 'published-v1',
+          note: '第一次发布',
+          fingerprint: '1111111111111111111111111111111111111111111111111111111111111111',
+          snapshot: {
+            scheduleId: 'published-v1',
+            slotCount: 2,
+            fingerprint: '1111111111111111111111111111111111111111111111111111111111111111',
+            score: { completeness: 100 },
+            publicationSummary: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0 },
+            slots: [],
+          },
+        }],
+      },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 2, totalLessons: 2, completeness: 100 },
+    },
+  });
+  const html = renderWorkbench(sampleWorkbenchState({
+    project,
+    publicationHistoryDialog: { open: true, version: 1 },
+  }));
+
+  assert.match(buttonTag(html, 'data-export-history-type="published_class"'), /disabled/);
+  assert.match(buttonTag(html, 'data-export-history-type="published_teacher"'), /disabled/);
+  assert.match(buttonTag(html, 'data-export-history-type="published_master"'), /disabled/);
+  assert.match(buttonTag(html, 'id="tt-restore-publication-history"'), /disabled/);
+  assert.match(html, /发布历史 V1/);
+  assert.match(html, /发布快照校验失败，请重新发布后再导出或恢复。/);
+  assert.doesNotMatch(html, /publication_fingerprint_mismatch/);
+});
+
+test('timetable export panel disables official export when current published fingerprint is known bad', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'published-current',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'published',
+      slots: [],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [{
+          type: 'publication_fingerprint_mismatch',
+          targetName: '发布快照',
+          message: '发布快照校验失败，请重新发布后再导出或恢复。',
+        }],
+        reviewItems: [{
+          type: 'publication_fingerprint_mismatch',
+          severity: 'warning',
+          targetKind: 'schedule',
+          targetName: '发布快照',
+          message: '发布快照校验失败，请重新发布后再导出或恢复。',
+        }],
+        summary: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'published',
+        version: 2,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-current',
+        note: '第二次发布',
+        fingerprint: '0'.repeat(64),
+        snapshot: {
+          scheduleId: 'published-current',
+          slotCount: 2,
+          fingerprint: '0'.repeat(64),
+          slots: [],
+        },
+        history: [],
+      },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 2, totalLessons: 2, completeness: 100 },
+    },
+  });
+  const html = renderWorkbench(sampleWorkbenchState({ project }));
+
+  assert.match(buttonTag(html, 'data-export-type="class"'), /disabled/);
+  assert.match(buttonTag(html, 'data-export-type="teacher"'), /disabled/);
+  assert.match(buttonTag(html, 'data-export-type="master"'), /disabled/);
+  assert.doesNotMatch(buttonTag(html, 'data-export-type="plans"'), /disabled/);
+  assert.match(html, /发布快照校验失败，请重新发布后再导出或恢复。/);
+  assert.doesNotMatch(html, /publication_fingerprint_mismatch/);
+});
+
+test('timetable inspector compares current draft against the published snapshot', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'draft-after-publish',
+      generatedAt: '2026-01-03T00:00:00.000Z',
+      source: 'manual_adjusted',
+      slots: [
+        {
+          id: 'slot-moved',
+          day: 2,
+          period: 3,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+        },
+        {
+          id: 'slot-added',
+          day: 3,
+          period: 1,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+        },
+      ],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [],
+        reviewItems: [],
+        summary: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'draft_changed',
+        version: 1,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-1',
+        note: '教务处确认发布',
+        snapshot: {
+          scheduleId: 'published-1',
+          generatedAt: '2026-01-01T00:00:00.000Z',
+          source: 'fast_constructed',
+          slotCount: 2,
+          score: { completeness: 100 },
+          publicationSummary: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0 },
+          slots: [
+            {
+              id: 'slot-moved',
+              day: 1,
+              period: 1,
+              classId: 'c1',
+              subjectId: 'math',
+              teacherId: 't_math',
+              teacherIds: ['t_math'],
+              lessonPlanId: 'lp_math',
+            },
+            {
+              id: 'slot-removed',
+              day: 1,
+              period: 2,
+              classId: 'c1',
+              subjectId: 'math',
+              teacherId: 't_math',
+              teacherIds: ['t_math'],
+              lessonPlanId: 'lp_math',
+            },
+          ],
+        },
+      },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 2, totalLessons: 2, completeness: 100 },
+    },
+  });
+
+  const diff = getPublishedScheduleDiff(project);
+  const inspector = renderInspector(sampleWorkbenchState({ project }));
+
+  assert.equal(diff.total, 3);
+  assert.equal(diff.moved, 1);
+  assert.equal(diff.added, 1);
+  assert.equal(diff.removed, 1);
+  assert.match(inspector, /发布差异/);
+  assert.match(inspector, /移动 1/);
+  assert.match(inspector, /新增 1/);
+  assert.match(inspector, /移除 1/);
+  assert.match(inspector, /Math/);
+  assert.match(inspector, /周一 第1节/);
+  assert.match(inspector, /周二 第3节/);
+  assert.match(inspector, /id="tt-restore-published-snapshot"/);
+  assert.match(inspector, /data-restore-published-version="1"/);
+  assert.match(inspector, /恢复发布版/);
+});
+
+test('timetable publish action is wired through controller and grid interactions', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+
+  assert.match(controllerSource, /async\s+publishSchedule\(/);
+  assert.match(controllerSource, /requestTimetable\('\/schedule\/publish'/);
+  assert.match(interactionSource, /#tt-publish-schedule/);
+  assert.match(interactionSource, /openPublishDialog\(\)/);
+  assert.match(interactionSource, /#tt-confirm-publish/);
+  assert.match(interactionSource, /confirmPublishSchedule\(\)/);
+  assert.match(interactionSource, /#tt-restore-published-snapshot/);
+  assert.match(interactionSource, /openRestoreDialog\('latest'\)/);
+});
+
+test('timetable restored published schedules are labeled as restored publish versions', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'restored-published-1',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'published_history_restored',
+      slots: [{
+        id: 'slot-1',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+        locked: false,
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      solverStats: { phase: 'published_history_restore', status: 'restored' },
+    },
+  });
+
+  const status = getSolveStatus(project);
+  const inspector = renderInspector(sampleWorkbenchState({ project }));
+
+  assert.equal(status.sourceLabel, '\u6062\u590d\u53d1\u5e03\u7248');
+  assert.match(inspector, /\u6062\u590d\u53d1\u5e03\u7248/);
+  assert.doesNotMatch(inspector, /\u672a\u751f\u6210/);
+});
+
+test('timetable optimization panel labels restored published drafts correctly', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'restored-published-optimization',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'published_history_restored',
+      slots: [{
+        id: 'slot-1',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+        locked: false,
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      solverStats: { phase: 'published_history_restore', status: 'restored' },
+    },
+  });
+  const inspector = renderInspector(sampleWorkbenchState({
+    project,
+    solverJob: {
+      jobId: 'old-job',
+      phase: 'timefold_optimization',
+      status: 'failed',
+      accepted: false,
+      reason: 'stale_schedule',
+    },
+  }));
+
+  assert.match(inspector, /<b>当前课表<\/b>恢复发布版/);
+  assert.doesNotMatch(inspector, /<b>当前课表<\/b>未生成/);
 });
 
 test('timetable schedule panel shows local optimization phase while running', () => {
@@ -310,6 +1689,134 @@ test('timetable workbench shows fast generation and background optimization stat
   assert.match(inspector, /快速课表/);
   assert.doesNotMatch(panel + inspector, /姝ｅ湪|鏁欏姟|璇捐〃|鎺掕/);
 });
+
+test('timetable inspector explains initial solution and pinned optimization rejection', () => {
+  const state = sampleWorkbenchState({
+    solverJob: {
+      jobId: 'tt-opt-pinned',
+      phase: 'timefold_optimization',
+      status: 'failed',
+      accepted: false,
+      reason: 'pinned_slot_moved',
+      solverStats: {
+        initialSolutionUsed: true,
+        pinnedCount: 2,
+        accepted: false,
+        reason: 'pinned_slot_moved',
+      },
+    },
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'manual-1',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'manual_adjusted',
+        slots: [{
+          id: 'slot-1',
+          day: 1,
+          period: 1,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+          locked: true,
+          manuallyAdjusted: true,
+        }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 3, completeness: 33 },
+        solverStats: {
+          solverUsed: true,
+          initialSolutionUsed: true,
+          pinnedCount: 2,
+          accepted: false,
+          reason: 'pinned_slot_moved',
+        },
+      },
+    }),
+  });
+
+  const inspector = renderInspector(state);
+
+  assert.match(inspector, /\u521d\u59cb\u89e3/);
+  assert.match(inspector, /\u5df2\u4f7f\u7528/);
+  assert.match(inspector, /\u9501\u5b9a\u8bfe\u8282/);
+  assert.match(inspector, /锁定课节被移动/);
+  assert.match(inspector, /已保留当前课表/);
+  assert.doesNotMatch(inspector, /pinned_slot_moved/);
+});
+
+test('timetable inspector translates background optimization rejection reasons for school staff', () => {
+  const state = sampleWorkbenchState({
+    solverJob: {
+      jobId: 'tt-opt-not-better',
+      phase: 'timefold_optimization',
+      status: 'completed',
+      accepted: false,
+      reason: 'not_better',
+      solverStats: {
+        initialSolutionUsed: true,
+        pinnedCount: 1,
+        accepted: false,
+        reason: 'not_better',
+      },
+    },
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'fast-keep',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'fast_constructed',
+        slots: [{
+          id: 'slot-1',
+          day: 1,
+          period: 1,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+          locked: true,
+        }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 3, completeness: 33 },
+        solverStats: {
+          initialSolutionUsed: true,
+          pinnedCount: 1,
+          accepted: false,
+          reason: 'not_better',
+        },
+      },
+    }),
+  });
+
+  const inspector = renderInspector(state);
+
+  assert.match(inspector, /优化结果没有更好/);
+  assert.match(inspector, /已保留当前课表/);
+  assert.doesNotMatch(inspector, /not_better/);
+});
+
 test('timetable data setup uses collapsible groups and compact active range dropdowns', () => {
   const state = sampleWorkbenchState({
     project: createDefaultTimetableProject({

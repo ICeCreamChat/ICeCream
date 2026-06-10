@@ -9,6 +9,7 @@ import {
     getActivePeriods,
     getActiveWeekdays,
     getTimetableEntityMaps,
+    isActiveTimetableSlot,
     normalizeTimetableProject,
     slotTeacherIds,
 } from './timetable-project.js';
@@ -20,6 +21,20 @@ import {
     auditTimetableProject,
     buildTimetableQualityIssues,
 } from './timetable-audit.js';
+import {
+    validateTimetablePublication,
+} from './timetable-validation.js';
+
+function attachPublication(project, schedule) {
+    schedule.publication = validateTimetablePublication({ ...project, schedule });
+    if (project.schedule?.published?.status === 'published') {
+        schedule.published = {
+            ...project.schedule.published,
+            status: 'draft_changed',
+        };
+    }
+    return schedule;
+}
 
 function isMorning(project, period) {
     const periods = getActivePeriods(project);
@@ -73,13 +88,22 @@ function blockFits(project, usage, task, day, period) {
     return { ok: true };
 }
 
+function roomCandidatesForTask(task = {}) {
+    const rooms = Array.isArray(task.allowedRoomIds) && task.allowedRoomIds.length
+        ? task.allowedRoomIds
+        : [task.roomId].filter(Boolean);
+    return rooms.length ? rooms : [null];
+}
+
 function getCandidateBlocks(project, usage, task) {
     const candidates = [];
     for (const day of getActiveWeekdays(project)) {
         for (const period of getActivePeriods(project)) {
             if (!hasConsecutiveActivePeriods(project, period, task.blockSize)) continue;
-            const check = blockFits(project, usage, task, day, period);
-            if (check.ok) candidates.push({ day, period });
+            for (const roomId of roomCandidatesForTask(task)) {
+                const check = blockFits(project, usage, { ...task, roomId }, day, period);
+                if (check.ok) candidates.push({ day, period, roomId });
+            }
         }
     }
     return candidates;
@@ -178,8 +202,9 @@ function candidateScoreV2(project, usage, slots, task, candidate) {
 function expandLessonPlanTasks(project, placedCountByPlan) {
     const tasks = [];
     for (const plan of project.lessonPlans) {
-        let remaining = Math.max(0, plan.weeklyHours - (placedCountByPlan.get(plan.id) || 0));
-        let blockIndex = 0;
+        const alreadyPlaced = placedCountByPlan.get(plan.id) || 0;
+        let remaining = Math.max(0, plan.weeklyHours - alreadyPlaced);
+        let blockIndex = placedBlockCountForPlan(plan, alreadyPlaced);
         const addTask = blockSize => {
             blockIndex += 1;
             tasks.push({
@@ -190,6 +215,7 @@ function expandLessonPlanTasks(project, placedCountByPlan) {
                 teacherId: plan.teacherId,
                 teacherIds: plan.teacherIds,
                 roomId: plan.roomId || null,
+                allowedRoomIds: plan.allowedRoomIds || [],
                 blockSize,
                 blockId: blockSize > 1 ? `${plan.id}_block_${blockIndex}` : null,
             });
@@ -219,7 +245,7 @@ function taskDifficulty(project, usage, task) {
     return candidates * 100 - task.blockSize * 10 - (subject?.priority || 50);
 }
 
-function makeSlot(task, day, period, index = 0, locked = false) {
+function makeSlot(task, day, period, index = 0, locked = false, roomId = undefined) {
     return {
         id: `${locked ? 'locked' : 'slot'}_${task.lessonPlanId || task.id}_${task.classId}_${day}_${period}_${index}`,
         day,
@@ -229,7 +255,7 @@ function makeSlot(task, day, period, index = 0, locked = false) {
         teacherId: task.teacherId,
         teacherIds: slotTeacherIds(task),
         lessonPlanId: task.lessonPlanId || null,
-        roomId: task.roomId || null,
+        roomId: roomId === undefined ? task.roomId || null : roomId,
         blockId: task.blockId || null,
         blockIndex: index,
         blockSize: Math.max(1, task.blockSize || 1),
@@ -420,6 +446,61 @@ function blockSizesForPlan(plan) {
     return sizes;
 }
 
+function placedBlockCountForPlan(plan, placedHours = 0) {
+    let consumed = 0;
+    let count = 0;
+    for (const size of blockSizesForPlan(plan)) {
+        if (consumed + size > placedHours) break;
+        consumed += size;
+        count += 1;
+    }
+    return count;
+}
+
+function nextLockedBlockSizeForPlan(plan, placedHours = 0) {
+    let consumed = 0;
+    for (const size of blockSizesForPlan(plan)) {
+        if (placedHours < consumed + size) return size;
+        consumed += size;
+    }
+    return 1;
+}
+
+function planForLockedRule(project, maps, locked) {
+    if (locked.lessonPlanId) return maps.plans.get(locked.lessonPlanId) || null;
+    return project.lessonPlans.find(item => item.classId === locked.classId
+        && item.subjectId === locked.subjectId
+        && slotTeacherIds(item).includes(locked.teacherId)) || null;
+}
+
+function lockedRuleTargetKey(locked, plan) {
+    return plan?.id || locked.lessonPlanId || [
+        locked.classId || '',
+        locked.subjectId || '',
+        locked.teacherId || '',
+    ].join(':');
+}
+
+function lockedRuleCellKey(locked, plan) {
+    return `${lockedRuleTargetKey(locked, plan)}:${Number(locked.day)}-${Number(locked.period)}`;
+}
+
+function lockedBlockStartPeriod(project, locked, blockSize) {
+    const day = Number(locked.day);
+    const period = Number(locked.period);
+    for (let start = period; start >= period - blockSize + 1; start -= 1) {
+        let fits = true;
+        for (let offset = 0; offset < blockSize; offset += 1) {
+            if (!isActiveTimetableSlot(project, day, start + offset)) {
+                fits = false;
+                break;
+            }
+        }
+        if (fits) return start;
+    }
+    return period;
+}
+
 function expandSingleTeacherEdgeTasks(project) {
     const tasks = [];
     for (const plan of project.lessonPlans) {
@@ -435,11 +516,12 @@ function expandSingleTeacherEdgeTasks(project) {
                     classId: plan.classId,
                     subjectId: plan.subjectId,
                     teacherId: plan.teacherId,
-                    teacherIds: plan.teacherIds,
-                    roomId: plan.roomId || null,
-                    blockSize,
-                    blockIndex,
-                    blockId: blockSize > 1 ? `${plan.id}_block_${blockNumber}` : null,
+            teacherIds: plan.teacherIds,
+            roomId: plan.roomId || null,
+            allowedRoomIds: plan.allowedRoomIds || [],
+            blockSize,
+            blockIndex,
+            blockId: blockSize > 1 ? `${plan.id}_block_${blockNumber}` : null,
                     priority: project.subjects.find(subject => subject.id === plan.subjectId)?.priority || 50,
                 });
             }
@@ -566,6 +648,7 @@ function buildFastEdgeColoredSchedule(project) {
             reason: null,
         },
     };
+    attachPublication(project, schedule);
 
     return {
         success: schedule.score.hardConflicts === 0 && unplaced.length === 0,
@@ -805,34 +888,85 @@ function seedLockedSlots(project, usage, maps) {
     const slots = [];
     const conflicts = [];
     const placedCountByPlan = new Map();
+    const seededKeys = new Set();
+    const consumedLockedCells = new Set();
+    const lockedRules = (project.rules?.hardRules?.lockedSlots || [])
+        .map(locked => {
+            const plan = planForLockedRule(project, maps, locked);
+            return {
+                locked,
+                plan,
+                targetKey: lockedRuleTargetKey(locked, plan),
+            };
+        })
+        .sort((left, right) => left.targetKey.localeCompare(right.targetKey)
+            || Number(left.locked.day) - Number(right.locked.day)
+            || Number(left.locked.period) - Number(right.locked.period));
 
-    for (const locked of project.rules.hardRules.lockedSlots || []) {
-        const plan = locked.lessonPlanId ? maps.plans.get(locked.lessonPlanId) : null;
+    for (const { locked, plan } of lockedRules) {
+        const lockedCellKey = lockedRuleCellKey(locked, plan);
+        if (consumedLockedCells.has(lockedCellKey)) continue;
+        const placedHours = plan ? (placedCountByPlan.get(plan.id) || 0) : 0;
+        const blockSize = plan ? nextLockedBlockSizeForPlan(plan, placedHours) : 1;
+        const blockNumber = plan ? placedBlockCountForPlan(plan, placedHours) + 1 : 1;
+        const lessonPlanId = locked.lessonPlanId || plan?.id || null;
         const task = {
             id: locked.id,
-            lessonPlanId: locked.lessonPlanId || plan?.id || null,
-            classId: locked.classId,
-            subjectId: locked.subjectId,
-            teacherId: locked.teacherId,
-            teacherIds: plan?.teacherIds || [locked.teacherId],
+            lessonPlanId,
+            classId: locked.classId || plan?.classId || null,
+            subjectId: locked.subjectId || plan?.subjectId || null,
+            teacherId: locked.teacherId || plan?.teacherId || null,
+            teacherIds: plan ? slotTeacherIds(plan) : [locked.teacherId].filter(Boolean),
             roomId: locked.roomId || plan?.roomId || null,
-            blockSize: 1,
+            blockSize,
+            blockId: blockSize > 1 ? `${lessonPlanId || locked.id}_block_${blockNumber}` : null,
         };
-        const check = canUseSlot(project, usage, { ...task, day: locked.day, period: locked.period });
-        if (!check.ok) {
+        const proposed = [];
+        let failed = null;
+        const startPeriod = lockedBlockStartPeriod(project, locked, blockSize);
+
+        for (let offset = 0; offset < blockSize; offset += 1) {
+            const day = Number(locked.day);
+            const period = startPeriod + offset;
+            if (!isActiveTimetableSlot(project, day, period)) {
+                failed = { reason: 'locked block is outside active timetable range', day, period };
+                break;
+            }
+            const key = `${task.lessonPlanId || task.id}:${task.classId}:${day}-${period}`;
+            if (seededKeys.has(key)) {
+                failed = { reason: 'duplicate locked slot', day, period };
+                break;
+            }
+            const check = canUseSlot(project, usage, { ...task, day, period });
+            if (!check.ok) {
+                failed = { reason: check.reason, day, period };
+                break;
+            }
+            proposed.push({ day, period, offset, key });
+        }
+
+        if (failed) {
             conflicts.push({
                 type: 'locked-conflict',
                 severity: 'hard',
-                message: `锁定课节无法放置：${check.reason}`,
-                slot: locked,
+                message: `Locked lesson cannot be placed: ${failed.reason}`,
+                slot: { ...locked, day: failed.day, period: failed.period },
             });
             continue;
         }
-        const slot = makeSlot(task, locked.day, locked.period, 0, true);
-        slots.push(slot);
-        addUsage(usage, slot);
-        if (task.lessonPlanId) placedCountByPlan.set(task.lessonPlanId, (placedCountByPlan.get(task.lessonPlanId) || 0) + 1);
+
+        for (const item of proposed) {
+            const slot = makeSlot(task, item.day, item.period, item.offset, true);
+            slots.push(slot);
+            addUsage(usage, slot);
+            seededKeys.add(item.key);
+            consumedLockedCells.add(`${lockedRuleTargetKey(locked, plan)}:${item.day}-${item.period}`);
+            if (task.lessonPlanId) {
+                placedCountByPlan.set(task.lessonPlanId, (placedCountByPlan.get(task.lessonPlanId) || 0) + 1);
+            }
+        }
     }
+
     return { slots, conflicts, placedCountByPlan };
 }
 
@@ -897,7 +1031,7 @@ export function runTimetableScheduler(input = {}) {
 
         const best = scored[0];
         for (let offset = 0; offset < task.blockSize; offset++) {
-            const slot = makeSlot(task, best.day, best.period + offset, offset, false);
+            const slot = makeSlot(task, best.day, best.period + offset, offset, false, best.roomId);
             slots.push(slot);
             addUsage(usage, slot);
         }
@@ -938,6 +1072,7 @@ export function runTimetableScheduler(input = {}) {
             localImprovement: localImprovement.stats,
         },
     };
+    attachPublication(project, schedule);
 
     return {
         success: schedule.score.hardConflicts === 0 && cleanUnplaced.length === 0,

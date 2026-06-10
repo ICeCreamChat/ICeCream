@@ -18,6 +18,7 @@ import {
     ensureOwnerSelection,
     getActivePeriods,
     getActiveWeekdays,
+    getPublishedScheduleDiff,
     getSavedRuleItems,
     removeSavedRuleById,
 } from './selectors.js';
@@ -1318,22 +1319,26 @@ export class TimetablePlannerController {
         }
     }
 
-    async export(type) {
+    async export(type, options = {}) {
         try {
             const response = await requestTimetable('/export', {
                 method: 'POST',
-                body: JSON.stringify({ type }),
+                body: JSON.stringify({ type, ...(options.publishedVersion ? { publishedVersion: options.publishedVersion } : {}) }),
                 raw: true,
             });
             if (!response.ok) {
                 const payload = await response.json();
-                throw new Error(payload.error || '导出失败');
+                const error = new Error(payload.error || '导出失败');
+                error.payload = payload;
+                error.status = response.status;
+                throw error;
             }
             const blob = await response.blob();
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
-            link.download = `${exportName(type)}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+            const versionSuffix = options.publishedVersion ? `_V${options.publishedVersion}` : '';
+            link.download = `${exportName(type)}${versionSuffix}_${new Date().toISOString().slice(0, 10)}.xlsx`;
             document.body.appendChild(link);
             link.click();
             link.remove();
@@ -1344,10 +1349,195 @@ export class TimetablePlannerController {
         }
     }
 
+    openPublishDialog() {
+        this.state.publishDialog = {
+            open: true,
+            note: this.state.project?.schedule?.published?.note || '',
+            loading: false,
+        };
+        this.render();
+    }
+
+    closePublishDialog() {
+        this.state.publishDialog = {
+            ...(this.state.publishDialog || {}),
+            open: false,
+            loading: false,
+        };
+        this.render();
+    }
+
+    openPublicationHistoryDialog(version) {
+        this.state.publicationHistoryDialog = {
+            open: true,
+            version: Number.parseInt(version, 10),
+        };
+        this.render();
+    }
+
+    closePublicationHistoryDialog() {
+        this.state.publicationHistoryDialog = {
+            ...(this.state.publicationHistoryDialog || {}),
+            open: false,
+        };
+        this.render();
+    }
+
+    openRestoreDialog(mode = 'latest', version = null) {
+        const parsedVersion = Number.parseInt(version ?? this.state.publicationHistoryDialog?.version, 10);
+        const published = this.state.project?.schedule?.published || null;
+        const historyEntry = mode === 'history' && Number.isInteger(parsedVersion)
+            ? (published?.history || []).find(item => Number.parseInt(item.version, 10) === parsedVersion) || null
+            : null;
+        const diffProject = historyEntry?.snapshot
+            ? {
+                ...this.state.project,
+                schedule: {
+                    ...this.state.project?.schedule,
+                    published: {
+                        ...published,
+                        snapshot: historyEntry.snapshot,
+                    },
+                },
+            }
+            : this.state.project;
+        const diff = getPublishedScheduleDiff(diffProject);
+        const summary = diff.hasSnapshot && diff.total
+            ? {
+                moved: diff.moved || 0,
+                changed: diff.changed || 0,
+                added: diff.added || 0,
+                removed: diff.removed || 0,
+                total: diff.total || 0,
+            }
+            : {
+                moved: 0,
+                changed: 0,
+                added: 0,
+                removed: 0,
+                total: 0,
+            };
+        const targetLabel = mode === 'history'
+            ? `发布历史 V${parsedVersion || ''}`
+            : `发布版 V${published?.version || parsedVersion || ''}`;
+        this.state.restoreDialog = {
+            open: true,
+            mode,
+            version: Number.isInteger(parsedVersion) ? parsedVersion : null,
+            targetLabel,
+            summary,
+            loading: false,
+        };
+        this.render();
+    }
+
+    closeRestoreDialog() {
+        this.state.restoreDialog = {
+            ...(this.state.restoreDialog || {}),
+            open: false,
+            loading: false,
+        };
+        this.render();
+    }
+
+    async restorePublicationHistoryVersion(version = this.state.publicationHistoryDialog?.version) {
+        this.openRestoreDialog('history', version);
+    }
+
+    async restoreLatestPublishedSnapshot() {
+        this.openRestoreDialog('latest', this.state.project?.schedule?.published?.version);
+    }
+
+    async confirmRestoreSchedule() {
+        const dialog = this.state.restoreDialog || {};
+        const requestedVersion = Number.parseInt(dialog.version, 10);
+        const isHistory = dialog.mode === 'history';
+        if (isHistory && !Number.isInteger(requestedVersion)) {
+            this.setMessage('请选择要恢复的发布版本。');
+            return;
+        }
+        this.state.restoreDialog = {
+            ...dialog,
+            loading: true,
+        };
+        this.render();
+        try {
+            const result = await requestTimetable('/schedule/published/restore', {
+                method: 'POST',
+                body: JSON.stringify(isHistory ? { version: requestedVersion } : {}),
+            });
+            this.applyProject(result.project);
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
+            this.state.selectedSlotId = '';
+            this.state.restoreDialog = { open: false, mode: '', version: null, targetLabel: '', summary: null, loading: false };
+            this.state.publicationHistoryDialog = { open: false, version: null };
+            if (isHistory) {
+                this.setMessage(`已恢复发布历史 V${result.restoredVersion || requestedVersion} 为当前草稿，请复核后重新发布。`);
+            } else {
+                const publishedVersion = Number.parseInt(this.state.project?.schedule?.published?.version, 10);
+                this.setMessage(`已恢复发布版 V${result.restoredVersion || publishedVersion || ''} 为当前草稿，请复核后重新发布。`);
+            }
+        } catch (error) {
+            this.state.restoreDialog = {
+                ...(this.state.restoreDialog || {}),
+                loading: false,
+            };
+            this.handleError(error, { keepFailure: true });
+        }
+    }
+
+    updatePublishNote() {
+        const textarea = this.state.container?.querySelector('#tt-publish-note');
+        this.state.publishDialog = {
+            ...(this.state.publishDialog || {}),
+            note: textarea?.value || '',
+        };
+    }
+
+    async confirmPublishSchedule() {
+        this.updatePublishNote();
+        this.state.publishDialog = {
+            ...(this.state.publishDialog || {}),
+            loading: true,
+        };
+        this.render();
+        try {
+            const result = await requestTimetable('/schedule/publish', {
+                method: 'POST',
+                body: JSON.stringify({ note: this.state.publishDialog?.note || '' }),
+            });
+            this.applyProject(result.project);
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
+            this.state.publishDialog = { open: false, note: '', loading: false };
+            const version = result.schedule?.published?.version || result.project?.schedule?.published?.version || 1;
+            this.setMessage(`课表已发布 V${version}。`);
+        } catch (error) {
+            this.state.publishDialog = {
+                ...(this.state.publishDialog || {}),
+                loading: false,
+            };
+            this.handleError(error);
+        }
+    }
+
+    async publishSchedule() {
+        await this.confirmPublishSchedule();
+    }
+
     handleError(error, options = {}) {
         const normalized = normalizeApiError(error);
         if (normalized.project) {
             this.applyProject(normalized.project);
+        } else if (normalized.publication && this.state.project?.schedule) {
+            this.state.project = {
+                ...this.state.project,
+                schedule: {
+                    ...this.state.project.schedule,
+                    publication: normalized.publication,
+                },
+            };
         }
         this.state.message = normalized.message;
         this.state.lastFailure = options.keepFailure ? normalized : null;

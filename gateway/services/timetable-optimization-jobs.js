@@ -3,6 +3,7 @@ import {
     solveTimetableWithTimefold,
     TimetableTimefoldError,
 } from './timetable-solver-bridge.js';
+import { validateTimetablePublication } from './timetable-validation.js';
 
 const jobs = new Map();
 let sequence = 0;
@@ -46,6 +47,47 @@ function scheduleQuality(schedule = {}) {
         - Number(score.unplacedLessons || 0) * 1000;
 }
 
+function slotSignature(slot = {}) {
+    return [
+        slot.id,
+        slot.lessonPlanId,
+        slot.classId,
+        slot.subjectId,
+        slot.teacherId,
+        (slot.teacherIds || []).join(','),
+        slot.day,
+        slot.period,
+        slot.roomId || '',
+        slot.blockId || '',
+        slot.blockIndex ?? 0,
+        slot.blockSize ?? 1,
+        slot.locked ? 1 : 0,
+        slot.manuallyAdjusted ? 1 : 0,
+    ].map(value => String(value ?? '')).join('|');
+}
+
+function scheduleSignature(schedule = null) {
+    if (!schedule) return '';
+    const slots = (schedule.slots || [])
+        .map(slotSignature)
+        .sort();
+    const unplaced = (schedule.unplaced || [])
+        .map(item => [
+            item.lessonPlanId,
+            item.classId,
+            item.subjectId,
+            item.teacherId,
+            item.reason,
+        ].map(value => String(value ?? '')).join('|'))
+        .sort();
+    return JSON.stringify({
+        id: schedule.id || '',
+        source: schedule.source || '',
+        slots,
+        unplaced,
+    });
+}
+
 function canAcceptOptimizedSchedule(currentSchedule, optimizedSchedule) {
     if (!optimizedSchedule) return false;
     if (optimizedSchedule.score?.hardConflicts > 0) return false;
@@ -54,10 +96,40 @@ function canAcceptOptimizedSchedule(currentSchedule, optimizedSchedule) {
     return scheduleQuality(optimizedSchedule) > scheduleQuality(currentSchedule);
 }
 
+function acceptedOptimizedSchedule(latestProject, optimizedSchedule) {
+    const latestSchedule = latestProject?.schedule || {};
+    const qualityScoreBefore = scheduleQuality(latestSchedule);
+    const qualityScoreAfter = scheduleQuality(optimizedSchedule);
+    const published = latestSchedule.published
+        ? {
+            ...latestSchedule.published,
+            status: latestSchedule.published.status === 'published' ? 'draft_changed' : latestSchedule.published.status,
+        }
+        : optimizedSchedule.published || null;
+    const schedule = {
+        ...optimizedSchedule,
+        ...(published ? { published } : { published: null }),
+        solverStats: {
+            ...(optimizedSchedule.solverStats || {}),
+            phase: 'timefold_optimization',
+            status: 'completed',
+            accepted: true,
+            reason: null,
+            qualityScoreBefore,
+            qualityScoreAfter,
+        },
+    };
+    return {
+        ...schedule,
+        publication: validateTimetablePublication({ ...latestProject, schedule }),
+    };
+}
+
 async function runOptimizationJob({
     jobId,
     project,
     sourceScheduleId,
+    sourceScheduleSignature,
     store,
     env,
     fetchImpl,
@@ -75,7 +147,25 @@ async function runOptimizationJob({
     try {
         const solved = await solveTimetableWithTimefold({ project, env, fetchImpl });
         const latest = await store.loadProject();
-        if (latest.schedule?.id !== sourceScheduleId) {
+        if (latest.schedule?.published?.status === 'published') {
+            updateJob(jobId, {
+                status: 'skipped',
+                accepted: false,
+                reason: 'published_schedule',
+                solverStats: {
+                    ...solved.schedule.solverStats,
+                    phase: 'timefold_optimization',
+                    status: 'skipped',
+                    accepted: false,
+                    reason: 'published_schedule',
+                    staleRejected: true,
+                    qualityScoreBefore: scheduleQuality(project.schedule),
+                    qualityScoreAfter: scheduleQuality(solved.schedule),
+                },
+            });
+            return;
+        }
+        if (latest.schedule?.id !== sourceScheduleId || scheduleSignature(latest.schedule) !== sourceScheduleSignature) {
             updateJob(jobId, {
                 status: 'skipped',
                 accepted: false,
@@ -86,6 +176,7 @@ async function runOptimizationJob({
                     status: 'skipped',
                     accepted: false,
                     reason: 'stale_schedule',
+                    staleRejected: true,
                     qualityScoreBefore: scheduleQuality(project.schedule),
                     qualityScoreAfter: scheduleQuality(solved.schedule),
                 },
@@ -111,7 +202,8 @@ async function runOptimizationJob({
             return;
         }
 
-        const saved = await store.saveProject({ ...latest, schedule: solved.schedule });
+        const acceptedSchedule = acceptedOptimizedSchedule(latest, solved.schedule);
+        const saved = await store.saveProject({ ...latest, schedule: acceptedSchedule });
         updateJob(jobId, {
             status: 'completed',
             accepted: true,
@@ -121,6 +213,7 @@ async function runOptimizationJob({
                 phase: 'timefold_optimization',
                 status: 'completed',
                 accepted: true,
+                reason: null,
                 qualityScoreBefore: scheduleQuality(latest.schedule),
                 qualityScoreAfter: scheduleQuality(saved.schedule),
             },
@@ -158,6 +251,7 @@ export function createTimetableOptimizationJob({
         accepted: false,
         reason: null,
         sourceScheduleId: schedule?.id || null,
+        sourceScheduleSignature: scheduleSignature(schedule),
         createdAt: nowIso(),
         updatedAt: nowIso(),
         solverStats: {
@@ -165,6 +259,8 @@ export function createTimetableOptimizationJob({
             status: 'queued',
             jobId,
             lessonCount: project?.lessonPlans?.reduce((sum, plan) => sum + plan.weeklyHours, 0) || 0,
+            initialSolutionUsed: Boolean(schedule?.slots?.length),
+            pinnedCount: (schedule?.slots || []).filter(slot => slot.locked || slot.manuallyAdjusted).length,
         },
     };
     jobs.set(jobId, job);
@@ -173,6 +269,7 @@ export function createTimetableOptimizationJob({
             jobId,
             project,
             sourceScheduleId: job.sourceScheduleId,
+            sourceScheduleSignature: job.sourceScheduleSignature,
             store,
             env: { ...env },
             fetchImpl,

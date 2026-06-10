@@ -11,6 +11,12 @@ const REASON_MESSAGES = {
     missing_subjects: '任课数据里没有课程。',
     invalid_lesson_plan_refs: '任课数据引用了不存在的班级、课程或教师。',
     insufficient_slots: '总课时超过当前作息容量。',
+    publication_blocked: '课表未通过发布前校验，暂不能导出。',
+    publication_draft_changed: '当前课表已改动，请重新发布后再导出正式课表。',
+    publication_required: '请先发布课表后导出正式课表。',
+    publication_fingerprint_mismatch: '发布快照校验失败，请重新发布后再导出或恢复。',
+    published_history_not_found: '没有找到可导出的发布历史版本。',
+    published_snapshot_missing: '没有可导出的已发布课表快照。',
     adjustment_failed: '调整失败，旧课表已保留。',
     ai_not_configured: 'AI 约束解析未配置，请先配置 API Key。',
     empty_prompt: '请先输入要解析的约束。',
@@ -49,6 +55,7 @@ export function normalizeApiError(error) {
         project: payload?.data?.project || null,
         schedule: payload?.data?.schedule || null,
         audit: payload?.data?.audit || null,
+        publication: payload?.data?.publication || null,
         solverStats: payload?.data?.solverStats || null,
     };
 }

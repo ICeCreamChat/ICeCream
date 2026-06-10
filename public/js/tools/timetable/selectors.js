@@ -345,6 +345,128 @@ export function getRuleSummary(project = {}) {
     };
 }
 
+function normalizedTeacherKey(slot = {}) {
+    const ids = Array.isArray(slot.teacherIds) && slot.teacherIds.length
+        ? slot.teacherIds
+        : [slot.teacherId].filter(Boolean);
+    return [...new Set(ids.map(item => String(item || '').trim()).filter(Boolean))].sort().join(',');
+}
+
+function slotSemanticKey(slot = {}) {
+    return [
+        slot.lessonPlanId || '',
+        slot.classId || '',
+        slot.subjectId || '',
+        normalizedTeacherKey(slot),
+        slot.blockId || '',
+        Number(slot.blockIndex || 0),
+        Number(slot.blockSize || 1),
+    ].map(value => String(value ?? '')).join('|');
+}
+
+function popMatchingSlot(queueMap, key, usedIds) {
+    const queue = queueMap.get(key) || [];
+    while (queue.length) {
+        const candidate = queue.shift();
+        if (!usedIds.has(candidate.__diffId)) return candidate;
+    }
+    return null;
+}
+
+function diffSlotContent(before = {}, after = {}) {
+    const contentChanged = before.lessonPlanId !== after.lessonPlanId
+        || before.classId !== after.classId
+        || before.subjectId !== after.subjectId
+        || normalizedTeacherKey(before) !== normalizedTeacherKey(after)
+        || Number(before.blockIndex || 0) !== Number(after.blockIndex || 0)
+        || Number(before.blockSize || 1) !== Number(after.blockSize || 1);
+    const roomChanged = (before.roomId || '') !== (after.roomId || '');
+    const moved = Number(before.day) !== Number(after.day)
+        || Number(before.period) !== Number(after.period);
+    return { moved, roomChanged, contentChanged };
+}
+
+export function getPublishedScheduleDiff(project = {}) {
+    const currentSlots = (project.schedule?.slots || []).map((slot, index) => ({
+        ...slot,
+        __diffId: `current:${slot.id || index}`,
+    }));
+    const snapshotSlots = (project.schedule?.published?.snapshot?.slots || []).map((slot, index) => ({
+        ...slot,
+        __diffId: `snapshot:${slot.id || index}`,
+    }));
+    if (!snapshotSlots.length) {
+        return {
+            hasSnapshot: false,
+            total: 0,
+            moved: 0,
+            changed: 0,
+            added: 0,
+            removed: 0,
+            items: [],
+        };
+    }
+
+    const currentById = new Map(currentSlots.filter(slot => slot.id).map(slot => [slot.id, slot]));
+    const exactMatchCount = snapshotSlots
+        .filter(slot => slot.id && currentById.has(slot.id))
+        .length;
+    const allowSemanticFallback = exactMatchCount === 0;
+    const currentBySemantic = new Map();
+    currentSlots.forEach(slot => {
+        const key = slotSemanticKey(slot);
+        if (!currentBySemantic.has(key)) currentBySemantic.set(key, []);
+        currentBySemantic.get(key).push(slot);
+    });
+
+    const usedCurrentIds = new Set();
+    const items = [];
+    snapshotSlots.forEach(before => {
+        let after = before.id ? currentById.get(before.id) : null;
+        if (after && usedCurrentIds.has(after.__diffId)) after = null;
+        if (!after && allowSemanticFallback) after = popMatchingSlot(currentBySemantic, slotSemanticKey(before), usedCurrentIds);
+        if (!after) {
+            items.push({ type: 'removed', beforeSlot: before, afterSlot: null });
+            return;
+        }
+        usedCurrentIds.add(after.__diffId);
+        const changes = diffSlotContent(before, after);
+        if (changes.moved || changes.roomChanged || changes.contentChanged) {
+            items.push({
+                type: changes.moved ? 'moved' : 'changed',
+                beforeSlot: before,
+                afterSlot: after,
+                changes,
+            });
+        }
+    });
+
+    currentSlots.forEach(after => {
+        if (!usedCurrentIds.has(after.__diffId)) {
+            items.push({ type: 'added', beforeSlot: null, afterSlot: after });
+        }
+    });
+
+    return {
+        hasSnapshot: true,
+        total: items.length,
+        moved: items.filter(item => item.type === 'moved').length,
+        changed: items.filter(item => item.type === 'changed').length,
+        added: items.filter(item => item.type === 'added').length,
+        removed: items.filter(item => item.type === 'removed').length,
+        items,
+    };
+}
+
+export function isPublishedDraftChanged(project = {}) {
+    const published = project.schedule?.published || null;
+    if (!published) return false;
+    if (published.status === 'draft_changed') return true;
+    if (published.status !== 'published') return false;
+    const diff = getPublishedScheduleDiff(project);
+    return Boolean(diff.hasSnapshot && diff.total > 0);
+}
+
 export function getPreparedness(project) {
     if (!project) return { ready: false, message: '正在读取排课项目。' };
     if (!(project.lessonPlans || []).length) return { ready: false, message: '请先导入任课数据。' };
@@ -448,13 +570,22 @@ export function getSolveStatus(project, lastFailure = null) {
     const score = getScore(project);
     const summary = getConflictSummary(project?.schedule || {});
     const source = project?.schedule?.source;
+    const publicationDraftChanged = isPublishedDraftChanged(project);
     return {
         source,
-        sourceLabel: source === 'timefold_solver'
+        sourceLabel: publicationDraftChanged
+            ? '草稿已变化'
+            : source === 'timefold_solver'
             ? 'Timefold'
             : source === 'fast_constructed'
                 ? '快速课表'
-                : source === 'diagnostic_local'
+                : source === 'manual_adjusted'
+                    ? '\u624b\u52a8\u8c03\u6574'
+                    : source === 'published' || source === 'published_snapshot' || source === 'published_history_snapshot'
+                        ? '已发布'
+                    : source === 'published_history_restored'
+                        ? '恢复发布版'
+                    : source === 'diagnostic_local'
                     ? '本地诊断'
                     : '未生成',
         placed: score.placedLessons ?? 0,

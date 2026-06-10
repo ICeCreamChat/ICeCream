@@ -17,6 +17,9 @@ import {
     auditTimetableProject,
     buildTimetableQualityIssues,
 } from './timetable-audit.js';
+import {
+    validateTimetablePublication,
+} from './timetable-validation.js';
 
 function blockSlotIndexes(schedule, slot) {
     if (!slot?.blockId || slot.blockSize <= 1) {
@@ -48,6 +51,13 @@ function refreshSchedule(project, schedule) {
     schedule.audit = auditTimetableProject(project);
     schedule.qualityIssues = buildTimetableQualityIssues(project, schedule.slots);
     schedule.score = buildTimetableScore(project, schedule.slots, unplaced, conflicts);
+    schedule.publication = validateTimetablePublication({ ...project, schedule });
+    if (schedule.published?.status === 'published') {
+        schedule.published = {
+            ...schedule.published,
+            status: 'draft_changed',
+        };
+    }
     return schedule;
 }
 
@@ -70,7 +80,7 @@ export function applyScheduleAdjustment(input = {}, adjustment = {}) {
     } else if (adjustment.type === 'lock') {
         schedule.slots = schedule.slots.map(slot => (
             blockSlotIds.has(slot.id)
-                ? { ...slot, locked: adjustment.locked !== false }
+                ? { ...slot, locked: adjustment.locked !== false, manuallyAdjusted: true }
                 : slot
         ));
     } else if (adjustment.type === 'move') {
@@ -90,6 +100,7 @@ export function applyScheduleAdjustment(input = {}, adjustment = {}) {
                 ...slot,
                 day,
                 period: startPeriod + relativeIndex,
+                manuallyAdjusted: true,
             };
             const check = canUseSlot(project, usage, next);
             if (!check.ok) throw new Error(check.reason);
@@ -101,6 +112,7 @@ export function applyScheduleAdjustment(input = {}, adjustment = {}) {
         throw new Error('未知的课表调整类型');
     }
 
+    schedule.source = 'manual_adjusted';
     refreshSchedule(project, schedule);
 
     return {

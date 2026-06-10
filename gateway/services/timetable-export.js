@@ -88,6 +88,35 @@ function lessonLabel(project, slot, mode) {
     return `${subject}\n${teacher}`.trim();
 }
 
+function publicationIssueLabel(type = '') {
+    return ({
+        class_capacity: '班级容量',
+        class_load: '班级负载',
+        hard_conflicts: '硬冲突',
+        inactive_slot: '作息范围',
+        incomplete_schedule: '未排课时',
+        invalid_schedule_refs: '无效引用',
+        manual_adjusted: '手动调整',
+        manual_review: '教务复核',
+        missing_lesson_plans: '任课数据',
+        missing_schedule: '课表生成',
+        quality_review: '质量建议',
+        restored_published_draft: '恢复发布版',
+        room_capacity: '教室容量',
+        room_load: '教室负载',
+        subject_avoid_period: '避开节次',
+        subject_spread: '同科分散',
+        teacher_capacity: '教师容量',
+        teacher_consecutive: '教师连续课',
+        teacher_daily_limit: '教师日课时',
+        teacher_load: '教师负载',
+    })[type] || (type ? '校验提醒' : '');
+}
+
+function publicationIssueText(item = {}) {
+    return item.message || item.targetName || publicationIssueLabel(item.type);
+}
+
 function sheetRowsForSchedule(project, mode) {
     const slots = project.schedule?.slots || [];
     const owners = mode === 'teacher' ? project.teachers : mode === 'master' ? [{ id: 'all', name: '总课表' }] : project.classes;
@@ -110,6 +139,37 @@ function sheetRowsForSchedule(project, mode) {
     return rows;
 }
 
+function publicationMetadataRows(project = {}, options = {}) {
+    if (options.type === 'plans') return [];
+    const schedule = project.schedule || {};
+    const published = schedule.published || null;
+    const publication = schedule.publication || {};
+    const summary = publication.summary || schedule.score || {};
+    if (!published && !publication.ok && !options.published) return [];
+    const version = Number.parseInt(published?.version, 10);
+    const publishedAt = published?.publishedAt || '';
+    const note = published?.note || '';
+    const fingerprint = published?.fingerprint || published?.snapshot?.fingerprint || '';
+    const validation = publication.ok ? '已通过' : publication.reason ? '未通过' : '未校验';
+    const rows = [
+        ['发布信息'],
+        ['发布状态', published ? (published.status === 'draft_changed' ? '草稿已变化' : '已发布') : '未发布'],
+        ['发布版本', Number.isInteger(version) ? `V${version}` : ''],
+        ['发布时间', publishedAt],
+        ['发布备注', note],
+        ['发布指纹', fingerprint],
+        ['课表编号', published?.scheduleId || schedule.id || ''],
+        ['发布校验', validation],
+        ['课时', `${summary.placedLessons ?? schedule.score?.placedLessons ?? 0}/${summary.totalLessons ?? schedule.score?.totalLessons ?? 0}`],
+        ['硬冲突', String(summary.hardConflicts ?? schedule.score?.hardConflicts ?? 0)],
+        ['未排课时', String(summary.unplacedLessons ?? schedule.score?.unplacedLessons ?? 0)],
+    ];
+    const warnings = Array.isArray(publication.warnings) ? publication.warnings : [];
+    if (warnings.length) rows.push(['发布提醒', warnings.map(publicationIssueText).filter(Boolean).join('；')]);
+    rows.push([]);
+    return rows;
+}
+
 function workbookXml(sheetName) {
     return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -121,7 +181,9 @@ function workbookXml(sheetName) {
 export function buildTimetableExportXlsx(project, options = {}) {
     const type = options.type || 'class';
     const sheetName = type === 'plans' ? '任课信息' : type === 'teacher' ? '教师课表' : type === 'master' ? '总课表' : '班级课表';
-    const rows = type === 'plans' ? sheetRowsForPlans(project) : sheetRowsForSchedule(project, type);
+    const rows = type === 'plans'
+        ? sheetRowsForPlans(project)
+        : [...publicationMetadataRows(project, { ...options, type }), ...sheetRowsForSchedule(project, type)];
     const sharedStrings = createSharedStringTable();
     const sheet = buildSheet(rows, sharedStrings);
     const zip = new AdmZip();

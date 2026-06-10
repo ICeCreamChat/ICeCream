@@ -313,8 +313,87 @@ function normalizeRules(raw = {}) {
     };
 }
 
+function normalizePublishedSnapshot(rawSnapshot, fallback = {}) {
+    if (!rawSnapshot || typeof rawSnapshot !== 'object') return null;
+    const fingerprint = cleanText(rawSnapshot.fingerprint || fallback.fingerprint, 80);
+    return {
+        scheduleId: cleanText(rawSnapshot.scheduleId, 80) || cleanText(fallback.scheduleId, 80) || cleanText(fallback.id, 80) || null,
+        generatedAt: rawSnapshot.generatedAt || fallback.generatedAt || null,
+        source: cleanText(rawSnapshot.source, 80) || cleanText(fallback.source, 80) || null,
+        slotCount: Math.max(0, Number.parseInt(rawSnapshot.slotCount, 10) || 0),
+        ...(fingerprint ? { fingerprint } : {}),
+        score: rawSnapshot.score && typeof rawSnapshot.score === 'object' ? rawSnapshot.score : {},
+        publicationSummary: rawSnapshot.publicationSummary && typeof rawSnapshot.publicationSummary === 'object'
+            ? rawSnapshot.publicationSummary
+            : {},
+        slots: Array.isArray(rawSnapshot.slots)
+            ? rawSnapshot.slots.map(slot => ({
+                id: cleanText(slot.id, 120),
+                day: Number.parseInt(slot.day, 10),
+                period: Number.parseInt(slot.period, 10),
+                classId: cleanText(slot.classId, 80),
+                subjectId: cleanText(slot.subjectId, 80),
+                teacherId: cleanText(slot.teacherId, 80),
+                teacherIds: normalizeIdList(slot.teacherIds),
+                lessonPlanId: cleanText(slot.lessonPlanId, 80),
+                roomId: cleanText(slot.roomId, 80) || null,
+                blockId: cleanText(slot.blockId, 120) || null,
+                blockIndex: Number.isInteger(Number(slot.blockIndex)) ? Number(slot.blockIndex) : 0,
+                blockSize: Math.max(1, Number.parseInt(slot.blockSize, 10) || 1),
+                locked: Boolean(slot.locked),
+                manuallyAdjusted: Boolean(slot.manuallyAdjusted),
+            })).filter(slot => slot.id && Number.isInteger(slot.day) && Number.isInteger(slot.period))
+            : [],
+    };
+}
+
+function normalizePublishedHistory(values = [], fallback = {}) {
+    return (Array.isArray(values) ? values : [])
+        .map(item => {
+            if (!item || typeof item !== 'object') return null;
+            const snapshot = normalizePublishedSnapshot(item.snapshot, {
+                ...fallback,
+                scheduleId: item.scheduleId,
+            });
+            if (!snapshot) return null;
+            return {
+                version: Math.max(1, Number.parseInt(item.version, 10) || 1),
+                publishedAt: item.publishedAt || null,
+                scheduleId: cleanText(item.scheduleId, 80) || snapshot.scheduleId || null,
+                note: cleanText(item.note, 200),
+                fingerprint: cleanText(item.fingerprint || snapshot.fingerprint, 80),
+                snapshot,
+            };
+        })
+        .filter(Boolean)
+        .sort((left, right) => Number(left.version || 0) - Number(right.version || 0));
+}
+
 export function normalizeSchedule(raw) {
     if (!raw || !Array.isArray(raw.slots)) return null;
+    const snapshot = normalizePublishedSnapshot(raw.published?.snapshot, {
+        scheduleId: raw.published?.scheduleId,
+        id: raw.id,
+        generatedAt: raw.generatedAt,
+        source: raw.source,
+    });
+    const history = normalizePublishedHistory(raw.published?.history, {
+        id: raw.id,
+        generatedAt: raw.generatedAt,
+        source: raw.source,
+    });
+    const published = raw.published && typeof raw.published === 'object'
+        ? {
+            status: ['published', 'draft_changed'].includes(raw.published.status) ? raw.published.status : 'published',
+            version: Math.max(1, Number.parseInt(raw.published.version, 10) || 1),
+            publishedAt: raw.published.publishedAt || null,
+            scheduleId: cleanText(raw.published.scheduleId, 80) || cleanText(raw.id, 80) || null,
+            note: cleanText(raw.published.note, 200),
+            fingerprint: cleanText(raw.published.fingerprint || snapshot?.fingerprint, 80),
+            ...(snapshot ? { snapshot } : {}),
+            ...(history.length ? { history } : {}),
+        }
+        : null;
     return {
         id: cleanText(raw.id, 80) || `schedule_${Date.now()}`,
         generatedAt: raw.generatedAt || new Date().toISOString(),
@@ -337,6 +416,7 @@ export function normalizeSchedule(raw) {
                 blockIndex: Number.isInteger(Number(slot.blockIndex)) ? Number(slot.blockIndex) : 0,
                 blockSize: Math.max(1, Number.parseInt(slot.blockSize, 10) || 1),
                 locked: Boolean(slot.locked),
+                manuallyAdjusted: Boolean(slot.manuallyAdjusted),
             };
         }).filter(slot => slot.id && slot.classId && slot.subjectId && slot.teacherId && Number.isInteger(slot.day) && Number.isInteger(slot.period)),
         lockedSlots: Array.isArray(raw.lockedSlots) ? raw.lockedSlots : [],
@@ -344,6 +424,8 @@ export function normalizeSchedule(raw) {
         unplaced: Array.isArray(raw.unplaced) ? raw.unplaced : [],
         audit: raw.audit || null,
         qualityIssues: Array.isArray(raw.qualityIssues) ? raw.qualityIssues : [],
+        publication: raw.publication || null,
+        published,
         score: raw.score || {},
         solverStats: raw.solverStats || null,
     };

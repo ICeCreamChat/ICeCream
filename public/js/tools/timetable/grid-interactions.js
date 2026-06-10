@@ -116,6 +116,28 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelectorAll('[data-export-type]').forEach(button => {
         button.addEventListener('click', () => controller.export(button.dataset.exportType));
     });
+    container.querySelectorAll('[data-export-history-type]').forEach(button => {
+        button.addEventListener('click', () => controller.export(button.dataset.exportHistoryType, {
+            publishedVersion: button.dataset.exportHistoryVersion,
+        }));
+    });
+    container.querySelector('#tt-publish-schedule')?.addEventListener('click', () => controller.openPublishDialog());
+    container.querySelector('#tt-publish-note')?.addEventListener('input', () => controller.updatePublishNote());
+    container.querySelector('#tt-confirm-publish')?.addEventListener('click', () => controller.confirmPublishSchedule());
+    container.querySelector('#tt-cancel-publish')?.addEventListener('click', () => controller.closePublishDialog());
+    container.querySelector('#tt-cancel-publish-secondary')?.addEventListener('click', () => controller.closePublishDialog());
+    container.querySelectorAll('[data-publication-history-version]').forEach(button => {
+        button.addEventListener('click', () => controller.openPublicationHistoryDialog(button.dataset.publicationHistoryVersion));
+    });
+    container.querySelector('#tt-restore-publication-history')?.addEventListener('click', event => {
+        controller.openRestoreDialog('history', event.currentTarget.dataset.restorePublicationVersion);
+    });
+    container.querySelector('#tt-restore-published-snapshot')?.addEventListener('click', () => controller.openRestoreDialog('latest'));
+    container.querySelector('#tt-confirm-restore')?.addEventListener('click', () => controller.confirmRestoreSchedule());
+    container.querySelector('#tt-cancel-restore')?.addEventListener('click', () => controller.closeRestoreDialog());
+    container.querySelector('#tt-cancel-restore-secondary')?.addEventListener('click', () => controller.closeRestoreDialog());
+    container.querySelector('#tt-close-publication-history')?.addEventListener('click', () => controller.closePublicationHistoryDialog());
+    container.querySelector('#tt-close-publication-history-secondary')?.addEventListener('click', () => controller.closePublicationHistoryDialog());
 
     container.querySelectorAll('.tt-slot').forEach(slotNode => {
         slotNode.addEventListener('click', () => {
