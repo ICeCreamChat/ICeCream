@@ -265,6 +265,7 @@ function makeSlot(task, day, period, index = 0, locked = false, roomId = undefin
 
 function hasSimpleEdgeColoringShape(project) {
     if ((project.rules?.hardRules?.lockedSlots || []).length > 0) return false;
+    if ((project.schedule?.slots || []).some(slot => slot.locked || slot.manuallyAdjusted)) return false;
     if (Object.keys(project.rules?.hardRules?.teacherUnavailable || {}).length > 0) return false;
     if (Object.keys(project.rules?.hardRules?.classUnavailable || {}).length > 0) return false;
     if ((project.teachers || []).some(teacher => (teacher.unavailableSlots || []).length > 0)) return false;
@@ -970,6 +971,53 @@ function seedLockedSlots(project, usage, maps) {
     return { slots, conflicts, placedCountByPlan };
 }
 
+function seedProtectedCurrentSlots(project, usage, maps, seededState) {
+    const slots = [...(seededState?.slots || [])];
+    const conflicts = [...(seededState?.conflicts || [])];
+    const placedCountByPlan = new Map(seededState?.placedCountByPlan || []);
+    const seededKeys = new Set(slots.map(slot => `${slot.lessonPlanId || ''}:${slot.classId}:${slot.day}-${slot.period}`));
+    const seededRuleCells = new Set(
+        slots
+            .filter(slot => slot.locked)
+            .map(slot => `${slot.lessonPlanId || ''}:${slot.classId}:${slot.day}-${slot.period}`),
+    );
+    const scheduleSlots = (project.schedule?.slots || [])
+        .filter(slot => slot.lessonPlanId && (slot.locked || slot.manuallyAdjusted))
+        .sort((left, right) => left.day - right.day || left.period - right.period || (left.blockIndex || 0) - (right.blockIndex || 0));
+
+    for (const existing of scheduleSlots) {
+        const plan = maps.plans.get(existing.lessonPlanId);
+        if (!plan) continue;
+        const key = `${existing.lessonPlanId}:${existing.classId}:${existing.day}-${existing.period}`;
+        if (seededRuleCells.has(key) || seededKeys.has(key)) continue;
+        if (!isActiveTimetableSlot(project, existing.day, existing.period)) continue;
+
+        const slot = {
+            ...existing,
+            teacherIds: slotTeacherIds(existing).length ? slotTeacherIds(existing) : slotTeacherIds(plan),
+            roomId: existing.roomId || null,
+            locked: Boolean(existing.locked),
+            manuallyAdjusted: Boolean(existing.manuallyAdjusted),
+        };
+        const check = canUseSlot(project, usage, slot);
+        if (!check.ok) {
+            conflicts.push({
+                type: 'protected-slot-conflict',
+                severity: 'hard',
+                message: `Protected lesson cannot be kept: ${check.reason}`,
+                slot,
+            });
+            continue;
+        }
+        slots.push(slot);
+        addUsage(usage, slot);
+        seededKeys.add(key);
+        placedCountByPlan.set(slot.lessonPlanId, (placedCountByPlan.get(slot.lessonPlanId) || 0) + 1);
+    }
+
+    return { slots, conflicts, placedCountByPlan };
+}
+
 export function runTimetableScheduler(input = {}) {
     const project = normalizeTimetableProject(input);
     const audit = auditTimetableProject(project);
@@ -982,7 +1030,8 @@ export function runTimetableScheduler(input = {}) {
 
     const maps = getTimetableEntityMaps(project);
     const usage = createTimetableUsage();
-    const seeded = seedLockedSlots(project, usage, maps);
+    const seededLocked = seedLockedSlots(project, usage, maps);
+    const seeded = seedProtectedCurrentSlots(project, usage, maps, seededLocked);
     const slots = [...seeded.slots];
     const unplaced = [];
     const conflicts = [...seeded.conflicts];

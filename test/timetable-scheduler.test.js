@@ -1040,6 +1040,74 @@ test('manual adjustment applies move, lock and clear to an entire block', () => 
     assert.equal(cleared.schedule.slots.some(slot => slot.blockId === 'lp1_block_1'), false);
 });
 
+test('fast timetable scheduler preserves locked and manually adjusted slots when regenerating', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 4,
+        teachers: [
+            { id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_cn', name: 'Chinese Teacher', subjects: ['chinese'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [
+            { id: 'math', name: 'Math', priority: 90, color: '#2563eb' },
+            { id: 'chinese', name: 'Chinese', priority: 88, color: '#16a34a' },
+        ],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2, blockPreference: 'single' },
+            { id: 'lp_cn', classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', weeklyHours: 2, blockPreference: 'single' },
+        ],
+        rules: { hardRules: { lockedSlots: [] }, softRules: {} },
+        schedule: {
+            id: 'manual_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'manual_adjusted',
+            slots: [
+                {
+                    id: 'manual_locked_math',
+                    day: 3,
+                    period: 2,
+                    classId: 'c1',
+                    subjectId: 'math',
+                    teacherId: 't_math',
+                    teacherIds: ['t_math'],
+                    lessonPlanId: 'lp_math',
+                    locked: true,
+                    manuallyAdjusted: true,
+                },
+                {
+                    id: 'manual_cn',
+                    day: 4,
+                    period: 3,
+                    classId: 'c1',
+                    subjectId: 'chinese',
+                    teacherId: 't_cn',
+                    teacherIds: ['t_cn'],
+                    lessonPlanId: 'lp_cn',
+                    locked: false,
+                    manuallyAdjusted: true,
+                },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 2, totalLessons: 4, completeness: 50 },
+        },
+    });
+
+    const result = runTimetableScheduler(project);
+    const mathSlots = result.schedule.slots.filter(slot => slot.lessonPlanId === 'lp_math');
+    const chineseSlots = result.schedule.slots.filter(slot => slot.lessonPlanId === 'lp_cn');
+
+    assert.equal(result.success, true);
+    assert.equal(mathSlots.length, 2);
+    assert.equal(chineseSlots.length, 2);
+    assert.ok(mathSlots.some(slot => slot.day === 3 && slot.period === 2 && slot.locked === true));
+    assert.ok(chineseSlots.some(slot => slot.day === 4 && slot.period === 3 && slot.manuallyAdjusted === true));
+    assert.equal(result.schedule.score.hardConflicts, 0);
+    assert.equal(result.schedule.score.unplacedLessons, 0);
+});
+
 test('timetable roster parser imports teachers, classes, subjects and lesson plans', () => {
     const parsed = parseTimetableRosterText(`
 年级,班级,课程,教师,周课时,连堂
