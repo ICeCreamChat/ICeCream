@@ -256,6 +256,39 @@ export class TimetablePlannerController {
         this.render();
     }
 
+    setRuleReviewProgress(phase, phaseText, { tone = '', step = null, mode = null } = {}) {
+        this.state.ruleReview = {
+            ...createTimetablePlannerState().ruleReview,
+            ...(this.state.ruleReview || {}),
+            open: true,
+            step: step || this.state.ruleReview?.step || 'input',
+            mode: mode || this.state.ruleReview?.mode || 'file',
+            loading: true,
+            phase,
+            phaseText,
+            phaseTone: tone,
+            text: this.state.ruleReview?.text ?? this.readRuleReviewText(),
+        };
+        this.render();
+    }
+
+    stopRuleReviewProgress(phaseText = '', tone = '') {
+        this.state.ruleReview = {
+            ...createTimetablePlannerState().ruleReview,
+            ...(this.state.ruleReview || {}),
+            loading: false,
+            phase: tone ? 'error' : '',
+            phaseText,
+            phaseTone: tone,
+        };
+        this.render();
+    }
+
+    async waitForRuleReviewFrame() {
+        if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') return;
+        await new Promise(resolve => window.requestAnimationFrame(resolve));
+    }
+
     setRuleReviewMode(mode) {
         const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'text';
         this.state.ruleReview = {
@@ -467,6 +500,10 @@ export class TimetablePlannerController {
             warnings,
             unsupportedItems: payload.unsupportedItems || [],
             hasBlockingIssues,
+            loading: false,
+            phase: '',
+            phaseText: '',
+            phaseTone: '',
         };
         this.state.ruleDraft = payload.draftRules || this.state.ruleDraft;
         this.state.ruleDraftPreview = payload.previewItems || draftRows;
@@ -569,6 +606,7 @@ export class TimetablePlannerController {
             if (form.type !== 'subject_morning' && (!form.days.length || !form.periods.length)) {
                 throw new Error('请先选择周几和节次。');
             }
+            this.setRuleReviewProgress('manual_rows', '生成复核行中...', { step: 'manual', mode: 'manual' });
             const rows = buildManualRuleDraftRows(form);
             this.setRuleReviewState({
                 draftRows: [...(this.state.ruleReview?.draftRows || []), ...rows],
@@ -577,6 +615,9 @@ export class TimetablePlannerController {
             });
             this.setMessage('手动规则已加入复核表。');
         } catch (error) {
+            if (this.state.ruleReview?.loading) {
+                this.stopRuleReviewProgress('生成复核行失败，请检查选择。', 'warning');
+            }
             this.handleError(error);
         }
     }
@@ -1014,22 +1055,38 @@ export class TimetablePlannerController {
     }
 
     async parseRules() {
+        const review = this.state.ruleReview || {};
+        const text = readRulePrompt(this.state.container);
+        const hasFile = review.mode === 'file' && this.ruleReviewFile;
+        if (!text && !hasFile) {
+            this.setMessage('请输入约束描述或上传约束文件。');
+            return;
+        }
+        this.state.ruleReview = {
+            ...review,
+            open: true,
+            text,
+        };
         try {
-            const review = this.state.ruleReview || {};
             let options;
-            if (review.mode === 'file' && this.ruleReviewFile) {
+            if (hasFile) {
+                this.setRuleReviewProgress('read_file', '读取约束文件中...', { step: 'input', mode: 'file' });
+                await this.waitForRuleReviewFrame();
                 const body = new FormData();
                 body.append('file', this.ruleReviewFile);
-                const text = readRulePrompt(this.state.container);
                 if (text) body.append('text', text);
                 options = { method: 'POST', body };
+                this.setRuleReviewProgress('parse_ai', 'AI 解析约束中...', { step: 'input', mode: 'file' });
             } else {
+                this.setRuleReviewProgress('parse_text', 'AI 理解自然语言中...', { step: 'input', mode: 'text' });
+                await this.waitForRuleReviewFrame();
                 options = {
                     method: 'POST',
-                    body: JSON.stringify({ text: readRulePrompt(this.state.container) }),
+                    body: JSON.stringify({ text }),
                 };
             }
             const result = await requestTimetable('/rules/parse', options);
+            this.setRuleReviewProgress('build_review', '生成复核表中...', { step: 'input', mode: hasFile ? 'file' : 'text' });
             this.setRuleReviewState(result);
             const total = (result.draftRows || []).length;
             const effective = (result.draftRows || []).filter(row => row.status === 'effective').length;
@@ -1037,6 +1094,7 @@ export class TimetablePlannerController {
                 ? `已解析 ${total} 条约束（${effective} 条可直接生效），请在复核表确认。`
                 : '未能解析出可用约束，请调整描述后重试。');
         } catch (error) {
+            this.stopRuleReviewProgress('解析失败，请调整后重试。', 'warning');
             this.handleError(error);
         }
     }
@@ -1047,6 +1105,7 @@ export class TimetablePlannerController {
             : this.state.ruleReview?.draftRows || [];
         if (rows.length) {
             try {
+                this.setRuleReviewProgress('normalize', '校验规则中...', { step: 'review', mode: this.state.ruleReview?.mode || 'file' });
                 const normalized = await requestTimetable('/rules/normalize', {
                     method: 'POST',
                     body: JSON.stringify({
@@ -1061,6 +1120,7 @@ export class TimetablePlannerController {
                     this.setMessage('复核表里没有可生效规则，请先修正对象或节次。');
                     return;
                 }
+                this.setRuleReviewProgress('save', '写入项目中...', { step: 'review', mode: this.state.ruleReview?.mode || 'file' });
                 const result = await requestTimetable('/rules', {
                     method: 'POST',
                     body: JSON.stringify({ rules: normalized.draftRules }),
@@ -1078,6 +1138,7 @@ export class TimetablePlannerController {
                 this.setMessage('约束已确认生效。');
                 return;
             } catch (error) {
+                this.stopRuleReviewProgress('写入失败，请稍后重试。', 'warning');
                 this.handleError(error);
                 return;
             }
@@ -1087,6 +1148,7 @@ export class TimetablePlannerController {
             return;
         }
         try {
+            this.setRuleReviewProgress('save', '写入项目中...', { step: this.state.ruleReview?.step || 'review', mode: this.state.ruleReview?.mode || 'file' });
             const result = await requestTimetable('/rules', {
                 method: 'POST',
                 body: JSON.stringify({ rules: this.state.ruleDraft }),
@@ -1103,6 +1165,7 @@ export class TimetablePlannerController {
             };
             this.setMessage('AI 约束已确认。');
         } catch (error) {
+            this.stopRuleReviewProgress('写入失败，请稍后重试。', 'warning');
             this.handleError(error);
         }
     }

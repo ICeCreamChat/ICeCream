@@ -60,6 +60,16 @@ body.light-mode .tt-workbench {
     font-size: 0.95rem;
 }
 
+.tt-spin {
+    animation: tt-spin 1s linear infinite;
+}
+
+@keyframes tt-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 .tt-topbar {
     grid-area: topbar;
     display: flex;
@@ -742,47 +752,13 @@ button.tt-section-title {
     display: none;
 }
 
-.tt-rule-entry-card {
-    display: grid;
-    grid-template-columns: 24px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--tt-space-sm);
-    padding: 10px 12px;
-    background: var(--tt-bg-input);
-    border: 1px solid var(--tt-border);
-    border-radius: var(--tt-radius-md);
-    color: var(--tt-muted);
-    font-size: 0.76rem;
+.tt-rule-entry {
+    min-height: 132px;
 }
 
-.tt-rule-entry-card--action {
-    width: 100%;
-    text-align: left;
-    cursor: pointer;
-    transition: var(--tt-transition);
-}
-
-.tt-rule-entry-card--action:hover,
-.tt-rule-entry-card--action:focus-visible {
-    border-color: var(--tt-primary);
-    color: var(--tt-text-secondary);
-    box-shadow: 0 0 0 1px rgba(8, 145, 178, 0.18);
-}
-
-.tt-rule-entry-card .lucide {
-    width: 20px;
-    height: 20px;
-    color: var(--tt-primary);
-}
-
-.tt-rule-entry-card strong {
-    display: block;
-    color: var(--tt-text);
-    font-size: 0.86rem;
-}
-
-.tt-rule-entry-card span {
-    min-width: 0;
+.tt-rule-entry span {
+    max-width: 100%;
+    line-height: 1.45;
 }
 
 .tt-rule-summary {
@@ -923,6 +899,58 @@ button.tt-section-title {
     line-height: 1.5;
 }
 
+.tt-process-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 7px 9px;
+    background: rgba(8, 145, 178, 0.08);
+    border: 1px solid rgba(8, 145, 178, 0.22);
+    border-radius: var(--tt-radius-md);
+}
+
+.tt-process-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    min-height: 22px;
+    padding: 2px 7px;
+    background: rgba(8, 145, 178, 0.12);
+    border: 1px solid rgba(8, 145, 178, 0.2);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-primary);
+    font-size: 0.74rem;
+    line-height: 1.3;
+}
+
+.tt-process-chip .lucide {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+}
+
+.tt-process-chip strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-process-chip--muted {
+    background: rgba(148, 163, 184, 0.09);
+    border-color: var(--tt-border);
+    color: var(--tt-muted);
+}
+
+.tt-process-chip--warning {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.32);
+    color: var(--tt-warning);
+}
+
 .tt-import-mode-tabs {
     width: fit-content;
     grid-template-columns: repeat(2, minmax(92px, 1fr));
@@ -1012,9 +1040,66 @@ button.tt-section-title {
 .tt-rule-review-table {
     width: 100%;
     min-width: 1180px;
+    table-layout: fixed;
     border-collapse: separate;
     border-spacing: 0;
     font-size: 0.74rem;
+}
+
+.tt-rule-review-col-raw {
+    width: 190px;
+}
+
+.tt-rule-review-col-type {
+    width: 170px;
+}
+
+.tt-rule-review-col-target {
+    width: 140px;
+}
+
+.tt-rule-review-col-slots {
+    width: 190px;
+}
+
+.tt-rule-review-col-priority {
+    width: 130px;
+}
+
+.tt-rule-review-col-status {
+    width: 110px;
+}
+
+.tt-rule-review-col-description {
+    width: 270px;
+}
+
+.tt-rule-review-col-action {
+    width: 48px;
+}
+
+.tt-saved-rule-col-type {
+    width: 210px;
+}
+
+.tt-saved-rule-col-target {
+    width: 190px;
+}
+
+.tt-saved-rule-col-slots {
+    width: 190px;
+}
+
+.tt-saved-rule-col-priority {
+    width: 120px;
+}
+
+.tt-saved-rule-col-description {
+    width: 420px;
+}
+
+.tt-saved-rule-col-action {
+    width: 58px;
 }
 
 .tt-roster-review-table th,
@@ -1025,6 +1110,10 @@ button.tt-section-title {
     border-bottom: 1px solid var(--tt-border);
     text-align: left;
     vertical-align: middle;
+}
+
+.tt-rule-review-table td {
+    vertical-align: top;
 }
 
 .tt-roster-review-table th,
@@ -1056,6 +1145,80 @@ button.tt-section-title {
     background: rgba(148, 163, 184, 0.08);
 }
 
+.tt-rule-review-cell {
+    display: grid;
+    grid-template-rows: 34px 16px;
+    gap: 3px;
+    min-width: 0;
+}
+
+.tt-rule-review-cell-main {
+    display: grid;
+    align-items: start;
+    min-height: 34px;
+    min-width: 0;
+}
+
+.tt-rule-review-cell-helper {
+    min-width: 0;
+    min-height: 16px;
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-size: 0.66rem;
+    line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-rule-review-action-cell {
+    display: flex;
+    align-items: start;
+    justify-content: center;
+    min-height: 34px;
+}
+
+.tt-saved-rule-table {
+    min-width: 1188px;
+}
+
+.tt-saved-rule-cell {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-text-secondary);
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-saved-rule-cell--type {
+    display: grid;
+    gap: 2px;
+}
+
+.tt-saved-rule-cell--type strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-text);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-saved-rule-cell--description {
+    color: var(--tt-text);
+}
+
+.tt-saved-rule-action-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+}
+
+.tt-saved-rule-table-row:hover td {
+    background: rgba(148, 163, 184, 0.06);
+}
+
 .tt-roster-review-field {
     width: 100%;
     min-width: 0;
@@ -1067,6 +1230,11 @@ button.tt-section-title {
     color: var(--tt-text);
     font: inherit;
     font-size: 0.76rem;
+}
+
+.tt-rule-review-table .tt-roster-review-field {
+    height: 34px;
+    min-height: 34px;
 }
 
 .tt-roster-review-field:focus {
@@ -1086,10 +1254,11 @@ button.tt-section-title {
 
 .tt-rule-row-warning,
 .tt-confidence {
-    display: block;
-    margin-top: 4px;
+    display: inline;
+    margin-top: 0;
     color: var(--tt-warning);
-    font-size: 0.68rem;
+    font-size: inherit;
+    line-height: inherit;
 }
 
 .tt-confidence {
@@ -1097,10 +1266,11 @@ button.tt-section-title {
 }
 
 .tt-field-hint {
-    display: block;
-    margin-top: 4px;
+    display: inline;
+    margin-top: 0;
     color: var(--tt-muted);
-    font-size: 0.66rem;
+    font-size: inherit;
+    line-height: inherit;
 }
 
 .tt-rule-examples {
@@ -1319,7 +1489,7 @@ button.tt-section-title {
     color: var(--tt-text-secondary);
 }
 
-.tt-saved-rule-row {
+.tt-saved-rules .tt-saved-rule-row {
     display: flex;
     align-items: center;
     gap: var(--tt-space-xs);
@@ -1330,7 +1500,7 @@ button.tt-section-title {
     transition: background 0.1s;
 }
 
-.tt-saved-rule-row:hover {
+.tt-saved-rules .tt-saved-rule-row:hover {
     background: var(--tt-bg-soft);
 }
 

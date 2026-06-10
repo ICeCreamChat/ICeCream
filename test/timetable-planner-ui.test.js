@@ -532,7 +532,9 @@ test('timetable AI rules support Excel file upload and rich preview metadata', a
   assert.match(interactionSource, /#tt-rule-review-parse/);
   assert.match(interactionSource, /\[data-saved-rule-delete\]/);
   assert.doesNotMatch(interactionSource, /#tt-open-bulk-rule-review/);
-  assert.match(styles, /\.tt-rule-entry-card/);
+  assert.match(styles, /\.tt-empty-card/);
+  assert.match(styles, /\.tt-rule-entry/);
+  assert.doesNotMatch(styles, /\.tt-rule-entry-card/);
   assert.match(styles, /\.tt-rule-review-dialog/);
 });
 
@@ -585,6 +587,8 @@ test('timetable rule review keeps parsed drafts inside the modal and preserves t
   const sidebar = html.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
 
   assert.match(sidebar, /id="tt-open-rule-review"/);
+  assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
+  assert.match(sidebar, /继续复核 AI 约束/);
   assert.match(sidebar, /2/);
   assert.doesNotMatch(sidebar, /id="tt-pending-rules"/);
   assert.doesNotMatch(sidebar, /data-rule-card="draft-1"/);
@@ -625,7 +629,7 @@ test('timetable rule review keeps parsed drafts inside the modal and preserves t
   assert.equal(controller.state.ruleReview.draftRows.length, 2);
 });
 
-test('timetable AI rules sidebar renders compact entry while examples and file upload stay in the modal', async () => {
+test('timetable AI rules sidebar renders roster-style card entry while examples and file upload stay in the modal', async () => {
   const viewSource = await readFile(new URL('view.js', moduleRoot), 'utf8');
   const state = sampleWorkbenchState({
     pendingRules: [],
@@ -648,7 +652,9 @@ test('timetable AI rules sidebar renders compact entry while examples and file u
   assert.doesNotMatch(sidebar, /id="tt-open-bulk-rule-review"/);
   assert.doesNotMatch(sidebar, /id="tt-add-lock"/);
   assert.doesNotMatch(sidebar, /tt-lock-list/);
-  assert.match(sidebar, /tt-rule-entry-card/);
+  assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
+  assert.match(sidebar, /导入 AI 约束/);
+  assert.doesNotMatch(sidebar, /tt-rule-entry-card/);
   // No dialog rendered when no pending rules and no open state
   assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
   // view.js contains the locked_slot option in the manual rule builder
@@ -663,7 +669,144 @@ test('timetable AI rules sidebar renders compact entry while examples and file u
   assert.equal(controller.state.ruleReview.mode, 'manual');
 });
 
-test('timetable saved AI rules remain visible after confirmation', () => {
+test('timetable rule review modal shows seating-style parse progress feedback', async () => {
+  const styles = await readFile(stylePath, 'utf8');
+  const fileHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'input',
+      mode: 'file',
+      fileName: 'AI-rules.xlsx',
+      text: 'Math prefers morning',
+      draftRows: [],
+      warnings: [],
+      loading: true,
+      phase: 'parse_file',
+      phaseText: 'AI 解析约束中...',
+    },
+  }));
+
+  assert.match(fileHtml, /class="[^"]*tt-process-strip[^"]*"/);
+  assert.match(fileHtml, /AI 解析约束中\.\.\./);
+  assert.match(fileHtml, /AI-rules\.xlsx/);
+  assert.match(fileHtml, /id="tt-rule-review-parse"[^>]*disabled/);
+  assert.match(fileHtml, /data-lucide="loader-2"[^>]*class="tt-spin"/);
+  assert.match(fileHtml, /AI 解析中/);
+  assert.match(fileHtml, /data-rule-review-mode="file"[^>]*disabled/);
+  assert.match(fileHtml, /id="tt-rule-review-file"[^>]*disabled/);
+  assert.match(fileHtml, /id="tt-rule-review-text"[^>]*disabled/);
+
+  const manualHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'manual',
+      mode: 'manual',
+      draftRows: [],
+      warnings: [],
+      loading: true,
+      phase: 'manual_rows',
+      phaseText: '生成复核行中...',
+    },
+  }));
+
+  assert.match(manualHtml, /生成复核行中\.\.\./);
+  assert.match(manualHtml, /id="tt-add-manual-rule-rows"[^>]*disabled/);
+  assert.match(manualHtml, /data-lucide="loader-2"[^>]*class="tt-spin"/);
+
+  assert.match(styles, /\.tt-spin\s*{/);
+  assert.match(styles, /@keyframes\s+tt-spin/);
+  assert.match(styles, /\.tt-process-strip\s*{/);
+  assert.match(styles, /\.tt-process-chip\s*{/);
+  assert.match(styles, /\.tt-process-chip--warning\s*{/);
+});
+
+test('timetable rule review modal locks review table while rules are being written', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'file',
+      fileName: 'AI-rules.xlsx',
+      inputType: 'xlsx_constraints',
+      draftRows: [{
+        id: 'draft-1',
+        rawText: 'Math should prefer Monday period 2',
+        type: 'subject_preferred_periods',
+        targetType: 'subject',
+        targetName: 'Math',
+        targetId: 'math',
+        slots: ['1-2'],
+        priority: 'soft',
+        status: 'effective',
+        confidence: 0.92,
+        description: 'Prefer period',
+        warnings: [],
+      }],
+      contextStats: { rowCount: 1 },
+      warnings: [],
+      loading: true,
+      phase: 'saving',
+      phaseText: '写入项目中...',
+    },
+  }));
+
+  assert.match(html, /写入项目中\.\.\./);
+  assert.match(html, /id="tt-confirm-rule-review"[^>]*disabled/);
+  assert.match(html, /data-lucide="loader-2"[^>]*class="tt-spin"/);
+  assert.match(html, /确认中/);
+  assert.match(html, /data-rule-review-field="rawText"[^>]*disabled/);
+  assert.match(html, /data-rule-review-field="type"[^>]*disabled/);
+  assert.match(html, /data-rule-review-delete-row="draft-1"[^>]*disabled/);
+  assert.match(html, /id="tt-add-rule-review-row"[^>]*disabled/);
+});
+
+test('timetable rule review table aligns controls with fixed helper rows', async () => {
+  const styles = await readFile(stylePath, 'utf8');
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'file',
+      fileName: 'AI-rules.xlsx',
+      inputType: 'xlsx_constraints',
+      draftRows: [{
+        id: 'draft-align-1',
+        rawText: 'Music should avoid the last periods',
+        type: 'subject_avoid_periods',
+        targetType: 'subject',
+        targetName: 'Music',
+        targetId: 'music',
+        slots: ['1-5', '1-6', '1-7', '2-5'],
+        priority: 'soft',
+        status: 'effective',
+        confidence: 0.7,
+        description: 'Music should be arranged before afternoon or half day',
+        warnings: ['Long warning should stay in the helper row instead of moving controls'],
+      }],
+      contextStats: { rowCount: 1 },
+      warnings: [],
+      loading: false,
+    },
+  }));
+
+  assert.match(html, /<colgroup class="tt-rule-review-cols">/);
+  assert.match(html, /class="tt-rule-review-cell"/);
+  assert.match(html, /class="tt-rule-review-cell-main"/);
+  assert.match(html, /class="tt-rule-review-cell-helper"/);
+  assert.match(html, /class="tt-rule-review-action-cell"/);
+  assert.match(html, /data-rule-review-field="slots"/);
+  assert.match(html, /data-rule-review-field="status"/);
+  assert.match(html, /data-rule-review-delete-row="draft-align-1"/);
+
+  assert.match(styles, /\.tt-rule-review-table\s*{[^}]*table-layout:\s*fixed/s);
+  assert.match(styles, /\.tt-rule-review-cell\s*{[^}]*display:\s*grid/s);
+  assert.match(styles, /\.tt-rule-review-cell-main\s*{[^}]*min-height:\s*34px/s);
+  assert.match(styles, /\.tt-rule-review-cell-helper\s*{[^}]*white-space:\s*nowrap/s);
+  assert.match(styles, /\.tt-rule-review-action-cell\s*{[^}]*align-items:\s*start/s);
+});
+
+test('timetable saved AI rules remain visible after confirmation', async () => {
+  const styles = await readFile(stylePath, 'utf8');
   const project = createDefaultTimetableProject({
     weekdays: 5,
     periodsPerDay: 7,
@@ -710,6 +853,8 @@ test('timetable saved AI rules remain visible after confirmation', () => {
 
   // New card-based saved rules section
   assert.match(sidebar, /id="tt-open-rule-review"/);
+  assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
+  assert.match(sidebar, /查看 AI 约束/);
   assert.match(sidebar, /9/);
   assert.match(sidebar, /id="tt-clear-rules"/);
   assert.doesNotMatch(sidebar, /id="tt-saved-rules"/);
@@ -731,9 +876,16 @@ test('timetable saved AI rules remain visible after confirmation', () => {
   }));
 
   assert.match(modalHtml, /id="tt-saved-rule-table"/);
+  assert.match(modalHtml, /<colgroup class="tt-saved-rule-cols">/);
+  assert.match(modalHtml, /<tr class="tt-saved-rule-table-row"/);
+  assert.doesNotMatch(modalHtml, /<tr class="tt-saved-rule-row"/);
+  assert.match(modalHtml, /class="tt-saved-rule-cell"/);
+  assert.match(modalHtml, /class="tt-saved-rule-action-cell"/);
   assert.match(modalHtml, /data-saved-rule-delete=/);
   assert.match(modalHtml, /teacher_daily_limit/);
   assert.match(modalHtml, /subject_spread/);
+  assert.match(styles, /(?:^|\n)\.tt-saved-rules\s+\.tt-saved-rule-row\s*\{/);
+  assert.doesNotMatch(styles, /(?:^|\n)\.tt-saved-rule-row\s*\{/);
 });
 
 test('timetable saved AI rules can be removed one at a time without clearing others', () => {
