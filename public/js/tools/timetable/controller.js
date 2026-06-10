@@ -764,6 +764,8 @@ export class TimetablePlannerController {
             grade: '',
             className: '',
             subjectName: '',
+            subjectCategory: 'normal',
+            subjectTags: '',
             teacherName: '',
             weeklyHours: '',
             blockPreference: 'single',
@@ -788,6 +790,8 @@ export class TimetablePlannerController {
                 grade: plan.grade || classItem.grade || '',
                 className: plan.className || classItem.name || '',
                 subjectName: plan.subjectName || subject.name || '',
+                subjectCategory: subject.category || 'normal',
+                subjectTags: Array.isArray(subject.tags) ? subject.tags.join('、') : '',
                 teacherName: teacherIds.map(id => teachers.get(id)?.name || id).filter(Boolean).join('、'),
                 weeklyHours: plan.weeklyHours || '',
                 blockPreference: plan.blockPreference || 'single',
@@ -803,6 +807,8 @@ export class TimetablePlannerController {
             grade: String(row.grade ?? '').trim(),
             className: String(row.className ?? '').trim(),
             subjectName: String(row.subjectName ?? '').trim(),
+            subjectCategory: ['main', 'quality', 'lab', 'normal'].includes(row.subjectCategory) ? row.subjectCategory : 'normal',
+            subjectTags: Array.isArray(row.subjectTags) ? row.subjectTags.join('、') : String(row.subjectTags ?? '').trim(),
             teacherName: String(row.teacherName ?? '').trim(),
             weeklyHours: String(row.weeklyHours ?? '').trim(),
             blockPreference: ['single', 'double', 'mixed'].includes(row.blockPreference) ? row.blockPreference : 'single',
@@ -813,7 +819,7 @@ export class TimetablePlannerController {
     }
 
     rosterDraftRowHasValue(row) {
-        return Boolean(row.manual) || ['grade', 'className', 'subjectName', 'teacherName', 'weeklyHours', 'roomName']
+        return Boolean(row.manual) || ['grade', 'className', 'subjectName', 'teacherName', 'weeklyHours', 'roomName', 'subjectTags']
             .some(field => String(row[field] ?? '').trim());
     }
 
@@ -906,6 +912,8 @@ export class TimetablePlannerController {
                 grade: value('grade'),
                 className: value('className'),
                 subjectName: value('subjectName'),
+                subjectCategory: value('subjectCategory') || 'normal',
+                subjectTags: value('subjectTags'),
                 teacherName: value('teacherName'),
                 weeklyHours: value('weeklyHours'),
                 blockPreference: value('blockPreference') || 'single',
@@ -1255,6 +1263,19 @@ export class TimetablePlannerController {
 
     async runSchedule() {
         this.state.loading = true;
+        this.state.solvePhaseText = '检查数据中';
+        const phaseTimers = [
+            setTimeout(() => {
+                if (!this.state.loading) return;
+                this.state.solvePhaseText = '快速生成中';
+                this.render();
+            }, 80),
+            setTimeout(() => {
+                if (!this.state.loading) return;
+                this.state.solvePhaseText = '局部优化中';
+                this.render();
+            }, 500),
+        ];
         this.render();
         try {
             const result = await requestTimetable('/schedule/run', { method: 'POST' });
@@ -1273,7 +1294,9 @@ export class TimetablePlannerController {
         } catch (error) {
             this.handleError(error, { keepFailure: true });
         } finally {
+            phaseTimers.forEach(timer => clearTimeout(timer));
             this.state.loading = false;
+            this.state.solvePhaseText = '';
             this.render();
         }
     }

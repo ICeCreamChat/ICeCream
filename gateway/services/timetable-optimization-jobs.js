@@ -51,7 +51,7 @@ function canAcceptOptimizedSchedule(currentSchedule, optimizedSchedule) {
     if (optimizedSchedule.score?.hardConflicts > 0) return false;
     if (optimizedSchedule.score?.unplacedLessons > 0) return false;
     if (optimizedSchedule.score?.placedLessons < optimizedSchedule.score?.totalLessons) return false;
-    return scheduleQuality(optimizedSchedule) >= scheduleQuality(currentSchedule);
+    return scheduleQuality(optimizedSchedule) > scheduleQuality(currentSchedule);
 }
 
 async function runOptimizationJob({

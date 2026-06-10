@@ -2,7 +2,11 @@ import path from 'node:path';
 
 import AdmZip from 'adm-zip';
 
-import { makeTimetableId } from './timetable-scheduler.js';
+import {
+    makeTimetableId,
+    normalizeSubjectCategory,
+    normalizeSubjectTags,
+} from './timetable-scheduler.js';
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const PALETTE = ['#14b8a6', '#60a5fa', '#f59e0b', '#f97316', '#a78bfa', '#22c55e', '#ef4444', '#06b6d4'];
@@ -17,7 +21,7 @@ function cleanCell(value) {
 function splitLine(line) {
     return String(line ?? '')
         .replace(/[|；;]/g, ',')
-        .split(/\t+|[,，]+/)
+        .split(/\t|,|，/)
         .map(cleanCell);
 }
 
@@ -30,6 +34,8 @@ function splitEntityNames(value) {
 
 function normalizeHeader(value) {
     const text = cleanCell(value).toLowerCase();
+    if (/课程类型|课程类别|学科类型|subject\s*(category|type)|course\s*(category|type)|category|type/.test(text)) return 'subjectCategory';
+    if (/课程标签|学科标签|subject\s*tags?|course\s*tags?|tags?/.test(text)) return 'subjectTags';
     if (/年级|grade/.test(text)) return 'grade';
     if (/班级|class/.test(text)) return 'className';
     if (/课程|科目|学科|subject|course/.test(text)) return 'subjectName';
@@ -97,18 +103,24 @@ function rowHasAnyValue(row = {}) {
         row.weeklyHours,
         row.blockPreference,
         row.roomName,
+        row.subjectCategory,
+        row.subjectTags,
     ].some(value => cleanCell(value));
 }
 
 function normalizeDraftRow(row = {}, index = 0) {
     const teacherName = splitEntityNames(row.teacherName).join('、');
     const roomName = splitEntityNames(row.roomName || row.roomId || row.allowedRoomIds).join('、');
+    const subjectCategory = normalizeSubjectCategory(row.subjectCategory || row.category || row.subjectType, row.subjectName);
+    const subjectTags = normalizeSubjectTags(row.subjectTags || row.tags);
     return {
         id: cleanCell(row.id, 80) || `draft_${index + 1}`,
         sourceRow: Number.parseInt(row.sourceRow, 10) || index + 1,
         grade: cleanCell(row.grade || '默认年级') || '默认年级',
         className: cleanCell(row.className),
         subjectName: cleanCell(row.subjectName),
+        subjectCategory,
+        subjectTags,
         teacherName,
         weeklyHours: parseWeeklyHours(row.weeklyHours),
         blockPreference: parseBlockPreference(row.blockPreference),
@@ -262,13 +274,21 @@ export function buildTimetableRosterFromRows(rows = [], { project = {} } = {}) {
         const subjectId = makeTimetableId('s', row.subjectName);
         const teacherIds = teacherNames.map(name => makeTimetableId('t', name));
         const roomNames = splitEntityNames(row.roomName);
+        const subjectCategory = normalizeSubjectCategory(row.subjectCategory, row.subjectName);
+        const subjectTags = normalizeSubjectTags(row.subjectTags);
 
         pushUnique(classes, classId, { id: classId, grade: row.grade, name: row.className });
-        pushUnique(subjects, subjectId, {
+        const subject = pushUnique(subjects, subjectId, {
             id: subjectId,
             name: row.subjectName,
-            priority: /语文|数学|英语|外语/.test(row.subjectName) ? 95 : 50,
+            category: subjectCategory,
+            tags: subjectTags,
+            priority: subjectCategory === 'main' ? 95 : subjectCategory === 'quality' ? 35 : subjectCategory === 'lab' ? 60 : 50,
             color: PALETTE[subjects.size % PALETTE.length],
+        });
+        if (subject.category === 'normal' && subjectCategory !== 'normal') subject.category = subjectCategory;
+        subjectTags.forEach(tag => {
+            if (!subject.tags.includes(tag)) subject.tags.push(tag);
         });
         teacherNames.forEach((name, index) => {
             const teacher = pushUnique(teachers, teacherIds[index], {

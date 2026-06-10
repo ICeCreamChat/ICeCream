@@ -1,5 +1,7 @@
 import {
+    auditTimetableProject,
     buildTimetableScore,
+    buildTimetableQualityIssues,
     createDefaultTimetableProject,
     detectScheduleConflicts,
     getActivePeriods,
@@ -338,6 +340,8 @@ export function transformTimetableSolutionToSchedule(inputProject = {}, solution
         ...detectScheduleConflicts(project, slots),
     ];
     const score = buildTimetableScore(project, slots, unplaced, conflicts);
+    const audit = auditTimetableProject(project);
+    const qualityIssues = buildTimetableQualityIssues(project, slots);
 
     return {
         id: `schedule_${Date.now()}`,
@@ -347,6 +351,8 @@ export function transformTimetableSolutionToSchedule(inputProject = {}, solution
         lockedSlots: slots.filter(slot => slot.locked),
         conflicts,
         unplaced,
+        audit,
+        qualityIssues,
         score,
         solverStats: {
             solverUsed: true,

@@ -12,6 +12,7 @@ import {
 import { createTimetableStore } from '../services/timetable-store.js';
 import {
     applyScheduleAdjustment,
+    auditTimetableProject,
     createDefaultTimetableProject,
     normalizeTimetableProject,
     runTimetableScheduler,
@@ -207,12 +208,14 @@ router.post('/schedule/run', async (req, res) => {
     try {
         const timetableStore = store();
         const current = await timetableStore.loadProject();
+        const audit = auditTimetableProject(current);
         const validation = validateTimetableProjectForSolve(current);
         if (!validation.ok) {
             fail(res, new Error(validation.message), 422, {
                 project: current,
                 schedule: current.schedule,
                 reason: validation.reason,
+                audit,
                 solverStats: current.schedule?.solverStats || null,
             });
             return;
@@ -223,6 +226,7 @@ router.post('/schedule/run', async (req, res) => {
                 project: current,
                 schedule: current.schedule,
                 reason: 'fast_construct_failed',
+                audit: fastResult.schedule?.audit || audit,
                 solverStats: fastResult.schedule?.solverStats || null,
             });
             return;

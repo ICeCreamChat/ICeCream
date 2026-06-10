@@ -8,6 +8,7 @@ export function createTimetablePlannerState(overrides = {}) {
         dragSlotId: '',
         dragBlockId: '',
         loading: false,
+        solvePhaseText: '',
         message: '',
         lastFailure: null,
         solverJob: null,

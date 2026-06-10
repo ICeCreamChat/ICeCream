@@ -8,6 +8,8 @@ export {
     makeTimetableId,
     normalizeIdList,
     normalizeSchedule,
+    normalizeSubjectCategory,
+    normalizeSubjectTags,
     normalizeTimetableProject,
     slotKey,
     slotTeacherIds,
@@ -29,6 +31,11 @@ export {
     buildTimetableScore,
     buildUnplacedConflicts,
 } from './timetable-score.js';
+
+export {
+    auditTimetableProject,
+    buildTimetableQualityIssues,
+} from './timetable-audit.js';
 
 export {
     applyScheduleAdjustment,

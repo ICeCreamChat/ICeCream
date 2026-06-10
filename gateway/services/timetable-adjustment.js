@@ -13,6 +13,10 @@ import {
     buildTimetableScore,
     buildUnplacedConflicts,
 } from './timetable-score.js';
+import {
+    auditTimetableProject,
+    buildTimetableQualityIssues,
+} from './timetable-audit.js';
 
 function blockSlotIndexes(schedule, slot) {
     if (!slot?.blockId || slot.blockSize <= 1) {
@@ -41,6 +45,8 @@ function refreshSchedule(project, schedule) {
     ];
     schedule.conflicts = conflicts;
     schedule.lockedSlots = schedule.slots.filter(slot => slot.locked);
+    schedule.audit = auditTimetableProject(project);
+    schedule.qualityIssues = buildTimetableQualityIssues(project, schedule.slots);
     schedule.score = buildTimetableScore(project, schedule.slots, unplaced, conflicts);
     return schedule;
 }

@@ -452,6 +452,8 @@ function renderRosterReview(dialog) {
                         <th>年级</th>
                         <th>班级</th>
                         <th>课程</th>
+                        <th>类型</th>
+                        <th>标签</th>
                         <th>教师</th>
                         <th>周课时</th>
                         <th>连堂</th>
@@ -491,6 +493,15 @@ function renderRosterReviewRow(row) {
             <td>${input('grade', row.grade)}</td>
             <td>${input('className', row.className)}</td>
             <td>${input('subjectName', row.subjectName)}</td>
+            <td>
+                <select class="tt-roster-review-field" data-roster-field="subjectCategory">
+                    <option value="normal" ${row.subjectCategory === 'normal' ? 'selected' : ''}>普通</option>
+                    <option value="main" ${row.subjectCategory === 'main' ? 'selected' : ''}>主科</option>
+                    <option value="quality" ${row.subjectCategory === 'quality' ? 'selected' : ''}>素质</option>
+                    <option value="lab" ${row.subjectCategory === 'lab' ? 'selected' : ''}>实验</option>
+                </select>
+            </td>
+            <td>${input('subjectTags', Array.isArray(row.subjectTags) ? row.subjectTags.join('、') : row.subjectTags)}</td>
             <td>${input('teacherName', row.teacherName)}</td>
             <td>${input('weeklyHours', row.weeklyHours, 'number')}</td>
             <td>
@@ -1126,6 +1137,7 @@ function renderSolveSection(state) {
     const placed = score.placedLessons ?? 0;
     const total = score.totalLessons ?? totalPlannedLessons(project);
     const scaleMessage = solveScaleMessage(project);
+    const runLabel = state.loading ? (state.solvePhaseText || '快速生成中') : '';
     return `
         <section class="tt-section tt-section--solve" data-workflow-step="solve">
             <div class="tt-section-title">
@@ -1135,6 +1147,7 @@ function renderSolveSection(state) {
             <p class="tt-compact-copy">${placed}/${total} 已排 · ${score.hardConflicts ?? 0} 硬冲突</p>
             <p class="tt-compact-copy">${escapeHtml(readiness.message)}</p>
             ${scaleMessage ? `<p class="tt-compact-copy tt-compact-copy--warn">${escapeHtml(scaleMessage)}</p>` : ''}
+            ${runLabel ? `<p class="tt-compact-copy">${escapeHtml(runLabel)}</p>` : ''}
             <button class="tt-btn tt-btn--primary" data-run-schedule type="button" ${state.loading || !readiness.ready ? 'disabled' : ''}>
                 <i data-lucide="${state.loading ? 'loader-2' : 'play'}"></i><span>${state.loading ? '快速生成中' : '快速生成'}</span>
             </button>
@@ -1178,6 +1191,7 @@ export function renderSchedulePanel(state) {
     const owners = getOwners(state.project, state.viewMode);
     const readiness = getPreparedness(state.project);
     const optimizationLabel = optimizationStatusLabel(state.solverJob);
+    const runLabel = state.loading ? (state.solvePhaseText || '快速生成中') : '';
     return `
         <div class="tt-schedule-toolbar">
             <div class="tt-schedule-view-controls">
@@ -1192,6 +1206,7 @@ export function renderSchedulePanel(state) {
             </div>
             <div class="tt-schedule-actions">
                 ${optimizationLabel ? `<span class="tt-chip ${state.solverJob?.status === 'failed' ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(optimizationLabel)}</span>` : ''}
+                ${runLabel ? `<span class="tt-chip tt-chip--ok">${escapeHtml(runLabel)}</span>` : ''}
                 ${solveScaleMessage(state.project) ? `<span class="tt-chip tt-chip--warn">${escapeHtml(solveScaleMessage(state.project))}</span>` : ''}
                 <span class="tt-chip ${readiness.ready ? 'tt-chip--ok' : 'tt-chip--warn'}">${readiness.ready ? '可生成' : '待准备'}</span>
                 <button class="tt-run-btn" id="tt-run-schedule" type="button" ${state.loading || !readiness.ready ? 'disabled' : ''}>
@@ -1330,6 +1345,8 @@ export function renderInspector(state) {
             ${selectedDetail ? renderSlotInspector(state) : renderPlanningInspector(state)}
             ${selectedDetail ? '' : renderUnscheduledPlanQueue(state)}
             ${renderAuditPanel(state)}
+            ${renderScheduleDiagnosticsPanel(state)}
+            ${renderQualityPanel(state)}
             ${renderConflictPanel(state)}
             ${renderOptimizationPanel(state)}
             <section class="tt-inspector-section">
@@ -1383,6 +1400,57 @@ function renderAuditPanel(state) {
                     ${warnings.slice(0, 3).map(warning => `<div class="tt-rule-warning"><i data-lucide="triangle-alert"></i><span>${escapeHtml(warning)}</span></div>`).join('')}
                 </div>
             ` : ''}
+        </section>
+    `;
+}
+
+function renderScheduleDiagnosticsPanel(state) {
+    const audit = state.project?.schedule?.audit || state.lastFailure?.audit || null;
+    if (!audit) return '';
+    const blocking = audit.blockingIssues || [];
+    const warnings = audit.warnings || [];
+    const teachers = audit.bottlenecks?.teachers || [];
+    const classes = audit.bottlenecks?.classes || [];
+    const capacity = audit.capacity || {};
+    return `
+        <section class="tt-inspector-section">
+            <div class="tt-section-title">
+                <h3><i data-lucide="stethoscope"></i><span>排课诊断</span></h3>
+                <span class="tt-chip ${blocking.length ? 'tt-chip--warn' : 'tt-chip--ok'}">${blocking.length ? `${blocking.length} 项` : '正常'}</span>
+            </div>
+            <div class="tt-detail-list">
+                <span><b>容量</b>${escapeHtml(`${capacity.totalLessons ?? 0}/${capacity.classCapacity ?? capacity.availableSlots ?? 0}`)}</span>
+                ${teachers[0] ? `<span><b>瓶颈教师</b>${escapeHtml(`${teachers[0].name || teachers[0].id} ${teachers[0].utilization || 0}%`)}</span>` : ''}
+                ${classes[0] ? `<span><b>瓶颈班级</b>${escapeHtml(`${classes[0].name || classes[0].id} ${classes[0].utilization || 0}%`)}</span>` : ''}
+                ${blocking.slice(0, 3).map(item => `<span class="is-warning"><b>${escapeHtml(item.type)}</b>${escapeHtml(item.message || item.type)}</span>`).join('')}
+                ${warnings.slice(0, 3).map(item => `<span class="is-warning"><b>${escapeHtml(item.type)}</b>${escapeHtml(item.message || item.type)}</span>`).join('')}
+            </div>
+        </section>
+    `;
+}
+
+function renderQualityPanel(state) {
+    const schedule = state.project?.schedule || {};
+    const issues = schedule.qualityIssues || [];
+    const breakdown = schedule.score?.softBreakdown || {};
+    if (!issues.length && !Object.keys(breakdown).length) return '';
+    return `
+        <section class="tt-inspector-section">
+            <div class="tt-section-title">
+                <h3><i data-lucide="line-chart"></i><span>质量建议</span></h3>
+                <span class="tt-chip ${issues.length ? 'tt-chip--warn' : 'tt-chip--ok'}">${issues.length}</span>
+            </div>
+            <div class="tt-audit-grid tt-audit-grid--quality">
+                ${Object.entries(breakdown).slice(0, 6).map(([key, value]) => `<span><b>${escapeHtml(key)}</b>${escapeHtml(value)}</span>`).join('')}
+            </div>
+            <div class="tt-conflict-list">
+                ${issues.slice(0, 5).map(item => `
+                    <div class="tt-conflict">
+                        <i data-lucide="${item.severity === 'info' ? 'info' : 'alert-circle'}"></i>
+                        <span>${escapeHtml(item.message || item.type)}</span>
+                    </div>
+                `).join('') || '<span class="tt-muted">当前课表质量良好。</span>'}
+            </div>
         </section>
     `;
 }

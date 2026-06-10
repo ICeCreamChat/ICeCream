@@ -99,6 +99,48 @@ export function normalizeIdList(values = []) {
     return result;
 }
 
+export function normalizeSubjectTags(value = []) {
+    const raw = Array.isArray(value) ? value : [value];
+    const tags = [];
+    for (const item of raw) {
+        String(item ?? '')
+            .split(/[,，、/;；|\s]+/)
+            .map(part => cleanText(part, 40))
+            .filter(Boolean)
+            .forEach(tag => {
+                const normalized = /^[a-z0-9_-]+$/i.test(tag) ? tag.toLowerCase() : tag;
+                if (!tags.includes(normalized)) tags.push(normalized);
+            });
+    }
+    return tags;
+}
+
+export function normalizeSubjectCategory(value = '', fallbackName = '') {
+    const explicit = cleanText(value, 40).toLowerCase();
+    const text = explicit || cleanText(fallbackName, 80).toLowerCase();
+    if (!text) return 'normal';
+    if (['main', 'core', 'major'].includes(text) || /main|core|major|chinese|math|english/.test(text)
+        || /\u4e3b\u79d1|\u6838\u5fc3|\u8bed\u6587|\u6570\u5b66|\u82f1\u8bed|\u5916\u8bed/.test(text)) {
+        return 'main';
+    }
+    if (['quality', 'elective', 'arts', 'sport', 'pe'].includes(text) || /quality|elective|arts?|sport|music|pe|labor|ict/.test(text)
+        || /\u7d20\u8d28|\u827a\u4f53|\u4f53\u80b2|\u97f3\u4e50|\u7f8e\u672f|\u52b3\u52a8|\u4fe1\u606f/.test(text)) {
+        return 'quality';
+    }
+    if (['lab', 'experiment', 'experimental'].includes(text) || /lab|experiment/.test(text)
+        || /\u5b9e\u9a8c/.test(text)) {
+        return 'lab';
+    }
+    return ['normal', 'regular', 'other'].includes(text) ? 'normal' : 'normal';
+}
+
+function defaultSubjectPriority(category) {
+    if (category === 'main') return 95;
+    if (category === 'lab') return 60;
+    if (category === 'quality') return 35;
+    return 50;
+}
+
 function intInRange(value, fallback, min, max) {
     const num = Number.parseInt(value, 10);
     if (!Number.isInteger(num)) return fallback;
@@ -151,10 +193,14 @@ function normalizeClass(raw = {}, index = 0) {
 function normalizeSubject(raw = {}, index = 0) {
     const name = cleanText(raw.name || raw.subjectName || `课程${index + 1}`, 40);
     const id = cleanText(raw.id, 60) || makeTimetableId('s', name);
+    const category = normalizeSubjectCategory(raw.category || raw.subjectCategory || raw.type || raw.subjectType, name);
+    const tags = normalizeSubjectTags(raw.tags || raw.subjectTags);
     return {
         id,
         name,
-        priority: intInRange(raw.priority, 50, 1, 100),
+        category,
+        tags,
+        priority: intInRange(raw.priority, defaultSubjectPriority(category), 1, 100),
         color: /^#[0-9a-f]{6}$/i.test(raw.color) ? raw.color : DEFAULT_SUBJECT_COLORS[index % DEFAULT_SUBJECT_COLORS.length],
     };
 }
@@ -296,6 +342,8 @@ export function normalizeSchedule(raw) {
         lockedSlots: Array.isArray(raw.lockedSlots) ? raw.lockedSlots : [],
         conflicts: Array.isArray(raw.conflicts) ? raw.conflicts : [],
         unplaced: Array.isArray(raw.unplaced) ? raw.unplaced : [],
+        audit: raw.audit || null,
+        qualityIssues: Array.isArray(raw.qualityIssues) ? raw.qualityIssues : [],
         score: raw.score || {},
         solverStats: raw.solverStats || null,
     };

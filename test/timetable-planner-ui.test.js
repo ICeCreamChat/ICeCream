@@ -197,6 +197,68 @@ test('timetable workbench keeps solving in the board and pending plans in the in
   assert.match(styles, /\.tt-main-empty-cell\s*{/);
 });
 
+test('timetable inspector renders scheduling audit and quality suggestions', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'audit-schedule',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'fast_constructed',
+        slots: [],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        audit: {
+          blockingIssues: [],
+          warnings: [{ type: 'teacher_load', message: 'Math Teacher load is high' }],
+          bottlenecks: { teachers: [{ id: 't_math', name: 'Math Teacher', utilization: 86 }] },
+          capacity: { totalLessons: 3, availableSlots: 35 },
+        },
+        qualityIssues: [
+          { type: 'teacher_consecutive', severity: 'warning', message: 'Math Teacher has too many consecutive lessons' },
+        ],
+        score: {
+          hardConflicts: 0,
+          unplacedLessons: 0,
+          placedLessons: 3,
+          totalLessons: 3,
+          completeness: 100,
+          softSatisfaction: 74,
+          softBreakdown: { teacherConsecutive: 60, classDailyBalance: 75 },
+        },
+      },
+    }),
+  });
+
+  const inspector = renderInspector(state);
+
+  assert.match(inspector, /Math Teacher load is high/);
+  assert.match(inspector, /Math Teacher has too many consecutive lessons/);
+  assert.match(inspector, /teacherConsecutive/);
+  assert.match(inspector, /classDailyBalance/);
+});
+
+test('timetable schedule panel shows local optimization phase while running', () => {
+  const state = sampleWorkbenchState({
+    loading: true,
+    solvePhaseText: '局部优化中',
+  });
+
+  const panel = renderSchedulePanel(state);
+
+  assert.match(panel, /局部优化中/);
+  assert.match(panel, /loader-2/);
+});
+
 test('timetable workbench shows fast generation and background optimization status in Chinese', async () => {
   const state = sampleWorkbenchState({
     solverJob: {
@@ -386,6 +448,8 @@ test('timetable roster import is opened from a data card instead of permanent si
         grade: 'G7',
         className: '1',
         subjectName: 'Math',
+        subjectCategory: 'main',
+        subjectTags: ['core', 'exam'],
         teacherName: 'Alice/Bob',
         weeklyHours: 4,
         blockPreference: 'double',
@@ -402,6 +466,8 @@ test('timetable roster import is opened from a data card instead of permanent si
   assert.match(review, /data-roster-field="grade"/);
   assert.match(review, /data-roster-field="className"/);
   assert.match(review, /data-roster-field="subjectName"/);
+  assert.match(review, /data-roster-field="subjectCategory"/);
+  assert.match(review, /data-roster-field="subjectTags"/);
   assert.match(review, /data-roster-field="teacherName"/);
   assert.match(review, /data-roster-field="weeklyHours"/);
   assert.match(review, /data-roster-field="blockPreference"/);

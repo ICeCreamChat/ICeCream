@@ -12,6 +12,7 @@ import {
     previewTimetableRosterFile,
 } from '../gateway/services/timetable-import.js';
 import {
+    createTimetableOptimizationJob,
     getTimetableOptimizationJob,
     resetTimetableOptimizationJobs,
 } from '../gateway/services/timetable-optimization-jobs.js';
@@ -301,6 +302,66 @@ test('timetable scheduler returns explainable unplaced lessons when constraints 
     assert.ok(result.schedule.conflicts.some(conflict => conflict.type === 'unplaced'));
 });
 
+test('timetable scheduler attaches preflight audit for impossible capacity', () => {
+    const project = sampleProject({
+        weekdays: 1,
+        periodsPerDay: 1,
+        activeWeekdays: [1],
+        activePeriods: [1],
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = runTimetableScheduler(project);
+
+    assert.equal(result.success, false);
+    assert.ok(result.schedule.audit);
+    assert.ok(result.schedule.audit.blockingIssues.some(issue => issue.type === 'class_capacity'));
+    assert.ok(result.schedule.audit.blockingIssues.some(issue => issue.type === 'teacher_capacity'));
+    assert.equal(result.schedule.audit.capacity.totalLessons, 2);
+    assert.equal(result.schedule.solverStats.reason, 'preflight_blocking_issues');
+});
+
+test('fast scheduler emits explainable quality issues and richer soft breakdown', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 4,
+        activeWeekdays: [1],
+        activePeriods: [1, 2, 3, 4],
+        teachers: [{ id: 't_cn', name: 'Chinese Teacher', subjects: ['chinese'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'chinese', name: 'Chinese', priority: 90, color: '#2563eb', category: 'main' }],
+        lessonPlans: [
+            { id: 'lp_cn', classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', weeklyHours: 4 },
+        ],
+        rules: {
+            hardRules: {},
+            softRules: {
+                morningSubjects: ['chinese'],
+                teacherLimits: { t_cn: { consecutive: 2, daily: 3 } },
+                spreadSubjects: ['chinese'],
+                subjectPreferredPeriods: { chinese: { avoid: ['1-4'], weight: 30 } },
+            },
+        },
+    });
+
+    const result = runTimetableScheduler(project);
+
+    assert.equal(result.success, true);
+    assert.equal(result.schedule.score.hardConflicts, 0);
+    assert.ok(Number.isInteger(result.schedule.score.softBreakdown.classDailyBalance));
+    assert.ok(Number.isInteger(result.schedule.score.softBreakdown.teacherConsecutive));
+    assert.ok(Number.isInteger(result.schedule.score.softBreakdown.roomUsage));
+    assert.ok(result.schedule.qualityIssues.some(issue => issue.type === 'teacher_consecutive'));
+    assert.ok(result.schedule.qualityIssues.some(issue => issue.type === 'subject_avoid_period'));
+    assert.ok(result.schedule.qualityIssues.some(issue => issue.type === 'subject_spread'));
+});
+
 test('fast scheduler reports real soft-rule satisfaction breakdown', () => {
     const project = createDefaultTimetableProject({
         weekdays: 1,
@@ -389,6 +450,37 @@ test('local repair rescues an otherwise unplaced lesson by relocating a blocker'
     assert.equal(result.schedule.slots.length, 4);
     assert.equal(result.schedule.score.unplacedLessons, 0);
     assertNoTeacherOrClassConflicts(result.schedule.slots);
+});
+
+test('structured subject category drives scheduler timing without relying on course name', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 4,
+        activeWeekdays: [1],
+        activePeriods: [1, 2, 3, 4],
+        teachers: [
+            { id: 't_project', name: 'Project Teacher', subjects: ['project'], unavailableSlots: [] },
+            { id: 't_quality', name: 'Quality Teacher', subjects: ['quality'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [
+            { id: 'project', name: 'Project Studies', category: 'main', tags: ['core'], priority: 50, color: '#2563eb' },
+            { id: 'quality', name: 'Movement Studio', category: 'quality', tags: ['sport'], priority: 50, color: '#16a34a' },
+        ],
+        lessonPlans: [
+            { id: 'lp_project', classId: 'c1', subjectId: 'project', teacherId: 't_project', weeklyHours: 1 },
+            { id: 'lp_quality', classId: 'c1', subjectId: 'quality', teacherId: 't_quality', weeklyHours: 1 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = runTimetableScheduler(project);
+    const projectSlot = result.schedule.slots.find(slot => slot.subjectId === 'project');
+    const qualitySlot = result.schedule.slots.find(slot => slot.subjectId === 'quality');
+
+    assert.equal(result.success, true);
+    assert.ok(projectSlot.period <= 2, 'main-category subject should prefer the morning half');
+    assert.ok(qualitySlot.period > projectSlot.period, 'quality-category subject should be pushed later than main subject');
 });
 
 test('solve preflight explains missing timetable data before calling Timefold', () => {
@@ -601,6 +693,26 @@ test('timetable roster parser imports teachers, classes, subjects and lesson pla
     assert.equal(parsed.subjects.length, 3);
     assert.equal(parsed.lessonPlans.length, 3);
     assert.equal(parsed.lessonPlans.find(plan => plan.subjectName === '体育').blockPreference, 'double');
+});
+
+test('timetable roster parser preserves subject category and tags from reviewed rows', () => {
+    const result = parseTimetableRosterText([
+        'grade,class,subject,teacher,hours,block,room,subject category,subject tags',
+        'G7,1,Project Studies,Ms Main,2,single,,main,core/reading',
+        'G7,1,Creative Lab,Ms Lab,2,double,Lab A,lab,experiment',
+    ].join('\n'));
+
+    const main = result.subjects.find(subject => subject.name === 'Project Studies');
+    const lab = result.subjects.find(subject => subject.name === 'Creative Lab');
+    const draftMain = result.draftRows.find(row => row.subjectName === 'Project Studies');
+
+    assert.equal(draftMain.subjectCategory, 'main');
+    assert.deepEqual(draftMain.subjectTags, ['core', 'reading']);
+    assert.equal(main.category, 'main');
+    assert.deepEqual(main.tags, ['core', 'reading']);
+    assert.equal(main.priority, 95);
+    assert.equal(lab.category, 'lab');
+    assert.ok(lab.tags.includes('experiment'));
 });
 
 function makeTimetableWorkbook(rows, { sheetName = 'Sheet1' } = {}) {
@@ -1307,6 +1419,74 @@ test('timetable API saves a fast schedule when Timefold is unavailable', async (
     }
 });
 
+test('timetable API keeps saved schedule when fast preflight audit blocks generation', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-audit-block-'));
+    delete process.env.TIMEFOLD_SOLVER_URL;
+
+    const store = createTimetableStore();
+    const existing = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 1,
+        activeWeekdays: [1],
+        activePeriods: [1],
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+        schedule: {
+            id: 'old_capacity_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'manual_adjusted',
+            slots: [],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 0, totalLessons: 2, completeness: 0 },
+        },
+    });
+    await store.saveProject(existing);
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const runResponse = await fetch(`${baseUrl}/api/tools/timetable/schedule/run`, { method: 'POST' });
+        const runPayload = await runResponse.json();
+
+        assert.equal(runResponse.status, 422);
+        assert.equal(runPayload.success, false);
+        assert.equal(runPayload.data.schedule.id, 'old_capacity_schedule');
+        assert.equal(runPayload.data.reason, 'insufficient_slots');
+        assert.ok(runPayload.data.audit.blockingIssues.some(issue => issue.type === 'class_capacity'));
+
+        const stored = await store.loadProject();
+        assert.equal(stored.schedule.id, 'old_capacity_schedule');
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+        if (previousSolverUrl === undefined) {
+            delete process.env.TIMEFOLD_SOLVER_URL;
+        } else {
+            process.env.TIMEFOLD_SOLVER_URL = previousSolverUrl;
+        }
+    }
+});
+
 test('background Timefold timeout keeps the saved fast schedule and exposes job status', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
@@ -1406,6 +1586,72 @@ test('background Timefold timeout keeps the saved fast schedule and exposes job 
             delete process.env.TIMEFOLD_SOLVER_TIMEOUT;
         } else {
             process.env.TIMEFOLD_SOLVER_TIMEOUT = previousTimefoldTimeout;
+        }
+    }
+});
+
+test('background Timefold keeps the fast schedule when optimized quality is equal', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-api-not-better-'));
+    resetTimetableOptimizationJobs();
+
+    const store = createTimetableStore();
+    const fast = runTimetableScheduler(sampleProject()).project;
+    await store.saveProject(fast);
+
+    let postedProblem = null;
+    const fetchImpl = async (url, options = {}) => {
+        const target = String(url);
+        if (target.endsWith('/timetable-solutions') && options.method === 'POST') {
+            postedProblem = JSON.parse(options.body);
+            return new Response(JSON.stringify({ jobId: 'same-quality-job', solverStatus: 'SOLVING' }), { status: 200 });
+        }
+        if (target.endsWith('/timetable-solutions/same-quality-job/status')) {
+            return new Response(JSON.stringify({
+                jobId: 'same-quality-job',
+                solverStatus: 'NOT_SOLVING',
+                hardScore: 0,
+                softScore: fast.schedule.score.softScore,
+                score: `0hard/${fast.schedule.score.softScore}soft`,
+            }), { status: 200 });
+        }
+        if (target.endsWith('/timetable-solutions/same-quality-job')) {
+            return new Response(JSON.stringify({
+                jobId: 'same-quality-job',
+                solverStatus: 'NOT_SOLVING',
+                hardScore: 0,
+                softScore: fast.schedule.score.softScore,
+                score: `0hard/${fast.schedule.score.softScore}soft`,
+                lessonAssignments: postedProblem.lessonAssignments.map(assignment => ({ ...assignment })),
+            }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+    };
+
+    try {
+        const job = createTimetableOptimizationJob({
+            project: fast,
+            schedule: fast.schedule,
+            store,
+            env: { TIMEFOLD_SOLVER_URL: 'http://timefold.same', TIMETABLE_SOLVER_TIMEOUT: '5' },
+            fetchImpl,
+        });
+
+        const completed = await waitFor(() => {
+            const current = getTimetableOptimizationJob(job.jobId);
+            return current?.status === 'completed' ? current : null;
+        }, 1500);
+
+        assert.equal(completed.accepted, false);
+        assert.equal(completed.reason, 'not_better');
+        const stored = await store.loadProject();
+        assert.equal(stored.schedule.id, fast.schedule.id);
+        assert.equal(stored.schedule.source, 'fast_constructed');
+    } finally {
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
         }
     }
 });

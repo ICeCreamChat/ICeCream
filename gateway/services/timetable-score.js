@@ -19,6 +19,32 @@ function ratio(hit, total) {
     return total > 0 ? hit / total : 1;
 }
 
+function longestRun(periods = []) {
+    let maxRun = 0;
+    let run = 0;
+    let prev = null;
+    for (const period of [...periods].sort((left, right) => left - right)) {
+        run = prev !== null && period === prev + 1 ? run + 1 : 1;
+        maxRun = Math.max(maxRun, run);
+        prev = period;
+    }
+    return maxRun;
+}
+
+function roomUsageScore(slots = []) {
+    const seen = new Set();
+    let roomSlots = 0;
+    let collisions = 0;
+    for (const slot of slots) {
+        if (!slot.roomId) continue;
+        roomSlots += 1;
+        const key = `${slot.roomId}:${slot.day}-${slot.period}`;
+        if (seen.has(key)) collisions += 1;
+        seen.add(key);
+    }
+    return roomSlots ? ratio(roomSlots - collisions, roomSlots) : 1;
+}
+
 /**
  * Evaluate how well the placed slots satisfy the project's SOFT rules.
  * Returns a 0–100 satisfaction score plus a per-dimension breakdown so the UI
@@ -102,41 +128,43 @@ export function evaluateSoftScore(project, slots = []) {
         }
     }
 
-    // 4. Teacher daily / consecutive limits
-    if (Object.keys(teacherLimits).length) {
-        let limitChecks = 0;
-        let limitHits = 0;
-        const teacherDaySlots = new Map();
-        for (const slot of slots) {
-            for (const teacherId of slotTeacherIds(slot)) {
-                const k = `${teacherId}:${slot.day}`;
-                if (!teacherDaySlots.has(k)) teacherDaySlots.set(k, []);
-                teacherDaySlots.get(k).push(Number(slot.period));
-            }
+    const teacherDaySlots = new Map();
+    for (const slot of slots) {
+        for (const teacherId of slotTeacherIds(slot)) {
+            const k = `${teacherId}:${slot.day}`;
+            if (!teacherDaySlots.has(k)) teacherDaySlots.set(k, []);
+            teacherDaySlots.get(k).push(Number(slot.period));
         }
-        for (const [teacherId, limit] of Object.entries(teacherLimits)) {
-            for (const day of activeWeekdays) {
-                const periods = (teacherDaySlots.get(`${teacherId}:${day}`) || []).sort((a, b) => a - b);
-                if (Number.isInteger(limit.daily)) {
-                    limitChecks += 1;
-                    if (periods.length <= limit.daily) limitHits += 1;
-                }
-                if (Number.isInteger(limit.consecutive)) {
-                    limitChecks += 1;
-                    let maxRun = 0;
-                    let run = 0;
-                    let prev = null;
-                    for (const period of periods) {
-                        run = prev !== null && period === prev + 1 ? run + 1 : 1;
-                        maxRun = Math.max(maxRun, run);
-                        prev = period;
-                    }
-                    if (maxRun <= limit.consecutive) limitHits += 1;
-                }
-            }
-        }
-        if (limitChecks > 0) addDimension('teacherLimits', 2, ratio(limitHits, limitChecks));
     }
+
+    // 4. Teacher daily / consecutive limits
+    let limitChecks = 0;
+    let limitHits = 0;
+    let consecutiveChecks = 0;
+    let consecutiveHits = 0;
+    const teacherIds = new Set([
+        ...Object.keys(teacherLimits),
+        ...slots.flatMap(slot => slotTeacherIds(slot)),
+    ]);
+    for (const teacherId of teacherIds) {
+        const limit = teacherLimits[teacherId] || {};
+        for (const day of activeWeekdays) {
+            const periods = (teacherDaySlots.get(`${teacherId}:${day}`) || []).sort((a, b) => a - b);
+            if (Number.isInteger(Number(limit.daily))) {
+                limitChecks += 1;
+                if (periods.length <= Number(limit.daily)) limitHits += 1;
+            }
+            const consecutiveLimit = Number.isInteger(Number(limit.consecutive)) ? Number(limit.consecutive) : 3;
+            consecutiveChecks += 1;
+            if (longestRun(periods) <= consecutiveLimit) consecutiveHits += 1;
+            if (Number.isInteger(Number(limit.consecutive))) {
+                limitChecks += 1;
+                if (longestRun(periods) <= Number(limit.consecutive)) limitHits += 1;
+            }
+        }
+    }
+    if (limitChecks > 0) addDimension('teacherLimits', 2, ratio(limitHits, limitChecks));
+    if (consecutiveChecks > 0) addDimension('teacherConsecutive', 2, ratio(consecutiveHits, consecutiveChecks));
 
     // 5. Same-subject spread (avoid stacking the same subject on one day for a class)
     const classSubjectDay = new Map();
@@ -154,6 +182,31 @@ export function evaluateSoftScore(project, slots = []) {
         if (count <= limit) spreadHits += 1;
     }
     if (spreadChecks > 0) addDimension('subjectSpread', 1, ratio(spreadHits, spreadChecks));
+
+    // 6. Class daily load balance
+    const classDayCount = new Map();
+    for (const slot of slots) {
+        const k = `${slot.classId}:${slot.day}`;
+        classDayCount.set(k, (classDayCount.get(k) || 0) + 1);
+    }
+    const classCounts = new Map();
+    for (const [key, count] of classDayCount) {
+        const classId = key.split(':')[0];
+        if (!classCounts.has(classId)) classCounts.set(classId, []);
+        classCounts.get(classId).push(count);
+    }
+    const classVariances = [];
+    for (const counts of classCounts.values()) {
+        while (counts.length < activeWeekdays.length) counts.push(0);
+        classVariances.push(variance(counts));
+    }
+    if (classVariances.length) {
+        const avgVariance = classVariances.reduce((sum, value) => sum + value, 0) / classVariances.length;
+        addDimension('classDailyBalance', 1, 1 - Math.min(1, avgVariance / 4));
+    }
+
+    // 7. Room usage sanity
+    addDimension('roomUsage', 1, roomUsageScore(slots));
 
     if (!dimensions.length) {
         return { score: 100, breakdown };

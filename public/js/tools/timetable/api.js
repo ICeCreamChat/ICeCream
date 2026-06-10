@@ -48,6 +48,7 @@ export function normalizeApiError(error) {
         message: mapped || error?.message || '请求失败，请稍后重试。',
         project: payload?.data?.project || null,
         schedule: payload?.data?.schedule || null,
+        audit: payload?.data?.audit || null,
         solverStats: payload?.data?.solverStats || null,
     };
 }
