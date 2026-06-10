@@ -65,13 +65,17 @@ function formatSlotTime(slot = null) {
 
 function formatSlotSubject(project = {}, slot = null) {
     if (!slot) return '未知课程';
-    const subject = (project.subjects || []).find(item => item.id === slot.subjectId);
-    const klass = (project.classes || []).find(item => item.id === slot.classId);
-    const teachers = Array.isArray(slot.teacherIds) && slot.teacherIds.length
+    const publishedContext = project.schedule?.published?.snapshot?.projectContext || {};
+    const subjects = (project.subjects || []).length ? (project.subjects || []) : (publishedContext.subjects || []);
+    const classes = (project.classes || []).length ? (project.classes || []) : (publishedContext.classes || []);
+    const teacherPool = (project.teachers || []).length ? (project.teachers || []) : (publishedContext.teachers || []);
+    const subject = subjects.find(item => item.id === slot.subjectId);
+    const klass = classes.find(item => item.id === slot.classId);
+    const teacherIds = Array.isArray(slot.teacherIds) && slot.teacherIds.length
         ? slot.teacherIds
         : [slot.teacherId].filter(Boolean);
-    const teacherNames = teachers
-        .map(teacherId => (project.teachers || []).find(item => item.id === teacherId)?.name || teacherId)
+    const teacherNames = teacherIds
+        .map(teacherId => teacherPool.find(item => item.id === teacherId)?.name || teacherId)
         .filter(Boolean)
         .join('、');
     const className = klass ? `${klass.grade}${klass.name}` : slot.classId;
@@ -307,7 +311,9 @@ function renderTopbar(state) {
     const { project } = state;
     const status = getSolveStatus(project, state.lastFailure);
     const preparedness = getPreparedness(project);
-    const message = state.message || preparedness.message;
+    const message = state.message || (isArchiveOnlyReadyState(project)
+        ? '当前草稿已清空，可恢复或导出已发布版本。'
+        : preparedness.message);
     const activeWeekdays = getActiveWeekdays(project);
     const activePeriods = getActivePeriods(project);
     return `
@@ -315,7 +321,7 @@ function renderTopbar(state) {
             <div class="tt-title-block">
                 <span class="tt-eyebrow">智能排课</span>
                 <h2>排课工作台</h2>
-                <p>${activeWeekdays.length} 天 · ${activePeriods.length} 节 · ${preparedness.ready ? '数据已就绪' : '待导入任课'}</p>
+                <p>${activeWeekdays.length} 天 · ${activePeriods.length} 节 · ${preparednessSummaryLabel(project, preparedness)}</p>
             </div>
             <div class="tt-topbar-metrics" aria-label="排课状态">
                 ${renderMetric('来源', status.sourceLabel, status.source === 'timefold_solver' ? 'ok' : '')}
@@ -358,7 +364,7 @@ function renderWorkflow(state) {
                 id: 'solve',
                 icon: 'sparkles',
                 title: '生成导出',
-                chip: readiness.ready ? '就绪' : '待准备',
+                chip: readinessChipLabel(state.project, readiness),
                 open: openSections.has('solve'),
                 content: `${renderSolveSection(state)}${renderExportSection(state)}`,
             })}
@@ -1399,6 +1405,9 @@ function renderRuleReviewRow(row = {}, project = {}, disabled = false) {
 function renderSolveSection(state) {
     const { project } = state;
     const readiness = getPreparedness(project);
+    const readinessMessage = isArchiveOnlyReadyState(project)
+        ? '当前草稿已清空，可恢复或导出已发布版本。'
+        : readiness.message;
     const score = getScore(project);
     const placed = score.placedLessons ?? 0;
     const total = score.totalLessons ?? totalPlannedLessons(project);
@@ -1408,10 +1417,10 @@ function renderSolveSection(state) {
         <section class="tt-section tt-section--solve" data-workflow-step="solve">
             <div class="tt-section-title">
                 <h3><i data-lucide="sparkles"></i><span>求解</span></h3>
-                <span class="tt-chip ${readiness.ready ? 'tt-chip--ok' : 'tt-chip--warn'}">${readiness.ready ? '就绪' : '待准备'}</span>
+                <span class="tt-chip ${readiness.ready || isArchiveOnlyReadyState(project) ? 'tt-chip--ok' : 'tt-chip--warn'}">${readinessChipLabel(project, readiness)}</span>
             </div>
             <p class="tt-compact-copy">${placed}/${total} 已排 · ${score.hardConflicts ?? 0} 硬冲突</p>
-            <p class="tt-compact-copy">${escapeHtml(readiness.message)}</p>
+            <p class="tt-compact-copy">${escapeHtml(readinessMessage)}</p>
             ${scaleMessage ? `<p class="tt-compact-copy tt-compact-copy--warn">${escapeHtml(scaleMessage)}</p>` : ''}
             ${runLabel ? `<p class="tt-compact-copy">${escapeHtml(runLabel)}</p>` : ''}
             <button class="tt-btn tt-btn--primary" data-run-schedule type="button" ${state.loading || !readiness.ready ? 'disabled' : ''}>
@@ -1442,6 +1451,8 @@ function solverReasonLabel(reason = '') {
         not_better: '优化结果没有更好',
         stale_schedule: '课表已被更新，旧优化结果已作废',
         published_schedule: '课表已经发布，后台优化不会覆盖发布版',
+        manual_adjustment_conflicts: '手动调整后仍有冲突',
+        manual_adjustment_unplaced: '手动调整后仍有未排课时',
         pinned_slot_moved: '锁定课节被移动，优化结果已拒绝',
         hard_score_violation: '优化结果存在硬约束冲突',
         incomplete_solution: '优化结果未排满全部课时',
@@ -1497,7 +1508,50 @@ function shortPublicationFingerprint(value = '') {
     return text.length > 12 ? `${text.slice(0, 12)}...` : text;
 }
 
+function hasPublishedArchive(project = {}) {
+    return Boolean(project.schedule?.published);
+}
+
+function hasPublishedSnapshot(project = {}) {
+    return Boolean(project.schedule?.published?.snapshot?.slots?.length);
+}
+
+function archiveOnlyDraftState(project = {}) {
+    return hasPublishedArchive(project) && !(project.schedule?.slots || []).length;
+}
+
+function isArchiveOnlyReadyState(project = {}) {
+    return archiveOnlyDraftState(project) && hasPublishedSnapshot(project);
+}
+
+function preparednessSummaryLabel(project = {}, preparedness = {}) {
+    if (preparedness.ready) return '数据已就绪';
+    if (isArchiveOnlyReadyState(project)) return '发布归档已保留';
+    return '待导入任课';
+}
+
+function readinessChipLabel(project = {}, preparedness = {}) {
+    if (preparedness.ready) return '就绪';
+    if (isArchiveOnlyReadyState(project)) return '归档可恢复';
+    return '待准备';
+}
+
 function getSolverDetail(state = {}) {
+    if (state.project?.schedule?.published?.status === 'published' && !state.solverJob && !state.lastFailure) {
+        return {
+            stats: {},
+            reason: '',
+            reasonLabel: '',
+            accepted: undefined,
+            kept: false,
+            isManualReview: false,
+            hasInitialSolutionInfo: false,
+            initialSolutionText: '',
+            hasPinnedCount: false,
+            pinnedCount: 0,
+            staleRejected: false,
+        };
+    }
     const scheduleStats = state.project?.schedule?.solverStats || {};
     const jobStats = state.solverJob?.solverStats || {};
     const failureStats = state.lastFailure?.solverStats || {};
@@ -1506,16 +1560,20 @@ function getSolverDetail(state = {}) {
     const hasPinnedCount = Object.prototype.hasOwnProperty.call(stats, 'pinnedCount');
     const reason = state.solverJob?.reason || stats.reason || state.lastFailure?.reason || '';
     const accepted = state.solverJob ? state.solverJob.accepted : stats.accepted;
+    const isManualReview = stats.phase === 'manual_adjustment'
+        && accepted === false
+        && (reason === 'manual_adjustment_conflicts' || reason === 'manual_adjustment_unplaced');
     const kept = Boolean(state.lastFailure)
         || state.solverJob?.status === 'failed'
         || state.solverJob?.status === 'skipped'
-        || (reason && accepted === false);
+        || ((reason && accepted === false) && !isManualReview);
     return {
         stats,
         reason,
         reasonLabel: solverReasonLabel(reason),
         accepted,
         kept,
+        isManualReview,
         hasInitialSolutionInfo,
         initialSolutionText: stats.initialSolutionUsed ? '\u5df2\u4f7f\u7528' : '\u672a\u4f7f\u7528',
         hasPinnedCount,
@@ -1525,32 +1583,39 @@ function getSolverDetail(state = {}) {
 }
 
 function renderPublicationPanel(state) {
+    const project = state.project || {};
     const publication = state.project?.schedule?.publication || state.lastFailure?.publication || null;
-    if (!publication) return '';
-    const summary = publication.summary || {};
-    const blocking = publication.blockingIssues || [];
-    const warnings = publication.warnings || [];
-    const reviewItems = publication.reviewItems || [];
-    const published = state.project?.schedule?.published || null;
+    const published = project.schedule?.published || null;
+    if (!publication && !published) return '';
+    const archiveOnly = !publication && archiveOnlyDraftState(project);
+    const publishedCurrent = published?.status === 'published' && !archiveOnly;
+    const summary = publication?.summary || published?.snapshot?.publicationSummary || {};
+    const blocking = publication?.blockingIssues || [];
+    const warnings = publication?.warnings || [];
+    const reviewItems = publication?.reviewItems || [];
     const snapshot = published?.snapshot || null;
     const fingerprint = published?.fingerprint || snapshot?.fingerprint || '';
     const fingerprintMismatch = hasPublicationFingerprintMismatch(publication, '发布快照');
     const restorePublishedAttrs = fingerprintMismatch
         ? `disabled title="${escapeAttr(PUBLICATION_FINGERPRINT_MISMATCH_MESSAGE)}"`
         : '';
-    const diff = getPublishedScheduleDiff(state.project);
-    const draftChanged = publishedDraftChanged(state.project);
+    const diff = getPublishedScheduleDiff(project);
+    const draftChanged = publishedDraftChanged(project);
     const placed = Number(summary.placedLessons ?? 0);
     const total = Number(summary.totalLessons ?? 0);
     return `
         <section class="tt-inspector-section">
             <div class="tt-section-title">
-                <h3><i data-lucide="shield-check"></i><span>发布前校验</span></h3>
-                <span class="tt-chip ${publication.ok ? 'tt-chip--ok' : 'tt-chip--warn'}">${publication.ok ? '可发布' : '不可发布'}</span>
+                <h3><i data-lucide="shield-check"></i><span>${archiveOnly || publishedCurrent ? '发布归档' : '发布前校验'}</span></h3>
+                <span class="tt-chip ${archiveOnly || publishedCurrent ? 'tt-chip--ok' : publication.ok ? 'tt-chip--ok' : 'tt-chip--warn'}">${archiveOnly ? '已保留' : publishedCurrent ? '已发布' : publication.ok ? '可发布' : '不可发布'}</span>
             </div>
             <div class="tt-detail-list">
                 ${published ? `<span class="${draftChanged ? 'is-warning' : ''}"><b>发布状态</b>${escapeHtml(draftChanged ? '草稿已变化' : `已发布 V${published.version || 1}`)}</span>` : '<span><b>发布状态</b>未发布</span>'}
-                ${draftChanged ? '<span class="is-warning"><b>发布已失效</b>当前课表改动后需要重新发布</span>' : ''}
+                ${archiveOnly
+                    ? '<span class="is-warning"><b>当前草稿</b>已清空，仍可恢复或导出已发布版本</span>'
+                    : draftChanged
+                        ? '<span class="is-warning"><b>发布已失效</b>当前课表改动后需要重新发布</span>'
+                        : ''}
                 ${published?.note ? `<span><b>发布备注</b>${escapeHtml(published.note)}</span>` : ''}
                 ${fingerprint ? `<span class="tt-fingerprint" title="${escapeAttr(fingerprint)}"><b>发布指纹</b>${escapeHtml(shortPublicationFingerprint(fingerprint))}</span>` : ''}
                 ${snapshot ? `<span><b>发布快照</b>${escapeHtml(`${snapshot.slotCount ?? snapshot.slots?.length ?? 0} 节`)}</span>` : ''}
@@ -1559,18 +1624,19 @@ function renderPublicationPanel(state) {
                 <span><b>硬冲突</b>${escapeHtml(summary.hardConflicts ?? 0)}</span>
                 <span><b>未排课时</b>${escapeHtml(summary.unplacedLessons ?? 0)}</span>
                 <span><b>提醒</b>${escapeHtml(warnings.length)}</span>
+                ${!archiveOnly && !snapshot?.slots?.length && draftChanged ? '<span class="is-warning"><b>发布快照</b>上一版发布快照缺失，暂时无法恢复或导出发布版。</span>' : ''}
                 ${blocking.slice(0, 4).map(item => `<span class="is-warning"><b>${escapeHtml(publicationItemTitle(item))}</b>${escapeHtml(item.message || publicationIssueLabel(item.type))}</span>`).join('')}
                 ${warnings.slice(0, 2).map(item => `<span class="is-warning"><b>${escapeHtml(publicationItemTitle(item))}</b>${escapeHtml(item.message || publicationIssueLabel(item.type))}</span>`).join('')}
                 ${reviewItems.slice(0, 5).map(item => `<span class="${item.severity === 'error' || item.severity === 'warning' ? 'is-warning' : ''}"><b>${escapeHtml(publicationItemTitle(item))}</b>${escapeHtml(item.message || publicationIssueLabel(item.type))}</span>`).join('')}
             </div>
             ${draftChanged && snapshot?.slots?.length ? `
                 <div class="tt-publication-actions tt-publication-actions--published">
-                    <button class="tt-btn tt-btn--ghost" id="tt-restore-published-snapshot" type="button" data-restore-published-version="${escapeAttr(published.version || '')}" ${restorePublishedAttrs}>
+                    <button class="tt-btn tt-btn--ghost" id="tt-restore-published-snapshot" type="button" data-restore-published-snapshot="latest" data-restore-published-version="${escapeAttr(published.version || '')}" ${restorePublishedAttrs}>
                         <i data-lucide="history"></i><span>恢复发布版</span>
                     </button>
                 </div>
             ` : ''}
-            ${renderPublishedDiff(state.project, diff)}
+            ${renderPublishedDiff(project, diff)}
             ${renderPublishedHistory(published)}
         </section>
     `;
@@ -1611,7 +1677,7 @@ function publishedDiffTypeLabel(type = '') {
 
 function renderPublishedDiff(project = {}, diff = {}) {
     const published = project.schedule?.published || null;
-    if (!publishedDraftChanged(project) || !diff.hasSnapshot) return '';
+    if (!publishedDraftChanged(project) || !diff.hasSnapshot || !(project.schedule?.slots || []).length) return '';
     const summary = `移动 ${diff.moved} · 修改 ${diff.changed} · 新增 ${diff.added} · 移除 ${diff.removed}`;
     const rows = (diff.items || []).slice(0, 5).map(item => {
         const slot = item.afterSlot || item.beforeSlot;
@@ -1651,6 +1717,8 @@ function publishStatusTone(schedule = {}) {
 function renderExportSection(state) {
     const schedule = state.project?.schedule || null;
     const publication = schedule?.publication || null;
+    const published = schedule?.published || null;
+    const archiveOnly = archiveOnlyDraftState(state.project);
     const canPublish = Boolean(schedule?.slots?.length && publication?.ok);
     const officialExportDisabled = publishedDraftChanged(state.project);
     const officialExportRequiresPublish = schedule?.published?.status !== 'published';
@@ -1677,11 +1745,15 @@ function renderExportSection(state) {
             : '导出正式课表';
     const officialExportCopy = publishedSnapshotMismatch
         ? PUBLICATION_FINGERPRINT_MISMATCH_MESSAGE
+        : archiveOnly && hasPublishedSnapshot
+            ? '当前工作草稿已清空，仍可恢复或导出已发布版本。'
+        : archiveOnly
+            ? '当前工作草稿已清空，上一版发布快照缺失，暂时无法恢复或导出发布版。'
         : officialExportDisabled
             ? '当前草稿已变化，请重新发布后导出正式课表。'
             : publication?.ok && officialExportRequiresPublish
                 ? '请先发布课表后导出正式课表。'
-            : publication?.ok
+                : publication?.ok
                 ? '发布前校验已通过，可确认发布后导出。'
                 : '发布前校验通过后才能发布正式课表。';
     return `
@@ -1705,6 +1777,7 @@ function renderExportSection(state) {
             ${officialExportDisabled && hasPublishedSnapshot ? `
                 <div class="tt-publication-actions tt-publication-actions--published">
                     <p class="tt-compact-copy">${publishedSnapshotMismatch ? escapeHtml(PUBLICATION_FINGERPRINT_MISMATCH_MESSAGE) : '导出发布版'}</p>
+                    <button class="tt-btn tt-btn--ghost" type="button" data-restore-published-snapshot="latest" data-restore-published-version="${escapeAttr(published?.version || '')}" ${publishedExportAttrs}><i data-lucide="history"></i><span>恢复发布版</span></button>
                     <div class="tt-export-grid">
                         <button class="tt-export-btn" data-export-type="published_class" type="button" title="${escapeAttr(publishedExportTitle)}" ${publishedExportAttrs}><i data-lucide="archive"></i><span>班级</span></button>
                         <button class="tt-export-btn" data-export-type="published_teacher" type="button" title="${escapeAttr(publishedExportTitle)}" ${publishedExportAttrs}><i data-lucide="archive"></i><span>教师</span></button>
@@ -1737,7 +1810,7 @@ export function renderSchedulePanel(state) {
                 ${optimizationLabel ? `<span class="tt-chip ${state.solverJob?.status === 'failed' ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(optimizationLabel)}</span>` : ''}
                 ${runLabel ? `<span class="tt-chip tt-chip--ok">${escapeHtml(runLabel)}</span>` : ''}
                 ${solveScaleMessage(state.project) ? `<span class="tt-chip tt-chip--warn">${escapeHtml(solveScaleMessage(state.project))}</span>` : ''}
-                <span class="tt-chip ${readiness.ready ? 'tt-chip--ok' : 'tt-chip--warn'}">${readiness.ready ? '可生成' : '待准备'}</span>
+                <span class="tt-chip ${readiness.ready || isArchiveOnlyReadyState(state.project) ? 'tt-chip--ok' : 'tt-chip--warn'}">${readiness.ready ? '可生成' : isArchiveOnlyReadyState(state.project) ? '可恢复' : '待准备'}</span>
                 <button class="tt-run-btn" id="tt-run-schedule" type="button" ${state.loading || !readiness.ready ? 'disabled' : ''}>
                     <i data-lucide="${state.loading ? 'loader-2' : 'play'}"></i><span>${state.loading ? '快速生成中' : '快速生成'}</span>
                 </button>
@@ -1752,6 +1825,18 @@ export function renderSchedulePanel(state) {
 function renderScheduleGrid(state) {
     const slots = state.project.schedule?.slots || [];
     if (!slots.length) {
+        if (!(state.project.lessonPlans || []).length && hasPublishedSnapshot(state.project)) {
+            return `
+                <div class="tt-empty">
+                    <i data-lucide="archive-restore"></i>
+                    <strong>当前草稿已清空</strong>
+                    <span>仍可恢复或导出已发布版本。</span>
+                    <button class="tt-btn tt-btn--ghost" type="button" data-restore-published-snapshot="latest" data-restore-published-version="${escapeAttr(state.project.schedule?.published?.version || '')}">
+                        <i data-lucide="history"></i><span>恢复发布版</span>
+                    </button>
+                </div>
+            `;
+        }
         if ((state.project.lessonPlans || []).length) {
             return renderEmptyScheduleGrid(state);
         }
@@ -1891,7 +1976,7 @@ export function renderInspector(state) {
                     <span><b>未排课时</b>${escapeHtml(status.unplaced)}</span>
                     ${solverDetail.hasInitialSolutionInfo ? `<span><b>\u521d\u59cb\u89e3</b>${escapeHtml(solverDetail.initialSolutionText)}</span>` : ''}
                     ${solverDetail.hasPinnedCount ? `<span><b>\u9501\u5b9a\u8bfe\u8282</b>${escapeHtml(solverDetail.pinnedCount)}</span>` : ''}
-                    ${solverDetail.reasonLabel ? `<span class="${solverDetail.kept ? 'is-warning' : ''}"><b>\u4f18\u5316\u539f\u56e0</b>${escapeHtml(solverDetail.reasonLabel)}</span>` : ''}
+                    ${solverDetail.reasonLabel ? `<span class="${solverDetail.kept || solverDetail.isManualReview ? 'is-warning' : ''}"><b>${solverDetail.isManualReview ? '教务复核' : '\u4f18\u5316\u539f\u56e0'}</b>${escapeHtml(solverDetail.reasonLabel)}</span>` : ''}
                     ${solverDetail.kept ? `<span class="is-warning"><b>\u4f18\u5316\u5904\u7406</b>\u5df2\u4fdd\u7559\u5f53\u524d\u8bfe\u8868${solverDetail.reasonLabel ? `：${escapeHtml(solverDetail.reasonLabel)}。` : ''}</span>` : ''}
                     ${state.lastFailure?.solverStats?.lessonCount ? `<span><b>课时数</b>${escapeHtml(state.lastFailure.solverStats.lessonCount)}</span>` : ''}
                     ${state.lastFailure?.solverStats?.timeoutSeconds ? `<span><b>超时上限</b>${escapeHtml(state.lastFailure.solverStats.timeoutSeconds)} 秒</span>` : ''}
@@ -1907,6 +1992,7 @@ function renderAuditPanel(state) {
     const rules = getRuleSummary(state.project);
     const preview = state.ruleDraftPreview || [];
     const warnings = state.ruleWarnings || [];
+    const unsupported = state.ruleReview?.unsupportedItems || state.ruleUnsupportedItems || [];
     return `
         <section class="tt-inspector-section">
             <div class="tt-section-title">
@@ -1926,6 +2012,16 @@ function renderAuditPanel(state) {
                         <div class="tt-rule-preview-item">
                             <strong>${escapeHtml(item.targetName || item.targetId || item.type)}</strong>
                             <span>${escapeHtml(item.type)} · ${escapeHtml((item.slots || []).join(', ') || '全局')}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            ` : ''}
+            ${unsupported.length ? `
+                <div class="tt-rule-preview tt-rule-preview--compact">
+                    ${unsupported.slice(0, 3).map(item => `
+                        <div class="tt-rule-preview-item">
+                            <strong>${escapeHtml(item.targetName || item.targetId || item.type)}</strong>
+                            <span>${escapeHtml(item.type)} 路 ${escapeHtml(item.description || '仅作建议展示')}</span>
                         </div>
                     `).join('')}
                 </div>
@@ -1993,32 +2089,39 @@ function renderQualityPanel(state) {
 function renderOptimizationPanel(state) {
     const job = state.solverJob;
     const schedule = state.project?.schedule || null;
-    if (!job && schedule?.source !== 'fast_constructed') return '';
-    const label = optimizationStatusLabel(job);
-    const reasonLabel = solverReasonLabel(job?.reason || job?.solverStats?.reason || '');
+    const persistedStats = schedule?.solverStats || null;
+    const detail = job || persistedStats;
+    if (schedule?.published?.status === 'published' && !job) return '';
+    const restoredPublishedDraft = schedule?.source === 'published_history_restored'
+        || persistedStats?.phase === 'published_history_restore'
+        || Boolean(persistedStats?.restoredPublishedDraft);
+    if (!detail && schedule?.source !== 'fast_constructed') return '';
+    if (!job && schedule?.source !== 'fast_constructed' && persistedStats?.phase !== 'timefold_optimization') return '';
+    const label = optimizationStatusLabel(detail);
+    const reasonLabel = solverReasonLabel(job?.reason || job?.solverStats?.reason || persistedStats?.reason || '');
     const statusText = job
         ? label
-        : '等待下一次 Timefold 优化';
-    const sourceText = schedule?.source === 'fast_constructed'
+        : (label || '等待下一次 Timefold 优化');
+    const sourceText = restoredPublishedDraft
+        ? '恢复发布版'
+        : schedule?.source === 'fast_constructed'
         ? '快速课表'
         : schedule?.source === 'timefold_solver'
             ? 'Timefold'
             : schedule?.source === 'manual_adjusted'
                 ? '手动调整'
-                : schedule?.source === 'published_history_restored'
-                    ? '恢复发布版'
-                    : '未生成';
+                : '未生成';
     return `
         <section class="tt-inspector-section">
             <div class="tt-section-title">
                 <h3><i data-lucide="refresh-cw"></i><span>后台优化</span></h3>
-                ${job ? `<span class="tt-chip ${job.status === 'failed' ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(job.status)}</span>` : ''}
+                ${detail ? `<span class="tt-chip ${detail.status === 'failed' ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(detail.status)}</span>` : ''}
             </div>
             <div class="tt-detail-list">
                 <span><b>当前课表</b>${escapeHtml(sourceText)}</span>
                 <span><b>优化状态</b>${escapeHtml(statusText)}</span>
                 ${reasonLabel ? `<span class="is-warning"><b>处理结果</b>${escapeHtml(reasonLabel)}</span>` : ''}
-                ${job?.solverStats?.lessonCount ? `<span><b>课时数</b>${escapeHtml(job.solverStats.lessonCount)}</span>` : ''}
+                ${(job?.solverStats?.lessonCount || persistedStats?.lessonCount) ? `<span><b>课时数</b>${escapeHtml(job?.solverStats?.lessonCount || persistedStats?.lessonCount)}</span>` : ''}
             </div>
         </section>
     `;

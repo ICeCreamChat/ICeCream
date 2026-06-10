@@ -329,6 +329,89 @@ test('transformTimetableSolutionToSchedule keeps current schedule shape and solv
     assert.equal(schedule.slots.filter(slot => slot.blockId).length, 2);
 });
 
+test('transformTimetableSolutionToSchedule preserves manual protected slots without converting them into locked slots', () => {
+    const project = sampleProject({
+        rules: { hardRules: { lockedSlots: [], teacherUnavailable: {}, classUnavailable: {} }, softRules: {} },
+        schedule: {
+            id: 'manual-seeded',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'manual_adjusted',
+            slots: [
+                {
+                    id: 'math_1',
+                    day: 1,
+                    period: 1,
+                    classId: 'c1',
+                    subjectId: 'math',
+                    teacherId: 't_math',
+                    teacherIds: ['t_math', 't_helper'],
+                    lessonPlanId: 'lp_math',
+                    blockId: 'lp_math_block_1',
+                    blockIndex: 0,
+                    blockSize: 2,
+                    locked: true,
+                    manuallyAdjusted: true,
+                },
+                {
+                    id: 'math_2',
+                    day: 1,
+                    period: 2,
+                    classId: 'c1',
+                    subjectId: 'math',
+                    teacherId: 't_math',
+                    teacherIds: ['t_math', 't_helper'],
+                    lessonPlanId: 'lp_math',
+                    blockId: 'lp_math_block_1',
+                    blockIndex: 1,
+                    blockSize: 2,
+                    locked: true,
+                    manuallyAdjusted: true,
+                },
+                {
+                    id: 'pe_1',
+                    day: 3,
+                    period: 1,
+                    classId: 'c1',
+                    subjectId: 'pe',
+                    teacherId: 't_pe',
+                    teacherIds: ['t_pe'],
+                    lessonPlanId: 'lp_pe',
+                    roomId: 'gym',
+                    locked: false,
+                    manuallyAdjusted: true,
+                },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 3, totalLessons: 3, completeness: 100 },
+        },
+    });
+
+    const problem = buildTimetableProblem(project);
+    const solved = {
+        jobId: 'job-manual-shape',
+        solverStatus: 'NOT_SOLVING',
+        score: '0hard/-4soft',
+        hardScore: 0,
+        softScore: -4,
+        lessonAssignments: problem.lessonAssignments.map(assignment => ({
+            ...assignment,
+            timeSlot: assignment.timeSlot,
+            room: assignment.room || '__NONE__',
+        })),
+    };
+
+    const schedule = transformTimetableSolutionToSchedule(project, solved, { durationMs: 12 });
+    const peSlot = schedule.slots.find(slot => slot.lessonPlanId === 'lp_pe');
+    const mathSlots = schedule.slots.filter(slot => slot.lessonPlanId === 'lp_math');
+
+    assert.equal(peSlot.locked, false);
+    assert.equal(peSlot.manuallyAdjusted, true);
+    assert.equal(mathSlots.every(slot => slot.locked), true);
+    assert.equal(mathSlots.every(slot => slot.manuallyAdjusted), true);
+});
+
 test('solveTimetableWithTimefold rejects solutions that move pinned assignments', async () => {
     let postedProblem = null;
     const fetchImpl = async (url, options = {}) => {

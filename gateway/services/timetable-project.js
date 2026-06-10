@@ -326,6 +326,30 @@ function normalizePublishedSnapshot(rawSnapshot, fallback = {}) {
         publicationSummary: rawSnapshot.publicationSummary && typeof rawSnapshot.publicationSummary === 'object'
             ? rawSnapshot.publicationSummary
             : {},
+        projectContext: rawSnapshot.projectContext && typeof rawSnapshot.projectContext === 'object'
+            ? {
+                schoolName: cleanText(rawSnapshot.projectContext.schoolName, 80),
+                term: cleanText(rawSnapshot.projectContext.term, 80),
+                weekdays: intInRange(rawSnapshot.projectContext.weekdays, DEFAULT_PROJECT.weekdays, 1, 7),
+                periodsPerDay: intInRange(rawSnapshot.projectContext.periodsPerDay, DEFAULT_PROJECT.periodsPerDay, 1, 12),
+                activeWeekdays: normalizeNumberList(rawSnapshot.projectContext.activeWeekdays, [], 1, 7),
+                activePeriods: normalizeNumberList(rawSnapshot.projectContext.activePeriods, [], 1, 12),
+                teachers: Array.isArray(rawSnapshot.projectContext.teachers)
+                    ? rawSnapshot.projectContext.teachers.map(normalizeTeacher)
+                    : [],
+                classes: Array.isArray(rawSnapshot.projectContext.classes)
+                    ? rawSnapshot.projectContext.classes.map(normalizeClass)
+                    : [],
+                subjects: Array.isArray(rawSnapshot.projectContext.subjects)
+                    ? rawSnapshot.projectContext.subjects.map(normalizeSubject)
+                    : [],
+                lessonPlans: Array.isArray(rawSnapshot.projectContext.lessonPlans)
+                    ? rawSnapshot.projectContext.lessonPlans.map(normalizeLessonPlan)
+                        .filter(plan => plan.classId && plan.subjectId && plan.teacherId && plan.weeklyHours > 0)
+                    : [],
+                rules: normalizeRules(rawSnapshot.projectContext.rules || {}),
+            }
+            : null,
         slots: Array.isArray(rawSnapshot.slots)
             ? rawSnapshot.slots.map(slot => ({
                 id: cleanText(slot.id, 120),

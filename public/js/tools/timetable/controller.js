@@ -20,6 +20,7 @@ import {
     getActiveWeekdays,
     getPublishedScheduleDiff,
     getSavedRuleItems,
+    getVisibleSlots,
     removeSavedRuleById,
 } from './selectors.js';
 import {
@@ -68,7 +69,76 @@ export class TimetablePlannerController {
     applyProject(project) {
         this.state.project = project;
         this.state.selectedOwnerId = ensureOwnerSelection(this.state);
+        const visibleSlotIds = new Set(
+            getVisibleSlots(project, this.state.viewMode, this.state.selectedOwnerId)
+                .map(item => item.id)
+                .filter(Boolean),
+        );
+        if (this.state.selectedSlotId && !visibleSlotIds.has(this.state.selectedSlotId)) {
+            this.state.selectedSlotId = '';
+        }
+        if (this.state.dragSlotId && !visibleSlotIds.has(this.state.dragSlotId)) {
+            this.state.dragSlotId = '';
+            this.state.dragBlockId = '';
+        }
+        this.syncPublicationDialogState();
         this.syncRangeDraftFromProject();
+    }
+
+    syncPublicationDialogState() {
+        const published = this.state.project?.schedule?.published || null;
+        const historyVersions = new Set(
+            (published?.history || [])
+                .map(item => Number.parseInt(item?.version, 10))
+                .filter(Number.isInteger),
+        );
+        const latestVersion = Number.parseInt(published?.version, 10);
+        const resetHistoryDialog = () => {
+            this.state.publicationHistoryDialog = { open: false, version: null };
+        };
+        const resetRestoreDialog = () => {
+            this.state.restoreDialog = {
+                open: false,
+                mode: '',
+                version: null,
+                targetLabel: '',
+                summary: null,
+                loading: false,
+            };
+        };
+
+        const historyDialog = this.state.publicationHistoryDialog || {};
+        if (historyDialog.open) {
+            const historyVersion = Number.parseInt(historyDialog.version, 10);
+            if (!Number.isInteger(historyVersion) || !historyVersions.has(historyVersion)) {
+                resetHistoryDialog();
+            } else {
+                this.state.publicationHistoryDialog = {
+                    ...historyDialog,
+                    version: historyVersion,
+                };
+            }
+        }
+
+        const restoreDialog = this.state.restoreDialog || {};
+        if (!restoreDialog.open) return;
+        const restoreVersion = Number.parseInt(restoreDialog.version, 10);
+        const isValidHistoryRestore = restoreDialog.mode === 'history'
+            && Number.isInteger(restoreVersion)
+            && historyVersions.has(restoreVersion);
+        const canBackfillLatestSnapshot = published?.status === 'published';
+        const isValidLatestRestore = restoreDialog.mode === 'latest'
+            && Number.isInteger(latestVersion)
+            && (!Number.isInteger(restoreVersion) || restoreVersion === latestVersion)
+            && (Boolean(published?.snapshot) || canBackfillLatestSnapshot);
+        if (isValidHistoryRestore || isValidLatestRestore) {
+            this.state.restoreDialog = {
+                ...restoreDialog,
+                version: Number.isInteger(restoreVersion) ? restoreVersion : latestVersion,
+            };
+            return;
+        }
+        resetRestoreDialog();
     }
 
     defaultWorkflowOpenSections() {
@@ -184,6 +254,8 @@ export class TimetablePlannerController {
     }
 
     clearRuleDraft() {
+        this.state.pendingRules = [];
+        this.state.expandedRuleId = null;
         this.state.ruleDraft = null;
         this.state.ruleDraftPreview = [];
         this.state.ruleWarnings = [];
@@ -192,6 +264,62 @@ export class TimetablePlannerController {
         this.state.ruleUnsupportedItems = [];
         this.state.ruleFileName = '';
         this.resetRuleReview();
+    }
+
+    syncPendingRuleDraftState(nextRows = [], options = {}) {
+        const rows = Array.isArray(nextRows) ? [...nextRows] : [];
+        const current = this.state.ruleReview || createTimetablePlannerState().ruleReview;
+        const rowIds = new Set(rows.map(item => item?.id).filter(Boolean));
+        const existingUnsupported = [
+            ...(current.unsupportedItems || []),
+            ...(this.state.ruleUnsupportedItems || []),
+        ];
+        const unsupportedById = new Map(
+            existingUnsupported
+                .filter(item => item?.id && rowIds.has(item.id))
+                .map(item => [item.id, item]),
+        );
+        const syncedUnsupportedItems = rows
+            .filter(item => ['suggestion', 'unsupported'].includes(item?.status))
+            .map(item => unsupportedById.get(item.id) || {
+                id: item.id,
+                type: item.type || '',
+                targetId: item.targetId || '',
+                targetName: item.targetName || '',
+                slots: Array.isArray(item.slots) ? item.slots : [],
+                priority: item.priority || 'soft',
+                description: item.description || item.rawText || '',
+                status: item.status,
+                effective: false,
+                confidence: item.confidence ?? null,
+            });
+        this.state.pendingRules = rows;
+        this.state.expandedRuleId = rows.some(item => item.id === this.state.expandedRuleId)
+            ? this.state.expandedRuleId
+            : null;
+        this.state.ruleDraft = null;
+
+        if (rows.length) {
+            this.setRuleReviewState({
+                draftRows: rows,
+                inputType: current.inputType || this.state.ruleDraftInputType || 'review',
+                contextStats: current.contextStats || this.state.ruleContextStats || null,
+                warnings: current.warnings || this.state.ruleWarnings || [],
+                unsupportedItems: syncedUnsupportedItems,
+                previewItems: rows,
+            });
+            return;
+        }
+
+        this.clearRuleDraft();
+        if (options.keepDialogOpen) {
+            this.state.ruleReview = {
+                ...createTimetablePlannerState().ruleReview,
+                open: true,
+                step: getSavedRuleItems(this.state.project).length ? 'saved' : 'input',
+                mode: current.mode || 'file',
+            };
+        }
     }
 
     selectRuleParseFile(file) {
@@ -408,15 +536,19 @@ export class TimetablePlannerController {
                 this.setMessage('该条规则无法生效，请展开编辑后重试。');
                 return;
             }
-            await requestTimetable('/rules', {
+            const result = await requestTimetable('/rules', {
                 method: 'POST',
                 body: JSON.stringify({ rules: normalized.draftRules }),
             });
-            await this.refreshProject();
-            this.state.pendingRules = pending.filter(item => item.id !== ruleId);
-            if (this.state.expandedRuleId === ruleId) this.state.expandedRuleId = null;
+            this.applyProject(result.project);
+            this.syncPendingRuleDraftState(
+                pending.filter(item => item.id !== ruleId),
+                { keepDialogOpen: Boolean(this.state.ruleReview?.open) },
+            );
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
+            this.state.selectedSlotId = '';
             this.setMessage('约束已生效。');
         } catch (error) {
             this.handleError(error);
@@ -424,8 +556,10 @@ export class TimetablePlannerController {
     }
 
     rejectRule(ruleId) {
-        this.state.pendingRules = (this.state.pendingRules || []).filter(item => item.id !== ruleId);
-        if (this.state.expandedRuleId === ruleId) this.state.expandedRuleId = null;
+        this.syncPendingRuleDraftState(
+            (this.state.pendingRules || []).filter(item => item.id !== ruleId),
+            { keepDialogOpen: Boolean(this.state.ruleReview?.open) },
+        );
         this.render();
     }
 
@@ -447,16 +581,20 @@ export class TimetablePlannerController {
                 this.setMessage('这些约束都无法自动生效，请逐条编辑。');
                 return;
             }
-            await requestTimetable('/rules', {
+            const result = await requestTimetable('/rules', {
                 method: 'POST',
                 body: JSON.stringify({ rules: normalized.draftRules }),
             });
-            await this.refreshProject();
+            this.applyProject(result.project);
             const acceptedIds = new Set(pending.map(item => item.id));
-            this.state.pendingRules = (this.state.pendingRules || []).filter(item => !acceptedIds.has(item.id));
-            this.state.expandedRuleId = null;
+            this.syncPendingRuleDraftState(
+                (this.state.pendingRules || []).filter(item => !acceptedIds.has(item.id)),
+                { keepDialogOpen: Boolean(this.state.ruleReview?.open) },
+            );
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
+            this.state.selectedSlotId = '';
             this.setMessage(`已接受 ${effectiveCount} 条约束。`);
         } catch (error) {
             this.handleError(error);
@@ -464,8 +602,7 @@ export class TimetablePlannerController {
     }
 
     rejectAllRules() {
-        this.state.pendingRules = [];
-        this.state.expandedRuleId = null;
+        this.syncPendingRuleDraftState([], { keepDialogOpen: Boolean(this.state.ruleReview?.open) });
         this.render();
     }
 
@@ -644,16 +781,40 @@ export class TimetablePlannerController {
     }
 
     openRosterImport(mode = 'file') {
-        this.state.rosterImport = {
-            ...createTimetablePlannerState().rosterImport,
-            open: true,
-            mode: mode === 'text' ? 'text' : 'file',
-        };
+        const nextMode = mode === 'text' ? 'text' : 'file';
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+        const hasDraftRows = Array.isArray(current.draftRows) && current.draftRows.length > 0;
+        const hasInputDraft = Boolean(current.text || current.fileName || this.rosterImportFile);
+        if (hasDraftRows) {
+            this.state.rosterImport = {
+                ...current,
+                open: true,
+                step: 'review',
+                mode: current.mode || nextMode,
+            };
+        } else if (hasInputDraft) {
+            this.state.rosterImport = {
+                ...createTimetablePlannerState().rosterImport,
+                ...current,
+                open: true,
+                step: 'input',
+                mode: current.mode || nextMode,
+            };
+        } else {
+            this.state.rosterImport = {
+                ...createTimetablePlannerState().rosterImport,
+                open: true,
+                mode: nextMode,
+            };
+        }
         this.render();
     }
 
     closeRosterImport() {
-        this.resetRosterImport();
+        this.state.rosterImport = {
+            ...(this.state.rosterImport || createTimetablePlannerState().rosterImport),
+            open: false,
+        };
         this.render();
     }
 
@@ -697,10 +858,13 @@ export class TimetablePlannerController {
                 const data = await requestTimetable('/bootstrap');
                 this.applyProject(data.project);
                 this.state.message = 'Timefold 优化已应用。';
+                this.state.lastFailure = null;
             } else if (result.job.status === 'completed') {
                 this.state.message = '快速课表已保留。';
+                this.state.lastFailure = null;
             } else if (result.job.status === 'failed') {
                 this.state.message = 'Timefold 优化未完成，快速课表已保留。';
+                this.state.lastFailure = null;
             }
             this.render();
             this.startOptimizationPolling(result.job);
@@ -736,6 +900,8 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
+            this.state.selectedSlotId = '';
             this.clearRuleDraft();
             this.setMessage('项目已保存。');
         } catch (error) {
@@ -1023,6 +1189,7 @@ export class TimetablePlannerController {
             this.state.selectedSlotId = '';
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
             this.clearRuleDraft();
             this.resetRosterImport();
             this.setMessage(`已导入 ${result.import.count} 条任课信息。`);
@@ -1039,6 +1206,7 @@ export class TimetablePlannerController {
             this.state.selectedSlotId = '';
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
             this.clearRuleDraft();
             this.setMessage('任课数据已清空。');
         } catch (error) {
@@ -1056,6 +1224,8 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
+            this.state.selectedSlotId = '';
             this.clearRuleDraft();
             this.setMessage('约束已保存。');
         } catch (error) {
@@ -1137,6 +1307,8 @@ export class TimetablePlannerController {
                 this.applyProject(result.project);
                 this.clearOptimizationPolling();
                 this.state.solverJob = null;
+                this.state.lastFailure = null;
+                this.state.selectedSlotId = '';
                 this.clearRuleDraft();
                 this.state.ruleReview = {
                     ...createTimetablePlannerState().ruleReview,
@@ -1165,6 +1337,8 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
+            this.state.selectedSlotId = '';
             this.clearRuleDraft();
             this.state.ruleReview = {
                 ...createTimetablePlannerState().ruleReview,
@@ -1189,6 +1363,8 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
+            this.state.selectedSlotId = '';
             this.state.ruleDraft = null;
             this.state.ruleDraftPreview = [];
             this.state.ruleWarnings = [];
@@ -1216,6 +1392,8 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
+            this.state.selectedSlotId = '';
             this.clearRuleDraft();
             this.setMessage('约束已清空。');
         } catch (error) {
@@ -1236,6 +1414,8 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
+            this.state.selectedSlotId = '';
             this.clearRuleDraft();
             this.setMessage('锁定课节已添加。');
         } catch (error) {
@@ -1255,6 +1435,8 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
+            this.state.selectedSlotId = '';
             this.clearRuleDraft();
             this.setMessage('锁定课节已移除。');
         } catch (error) {
@@ -1311,6 +1493,7 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
             this.clearRuleDraft();
             if (payload.type === 'clear') this.state.selectedSlotId = '';
             this.setMessage(result.schedule.conflicts.length ? '已调整，当前仍有冲突。' : '已调整。');
@@ -1389,6 +1572,41 @@ export class TimetablePlannerController {
         const historyEntry = mode === 'history' && Number.isInteger(parsedVersion)
             ? (published?.history || []).find(item => Number.parseInt(item.version, 10) === parsedVersion) || null
             : null;
+        if (mode === 'history' && (!Number.isInteger(parsedVersion) || !historyEntry)) {
+            this.state.restoreDialog = {
+                open: false,
+                mode: '',
+                version: null,
+                targetLabel: '',
+                summary: null,
+                loading: false,
+            };
+            this.setMessage(Number.isInteger(parsedVersion)
+                ? `发布历史 V${parsedVersion} 不存在，无法恢复。`
+                : '请选择要恢复的发布历史版本。');
+            return;
+        }
+        if (mode !== 'history') {
+            const latestVersion = Number.parseInt(published?.version, 10);
+            const requestedVersion = Number.isInteger(parsedVersion) ? parsedVersion : latestVersion;
+            const canBackfillLatestSnapshot = published?.status === 'published';
+            if (
+                !Number.isInteger(latestVersion)
+                || requestedVersion !== latestVersion
+                || (!published?.snapshot && !canBackfillLatestSnapshot)
+            ) {
+                this.state.restoreDialog = {
+                    open: false,
+                    mode: '',
+                    version: null,
+                    targetLabel: '',
+                    summary: null,
+                    loading: false,
+                };
+                this.setMessage('当前没有可恢复的发布版本。');
+                return;
+            }
+        }
         const diffProject = historyEntry?.snapshot
             ? {
                 ...this.state.project,
@@ -1469,6 +1687,7 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
             this.state.selectedSlotId = '';
             this.state.restoreDialog = { open: false, mode: '', version: null, targetLabel: '', summary: null, loading: false };
             this.state.publicationHistoryDialog = { open: false, version: null };
@@ -1510,6 +1729,7 @@ export class TimetablePlannerController {
             this.applyProject(result.project);
             this.clearOptimizationPolling();
             this.state.solverJob = null;
+            this.state.lastFailure = null;
             this.state.publishDialog = { open: false, note: '', loading: false };
             const version = result.schedule?.published?.version || result.project?.schedule?.published?.version || 1;
             this.setMessage(`课表已发布 V${version}。`);

@@ -22,6 +22,8 @@ public class LessonAssignment {
     private String teacherId;
     private List<String> teacherIds = new ArrayList<>();
     private String pinnedTimeSlotId;
+    private boolean locked;
+    private boolean manuallyAdjusted;
     private List<String> blockedTimeSlotIds = new ArrayList<>();
     private List<String> allowedRoomIds = new ArrayList<>();
     private boolean requiresRoom;
@@ -108,6 +110,22 @@ public class LessonAssignment {
 
     public void setPinnedTimeSlotId(String pinnedTimeSlotId) {
         this.pinnedTimeSlotId = pinnedTimeSlotId;
+    }
+
+    public boolean isLocked() {
+        return locked;
+    }
+
+    public void setLocked(boolean locked) {
+        this.locked = locked;
+    }
+
+    public boolean isManuallyAdjusted() {
+        return manuallyAdjusted;
+    }
+
+    public void setManuallyAdjusted(boolean manuallyAdjusted) {
+        this.manuallyAdjusted = manuallyAdjusted;
     }
 
     public List<String> getBlockedTimeSlotIds() {

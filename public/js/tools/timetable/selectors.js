@@ -571,9 +571,17 @@ export function getSolveStatus(project, lastFailure = null) {
     const summary = getConflictSummary(project?.schedule || {});
     const source = project?.schedule?.source;
     const publicationDraftChanged = isPublishedDraftChanged(project);
+    const publishedStatus = project?.schedule?.published?.status;
+    const restoredPublishedDraft = publishedStatus !== 'published' && (
+        source === 'published_history_restored'
+        || project?.schedule?.solverStats?.phase === 'published_history_restore'
+        || Boolean(project?.schedule?.solverStats?.restoredPublishedDraft)
+    );
     return {
         source,
-        sourceLabel: publicationDraftChanged
+        sourceLabel: restoredPublishedDraft
+            ? '恢复发布版'
+            : publicationDraftChanged
             ? '草稿已变化'
             : source === 'timefold_solver'
             ? 'Timefold'

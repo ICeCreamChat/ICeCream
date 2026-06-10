@@ -100,6 +100,9 @@ function acceptedOptimizedSchedule(latestProject, optimizedSchedule) {
     const latestSchedule = latestProject?.schedule || {};
     const qualityScoreBefore = scheduleQuality(latestSchedule);
     const qualityScoreAfter = scheduleQuality(optimizedSchedule);
+    const restoredPublishedDraft = latestSchedule.source === 'published_history_restored'
+        || latestSchedule.solverStats?.phase === 'published_history_restore'
+        || Boolean(latestSchedule.solverStats?.restoredPublishedDraft);
     const published = latestSchedule.published
         ? {
             ...latestSchedule.published,
@@ -110,6 +113,12 @@ function acceptedOptimizedSchedule(latestProject, optimizedSchedule) {
         ...optimizedSchedule,
         ...(published ? { published } : { published: null }),
         solverStats: {
+            ...(latestSchedule.solverStats?.phase === 'published_history_restore'
+                ? {
+                    restoredVersion: latestSchedule.solverStats.restoredVersion ?? null,
+                    restoredScheduleId: latestSchedule.solverStats.restoredScheduleId ?? null,
+                }
+                : {}),
             ...(optimizedSchedule.solverStats || {}),
             phase: 'timefold_optimization',
             status: 'completed',
@@ -117,6 +126,23 @@ function acceptedOptimizedSchedule(latestProject, optimizedSchedule) {
             reason: null,
             qualityScoreBefore,
             qualityScoreAfter,
+            ...(restoredPublishedDraft ? { restoredPublishedDraft: true } : {}),
+        },
+    };
+    return {
+        ...schedule,
+        publication: validateTimetablePublication({ ...latestProject, schedule }),
+    };
+}
+
+function preservedCurrentSchedule(latestProject, solverStatsPatch = {}) {
+    const latestSchedule = latestProject?.schedule || null;
+    if (!latestSchedule) return null;
+    const schedule = {
+        ...latestSchedule,
+        solverStats: {
+            ...(latestSchedule.solverStats || {}),
+            ...solverStatsPatch,
         },
     };
     return {
@@ -148,56 +174,74 @@ async function runOptimizationJob({
         const solved = await solveTimetableWithTimefold({ project, env, fetchImpl });
         const latest = await store.loadProject();
         if (latest.schedule?.published?.status === 'published') {
+            const rejectedStats = {
+                ...(latest.schedule?.solverStats || {}),
+                ...solved.schedule.solverStats,
+                phase: 'timefold_optimization',
+                status: 'skipped',
+                accepted: false,
+                reason: 'published_schedule',
+                staleRejected: true,
+                qualityScoreBefore: scheduleQuality(project.schedule),
+                qualityScoreAfter: scheduleQuality(solved.schedule),
+            };
+            await store.saveProject({
+                ...latest,
+                schedule: preservedCurrentSchedule(latest, rejectedStats),
+            });
             updateJob(jobId, {
                 status: 'skipped',
                 accepted: false,
                 reason: 'published_schedule',
-                solverStats: {
-                    ...solved.schedule.solverStats,
-                    phase: 'timefold_optimization',
-                    status: 'skipped',
-                    accepted: false,
-                    reason: 'published_schedule',
-                    staleRejected: true,
-                    qualityScoreBefore: scheduleQuality(project.schedule),
-                    qualityScoreAfter: scheduleQuality(solved.schedule),
-                },
+                solverStats: rejectedStats,
             });
             return;
         }
         if (latest.schedule?.id !== sourceScheduleId || scheduleSignature(latest.schedule) !== sourceScheduleSignature) {
+            const rejectedStats = {
+                ...(latest.schedule?.solverStats || {}),
+                ...solved.schedule.solverStats,
+                phase: 'timefold_optimization',
+                status: 'skipped',
+                accepted: false,
+                reason: 'stale_schedule',
+                staleRejected: true,
+                qualityScoreBefore: scheduleQuality(project.schedule),
+                qualityScoreAfter: scheduleQuality(solved.schedule),
+            };
+            await store.saveProject({
+                ...latest,
+                schedule: preservedCurrentSchedule(latest, rejectedStats),
+            });
             updateJob(jobId, {
                 status: 'skipped',
                 accepted: false,
                 reason: 'stale_schedule',
-                solverStats: {
-                    ...solved.schedule.solverStats,
-                    phase: 'timefold_optimization',
-                    status: 'skipped',
-                    accepted: false,
-                    reason: 'stale_schedule',
-                    staleRejected: true,
-                    qualityScoreBefore: scheduleQuality(project.schedule),
-                    qualityScoreAfter: scheduleQuality(solved.schedule),
-                },
+                solverStats: rejectedStats,
             });
             return;
         }
 
         if (!canAcceptOptimizedSchedule(latest.schedule, solved.schedule)) {
+            const rejectedStats = {
+                ...(latest.schedule?.solverStats || {}),
+                ...solved.schedule.solverStats,
+                phase: 'timefold_optimization',
+                status: 'completed',
+                accepted: false,
+                reason: 'not_better',
+                qualityScoreBefore: scheduleQuality(latest.schedule),
+                qualityScoreAfter: scheduleQuality(solved.schedule),
+            };
+            const savedCurrent = await store.saveProject({
+                ...latest,
+                schedule: preservedCurrentSchedule(latest, rejectedStats),
+            });
             updateJob(jobId, {
                 status: 'completed',
                 accepted: false,
                 reason: 'not_better',
-                solverStats: {
-                    ...solved.schedule.solverStats,
-                    phase: 'timefold_optimization',
-                    status: 'completed',
-                    accepted: false,
-                    reason: 'not_better',
-                    qualityScoreBefore: scheduleQuality(latest.schedule),
-                    qualityScoreAfter: scheduleQuality(solved.schedule),
-                },
+                solverStats: savedCurrent.schedule.solverStats,
             });
             return;
         }
@@ -220,17 +264,49 @@ async function runOptimizationJob({
         });
     } catch (error) {
         const reason = error instanceof TimetableTimefoldError ? error.reason : 'failed';
+        const latest = await store.loadProject();
+        const latestSignature = scheduleSignature(latest.schedule);
+        const publishedChanged = latest.schedule?.published?.status === 'published';
+        const staleChanged = latest.schedule?.id !== sourceScheduleId
+            || latestSignature !== sourceScheduleSignature;
+        if (publishedChanged || staleChanged) {
+            const rejectedReason = publishedChanged ? 'published_schedule' : 'stale_schedule';
+            const rejectedStats = {
+                ...(latest.schedule?.solverStats || {}),
+                ...(error.solverStats || {}),
+                phase: 'timefold_optimization',
+                status: 'skipped',
+                accepted: false,
+                reason: rejectedReason,
+                staleRejected: true,
+            };
+            updateJob(jobId, {
+                status: 'skipped',
+                accepted: false,
+                reason: rejectedReason,
+                solverStats: rejectedStats,
+            });
+            return;
+        }
+        const failedStats = {
+            ...(latest.schedule?.solverStats || {}),
+            ...(error.solverStats || {}),
+            phase: 'timefold_optimization',
+            status: 'failed',
+            accepted: false,
+            reason,
+        };
+        if (latest.schedule) {
+            await store.saveProject({
+                ...latest,
+                schedule: preservedCurrentSchedule(latest, failedStats),
+            });
+        }
         updateJob(jobId, {
             status: 'failed',
             accepted: false,
             reason,
-            solverStats: {
-                ...(error.solverStats || {}),
-                phase: 'timefold_optimization',
-                status: 'failed',
-                accepted: false,
-                reason,
-            },
+            solverStats: failedStats,
         });
     }
 }

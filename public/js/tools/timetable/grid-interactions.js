@@ -132,7 +132,9 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-restore-publication-history')?.addEventListener('click', event => {
         controller.openRestoreDialog('history', event.currentTarget.dataset.restorePublicationVersion);
     });
-    container.querySelector('#tt-restore-published-snapshot')?.addEventListener('click', () => controller.openRestoreDialog('latest'));
+    container.querySelectorAll('[data-restore-published-snapshot]').forEach(button => {
+        button.addEventListener('click', () => controller.openRestoreDialog('latest', button.dataset.restorePublishedVersion));
+    });
     container.querySelector('#tt-confirm-restore')?.addEventListener('click', () => controller.confirmRestoreSchedule());
     container.querySelector('#tt-cancel-restore')?.addEventListener('click', () => controller.closeRestoreDialog());
     container.querySelector('#tt-cancel-restore-secondary')?.addEventListener('click', () => controller.closeRestoreDialog());

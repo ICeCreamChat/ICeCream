@@ -61,6 +61,32 @@ function refreshSchedule(project, schedule) {
     return schedule;
 }
 
+function buildManualAdjustmentSolverStats(schedule) {
+    const conflicts = Array.isArray(schedule.conflicts) ? schedule.conflicts : [];
+    const unplaced = Array.isArray(schedule.unplaced) ? schedule.unplaced : [];
+    const hasHardConflicts = conflicts.some(conflict => conflict?.severity === 'hard');
+    const restoredPublishedDraft = schedule?.source === 'published_history_restored'
+        || schedule?.solverStats?.phase === 'published_history_restore'
+        || Boolean(schedule?.solverStats?.restoredPublishedDraft);
+    return {
+        solverUsed: false,
+        phase: 'manual_adjustment',
+        status: hasHardConflicts || unplaced.length ? 'needs_review' : 'accepted',
+        accepted: !(hasHardConflicts || unplaced.length),
+        reason: hasHardConflicts
+            ? 'manual_adjustment_conflicts'
+            : unplaced.length
+                ? 'manual_adjustment_unplaced'
+                : null,
+        lessonCount: Number(schedule.score?.totalLessons || 0),
+        ...(restoredPublishedDraft ? {
+            restoredPublishedDraft: true,
+            restoredVersion: schedule?.solverStats?.restoredVersion ?? null,
+            restoredScheduleId: schedule?.solverStats?.restoredScheduleId ?? null,
+        } : {}),
+    };
+}
+
 export function applyScheduleAdjustment(input = {}, adjustment = {}) {
     const project = normalizeTimetableProject(input);
     const schedule = normalizeSchedule(project.schedule) || { slots: [], conflicts: [], unplaced: [], score: {} };
@@ -114,6 +140,7 @@ export function applyScheduleAdjustment(input = {}, adjustment = {}) {
 
     schedule.source = 'manual_adjusted';
     refreshSchedule(project, schedule);
+    schedule.solverStats = buildManualAdjustmentSolverStats(schedule);
 
     return {
         success: schedule.conflicts.length === 0 && schedule.unplaced.length === 0,

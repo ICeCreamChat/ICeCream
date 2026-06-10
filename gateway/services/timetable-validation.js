@@ -289,7 +289,12 @@ export function validateTimetablePublication(input = {}) {
     if (schedule?.source === 'manual_adjusted') {
         warnings.push(publicationIssue('manual_adjusted', '课表包含手动调整，发布前建议复核锁定课节。'));
     }
-    if (schedule?.source === 'published_history_restored' && schedule?.published?.status !== 'published') {
+    if (
+        (schedule?.source === 'published_history_restored'
+            || schedule?.solverStats?.phase === 'published_history_restore'
+            || schedule?.solverStats?.restoredPublishedDraft)
+        && schedule?.published?.status !== 'published'
+    ) {
         warnings.push(publicationIssue('restored_published_draft', '当前草稿来自恢复发布版，重新发布前建议教务复核。', {
             targetName: '恢复发布版',
         }));

@@ -16,6 +16,7 @@ import {
     getTimetableOptimizationJob,
     resetTimetableOptimizationJobs,
 } from '../gateway/services/timetable-optimization-jobs.js';
+import { buildTimetableProblem } from '../gateway/services/timetable-solver-bridge.js';
 import {
     normalizeTimetableRuleDraftRows,
     parseTimetableRules,
@@ -940,10 +941,24 @@ test('manual adjustment preserves unplaced conflicts after partial schedules cha
     assert.ok(adjusted.schedule.conflicts.some(conflict => conflict.type === 'unplaced'));
     assert.equal(adjusted.schedule.score.unplacedLessons, 1);
     assert.equal(adjusted.schedule.score.hardConflicts, 1);
+    assert.equal(adjusted.schedule.solverStats.phase, 'manual_adjustment');
+    assert.equal(adjusted.schedule.solverStats.status, 'needs_review');
+    assert.equal(adjusted.schedule.solverStats.accepted, false);
+    assert.equal(adjusted.schedule.solverStats.reason, 'manual_adjustment_conflicts');
 });
 
 test('manual adjustment moves, locks and clears timetable slots with validation', () => {
     const result = runTimetableScheduler(sampleProject());
+    result.schedule.solverStats = {
+        phase: 'timefold_optimization',
+        status: 'failed',
+        accepted: false,
+        reason: 'timeout',
+        initialSolutionUsed: true,
+        pinnedCount: 2,
+        lessonCount: 11,
+        timeoutSeconds: 210,
+    };
     const first = result.schedule.slots.find(slot => !slot.locked && slot.teacherId === 't_math');
     const moved = applyScheduleAdjustment(sampleProject({ schedule: result.schedule }), {
         type: 'move',
@@ -957,6 +972,13 @@ test('manual adjustment moves, locks and clears timetable slots with validation'
     assert.equal(adjusted.period, 4);
     assert.equal(adjusted.manuallyAdjusted, true);
     assert.equal(moved.schedule.source, 'manual_adjusted');
+    assert.equal(moved.schedule.solverStats.phase, 'manual_adjustment');
+    assert.equal(moved.schedule.solverStats.status, 'accepted');
+    assert.equal(moved.schedule.solverStats.accepted, true);
+    assert.equal(moved.schedule.solverStats.reason, null);
+    assert.equal(moved.schedule.solverStats.initialSolutionUsed, undefined);
+    assert.equal(moved.schedule.solverStats.pinnedCount, undefined);
+    assert.equal(moved.schedule.solverStats.timeoutSeconds, undefined);
 
     const locked = applyScheduleAdjustment(sampleProject({ schedule: moved.schedule }), {
         type: 'lock',
@@ -964,12 +986,59 @@ test('manual adjustment moves, locks and clears timetable slots with validation'
         locked: true,
     });
     assert.equal(locked.schedule.slots.find(slot => slot.id === first.id).locked, true);
+    assert.equal(locked.schedule.solverStats.phase, 'manual_adjustment');
+    assert.equal(locked.schedule.solverStats.status, 'accepted');
+    assert.equal(locked.schedule.solverStats.accepted, true);
+    assert.equal(locked.schedule.solverStats.reason, null);
 
     const cleared = applyScheduleAdjustment(sampleProject({ schedule: locked.schedule }), {
         type: 'clear',
         slotId: first.id,
     });
     assert.equal(cleared.schedule.slots.some(slot => slot.id === first.id), false);
+    assert.equal(cleared.schedule.solverStats.phase, 'manual_adjustment');
+    assert.equal(cleared.schedule.solverStats.status, 'accepted');
+    assert.equal(cleared.schedule.solverStats.accepted, true);
+    assert.equal(cleared.schedule.solverStats.reason, null);
+});
+
+test('manual adjustment preserves restored-published review semantics on restored drafts', () => {
+    const result = runTimetableScheduler(sampleProject());
+    const first = result.schedule.slots.find(slot => !slot.locked && slot.teacherId === 't_math');
+    const restoredSchedule = {
+        ...result.schedule,
+        source: 'published_history_restored',
+        published: {
+            status: 'draft_changed',
+            version: 2,
+            publishedAt: '2026-01-02T08:00:00.000Z',
+            scheduleId: 'published-v2',
+            note: '恢复的发布版',
+        },
+        solverStats: {
+            phase: 'published_history_restore',
+            status: 'restored',
+            accepted: true,
+            reason: null,
+            restoredVersion: 2,
+            restoredScheduleId: 'published-v2',
+        },
+    };
+
+    const moved = applyScheduleAdjustment(sampleProject({ schedule: restoredSchedule }), {
+        type: 'move',
+        slotId: first.id,
+        day: 5,
+        period: 4,
+    });
+
+    assert.equal(moved.schedule.source, 'manual_adjusted');
+    assert.equal(moved.schedule.solverStats.phase, 'manual_adjustment');
+    assert.equal(moved.schedule.solverStats.restoredPublishedDraft, true);
+    assert.equal(moved.schedule.solverStats.restoredVersion, 2);
+    assert.equal(moved.schedule.solverStats.restoredScheduleId, 'published-v2');
+    assert.ok(moved.schedule.publication.warnings.some(issue => issue.type === 'restored_published_draft'));
+    assert.ok(moved.schedule.publication.reviewItems.some(item => item.type === 'restored_published_draft'));
 });
 
 test('manual adjustment applies move, lock and clear to an entire block', () => {
@@ -1992,6 +2061,10 @@ test('background Timefold timeout keeps the saved fast schedule and exposes job 
 
         const stored = await store.loadProject();
         assert.equal(stored.schedule.source, 'fast_constructed');
+        assert.equal(stored.schedule.solverStats.phase, 'timefold_optimization');
+        assert.equal(stored.schedule.solverStats.status, 'failed');
+        assert.equal(stored.schedule.solverStats.accepted, false);
+        assert.equal(stored.schedule.solverStats.reason, 'timeout');
     } finally {
         await new Promise(resolve => server.close(resolve));
         globalThis.fetch = nativeFetch;
@@ -2075,6 +2148,102 @@ test('background Timefold keeps the fast schedule when optimized quality is equa
         const stored = await store.loadProject();
         assert.equal(stored.schedule.id, fast.schedule.id);
         assert.equal(stored.schedule.source, 'fast_constructed');
+        assert.equal(stored.schedule.solverStats.phase, 'timefold_optimization');
+        assert.equal(stored.schedule.solverStats.status, 'completed');
+        assert.equal(stored.schedule.solverStats.accepted, false);
+        assert.equal(stored.schedule.solverStats.reason, 'not_better');
+        assert.equal(stored.schedule.solverStats.qualityScoreBefore, stored.schedule.solverStats.qualityScoreAfter);
+    } finally {
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
+test('background Timefold rejection keeps latest initial-solution and pinned metadata on the preserved schedule', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-api-not-better-meta-'));
+    resetTimetableOptimizationJobs();
+
+    const store = createTimetableStore();
+    const fast = runTimetableScheduler(sampleProject()).project;
+    const seeded = {
+        ...fast,
+        schedule: {
+            ...fast.schedule,
+            slots: fast.schedule.slots.map((slot, index) => (
+                index === 0
+                    ? { ...slot, locked: true, manuallyAdjusted: true }
+                    : slot
+            )),
+            solverStats: {
+                phase: 'manual_adjustment',
+                status: 'accepted',
+                accepted: true,
+                reason: null,
+                initialSolutionUsed: false,
+                pinnedCount: 0,
+            },
+        },
+    };
+    await store.saveProject(seeded);
+
+    let postedProblem = null;
+    const fetchImpl = async (url, options = {}) => {
+        const target = String(url);
+        if (target.endsWith('/timetable-solutions') && options.method === 'POST') {
+            postedProblem = JSON.parse(options.body);
+            return new Response(JSON.stringify({ jobId: 'same-quality-meta-job', solverStatus: 'SOLVING' }), { status: 200 });
+        }
+        if (target.endsWith('/timetable-solutions/same-quality-meta-job/status')) {
+            return new Response(JSON.stringify({
+                jobId: 'same-quality-meta-job',
+                solverStatus: 'NOT_SOLVING',
+                hardScore: 0,
+                softScore: fast.schedule.score.softScore,
+                score: `0hard/${fast.schedule.score.softScore}soft`,
+            }), { status: 200 });
+        }
+        if (target.endsWith('/timetable-solutions/same-quality-meta-job')) {
+            return new Response(JSON.stringify({
+                jobId: 'same-quality-meta-job',
+                solverStatus: 'NOT_SOLVING',
+                hardScore: 0,
+                softScore: fast.schedule.score.softScore,
+                score: `0hard/${fast.schedule.score.softScore}soft`,
+                lessonAssignments: postedProblem.lessonAssignments.map(assignment => ({ ...assignment })),
+            }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+    };
+
+    try {
+        const job = createTimetableOptimizationJob({
+            project: seeded,
+            schedule: seeded.schedule,
+            store,
+            env: { TIMEFOLD_SOLVER_URL: 'http://timefold.same-meta', TIMETABLE_SOLVER_TIMEOUT: '5' },
+            fetchImpl,
+        });
+
+        const completed = await waitFor(() => {
+            const current = getTimetableOptimizationJob(job.jobId);
+            return current?.status === 'completed' ? current : null;
+        }, 1500);
+
+        assert.equal(completed.accepted, false);
+        assert.equal(completed.reason, 'not_better');
+        assert.equal(completed.solverStats.initialSolutionUsed, true);
+        assert.equal(completed.solverStats.pinnedCount, 2);
+
+        const stored = await store.loadProject();
+        assert.equal(stored.schedule.id, seeded.schedule.id);
+        assert.equal(stored.schedule.solverStats.accepted, false);
+        assert.equal(stored.schedule.solverStats.reason, 'not_better');
+        assert.equal(stored.schedule.solverStats.initialSolutionUsed, true);
+        assert.equal(stored.schedule.solverStats.pinnedCount, 2);
     } finally {
         if (previousDataDir === undefined) {
             delete process.env.TIMETABLE_DATA_DIR;
@@ -2206,6 +2375,216 @@ test('background Timefold preserves published draft metadata when accepting a be
     }
 });
 
+test('background Timefold acceptance keeps restored-published review semantics on restored drafts', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-api-accepted-restored-draft-'));
+    resetTimetableOptimizationJobs();
+
+    const store = createTimetableStore();
+    const fast = runTimetableScheduler(sampleProject()).project;
+    const restoredDraft = {
+        ...fast,
+        schedule: {
+            ...fast.schedule,
+            id: 'restored-draft-schedule',
+            source: 'published_history_restored',
+            score: {
+                ...fast.schedule.score,
+                softScore: Number(fast.schedule.score.softScore || 0) - 1000,
+                completeness: Math.max(0, Number(fast.schedule.score.completeness || 0) - 10),
+            },
+            solverStats: {
+                phase: 'published_history_restore',
+                status: 'restored',
+                accepted: true,
+                reason: null,
+                restoredVersion: 2,
+                restoredScheduleId: 'published-v2',
+            },
+            published: {
+                status: 'draft_changed',
+                version: 2,
+                publishedAt: '2026-01-02T08:00:00.000Z',
+                scheduleId: 'published-v2',
+                note: '恢复的发布版',
+                snapshot: {
+                    scheduleId: 'published-v2',
+                    generatedAt: fast.schedule.generatedAt,
+                    source: 'timefold_solver',
+                    slotCount: fast.schedule.slots.length,
+                    score: fast.schedule.score,
+                    publicationSummary: {
+                        totalLessons: fast.schedule.score.totalLessons,
+                        placedLessons: fast.schedule.score.placedLessons,
+                        unplacedLessons: 0,
+                        hardConflicts: 0,
+                    },
+                    slots: fast.schedule.slots,
+                },
+                history: [],
+            },
+        },
+    };
+    await store.saveProject(restoredDraft);
+
+    let postedProblem = null;
+    const fetchImpl = async (url, options = {}) => {
+        const target = String(url);
+        if (target.endsWith('/timetable-solutions') && options.method === 'POST') {
+            postedProblem = JSON.parse(options.body);
+            return new Response(JSON.stringify({ jobId: 'accepted-restored-draft-job', solverStatus: 'SOLVING' }), { status: 200 });
+        }
+        if (target.endsWith('/timetable-solutions/accepted-restored-draft-job/status')) {
+            return new Response(JSON.stringify({
+                jobId: 'accepted-restored-draft-job',
+                solverStatus: 'NOT_SOLVING',
+                hardScore: 0,
+                softScore: fast.schedule.score.softScore + 100,
+                score: `0hard/${fast.schedule.score.softScore + 100}soft`,
+            }), { status: 200 });
+        }
+        if (target.endsWith('/timetable-solutions/accepted-restored-draft-job')) {
+            return new Response(JSON.stringify({
+                jobId: 'accepted-restored-draft-job',
+                solverStatus: 'NOT_SOLVING',
+                hardScore: 0,
+                softScore: fast.schedule.score.softScore + 100,
+                score: `0hard/${fast.schedule.score.softScore + 100}soft`,
+                lessonAssignments: postedProblem.lessonAssignments.map(assignment => ({ ...assignment })),
+            }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+    };
+
+    try {
+        const job = createTimetableOptimizationJob({
+            project: restoredDraft,
+            schedule: restoredDraft.schedule,
+            store,
+            env: { TIMEFOLD_SOLVER_URL: 'http://timefold.accepted-restored-draft', TIMETABLE_SOLVER_TIMEOUT: '5' },
+            fetchImpl,
+        });
+
+        const completed = await waitFor(() => {
+            const current = getTimetableOptimizationJob(job.jobId);
+            return current?.status === 'completed' && current.accepted ? current : null;
+        }, 1500);
+
+        assert.equal(completed.accepted, true);
+        const stored = await store.loadProject();
+        assert.equal(stored.schedule.source, 'timefold_solver');
+        assert.equal(stored.schedule.published.status, 'draft_changed');
+        assert.equal(stored.schedule.solverStats.phase, 'timefold_optimization');
+        assert.equal(stored.schedule.solverStats.restoredVersion, 2);
+        assert.equal(stored.schedule.solverStats.restoredScheduleId, 'published-v2');
+        assert.equal(stored.schedule.solverStats.restoredPublishedDraft, true);
+        assert.ok(stored.schedule.publication.warnings.some(issue => issue.type === 'restored_published_draft'));
+        assert.ok(stored.schedule.publication.reviewItems.some(item => item.type === 'restored_published_draft'));
+    } finally {
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
+test('background Timefold acceptance preserves manual protected slot semantics', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-api-accepted-manual-protected-'));
+    resetTimetableOptimizationJobs();
+
+    const store = createTimetableStore();
+    const fast = runTimetableScheduler(sampleProject()).project;
+    const protectedSchedule = {
+        ...fast.schedule,
+        source: 'manual_adjusted',
+        score: {
+            ...fast.schedule.score,
+            softScore: Number(fast.schedule.score.softScore || 0) - 1000,
+            completeness: Math.max(0, Number(fast.schedule.score.completeness || 0) - 10),
+        },
+        slots: fast.schedule.slots.map((slot, index) => {
+            if (index === 0) {
+                return { ...slot, locked: true, manuallyAdjusted: true };
+            }
+            if (index === 1) {
+                return { ...slot, locked: false, manuallyAdjusted: true };
+            }
+            return slot;
+        }),
+        solverStats: {
+            phase: 'manual_adjustment',
+            status: 'accepted',
+            accepted: true,
+            reason: null,
+        },
+    };
+    await store.saveProject({
+        ...fast,
+        schedule: protectedSchedule,
+    });
+
+    let postedProblem = null;
+    const fetchImpl = async (url, options = {}) => {
+        const target = String(url);
+        if (target.endsWith('/timetable-solutions') && options.method === 'POST') {
+            postedProblem = JSON.parse(options.body);
+            return new Response(JSON.stringify({ jobId: 'accepted-manual-protected-job', solverStatus: 'SOLVING' }), { status: 200 });
+        }
+        if (target.endsWith('/timetable-solutions/accepted-manual-protected-job/status')) {
+            return new Response(JSON.stringify({
+                jobId: 'accepted-manual-protected-job',
+                solverStatus: 'NOT_SOLVING',
+                hardScore: 0,
+                softScore: protectedSchedule.score.softScore + 100,
+                score: `0hard/${protectedSchedule.score.softScore + 100}soft`,
+            }), { status: 200 });
+        }
+        if (target.endsWith('/timetable-solutions/accepted-manual-protected-job')) {
+            return new Response(JSON.stringify({
+                jobId: 'accepted-manual-protected-job',
+                solverStatus: 'NOT_SOLVING',
+                hardScore: 0,
+                softScore: protectedSchedule.score.softScore + 100,
+                score: `0hard/${protectedSchedule.score.softScore + 100}soft`,
+                lessonAssignments: postedProblem.lessonAssignments.map(assignment => ({ ...assignment })),
+            }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+    };
+
+    try {
+        const job = createTimetableOptimizationJob({
+            project: { ...fast, schedule: protectedSchedule },
+            schedule: protectedSchedule,
+            store,
+            env: { TIMEFOLD_SOLVER_URL: 'http://timefold.accepted-manual-protected', TIMETABLE_SOLVER_TIMEOUT: '5' },
+            fetchImpl,
+        });
+
+        const completed = await waitFor(() => {
+            const current = getTimetableOptimizationJob(job.jobId);
+            return current?.status === 'completed' && current.accepted ? current : null;
+        }, 1500);
+
+        assert.equal(completed.accepted, true);
+        const stored = await store.loadProject();
+        const protectedSlots = stored.schedule.slots.filter(slot => slot.manuallyAdjusted);
+        assert.ok(protectedSlots.length >= 2);
+        assert.equal(protectedSlots.some(slot => slot.locked === false), true);
+        assert.equal(protectedSlots.some(slot => slot.locked === true), true);
+        assert.equal(stored.schedule.source, 'timefold_solver');
+        assert.equal(stored.schedule.solverStats.accepted, true);
+    } finally {
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
 test('background Timefold rejects stale jobs when schedule content changed without id change', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-api-stale-signature-'));
@@ -2275,6 +2654,11 @@ test('background Timefold rejects stale jobs when schedule content changed witho
         assert.equal(stored.schedule.id, fast.schedule.id);
         assert.equal(stored.schedule.source, 'fast_constructed');
         assert.equal(stored.schedule.slots.some(slot => slot.manuallyAdjusted), true);
+        assert.equal(stored.schedule.solverStats.phase, 'timefold_optimization');
+        assert.equal(stored.schedule.solverStats.status, 'skipped');
+        assert.equal(stored.schedule.solverStats.accepted, false);
+        assert.equal(stored.schedule.solverStats.reason, 'stale_schedule');
+        assert.equal(stored.schedule.solverStats.staleRejected, true);
     } finally {
         if (previousDataDir === undefined) {
             delete process.env.TIMETABLE_DATA_DIR;
@@ -2358,6 +2742,134 @@ test('background Timefold does not overwrite a schedule after it has been publis
         assert.equal(stored.schedule.source, 'fast_constructed');
         assert.equal(stored.schedule.published.status, 'published');
         assert.equal(stored.schedule.published.version, 1);
+        assert.equal(stored.schedule.solverStats.phase, 'timefold_optimization');
+        assert.equal(stored.schedule.solverStats.status, 'skipped');
+        assert.equal(stored.schedule.solverStats.accepted, false);
+        assert.equal(stored.schedule.solverStats.reason, 'published_schedule');
+        assert.equal(stored.schedule.solverStats.staleRejected, true);
+    } finally {
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
+test('background stale Timefold failure is skipped and does not overwrite newer manual-adjustment solver metadata', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-timeout-manual-state-'));
+    resetTimetableOptimizationJobs();
+
+    const store = createTimetableStore();
+    const fast = runTimetableScheduler(sampleProject()).project;
+    await store.saveProject(fast);
+
+    const timeoutError = new Error('request timed out');
+    timeoutError.name = 'TimeoutError';
+    let adjustedProject = null;
+    const fetchImpl = async (url, options = {}) => {
+        const target = String(url);
+        if (target.endsWith('/timetable-solutions') && options.method === 'POST') {
+            const latest = await store.loadProject();
+            const movable = latest.schedule.slots.find(slot => !slot.locked);
+            adjustedProject = applyScheduleAdjustment(latest, {
+                type: 'lock',
+                slotId: movable.id,
+                locked: true,
+            }).project;
+            await store.saveProject(adjustedProject);
+            throw timeoutError;
+        }
+        return new Response('{}', { status: 404 });
+    };
+
+    try {
+        const job = createTimetableOptimizationJob({
+            project: fast,
+            schedule: fast.schedule,
+            store,
+            env: { TIMEFOLD_SOLVER_URL: 'http://timefold.timeout-manual', TIMETABLE_SOLVER_TIMEOUT: '5' },
+            fetchImpl,
+        });
+
+        const failed = await waitFor(() => {
+            const current = getTimetableOptimizationJob(job.jobId);
+            return current?.status === 'skipped' ? current : null;
+        }, 1500);
+
+        assert.equal(failed.reason, 'stale_schedule');
+        assert.equal(failed.solverStats.staleRejected, true);
+        const stored = await store.loadProject();
+        assert.ok(adjustedProject);
+        assert.equal(stored.schedule.source, 'manual_adjusted');
+        assert.equal(stored.schedule.solverStats.phase, 'manual_adjustment');
+        assert.equal(stored.schedule.solverStats.status, 'accepted');
+        assert.equal(stored.schedule.solverStats.accepted, true);
+        assert.equal(stored.schedule.solverStats.reason, null);
+    } finally {
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
+test('background published Timefold failure is skipped and does not overwrite published metadata', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-timeout-published-state-'));
+    resetTimetableOptimizationJobs();
+
+    const store = createTimetableStore();
+    const fast = runTimetableScheduler(sampleProject()).project;
+    await store.saveProject(fast);
+
+    const timeoutError = new Error('request timed out');
+    timeoutError.name = 'TimeoutError';
+    const fetchImpl = async (url, options = {}) => {
+        const target = String(url);
+        if (target.endsWith('/timetable-solutions') && options.method === 'POST') {
+            const latest = await store.loadProject();
+            await store.saveProject({
+                ...latest,
+                schedule: {
+                    ...latest.schedule,
+                    published: {
+                        status: 'published',
+                        version: 1,
+                        publishedAt: '2026-01-02T08:00:00.000Z',
+                        scheduleId: latest.schedule.id,
+                        note: 'Published before stale failure',
+                    },
+                },
+            });
+            throw timeoutError;
+        }
+        return new Response('{}', { status: 404 });
+    };
+
+    try {
+        const job = createTimetableOptimizationJob({
+            project: fast,
+            schedule: fast.schedule,
+            store,
+            env: { TIMEFOLD_SOLVER_URL: 'http://timefold.timeout-published', TIMETABLE_SOLVER_TIMEOUT: '5' },
+            fetchImpl,
+        });
+
+        const skipped = await waitFor(() => {
+            const current = getTimetableOptimizationJob(job.jobId);
+            return current?.status === 'skipped' ? current : null;
+        }, 1500);
+
+        assert.equal(skipped.reason, 'published_schedule');
+        assert.equal(skipped.solverStats.staleRejected, true);
+        const stored = await store.loadProject();
+        assert.equal(stored.schedule.source, 'fast_constructed');
+        assert.equal(stored.schedule.published.status, 'published');
+        assert.equal(stored.schedule.solverStats.phase, 'fast_construct');
+        assert.equal(stored.schedule.solverStats?.reason ?? null, null);
     } finally {
         if (previousDataDir === undefined) {
             delete process.env.TIMETABLE_DATA_DIR;
@@ -3677,6 +4189,9 @@ test('timetable API restores a published history version into the current draft'
         assert.equal(republishResponse.status, 200);
         assert.equal(republishPayload.data.schedule.published.status, 'published');
         assert.equal(republishPayload.data.schedule.published.version, 3);
+        assert.equal(republishPayload.data.schedule.solverStats?.restoredPublishedDraft, undefined);
+        assert.equal(republishPayload.data.schedule.solverStats?.restoredVersion, undefined);
+        assert.equal(republishPayload.data.schedule.solverStats?.restoredScheduleId, undefined);
         assert.equal(republishPayload.data.schedule.published.note, '恢复后重新发布');
         assert.equal(
             republishPayload.data.schedule.publication.warnings.some(issue => issue.type === 'restored_published_draft'),
@@ -4025,6 +4540,74 @@ test('timetable API marks a published schedule as changed after regeneration', a
     }
 });
 
+test('manual-adjusted schedules keep protected slots and seed Timefold pinned metadata on regeneration intent', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 4,
+        teachers: [
+            { id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_cn', name: 'Chinese Teacher', subjects: ['chinese'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [
+            { id: 'math', name: 'Math', priority: 90, color: '#2563eb' },
+            { id: 'chinese', name: 'Chinese', priority: 88, color: '#16a34a' },
+        ],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2, blockPreference: 'single' },
+            { id: 'lp_cn', classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', weeklyHours: 2, blockPreference: 'single' },
+        ],
+        rules: { hardRules: { lockedSlots: [] }, softRules: {} },
+        schedule: {
+            id: 'manual_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'manual_adjusted',
+            slots: [
+                {
+                    id: 'manual_locked_math',
+                    day: 3,
+                    period: 2,
+                    classId: 'c1',
+                    subjectId: 'math',
+                    teacherId: 't_math',
+                    teacherIds: ['t_math'],
+                    lessonPlanId: 'lp_math',
+                    locked: true,
+                    manuallyAdjusted: true,
+                },
+                {
+                    id: 'manual_cn',
+                    day: 4,
+                    period: 3,
+                    classId: 'c1',
+                    subjectId: 'chinese',
+                    teacherId: 't_cn',
+                    teacherIds: ['t_cn'],
+                    lessonPlanId: 'lp_cn',
+                    locked: false,
+                    manuallyAdjusted: true,
+                },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 2, totalLessons: 4, completeness: 50 },
+        },
+    });
+
+    const rerun = runTimetableScheduler(project);
+    const problem = buildTimetableProblem(rerun.project);
+    const pinnedAssignments = problem.lessonAssignments.filter(assignment => assignment.pinnedTimeSlotId);
+
+    assert.equal(rerun.success, true);
+    assert.ok(rerun.schedule.slots.some(slot => slot.lessonPlanId === 'lp_math' && slot.day === 3 && slot.period === 2 && slot.locked));
+    assert.ok(rerun.schedule.slots.some(slot => slot.lessonPlanId === 'lp_cn' && slot.day === 4 && slot.period === 3 && slot.manuallyAdjusted));
+    assert.deepEqual(
+        pinnedAssignments.map(assignment => [assignment.lessonPlanId, assignment.pinnedTimeSlotId]).sort(),
+        [['lp_cn', '4-3'], ['lp_math', '3-2']],
+    );
+});
+
 test('timetable API clears roster data while preserving active timetable range', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-clear-'));
@@ -4079,6 +4662,198 @@ test('timetable API clears roster data while preserving active timetable range',
         assert.deepEqual(payload.data.project.rules.hardRules.teacherUnavailable, {});
         assert.deepEqual(payload.data.project.rules.hardRules.classUnavailable, {});
         assert.deepEqual(payload.data.project.rules.hardRules.lockedSlots, []);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
+test('timetable project/rules/roster changes preserve published archive while clearing current draft', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-preserve-published-archive-'));
+
+    const store = createTimetableStore();
+    const readyProject = runTimetableScheduler(sampleProject()).project;
+    const publication = validateTimetablePublication(readyProject);
+    const publishedSnapshot = {
+        status: 'published',
+        version: 1,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: readyProject.schedule.id,
+        note: '教务处确认发布',
+        snapshot: {
+            scheduleId: readyProject.schedule.id,
+            generatedAt: readyProject.schedule.generatedAt,
+            source: readyProject.schedule.source,
+            slotCount: readyProject.schedule.slots.length,
+            score: readyProject.schedule.score,
+            publicationSummary: publication.summary || {},
+            projectContext: {
+                schoolName: readyProject.schoolName,
+                term: readyProject.term,
+                weekdays: readyProject.weekdays,
+                periodsPerDay: readyProject.periodsPerDay,
+                activeWeekdays: readyProject.activeWeekdays,
+                activePeriods: readyProject.activePeriods,
+                teachers: readyProject.teachers,
+                classes: readyProject.classes,
+                subjects: readyProject.subjects,
+                lessonPlans: readyProject.lessonPlans,
+                rules: readyProject.rules,
+            },
+            slots: readyProject.schedule.slots,
+        },
+    };
+    await store.saveProject({
+        ...readyProject,
+        schedule: {
+            ...readyProject.schedule,
+            published: publishedSnapshot,
+        },
+    });
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const projectResponse = await fetch(`${baseUrl}/api/tools/timetable/project`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ activeWeekdays: [1, 2, 3, 4], activePeriods: [1, 2, 3, 4, 5] }),
+        });
+        const projectPayload = await projectResponse.json();
+
+        assert.equal(projectResponse.status, 200);
+        assert.equal(projectPayload.data.project.schedule.slots.length, 0);
+        assert.equal(projectPayload.data.project.schedule.published.status, 'draft_changed');
+        assert.equal(projectPayload.data.project.schedule.published.version, 1);
+        assert.ok(projectPayload.data.project.schedule.published.snapshot.projectContext);
+
+        const rulesResponse = await fetch(`${baseUrl}/api/tools/timetable/rules`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                rules: {
+                    hardRules: { teacherUnavailable: { t_math: ['3-4'] }, classUnavailable: {}, lockedSlots: [] },
+                    softRules: { morningSubjects: ['math'], balancedTeacherLoad: true },
+                },
+            }),
+        });
+        const rulesPayload = await rulesResponse.json();
+
+        assert.equal(rulesResponse.status, 200);
+        assert.equal(rulesPayload.data.project.schedule.slots.length, 0);
+        assert.equal(rulesPayload.data.project.schedule.published.status, 'draft_changed');
+        assert.equal(rulesPayload.data.project.schedule.published.version, 1);
+
+        const clearResponse = await fetch(`${baseUrl}/api/tools/timetable/roster/clear`, { method: 'POST' });
+        const clearPayload = await clearResponse.json();
+
+        assert.equal(clearResponse.status, 200);
+        assert.equal(clearPayload.data.project.schedule.slots.length, 0);
+        assert.equal(clearPayload.data.project.schedule.published.status, 'draft_changed');
+        assert.equal(clearPayload.data.project.schedule.published.version, 1);
+
+        const stored = await store.loadProject();
+        assert.equal(stored.schedule.published.status, 'draft_changed');
+        assert.equal(stored.schedule.published.version, 1);
+        assert.ok(stored.schedule.published.snapshot.projectContext);
+        assert.equal(stored.schedule.published.snapshot.projectContext.lessonPlans.length, readyProject.lessonPlans.length);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
+test('timetable can restore published snapshot after current draft was cleared by setup changes', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-restore-after-clear-'));
+
+    const store = createTimetableStore();
+    const readyProject = runTimetableScheduler(sampleProject()).project;
+    const publication = validateTimetablePublication(readyProject);
+    await store.saveProject({
+        ...readyProject,
+        schedule: {
+            ...readyProject.schedule,
+            published: {
+                status: 'published',
+                version: 2,
+                publishedAt: '2026-01-02T08:00:00.000Z',
+                scheduleId: readyProject.schedule.id,
+                note: '教务处确认发布',
+                snapshot: {
+                    scheduleId: readyProject.schedule.id,
+                    generatedAt: readyProject.schedule.generatedAt,
+                    source: readyProject.schedule.source,
+                    slotCount: readyProject.schedule.slots.length,
+                    score: readyProject.schedule.score,
+                    publicationSummary: publication.summary || {},
+                    projectContext: {
+                        schoolName: readyProject.schoolName,
+                        term: readyProject.term,
+                        weekdays: readyProject.weekdays,
+                        periodsPerDay: readyProject.periodsPerDay,
+                        activeWeekdays: readyProject.activeWeekdays,
+                        activePeriods: readyProject.activePeriods,
+                        teachers: readyProject.teachers,
+                        classes: readyProject.classes,
+                        subjects: readyProject.subjects,
+                        lessonPlans: readyProject.lessonPlans,
+                        rules: readyProject.rules,
+                    },
+                    slots: readyProject.schedule.slots,
+                },
+            },
+        },
+    });
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const clearResponse = await fetch(`${baseUrl}/api/tools/timetable/roster/clear`, { method: 'POST' });
+        const clearPayload = await clearResponse.json();
+
+        assert.equal(clearResponse.status, 200);
+        assert.equal(clearPayload.data.project.schedule.published.status, 'draft_changed');
+        assert.equal(clearPayload.data.project.teachers.length, 0);
+
+        const restoreResponse = await fetch(`${baseUrl}/api/tools/timetable/schedule/published/restore`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        const restorePayload = await restoreResponse.json();
+
+        assert.equal(restoreResponse.status, 200);
+        assert.equal(restorePayload.success, true);
+        assert.equal(restorePayload.data.schedule.source, 'published_history_restored');
+        assert.equal(restorePayload.data.project.teachers.length, readyProject.teachers.length);
+        assert.equal(restorePayload.data.project.classes.length, readyProject.classes.length);
+        assert.equal(restorePayload.data.project.subjects.length, readyProject.subjects.length);
+        assert.equal(restorePayload.data.project.lessonPlans.length, readyProject.lessonPlans.length);
+        assert.equal(restorePayload.data.schedule.slots.length, readyProject.schedule.slots.length);
     } finally {
         await new Promise(resolve => server.close(resolve));
         if (previousDataDir === undefined) {

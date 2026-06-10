@@ -327,6 +327,7 @@ function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pi
         timeSlot: initialSlot ? slotKey(initialSlot.day, initialSlot.period) : null,
         room: initialSlot?.roomId || NONE_ROOM_ID,
         pinnedTimeSlotId: pinnedTimeSlotId || null,
+        locked: Boolean(pinnedTimeSlotId && (initialSlot?.locked || !initialSlot?.manuallyAdjusted)),
         manuallyAdjusted: Boolean(initialSlot?.manuallyAdjusted),
         blockedTimeSlotIds: blockedSlotsForPlan(project, plan),
         allowedRoomIds,
@@ -438,6 +439,9 @@ function assignmentToSlot(assignment) {
     if (!Number.isInteger(day) || !Number.isInteger(period)) return null;
     const teacherIds = teacherIdsForPlan(assignment);
     const roomId = idOfPlanningValue(assignment.room);
+    const locked = assignment.locked !== undefined
+        ? Boolean(assignment.locked)
+        : Boolean(assignment.pinnedTimeSlotId && !assignment.manuallyAdjusted);
     return {
         id: `slot_${assignment.id}_${day}_${period}`,
         day,
@@ -451,7 +455,7 @@ function assignmentToSlot(assignment) {
         blockId: assignment.blockId || null,
         blockIndex: Number.isInteger(Number(assignment.blockIndex)) ? Number(assignment.blockIndex) : 0,
         blockSize: Math.max(1, Number.parseInt(assignment.blockSize, 10) || 1),
-        locked: Boolean(assignment.pinnedTimeSlotId),
+        locked,
         manuallyAdjusted: Boolean(assignment.manuallyAdjusted),
     };
 }

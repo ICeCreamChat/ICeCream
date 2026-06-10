@@ -73,8 +73,32 @@ function sameNumberList(left = [], right = []) {
         && left.every((value, index) => Number(value) === Number(right[index]));
 }
 
+function preservePublishedArchive(nextSchedule, currentSchedule) {
+    const published = currentSchedule?.published || null;
+    if (!published) return nextSchedule;
+    return {
+        id: nextSchedule?.id || currentSchedule?.id || `schedule_cleared_${Date.now()}`,
+        generatedAt: nextSchedule?.generatedAt || new Date().toISOString(),
+        source: nextSchedule?.source || currentSchedule?.source || null,
+        slots: Array.isArray(nextSchedule?.slots) ? nextSchedule.slots : [],
+        lockedSlots: Array.isArray(nextSchedule?.lockedSlots) ? nextSchedule.lockedSlots : [],
+        conflicts: Array.isArray(nextSchedule?.conflicts) ? nextSchedule.conflicts : [],
+        unplaced: Array.isArray(nextSchedule?.unplaced) ? nextSchedule.unplaced : [],
+        audit: nextSchedule?.audit || null,
+        qualityIssues: Array.isArray(nextSchedule?.qualityIssues) ? nextSchedule.qualityIssues : [],
+        publication: nextSchedule?.publication || null,
+        score: nextSchedule?.score || {},
+        solverStats: nextSchedule?.solverStats || null,
+        published: {
+            ...published,
+            status: 'draft_changed',
+        },
+    };
+}
+
 function scheduleFromPublishedSnapshot(current = {}, entry = {}) {
     const snapshot = entry.snapshot || {};
+    const context = snapshot.projectContext || {};
     const now = new Date().toISOString();
     const slots = (snapshot.slots || []).map((slot, index) => ({
         id: slot.id || `restored_${entry.version || 'history'}_${index + 1}`,
@@ -227,6 +251,7 @@ function projectWithPublishedSnapshot(project = {}, version = null) {
     const historyEntry = version ? selectedEntry : null;
     const snapshot = selectedEntry?.snapshot || project.schedule?.published?.snapshot;
     if (!snapshot?.slots?.length) return null;
+    const context = snapshot.projectContext || {};
     const projectedPublished = selectedEntry
         ? {
             ...(project.schedule?.published || {}),
@@ -243,6 +268,15 @@ function projectWithPublishedSnapshot(project = {}, version = null) {
             : null;
     return normalizeTimetableProject({
         ...project,
+        ...(context.schoolName ? { schoolName: context.schoolName } : {}),
+        ...(context.term ? { term: context.term } : {}),
+        ...(context.activeWeekdays?.length ? { activeWeekdays: context.activeWeekdays } : {}),
+        ...(context.activePeriods?.length ? { activePeriods: context.activePeriods } : {}),
+        ...(Array.isArray(context.teachers) ? { teachers: context.teachers } : {}),
+        ...(Array.isArray(context.classes) ? { classes: context.classes } : {}),
+        ...(Array.isArray(context.subjects) ? { subjects: context.subjects } : {}),
+        ...(Array.isArray(context.lessonPlans) ? { lessonPlans: context.lessonPlans } : {}),
+        ...(context.rules ? { rules: context.rules } : {}),
         schedule: {
             ...project.schedule,
             id: snapshot.scheduleId || project.schedule.id,
@@ -300,7 +334,10 @@ router.post('/project', async (req, res) => {
             !sameNumberList(current.activeWeekdays, project.activeWeekdays)
             || !sameNumberList(current.activePeriods, project.activePeriods)
         ) {
-            project = normalizeTimetableProject({ ...project, schedule: null });
+            project = normalizeTimetableProject({
+                ...project,
+                schedule: preservePublishedArchive(null, current.schedule),
+            });
         }
         const saved = await store().saveProject(project);
         ok(res, { project: saved });
@@ -323,7 +360,7 @@ router.post('/roster/clear', async (req, res) => {
             subjects: [],
             lessonPlans: [],
             rules: defaults.rules,
-            schedule: null,
+            schedule: preservePublishedArchive(null, current.schedule),
         });
         const saved = await store().saveProject(project);
         ok(res, { project: saved });
@@ -358,7 +395,7 @@ router.post('/roster/import', upload.single('file'), async (req, res) => {
             classes: parsed.classes,
             subjects: parsed.subjects,
             lessonPlans: parsed.lessonPlans,
-            schedule: null,
+            schedule: preservePublishedArchive(null, current.schedule),
         });
         const saved = await store().saveProject(project);
         ok(res, { project: saved, import: parsed });
@@ -373,7 +410,7 @@ router.post('/rules', async (req, res) => {
         const project = normalizeTimetableProject({
             ...current,
             rules: req.body?.rules || req.body || current.rules,
-            schedule: null,
+            schedule: preservePublishedArchive(null, current.schedule),
         });
         const saved = await store().saveProject(project);
         ok(res, { project: saved });
@@ -517,14 +554,23 @@ router.post('/schedule/publish', async (req, res) => {
             ? {
                 ...currentPublished,
                 fingerprint: currentPublished.fingerprint || '',
-                snapshot: buildPublishedSnapshot(current.schedule, publication),
+                snapshot: buildPublishedSnapshot(current.schedule, publication, current),
             }
             : currentPublished;
         const history = nextPublishedHistory(archivedPublished);
-        const snapshot = buildPublishedSnapshot(current.schedule, publication);
+        const snapshot = buildPublishedSnapshot(current.schedule, publication, current);
+        const nextSolverStats = current.schedule?.solverStats
+            ? { ...current.schedule.solverStats }
+            : null;
+        if (nextSolverStats) {
+            delete nextSolverStats.restoredPublishedDraft;
+            delete nextSolverStats.restoredVersion;
+            delete nextSolverStats.restoredScheduleId;
+        }
         const publishedSchedule = {
             ...current.schedule,
             source: 'published',
+            solverStats: nextSolverStats,
             published: {
                 status: 'published',
                 version: nextPublishVersion(current.schedule),
@@ -583,7 +629,7 @@ router.post('/schedule/published/restore', async (req, res) => {
                 });
                 return;
             }
-            const snapshot = buildPublishedSnapshot(restoreSourceProject.schedule, publication);
+            const snapshot = buildPublishedSnapshot(restoreSourceProject.schedule, publication, restoreSourceProject);
             restoreSourceProject = normalizeTimetableProject({
                 ...restoreSourceProject,
                 schedule: {
@@ -628,8 +674,18 @@ router.post('/schedule/published/restore', async (req, res) => {
         }
         const entry = publicationEntryWithVerifiedFingerprint(rawEntry);
         const restoredSchedule = scheduleFromPublishedSnapshot(restoreSourceProject, entry);
+        const context = entry?.snapshot?.projectContext || {};
         let project = normalizeTimetableProject({
             ...restoreSourceProject,
+            ...(context.schoolName ? { schoolName: context.schoolName } : {}),
+            ...(context.term ? { term: context.term } : {}),
+            ...(context.activeWeekdays?.length ? { activeWeekdays: context.activeWeekdays } : {}),
+            ...(context.activePeriods?.length ? { activePeriods: context.activePeriods } : {}),
+            ...(Array.isArray(context.teachers) ? { teachers: context.teachers } : {}),
+            ...(Array.isArray(context.classes) ? { classes: context.classes } : {}),
+            ...(Array.isArray(context.subjects) ? { subjects: context.subjects } : {}),
+            ...(Array.isArray(context.lessonPlans) ? { lessonPlans: context.lessonPlans } : {}),
+            ...(context.rules ? { rules: context.rules } : {}),
             schedule: restoredSchedule,
         });
         const publication = validateTimetablePublication(project);
@@ -693,7 +749,7 @@ router.post('/export', async (req, res) => {
                     });
                     return;
                 }
-                const snapshot = buildPublishedSnapshot(publishedSourceProject.schedule, publication);
+                const snapshot = buildPublishedSnapshot(publishedSourceProject.schedule, publication, publishedSourceProject);
                 publishedSourceProject = normalizeTimetableProject({
                     ...publishedSourceProject,
                     schedule: {
@@ -770,7 +826,7 @@ router.post('/export', async (req, res) => {
                 ? resolvePublishedRestoreEntry(current.schedule.published)
                 : null;
             if (!currentPublishedEntry?.snapshot) {
-                const snapshot = buildPublishedSnapshot(current.schedule, publication);
+                const snapshot = buildPublishedSnapshot(current.schedule, publication, current);
                 exportProject = normalizeTimetableProject({
                     ...current,
                     schedule: {

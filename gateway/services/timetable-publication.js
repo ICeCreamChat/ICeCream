@@ -72,7 +72,23 @@ export function nextPublishedHistory(published = null, limit = 10) {
         .slice(-limit);
 }
 
-export function buildPublishedSnapshot(schedule = {}, publication = {}) {
+function snapshotProjectContext(project = {}) {
+    return {
+        schoolName: project.schoolName || '',
+        term: project.term || '',
+        weekdays: Number(project.weekdays || 0),
+        periodsPerDay: Number(project.periodsPerDay || 0),
+        activeWeekdays: Array.isArray(project.activeWeekdays) ? [...project.activeWeekdays] : [],
+        activePeriods: Array.isArray(project.activePeriods) ? [...project.activePeriods] : [],
+        teachers: Array.isArray(project.teachers) ? project.teachers.map(item => ({ ...item })) : [],
+        classes: Array.isArray(project.classes) ? project.classes.map(item => ({ ...item })) : [],
+        subjects: Array.isArray(project.subjects) ? project.subjects.map(item => ({ ...item })) : [],
+        lessonPlans: Array.isArray(project.lessonPlans) ? project.lessonPlans.map(item => ({ ...item })) : [],
+        rules: project.rules ? JSON.parse(JSON.stringify(project.rules)) : null,
+    };
+}
+
+export function buildPublishedSnapshot(schedule = {}, publication = {}, project = {}) {
     const snapshot = {
         scheduleId: schedule.id || null,
         generatedAt: schedule.generatedAt || null,
@@ -80,6 +96,7 @@ export function buildPublishedSnapshot(schedule = {}, publication = {}) {
         slotCount: (schedule.slots || []).length,
         score: schedule.score || {},
         publicationSummary: publication.summary || {},
+        projectContext: snapshotProjectContext(project),
         slots: (schedule.slots || []).map(slot => ({
             id: slot.id,
             day: slot.day,

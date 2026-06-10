@@ -54,6 +54,28 @@ function buttonTag(html, marker) {
   return html.slice(start, end + 1);
 }
 
+function extractMethodSource(source, methodName) {
+  const signature = `async ${methodName}(`;
+  const start = source.indexOf(signature);
+  assert.notEqual(start, -1, `expected method ${methodName}`);
+  const paramsEnd = source.indexOf(') {', start);
+  assert.notEqual(paramsEnd, -1, `expected parameter list end for ${methodName}`);
+  const bodyStart = source.indexOf('{', paramsEnd);
+  assert.notEqual(bodyStart, -1, `expected method body for ${methodName}`);
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, index + 1);
+      }
+    }
+  }
+  assert.fail(`unable to extract method ${methodName}`);
+}
+
 test('timetable planner is assembled from workbench modules', async () => {
   const source = await readFile(sourcePath, 'utf8');
   const expectedModules = [
@@ -168,9 +190,8 @@ test('timetable controller clears stale optimization jobs after saved data chang
     'importRoster',
     'saveRules',
     'adjustSlot',
+    'confirmRestoreSchedule',
     'confirmPublishSchedule',
-    'restorePublicationHistoryVersion',
-    'restoreLatestPublishedSnapshot',
   ];
 
   for (const methodName of mutatingMethods) {
@@ -214,6 +235,484 @@ test('timetable workbench keeps solving in the board and pending plans in the in
   assert.match(styles, /\.tt-grid-head\s*{[^}]*min-height:\s*36px/s);
   assert.match(styles, /\.tt-plan-queue\s*{/);
   assert.match(styles, /\.tt-main-empty-cell\s*{/);
+});
+
+test('timetable manual adjustment success clears stale solve failure state', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+
+  assert.match(controllerSource, /async adjustSlot\([\s\S]*this\.state\.lastFailure = null;/);
+});
+
+test('timetable optimization polling success clears stale solve failure state', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+
+  assert.match(controllerSource, /async refreshOptimizationJob\([\s\S]*status === 'completed' && result\.job\.accepted[\s\S]*this\.state\.lastFailure = null;/);
+  assert.match(controllerSource, /async refreshOptimizationJob\([\s\S]*else if \(result\.job\.status === 'completed'\)[\s\S]*this\.state\.lastFailure = null;/);
+  assert.match(controllerSource, /async refreshOptimizationJob\([\s\S]*else if \(result\.job\.status === 'failed'\)[\s\S]*this\.state\.lastFailure = null;/);
+});
+
+test('timetable publish success clears stale solve failure state', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+
+  assert.match(controllerSource, /async confirmPublishSchedule\([\s\S]*this\.state\.lastFailure = null;/);
+});
+
+test('timetable AI rule acceptance reuses saved rules response instead of extra bootstrap refresh', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+
+  assert.match(controllerSource, /async acceptRule\([\s\S]*const result = await requestTimetable\('\/rules'/);
+  assert.match(controllerSource, /async acceptRule\([\s\S]*this\.applyProject\(result\.project\);/);
+  assert.doesNotMatch(controllerSource, /async acceptRule\([\s\S]*await this\.refreshProject\(\);/);
+
+  assert.match(controllerSource, /async acceptAllRules\([\s\S]*const result = await requestTimetable\('\/rules'/);
+  assert.match(controllerSource, /async acceptAllRules\([\s\S]*this\.applyProject\(result\.project\);/);
+  assert.doesNotMatch(controllerSource, /async acceptAllRules\([\s\S]*await this\.refreshProject\(\);/);
+});
+
+test('timetable successful data and rule mutations clear stale solve failure state', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const mutatingMethods = [
+    'saveProject',
+    'importRoster',
+    'clearRoster',
+    'saveRules',
+    'acceptAllRules',
+    'confirmRuleDraft',
+    'removeSavedRule',
+    'clearRules',
+    'addLockedSlot',
+    'removeLockedSlot',
+    'confirmRestoreSchedule',
+  ];
+
+  for (const methodName of mutatingMethods) {
+    const methodSource = extractMethodSource(controllerSource, methodName);
+    assert.match(methodSource, /this\.state\.lastFailure\s*=\s*null;/);
+  }
+});
+
+test('timetable mutations that invalidate the current draft clear selected slot state', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const selectionResetMethods = [
+    'saveProject',
+    'importRoster',
+    'clearRoster',
+    'saveRules',
+    'confirmRuleDraft',
+    'removeSavedRule',
+    'clearRules',
+    'addLockedSlot',
+    'removeLockedSlot',
+    'confirmRestoreSchedule',
+  ];
+
+  for (const methodName of selectionResetMethods) {
+    const methodSource = extractMethodSource(controllerSource, methodName);
+    assert.match(methodSource, /this\.state\.selectedSlotId\s*=\s*'';/);
+  }
+});
+
+test('timetable clearRuleDraft clears pending AI rule cards and expanded editor state', () => {
+  const controller = new TimetablePlannerController();
+  controller.state.pendingRules = [{ id: 'draft-1' }];
+  controller.state.expandedRuleId = 'draft-1';
+  controller.state.ruleDraft = { hardRules: {}, softRules: {} };
+  controller.state.ruleDraftPreview = [{ id: 'preview-1' }];
+  controller.state.ruleWarnings = [{ message: 'warn' }];
+  controller.state.ruleReview = {
+    ...controller.state.ruleReview,
+    open: true,
+    draftRows: [{ id: 'draft-1' }],
+  };
+
+  controller.clearRuleDraft();
+
+  assert.deepEqual(controller.state.pendingRules, []);
+  assert.equal(controller.state.expandedRuleId, null);
+  assert.equal(controller.state.ruleDraft, null);
+  assert.deepEqual(controller.state.ruleDraftPreview, []);
+  assert.deepEqual(controller.state.ruleWarnings, []);
+  assert.equal(controller.state.ruleReview.open, false);
+  assert.deepEqual(controller.state.ruleReview.draftRows, []);
+});
+
+test('timetable applyProject clears stale selected and drag slot state when the schedule changes', () => {
+  const controller = new TimetablePlannerController();
+  controller.state.selectedSlotId = 'slot-old';
+  controller.state.dragSlotId = 'slot-old';
+  controller.state.dragBlockId = 'block-old';
+  controller.state.viewMode = 'class';
+  controller.state.selectedOwnerId = 'c1';
+
+  controller.applyProject(createDefaultTimetableProject({
+    teachers: [{ id: 't1', name: 'Teacher 1', subjects: ['s1'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 's1', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyHours: 3 }],
+    schedule: {
+      id: 'schedule-new',
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [{
+        id: 'slot-new',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 's1',
+        teacherId: 't1',
+        teacherIds: ['t1'],
+        lessonPlanId: 'lp1',
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+    },
+  }));
+
+  assert.equal(controller.state.selectedSlotId, '');
+  assert.equal(controller.state.dragSlotId, '');
+  assert.equal(controller.state.dragBlockId, '');
+});
+
+test('timetable applyProject preserves active selected and drag slot state when the slot still exists', () => {
+  const controller = new TimetablePlannerController();
+  controller.state.selectedSlotId = 'slot-1';
+  controller.state.dragSlotId = 'slot-1';
+  controller.state.dragBlockId = 'block-1';
+  controller.state.viewMode = 'class';
+  controller.state.selectedOwnerId = 'c1';
+
+  controller.applyProject(createDefaultTimetableProject({
+    teachers: [{ id: 't1', name: 'Teacher 1', subjects: ['s1'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 's1', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyHours: 3 }],
+    schedule: {
+      id: 'schedule-current',
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [{
+        id: 'slot-1',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 's1',
+        teacherId: 't1',
+        teacherIds: ['t1'],
+        lessonPlanId: 'lp1',
+        blockId: 'block-1',
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+    },
+  }));
+
+  assert.equal(controller.state.selectedSlotId, 'slot-1');
+  assert.equal(controller.state.dragSlotId, 'slot-1');
+  assert.equal(controller.state.dragBlockId, 'block-1');
+});
+
+test('timetable applyProject clears selected and drag slot state when the slot is no longer visible in the current view', () => {
+  const controller = new TimetablePlannerController();
+  controller.state.selectedSlotId = 'slot-1';
+  controller.state.dragSlotId = 'slot-1';
+  controller.state.dragBlockId = 'block-1';
+  controller.state.viewMode = 'teacher';
+  controller.state.selectedOwnerId = 't1';
+
+  controller.applyProject(createDefaultTimetableProject({
+    teachers: [
+      { id: 't1', name: 'Teacher 1', subjects: ['s1'], unavailableSlots: [] },
+      { id: 't2', name: 'Teacher 2', subjects: ['s1'], unavailableSlots: [] },
+    ],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 's1', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp1', classId: 'c1', subjectId: 's1', teacherId: 't2', weeklyHours: 3 }],
+    schedule: {
+      id: 'schedule-current',
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [{
+        id: 'slot-1',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 's1',
+        teacherId: 't2',
+        teacherIds: ['t2'],
+        lessonPlanId: 'lp1',
+        blockId: 'block-1',
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+    },
+  }));
+
+  assert.equal(controller.state.selectedOwnerId, 't1');
+  assert.equal(controller.state.selectedSlotId, '');
+  assert.equal(controller.state.dragSlotId, '');
+  assert.equal(controller.state.dragBlockId, '');
+});
+
+test('timetable applyProject closes stale publication history and restore dialogs when their target version disappears', () => {
+  const controller = new TimetablePlannerController();
+  controller.state.publicationHistoryDialog = { open: true, version: 1 };
+  controller.state.restoreDialog = {
+    open: true,
+    mode: 'history',
+    version: 1,
+    targetLabel: 'Publication history V1',
+    summary: { total: 1 },
+    loading: false,
+  };
+
+  controller.applyProject(createDefaultTimetableProject({
+    schedule: {
+      id: 'published-current',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'published',
+      slots: [],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 0, totalLessons: 0, completeness: 100 },
+      published: {
+        status: 'published',
+        version: 2,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-current',
+        snapshot: { scheduleId: 'published-current', slotCount: 0, slots: [] },
+        history: [],
+      },
+    },
+  }));
+
+  assert.deepEqual(controller.state.publicationHistoryDialog, { open: false, version: null });
+  assert.deepEqual(controller.state.restoreDialog, {
+    open: false,
+    mode: '',
+    version: null,
+    targetLabel: '',
+    summary: null,
+    loading: false,
+  });
+});
+
+test('timetable applyProject preserves publication dialogs when their target version still exists', () => {
+  const controller = new TimetablePlannerController();
+  controller.state.publicationHistoryDialog = { open: true, version: '1' };
+  controller.state.restoreDialog = {
+    open: true,
+    mode: 'history',
+    version: '1',
+    targetLabel: 'Publication history V1',
+    summary: { total: 1 },
+    loading: false,
+  };
+
+  controller.applyProject(createDefaultTimetableProject({
+    schedule: {
+      id: 'published-current',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'published',
+      slots: [],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 0, totalLessons: 0, completeness: 100 },
+      published: {
+        status: 'published',
+        version: 2,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-current',
+        snapshot: { scheduleId: 'published-current', slotCount: 0, slots: [] },
+        history: [{
+          version: 1,
+          publishedAt: '2026-01-01T08:00:00.000Z',
+          scheduleId: 'published-v1',
+          snapshot: { scheduleId: 'published-v1', slotCount: 0, slots: [] },
+        }],
+      },
+    },
+  }));
+
+  assert.deepEqual(controller.state.publicationHistoryDialog, { open: true, version: 1 });
+  assert.deepEqual(controller.state.restoreDialog, {
+    open: true,
+    mode: 'history',
+    version: 1,
+    targetLabel: 'Publication history V1',
+    summary: { total: 1 },
+    loading: false,
+  });
+});
+
+test('timetable restore dialog refuses missing publication history versions before confirmation', () => {
+  const controller = new TimetablePlannerController();
+  controller.state.project = createDefaultTimetableProject({
+    schedule: {
+      id: 'published-current',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'published',
+      slots: [],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 0, totalLessons: 0, completeness: 100 },
+      published: {
+        status: 'published',
+        version: 2,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-current',
+        snapshot: { scheduleId: 'published-current', slotCount: 0, slots: [] },
+        history: [],
+      },
+    },
+  });
+
+  controller.openRestoreDialog('history', 1);
+
+  assert.deepEqual(controller.state.restoreDialog, {
+    open: false,
+    mode: '',
+    version: null,
+    targetLabel: '',
+    summary: null,
+    loading: false,
+  });
+  assert.match(controller.state.message, /1/);
+});
+
+test('timetable latest restore dialog still opens for legacy published projects without a saved snapshot', () => {
+  const controller = new TimetablePlannerController();
+  controller.state.project = createDefaultTimetableProject({
+    schedule: {
+      id: 'legacy-published',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'published',
+      slots: [],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 0, totalLessons: 0, completeness: 100 },
+      published: {
+        status: 'published',
+        version: 3,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'legacy-published',
+        note: 'legacy published without snapshot',
+      },
+    },
+  });
+
+  controller.openRestoreDialog('latest', 3);
+
+  assert.equal(controller.state.restoreDialog.open, true);
+  assert.equal(controller.state.restoreDialog.mode, 'latest');
+  assert.equal(controller.state.restoreDialog.version, 3);
+  assert.match(controller.state.restoreDialog.targetLabel, /3/);
+});
+
+test('timetable syncPendingRuleDraftState keeps AI draft review state aligned', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.project = createDefaultTimetableProject({
+    teachers: [{ id: 't1', name: 'Teacher 1', subjects: ['s1'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 's1', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyHours: 3 }],
+  });
+  controller.state.ruleReview = {
+    ...controller.state.ruleReview,
+    open: true,
+    step: 'review',
+    mode: 'file',
+    inputType: 'xlsx_constraints',
+    contextStats: { rowCount: 2 },
+    warnings: ['warn-1'],
+    unsupportedItems: [{ id: 'u1', type: 'suggestion' }],
+  };
+  controller.state.ruleWarnings = ['warn-1'];
+  controller.state.ruleUnsupportedItems = [{ id: 'u1', type: 'suggestion' }];
+  controller.state.expandedRuleId = 'draft-2';
+  controller.state.ruleDraft = { hardRules: { teacherUnavailable: { t1: ['1-1'] } }, softRules: {} };
+
+  controller.syncPendingRuleDraftState([
+    { id: 'draft-1', type: 'teacher_unavailable', targetName: 'Teacher 1', status: 'effective', slots: ['1-1'] },
+    { id: 'draft-2', type: 'class_unavailable', targetName: 'G7 1', status: 'needs_review', slots: ['2-2'] },
+  ]);
+
+  assert.deepEqual(controller.state.pendingRules.map(item => item.id), ['draft-1', 'draft-2']);
+  assert.equal(controller.state.expandedRuleId, 'draft-2');
+  assert.equal(controller.state.ruleDraft, null);
+  assert.equal(controller.state.ruleReview.open, true);
+  assert.equal(controller.state.ruleReview.step, 'review');
+  assert.equal(controller.state.ruleReview.inputType, 'xlsx_constraints');
+  assert.deepEqual(controller.state.ruleReview.warnings, ['warn-1']);
+  assert.equal(controller.state.ruleDraftPreview.length, 2);
+
+  controller.syncPendingRuleDraftState([], { keepDialogOpen: true });
+
+  assert.deepEqual(controller.state.pendingRules, []);
+  assert.equal(controller.state.expandedRuleId, null);
+  assert.equal(controller.state.ruleDraft, null);
+  assert.deepEqual(controller.state.ruleWarnings, []);
+  assert.deepEqual(controller.state.ruleUnsupportedItems, []);
+  assert.equal(controller.state.ruleReview.open, true);
+  assert.equal(controller.state.ruleReview.step, 'input');
+});
+
+test('timetable syncPendingRuleDraftState drops stale unsupported AI items when draft rows shrink', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.project = createDefaultTimetableProject();
+  controller.state.ruleReview = {
+    ...controller.state.ruleReview,
+    open: true,
+    step: 'review',
+    mode: 'file',
+    inputType: 'xlsx_constraints',
+    unsupportedItems: [
+      { id: 'draft-suggestion', type: 'teacher_load_balance', description: 'keep me if still present' },
+      { id: 'draft-removed', type: 'spread_hint', description: 'should disappear with removed row' },
+    ],
+  };
+  controller.state.ruleUnsupportedItems = [
+    { id: 'draft-suggestion', type: 'teacher_load_balance', description: 'keep me if still present' },
+    { id: 'draft-removed', type: 'spread_hint', description: 'should disappear with removed row' },
+  ];
+
+  controller.syncPendingRuleDraftState([
+    {
+      id: 'draft-suggestion',
+      type: 'teacher_load_balance',
+      targetName: 'All teachers',
+      status: 'suggestion',
+      slots: [],
+      description: 'keep me if still present',
+    },
+    {
+      id: 'draft-effective',
+      type: 'teacher_unavailable',
+      targetName: 'Teacher 1',
+      status: 'effective',
+      slots: ['1-1'],
+    },
+  ]);
+
+  assert.deepEqual(
+    controller.state.ruleUnsupportedItems.map(item => item.id),
+    ['draft-suggestion'],
+  );
+  assert.deepEqual(
+    controller.state.ruleReview.unsupportedItems.map(item => item.id),
+    ['draft-suggestion'],
+  );
 });
 
 test('timetable inspector renders scheduling audit and quality suggestions', () => {
@@ -522,7 +1021,7 @@ test('timetable restore published actions use a confirmation dialog with overwri
   assert.match(controllerSource, /restoreLatestPublishedSnapshot\(\)\s*\{/);
   assert.doesNotMatch(controllerSource, /requestTimetable\('\/schedule\/published\/restore'[\s\S]*restorePublicationHistoryVersion\(/);
   assert.match(interactionSource, /#tt-restore-publication-history[\s\S]*openRestoreDialog/);
-  assert.match(interactionSource, /#tt-restore-published-snapshot[\s\S]*openRestoreDialog/);
+  assert.match(interactionSource, /\[data-restore-published-snapshot\][\s\S]*openRestoreDialog\('latest', button\.dataset\.restorePublishedVersion\)/);
   assert.match(interactionSource, /#tt-confirm-restore[\s\S]*confirmRestoreSchedule/);
 });
 
@@ -799,6 +1298,150 @@ test('timetable workflow explains missing published snapshot when a changed draf
   assert.match(inspector, /发布快照/);
   assert.match(inspector, /暂时无法恢复或导出发布版/);
   assert.doesNotMatch(html, /published_snapshot_missing/);
+});
+
+test('timetable workflow keeps published restore/export entry when current draft was cleared but archive remains', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [],
+      classes: [],
+      subjects: [],
+      lessonPlans: [],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'archive-only-draft',
+        generatedAt: '2026-01-03T00:00:00.000Z',
+        source: 'published',
+        slots: [],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        publication: null,
+        published: {
+          status: 'draft_changed',
+          version: 3,
+          publishedAt: '2026-01-02T08:00:00.000Z',
+          scheduleId: 'published-3',
+          note: '教务处确认发布',
+          snapshot: {
+            scheduleId: 'published-3',
+            slotCount: 1,
+            score: { completeness: 100 },
+            publicationSummary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+            projectContext: {
+              schoolName: 'UI School',
+              term: '2026',
+              weekdays: 5,
+              periodsPerDay: 7,
+              activeWeekdays: [1, 2, 3, 4, 5],
+              activePeriods: [1, 2, 3, 4, 5, 6, 7],
+              teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+              classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+              subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+              lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+              rules: { hardRules: {}, softRules: {} },
+            },
+            slots: [{
+              id: 'slot-1',
+              day: 1,
+              period: 1,
+              classId: 'c1',
+              subjectId: 'math',
+              teacherId: 't_math',
+              teacherIds: ['t_math'],
+              lessonPlanId: 'lp_math',
+            }],
+          },
+        },
+        score: {},
+      },
+    }),
+  });
+
+  const html = renderWorkbench(state);
+  const inspector = renderInspector(state);
+
+  assert.match(html, /当前工作草稿已清空，仍可恢复或导出已发布版本。/);
+  assert.match(html, /data-restore-published-snapshot="latest"/);
+  assert.match(html, /data-export-type="published_class"/);
+  assert.match(html, /data-export-type="published_teacher"/);
+  assert.match(html, /data-export-type="published_master"/);
+  assert.match(html, /当前草稿已清空/);
+  assert.match(inspector, /发布归档/);
+  assert.match(inspector, /已清空，仍可恢复或导出已发布版本/);
+});
+
+test('timetable archive-only draft does not fall back to roster-import readiness copy', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [],
+      classes: [],
+      subjects: [],
+      lessonPlans: [],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'archive-only-topbar',
+        generatedAt: '2026-01-03T00:00:00.000Z',
+        source: 'published',
+        slots: [],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        publication: null,
+        published: {
+          status: 'draft_changed',
+          version: 3,
+          publishedAt: '2026-01-02T08:00:00.000Z',
+          scheduleId: 'published-3',
+          snapshot: {
+            scheduleId: 'published-3',
+            slotCount: 1,
+            score: { completeness: 100 },
+            publicationSummary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+            projectContext: {
+              schoolName: 'UI School',
+              term: '2026',
+              weekdays: 5,
+              periodsPerDay: 7,
+              activeWeekdays: [1, 2, 3, 4, 5],
+              activePeriods: [1, 2, 3, 4, 5, 6, 7],
+              teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+              classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+              subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+              lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+              rules: { hardRules: {}, softRules: {} },
+            },
+            slots: [{
+              id: 'slot-1',
+              day: 1,
+              period: 1,
+              classId: 'c1',
+              subjectId: 'math',
+              teacherId: 't_math',
+              teacherIds: ['t_math'],
+              lessonPlanId: 'lp_math',
+            }],
+          },
+        },
+        score: {},
+      },
+    }),
+  });
+
+  const html = renderWorkbench(state);
+
+  assert.match(html, /来源<\/span><strong>草稿已变化<\/strong>/);
+  assert.match(html, /data-restore-published-snapshot="latest"/);
+  assert.doesNotMatch(html, /待导入任课/);
+  assert.doesNotMatch(html, /请先导入任课数据。/);
 });
 
 test('timetable workflow treats published status with slot drift as draft changed', () => {
@@ -1120,6 +1763,8 @@ test('timetable inspector explains published and changed draft states', () => {
   }));
 
   assert.match(publishedInspector, /发布状态/);
+  assert.match(publishedInspector, /发布归档/);
+  assert.match(publishedInspector, /已发布/);
   assert.match(publishedInspector, /已发布 V1/);
   assert.match(publishedInspector, /来源<\/b>已发布/);
   assert.match(publishedInspector, /教务处确认发布/);
@@ -1136,6 +1781,58 @@ test('timetable inspector explains published and changed draft states', () => {
   assert.match(restoredInspector, /恢复发布版/);
   assert.match(restoredInspector, /重新发布前建议教务复核/);
   assert.doesNotMatch(restoredInspector, /restored_published_draft/);
+
+  const republishedInspector = renderInspector(sampleWorkbenchState({
+    project: {
+      ...publishedProject,
+      schedule: {
+        ...publishedProject.schedule,
+        source: 'published',
+        publication: {
+          ...publishedProject.schedule.publication,
+          warnings: [],
+          reviewItems: [],
+        },
+        published: {
+          ...publishedProject.schedule.published,
+          status: 'published',
+        },
+        solverStats: {
+          phase: 'published',
+          status: 'accepted',
+          accepted: true,
+          reason: null,
+          restoredPublishedDraft: true,
+          restoredVersion: 1,
+          restoredScheduleId: 'published-1',
+        },
+      },
+    },
+  }));
+  const republishedStatus = getSolveStatus({
+    ...publishedProject,
+    schedule: {
+      ...publishedProject.schedule,
+      source: 'published',
+      published: {
+        ...publishedProject.schedule.published,
+        status: 'published',
+      },
+      solverStats: {
+        phase: 'published',
+        status: 'accepted',
+        accepted: true,
+        reason: null,
+        restoredPublishedDraft: true,
+        restoredVersion: 1,
+        restoredScheduleId: 'published-1',
+      },
+    },
+  });
+
+  assert.equal(republishedStatus.sourceLabel, '已发布');
+  assert.match(republishedInspector, /<b>来源<\/b>已发布/);
+  assert.doesNotMatch(republishedInspector, /恢复发布版/);
 
   const fingerprintFailedInspector = renderInspector(sampleWorkbenchState({
     project: {
@@ -1522,7 +2219,121 @@ test('timetable inspector compares current draft against the published snapshot'
   assert.match(inspector, /恢复发布版/);
 });
 
+test('timetable archive-only draft uses published snapshot context for diff labels and restore wiring', async () => {
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [],
+    classes: [],
+    subjects: [],
+    lessonPlans: [],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'archive-only-context',
+      generatedAt: '2026-01-03T00:00:00.000Z',
+      source: 'published',
+      slots: [],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      publication: null,
+      published: {
+        status: 'draft_changed',
+        version: 2,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-2',
+        note: '教务处确认发布',
+        snapshot: {
+          scheduleId: 'published-2',
+          slotCount: 1,
+          score: { completeness: 100 },
+          publicationSummary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+          projectContext: {
+            schoolName: 'UI School',
+            term: '2026',
+            weekdays: 5,
+            periodsPerDay: 7,
+            activeWeekdays: [1, 2, 3, 4, 5],
+            activePeriods: [1, 2, 3, 4, 5, 6, 7],
+            teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+            classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+            subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+            lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+            rules: { hardRules: {}, softRules: {} },
+          },
+          slots: [{
+            id: 'slot-1',
+            day: 1,
+            period: 1,
+            classId: 'c1',
+            subjectId: 'math',
+            teacherId: 't_math',
+            teacherIds: ['t_math'],
+            lessonPlanId: 'lp_math',
+          }],
+        },
+      },
+      score: {},
+    },
+  });
+
+  const html = renderWorkbench(sampleWorkbenchState({ project }));
+
+  assert.match(html, /data-restore-published-snapshot="latest"/);
+  assert.match(html, /data-restore-published-version="2"/);
+  assert.match(html, /data-export-type="published_class"/);
+  assert.match(interactionSource, /\[data-restore-published-snapshot\][\s\S]*openRestoreDialog\('latest', button\.dataset\.restorePublishedVersion\)/);
+});
+
 test('timetable publish action is wired through controller and grid interactions', async () => {
+  const manualProject = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'manual-current',
+      generatedAt: '2026-01-03T00:00:00.000Z',
+      source: 'manual_adjusted',
+      slots: [{
+        id: 'slot-1',
+        day: 2,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+        manuallyAdjusted: true,
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      solverStats: {
+        phase: 'manual_adjustment',
+        status: 'accepted',
+        accepted: true,
+        reason: null,
+      },
+    },
+  });
+  const manualInspector = renderInspector(sampleWorkbenchState({ project: manualProject }));
+
+  assert.match(manualInspector, /<b>来源<\/b>手动调整/);
+  assert.doesNotMatch(manualInspector, /Timefold 未完成/);
+  assert.doesNotMatch(manualInspector, /后台优化超时/);
+  assert.doesNotMatch(manualInspector, /优化原因/);
+  assert.doesNotMatch(manualInspector, /优化处理/);
+
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
   const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
 
@@ -1532,8 +2343,127 @@ test('timetable publish action is wired through controller and grid interactions
   assert.match(interactionSource, /openPublishDialog\(\)/);
   assert.match(interactionSource, /#tt-confirm-publish/);
   assert.match(interactionSource, /confirmPublishSchedule\(\)/);
-  assert.match(interactionSource, /#tt-restore-published-snapshot/);
-  assert.match(interactionSource, /openRestoreDialog\('latest'\)/);
+  assert.match(interactionSource, /\[data-restore-published-snapshot\]/);
+  assert.match(interactionSource, /openRestoreDialog\('latest', button\.dataset\.restorePublishedVersion\)/);
+});
+
+test('timetable inspector treats manual adjustment review as school review instead of optimization fallback', () => {
+  const reviewProject = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'manual-review',
+      generatedAt: '2026-01-03T00:00:00.000Z',
+      source: 'manual_adjusted',
+      slots: [{
+        id: 'slot-1',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+        manuallyAdjusted: true,
+      }],
+      lockedSlots: [],
+      conflicts: [{
+        type: 'unplaced',
+        severity: 'hard',
+        message: '仍有课时未进入课表',
+        lessonPlanId: 'lp_math',
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+      }],
+      unplaced: [{
+        lessonPlanId: 'lp_math',
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        reason: 'Manual review still required',
+      }],
+      score: { hardConflicts: 1, unplacedLessons: 1, placedLessons: 1, totalLessons: 2, completeness: 50 },
+      solverStats: {
+        phase: 'manual_adjustment',
+        status: 'needs_review',
+        accepted: false,
+        reason: 'manual_adjustment_conflicts',
+      },
+    },
+  });
+
+  const inspector = renderInspector(sampleWorkbenchState({ project: reviewProject }));
+
+  assert.match(inspector, /<b>来源<\/b>手动调整/);
+  assert.match(inspector, /手动调整/);
+  assert.match(inspector, /教务复核/);
+  assert.doesNotMatch(inspector, /优化原因/);
+  assert.doesNotMatch(inspector, /优化处理/);
+  assert.doesNotMatch(inspector, /后台优化未采纳/);
+});
+
+test('timetable inspector treats stale optimization on manual schedules as optimization status, not manual review', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'manual-stale-optimization',
+      generatedAt: '2026-01-03T00:00:00.000Z',
+      source: 'manual_adjusted',
+      slots: [{
+        id: 'slot-1',
+        day: 2,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+        manuallyAdjusted: true,
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      solverStats: {
+        phase: 'manual_adjustment',
+        status: 'accepted',
+        accepted: true,
+        reason: null,
+      },
+    },
+  });
+
+  const inspector = renderInspector(sampleWorkbenchState({
+    project,
+    solverJob: {
+      jobId: 'stale-manual-job',
+      phase: 'timefold_optimization',
+      status: 'failed',
+      accepted: false,
+      reason: 'stale_schedule',
+    },
+  }));
+
+  assert.match(inspector, /优化原因/);
+  assert.match(inspector, /课表已被更新，旧优化结果已作废/);
+  assert.match(inspector, /优化处理/);
+  assert.doesNotMatch(inspector, /<b>教务复核<\/b>课表已被更新，旧优化结果已作废/);
 });
 
 test('timetable restored published schedules are labeled as restored publish versions', () => {
@@ -1624,6 +2554,342 @@ test('timetable optimization panel labels restored published drafts correctly', 
 
   assert.match(inspector, /<b>当前课表<\/b>恢复发布版/);
   assert.doesNotMatch(inspector, /<b>当前课表<\/b>未生成/);
+});
+
+test('timetable optimization panel keeps restored-published label after manual adjustment on a restored draft', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'restored-manual-optimization',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'manual_adjusted',
+      slots: [{
+        id: 'slot-1',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+        locked: false,
+        manuallyAdjusted: true,
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      solverStats: {
+        phase: 'manual_adjustment',
+        status: 'accepted',
+        accepted: true,
+        reason: null,
+        restoredPublishedDraft: true,
+        restoredVersion: 2,
+        restoredScheduleId: 'published-v2',
+      },
+    },
+  });
+  const inspector = renderInspector(sampleWorkbenchState({
+    project,
+    solverJob: {
+      jobId: 'manual-restored-job',
+      phase: 'timefold_optimization',
+      status: 'failed',
+      accepted: false,
+      reason: 'stale_schedule',
+    },
+  }));
+
+  assert.match(inspector, /<b>当前课表<\/b>恢复发布版/);
+  assert.doesNotMatch(inspector, /<b>当前课表<\/b>手动调整/);
+});
+
+test('timetable published schedules do not keep showing the background optimization panel from stale solver stats', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'published-with-stale-opt-stats',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'published',
+      slots: [{
+        id: 'slot-1',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+        locked: false,
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [],
+        reviewItems: [],
+        summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'published',
+        version: 2,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-v2',
+        note: '教务处确认发布',
+      },
+      solverStats: {
+        phase: 'timefold_optimization',
+        status: 'completed',
+        accepted: false,
+        reason: 'not_better',
+        initialSolutionUsed: true,
+        pinnedCount: 2,
+      },
+    },
+  });
+
+  const inspector = renderInspector(sampleWorkbenchState({ project }));
+
+  assert.doesNotMatch(inspector, /后台优化/);
+  assert.doesNotMatch(inspector, /优化原因/);
+  assert.doesNotMatch(inspector, /优化处理/);
+  assert.doesNotMatch(inspector, /初始解/);
+  assert.doesNotMatch(inspector, /锁定课节/);
+});
+
+test('timetable inspector keeps restored-published review wording after accepted optimization on a restored draft', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'restored-optimized-1',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'timefold_solver',
+      slots: [{
+        id: 'slot-1',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+        locked: false,
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [{
+          type: 'restored_published_draft',
+          message: '当前草稿来自恢复发布版，重新发布前建议教务复核。',
+        }],
+        reviewItems: [{
+          type: 'restored_published_draft',
+          severity: 'warning',
+          targetKind: 'schedule',
+          targetName: '恢复发布版',
+          message: '当前草稿来自恢复发布版，重新发布前建议教务复核。',
+        }],
+        summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'draft_changed',
+        version: 2,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-v2',
+        note: '恢复的发布版',
+      },
+      solverStats: {
+        phase: 'timefold_optimization',
+        status: 'completed',
+        accepted: true,
+        reason: null,
+        restoredPublishedDraft: true,
+        restoredVersion: 2,
+        restoredScheduleId: 'published-v2',
+      },
+    },
+  });
+
+  const inspector = renderInspector(sampleWorkbenchState({ project }));
+
+  assert.match(inspector, /恢复发布版/);
+  assert.match(inspector, /重新发布前建议教务复核/);
+});
+
+test('timetable topbar keeps restored-published source wording after accepted optimization on a restored draft', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'restored-topbar-1',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'timefold_solver',
+      slots: [{
+        id: 'slot-1',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+        locked: false,
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [{
+          type: 'restored_published_draft',
+          message: '当前草稿来自恢复发布版，重新发布前建议教务复核。',
+        }],
+        reviewItems: [],
+        summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'draft_changed',
+        version: 2,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-v2',
+        note: '恢复的发布版',
+      },
+      solverStats: {
+        phase: 'timefold_optimization',
+        status: 'completed',
+        accepted: true,
+        reason: null,
+        restoredPublishedDraft: true,
+        restoredVersion: 2,
+        restoredScheduleId: 'published-v2',
+      },
+    },
+  });
+
+  const status = getSolveStatus(project);
+  const panel = renderSchedulePanel(sampleWorkbenchState({ project }));
+
+  assert.equal(status.sourceLabel, '恢复发布版');
+  assert.match(panel, /可生成/);
+});
+
+test('timetable manual-adjusted restored drafts keep restored-published wording and review warning', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    rules: { hardRules: {}, softRules: {} },
+    schedule: {
+      id: 'restored-manual-1',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'manual_adjusted',
+      slots: [{
+        id: 'slot-1',
+        day: 2,
+        period: 2,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+        locked: false,
+        manuallyAdjusted: true,
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [{
+          type: 'restored_published_draft',
+          message: '当前草稿来自恢复发布版，重新发布前建议教务复核。',
+        }],
+        reviewItems: [{
+          type: 'restored_published_draft',
+          severity: 'warning',
+          targetKind: 'schedule',
+          targetName: '恢复发布版',
+          message: '当前草稿来自恢复发布版，重新发布前建议教务复核。',
+        }],
+        summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'draft_changed',
+        version: 2,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-v2',
+        note: '恢复的发布版',
+      },
+      solverStats: {
+        phase: 'manual_adjustment',
+        status: 'accepted',
+        accepted: true,
+        reason: null,
+        restoredPublishedDraft: true,
+        restoredVersion: 2,
+        restoredScheduleId: 'published-v2',
+      },
+    },
+  });
+
+  const status = getSolveStatus(project);
+  const inspector = renderInspector(sampleWorkbenchState({ project }));
+
+  assert.equal(status.sourceLabel, '恢复发布版');
+  assert.match(inspector, /<b>来源<\/b>恢复发布版/);
+  assert.match(inspector, /重新发布前建议教务复核/);
 });
 
 test('timetable schedule panel shows local optimization phase while running', () => {
@@ -1756,6 +3022,58 @@ test('timetable inspector explains initial solution and pinned optimization reje
   assert.doesNotMatch(inspector, /pinned_slot_moved/);
 });
 
+test('timetable inspector keeps persisted failed optimization details visible after reload', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'fast-timeout-reload',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'fast_constructed',
+        slots: [{
+          id: 'slot-1',
+          day: 1,
+          period: 1,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+          locked: false,
+        }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 3, completeness: 33 },
+        solverStats: {
+          phase: 'timefold_optimization',
+          status: 'failed',
+          accepted: false,
+          reason: 'timeout',
+          lessonCount: 3,
+          timeoutSeconds: 210,
+        },
+      },
+    }),
+  });
+
+  const inspector = renderInspector(state);
+
+  assert.match(inspector, /后台优化/);
+  assert.match(inspector, /<b>优化状态<\/b>Timefold 未完成/);
+  assert.match(inspector, /<b>处理结果<\/b>后台优化超时/);
+  assert.match(inspector, /<b>优化处理<\/b>已保留当前课表：后台优化超时。/);
+  assert.doesNotMatch(inspector, /timeout/);
+});
+
 test('timetable inspector translates background optimization rejection reasons for school staff', () => {
   const state = sampleWorkbenchState({
     solverJob: {
@@ -1814,6 +3132,59 @@ test('timetable inspector translates background optimization rejection reasons f
 
   assert.match(inspector, /优化结果没有更好/);
   assert.match(inspector, /已保留当前课表/);
+  assert.doesNotMatch(inspector, /not_better/);
+});
+
+test('timetable inspector keeps persisted optimization rejection details visible after reload', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'fast-keep-reload',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'fast_constructed',
+        slots: [{
+          id: 'slot-1',
+          day: 1,
+          period: 1,
+          classId: 'c1',
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+          locked: false,
+        }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 3, completeness: 33 },
+        solverStats: {
+          phase: 'timefold_optimization',
+          status: 'completed',
+          initialSolutionUsed: true,
+          pinnedCount: 1,
+          accepted: false,
+          reason: 'not_better',
+          qualityScoreBefore: 133,
+          qualityScoreAfter: 133,
+        },
+      },
+    }),
+  });
+
+  const inspector = renderInspector(state);
+
+  assert.match(inspector, /优化结果没有更好/);
+  assert.match(inspector, /已保留当前课表/);
+  assert.match(inspector, /<b>优化状态<\/b>已保留快速课表/);
   assert.doesNotMatch(inspector, /not_better/);
 });
 
@@ -2025,6 +3396,55 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-roster-review-table/);
   assert.match(styles, /\.tt-roster-review-row--error/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
+});
+
+test('timetable roster import preserves input and review drafts when the modal is reopened', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+
+  controller.state.rosterImport = {
+    ...controller.state.rosterImport,
+    open: true,
+    step: 'input',
+    mode: 'text',
+    text: 'G7,1,Math,Teacher,4',
+    fileName: '',
+    draftRows: [],
+  };
+  controller.closeRosterImport();
+  assert.equal(controller.state.rosterImport.open, false);
+  assert.equal(controller.state.rosterImport.text, 'G7,1,Math,Teacher,4');
+  controller.openRosterImport('file');
+  assert.equal(controller.state.rosterImport.open, true);
+  assert.equal(controller.state.rosterImport.step, 'input');
+  assert.equal(controller.state.rosterImport.mode, 'text');
+  assert.equal(controller.state.rosterImport.text, 'G7,1,Math,Teacher,4');
+
+  controller.state.rosterImport = {
+    ...controller.state.rosterImport,
+    open: true,
+    step: 'review',
+    mode: 'file',
+    fileName: 'roster.xlsx',
+    draftRows: [{ id: 'draft_1', className: '1', subjectName: 'Math', teacherName: 'Teacher', weeklyHours: '4' }],
+    stats: { planCount: 1 },
+    warnings: ['warn'],
+    issues: [],
+  };
+  controller.closeRosterImport();
+  assert.equal(controller.state.rosterImport.open, false);
+  controller.openRosterImport('text');
+  assert.equal(controller.state.rosterImport.open, true);
+  assert.equal(controller.state.rosterImport.step, 'review');
+  assert.equal(controller.state.rosterImport.mode, 'file');
+  assert.equal(controller.state.rosterImport.draftRows.length, 1);
+
+  controller.resetRosterImport();
+  controller.openRosterImport('text');
+  assert.equal(controller.state.rosterImport.open, true);
+  assert.equal(controller.state.rosterImport.step, 'input');
+  assert.equal(controller.state.rosterImport.mode, 'text');
+  assert.deepEqual(controller.state.rosterImport.draftRows, []);
 });
 
 test('timetable AI rules support Excel file upload and rich preview metadata', async () => {
@@ -2549,6 +3969,18 @@ test('timetable inspector surfaces data and AI rule audit summaries', () => {
       status: 'ready',
     }],
     ruleWarnings: ['Unknown class ignored'],
+    ruleReview: {
+      ...sampleWorkbenchState().ruleReview,
+      unsupportedItems: [{
+        id: 'draft-2',
+        type: 'teacher_load_balance',
+        targetName: 'All teachers',
+        slots: [],
+        priority: 'soft',
+        description: 'Suggestion only',
+        status: 'suggestion',
+      }],
+    },
   });
 
   const inspector = renderInspector(state);
@@ -2556,4 +3988,6 @@ test('timetable inspector surfaces data and AI rule audit summaries', () => {
   assert.match(inspector, /class="tt-audit-grid"/);
   assert.match(inspector, /tt-rule-preview-item/);
   assert.match(inspector, /Unknown class ignored/);
+  assert.match(inspector, /All teachers/);
+  assert.match(inspector, /teacher_load_balance/);
 });
