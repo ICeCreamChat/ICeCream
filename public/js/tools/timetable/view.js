@@ -1270,6 +1270,12 @@ function renderRuleReviewTable(dialog, project = {}) {
                 ${stats.totalLessons !== undefined ? `<span>${escapeHtml(stats.totalLessons)} 课时</span>` : ''}
             </div>
         ` : ''}
+        ${renderRuleReviewOverview(dialog)}
+        ${renderClarifyingQuestions(dialog)}
+        ${renderAutoAcceptableRules(dialog)}
+        ${renderRuleConflictSection(dialog)}
+        ${renderUnsupportedRuleItems(dialog)}
+        ${renderRuleDiagnosis(dialog)}
         ${renderRuleReviewReport(warnings)}
         <div class="tt-roster-review-wrap">
             <table class="tt-rule-review-table" id="tt-rule-review-table">
@@ -1302,8 +1308,180 @@ function renderRuleReviewTable(dialog, project = {}) {
         </div>
         <div class="tt-dialog-actions">
             <button class="tt-btn" id="tt-add-rule-review-row" type="button" ${disabled}><i data-lucide="plus"></i><span>新增行</span></button>
+            <button class="tt-btn" id="tt-diagnose-rules" type="button" ${disabled}><i data-lucide="stethoscope"></i><span>试排诊断</span></button>
             <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
             <button class="tt-btn tt-btn--primary" id="tt-confirm-rule-review" type="button" ${isBusy || !rows.length ? 'disabled' : ''}><i data-lucide="${isBusy ? 'loader-2' : 'check'}" class="${isBusy ? 'tt-spin' : ''}"></i><span>${isBusy ? '确认中' : '确认生效'}</span></button>
+        </div>
+    `;
+}
+
+function renderRuleReviewOverview(dialog = {}) {
+    const rows = dialog.draftRows || [];
+    const auto = dialog.autoAcceptable || [];
+    const review = dialog.needReview || rows.filter(row => ['needs_review', 'invalid'].includes(row.status));
+    const questions = dialog.clarifyingQuestions || [];
+    const missing = dialog.missingInfo || [];
+    const conflicts = dialog.conflicts || [];
+    const unsupported = dialog.unsupportedItems || [];
+    const summary = dialog.confidenceSummary || {};
+    const items = [
+        ['已识别', rows.length, 'list-checks'],
+        ['可直接生效', auto.length, 'badge-check'],
+        ['需要复核', review.length, 'edit-3'],
+        ['需要补充', questions.length + missing.length, 'message-square-question'],
+        ['冲突风险', conflicts.length, 'triangle-alert'],
+        ['暂不支持', unsupported.length, 'lightbulb'],
+    ];
+    return `
+        <section class="tt-rule-review-overview" aria-label="智能建议总览">
+            <div class="tt-rule-review-group-title">
+                <i data-lucide="sparkles"></i>
+                <strong>智能建议总览</strong>
+                ${dialog.nextAction ? `<span>${escapeHtml(ruleNextActionLabel(dialog.nextAction))}</span>` : ''}
+            </div>
+            <div class="tt-rule-overview-grid">
+                ${items.map(([label, value, icon]) => `
+                    <span class="tt-rule-overview-chip">
+                        <i data-lucide="${escapeAttr(icon)}"></i>
+                        <b>${escapeHtml(value)}</b>
+                        <em>${escapeHtml(label)}</em>
+                    </span>
+                `).join('')}
+            </div>
+            <p class="tt-muted">置信度：高 ${escapeHtml(summary.high || 0)} / 中 ${escapeHtml(summary.medium || 0)} / 低 ${escapeHtml(summary.low || 0)}</p>
+        </section>
+    `;
+}
+
+function ruleNextActionLabel(value = '') {
+    return {
+        ask_user: '需要补充信息',
+        ready_to_apply: '可一键生效',
+        review: '需要复核',
+        no_result: '没有可用结果',
+    }[value] || value;
+}
+
+function renderClarifyingQuestions(dialog = {}) {
+    const questions = dialog.clarifyingQuestions || [];
+    const missing = dialog.missingInfo || [];
+    if (!questions.length && !missing.length) return '';
+    return `
+        <section class="tt-rule-review-group tt-rule-review-group--question">
+            <div class="tt-rule-review-group-title">
+                <i data-lucide="message-square-question"></i>
+                <strong>需要补充信息</strong>
+                <span>${questions.length + missing.length} 条</span>
+            </div>
+            ${questions.map(question => `
+                <div class="tt-rule-question">
+                    <strong>${escapeHtml(question.question || '请补充信息')}</strong>
+                    ${question.reason ? `<span>${escapeHtml(question.reason)}</span>` : ''}
+                    ${(question.options || []).length ? `
+                        <select class="tt-roster-review-field" data-rule-question-answer="${escapeAttr(question.id)}">
+                            <option value="">请选择</option>
+                            ${(question.options || []).map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label || option.value)}</option>`).join('')}
+                        </select>
+                    ` : `<input class="tt-roster-review-field" data-rule-question-answer="${escapeAttr(question.id)}" type="text" placeholder="输入补充说明">`}
+                </div>
+            `).join('')}
+            ${missing.map(item => `
+                <div class="tt-rule-warning tt-rule-warning--review">
+                    <i data-lucide="circle-alert"></i>
+                    <span>${escapeHtml(item.message || item)}</span>
+                </div>
+            `).join('')}
+            ${questions.length ? `
+                <button class="tt-btn tt-btn--primary tt-btn--sm" id="tt-continue-rule-conversation" type="button">
+                    <i data-lucide="send"></i><span>提交回答并继续解析</span>
+                </button>
+            ` : ''}
+        </section>
+    `;
+}
+
+function renderAutoAcceptableRules(dialog = {}) {
+    const rows = dialog.autoAcceptable || [];
+    if (!rows.length) return '';
+    return `
+        <section class="tt-rule-review-group tt-rule-review-group--auto">
+            <div class="tt-rule-review-group-title">
+                <i data-lucide="badge-check"></i>
+                <strong>可直接生效</strong>
+                <span>${rows.length} 条</span>
+            </div>
+            <div class="tt-rule-mini-list">
+                ${rows.slice(0, 5).map(row => renderRuleMiniItem(row)).join('')}
+                ${rows.length > 5 ? `<span class="tt-muted">还有 ${escapeHtml(rows.length - 5)} 条可在下方表格查看。</span>` : ''}
+            </div>
+            <button class="tt-btn tt-btn--primary tt-btn--sm" id="tt-apply-auto-rules" type="button">
+                <i data-lucide="check-check"></i><span>一键应用这些高置信度约束</span>
+            </button>
+        </section>
+    `;
+}
+
+function renderRuleConflictSection(dialog = {}) {
+    const conflicts = dialog.conflicts || [];
+    if (!conflicts.length) return '';
+    return `
+        <section class="tt-rule-review-group tt-rule-review-group--conflict">
+            <div class="tt-rule-review-group-title">
+                <i data-lucide="triangle-alert"></i>
+                <strong>冲突与风险</strong>
+                <span>${conflicts.length} 条</span>
+            </div>
+            ${conflicts.map(conflict => `
+                <div class="tt-rule-conflict tt-rule-conflict--${escapeAttr(conflict.level || 'warning')}">
+                    <strong>${escapeHtml(conflict.level === 'blocking' ? '阻塞风险' : '普通风险')}</strong>
+                    <span>${escapeHtml(conflict.message || '')}</span>
+                    ${conflict.suggestion ? `<em>${escapeHtml(conflict.suggestion)}</em>` : ''}
+                </div>
+            `).join('')}
+        </section>
+    `;
+}
+
+function renderUnsupportedRuleItems(dialog = {}) {
+    const items = dialog.unsupportedItems || [];
+    if (!items.length) return '';
+    return `
+        <section class="tt-rule-review-group tt-rule-review-group--unsupported">
+            <div class="tt-rule-review-group-title">
+                <i data-lucide="lightbulb"></i>
+                <strong>暂不支持</strong>
+                <span>${items.length} 条</span>
+            </div>
+            <p class="tt-muted">当前版本只能作为建议，不会写入排课规则。</p>
+            <div class="tt-rule-mini-list">
+                ${items.slice(0, 6).map(item => renderRuleMiniItem(item)).join('')}
+            </div>
+        </section>
+    `;
+}
+
+function renderRuleDiagnosis(dialog = {}) {
+    const diagnosis = dialog.diagnosis;
+    if (!diagnosis) return '';
+    return `
+        <section class="tt-rule-review-group tt-rule-review-group--diagnosis">
+            <div class="tt-rule-review-group-title">
+                <i data-lucide="stethoscope"></i>
+                <strong>智能诊断</strong>
+            </div>
+            <p>${escapeHtml(diagnosis.summary || '')}</p>
+            ${(diagnosis.blockingRules || []).map(item => `<div class="tt-rule-warning tt-rule-warning--review"><i data-lucide="circle-alert"></i><span>${escapeHtml(item)}</span></div>`).join('')}
+            ${(diagnosis.suggestedRelaxations || []).map(item => `<div class="tt-rule-warning tt-rule-warning--info"><i data-lucide="lightbulb"></i><span>${escapeHtml(item)}</span></div>`).join('')}
+        </section>
+    `;
+}
+
+function renderRuleMiniItem(row = {}) {
+    return `
+        <div class="tt-rule-mini-item">
+            <strong>${escapeHtml(ruleTypeLabel(row.type || '') || row.type || '约束')}</strong>
+            <span>${escapeHtml(row.targetName || row.targetId || row.description || row.rawText || '-')}</span>
+            <em>${escapeHtml((row.slots || []).join(', ') || row.priority || '')}</em>
         </div>
     `;
 }
@@ -1373,16 +1551,44 @@ function ruleTargetEntities(project = {}, targetType) {
     return [];
 }
 
+function isAllTeachersRuleTarget(row = {}) {
+    if (row.targetType === 'all_teachers' || row.targetId === '__all_teachers') return true;
+    if (!['teacher_daily_limit', 'teacher_consecutive_limit'].includes(row.type)) return false;
+    const text = [
+        row.targetName,
+        row.targetId,
+        row.teacherName,
+        row.teacherId,
+        row.rawText,
+        row.description,
+    ].map(value => String(value || '')).join(' ');
+    return /(全部|全体|所有|每位|每个|各位|任课|任意)\s*(教师|老师)|all\s+teachers?/i.test(text);
+}
+
+function normalizeRuleReviewTargetForDisplay(row = {}) {
+    if (!isAllTeachersRuleTarget(row)) return row;
+    return {
+        ...row,
+        targetType: 'all_teachers',
+        targetId: '__all_teachers',
+        targetName: '全部教师',
+    };
+}
+
 function renderRuleTargetField(row, project, disabled = false) {
-    const entities = ruleTargetEntities(project, row.targetType);
+    const normalizedRow = normalizeRuleReviewTargetForDisplay(row);
+    const entities = ruleTargetEntities(project, normalizedRow.targetType);
     const disabledAttr = disabled ? 'disabled' : '';
-    // locked_slot / global rules keep a free-text target; others get a bound dropdown
-    if (!entities.length || row.targetType === 'locked_slot' || row.targetType === 'global') {
-        return `<input class="tt-roster-review-field" data-rule-review-field="targetName" type="text" value="${escapeAttr(row.targetName || row.targetId || '')}" ${disabledAttr}>`;
+    if (normalizedRow.targetType === 'all_teachers') {
+        return `<input class="tt-roster-review-field" data-rule-review-field="targetName" type="text" value="全部教师" readonly ${disabledAttr}>`;
     }
-    const matchesId = entities.some(item => item.id === row.targetId);
-    const matchesName = entities.find(item => item.name === row.targetName);
-    const selectedId = matchesId ? row.targetId : (matchesName?.id || '');
+    // locked_slot / global rules keep a free-text target; others get a bound dropdown
+    if (!entities.length || normalizedRow.targetType === 'locked_slot' || normalizedRow.targetType === 'global') {
+        return `<input class="tt-roster-review-field" data-rule-review-field="targetName" type="text" value="${escapeAttr(normalizedRow.targetName || normalizedRow.targetId || '')}" ${disabledAttr}>`;
+    }
+    const matchesId = entities.some(item => item.id === normalizedRow.targetId);
+    const matchesName = entities.find(item => item.name === normalizedRow.targetName);
+    const selectedId = matchesId ? normalizedRow.targetId : (matchesName?.id || '');
     return `
         <select class="tt-roster-review-field tt-rule-target-select" data-rule-review-field="targetName" data-rule-target-select ${disabledAttr}>
             <option value="">未选择</option>
@@ -1392,6 +1598,7 @@ function renderRuleTargetField(row, project, disabled = false) {
 }
 
 function renderRuleReviewRow(row = {}, project = {}, disabled = false) {
+    const displayRow = normalizeRuleReviewTargetForDisplay(row);
     const warnings = row.warnings || [];
     const status = row.status || 'needs_review';
     const statusOptions = ['effective', 'needs_review', 'suggestion', 'unsupported', 'invalid', 'ignored'];
@@ -1420,8 +1627,8 @@ function renderRuleReviewRow(row = {}, project = {}, disabled = false) {
                 <select class="tt-roster-review-field" data-rule-review-field="type" ${disabledAttr}>
                     ${typeOptions.map(type => `<option value="${type}" ${row.type === type ? 'selected' : ''}>${escapeHtml(ruleTypeLabel(type))}</option>`).join('')}
                 </select>
-                <input type="hidden" data-rule-review-field="targetType" value="${escapeAttr(row.targetType || '')}">
-                <input type="hidden" data-rule-review-field="targetId" value="${escapeAttr(row.targetId || '')}">
+                <input type="hidden" data-rule-review-field="targetType" value="${escapeAttr(displayRow.targetType || '')}">
+                <input type="hidden" data-rule-review-field="targetId" value="${escapeAttr(displayRow.targetId || '')}">
                 <input type="hidden" data-rule-review-field="classId" value="${escapeAttr(row.classId || '')}">
                 <input type="hidden" data-rule-review-field="className" value="${escapeAttr(row.className || '')}">
                 <input type="hidden" data-rule-review-field="subjectId" value="${escapeAttr(row.subjectId || '')}">
@@ -1429,7 +1636,7 @@ function renderRuleReviewRow(row = {}, project = {}, disabled = false) {
                 <input type="hidden" data-rule-review-field="teacherId" value="${escapeAttr(row.teacherId || '')}">
                 <input type="hidden" data-rule-review-field="teacherName" value="${escapeAttr(row.teacherName || '')}">
             `)}</td>
-            <td>${cell(renderRuleTargetField(row, project, disabled))}</td>
+            <td>${cell(renderRuleTargetField(displayRow, project, disabled))}</td>
             <td>${cell(input('slots', (row.slots || []).join(', ')), slotHint)}</td>
             <td>${cell(`
                 <select class="tt-roster-review-field" data-rule-review-field="priority" ${disabledAttr}>

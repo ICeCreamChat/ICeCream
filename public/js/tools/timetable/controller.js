@@ -517,9 +517,16 @@ export class TimetablePlannerController {
             this.ruleReviewFile = null;
             // legacy sync
             this.setRuleReviewState(result);
-            this.setMessage(rows.length
-                ? `已解析 ${rows.length} 条约束，请逐条确认。`
-                : '未能解析出可用约束，请调整描述后重试。');
+            const autoCount = (result.autoAcceptable || []).length;
+            const reviewCount = (result.needReview || []).length;
+            const questionCount = (result.clarifyingQuestions || []).length;
+            const message = {
+                ask_user: '需要补充信息后才能继续。',
+                ready_to_apply: `已找到 ${autoCount} 条高置信度约束，可一键生效。`,
+                review: `已解析 ${rows.length} 条约束，其中 ${reviewCount} 条需要复核。`,
+                no_result: '未解析出可用约束，请换一种说法。',
+            }[result.nextAction] || (rows.length ? `已解析 ${rows.length} 条约束，请在复核表确认。` : '未能解析出可用约束，请调整描述后重试。');
+            this.setMessage(questionCount ? `${message} 有 ${questionCount} 个问题需要确认。` : message);
         } catch (error) {
             this.state.ruleInput = { ...(this.state.ruleInput || {}), loading: false };
             this.handleError(error);
@@ -586,12 +593,17 @@ export class TimetablePlannerController {
         this.render();
     }
 
+    isAutoAcceptablePendingRule(rule = {}) {
+        return rule.status === 'effective'
+            && Number(rule.confidence || 0) >= 0.85
+            && !(rule.warnings || []).length
+            && !['suggestion', 'unsupported', 'invalid', 'needs_review'].includes(rule.status);
+    }
+
     async acceptAllRules() {
-        const pending = (this.state.pendingRules || []).filter(
-            item => !['suggestion', 'unsupported'].includes(item.status),
-        );
+        const pending = (this.state.pendingRules || []).filter(item => this.isAutoAcceptablePendingRule(item));
         if (!pending.length) {
-            this.setMessage('没有可直接接受的约束。');
+            this.setMessage('没有可直接接受的高置信度约束。');
             return;
         }
         try {
@@ -599,7 +611,8 @@ export class TimetablePlannerController {
                 method: 'POST',
                 body: JSON.stringify({ draftRows: pending }),
             });
-            const effectiveCount = (normalized.draftRows || []).filter(row => row.status === 'effective').length;
+            const effectiveRows = (normalized.draftRows || []).filter(row => row.status === 'effective');
+            const effectiveCount = effectiveRows.length;
             if (!effectiveCount) {
                 this.setMessage('这些约束都无法自动生效，请逐条编辑。');
                 return;
@@ -609,7 +622,7 @@ export class TimetablePlannerController {
                 body: JSON.stringify({ rules: normalized.draftRules }),
             });
             this.applyProject(result.project);
-            const acceptedIds = new Set(pending.map(item => item.id));
+            const acceptedIds = new Set(effectiveRows.map(item => item.id));
             this.syncPendingRuleDraftState(
                 (this.state.pendingRules || []).filter(item => !acceptedIds.has(item.id)),
                 { keepDialogOpen: Boolean(this.state.ruleReview?.open) },
@@ -647,7 +660,8 @@ export class TimetablePlannerController {
     setRuleReviewState(payload = {}) {
         const draftRows = Array.isArray(payload.draftRows) ? payload.draftRows : [];
         const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
-        const hasBlockingIssues = draftRows.some(row => ['invalid'].includes(row.status));
+        const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
+        const hasBlockingIssues = draftRows.some(row => ['invalid'].includes(row.status)) || conflicts.some(item => item.level === 'blocking');
         this.state.ruleReview = {
             ...(this.state.ruleReview || {}),
             open: true,
@@ -660,6 +674,14 @@ export class TimetablePlannerController {
             contextStats: payload.contextStats || null,
             warnings,
             unsupportedItems: payload.unsupportedItems || [],
+            autoAcceptable: payload.autoAcceptable || [],
+            needReview: payload.needReview || [],
+            clarifyingQuestions: payload.clarifyingQuestions || [],
+            missingInfo: payload.missingInfo || [],
+            conflicts,
+            confidenceSummary: payload.confidenceSummary || { high: 0, medium: 0, low: 0 },
+            nextAction: payload.nextAction || '',
+            diagnosis: payload.diagnosis || this.state.ruleReview?.diagnosis || null,
             hasBlockingIssues,
             loading: false,
             phase: '',
@@ -1300,12 +1322,129 @@ export class TimetablePlannerController {
             this.setRuleReviewProgress('build_review', '生成复核表中...', { step: 'input', mode: hasFile ? 'file' : 'text' });
             this.setRuleReviewState(result);
             const total = (result.draftRows || []).length;
-            const effective = (result.draftRows || []).filter(row => row.status === 'effective').length;
-            this.setMessage(total
-                ? `已解析 ${total} 条约束（${effective} 条可直接生效），请在复核表确认。`
-                : '未能解析出可用约束，请调整描述后重试。');
+            const autoCount = (result.autoAcceptable || []).length;
+            const reviewCount = (result.needReview || []).length;
+            const questionCount = (result.clarifyingQuestions || []).length;
+            const message = {
+                ask_user: '需要补充信息后才能继续。',
+                ready_to_apply: `已找到 ${autoCount} 条高置信度约束，可一键生效。`,
+                review: `已解析 ${total} 条约束，其中 ${reviewCount} 条需要复核。`,
+                no_result: '未解析出可用约束，请换一种说法。',
+            }[result.nextAction] || (total ? `已解析 ${total} 条约束，请在复核表确认。` : '未能解析出可用约束，请调整描述后重试。');
+            this.setMessage(questionCount ? `${message} 有 ${questionCount} 个问题需要确认。` : message);
         } catch (error) {
             this.stopRuleReviewProgress('解析失败，请调整后重试。', 'warning');
+            this.handleError(error);
+        }
+    }
+
+    readClarifyingAnswers() {
+        return [...(this.state.container?.querySelectorAll('[data-rule-question-answer]') || [])]
+            .map(input => ({
+                id: input.dataset.ruleQuestionAnswer || '',
+                value: input.value || '',
+                label: input.options ? input.options[input.selectedIndex]?.textContent || input.value : input.value,
+            }))
+            .filter(item => item.id && item.value);
+    }
+
+    async continueRuleConversation() {
+        const answers = this.readClarifyingAnswers();
+        if (!answers.length) {
+            this.setMessage('请先回答需要补充的问题。');
+            return;
+        }
+        const review = this.state.ruleReview || {};
+        try {
+            this.setRuleReviewProgress('clarify', '根据补充信息继续解析中...', { step: 'review', mode: review.mode || 'text' });
+            const result = await requestTimetable('/rules/clarify', {
+                method: 'POST',
+                body: JSON.stringify({
+                    draftRows: review.draftRows || [],
+                    answers,
+                    inputType: review.inputType || 'clarification',
+                    contextStats: review.contextStats || null,
+                }),
+            });
+            this.setRuleReviewState(result);
+            this.setMessage('已根据补充信息更新复核表。');
+        } catch (error) {
+            this.stopRuleReviewProgress('继续解析失败，请稍后重试。', 'warning');
+            this.handleError(error);
+        }
+    }
+
+    async applyAutoAcceptableRules() {
+        const rows = this.state.ruleReview?.autoAcceptable || [];
+        if (!rows.length) {
+            this.setMessage('没有可一键生效的高置信度约束。');
+            return;
+        }
+        try {
+            this.setRuleReviewProgress('save_auto', '写入高置信度约束中...', { step: 'review', mode: this.state.ruleReview?.mode || 'text' });
+            const normalized = await requestTimetable('/rules/normalize', {
+                method: 'POST',
+                body: JSON.stringify({
+                    draftRows: rows,
+                    inputType: this.state.ruleReview?.inputType || 'review',
+                    contextStats: this.state.ruleReview?.contextStats || null,
+                }),
+            });
+            const effectiveCount = (normalized.draftRows || []).filter(row => row.status === 'effective').length;
+            if (effectiveCount !== rows.length) {
+                this.setRuleReviewState(normalized);
+                this.setMessage('部分高置信度约束未通过校验，请复核后再生效。');
+                return;
+            }
+            const result = await requestTimetable('/rules', {
+                method: 'POST',
+                body: JSON.stringify({ rules: normalized.draftRules }),
+            });
+            this.applyProject(result.project);
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
+            this.state.lastFailure = null;
+            this.state.selectedSlotId = '';
+            const acceptedIds = new Set(rows.map(row => row.id));
+            const remaining = (this.state.ruleReview?.draftRows || []).filter(row => !acceptedIds.has(row.id));
+            this.setRuleReviewState({
+                ...(this.state.ruleReview || {}),
+                draftRows: remaining,
+                autoAcceptable: [],
+                needReview: remaining.filter(row => ['needs_review', 'invalid'].includes(row.status)),
+                unsupportedItems: this.state.ruleReview?.unsupportedItems || [],
+                warnings: this.state.ruleReview?.warnings || [],
+                nextAction: remaining.length ? 'review' : 'ready_to_apply',
+            });
+            this.setMessage(`已生效 ${effectiveCount} 条高置信度约束。`);
+        } catch (error) {
+            this.stopRuleReviewProgress('写入失败，请稍后重试。', 'warning');
+            this.handleError(error);
+        }
+    }
+
+    async diagnoseRules() {
+        const review = this.state.ruleReview || {};
+        try {
+            this.setRuleReviewProgress('diagnose', '诊断约束风险中...', { step: review.step || 'review', mode: review.mode || 'text' });
+            const result = await requestTimetable('/rules/diagnose', {
+                method: 'POST',
+                body: JSON.stringify({
+                    draftRows: review.draftRows || [],
+                    solverFailure: this.state.lastFailure || this.state.project?.schedule?.solverStats || null,
+                }),
+            });
+            this.state.ruleReview = {
+                ...(this.state.ruleReview || {}),
+                loading: false,
+                phase: '',
+                phaseText: '',
+                phaseTone: '',
+                diagnosis: result.diagnosis || null,
+            };
+            this.setMessage('智能诊断已更新。');
+        } catch (error) {
+            this.stopRuleReviewProgress('诊断失败，请稍后重试。', 'warning');
             this.handleError(error);
         }
     }

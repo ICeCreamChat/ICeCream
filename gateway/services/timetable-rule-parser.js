@@ -370,8 +370,8 @@ function parsePeriods(value, project, fallback = []) {
     if (!text) return [...fallback];
     const active = getActivePeriods(project);
     if (/全部|全日|all/i.test(text)) return active;
-    if (/上午|早上/.test(text)) return active.filter(period => period <= Math.ceil(active.length / 2));
-    if (/下午|后半天/.test(text)) return active.filter(period => period > Math.ceil(active.length / 2));
+    if (/上午|早上|morning/i.test(text)) return active.filter(period => period <= Math.ceil(active.length / 2));
+    if (/下午|后半天|afternoon/i.test(text)) return active.filter(period => period > Math.ceil(active.length / 2));
     const values = [];
     for (const range of text.matchAll(/第?\s*(\d{1,2})\s*[-~到至]\s*(\d{1,2})\s*节?/g)) {
         values.push(...expandRange(range[1], range[2], Math.max(...active, 12)));
@@ -415,8 +415,112 @@ function normalizeName(value) {
     return asText(value, 120).toLowerCase().replace(/\s+/g, '');
 }
 
+function normalizeEntityName(value) {
+    return normalizeName(value)
+        .replace(/[·\-_/()（）【】\[\]]/g, '')
+        .replace(/年级/g, '')
+        .replace(/班级/g, '班');
+}
+
 function entityLabel(item = {}) {
     return item.grade ? `${item.grade}${item.name || ''}` : item.name || item.id || '';
+}
+
+function entityItemsForType(project = {}, targetType = '') {
+    if (targetType === 'teacher') return project.teachers || [];
+    if (targetType === 'class') return project.classes || [];
+    if (targetType === 'subject') return project.subjects || [];
+    return [];
+}
+
+function entityNamesForMatch(item = {}, targetType = '') {
+    const names = [item.id, item.name, entityLabel(item)].map(value => asText(value, 120)).filter(Boolean);
+    if (targetType === 'teacher' && item.name) {
+        names.push(`${item.name}老师`, `${item.name}教师`);
+    }
+    return [...new Set(names)];
+}
+
+function candidatePreview(item = {}, targetType = '', confidence = 0) {
+    return {
+        id: item.id || '',
+        label: targetType === 'class' ? entityLabel(item) : (item.name || entityLabel(item) || item.id || ''),
+        type: targetType,
+        confidence,
+    };
+}
+
+function isAllTeachersTarget(row = {}) {
+    const text = [
+        row.targetId,
+        row.targetName,
+        row.target,
+        row.teacherId,
+        row.teacherName,
+        row.teacher,
+        row.rawText,
+        row.description,
+    ].map(value => String(value || '')).join(' ');
+    return /(全部|全体|所有|每位|每个|各位|任课|任意)\s*(教师|老师)|all\s+teachers?/i.test(text);
+}
+
+function matchEntityCandidates(project = {}, targetText = '', targetType = '', { targetId = '' } = {}) {
+    const items = entityItemsForType(project, targetType);
+    const query = asText(targetText || targetId, 160);
+    if (!items.length || (!query && !targetId)) return { candidates: [], confidence: 0, targetText: query };
+
+    const scored = new Map();
+    const add = (item, confidence) => {
+        if (!item?.id) return;
+        const current = scored.get(item.id);
+        if (!current || confidence > current.confidence) {
+            scored.set(item.id, candidatePreview(item, targetType, confidence));
+        }
+    };
+
+    if (targetId) {
+        const exactId = items.find(item => item.id === targetId);
+        if (exactId) add(exactId, 1);
+    }
+
+    const normalizedQuery = normalizeEntityName(query);
+    for (const item of items) {
+        const names = entityNamesForMatch(item, targetType);
+        if (names.some(name => name === query)) add(item, 1);
+        if (normalizedQuery && names.map(normalizeEntityName).some(name => name === normalizedQuery)) add(item, 0.96);
+    }
+
+    if (normalizedQuery) {
+        for (const item of items) {
+            const names = entityNamesForMatch(item, targetType).map(normalizeEntityName).filter(Boolean);
+            if (names.some(name => name.includes(normalizedQuery) || normalizedQuery.includes(name))) {
+                add(item, normalizedQuery.length <= 2 ? 0.72 : 0.82);
+            }
+        }
+    }
+
+    if (targetType === 'teacher' && /老师|教师/.test(query)) {
+        const stem = normalizeEntityName(query.replace(/老师|教师/g, ''));
+        if (stem) {
+            for (const item of items) {
+                const teacherName = normalizeEntityName(item.name || '');
+                if (!teacherName) continue;
+                if (stem.length === 1 ? teacherName.startsWith(stem) : teacherName.includes(stem)) {
+                    add(item, stem.length === 1 ? 0.72 : 0.86);
+                }
+            }
+        }
+    }
+
+    const candidates = [...scored.values()].sort((left, right) => {
+        if (right.confidence !== left.confidence) return right.confidence - left.confidence;
+        return left.label.localeCompare(right.label, 'zh-Hans-CN');
+    });
+    return {
+        candidates,
+        confidence: candidates[0]?.confidence || 0,
+        targetText: query,
+    };
 }
 
 function findEntity(items = [], { targetId = '', targetName = '', target = '', aliases = [] } = {}) {
@@ -548,12 +652,207 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
         periods: parsePeriods(row.periods || row.lessonIndexes || '', project, []),
         priority: normalizePriority(row.priority || row.strength, type),
         status: status === 'ready' ? 'effective' : status,
-        confidence: Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : null,
+        confidence: row.confidence !== null && row.confidence !== undefined && Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : null,
         description: asText(row.description || row.reason || row.note || '', 500),
         warnings: Array.isArray(row.warnings) ? row.warnings.map(item => asText(item, 200)).filter(Boolean) : [],
+        ambiguity: row.ambiguity || null,
+        ambiguities: Array.isArray(row.ambiguities) ? row.ambiguities : [],
         weight: Number.parseInt(row.weight, 10) || undefined,
         limit: Number.parseInt(row.limit ?? row.value ?? row.max ?? row.count, 10) || undefined,
     };
+}
+
+function validateTimeExpression(row = {}, project = {}) {
+    const activeDays = new Set(getActiveWeekdays(project));
+    const activePeriods = new Set(getActivePeriods(project));
+    const invalidSlots = [];
+    const slots = (row.slots || []).filter(slot => {
+        const match = String(slot || '').match(/^(\d{1,2})-(\d{1,2})$/);
+        if (!match) {
+            invalidSlots.push(String(slot || ''));
+            return false;
+        }
+        const day = Number.parseInt(match[1], 10);
+        const period = Number.parseInt(match[2], 10);
+        const valid = activeDays.has(day) && activePeriods.has(period);
+        if (!valid) invalidSlots.push(slotKey(day, period));
+        return true;
+    });
+    return {
+        slots,
+        invalidSlots,
+        warnings: invalidSlots.length
+            ? [`节次 ${invalidSlots.join('、')} 不在当前排课范围内。`]
+            : [],
+    };
+}
+
+function statusWithConfidence(row = {}, confidence = null) {
+    if (row.status === 'ignored') return 'ignored';
+    const value = row.confidence !== null && row.confidence !== undefined && Number.isFinite(Number(row.confidence))
+        ? Number(row.confidence)
+        : confidence;
+    if (Number.isFinite(value) && value < 0.65 && row.status === 'effective') return 'needs_review';
+    return row.status === 'ready' ? 'effective' : row.status;
+}
+
+function rowNeedsSlots(type) {
+    return ['teacher_unavailable', 'class_unavailable', 'locked_slot', 'subject_preferred_periods', 'subject_avoid_periods'].includes(type);
+}
+
+function applySingleTarget(row, project, targetType) {
+    const match = matchEntityCandidates(project, row.targetName || row.targetId, targetType, { targetId: row.targetId });
+    const warnings = [...(row.warnings || [])];
+    const next = { ...row, targetType };
+
+    if (match.candidates.length === 1) {
+        const [candidate] = match.candidates;
+        next.targetId = candidate.id;
+        next.targetName = candidate.label;
+        next.confidence = next.confidence !== null && next.confidence !== undefined && Number.isFinite(Number(next.confidence))
+            ? Math.min(Number(next.confidence), candidate.confidence || 1)
+            : candidate.confidence || 0.9;
+        return { ...next, warnings, status: statusWithConfidence(next, candidate.confidence || 0.9) };
+    }
+
+    if (match.candidates.length > 1) {
+        const ambiguity = {
+            field: 'target',
+            targetType,
+            targetText: match.targetText || row.targetName || row.targetId || '',
+            candidates: match.candidates,
+        };
+        warnings.push(`${ambiguity.targetText || '规则对象'} 存在多个候选，请确认后再生效。`);
+        return {
+            ...next,
+            status: 'needs_review',
+            confidence: Math.min(
+                next.confidence !== null && next.confidence !== undefined && Number.isFinite(Number(next.confidence)) ? Number(next.confidence) : 0.7,
+                match.confidence || 0.7,
+            ),
+            ambiguity,
+            ambiguities: [...(next.ambiguities || []), ambiguity],
+            warnings,
+        };
+    }
+
+    warnings.push(`${row.targetName || row.targetId || '规则对象'} 在当前项目中没有匹配对象。`);
+    return {
+        ...next,
+        status: 'needs_review',
+        confidence: Math.min(
+            next.confidence !== null && next.confidence !== undefined && Number.isFinite(Number(next.confidence)) ? Number(next.confidence) : 0.55,
+            0.55,
+        ),
+        warnings,
+    };
+}
+
+function matchLockedField(project, row, field, targetType, text, id = '') {
+    const match = matchEntityCandidates(project, text || id, targetType, { targetId: id });
+    if (match.candidates.length === 1) return { field, targetType, match: match.candidates[0] };
+    return {
+        field,
+        targetType,
+        targetText: match.targetText || text || id || '',
+        candidates: match.candidates,
+    };
+}
+
+function classifyDraftRow(row = {}, project = {}) {
+    let next = { ...row, warnings: [...(row.warnings || [])] };
+    const type = next.type;
+    const time = validateTimeExpression(next, project);
+    next = { ...next, slots: time.slots.length ? time.slots : next.slots, warnings: [...next.warnings, ...time.warnings] };
+
+    if (next.status === 'ignored') return next;
+    if (!SUPPORTED_EFFECTIVE_TYPES.has(type)) {
+        const status = SUGGESTION_ONLY_TYPES.has(type) ? 'suggestion' : 'unsupported';
+        return {
+            ...next,
+            status,
+            priority: normalizePriority(next.priority, type),
+            warnings: status === 'unsupported'
+                ? [...next.warnings, '当前版本只能预览这类建议，暂不会写入排课规则。']
+                : next.warnings,
+        };
+    }
+
+    if (time.invalidSlots.length) {
+        next.status = 'invalid';
+    }
+    if (rowNeedsSlots(type) && !(next.slots || []).length) {
+        next.status = 'needs_review';
+        next.warnings.push('缺少明确节次，请补充后再生效。');
+    }
+
+    if (type === 'locked_slot') {
+        const fields = [
+            matchLockedField(project, next, 'teacher', 'teacher', next.teacherName || '', next.teacherId || ''),
+            matchLockedField(project, next, 'class', 'class', next.className || next.targetName || '', next.classId || ''),
+            matchLockedField(project, next, 'subject', 'subject', next.subjectName || '', next.subjectId || ''),
+        ];
+        const ambiguities = fields.filter(item => item.candidates && item.candidates.length !== 1);
+        const matched = Object.fromEntries(fields.filter(item => item.match).map(item => [item.field, item.match]));
+
+        if (ambiguities.length) {
+            ambiguities.forEach(item => {
+                next.warnings.push(`${item.targetText || item.field} ${item.candidates.length ? '存在多个候选' : '没有匹配对象'}，请确认。`);
+            });
+            return {
+                ...next,
+                targetType: 'locked_slot',
+                status: 'needs_review',
+                confidence: Math.min(
+                    next.confidence !== null && next.confidence !== undefined && Number.isFinite(Number(next.confidence)) ? Number(next.confidence) : 0.65,
+                    0.75,
+                ),
+                ambiguities,
+                ambiguity: ambiguities[0] || null,
+            };
+        }
+
+        next.teacherId = matched.teacher.id;
+        next.teacherName = matched.teacher.label;
+        next.classId = matched.class.id;
+        next.className = matched.class.label;
+        next.subjectId = matched.subject.id;
+        next.subjectName = matched.subject.label;
+        next.targetType = 'locked_slot';
+        next.targetId = `${next.classId}:${next.subjectId}:${next.teacherId}`;
+        next.targetName = `${next.className} / ${next.subjectName} / ${next.teacherName}`;
+        next.priority = 'hard';
+        next.confidence = next.confidence !== null && next.confidence !== undefined && Number.isFinite(Number(next.confidence)) ? Number(next.confidence) : 0.9;
+        next.status = statusWithConfidence(next, 0.9);
+        return next;
+    }
+
+    if ((type === 'teacher_daily_limit' || type === 'teacher_consecutive_limit') && isAllTeachersTarget(next)) {
+        next.targetType = 'all_teachers';
+        next.targetId = '__all_teachers';
+        next.targetName = '全部教师';
+        next.priority = 'soft';
+        next.confidence = next.confidence !== null && next.confidence !== undefined && Number.isFinite(Number(next.confidence))
+            ? Number(next.confidence)
+            : 0.9;
+        next.status = statusWithConfidence(next, next.confidence);
+    }
+
+    const targetType = targetTypeFor(type, next);
+    if (['teacher', 'class', 'subject'].includes(targetType)) {
+        next = applySingleTarget(next, project, targetType);
+    }
+
+    if ((type === 'teacher_daily_limit' || type === 'teacher_consecutive_limit') && (!Number.isInteger(next.limit) || next.limit <= 0)) {
+        next.status = 'needs_review';
+        next.warnings.push('缺少有效的节数上限。');
+    }
+
+    if (next.confidence === null || next.confidence === undefined || !Number.isFinite(Number(next.confidence))) {
+        next.confidence = next.status === 'effective' ? 0.9 : next.status === 'needs_review' ? 0.65 : 0.5;
+    }
+    next.status = statusWithConfidence(next, Number(next.confidence));
+    return next;
 }
 
 function previewFromRow(row = {}) {
@@ -585,6 +884,372 @@ function emptyRulesFrom(project) {
     return rules;
 }
 
+function previewRows(rows = []) {
+    return rows.map(previewFromRow);
+}
+
+function confidenceBucket(row = {}) {
+    const value = Number(row.confidence);
+    if (Number.isFinite(value) && value >= 0.85) return 'high';
+    if (Number.isFinite(value) && value >= 0.65) return 'medium';
+    return 'low';
+}
+
+function confidenceSummary(rows = []) {
+    return rows.reduce((summary, row) => {
+        summary[confidenceBucket(row)] += 1;
+        return summary;
+    }, { high: 0, medium: 0, low: 0 });
+}
+
+function buildMissingInfo(rows = []) {
+    const items = [];
+    rows.forEach((row, index) => {
+        if (!['needs_review', 'invalid'].includes(row.status)) return;
+        const text = row.targetName || row.targetId || row.className || row.teacherName || row.subjectName || row.rawText || '规则对象';
+        const hasCandidates = (row.ambiguities || []).some(item => (item.candidates || []).length);
+        if (hasCandidates) return;
+        if (!row.warnings?.length && row.status !== 'invalid') return;
+        items.push({
+            id: `missing_${index + 1}`,
+            message: row.warnings?.[0] || `${text} 信息不完整，请补充。`,
+            relatedRuleIds: [row.id],
+        });
+    });
+    return items;
+}
+
+function buildClarifyingQuestions(project = {}, rows = []) {
+    const questions = [];
+    rows.forEach(row => {
+        const ambiguityMap = new Map();
+        [...(row.ambiguities || []), row.ambiguity].filter(Boolean).forEach(item => {
+            const key = JSON.stringify([
+                item.field || '',
+                item.targetType || '',
+                item.targetText || '',
+                (item.candidates || []).map(candidate => candidate.id || candidate.value || candidate.label).sort(),
+            ]);
+            if (!ambiguityMap.has(key)) ambiguityMap.set(key, item);
+        });
+        const ambiguities = [...ambiguityMap.values()];
+        ambiguities.forEach((ambiguity, index) => {
+            const options = (ambiguity.candidates || []).map(candidate => ({
+                label: candidate.label,
+                value: candidate.id,
+            }));
+            if (!options.length) return;
+            const targetText = ambiguity.targetText || row.targetName || row.rawText || '这个对象';
+            const typeLabel = {
+                teacher: '老师',
+                class: '班级',
+                subject: '课程',
+            }[ambiguity.targetType] || '对象';
+            questions.push({
+                id: `q_${row.id}_${ambiguity.field || index}`,
+                question: `你说的${targetText}是哪一个${typeLabel}？`,
+                reason: `存在多个可匹配的${typeLabel}，系统不会自动猜测。`,
+                options,
+                relatedRuleIds: [row.id],
+            });
+        });
+    });
+    return questions;
+}
+
+function detectRuleConflicts(project = {}, draftRows = []) {
+    const conflicts = [];
+    const teacherUnavailable = new Map();
+    const classUnavailable = new Map();
+    const subjectAvoid = new Map();
+    const teacherLimits = new Map();
+    const locked = [];
+
+    const addMapSlots = (map, id, slots = [], ruleId = '') => {
+        if (!id) return;
+        const current = map.get(id) || [];
+        slots.forEach(slot => current.push({ slot, ruleId }));
+        map.set(id, current);
+    };
+
+    Object.entries(project.rules?.hardRules?.teacherUnavailable || {}).forEach(([teacherId, slots]) => addMapSlots(teacherUnavailable, teacherId, slots, 'saved_teacher_unavailable'));
+    Object.entries(project.rules?.hardRules?.classUnavailable || {}).forEach(([classId, slots]) => addMapSlots(classUnavailable, classId, slots, 'saved_class_unavailable'));
+    Object.entries(project.rules?.softRules?.subjectPreferredPeriods || {}).forEach(([subjectId, rule]) => addMapSlots(subjectAvoid, subjectId, rule?.avoid || [], 'saved_subject_avoid'));
+    Object.entries(project.rules?.softRules?.teacherLimits || {}).forEach(([teacherId, limits]) => {
+        if (Number.isInteger(Number(limits?.daily))) teacherLimits.set(teacherId, { limit: Number(limits.daily), ruleId: 'saved_teacher_daily_limit' });
+    });
+    (project.rules?.hardRules?.lockedSlots || []).forEach((slot, index) => locked.push({
+        id: `saved_locked_${index + 1}`,
+        teacherId: slot.teacherId,
+        classId: slot.classId,
+        subjectId: slot.subjectId,
+        slot: slotKey(slot.day, slot.period),
+    }));
+
+    draftRows.filter(row => row.status === 'effective').forEach(row => {
+        if (row.type === 'teacher_unavailable') addMapSlots(teacherUnavailable, row.targetId, row.slots, row.id);
+        if (row.type === 'class_unavailable') addMapSlots(classUnavailable, row.targetId, row.slots, row.id);
+        if (row.type === 'subject_avoid_periods') addMapSlots(subjectAvoid, row.targetId, row.slots, row.id);
+        if (row.type === 'teacher_daily_limit') {
+            if (isAllTeachersTarget(row)) {
+                (project.teachers || []).forEach(teacher => {
+                    teacherLimits.set(teacher.id, { limit: row.limit, ruleId: row.id });
+                });
+            } else {
+                teacherLimits.set(row.targetId, { limit: row.limit, ruleId: row.id });
+            }
+        }
+        if (row.type === 'locked_slot') {
+            const [slot] = row.slots || [];
+            if (slot) locked.push({
+                id: row.id,
+                teacherId: row.teacherId,
+                classId: row.classId,
+                subjectId: row.subjectId,
+                slot,
+            });
+        }
+    });
+
+    const lockedByTeacherSlot = new Map();
+    const lockedByClassSlot = new Map();
+    locked.forEach(item => {
+        const teacherKey = `${item.teacherId}|${item.slot}`;
+        const classKey = `${item.classId}|${item.slot}`;
+        lockedByTeacherSlot.set(teacherKey, [...(lockedByTeacherSlot.get(teacherKey) || []), item]);
+        lockedByClassSlot.set(classKey, [...(lockedByClassSlot.get(classKey) || []), item]);
+    });
+
+    lockedByTeacherSlot.forEach(items => {
+        const uniqueClasses = new Set(items.map(item => item.classId));
+        if (items.length > 1 && uniqueClasses.size > 1) {
+            conflicts.push({
+                level: 'blocking',
+                message: '同一老师在同一节被多个锁定课节占用。',
+                relatedRuleIds: items.map(item => item.id),
+                suggestion: '请只保留其中一个锁定课节，或更换教师/节次。',
+            });
+        }
+    });
+    lockedByClassSlot.forEach(items => {
+        const uniqueSubjects = new Set(items.map(item => item.subjectId));
+        if (items.length > 1 && uniqueSubjects.size > 1) {
+            conflicts.push({
+                level: 'blocking',
+                message: '同一班级同一节被多个课程锁定。',
+                relatedRuleIds: items.map(item => item.id),
+                suggestion: '请取消重复锁定，或改到不同节次。',
+            });
+        }
+    });
+
+    locked.forEach(item => {
+        const teacherBlocked = (teacherUnavailable.get(item.teacherId) || []).filter(rule => rule.slot === item.slot);
+        teacherBlocked.forEach(rule => conflicts.push({
+            level: 'blocking',
+            message: '老师不可排时间与锁定课节冲突。',
+            relatedRuleIds: [item.id, rule.ruleId].filter(Boolean),
+            suggestion: '请取消其中一个硬约束，或把锁定课节改到可用时间。',
+        }));
+        const classBlocked = (classUnavailable.get(item.classId) || []).filter(rule => rule.slot === item.slot);
+        classBlocked.forEach(rule => conflicts.push({
+            level: 'blocking',
+            message: '班级不可排时间与锁定课节冲突。',
+            relatedRuleIds: [item.id, rule.ruleId].filter(Boolean),
+            suggestion: '请取消其中一个硬约束，或调整班级不可排时间。',
+        }));
+        const subjectAvoided = (subjectAvoid.get(item.subjectId) || []).filter(rule => rule.slot === item.slot);
+        subjectAvoided.forEach(rule => conflicts.push({
+            level: 'warning',
+            message: '课程避开节次与锁定课节存在偏好冲突。',
+            relatedRuleIds: [item.id, rule.ruleId].filter(Boolean),
+            suggestion: '如果必须锁定，可保留；否则建议调整避开节次或锁定节次。',
+        }));
+    });
+
+    teacherLimits.forEach(({ limit, ruleId }, teacherId) => {
+        if (!Number.isInteger(Number(limit)) || Number(limit) <= 0) return;
+        const lockedByDay = new Map();
+        locked.filter(item => item.teacherId === teacherId).forEach(item => {
+            const day = String(item.slot).split('-')[0];
+            lockedByDay.set(day, [...(lockedByDay.get(day) || []), item]);
+        });
+        lockedByDay.forEach(items => {
+            if (items.length > Number(limit)) {
+                conflicts.push({
+                    level: 'blocking',
+                    message: '教师每日最多节数小于已有硬锁定课节数。',
+                    relatedRuleIds: [ruleId, ...items.map(item => item.id)].filter(Boolean),
+                    suggestion: '请放宽教师每日上限，或减少当天锁定课节。',
+                });
+            }
+        });
+    });
+
+    const seen = new Set();
+    return conflicts.filter(conflict => {
+        const key = JSON.stringify([conflict.level, conflict.message, conflict.relatedRuleIds]);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function splitParseResult({ project, rows, warnings = [], unsupportedItems = [], source, inputType, contextStats, draftRules, previewItems }) {
+    const conflicts = detectRuleConflicts(project, rows);
+    const clarifyingQuestions = buildClarifyingQuestions(project, rows);
+    const missingInfo = buildMissingInfo(rows);
+    const blockingRuleIds = new Set(conflicts.filter(item => item.level === 'blocking').flatMap(item => item.relatedRuleIds || []));
+    const autoAcceptable = rows.filter(row => (
+        row.status === 'effective'
+        && SUPPORTED_EFFECTIVE_TYPES.has(row.type)
+        && Number(row.confidence || 0) >= 0.85
+        && !(row.warnings || []).length
+        && !(row.ambiguity || (row.ambiguities || []).length)
+        && !blockingRuleIds.has(row.id)
+    ));
+    const needReview = rows.filter(row => ['needs_review', 'invalid'].includes(row.status));
+    const nextAction = clarifyingQuestions.length || missingInfo.length
+        ? 'ask_user'
+        : !rows.length
+            ? 'no_result'
+            : conflicts.some(item => item.level === 'blocking') || needReview.length || unsupportedItems.length || autoAcceptable.length < rows.filter(row => row.status === 'effective').length
+                ? 'review'
+                : 'ready_to_apply';
+
+    return {
+        draftRules,
+        draftRows: rows,
+        previewItems,
+        autoAcceptable,
+        needReview,
+        clarifyingQuestions,
+        missingInfo,
+        conflicts,
+        warnings,
+        unsupportedItems,
+        confidenceSummary: confidenceSummary(rows),
+        nextAction,
+        source,
+        inputType,
+        contextStats,
+    };
+}
+
+function applyClarifyingAnswers(draftRows = [], answers = []) {
+    const byQuestion = new Map((Array.isArray(answers) ? answers : []).map(answer => [asText(answer.id, 160), answer]));
+    if (!byQuestion.size) return draftRows;
+    return draftRows.map(row => {
+        const next = cloneValue(row);
+        const ambiguities = [...(next.ambiguities || []), next.ambiguity].filter(Boolean);
+        for (const ambiguity of ambiguities) {
+            const questionId = `q_${next.id}_${ambiguity.field || 'target'}`;
+            const answer = byQuestion.get(questionId);
+            if (!answer?.value) continue;
+            const selected = (ambiguity.candidates || []).find(candidate => candidate.id === answer.value || candidate.value === answer.value);
+            if (!selected) continue;
+            if (ambiguity.field === 'teacher' || ambiguity.targetType === 'teacher') {
+                next.teacherId = selected.id || selected.value;
+                next.teacherName = selected.label || selected.name || answer.label || answer.value;
+                if (next.targetType === 'teacher') {
+                    next.targetId = next.teacherId;
+                    next.targetName = next.teacherName;
+                }
+            } else if (ambiguity.field === 'class' || ambiguity.targetType === 'class') {
+                next.classId = selected.id || selected.value;
+                next.className = selected.label || selected.name || answer.label || answer.value;
+                if (next.targetType === 'class') {
+                    next.targetId = next.classId;
+                    next.targetName = next.className;
+                }
+            } else if (ambiguity.field === 'subject' || ambiguity.targetType === 'subject') {
+                next.subjectId = selected.id || selected.value;
+                next.subjectName = selected.label || selected.name || answer.label || answer.value;
+                if (next.targetType === 'subject') {
+                    next.targetId = next.subjectId;
+                    next.targetName = next.subjectName;
+                }
+            }
+            next.ambiguity = null;
+            next.ambiguities = [];
+            next.status = 'effective';
+            next.confidence = Math.max(Number(next.confidence) || 0, 0.88);
+            next.warnings = (next.warnings || []).filter(warning => !/多个候选|请确认/.test(warning));
+        }
+        return next;
+    });
+}
+
+export function continueTimetableRuleConversation({
+    project: inputProject = {},
+    draftRows = [],
+    answers = [],
+    inputType = 'clarification',
+    contextStats = null,
+} = {}) {
+    const project = normalizeTimetableProject(inputProject);
+    return normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: applyClarifyingAnswers(draftRows, answers),
+        source: 'clarification',
+        inputType,
+        contextStats,
+    });
+}
+
+function nameById(items = [], id = '', fallback = '') {
+    const item = (items || []).find(entry => entry.id === id);
+    return item?.name || entityLabel(item) || fallback || id;
+}
+
+export function diagnoseTimetableRules({
+    project: inputProject = {},
+    draftRows = [],
+    solverFailure = null,
+} = {}) {
+    const project = normalizeTimetableProject(inputProject);
+    const normalized = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows,
+        source: 'diagnose',
+        inputType: 'diagnose',
+    });
+    const teacherUnavailable = Object.entries(project.rules?.hardRules?.teacherUnavailable || {})
+        .map(([teacherId, slots]) => ({
+            label: `${nameById(project.teachers, teacherId)}：${(slots || []).length} 个不可排节次`,
+            count: (slots || []).length,
+        }))
+        .sort((left, right) => right.count - left.count);
+    const classUnavailable = Object.entries(project.rules?.hardRules?.classUnavailable || {})
+        .map(([classId, slots]) => ({
+            label: `${nameById(project.classes, classId)}：${(slots || []).length} 个不可排节次`,
+            count: (slots || []).length,
+        }))
+        .sort((left, right) => right.count - left.count);
+    const blockingRules = [
+        ...normalized.conflicts.filter(item => item.level === 'blocking').map(item => item.message),
+        ...teacherUnavailable.filter(item => item.count >= Math.max(3, getActivePeriods(project).length - 1)).map(item => item.label),
+        ...classUnavailable.filter(item => item.count >= Math.max(3, getActivePeriods(project).length - 1)).map(item => item.label),
+    ];
+    const suggestedRelaxations = blockingRules.length
+        ? [
+            '优先检查硬性不可排、锁定课节和教师每日上限。',
+            '非必须的时间偏好建议改为软约束，或缩小到更少节次。',
+        ]
+        : ['当前没有发现明显规则级无解风险，可继续试排并查看质量建议。'];
+    return {
+        summary: blockingRules.length
+            ? '当前无解风险主要来自硬性约束过强或锁定课节冲突。'
+            : (solverFailure?.message || solverFailure?.reason)
+                ? '暂未发现明确规则冲突，建议结合求解失败详情继续检查。'
+                : '当前约束没有明显无解风险。',
+        blockingRules,
+        suggestedRelaxations,
+        questions: normalized.clarifyingQuestions || [],
+        conflicts: normalized.conflicts || [],
+    };
+}
+
 export function normalizeTimetableRuleDraftRows({
     project: inputProject = {},
     draftRows = [],
@@ -599,7 +1264,7 @@ export function normalizeTimetableRuleDraftRows({
     const unsupportedItems = [];
 
     const rows = (Array.isArray(draftRows) ? draftRows : [])
-        .map((row, index) => normalizeDraftRow(row, index, project))
+        .map((row, index) => classifyDraftRow(normalizeDraftRow(row, index, project), project))
         .map(row => {
             if (['ignored', 'suggestion', 'unsupported', 'invalid', 'needs_review'].includes(row.status)) {
                 if (row.status === 'needs_review' && (row.targetName || row.targetId)) {
@@ -725,8 +1390,19 @@ export function normalizeTimetableRuleDraftRows({
             }
 
             if (row.type === 'teacher_daily_limit' || row.type === 'teacher_consecutive_limit') {
-                const teacher = findEntity(project.teachers, row);
                 const limit = Number.parseInt(row.limit ?? row.weight ?? row.value, 10);
+                if (isAllTeachersTarget(row)) {
+                    if (!Number.isInteger(limit) || limit <= 0 || !(project.teachers || []).length) {
+                        const reason = `${row.targetName || '全部教师'} 缺少有效的节数上限或当前项目没有教师，请复核。`;
+                        warnings.push(reason);
+                        return { ...row, status: 'needs_review', targetType: 'all_teachers', targetId: '__all_teachers', targetName: '全部教师', warnings: [...row.warnings, reason] };
+                    }
+                    (project.teachers || []).forEach(teacher => {
+                        addTeacherLimit(rules, teacher.id, row.type === 'teacher_daily_limit' ? { daily: limit } : { consecutive: limit });
+                    });
+                    return { ...row, targetType: 'all_teachers', targetId: '__all_teachers', targetName: '全部教师', priority: 'soft', status: 'effective' };
+                }
+                const teacher = findEntity(project.teachers, row);
                 if (!teacher || !Number.isInteger(limit) || limit <= 0) {
                     const reason = `${row.targetName || row.targetId || '教师'} 缺少可匹配教师或有效的节数上限，请复核。`;
                     warnings.push(reason);
@@ -749,16 +1425,17 @@ export function normalizeTimetableRuleDraftRows({
             return { ...row, status: 'unsupported' };
         });
 
-    return {
+    return splitParseResult({
+        project,
         draftRules: normalizeTimetableProject({ ...project, rules }).rules,
-        draftRows: rows,
-        previewItems: rows.map(previewFromRow),
+        rows,
+        previewItems: previewRows(rows),
         warnings: [...new Set(warnings.filter(Boolean))],
         source,
         inputType,
         contextStats,
         unsupportedItems,
-    };
+    });
 }
 
 function normalizeAiContent(content) {
@@ -769,13 +1446,39 @@ function normalizeAiContent(content) {
     return JSON.parse(fenced ? fenced[1] : text);
 }
 
+function aiDraftRowsFromParsed(parsed = {}) {
+    if (Array.isArray(parsed.draftRows)) return parsed.draftRows;
+    const groupedRows = [
+        ...(Array.isArray(parsed.autoAcceptable) ? parsed.autoAcceptable : []),
+        ...(Array.isArray(parsed.needReview) ? parsed.needReview : []),
+        ...(Array.isArray(parsed.unsupportedItems) ? parsed.unsupportedItems : []),
+    ];
+    if (groupedRows.length) return groupedRows;
+    if (Array.isArray(parsed.constraints)) return parsed.constraints;
+    if (Array.isArray(parsed.rules)) return parsed.rules;
+    return [];
+}
+
+function warningMessagesFromAi(value = []) {
+    return (Array.isArray(value) ? value : [])
+        .map(item => {
+            if (typeof item === 'string') return item;
+            return item?.message || item?.reason || item?.suggestion || item?.description || '';
+        })
+        .map(item => asText(item, 240))
+        .filter(Boolean);
+}
+
 function buildPrompt({ project, text, inputType = 'text', contextStats = null, constraintRows = [] }) {
     return [
         {
             role: 'system',
             content: [
-                '你是中文中小学排课约束解析助手。把用户用自然语言（可能口语化、不规范）描述的排课要求，转换成严格的 JSON。',
-                '只输出 JSON 对象，不要任何解释文字，格式：{"constraints":[...],"warnings":[]}。',
+                '你是中文中小学排课约束候选抽取助手。你只负责从自然语言、TXT、XLSX 内容中抽取候选约束，不负责最终生效判断。',
+                '只输出 JSON 对象，不要 markdown，不要解释文字。优先输出完整 Agent schema：{"draftRows":[],"autoAcceptable":[],"needReview":[],"clarifyingQuestions":[],"missingInfo":[],"conflicts":[],"warnings":[],"unsupportedItems":[],"confidenceSummary":{"high":0,"medium":0,"low":0},"nextAction":"review"}。',
+                'draftRows 必须包含所有候选约束；autoAcceptable/needReview/unsupportedItems 只是你给出的初步分组，系统会重新校验和重分组。',
+                'nextAction 只能是 ask_user、ready_to_apply、review、no_result。遇到歧义或缺失信息时优先 ask_user，不要猜。',
+                '系统会在你输出后做确定性实体匹配、歧义检测、冲突预检和最终 normalize；不要把不确定内容强行标记为可生效。',
                 '',
                 '【可生效约束类型】（会真正影响排课，请尽量归类到这些）：',
                 '- teacher_unavailable：某教师在某些时间不能上课。需 targetId/target + slots（或 days+periods）。priority=hard。',
@@ -790,15 +1493,27 @@ function buildPrompt({ project, text, inputType = 'text', contextStats = null, c
                 '',
                 '【仅建议类型】（暂不写入排课，仅供复核展示）：teacher_load_balance, block_protection, class_daily_balance, quality_subject_later。无法确定或属于通用常识（如"教师不能同时在两个班"）时，归到这里或写进 warnings，不要编造硬约束。',
                 '',
+                '【严禁猜测】',
+                '- 不允许编造老师、班级、课程、节次；只能使用用户原文或下方项目上下文。',
+                '- 如果目标不在 teachers/classes/subjects 中，把原文放在 target/targetName，并降低 confidence。',
+                '- 如果存在多个候选，必须在该规则中返回 ambiguity，例如 {"targetText":"王老师","candidates":[{"label":"王明","value":"t1"},{"label":"王华","value":"t2"}]}。',
+                '- 低置信度、歧义、缺少目标或缺少节次时，不要强行 effective；confidence 低于 0.65 的内容必须保守。',
+                '',
                 '【字段规范】：',
                 '- slots 用 "day-period" 字符串，day 为周几(1-7)，period 为第几节，例如周三第4节="3-4"。',
                 '- 也可用 days:[1,2] + periods:[3,4] 让系统自动展开。',
                 '- target 用教师/班级/课程的名称（从下方上下文里匹配），匹配不到就照原文填，targetId 留空。',
-                '- 每条约束包含：type, target(或targetId), slots或days/periods, priority, limit(仅上限类), reason(中文原因), confidence(0-1)。',
+                '- 每条规则都必须包含：rawText, type, targetType, targetName, days, periods, priority, reason, confidence, ambiguity。',
+                '- locked_slot 必须尽量包含 class/className, subject/subjectName, teacher/teacherName 和单个 slots。',
+                '',
+                '【强弱判断】',
+                '- 用户表达“尽量、最好、优先、希望、建议”时 priority=soft。',
+                '- 用户表达“禁止、必须、不能、不要、没空、不可排”时 priority=hard，除非语义明显是偏好。',
                 '',
                 '【示例】',
                 '输入："王老师周三下午都没空" → {"type":"teacher_unavailable","target":"王老师","days":[3],"periods":[5,6,7],"priority":"hard","reason":"王老师周三下午不可排","confidence":0.95}',
                 '输入："数学尽量排上午" → {"type":"subject_morning","target":"数学","priority":"soft","reason":"数学优先上午","confidence":0.9}',
+                '输入："李老师必须周三第3节上高一1班数学" → {"type":"locked_slot","teacher":"李老师","class":"高一1班","subject":"数学","slots":["3-3"],"priority":"hard","reason":"固定课节","confidence":0.9}',
                 '输入："李老师每天最多上3节课" → {"type":"teacher_daily_limit","target":"李老师","limit":3,"priority":"soft","reason":"控制李老师每日工作量","confidence":0.9}',
                 '输入："体育不要连着上两节" → {"type":"teacher_consecutive_limit"或"subject_spread","target":"体育","limit":1,"priority":"soft","reason":"体育课分散","confidence":0.8}',
                 '输入："美术第一节不要排" → {"type":"subject_avoid_periods","target":"美术","periods":[1],"priority":"soft","reason":"美术避开第一节","confidence":0.85}',
@@ -870,12 +1585,20 @@ function rowsFromAiConstraints(constraints = [], { inputRows = [], source = 'ai'
             targetType: constraint.targetType || targetTypeFor(type, constraint),
             targetId: constraint.targetId || constraint.teacherId || constraint.classId || constraint.subjectId || '',
             targetName: constraint.targetName || constraint.target || constraint.teacher || constraint.class || constraint.subject || '',
+            classId: constraint.classId || '',
+            className: constraint.className || constraint.class || '',
+            subjectId: constraint.subjectId || '',
+            subjectName: constraint.subjectName || constraint.subject || '',
+            teacherId: constraint.teacherId || '',
+            teacherName: constraint.teacherName || constraint.teacher || '',
             slots: constraint.slots || constraint.slotKeys || [],
             days: constraint.days || constraint.weekdays || '',
             periods: constraint.periods || constraint.lessonIndexes || '',
             priority: constraint.priority || constraint.strength,
             status: SUPPORTED_EFFECTIVE_TYPES.has(type) ? 'effective' : SUGGESTION_ONLY_TYPES.has(type) ? 'suggestion' : 'unsupported',
             confidence: constraint.confidence ?? null,
+            ambiguity: constraint.ambiguity || null,
+            ambiguities: constraint.ambiguities || [],
             description: constraint.reason || constraint.description || constraint.note || '',
             warnings: [],
             weight: constraint.weight,
@@ -1027,6 +1750,57 @@ function textSlots(sentence, project) {
     return targetDays.flatMap(day => periods.map(period => slotKey(day, period)));
 }
 
+function uniqueTargets(targets = []) {
+    const seen = new Set();
+    return targets.filter(target => {
+        const key = normalizeEntityName(target.name || target.id || '');
+        if (!target.name && !target.id) return false;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function textTeacherTargets(sentence = '', project = {}) {
+    const targets = [];
+    project.teachers.forEach(teacher => {
+        if (teacher.name && sentence.includes(teacher.name)) targets.push({ id: teacher.id, name: teacher.name });
+    });
+    for (const match of sentence.matchAll(/([A-Za-z][A-Za-z ]{1,40}Teacher|[\u4e00-\u9fa5]{1,4}(?:老师|教师))/g)) {
+        targets.push({ id: '', name: match[1] });
+    }
+    return uniqueTargets(targets);
+}
+
+function textClassTargets(sentence = '', project = {}) {
+    const targets = [];
+    project.classes.forEach(klass => {
+        const label = entityLabel(klass);
+        if ((label && sentence.includes(label)) || (klass.name && sentence.includes(klass.name))) {
+            targets.push({ id: klass.id, name: label || klass.name });
+        }
+    });
+    for (const match of sentence.matchAll(/((?:高|初|七|八|九|一|二|三)[一二三四五六七八九十0-9]*年?级?\s*\d{0,2}\s*班|高[一二三]\s*\d{1,2}\s*班|初[一二三]\s*\d{1,2}\s*班)/g)) {
+        targets.push({ id: '', name: match[1].replace(/\s+/g, '') });
+    }
+    return uniqueTargets(targets);
+}
+
+function textSubjectTargets(sentence = '', project = {}) {
+    const targets = [];
+    project.subjects.forEach(subject => {
+        if (subject.name && sentence.includes(subject.name)) targets.push({ id: subject.id, name: subject.name });
+    });
+    if (!targets.length && /上午|早上/.test(sentence) && /(尽量|优先|最好|希望|prefer)/i.test(sentence)) {
+        const match = sentence.match(/^(.{1,12}?)(?:尽量|优先|最好|希望|要|排|安排).*?(?:上午|早上)/);
+        if (match) {
+            const name = match[1].replace(/课程|学科|科目/g, '').trim();
+            if (name) targets.push({ id: '', name });
+        }
+    }
+    return uniqueTargets(targets);
+}
+
 function localTextConstraints(project, text) {
     const constraints = [];
     const sentences = splitSentences(text);
@@ -1036,8 +1810,32 @@ function localTextConstraints(project, text) {
 
     for (const sentence of sentences) {
         const slots = textSlots(sentence, project);
-        project.teachers.forEach(teacher => {
-            if (sentence.includes(teacher.name) && unavailablePattern.test(sentence) && slots.length) {
+        const teacherTargets = textTeacherTargets(sentence, project);
+        const classTargets = textClassTargets(sentence, project);
+        const subjectTargets = textSubjectTargets(sentence, project);
+
+        if (/(必须|固定|锁定|指定)/.test(sentence) && slots.length && teacherTargets.length && classTargets.length && subjectTargets.length) {
+            const teacher = teacherTargets[0];
+            const klass = classTargets[0];
+            const subject = subjectTargets[0];
+            constraints.push({
+                type: 'locked_slot',
+                teacherId: teacher.id,
+                teacher: teacher.name,
+                classId: klass.id,
+                class: klass.name,
+                subjectId: subject.id,
+                subject: subject.name,
+                slots: [slots[0]],
+                priority: 'hard',
+                reason: sentence,
+                confidence: 0.88,
+            });
+            continue;
+        }
+
+        teacherTargets.forEach(teacher => {
+            if (unavailablePattern.test(sentence) && slots.length) {
                 constraints.push({
                     type: 'teacher_unavailable',
                     targetId: teacher.id,
@@ -1045,12 +1843,12 @@ function localTextConstraints(project, text) {
                     slots,
                     priority: 'hard',
                     reason: sentence,
-                    confidence: 0.86,
+                    confidence: teacher.id ? 0.88 : 0.74,
                 });
             }
             // 每天最多 N 节
             const dailyMatch = sentence.match(/每[天日].*?(?:最多|不超过|不多于|上限)\s*(\d{1,2})\s*节/);
-            if (sentence.includes(teacher.name) && dailyMatch) {
+            if (dailyMatch) {
                 constraints.push({
                     type: 'teacher_daily_limit',
                     targetId: teacher.id,
@@ -1058,12 +1856,12 @@ function localTextConstraints(project, text) {
                     limit: Number.parseInt(dailyMatch[1], 10),
                     priority: 'soft',
                     reason: sentence,
-                    confidence: 0.82,
+                    confidence: teacher.id ? 0.82 : 0.7,
                 });
             }
             // 最多连续 N 节 / 不要连上
             const consecutiveMatch = sentence.match(/(?:连续|连排|连堂).*?(?:最多|不超过|不多于)\s*(\d{1,2})\s*节/);
-            if (sentence.includes(teacher.name) && consecutiveMatch) {
+            if (consecutiveMatch) {
                 constraints.push({
                     type: 'teacher_consecutive_limit',
                     targetId: teacher.id,
@@ -1071,26 +1869,24 @@ function localTextConstraints(project, text) {
                     limit: Number.parseInt(consecutiveMatch[1], 10),
                     priority: 'soft',
                     reason: sentence,
-                    confidence: 0.8,
+                    confidence: teacher.id ? 0.8 : 0.68,
                 });
             }
         });
-        project.classes.forEach(klass => {
-            const label = entityLabel(klass);
-            if ((sentence.includes(label) || sentence.includes(klass.name)) && unavailablePattern.test(sentence) && slots.length) {
+        classTargets.forEach(klass => {
+            if (unavailablePattern.test(sentence) && slots.length) {
                 constraints.push({
                     type: 'class_unavailable',
                     targetId: klass.id,
-                    target: label,
+                    target: klass.name,
                     slots,
                     priority: 'hard',
                     reason: sentence,
-                    confidence: 0.84,
+                    confidence: klass.id ? 0.84 : 0.68,
                 });
             }
         });
-        project.subjects.forEach(subject => {
-            if (!sentence.includes(subject.name)) return;
+        subjectTargets.forEach(subject => {
             const teacherUnavailableSentence = project.teachers.some(teacher => sentence.includes(teacher.name))
                 && unavailablePattern.test(sentence)
                 && !preferPattern.test(sentence);
@@ -1102,7 +1898,7 @@ function localTextConstraints(project, text) {
                     target: subject.name,
                     priority: 'soft',
                     reason: sentence,
-                    confidence: 0.82,
+                    confidence: subject.id ? 0.86 : 0.68,
                 });
             } else if (slots.length && preferPattern.test(sentence)) {
                 constraints.push({
@@ -1112,7 +1908,7 @@ function localTextConstraints(project, text) {
                     slots,
                     priority: 'soft',
                     reason: sentence,
-                    confidence: 0.76,
+                    confidence: subject.id ? 0.76 : 0.64,
                 });
             } else if (slots.length && avoidPattern.test(sentence)) {
                 constraints.push({
@@ -1122,7 +1918,7 @@ function localTextConstraints(project, text) {
                     slots,
                     priority: 'soft',
                     reason: sentence,
-                    confidence: 0.76,
+                    confidence: subject.id ? 0.76 : 0.64,
                 });
             }
         });
@@ -1168,8 +1964,12 @@ function parseConstraintsWithLocalFallback({ project, text, inputType, contextSt
 async function parseAiOrLocal({ project, text, inputType, contextStats = null, constraintRows = [], env, fetchImpl }) {
     try {
         const parsed = await callAi({ project, text, inputType, contextStats, constraintRows, env, fetchImpl });
-        const constraints = Array.isArray(parsed.constraints) ? parsed.constraints : Array.isArray(parsed.rules) ? parsed.rules : [];
-        const warnings = Array.isArray(parsed.warnings) ? parsed.warnings.map(item => asText(item, 240)).filter(Boolean) : [];
+        const constraints = aiDraftRowsFromParsed(parsed);
+        const warnings = [
+            ...warningMessagesFromAi(parsed.warnings),
+            ...warningMessagesFromAi(parsed.missingInfo),
+            ...warningMessagesFromAi(parsed.conflicts),
+        ];
         return normalizeTimetableRuleDraftRows({
             project,
             draftRows: rowsFromAiConstraints(constraints, { inputRows: constraintRows, source: 'ai' }),

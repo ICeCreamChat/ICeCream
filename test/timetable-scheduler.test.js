@@ -1489,6 +1489,268 @@ test('timetable AI rules parser locally extracts obvious text rules when AI is u
     assert.equal(result.draftRows.filter(row => row.status === 'effective').length, 2);
 });
 
+test('timetable smart rules accept full agent schema from the configured parser', async () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    let requestBody = null;
+    const result = await parseTimetableRules({
+        text: 'Math Teacher 周三第4节不要排。',
+        project,
+        env: {
+            DEEPSEEK_API_KEY: 'test-key',
+            DEEPSEEK_API_BASE: 'https://example.test',
+            DEEPSEEK_MODEL: 'agent-test',
+        },
+        fetchImpl: async (_url, options = {}) => {
+            requestBody = JSON.parse(options.body);
+            return {
+                ok: true,
+                status: 200,
+                async text() {
+                    return JSON.stringify({
+                        choices: [{
+                            message: {
+                                content: JSON.stringify({
+                                    draftRows: [{
+                                        id: 'agent_row_1',
+                                        rawText: 'Math Teacher 周三第4节不要排。',
+                                        type: 'teacher_unavailable',
+                                        targetType: 'teacher',
+                                        targetName: 'Math Teacher',
+                                        targetId: 't_math',
+                                        slots: ['3-4'],
+                                        priority: 'hard',
+                                        status: 'effective',
+                                        confidence: 0.93,
+                                        reason: '教师不可排',
+                                    }],
+                                    autoAcceptable: [],
+                                    needReview: [],
+                                    clarifyingQuestions: [],
+                                    missingInfo: [],
+                                    conflicts: [],
+                                    warnings: [],
+                                    nextAction: 'ready_to_apply',
+                                }),
+                            },
+                        }],
+                    });
+                },
+            };
+        },
+    });
+
+    const systemPrompt = requestBody.messages[0].content;
+    assert.match(systemPrompt, /"draftRows"/);
+    assert.match(systemPrompt, /"autoAcceptable"/);
+    assert.match(systemPrompt, /"clarifyingQuestions"/);
+    assert.match(systemPrompt, /"conflicts"/);
+    assert.doesNotMatch(systemPrompt, /格式：\{"constraints":\[\],"warnings":\[\]\}/);
+    assert.equal(result.source, 'ai');
+    assert.equal(result.nextAction, 'ready_to_apply');
+    assert.equal(result.autoAcceptable.length, 1);
+    assert.deepEqual(result.draftRules.hardRules.teacherUnavailable.t_math, ['3-4']);
+});
+
+test('timetable smart rules split clear local text into auto-acceptable constraints', async () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 8,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7, 8],
+        teachers: [{ id: 't_wang', name: '王老师', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: '高一', name: '1班' }],
+        subjects: [{ id: 'math', name: '数学', priority: 90, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = await parseTimetableRules({
+        text: '王老师周三下午都没空，数学尽量排上午。',
+        project,
+        env: {},
+    });
+
+    const teacherRow = result.draftRows.find(row => row.type === 'teacher_unavailable');
+    const subjectRow = result.draftRows.find(row => row.type === 'subject_morning');
+
+    assert.equal(result.nextAction, 'ready_to_apply');
+    assert.equal(result.autoAcceptable.length, 2);
+    assert.equal(result.needReview.length, 0);
+    assert.equal(teacherRow.status, 'effective');
+    assert.equal(teacherRow.targetId, 't_wang');
+    assert.deepEqual(teacherRow.slots, ['3-5', '3-6', '3-7', '3-8']);
+    assert.equal(subjectRow.priority, 'soft');
+    assert.deepEqual(result.draftRules.hardRules.teacherUnavailable.t_wang, ['3-5', '3-6', '3-7', '3-8']);
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
+    assert.deepEqual(result.confidenceSummary, { high: 2, medium: 0, low: 0 });
+});
+
+test('timetable smart rules ask a clarifying question for ambiguous teachers', async () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 8,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7, 8],
+        teachers: [
+            { id: 't_wang_ming', name: '王明', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_wang_hua', name: '王华', subjects: ['chinese'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: '高一', name: '1班' }],
+        subjects: [{ id: 'math', name: '数学', priority: 90, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = await parseTimetableRules({
+        text: '王老师周三下午都没空。',
+        project,
+        env: {},
+    });
+
+    assert.equal(result.nextAction, 'ask_user');
+    assert.equal(result.autoAcceptable.length, 0);
+    assert.equal(result.needReview.length, 1);
+    assert.equal(result.draftRows[0].status, 'needs_review');
+    assert.equal(result.clarifyingQuestions.length, 1);
+    assert.match(result.clarifyingQuestions[0].question, /王老师/);
+    assert.deepEqual(result.clarifyingQuestions[0].options.map(item => item.value).sort(), ['t_wang_hua', 't_wang_ming']);
+    assert.equal(result.draftRules.hardRules.teacherUnavailable.t_wang_ming, undefined);
+});
+
+test('timetable smart rules normalize locked slots and detect hard conflicts', async () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 8,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7, 8],
+        teachers: [{ id: 't_li', name: '李老师', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: '高一', name: '1班' }],
+        subjects: [{ id: 'math', name: '数学', priority: 90, color: '#2563eb' }],
+        lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_li', weeklyHours: 4 }],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = await parseTimetableRules({
+        text: '李老师周三第3节不要排。李老师必须周三第3节上高一1班数学。',
+        project,
+        env: {},
+    });
+
+    const locked = result.draftRows.find(row => row.type === 'locked_slot');
+    assert.equal(locked.status, 'effective');
+    assert.equal(locked.teacherId, 't_li');
+    assert.equal(locked.classId, 'c1');
+    assert.equal(locked.subjectId, 'math');
+    assert.deepEqual(locked.slots, ['3-3']);
+    assert.equal(result.draftRules.hardRules.lockedSlots[0].lessonPlanId, 'lp_math');
+    assert.ok(result.conflicts.some(conflict => conflict.level === 'blocking' && conflict.message.includes('不可排')));
+    assert.equal(result.nextAction, 'review');
+});
+
+test('timetable smart rules do not silently apply unknown subjects or unsupported AI output', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [{ id: 't_math', name: '王老师', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: '高一', name: '1班' }],
+        subjects: [{ id: 'math', name: '数学', priority: 90, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: [{
+            id: 'unknown_subject',
+            rawText: '物理尽量排上午',
+            type: 'subject_morning',
+            targetType: 'subject',
+            targetName: '物理',
+            priority: 'soft',
+            status: 'effective',
+            confidence: 0.92,
+        }, {
+            id: 'unsupported_ai',
+            rawText: '所有老师空堂紧凑',
+            type: 'teacher_free_period_compact',
+            targetType: 'global',
+            priority: 'soft',
+            status: 'effective',
+            confidence: 0.9,
+        }],
+    });
+
+    assert.equal(result.nextAction, 'ask_user');
+    assert.equal(result.autoAcceptable.length, 0);
+    assert.equal(result.draftRows.find(row => row.id === 'unknown_subject').status, 'needs_review');
+    assert.ok(result.missingInfo.some(item => item.message.includes('物理')));
+    assert.equal(result.draftRows.find(row => row.id === 'unsupported_ai').status, 'unsupported');
+    assert.ok(result.unsupportedItems.some(item => item.id === 'unsupported_ai'));
+});
+
+test('timetable smart rules expand all-teacher limits across uploaded teachers', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [
+            { id: 't_zhang', name: '张老师', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_li', name: '李老师', subjects: ['chinese'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: '高一', name: '1班' }],
+        subjects: [{ id: 'math', name: '数学', priority: 90, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: [{
+            id: 'all_daily',
+            rawText: '每位教师每天授课量尽量均衡，单日不超过4节',
+            type: 'teacher_daily_limit',
+            targetType: 'teacher',
+            targetName: '全部教师',
+            limit: 4,
+            priority: 'soft',
+            status: 'effective',
+            confidence: 0.9,
+        }, {
+            id: 'all_consecutive',
+            rawText: '每位教师连续授课限制',
+            type: 'teacher_consecutive_limit',
+            targetType: 'teacher',
+            targetName: '全部教师',
+            limit: 2,
+            priority: 'soft',
+            status: 'effective',
+            confidence: 0.9,
+        }],
+    });
+
+    assert.equal(result.nextAction, 'ready_to_apply');
+    assert.equal(result.needReview.length, 0);
+    assert.equal(result.missingInfo.length, 0);
+    assert.deepEqual(result.draftRows.map(row => row.status), ['effective', 'effective']);
+    assert.deepEqual(result.draftRows.map(row => row.targetType), ['all_teachers', 'all_teachers']);
+    assert.deepEqual(result.draftRules.softRules.teacherLimits.t_zhang, { daily: 4, consecutive: 2 });
+    assert.deepEqual(result.draftRules.softRules.teacherLimits.t_li, { daily: 4, consecutive: 2 });
+});
+
 test('timetable rule draft row normalization only saves effective valid rows', () => {
     const project = createDefaultTimetableProject({
         weekdays: 5,
@@ -5305,6 +5567,99 @@ test('timetable rules normalize API converts review rows without saving rules', 
 
         const stored = await store.loadProject();
         assert.deepEqual(stored.rules.hardRules.teacherUnavailable, {});
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
+test('timetable rules clarify and diagnose APIs support autonomous review flow', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-rules-clarify-'));
+
+    const store = createTimetableStore();
+    await store.saveProject(createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [
+            { id: 't_wang_ming', name: '王明', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_wang_hua', name: '王华', subjects: ['math'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: '高一', name: '1班' }],
+        subjects: [{ id: 'math', name: '数学', priority: 90, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: {
+            hardRules: {
+                teacherUnavailable: { t_wang_ming: ['1-1', '1-2', '1-3', '1-4', '1-5', '1-6'] },
+                classUnavailable: {},
+                lockedSlots: [],
+            },
+            softRules: {},
+        },
+    }));
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const draftRows = [{
+            id: 'ambiguous_1',
+            rawText: '王老师周三下午不要排',
+            type: 'teacher_unavailable',
+            targetType: 'teacher',
+            targetName: '王老师',
+            slots: ['3-5'],
+            priority: 'hard',
+            status: 'needs_review',
+            confidence: 0.7,
+            ambiguity: {
+                field: 'target',
+                targetType: 'teacher',
+                targetText: '王老师',
+                candidates: [
+                    { id: 't_wang_ming', label: '王明' },
+                    { id: 't_wang_hua', label: '王华' },
+                ],
+            },
+        }];
+        const clarifyResponse = await fetch(`${baseUrl}/api/tools/timetable/rules/clarify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                draftRows,
+                answers: [{ id: 'q_ambiguous_1_target', value: 't_wang_hua', label: '王华' }],
+            }),
+        });
+        const clarified = await clarifyResponse.json();
+
+        assert.equal(clarifyResponse.status, 200);
+        assert.equal(clarified.data.draftRows[0].status, 'effective');
+        assert.equal(clarified.data.draftRows[0].targetId, 't_wang_hua');
+        assert.deepEqual(clarified.data.draftRules.hardRules.teacherUnavailable.t_wang_hua, ['3-5']);
+
+        const diagnoseResponse = await fetch(`${baseUrl}/api/tools/timetable/rules/diagnose`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ draftRows: clarified.data.draftRows }),
+        });
+        const diagnosed = await diagnoseResponse.json();
+
+        assert.equal(diagnoseResponse.status, 200);
+        assert.match(diagnosed.data.diagnosis.summary, /约束|风险|无解/);
+        assert.ok(diagnosed.data.diagnosis.suggestedRelaxations.length >= 1);
+        assert.ok(diagnosed.data.diagnosis.blockingRules.some(item => item.includes('王明')));
     } finally {
         await new Promise(resolve => server.close(resolve));
         if (previousDataDir === undefined) {

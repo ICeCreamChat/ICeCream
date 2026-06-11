@@ -349,6 +349,91 @@ test('timetable 智能 rule acceptance reuses saved rules response instead of ex
   assert.doesNotMatch(controllerSource, /async acceptAllRules\([\s\S]*await this\.refreshProject\(\);/);
 });
 
+test('timetable legacy bulk 智能 rule acceptance keeps review-only drafts pending', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), body });
+    if (String(url).endsWith('/rules/normalize')) {
+      assert.deepEqual(body.draftRows.map(row => row.id), ['auto-1']);
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            success: true,
+            data: {
+              draftRows: [{ id: 'auto-1', status: 'effective' }],
+              draftRules: { hardRules: { teacherUnavailable: { t1: ['3-5'] } }, softRules: {} },
+            },
+          };
+        },
+      };
+    }
+    if (String(url).endsWith('/rules')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            success: true,
+            data: {
+              project: createDefaultTimetableProject({
+                rules: body.rules,
+              }),
+            },
+          };
+        },
+      };
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.project = createDefaultTimetableProject();
+    controller.state.pendingRules = [{
+      id: 'auto-1',
+      type: 'teacher_unavailable',
+      targetType: 'teacher',
+      targetId: 't1',
+      targetName: 'Teacher 1',
+      slots: ['3-5'],
+      priority: 'hard',
+      status: 'effective',
+      confidence: 0.91,
+      warnings: [],
+    }, {
+      id: 'review-1',
+      type: 'teacher_unavailable',
+      targetType: 'teacher',
+      targetName: 'Teacher',
+      slots: ['3-5'],
+      priority: 'hard',
+      status: 'needs_review',
+      confidence: 0.7,
+      warnings: ['存在多个候选教师'],
+    }, {
+      id: 'unsupported-1',
+      type: 'teacher_free_period_compact',
+      targetType: 'global',
+      status: 'unsupported',
+      confidence: 0.9,
+      warnings: [],
+    }];
+
+    await controller.acceptAllRules();
+
+    assert.ok(calls.some(call => call.url.endsWith('/rules/normalize')));
+    assert.ok(calls.some(call => call.url.endsWith('/rules')));
+    assert.deepEqual(controller.state.pendingRules.map(row => row.id), ['review-1', 'unsupported-1']);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('timetable successful data and rule mutations clear stale solve failure state', async () => {
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
   const mutatingMethods = [
@@ -3822,6 +3907,38 @@ test('timetable rule review keeps parsed drafts inside the modal and preserves t
   assert.equal(controller.state.ruleReview.draftRows.length, 2);
 });
 
+test('timetable rule review shows all-teacher limit targets instead of an unmatched teacher dropdown', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      draftRows: [{
+        id: 'all-teachers-limit',
+        rawText: '每位教师每天授课量尽量均衡，单日不超过4节',
+        type: 'teacher_daily_limit',
+        targetType: 'teacher',
+        targetName: '全部教师',
+        targetId: '',
+        limit: 4,
+        priority: 'soft',
+        status: 'effective',
+        confidence: 0.9,
+        warnings: [],
+      }],
+      warnings: [],
+    },
+  }));
+
+  const row = html.match(/<tr class="tt-rule-review-row[^"]*" data-rule-review-row="all-teachers-limit">([\s\S]*?)<\/tr>/)?.[1] || '';
+
+  assert.match(row, /value="全部教师"/);
+  assert.match(row, /data-rule-review-field="targetType" value="all_teachers"/);
+  assert.match(row, /data-rule-review-field="targetId" value="__all_teachers"/);
+  assert.doesNotMatch(row, /data-rule-target-select/);
+  assert.doesNotMatch(row, /<option value="">未选择<\/option>/);
+});
+
 test('timetable 智能 rules sidebar renders roster-style card entry while examples and file upload stay in the modal', async () => {
   const viewSource = await readFile(new URL('view.js', moduleRoot), 'utf8');
   const state = sampleWorkbenchState({
@@ -4018,6 +4135,215 @@ test('timetable rule review explains warning groups and draft row sources separa
   assert.match(styles, /\.tt-rule-review-report\s*{/);
   assert.match(styles, /\.tt-rule-warning--info\s*{/);
   assert.match(styles, /\.tt-rule-row-source\s*{/);
+});
+
+test('timetable rule review groups smart parse results by readiness and questions', async () => {
+  const styles = await readFile(stylePath, 'utf8');
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputType: 'text',
+      nextAction: 'ask_user',
+      autoAcceptable: [{
+        id: 'auto-1',
+        rawText: '数学尽量上午',
+        type: 'subject_morning',
+        targetName: '数学',
+        targetId: 'math',
+        priority: 'soft',
+        status: 'effective',
+        confidence: 0.93,
+        description: '数学优先上午',
+      }],
+      needReview: [{
+        id: 'review-1',
+        rawText: '王老师周三下午不要排',
+        type: 'teacher_unavailable',
+        targetName: '王老师',
+        priority: 'hard',
+        status: 'needs_review',
+        confidence: 0.62,
+        warnings: ['存在多个候选教师'],
+      }],
+      clarifyingQuestions: [{
+        id: 'q_1',
+        question: '你说的王老师是哪一位？',
+        reason: '存在多个同姓教师',
+        options: [
+          { label: '王明', value: 't_wang_ming' },
+          { label: '王华', value: 't_wang_hua' },
+        ],
+        relatedRuleIds: ['review-1'],
+      }],
+      missingInfo: [{ id: 'm_1', message: '没有找到物理这门课', relatedRuleIds: ['review-2'] }],
+      conflicts: [{ level: 'blocking', message: '李老师不可排与锁定课节冲突', suggestion: '取消其中一个硬约束。', relatedRuleIds: ['lock-1'] }],
+      unsupportedItems: [{ id: 'u_1', type: 'teacher_free_period_compact', targetName: '全部教师', description: '当前仅作为建议。' }],
+      confidenceSummary: { high: 1, medium: 1, low: 0 },
+      draftRows: [{
+        id: 'auto-1',
+        rawText: '数学尽量上午',
+        type: 'subject_morning',
+        targetType: 'subject',
+        targetName: '数学',
+        targetId: 'math',
+        priority: 'soft',
+        status: 'effective',
+        confidence: 0.93,
+        warnings: [],
+      }, {
+        id: 'review-1',
+        rawText: '王老师周三下午不要排',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetName: '王老师',
+        priority: 'hard',
+        status: 'needs_review',
+        confidence: 0.62,
+        warnings: ['存在多个候选教师'],
+      }],
+      warnings: [],
+    },
+  }));
+
+  assert.match(html, /智能建议总览/);
+  assert.match(html, /已识别/);
+  assert.match(html, /可直接生效/);
+  assert.match(html, /需要补充信息/);
+  assert.match(html, /你说的王老师是哪一位/);
+  assert.match(html, /data-rule-question-answer="q_1"/);
+  assert.match(html, /id="tt-continue-rule-conversation"/);
+  assert.match(html, /id="tt-apply-auto-rules"/);
+  assert.match(html, /需要复核/);
+  assert.match(html, /冲突与风险/);
+  assert.match(html, /李老师不可排与锁定课节冲突/);
+  assert.match(html, /暂不支持/);
+  assert.match(html, /teacher_free_period_compact/);
+
+  assert.match(styles, /\.tt-rule-review-overview\s*{/);
+  assert.match(styles, /\.tt-rule-review-group\s*{/);
+  assert.match(styles, /\.tt-rule-conflict--blocking\s*{/);
+});
+
+test('timetable rule review can clarify questions and request rule diagnosis', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), body: options.body ? JSON.parse(options.body) : null });
+    if (String(url).endsWith('/rules/clarify')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            success: true,
+            data: {
+              draftRows: [{
+                id: 'review-1',
+                type: 'teacher_unavailable',
+                targetType: 'teacher',
+                targetId: 't_wang_hua',
+                targetName: '王华',
+                slots: ['3-5'],
+                priority: 'hard',
+                status: 'effective',
+                confidence: 0.9,
+                warnings: [],
+              }],
+              autoAcceptable: [{ id: 'review-1', status: 'effective' }],
+              needReview: [],
+              warnings: [],
+              unsupportedItems: [],
+              nextAction: 'ready_to_apply',
+            },
+          };
+        },
+      };
+    }
+    if (String(url).endsWith('/rules/diagnose')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            success: true,
+            data: {
+              diagnosis: {
+                summary: '当前约束没有明显无解风险。',
+                blockingRules: [],
+                suggestedRelaxations: ['可以继续试排。'],
+                questions: [],
+              },
+            },
+          };
+        },
+      };
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.state.project = createDefaultTimetableProject({
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [
+        { id: 't_wang_ming', name: '王明', subjects: ['math'], unavailableSlots: [] },
+        { id: 't_wang_hua', name: '王华', subjects: ['math'], unavailableSlots: [] },
+      ],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: '数学', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_wang_hua', weeklyHours: 3 }],
+    });
+    controller.state.ruleReview = {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      draftRows: [{
+        id: 'review-1',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetName: '王老师',
+        slots: ['3-5'],
+        priority: 'hard',
+        status: 'needs_review',
+        confidence: 0.7,
+        warnings: ['存在多个候选教师'],
+      }],
+      clarifyingQuestions: [{
+        id: 'q_review-1_target',
+        question: '你说的王老师是哪一位？',
+        options: [{ label: '王华', value: 't_wang_hua' }],
+      }],
+    };
+    controller.state.container = {
+      innerHTML: '',
+      querySelectorAll(selector) {
+        if (selector === '[data-rule-question-answer]') {
+          return [{
+            dataset: { ruleQuestionAnswer: 'q_review-1_target' },
+            value: 't_wang_hua',
+            selectedIndex: 0,
+            options: [{ textContent: '王华' }],
+          }];
+        }
+        return [];
+      },
+      querySelector() { return null; },
+    };
+    controller.render = () => {};
+
+    await controller.continueRuleConversation();
+    assert.ok(calls.some(call => call.url.endsWith('/rules/clarify')));
+    assert.equal(controller.state.ruleReview.draftRows[0].targetId, 't_wang_hua');
+
+    await controller.diagnoseRules();
+    assert.ok(calls.some(call => call.url.endsWith('/rules/diagnose')));
+    assert.equal(controller.state.ruleReview.diagnosis.summary, '当前约束没有明显无解风险。');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('timetable rule review table aligns controls with fixed helper rows', async () => {

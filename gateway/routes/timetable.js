@@ -20,6 +20,8 @@ import {
     validateTimetablePublication,
 } from '../services/timetable-scheduler.js';
 import {
+    continueTimetableRuleConversation,
+    diagnoseTimetableRules,
     normalizeTimetableRuleDraftRows,
     parseTimetableRules,
     TimetableRuleParseError,
@@ -454,6 +456,44 @@ router.post('/rules/normalize', async (req, res) => {
         fail(res, error, 400, {
             project: current,
             reason: 'rules_normalize_failed',
+        });
+    }
+});
+
+router.post('/rules/clarify', async (req, res) => {
+    let current = null;
+    try {
+        current = await store().loadProject();
+        const result = continueTimetableRuleConversation({
+            project: current,
+            draftRows: req.body?.draftRows || [],
+            answers: req.body?.answers || [],
+            inputType: req.body?.inputType || 'clarification',
+            contextStats: req.body?.contextStats || null,
+        });
+        ok(res, result);
+    } catch (error) {
+        fail(res, error, 400, {
+            project: current,
+            reason: 'rules_clarify_failed',
+        });
+    }
+});
+
+router.post('/rules/diagnose', async (req, res) => {
+    let current = null;
+    try {
+        current = await store().loadProject();
+        const diagnosis = diagnoseTimetableRules({
+            project: current,
+            draftRows: req.body?.draftRows || [],
+            solverFailure: req.body?.solverFailure || current.schedule?.solverStats || null,
+        });
+        ok(res, { diagnosis });
+    } catch (error) {
+        fail(res, error, 400, {
+            project: current,
+            reason: 'rules_diagnose_failed',
         });
     }
 });
