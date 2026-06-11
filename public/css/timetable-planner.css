@@ -862,7 +862,10 @@ button.tt-section-title {
 .tt-rule-review-dialog {
     display: grid;
     gap: var(--tt-space-md);
-    width: min(640px, 100%);
+    box-sizing: border-box;
+    width: max-content;
+    min-width: min(640px, calc(100vw - 48px));
+    max-width: calc(100vw - 48px);
     max-height: min(720px, calc(100vh - 48px));
     overflow: auto;
     padding: var(--tt-space-md);
@@ -876,7 +879,9 @@ button.tt-section-title {
 .tt-publish-dialog {
     display: grid;
     gap: var(--tt-space-md);
-    width: min(560px, 100%);
+    box-sizing: border-box;
+    width: min(560px, calc(100vw - 48px));
+    max-width: calc(100vw - 48px);
     max-height: min(720px, calc(100vh - 48px));
     overflow: auto;
     padding: var(--tt-space-md);
@@ -888,7 +893,7 @@ button.tt-section-title {
 }
 
 .tt-rule-review-dialog {
-    width: min(1120px, 100%);
+    min-width: min(820px, calc(100vw - 48px));
 }
 
 .tt-publish-summary {
@@ -2262,7 +2267,9 @@ button.tt-section-title {
 }
 
 .tt-publication-history-dialog {
-    width: min(720px, 100%);
+    width: max-content;
+    min-width: min(720px, calc(100vw - 48px));
+    max-width: calc(100vw - 48px);
 }
 
 .tt-publication-history-detail {
@@ -2431,8 +2438,12 @@ button.tt-section-title {
     }
 
     .tt-roster-import-dialog,
-    .tt-rule-review-dialog {
+    .tt-rule-review-dialog,
+    .tt-publish-dialog,
+    .tt-publication-history-dialog {
         width: 100%;
+        min-width: 0;
+        max-width: 100%;
         max-height: calc(100vh - 20px);
         border-radius: var(--tt-radius-lg) var(--tt-radius-lg) var(--tt-radius-md) var(--tt-radius-md);
     }

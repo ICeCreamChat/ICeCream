@@ -1759,6 +1759,212 @@ test('timetable API exposes bootstrap, project save, import and scheduling flow'
     }
 });
 
+test('timetable API supports the full school workflow from roster review to publish export and restore', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-school-workflow-'));
+    process.env.TIMEFOLD_SOLVER_URL = '';
+    resetTimetableOptimizationJobs();
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    const postJson = async (pathName, body = {}) => {
+        const response = await fetch(`${baseUrl}${pathName}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const payload = await response.json();
+        return { response, payload };
+    };
+
+    try {
+        const projectSetup = await postJson('/api/tools/timetable/project', {
+            activeWeekdays: [1, 2, 3, 4, 5],
+            activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        });
+        assert.equal(projectSetup.response.status, 200);
+        assert.deepEqual(projectSetup.payload.data.project.activeWeekdays, [1, 2, 3, 4, 5]);
+        assert.deepEqual(projectSetup.payload.data.project.activePeriods, [1, 2, 3, 4, 5, 6, 7]);
+
+        const preview = await postJson('/api/tools/timetable/roster/preview', {
+            text: [
+                'grade,class,subject,teacher,hours,block,room,category,tags',
+                'G7,1,Chinese,Ms Lin,4,single,Room 101,core,main',
+                'G7,1,Math,Mr Chen,4,single,Room 101,core,main',
+                'G7,1,PE,Coach Zhou,2,double,Playground,activity,sport',
+                'G7,2,Chinese,Ms Lin,4,single,Room 102,core,main',
+                'G7,2,Math,Mr Chen,4,single,Room 102,core,main',
+                'G7,2,PE,Coach Zhou,2,double,Playground,activity,sport',
+            ].join('\n'),
+        });
+        assert.equal(preview.response.status, 200);
+        assert.equal(preview.payload.success, true);
+        assert.equal(preview.payload.data.stats.classCount, 2);
+        assert.equal(preview.payload.data.stats.teacherCount, 3);
+        assert.equal(preview.payload.data.stats.totalLessons, 20);
+        assert.equal(preview.payload.data.hasBlockingIssues, false);
+
+        const imported = await postJson('/api/tools/timetable/roster/import', {
+            rows: preview.payload.data.draftRows,
+        });
+        assert.equal(imported.response.status, 200);
+        assert.equal(imported.payload.data.project.lessonPlans.length, 6);
+        assert.equal(imported.payload.data.project.schedule, null);
+
+        const rules = await postJson('/api/tools/timetable/rules/normalize', {
+            source: 'school_workflow_review',
+            inputType: 'manual',
+            draftRows: [{
+                id: 'workflow_rule_1',
+                rawText: 'Chinese and Math should be in the morning.',
+                type: 'subject_preferred_periods',
+                targetType: 'subject',
+                subjectName: 'Chinese',
+                targetName: 'Chinese',
+                slots: ['1-1', '1-2', '1-3', '2-1', '2-2', '2-3', '3-1', '3-2', '3-3', '4-1', '4-2', '4-3', '5-1', '5-2', '5-3'],
+                priority: 'soft',
+                status: 'effective',
+            }, {
+                id: 'workflow_rule_2',
+                rawText: 'Mr Chen cannot teach on Monday first period.',
+                type: 'teacher_unavailable',
+                targetType: 'teacher',
+                teacherName: 'Mr Chen',
+                targetName: 'Mr Chen',
+                slots: ['1-1'],
+                priority: 'hard',
+                status: 'effective',
+            }],
+        });
+        assert.equal(rules.response.status, 200);
+        assert.equal(
+            Object.values(rules.payload.data.draftRules.hardRules.teacherUnavailable || {})
+                .some(slots => slots.includes('1-1')),
+            true,
+        );
+
+        const savedRules = await postJson('/api/tools/timetable/rules', rules.payload.data.draftRules);
+        assert.equal(savedRules.response.status, 200);
+        assert.equal(savedRules.payload.data.project.schedule, null);
+
+        const run = await fetch(`${baseUrl}/api/tools/timetable/schedule/run`, { method: 'POST' }).then(async response => ({
+            response,
+            payload: await response.json(),
+        }));
+        assert.equal(run.response.status, 200);
+        assert.equal(run.payload.success, true);
+        assert.equal(run.payload.data.schedule.source, 'fast_constructed');
+        assert.equal(run.payload.data.schedule.score.hardConflicts, 0);
+        assert.equal(run.payload.data.schedule.score.unplacedLessons, 0);
+        assert.equal(run.payload.data.schedule.score.totalLessons, 20);
+        assert.equal(run.payload.data.schedule.publication.ok, true);
+        assert.equal(run.payload.data.solverJob, null);
+
+        const publish = await postJson('/api/tools/timetable/schedule/publish', {
+            note: 'school workflow acceptance publish',
+        });
+        assert.equal(publish.response.status, 200);
+        assert.equal(publish.payload.data.schedule.source, 'published');
+        assert.equal(publish.payload.data.schedule.published.status, 'published');
+        assert.equal(publish.payload.data.schedule.published.version, 1);
+        assert.equal(publish.payload.data.schedule.published.snapshot.slotCount, 20);
+        assert.equal(publish.payload.data.schedule.publication.ok, true);
+
+        const officialExport = await fetch(`${baseUrl}/api/tools/timetable/export`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'master' }),
+        });
+        assert.equal(officialExport.status, 200);
+        assert.match(officialExport.headers.get('content-type') || '', /spreadsheetml\.sheet/);
+        const officialWorkbook = new AdmZip(Buffer.from(await officialExport.arrayBuffer()));
+        assert.ok(officialWorkbook.getEntry('xl/workbook.xml'));
+
+        const publishedProject = publish.payload.data.project;
+        const movedSlot = publishedProject.schedule.slots.find(slot => !slot.blockId || Number(slot.blockSize || 1) <= 1);
+        assert.ok(movedSlot, 'expected at least one movable single-period slot');
+        let target = null;
+        for (const day of publishedProject.activeWeekdays) {
+            for (const period of publishedProject.activePeriods) {
+                if (day === movedSlot.day && period === movedSlot.period) continue;
+                try {
+                    const previewMove = applyScheduleAdjustment(publishedProject, {
+                        type: 'move',
+                        slotId: movedSlot.id,
+                        day,
+                        period,
+                    });
+                    if (previewMove.success) {
+                        target = { day, period };
+                        break;
+                    }
+                } catch {
+                    // Try the next candidate cell.
+                }
+            }
+            if (target) break;
+        }
+        assert.ok(target, 'expected a valid manual adjustment target');
+        const manualAdjust = await postJson('/api/tools/timetable/schedule/adjust', {
+            type: 'move',
+            slotId: movedSlot.id,
+            day: target.day,
+            period: target.period,
+        });
+        assert.equal(manualAdjust.response.status, 200);
+        assert.equal(manualAdjust.payload.data.project.schedule.source, 'manual_adjusted');
+        assert.equal(manualAdjust.payload.data.project.schedule.published.status, 'draft_changed');
+
+        const blockedOfficialExport = await fetch(`${baseUrl}/api/tools/timetable/export`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'master' }),
+        });
+        const blockedPayload = await blockedOfficialExport.json();
+        assert.equal(blockedOfficialExport.status, 422);
+        assert.equal(blockedPayload.data.reason, 'publication_draft_changed');
+
+        const publishedSnapshotExport = await fetch(`${baseUrl}/api/tools/timetable/export`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'published_master' }),
+        });
+        assert.equal(publishedSnapshotExport.status, 200);
+        assert.ok(new AdmZip(Buffer.from(await publishedSnapshotExport.arrayBuffer())).getEntry('xl/workbook.xml'));
+
+        const restore = await postJson('/api/tools/timetable/schedule/published/restore');
+        assert.equal(restore.response.status, 200);
+        assert.equal(restore.payload.data.schedule.source, 'published_history_restored');
+        assert.equal(restore.payload.data.schedule.slots.length, 20);
+        assert.equal(restore.payload.data.schedule.publication.ok, true);
+        assert.equal(restore.payload.data.schedule.solverStats.phase, 'published_history_restore');
+        assert.equal(restore.payload.data.schedule.solverStats.status, 'restored');
+        assert.equal(restore.payload.data.schedule.solverStats.accepted, true);
+        assert.equal(restore.payload.data.schedule.published.status, 'draft_changed');
+        assert.ok(restore.payload.data.schedule.publication.warnings.some(issue => issue.type === 'restored_published_draft'));
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+        if (previousSolverUrl === undefined) {
+            delete process.env.TIMEFOLD_SOLVER_URL;
+        } else {
+            process.env.TIMEFOLD_SOLVER_URL = previousSolverUrl;
+        }
+    }
+});
+
 test('timetable roster preview does not save and reviewed rows replace the saved roster', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-roster-review-'));

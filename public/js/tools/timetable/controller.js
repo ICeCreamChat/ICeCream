@@ -82,7 +82,30 @@ export class TimetablePlannerController {
             this.state.dragBlockId = '';
         }
         this.syncPublicationDialogState();
+        this.syncPublishDialogState();
         this.syncRangeDraftFromProject();
+    }
+
+    resetPublishDialog() {
+        this.state.publishDialog = { open: false, note: '', loading: false };
+    }
+
+    isSchedulePublicationReady(project = this.state.project) {
+        const schedule = project?.schedule || null;
+        if (!schedule || !(schedule.slots || []).length) return false;
+        const publication = schedule.publication || null;
+        if (publication && publication.ok === false) return false;
+        const summary = publication?.summary || schedule.score || {};
+        const hardConflicts = Number(summary.hardConflicts ?? schedule.score?.hardConflicts ?? (schedule.conflicts || []).length ?? 0);
+        const unplacedLessons = Number(summary.unplacedLessons ?? schedule.score?.unplacedLessons ?? (schedule.unplaced || []).length ?? 0);
+        return hardConflicts === 0 && unplacedLessons === 0;
+    }
+
+    syncPublishDialogState() {
+        if (!this.state.publishDialog?.open) return;
+        if (!this.isSchedulePublicationReady()) {
+            this.resetPublishDialog();
+        }
     }
 
     syncPublicationDialogState() {
@@ -850,12 +873,19 @@ export class TimetablePlannerController {
         }, 1200);
     }
 
+    isCurrentOptimizationJob(jobId) {
+        return Boolean(jobId && this.state.solverJob?.jobId === jobId);
+    }
+
     async refreshOptimizationJob(jobId) {
+        if (!this.isCurrentOptimizationJob(jobId)) return;
         try {
             const result = await requestTimetable(`/schedule/jobs/${encodeURIComponent(jobId)}`);
+            if (!this.isCurrentOptimizationJob(jobId) || result.job?.jobId !== jobId) return;
             this.state.solverJob = result.job;
             if (result.job.status === 'completed' && result.job.accepted) {
                 const data = await requestTimetable('/bootstrap');
+                if (!this.isCurrentOptimizationJob(jobId)) return;
                 this.applyProject(data.project);
                 this.state.message = 'Timefold 优化已应用。';
                 this.state.lastFailure = null;
@@ -869,7 +899,9 @@ export class TimetablePlannerController {
             this.render();
             this.startOptimizationPolling(result.job);
         } catch {
-            this.clearOptimizationPolling();
+            if (this.isCurrentOptimizationJob(jobId)) {
+                this.clearOptimizationPolling();
+            }
         }
     }
 
@@ -1533,6 +1565,11 @@ export class TimetablePlannerController {
     }
 
     openPublishDialog() {
+        if (!this.isSchedulePublicationReady()) {
+            this.resetPublishDialog();
+            this.setMessage('当前课表还不能发布，请先处理未排课时或硬冲突。');
+            return;
+        }
         this.state.publishDialog = {
             open: true,
             note: this.state.project?.schedule?.published?.note || '',
@@ -1551,9 +1588,19 @@ export class TimetablePlannerController {
     }
 
     openPublicationHistoryDialog(version) {
+        const parsedVersion = Number.parseInt(version, 10);
+        const historyEntry = (this.state.project?.schedule?.published?.history || [])
+            .find(item => Number.parseInt(item?.version, 10) === parsedVersion);
+        if (!Number.isInteger(parsedVersion) || !historyEntry) {
+            this.state.publicationHistoryDialog = { open: false, version: null };
+            this.setMessage(Number.isInteger(parsedVersion)
+                ? `发布历史 V${parsedVersion} 不存在，无法查看。`
+                : '请选择要查看的发布历史版本。');
+            return;
+        }
         this.state.publicationHistoryDialog = {
             open: true,
-            version: Number.parseInt(version, 10),
+            version: parsedVersion,
         };
         this.render();
     }
@@ -1716,6 +1763,11 @@ export class TimetablePlannerController {
 
     async confirmPublishSchedule() {
         this.updatePublishNote();
+        if (!this.isSchedulePublicationReady()) {
+            this.resetPublishDialog();
+            this.setMessage('当前课表还不能发布，请先处理未排课时或硬冲突。');
+            return;
+        }
         this.state.publishDialog = {
             ...(this.state.publishDialog || {}),
             loading: true,

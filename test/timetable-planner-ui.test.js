@@ -251,6 +251,86 @@ test('timetable optimization polling success clears stale solve failure state', 
   assert.match(controllerSource, /async refreshOptimizationJob\([\s\S]*else if \(result\.job\.status === 'failed'\)[\s\S]*this\.state\.lastFailure = null;/);
 });
 
+test('timetable optimization polling ignores stale job responses after manual state changes', async () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.solverJob = { jobId: 'job-old', status: 'running' };
+  controller.state.message = '手动调整中';
+  let resolveJobResponse;
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async url => {
+    requests.push(String(url));
+    await new Promise(resolve => {
+      resolveJobResponse = resolve;
+    });
+    return {
+      ok: true,
+      async json() {
+        return {
+          success: true,
+          data: {
+            job: { jobId: 'job-old', status: 'completed', accepted: false, reason: 'not_better' },
+          },
+        };
+      },
+    };
+  };
+
+  try {
+    const refreshPromise = controller.refreshOptimizationJob('job-old');
+    await Promise.resolve();
+    controller.state.solverJob = null;
+    controller.state.message = '已调整。';
+    resolveJobResponse();
+    await refreshPromise;
+
+    assert.deepEqual(requests, ['/api/tools/timetable/schedule/jobs/job-old']);
+    assert.equal(controller.state.solverJob, null);
+    assert.equal(controller.state.message, '已调整。');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('timetable optimization polling still applies current job responses', async () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.startOptimizationPolling = job => {
+    controller._nextPolledJob = job;
+  };
+  controller.state.solverJob = { jobId: 'job-current', status: 'running' };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async url => ({
+    ok: true,
+    async json() {
+      assert.equal(String(url), '/api/tools/timetable/schedule/jobs/job-current');
+      return {
+        success: true,
+        data: {
+          job: { jobId: 'job-current', status: 'completed', accepted: false, reason: 'not_better' },
+        },
+      };
+    },
+  });
+
+  try {
+    await controller.refreshOptimizationJob('job-current');
+
+    assert.deepEqual(controller.state.solverJob, {
+      jobId: 'job-current',
+      status: 'completed',
+      accepted: false,
+      reason: 'not_better',
+    });
+    assert.match(controller.state.message, /快速|课表|保留|蹇/);
+    assert.equal(controller.state.lastFailure, null);
+    assert.equal(controller._nextPolledJob.jobId, 'job-current');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('timetable publish success clears stale solve failure state', async () => {
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
 
@@ -552,6 +632,38 @@ test('timetable applyProject preserves publication dialogs when their target ver
   });
 });
 
+test('timetable applyProject closes an open publish dialog when the new schedule is not ready', () => {
+  const controller = new TimetablePlannerController();
+  controller.state.publishDialog = { open: true, note: 'ready before mutation', loading: false };
+
+  controller.applyProject(createDefaultTimetableProject({
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    schedule: {
+      id: 'blocked-after-mutation',
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [{ lessonPlanId: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+      publication: {
+        ok: false,
+        reason: 'publication_blocked',
+        blockingIssues: [{ type: 'incomplete_schedule', message: 'unplaced lesson' }],
+        warnings: [],
+        reviewItems: [],
+        summary: { totalLessons: 1, placedLessons: 0, unplacedLessons: 1, hardConflicts: 0 },
+      },
+      score: { hardConflicts: 0, unplacedLessons: 1, placedLessons: 0, totalLessons: 1, completeness: 0 },
+    },
+  }));
+
+  assert.deepEqual(controller.state.publishDialog, { open: false, note: '', loading: false });
+});
+
 test('timetable restore dialog refuses missing publication history versions before confirmation', () => {
   const controller = new TimetablePlannerController();
   controller.state.project = createDefaultTimetableProject({
@@ -616,6 +728,35 @@ test('timetable latest restore dialog still opens for legacy published projects 
   assert.equal(controller.state.restoreDialog.mode, 'latest');
   assert.equal(controller.state.restoreDialog.version, 3);
   assert.match(controller.state.restoreDialog.targetLabel, /3/);
+});
+
+test('timetable publication history dialog refuses missing history versions before rendering', () => {
+  const controller = new TimetablePlannerController();
+  controller.state.project = createDefaultTimetableProject({
+    schedule: {
+      id: 'published-current',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'published',
+      slots: [],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 0, totalLessons: 0, completeness: 100 },
+      published: {
+        status: 'published',
+        version: 2,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-current',
+        snapshot: { scheduleId: 'published-current', slotCount: 0, slots: [] },
+        history: [],
+      },
+    },
+  });
+
+  controller.openPublicationHistoryDialog(1);
+
+  assert.deepEqual(controller.state.publicationHistoryDialog, { open: false, version: null });
+  assert.match(controller.state.message, /1/);
 });
 
 test('timetable syncPendingRuleDraftState keeps AI draft review state aligned', () => {
@@ -902,6 +1043,49 @@ test('timetable publish uses a confirmation dialog with editable note', async ()
   assert.doesNotMatch(controllerSource, /JSON\.stringify\(\{\s*note:\s*''\s*\}\)/);
   assert.match(interactionSource, /#tt-publish-schedule[\s\S]*openPublishDialog\(\)/);
   assert.match(interactionSource, /#tt-confirm-publish[\s\S]*confirmPublishSchedule\(\)/);
+});
+
+test('timetable publish dialog refuses schedules that are not publication-ready', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.project = createDefaultTimetableProject({
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 }],
+    schedule: {
+      id: 'not-ready-publish',
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [{
+        id: 'slot-1',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [{ lessonPlanId: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+      publication: {
+        ok: false,
+        reason: 'publication_blocked',
+        blockingIssues: [{ type: 'incomplete_schedule', message: 'unplaced lesson' }],
+        warnings: [],
+        reviewItems: [],
+        summary: { totalLessons: 2, placedLessons: 1, unplacedLessons: 1, hardConflicts: 0 },
+      },
+      score: { hardConflicts: 0, unplacedLessons: 1, placedLessons: 1, totalLessons: 2, completeness: 50 },
+    },
+  });
+
+  controller.openPublishDialog();
+
+  assert.deepEqual(controller.state.publishDialog, { open: false, note: '', loading: false });
+  assert.ok(controller.state.message);
 });
 
 test('timetable restore published actions use a confirmation dialog with overwrite summary', async () => {
@@ -3395,7 +3579,17 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-import-dropzone/);
   assert.match(styles, /\.tt-roster-review-table/);
   assert.match(styles, /\.tt-roster-review-row--error/);
+  assert.match(styles, /\.tt-roster-import-dialog,\s*\n\.tt-rule-review-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
+});
+
+test('timetable dialogs expand to review content on desktop and stay constrained on mobile', async () => {
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(styles, /\.tt-roster-import-dialog,\s*\n\.tt-rule-review-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*min-width:\s*min\(640px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
+  assert.match(styles, /\.tt-rule-review-dialog\s*{[\s\S]*min-width:\s*min\(820px,\s*calc\(100vw - 48px\)\);/);
+  assert.match(styles, /\.tt-publication-history-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*min-width:\s*min\(720px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog,[\s\S]*\.tt-rule-review-dialog,[\s\S]*\.tt-publish-dialog,[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
 });
 
 test('timetable roster import preserves input and review drafts when the modal is reopened', () => {

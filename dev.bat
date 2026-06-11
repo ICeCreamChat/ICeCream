@@ -87,7 +87,7 @@ if "%JAVA_OK%"=="1" (
         echo [WARN] solver\mvnw.cmd not found. Timefold will be disabled.
     )
 ) else (
-    echo [WARN] Java not found. Timefold will be disabled and seating will use local fallback.
+    echo [WARN] Java not found. Timefold will be disabled; timetable and seating will use local fallback.
 )
 
 set "TIMEFOLD_REBUILD=0"
@@ -108,10 +108,16 @@ if "!TIMEFOLD_ENABLED!"=="1" if "!TIMEFOLD_REBUILD!"=="1" (
     pushd "solver"
     call mvnw.cmd -q package -DskipTests
     if errorlevel 1 (
-        echo [WARN] Timefold build failed. Seating will use local fallback.
-        set "TIMEFOLD_ENABLED=0"
+        popd
+        if exist "!TIMEFOLD_JAR!" (
+            echo [WARN] Timefold build failed; reusing existing packaged solver.
+        ) else (
+            echo [WARN] Timefold build failed. Timetable and seating will use local fallback.
+            set "TIMEFOLD_ENABLED=0"
+        )
+    ) else (
+        popd
     )
-    popd
 )
 
 if /i "%~1"=="--check" (

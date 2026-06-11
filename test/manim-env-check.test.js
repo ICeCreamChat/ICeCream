@@ -177,6 +177,14 @@ test('dev.bat rebuilds Timefold when solver sources are newer than the packaged 
   assert.match(devBatch, /solver\\pom\.xml/);
 });
 
+test('dev.bat reuses an existing Timefold package when rebuild fails offline', async () => {
+  const devBatch = await readFile(new URL('../dev.bat', import.meta.url), 'utf8');
+
+  assert.match(devBatch, /if exist "!TIMEFOLD_JAR!"/);
+  assert.match(devBatch, /reusing existing packaged solver/);
+  assert.doesNotMatch(devBatch, /if errorlevel 1 \(\s*echo \[WARN\] Timefold build failed\. Seating will use local fallback\.\s*set "TIMEFOLD_ENABLED=0"/);
+});
+
 test('dev.bat exposes timetable solver timeout defaults without overwriting user settings', async () => {
   const devBatch = await readFile(new URL('../dev.bat', import.meta.url), 'utf8');
   const solverProperties = await readFile(new URL('../solver/src/main/resources/application.properties', import.meta.url), 'utf8');
