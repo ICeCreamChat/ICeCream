@@ -991,6 +991,15 @@ button.tt-section-title {
     color: var(--tt-warning);
 }
 
+.tt-solve-process {
+    margin-top: var(--tt-space-sm);
+}
+
+.tt-solve-toolbar-chip {
+    flex: 0 1 auto;
+    white-space: nowrap;
+}
+
 .tt-import-mode-tabs {
     width: fit-content;
     grid-template-columns: repeat(2, minmax(92px, 1fr));

@@ -3076,16 +3076,22 @@ test('timetable manual-adjusted restored drafts keep restored-published wording 
   assert.match(inspector, /重新发布前建议教务复核/);
 });
 
-test('timetable schedule panel shows local optimization phase while running', () => {
+test('timetable schedule panel shows animated fast-generation progress while running', () => {
   const state = sampleWorkbenchState({
     loading: true,
     solvePhaseText: '局部优化中',
   });
 
   const panel = renderSchedulePanel(state);
+  const workbench = renderWorkbench(state);
 
   assert.match(panel, /局部优化中/);
   assert.match(panel, /loader-2/);
+  assert.match(panel, /class="tt-spin"/);
+  assert.match(panel, /tt-solve-toolbar-chip/);
+  assert.match(workbench, /tt-process-strip tt-solve-process/);
+  assert.match(workbench, /生成课表/);
+  assert.match(workbench, /data-lucide="loader-2" class="tt-spin"/);
 });
 
 test('timetable workbench shows fast generation and background optimization status in Chinese', async () => {

@@ -1422,9 +1422,17 @@ function renderSolveSection(state) {
             <p class="tt-compact-copy">${placed}/${total} 已排 · ${score.hardConflicts ?? 0} 硬冲突</p>
             <p class="tt-compact-copy">${escapeHtml(readinessMessage)}</p>
             ${scaleMessage ? `<p class="tt-compact-copy tt-compact-copy--warn">${escapeHtml(scaleMessage)}</p>` : ''}
-            ${runLabel ? `<p class="tt-compact-copy">${escapeHtml(runLabel)}</p>` : ''}
+            ${runLabel ? `
+                <div class="tt-process-strip tt-solve-process" aria-live="polite">
+                    <span class="tt-process-chip">
+                        <i data-lucide="loader-2" class="tt-spin"></i>
+                        <strong>${escapeHtml(runLabel)}</strong>
+                    </span>
+                    <span class="tt-process-chip tt-process-chip--muted">生成课表</span>
+                </div>
+            ` : ''}
             <button class="tt-btn tt-btn--primary" data-run-schedule type="button" ${state.loading || !readiness.ready ? 'disabled' : ''}>
-                <i data-lucide="${state.loading ? 'loader-2' : 'play'}"></i><span>${state.loading ? '快速生成中' : '快速生成'}</span>
+                <i data-lucide="${state.loading ? 'loader-2' : 'play'}" class="${state.loading ? 'tt-spin' : ''}"></i><span>${state.loading ? '快速生成中' : '快速生成'}</span>
             </button>
         </section>
     `;
@@ -1808,11 +1816,16 @@ export function renderSchedulePanel(state) {
             </div>
             <div class="tt-schedule-actions">
                 ${optimizationLabel ? `<span class="tt-chip ${state.solverJob?.status === 'failed' ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(optimizationLabel)}</span>` : ''}
-                ${runLabel ? `<span class="tt-chip tt-chip--ok">${escapeHtml(runLabel)}</span>` : ''}
+                ${runLabel ? `
+                    <span class="tt-process-chip tt-solve-toolbar-chip" aria-live="polite">
+                        <i data-lucide="loader-2" class="tt-spin"></i>
+                        <strong>${escapeHtml(runLabel)}</strong>
+                    </span>
+                ` : ''}
                 ${solveScaleMessage(state.project) ? `<span class="tt-chip tt-chip--warn">${escapeHtml(solveScaleMessage(state.project))}</span>` : ''}
                 <span class="tt-chip ${readiness.ready || isArchiveOnlyReadyState(state.project) ? 'tt-chip--ok' : 'tt-chip--warn'}">${readiness.ready ? '可生成' : isArchiveOnlyReadyState(state.project) ? '可恢复' : '待准备'}</span>
                 <button class="tt-run-btn" id="tt-run-schedule" type="button" ${state.loading || !readiness.ready ? 'disabled' : ''}>
-                    <i data-lucide="${state.loading ? 'loader-2' : 'play'}"></i><span>${state.loading ? '快速生成中' : '快速生成'}</span>
+                    <i data-lucide="${state.loading ? 'loader-2' : 'play'}" class="${state.loading ? 'tt-spin' : ''}"></i><span>${state.loading ? '快速生成中' : '快速生成'}</span>
                 </button>
             </div>
         </div>
