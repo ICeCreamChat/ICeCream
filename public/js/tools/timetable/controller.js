@@ -556,6 +556,10 @@ export class TimetablePlannerController {
         const pending = this.state.pendingRules || [];
         const rule = pending.find(item => item.id === ruleId);
         if (!rule) return;
+        if (['unsupported', 'invalid', 'suggestion', 'ignored'].includes(rule.status)) {
+            this.setMessage('该约束不能直接生效，请作为建议查看或重新解析。');
+            return;
+        }
         try {
             const normalized = await requestTimetable('/rules/normalize', {
                 method: 'POST',
@@ -593,11 +597,28 @@ export class TimetablePlannerController {
         this.render();
     }
 
-    isAutoAcceptablePendingRule(rule = {}) {
+    isSafeAutoAcceptableRule(rule = {}) {
+        const supportedTypes = new Set([
+            'teacher_unavailable',
+            'class_unavailable',
+            'locked_slot',
+            'subject_morning',
+            'subject_preferred_periods',
+            'subject_avoid_periods',
+            'teacher_daily_limit',
+            'teacher_consecutive_limit',
+            'subject_spread',
+        ]);
         return rule.status === 'effective'
+            && supportedTypes.has(rule.type)
             && Number(rule.confidence || 0) >= 0.85
             && !(rule.warnings || []).length
-            && !['suggestion', 'unsupported', 'invalid', 'needs_review'].includes(rule.status);
+            && !rule.ambiguity
+            && !(rule.ambiguities || []).length;
+    }
+
+    isAutoAcceptablePendingRule(rule = {}) {
+        return this.isSafeAutoAcceptableRule(rule);
     }
 
     async acceptAllRules() {
@@ -1375,7 +1396,12 @@ export class TimetablePlannerController {
     }
 
     async applyAutoAcceptableRules() {
-        const rows = this.state.ruleReview?.autoAcceptable || [];
+        const hasBlockingConflict = (this.state.ruleReview?.conflicts || []).some(item => item.level === 'blocking');
+        if (hasBlockingConflict) {
+            this.setMessage('存在阻塞冲突，请先处理冲突后再一键生效。');
+            return;
+        }
+        const rows = (this.state.ruleReview?.autoAcceptable || []).filter(row => this.isSafeAutoAcceptableRule(row));
         if (!rows.length) {
             this.setMessage('没有可一键生效的高置信度约束。');
             return;

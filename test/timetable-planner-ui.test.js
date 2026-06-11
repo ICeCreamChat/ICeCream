@@ -434,6 +434,87 @@ test('timetable legacy bulk 智能 rule acceptance keeps review-only drafts pend
   }
 });
 
+test('timetable auto-apply only sends safe high-confidence review rows', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), body });
+    if (String(url).endsWith('/rules/normalize')) {
+      assert.deepEqual(body.draftRows.map(row => row.id), ['safe-1']);
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            success: true,
+            data: {
+              draftRows: [{ id: 'safe-1', status: 'effective' }],
+              draftRules: { hardRules: { teacherUnavailable: { t1: ['3-5'] } }, softRules: {} },
+              autoAcceptable: [{ id: 'safe-1', status: 'effective' }],
+              needReview: [],
+              warnings: [],
+              unsupportedItems: [],
+              conflicts: [],
+            },
+          };
+        },
+      };
+    }
+    if (String(url).endsWith('/rules')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            success: true,
+            data: {
+              project: createDefaultTimetableProject({
+                rules: body.rules,
+              }),
+            },
+          };
+        },
+      };
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.project = createDefaultTimetableProject();
+    controller.state.ruleReview = {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      draftRows: [
+        { id: 'safe-1', status: 'effective', type: 'teacher_unavailable', confidence: 0.91, warnings: [] },
+        { id: 'review-1', status: 'needs_review', type: 'teacher_unavailable', confidence: 0.91, warnings: [] },
+        { id: 'low-1', status: 'effective', type: 'teacher_unavailable', confidence: 0.7, warnings: [] },
+        { id: 'suggestion-1', status: 'suggestion', type: 'teacher_load_balance', confidence: 0.95, warnings: [] },
+      ],
+      autoAcceptable: [
+        { id: 'safe-1', status: 'effective', type: 'teacher_unavailable', confidence: 0.91, warnings: [] },
+        { id: 'review-1', status: 'needs_review', type: 'teacher_unavailable', confidence: 0.91, warnings: [] },
+        { id: 'low-1', status: 'effective', type: 'teacher_unavailable', confidence: 0.7, warnings: [] },
+        { id: 'suggestion-1', status: 'suggestion', type: 'teacher_load_balance', confidence: 0.95, warnings: [] },
+      ],
+      needReview: [],
+      warnings: [],
+      unsupportedItems: [],
+      conflicts: [],
+    };
+
+    await controller.applyAutoAcceptableRules();
+
+    assert.ok(calls.some(call => call.url.endsWith('/rules/normalize')));
+    assert.ok(calls.some(call => call.url.endsWith('/rules')));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('timetable successful data and rule mutations clear stale solve failure state', async () => {
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
   const mutatingMethods = [
@@ -4248,8 +4329,33 @@ test('timetable rule review does not render empty candidate questions as blank s
   }));
 
   assert.match(html, /Which all-teacher object/);
-  assert.doesNotMatch(html, /data-rule-question-answer="q_empty"/);
+  assert.match(html, /<input[^>]*data-rule-question-answer="q_empty"/);
   assert.doesNotMatch(html, /<select[^>]*data-rule-question-answer="q_empty"/);
+});
+
+test('timetable rule review disables auto apply when blocking conflicts exist', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      autoAcceptable: [{
+        id: 'auto-1',
+        type: 'subject_morning',
+        targetName: '数学',
+        status: 'effective',
+        confidence: 0.92,
+        warnings: [],
+      }],
+      draftRows: [],
+      needReview: [],
+      conflicts: [{ level: 'blocking', message: '锁定课节与教师不可用冲突。' }],
+      warnings: [],
+      unsupportedItems: [],
+    },
+  }));
+
+  assert.match(html, /id="tt-apply-auto-rules"[^>]*disabled/);
 });
 
 test('timetable rule review can clarify questions and request rule diagnosis', async () => {

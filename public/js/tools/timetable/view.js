@@ -1273,6 +1273,7 @@ function renderRuleReviewTable(dialog, project = {}) {
         ${renderRuleReviewOverview(dialog)}
         ${renderClarifyingQuestions(dialog)}
         ${renderAutoAcceptableRules(dialog)}
+        ${renderNeedReviewRules(dialog)}
         ${renderRuleConflictSection(dialog)}
         ${renderUnsupportedRuleItems(dialog)}
         ${renderRuleDiagnosis(dialog)}
@@ -1381,10 +1382,10 @@ function renderClarifyingQuestions(dialog = {}) {
         ...question,
         options: normalizeQuestionOptions(question.options),
     }));
-    const answerableQuestions = questions.filter(question => question.options.length);
-    const emptyQuestions = questions.filter(question => !question.options.length);
+    const answerableQuestions = questions;
+    const emptyQuestions = [];
     const missing = dialog.missingInfo || [];
-    if (!answerableQuestions.length && !emptyQuestions.length && !missing.length) return '';
+    if (!questions.length && !missing.length) return '';
     return `
         <section class="tt-rule-review-group tt-rule-review-group--question">
             <div class="tt-rule-review-group-title">
@@ -1392,7 +1393,7 @@ function renderClarifyingQuestions(dialog = {}) {
                 <strong>需要补充信息</strong>
                 <span>${questions.length + missing.length} 条</span>
             </div>
-            ${answerableQuestions.map(question => `
+            ${questions.map(question => `
                 <div class="tt-rule-question">
                     <strong>${escapeHtml(question.question || '请补充信息')}</strong>
                     ${question.reason ? `<span>${escapeHtml(question.reason)}</span>` : ''}
@@ -1428,6 +1429,7 @@ function renderClarifyingQuestions(dialog = {}) {
 function renderAutoAcceptableRules(dialog = {}) {
     const rows = dialog.autoAcceptable || [];
     if (!rows.length) return '';
+    const blocked = (dialog.conflicts || []).some(item => item.level === 'blocking');
     return `
         <section class="tt-rule-review-group tt-rule-review-group--auto">
             <div class="tt-rule-review-group-title">
@@ -1439,9 +1441,28 @@ function renderAutoAcceptableRules(dialog = {}) {
                 ${rows.slice(0, 5).map(row => renderRuleMiniItem(row)).join('')}
                 ${rows.length > 5 ? `<span class="tt-muted">还有 ${escapeHtml(rows.length - 5)} 条可在下方表格查看。</span>` : ''}
             </div>
-            <button class="tt-btn tt-btn--primary tt-btn--sm" id="tt-apply-auto-rules" type="button">
+            <button class="tt-btn tt-btn--primary tt-btn--sm" id="tt-apply-auto-rules" type="button" ${blocked ? 'disabled' : ''}>
                 <i data-lucide="check-check"></i><span>一键应用这些高置信度约束</span>
             </button>
+        </section>
+    `;
+}
+
+function renderNeedReviewRules(dialog = {}) {
+    const rows = dialog.needReview || [];
+    if (!rows.length) return '';
+    return `
+        <section class="tt-rule-review-group tt-rule-review-group--review">
+            <div class="tt-rule-review-group-title">
+                <i data-lucide="edit-3"></i>
+                <strong>需要复核</strong>
+                <span>${rows.length} 条</span>
+            </div>
+            <p class="tt-muted">这些约束需要在下方复核表确认对象、节次或置信度。</p>
+            <div class="tt-rule-mini-list">
+                ${rows.slice(0, 6).map(row => renderRuleMiniItem(row)).join('')}
+                ${rows.length > 6 ? `<span class="tt-muted">还有 ${escapeHtml(rows.length - 6)} 条可在下方表格查看。</span>` : ''}
+            </div>
         </section>
     `;
 }

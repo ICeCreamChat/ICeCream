@@ -444,9 +444,11 @@ function entityNamesForMatch(item = {}, targetType = '') {
 function candidatePreview(item = {}, targetType = '', confidence = 0) {
     return {
         id: item.id || '',
+        name: item.name || entityLabel(item) || item.id || '',
         label: targetType === 'class' ? entityLabel(item) : (item.name || entityLabel(item) || item.id || ''),
         type: targetType,
         confidence,
+        score: confidence,
     };
 }
 
@@ -489,31 +491,34 @@ function matchEntityCandidates(project = {}, targetText = '', targetType = '', {
     if (!items.length || (!query && !targetId)) return { candidates: [], confidence: 0, targetText: query };
 
     const scored = new Map();
-    const add = (item, confidence) => {
+    const add = (item, confidence, matchType = 'fuzzy') => {
         if (!item?.id) return;
         const current = scored.get(item.id);
         if (!current || confidence > current.confidence) {
-            scored.set(item.id, candidatePreview(item, targetType, confidence));
+            scored.set(item.id, {
+                ...candidatePreview(item, targetType, confidence),
+                matchType,
+            });
         }
     };
 
     if (targetId) {
         const exactId = items.find(item => item.id === targetId);
-        if (exactId) add(exactId, 1);
+        if (exactId) add(exactId, 1, 'exact');
     }
 
     const normalizedQuery = normalizeEntityName(query);
     for (const item of items) {
         const names = entityNamesForMatch(item, targetType);
-        if (names.some(name => name === query)) add(item, 1);
-        if (normalizedQuery && names.map(normalizeEntityName).some(name => name === normalizedQuery)) add(item, 0.96);
+        if (names.some(name => name === query)) add(item, 1, 'exact');
+        if (normalizedQuery && names.map(normalizeEntityName).some(name => name === normalizedQuery)) add(item, 0.96, 'normalized');
     }
 
     if (normalizedQuery) {
         for (const item of items) {
             const names = entityNamesForMatch(item, targetType).map(normalizeEntityName).filter(Boolean);
             if (names.some(name => name.includes(normalizedQuery) || normalizedQuery.includes(name))) {
-                add(item, normalizedQuery.length <= 2 ? 0.72 : 0.82);
+                add(item, normalizedQuery.length <= 2 ? 0.72 : 0.82, 'contains');
             }
         }
     }
@@ -525,7 +530,7 @@ function matchEntityCandidates(project = {}, targetText = '', targetType = '', {
                 const teacherName = normalizeEntityName(item.name || '');
                 if (!teacherName) continue;
                 if (stem.length === 1 ? teacherName.startsWith(stem) : teacherName.includes(stem)) {
-                    add(item, stem.length === 1 ? 0.72 : 0.86);
+                    add(item, stem.length === 1 ? 0.72 : 0.86, 'fuzzy');
                 }
             }
         }
@@ -537,8 +542,10 @@ function matchEntityCandidates(project = {}, targetText = '', targetType = '', {
     });
     return {
         candidates,
-        confidence: candidates[0]?.confidence || 0,
+        confidence: candidates.length > 1 ? Math.min(candidates[0]?.confidence || 0, 0.7) : candidates[0]?.confidence || 0,
         targetText: query,
+        targetType,
+        matchType: candidates.length ? candidates[0].matchType || 'fuzzy' : 'none',
     };
 }
 
@@ -711,7 +718,7 @@ function statusWithConfidence(row = {}, confidence = null) {
     const value = row.confidence !== null && row.confidence !== undefined && Number.isFinite(Number(row.confidence))
         ? Number(row.confidence)
         : confidence;
-    if (Number.isFinite(value) && value < 0.65 && row.status === 'effective') return 'needs_review';
+    if (Number.isFinite(value) && value < 0.85 && row.status === 'effective') return 'needs_review';
     return row.status === 'ready' ? 'effective' : row.status;
 }
 
@@ -943,6 +950,7 @@ function buildMissingInfo(rows = []) {
 
 function buildClarifyingQuestions(project = {}, rows = []) {
     const questions = [];
+    const questionMap = new Map();
     rows.forEach(row => {
         if (isAllTeachersTarget(row)) return;
         const ambiguityMap = new Map();
@@ -988,7 +996,21 @@ function buildClarifyingQuestions(project = {}, rows = []) {
             });
         });
     });
-    return questions;
+    const merged = [];
+    questions.forEach(question => {
+        const key = JSON.stringify([
+            question.question || '',
+            (question.options || []).map(option => option.value || option.id || option.label).sort(),
+        ]);
+        const existing = questionMap.get(key);
+        if (existing) {
+            existing.relatedRuleIds = [...new Set([...(existing.relatedRuleIds || []), ...(question.relatedRuleIds || [])].filter(Boolean))];
+            return;
+        }
+        questionMap.set(key, question);
+        merged.push(question);
+    });
+    return merged;
 }
 
 function detectRuleConflicts(project = {}, draftRows = []) {
@@ -1129,7 +1151,7 @@ function detectRuleConflicts(project = {}, draftRows = []) {
     });
 }
 
-function splitParseResult({ project, rows, warnings = [], unsupportedItems = [], source, inputType, contextStats, draftRules, previewItems }) {
+function buildRuleReviewResult({ project, rows, warnings = [], unsupportedItems = [], source, inputType, contextStats, draftRules, previewItems }) {
     const conflicts = detectRuleConflicts(project, rows);
     const clarifyingQuestions = buildClarifyingQuestions(project, rows);
     const missingInfo = buildMissingInfo(rows);
@@ -1142,7 +1164,19 @@ function splitParseResult({ project, rows, warnings = [], unsupportedItems = [],
         && !(row.ambiguity || (row.ambiguities || []).length)
         && !blockingRuleIds.has(row.id)
     ));
-    const needReview = rows.filter(row => ['needs_review', 'invalid'].includes(row.status));
+    const needReview = rows.filter(row => (
+        ['needs_review', 'invalid'].includes(row.status)
+        || (
+            SUPPORTED_EFFECTIVE_TYPES.has(row.type)
+            && row.status === 'effective'
+            && (
+                Number(row.confidence || 0) < 0.85
+                || (row.warnings || []).length
+                || row.ambiguity
+                || (row.ambiguities || []).length
+            )
+        )
+    ));
     const nextAction = clarifyingQuestions.length || missingInfo.length
         ? 'ask_user'
         : !rows.length
@@ -1168,6 +1202,10 @@ function splitParseResult({ project, rows, warnings = [], unsupportedItems = [],
         inputType,
         contextStats,
     };
+}
+
+function splitParseResult(options = {}) {
+    return buildRuleReviewResult(options);
 }
 
 function applyClarifyingAnswers(draftRows = [], answers = []) {

@@ -1596,6 +1596,40 @@ test('timetable smart rules split clear local text into auto-acceptable constrai
     assert.deepEqual(result.confidenceSummary, { high: 2, medium: 0, low: 0 });
 });
 
+test('timetable smart rules keep low-confidence effective rows in needReview', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [{ id: 't_wang', name: '王老师', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: '高一', name: '1班' }],
+        subjects: [{ id: 'math', name: '数学', priority: 90, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: [{
+            id: 'low_confidence_teacher',
+            rawText: '王老师周三下午没空',
+            type: 'teacher_unavailable',
+            targetType: 'teacher',
+            targetName: '王老师',
+            slots: ['3-5', '3-6'],
+            priority: 'hard',
+            status: 'effective',
+            confidence: 0.7,
+        }],
+    });
+
+    assert.equal(result.autoAcceptable.length, 0);
+    assert.equal(result.needReview.length, 1);
+    assert.equal(result.needReview[0].id, 'low_confidence_teacher');
+    assert.equal(result.nextAction, 'review');
+});
+
 test('timetable smart rules ask a clarifying question for ambiguous teachers', async () => {
     const project = createDefaultTimetableProject({
         weekdays: 5,
@@ -1626,6 +1660,51 @@ test('timetable smart rules ask a clarifying question for ambiguous teachers', a
     assert.match(result.clarifyingQuestions[0].question, /王老师/);
     assert.deepEqual(result.clarifyingQuestions[0].options.map(item => item.value).sort(), ['t_wang_hua', 't_wang_ming']);
     assert.equal(result.draftRules.hardRules.teacherUnavailable.t_wang_ming, undefined);
+});
+
+test('timetable smart rules deduplicate clarifying questions for the same ambiguous target', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 8,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7, 8],
+        teachers: [
+            { id: 't_wang_ming', name: '王明', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_wang_hua', name: '王华', subjects: ['chinese'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: '高一', name: '1班' }],
+        subjects: [{ id: 'math', name: '数学', priority: 90, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: [{
+            id: 'ambiguous_1',
+            rawText: '王老师周三下午没空',
+            type: 'teacher_unavailable',
+            targetType: 'teacher',
+            targetName: '王老师',
+            slots: ['3-5'],
+            priority: 'hard',
+            status: 'effective',
+            confidence: 0.9,
+        }, {
+            id: 'ambiguous_2',
+            rawText: '王老师周五第1节没空',
+            type: 'teacher_unavailable',
+            targetType: 'teacher',
+            targetName: '王老师',
+            slots: ['5-1'],
+            priority: 'hard',
+            status: 'effective',
+            confidence: 0.9,
+        }],
+    });
+
+    assert.equal(result.clarifyingQuestions.length, 1);
+    assert.deepEqual(result.clarifyingQuestions[0].relatedRuleIds.sort(), ['ambiguous_1', 'ambiguous_2']);
 });
 
 test('timetable smart rules normalize locked slots and detect hard conflicts', async () => {
