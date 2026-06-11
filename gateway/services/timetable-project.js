@@ -17,6 +17,7 @@ const DEFAULT_PROJECT = {
     periodsPerDay: 7,
     activeWeekdays: [1, 2, 3, 4, 5],
     activePeriods: [1, 2, 3, 4, 5, 6, 7],
+    periodTimes: [],
     teachers: [],
     classes: [],
     subjects: [],
@@ -170,6 +171,50 @@ export function getActivePeriods(project = {}) {
 
 export function isActiveTimetableSlot(project = {}, day, period) {
     return getActiveWeekdays(project).includes(Number(day)) && getActivePeriods(project).includes(Number(period));
+}
+
+const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
+export function normalizePeriodTimes(raw, activePeriods = []) {
+    if (!Array.isArray(raw)) return [];
+    const activeSet = new Set(activePeriods);
+    return raw
+        .filter(item => item && activeSet.has(Number(item.period)))
+        .map(item => ({
+            period: Number(item.period),
+            start: TIME_RE.test(String(item.start || '')) ? String(item.start) : '',
+            end: TIME_RE.test(String(item.end || '')) ? String(item.end) : '',
+        }))
+        .sort((a, b) => a.period - b.period);
+}
+
+export function generateDefaultPeriodTimes(activePeriods = [], options = {}) {
+    const {
+        startHour = 8,
+        startMinute = 0,
+        durationMinutes = 40,
+        breakMinutes = 10,
+        lunchMinutes = 60,
+        lunchAfterPeriod = 4,
+    } = options;
+    let minutes = startHour * 60 + startMinute;
+    return activePeriods.map(period => {
+        if (period > lunchAfterPeriod && period === activePeriods.find(p => p > lunchAfterPeriod)) {
+            // First afternoon period: add lunch break
+            const lastMorning = activePeriods.filter(p => p <= lunchAfterPeriod).pop();
+            if (lastMorning) {
+                const morningEnd = startHour * 60 + startMinute
+                    + activePeriods.filter(p => p <= lunchAfterPeriod).length * durationMinutes
+                    + (activePeriods.filter(p => p <= lunchAfterPeriod).length - 1) * breakMinutes;
+                minutes = morningEnd + lunchMinutes;
+            }
+        }
+        const start = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+        minutes += durationMinutes;
+        const end = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+        minutes += breakMinutes;
+        return { period, start, end };
+    });
 }
 
 function normalizeTeacher(raw = {}, index = 0) {
@@ -476,6 +521,7 @@ export function normalizeTimetableProject(raw = {}) {
         periodsPerDay: Math.max(...activePeriods),
         activeWeekdays,
         activePeriods,
+        periodTimes: normalizePeriodTimes(base.periodTimes, activePeriods),
         teachers,
         classes,
         subjects,

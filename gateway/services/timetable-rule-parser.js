@@ -423,7 +423,10 @@ function normalizeEntityName(value) {
 }
 
 function entityLabel(item = {}) {
-    return item.grade ? `${item.grade}${item.name || ''}` : item.name || item.id || '';
+    if (item.grade && item.name && !item.name.startsWith(item.grade)) {
+        return `${item.grade}${item.name}`;
+    }
+    return item.name || item.id || '';
 }
 
 function entityItemsForType(project = {}, targetType = '') {
@@ -504,7 +507,11 @@ function matchEntityCandidates(project = {}, targetText = '', targetType = '', {
 
     if (targetId) {
         const exactId = items.find(item => item.id === targetId);
-        if (exactId) add(exactId, 1, 'exact');
+        if (exactId) {
+            // targetId 已明确指向一个实体时(如追问回填后),直接返回唯一候选
+            const candidate = { ...candidatePreview(exactId, targetType, 1), matchType: 'exact' };
+            return { candidates: [candidate], confidence: 1, targetText: query, targetType, matchType: 'exact' };
+        }
     }
 
     const normalizedQuery = normalizeEntityName(query);
@@ -569,6 +576,7 @@ function findEntity(items = [], { targetId = '', targetName = '', target = '', a
 function targetTypeFor(type, row = {}) {
     if (row.targetType) return row.targetType;
     if (type === 'teacher_unavailable') return 'teacher';
+    if (type === 'teacher_daily_limit' || type === 'teacher_consecutive_limit') return 'teacher';
     if (type === 'class_unavailable') return 'class';
     if (type === 'locked_slot') return 'locked_slot';
     if (type.startsWith('subject_')) return 'subject';
@@ -727,6 +735,27 @@ function rowNeedsSlots(type) {
 }
 
 function applySingleTarget(row, project, targetType) {
+    const items = entityItemsForType(project, targetType);
+    // 如果 targetId 已明确指向一个有效实体(如追问回填后),直接采用,无需模糊匹配
+    if (row.targetId) {
+        const directMatch = items.find(item => item.id === row.targetId);
+        if (directMatch) {
+            const label = directMatch.label || directMatch.name || row.targetName || row.targetId;
+            const confidence = Math.max(
+                row.confidence !== null && row.confidence !== undefined && Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : 0.9,
+                0.9,
+            );
+            return {
+                ...row,
+                targetType,
+                targetId: directMatch.id,
+                targetName: label,
+                confidence,
+                warnings: [...(row.warnings || [])],
+                status: statusWithConfidence({ ...row, confidence }, confidence),
+            };
+        }
+    }
     const match = matchEntityCandidates(project, row.targetName || row.targetId, targetType, { targetId: row.targetId });
     const warnings = [...(row.warnings || [])];
     const next = { ...row, targetType };

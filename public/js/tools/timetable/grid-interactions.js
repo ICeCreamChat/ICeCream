@@ -5,6 +5,14 @@ export function bindGridInteractions(container, controller, state) {
             controller.submitClarifyingAnswers();
         } else if (action === 'diagnose-rules') {
             controller.diagnoseRules();
+        } else if (action === 'auto-fill-period-times') {
+            controller.autoFillPeriodTimes();
+        }
+    });
+
+    container.addEventListener('change', event => {
+        if (event.target.matches('[data-period-time-start], [data-period-time-end]')) {
+            controller.readPeriodTimesFromDom();
         }
     });
 

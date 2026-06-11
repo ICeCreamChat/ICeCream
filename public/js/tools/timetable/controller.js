@@ -193,6 +193,7 @@ export class TimetablePlannerController {
         this.state.rangeDraft = {
             activeWeekdays: getActiveWeekdays(this.state.project),
             activePeriods: getActivePeriods(this.state.project),
+            periodTimes: this.state.project.periodTimes || [],
         };
     }
 
@@ -211,6 +212,7 @@ export class TimetablePlannerController {
         return {
             activeWeekdays,
             activePeriods,
+            periodTimes: this.state.rangeDraft?.periodTimes || this.state.project?.periodTimes || [],
             weekdays: activeWeekdays.length ? Math.max(...activeWeekdays) : 5,
             periodsPerDay: activePeriods.length ? Math.max(...activePeriods) : 7,
         };
@@ -218,7 +220,48 @@ export class TimetablePlannerController {
 
     async applyRangeDraft() {
         this.updateRangeDraftFromForm();
+        this.readPeriodTimesFromDom();
         await this.saveProject(this.rangePayloadFromDraft());
+    }
+
+    autoFillPeriodTimes() {
+        const activePeriods = this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project);
+        const startHour = 8;
+        const durationMinutes = 40;
+        const breakMinutes = 10;
+        const lunchMinutes = 60;
+        const lunchAfterPeriod = Math.ceil(activePeriods.length / 2);
+        let minutes = startHour * 60;
+        const times = activePeriods.map((period, index) => {
+            if (period > activePeriods[0] && index === activePeriods.filter(p => p <= activePeriods[lunchAfterPeriod - 1]).length) {
+                const morningEnd = startHour * 60 + lunchAfterPeriod * durationMinutes + (lunchAfterPeriod - 1) * breakMinutes;
+                minutes = morningEnd + lunchMinutes;
+            }
+            const start = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+            minutes += durationMinutes;
+            const end = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+            minutes += breakMinutes;
+            return { period, start, end };
+        });
+        this.state.rangeDraft = { ...(this.state.rangeDraft || {}), periodTimes: times };
+        this.render();
+        this.setMessage('已填充默认时间模板。');
+    }
+
+    readPeriodTimesFromDom() {
+        if (!this.state.container) return;
+        const rows = this.state.container.querySelectorAll('[data-period-time-row]');
+        if (!rows.length) return;
+        const times = [];
+        rows.forEach(row => {
+            const period = Number(row.dataset.periodTimeRow);
+            const startInput = row.querySelector('[data-period-time-start]');
+            const endInput = row.querySelector('[data-period-time-end]');
+            const start = startInput?.value || '';
+            const end = endInput?.value || '';
+            if (start || end) times.push({ period, start, end });
+        });
+        this.state.rangeDraft = { ...(this.state.rangeDraft || {}), periodTimes: times };
     }
 
     updateBulkRuleDraftFromForm() {
@@ -1163,6 +1206,7 @@ export class TimetablePlannerController {
             ...(this.state.rosterImport || {}),
             open: true,
             step: 'review',
+            source: payload.source || this.state.rosterImport?.source || null,
             draftRows: (payload.draftRows || analyzed.draftRows).map((row, index) => this.normalizeRosterDraftRow(row, index)),
             stats: payload.stats || analyzed.stats,
             warnings,

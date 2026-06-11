@@ -2414,6 +2414,7 @@ test('timetable roster preview does not save and reviewed rows replace the saved
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                ai: false,
                 text: [
                     'grade,class,subject,teacher,hours,block,room',
                     'G8,2,Science,Alice/Bob,4,double,Lab A/Lab B',

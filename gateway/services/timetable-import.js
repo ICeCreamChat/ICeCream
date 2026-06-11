@@ -400,3 +400,170 @@ export const TIMETABLE_BLOCK_LABELS = {
     double: blockLabel('double'),
     mixed: blockLabel('mixed'),
 };
+
+// ============================================================
+// AI-Driven Roster Parsing
+// ============================================================
+
+class RosterAiError extends Error {
+    constructor(message, reason = 'ai_unavailable') {
+        super(message);
+        this.name = 'RosterAiError';
+        this.reason = reason;
+    }
+}
+
+function resolveRosterAiConfig(env = {}) {
+    const apiKey = String(env.DEEPSEEK_API_KEY || env.OPENAI_API_KEY || '').trim();
+    const baseUrl = String(env.DEEPSEEK_API_BASE || env.OPENAI_API_BASE || 'https://api.deepseek.com').trim().replace(/\/+$/, '');
+    const model = String(env.DEEPSEEK_MODEL || env.OPENAI_MODEL || 'deepseek-chat').trim();
+    if (!apiKey) {
+        throw new RosterAiError('AI 解析未配置，请先配置 API Key。', 'ai_not_configured');
+    }
+    return { apiKey, baseUrl, model };
+}
+
+function resolveRosterFetch(fetchImpl) {
+    if (typeof fetchImpl === 'function') return fetchImpl;
+    if (typeof globalThis.fetch === 'function') return globalThis.fetch;
+    throw new RosterAiError('运行环境缺少 fetch。', 'missing_fetch');
+}
+
+function buildRosterAiPrompt(text, project = {}) {
+    const existingTeachers = (project.teachers || []).map(t => t.name).filter(Boolean).slice(0, 50);
+    const existingSubjects = (project.subjects || []).map(s => s.name).filter(Boolean).slice(0, 30);
+    const existingClasses = (project.classes || []).map(c => c.name).filter(Boolean).slice(0, 30);
+
+    const systemPrompt = [
+        '你是一个中国 K-12 学校任课数据提取助手。',
+        '用户会粘贴或上传各种格式的任课安排数据(表格、文本、不规则格式)。',
+        '你的任务是从中提取结构化的任课数据行。',
+        '',
+        '## 输出 JSON schema (严格遵守):',
+        '```json',
+        '{',
+        '  "draftRows": [',
+        '    {',
+        '      "grade": "年级名(如 高一、一年级)",',
+        '      "className": "班级名(如 1班、高一(2)班)",',
+        '      "subjectName": "科目名(如 语文、数学)",',
+        '      "teacherName": "教师姓名",',
+        '      "weeklyHours": 4,',
+        '      "blockPreference": "single|double|mixed",',
+        '      "roomName": "教室名(可选)",',
+        '      "subjectCategory": "core|elective|activity"',
+        '    }',
+        '  ],',
+        '  "anomalies": [',
+        '    { "row": 0, "field": "weeklyHours", "message": "周课时异常高(20),疑似输入错误", "suggestion": "通常为2-6" }',
+        '  ]',
+        '}',
+        '```',
+        '',
+        '## 规则:',
+        '1. grade: 从班级名推断年级(如"高一1班"→grade:"高一",className:"1班")',
+        '2. 如果一行包含多个教师(用、/，分隔),拆分为多行',
+        '3. weeklyHours 必须是正整数,默认为2,范围1-15',
+        '4. blockPreference: "double"=连堂,"single"=单节,"mixed"=混合,默认"single"',
+        '5. 识别不规则格式: 合并单元格、跨行数据、备注文字',
+        '6. 忽略纯标题/汇总/空行',
+        '7. anomalies: 周课时>10标为异常,重复任课标为异常',
+        '8. 只输出 JSON,不要 markdown 包裹,不要解释文字',
+        existingTeachers.length ? `\n已知教师: ${existingTeachers.join('、')}` : '',
+        existingSubjects.length ? `已知科目: ${existingSubjects.join('、')}` : '',
+        existingClasses.length ? `已知班级: ${existingClasses.join('、')}` : '',
+    ].filter(Boolean).join('\n');
+
+    return { systemPrompt, userMessage: text };
+}
+
+async function callRosterAi({ text, project, env = {}, fetchImpl }) {
+    const { apiKey, baseUrl, model } = resolveRosterAiConfig(env);
+    const fetchClient = resolveRosterFetch(fetchImpl);
+    const { systemPrompt, userMessage } = buildRosterAiPrompt(text, project);
+
+    const response = await fetchClient(`${baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+            model,
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userMessage.slice(0, 12000) },
+            ],
+            temperature: 0.1,
+            response_format: { type: 'json_object' },
+            max_tokens: 4096,
+        }),
+    });
+
+    if (!response.ok) {
+        throw new RosterAiError(`AI 服务返回 ${response.status}`, 'ai_request_failed');
+    }
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    try {
+        const parsed = typeof content === 'string' ? JSON.parse(content) : content;
+        return parsed;
+    } catch {
+        throw new RosterAiError('AI 返回格式异常，无法解析。', 'ai_response_invalid');
+    }
+}
+
+function normalizeAiRosterRows(parsed = {}) {
+    const rows = Array.isArray(parsed.draftRows) ? parsed.draftRows : Array.isArray(parsed) ? parsed : [];
+    const anomalies = Array.isArray(parsed.anomalies) ? parsed.anomalies : [];
+    return { rows, anomalies };
+}
+
+export async function parseRosterAiOrLocal({ text = '', file = null, project = {}, env = {}, fetchImpl } = {}) {
+    const rawText = file ? fileToText(file) : text;
+    if (!rawText.trim()) {
+        throw new Error('导入内容为空，请粘贴文本或上传文件。');
+    }
+
+    try {
+        const aiResult = await callRosterAi({ text: rawText, project, env, fetchImpl });
+        const { rows: aiRows, anomalies } = normalizeAiRosterRows(aiResult);
+        if (!aiRows.length) {
+            // AI returned empty — fall back to local
+            return { ...localRosterParse(rawText, project), source: 'local', aiEmpty: true };
+        }
+        const normalized = aiRows.map((row, index) => normalizeDraftRow(row, index));
+        const analysis = analyzeDraftRows(normalized, project);
+        // Merge AI anomalies as extra issues
+        anomalies.forEach(anomaly => {
+            const rowIndex = Number(anomaly.row) || 0;
+            const targetRow = analysis.draftRows[rowIndex] || analysis.draftRows[0];
+            if (targetRow) {
+                analysis.issues.push(createIssue(
+                    targetRow,
+                    'warning',
+                    anomaly.field || 'general',
+                    `${anomaly.message || 'AI 异常检测'}${anomaly.suggestion ? ` — 建议: ${anomaly.suggestion}` : ''}`,
+                ));
+            }
+        });
+        return { ...analysis, source: 'ai' };
+    } catch (error) {
+        if (error instanceof RosterAiError && ['ai_not_configured', 'missing_fetch'].includes(error.reason)) {
+            return { ...localRosterParse(rawText, project), source: 'local' };
+        }
+        // Non-config AI errors: still fall back to local with a warning
+        const result = localRosterParse(rawText, project);
+        result.warnings = [...(result.warnings || []), `AI 解析失败(${error.message})，已使用本地解析。`];
+        result.source = 'local';
+        return result;
+    }
+}
+
+function localRosterParse(text, project) {
+    const lines = String(text)
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean);
+    return analyzeDraftRows(parseRows(lines), project);
+}

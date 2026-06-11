@@ -4,6 +4,7 @@ import multer from 'multer';
 import { buildTimetableExportXlsx, TIMETABLE_XLSX_MIME } from '../services/timetable-export.js';
 import {
     buildTimetableRosterFromRows,
+    parseRosterAiOrLocal,
     parseTimetableRosterFile,
     parseTimetableRosterText,
     previewTimetableRosterFile,
@@ -374,10 +375,21 @@ router.post('/roster/clear', async (req, res) => {
 router.post('/roster/preview', upload.single('file'), async (req, res) => {
     try {
         const current = await store().loadProject();
-        const preview = req.file
-            ? previewTimetableRosterFile({ buffer: req.file.buffer, filename: req.file.originalname }, { project: current })
-            : previewTimetableRosterText(req.body?.text || '', { project: current });
-        ok(res, preview);
+        const useAi = req.body?.ai !== 'false' && req.body?.ai !== false;
+        if (useAi) {
+            const preview = await parseRosterAiOrLocal({
+                text: req.body?.text || '',
+                file: req.file ? { buffer: req.file.buffer, filename: req.file.originalname } : null,
+                project: current,
+                env: process.env,
+            });
+            ok(res, preview);
+        } else {
+            const preview = req.file
+                ? previewTimetableRosterFile({ buffer: req.file.buffer, filename: req.file.originalname }, { project: current })
+                : previewTimetableRosterText(req.body?.text || '', { project: current });
+            ok(res, preview);
+        }
     } catch (error) {
         fail(res, error);
     }

@@ -123,7 +123,13 @@ function sheetRowsForSchedule(project, mode) {
     const weekdayNames = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
     const activeWeekdays = getActiveWeekdays(project);
     const activePeriods = getActivePeriods(project);
-    const rows = [['对象/节次', ...activeWeekdays.flatMap(day => activePeriods.map(period => `${weekdayNames[day - 1] || `周${day}`} 第${period}节`))]];
+    const periodTimeMap = new Map((project.periodTimes || []).map(item => [item.period, item]));
+    const periodLabel = (period) => {
+        const time = periodTimeMap.get(period);
+        const base = `第${period}节`;
+        return time?.start && time?.end ? `${base}\n${time.start}-${time.end}` : base;
+    };
+    const rows = [['对象/节次', ...activeWeekdays.flatMap(day => activePeriods.map(period => `${weekdayNames[day - 1] || `周${day}`} ${periodLabel(period)}`))]];
 
     for (const owner of owners) {
         const row = [mode === 'class' ? `${owner.grade}${owner.name}` : owner.name];

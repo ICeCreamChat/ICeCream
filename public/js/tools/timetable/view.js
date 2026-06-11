@@ -372,6 +372,42 @@ function renderWorkflow(state) {
     `;
 }
 
+function renderPeriodTimesConfig(state) {
+    const { activePeriods } = getRangeDraft(state);
+    const periodTimes = state.rangeDraft?.periodTimes || state.project?.periodTimes || [];
+    const timeMap = new Map(periodTimes.map(item => [item.period, item]));
+    const hasAnyTime = periodTimes.some(item => item.start || item.end);
+    return `
+        <details class="tt-period-times"${hasAnyTime ? ' open' : ''}>
+            <summary class="tt-period-times-summary">
+                <i data-lucide="clock"></i>
+                <span>节次时间配置</span>
+                <span class="tt-chip">${hasAnyTime ? '已配置' : '可选'}</span>
+            </summary>
+            <div class="tt-period-time-body">
+                <table class="tt-period-time-table">
+                    <thead><tr><th>节次</th><th>开始</th><th>结束</th></tr></thead>
+                    <tbody>
+                        ${activePeriods.map(period => {
+                            const entry = timeMap.get(period) || {};
+                            return `<tr data-period-time-row="${period}">
+                                <td class="tt-period-time-label">第${period}节</td>
+                                <td><input type="time" class="tt-period-time-input" data-period-time-start="${period}" value="${escapeAttr(entry.start || '')}"></td>
+                                <td><input type="time" class="tt-period-time-input" data-period-time-end="${period}" value="${escapeAttr(entry.end || '')}"></td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+                <div class="tt-action-row">
+                    <button class="tt-btn tt-btn--sm" type="button" data-action="auto-fill-period-times">
+                        <i data-lucide="wand-2"></i><span>一键填充</span>
+                    </button>
+                </div>
+            </div>
+        </details>
+    `;
+}
+
 function renderProjectSection(state) {
     const { project } = state;
     const { activeWeekdays, activePeriods } = getRangeDraft(state);
@@ -414,6 +450,7 @@ function renderProjectSection(state) {
                         summaryOnly: true,
                     })}
                 </div>
+                ${renderPeriodTimesConfig(state)}
             </form>
         </div>
     `;
@@ -458,7 +495,7 @@ function renderRosterImportDialog(state) {
             <section class="tt-roster-import-dialog" id="tt-roster-import-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-roster-import-title">
                 <div class="tt-dialog-header">
                     <div>
-                        <span class="tt-eyebrow">任课数据</span>
+                        <span class="tt-eyebrow">任课数据${isReview && dialog.source ? ` · <span class="tt-badge tt-badge--${dialog.source === 'ai' ? 'success' : 'neutral'}">${dialog.source === 'ai' ? 'AI 辅助解析' : '本地解析'}</span>` : ''}</span>
                         <h3 id="tt-roster-import-title">${isReview ? '复核任课数据' : '导入任课数据'}</h3>
                         <p>${isReview ? '检查解析后的任课表，可以增删改；确认后才会写入项目并清空旧课表。' : '上传文件、粘贴文本，或直接手动新增任课表。'}</p>
                     </div>
