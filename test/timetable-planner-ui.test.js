@@ -394,6 +394,9 @@ test('timetable legacy bulk 智能 rule acceptance keeps review-only drafts pend
     const controller = new TimetablePlannerController();
     controller.render = () => {};
     controller.state.project = createDefaultTimetableProject();
+    controller.state.ruleReview = {
+      conflicts: [{ level: 'blocking', relatedRuleIds: ['conflict-1'] }],
+    };
     controller.state.pendingRules = [{
       id: 'auto-1',
       type: 'teacher_unavailable',
@@ -404,6 +407,17 @@ test('timetable legacy bulk 智能 rule acceptance keeps review-only drafts pend
       priority: 'hard',
       status: 'effective',
       confidence: 0.91,
+      warnings: [],
+    }, {
+      id: 'conflict-1',
+      type: 'teacher_unavailable',
+      targetType: 'teacher',
+      targetId: 't2',
+      targetName: 'Teacher 2',
+      slots: ['3-5'],
+      priority: 'hard',
+      status: 'effective',
+      confidence: 0.95,
       warnings: [],
     }, {
       id: 'review-1',
@@ -428,7 +442,7 @@ test('timetable legacy bulk 智能 rule acceptance keeps review-only drafts pend
 
     assert.ok(calls.some(call => call.url.endsWith('/rules/normalize')));
     assert.ok(calls.some(call => call.url.endsWith('/rules')));
-    assert.deepEqual(controller.state.pendingRules.map(row => row.id), ['review-1', 'unsupported-1']);
+    assert.deepEqual(controller.state.pendingRules.map(row => row.id), ['conflict-1', 'review-1', 'unsupported-1']);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -488,6 +502,8 @@ test('timetable auto-apply only sends safe high-confidence review rows', async (
       open: true,
       step: 'review',
       mode: 'text',
+      text: 'dialog text',
+      originalText: 'original constraint',
       draftRows: [
         { id: 'safe-1', status: 'effective', type: 'teacher_unavailable', confidence: 0.91, warnings: [] },
         { id: 'review-1', status: 'needs_review', type: 'teacher_unavailable', confidence: 0.91, warnings: [] },
@@ -3875,6 +3891,7 @@ test('timetable 智能 rules support Excel file upload and rich preview metadata
   assert.match(controllerSource, /acceptRule\(/);
   assert.match(controllerSource, /rejectRule\(/);
   assert.match(controllerSource, /acceptAllRules\(/);
+  assert.match(controllerSource, /submitClarifyingAnswers\(/);
   assert.match(controllerSource, /rejectAllRules\(/);
   assert.match(controllerSource, /selectRuleInputFile\(/);
   assert.match(controllerSource, /expandRuleCard\(/);
@@ -3889,6 +3906,8 @@ test('timetable 智能 rules support Excel file upload and rich preview metadata
   assert.match(interactionSource, /#tt-open-rule-review/);
   assert.match(interactionSource, /#tt-rule-review-file/);
   assert.match(interactionSource, /#tt-rule-review-parse/);
+  assert.match(interactionSource, /submit-rule-clarification/);
+  assert.match(interactionSource, /submitClarifyingAnswers\(/);
   assert.match(interactionSource, /\[data-saved-rule-delete\]/);
   assert.doesNotMatch(interactionSource, /#tt-open-bulk-rule-review/);
   assert.match(styles, /\.tt-empty-card/);
@@ -3994,6 +4013,8 @@ test('timetable rule review shows all-teacher limit targets instead of an unmatc
       open: true,
       step: 'review',
       mode: 'text',
+      text: 'dialog text',
+      originalText: 'original constraint',
       draftRows: [{
         id: 'all-teachers-limit',
         rawText: '每位教师每天授课量尽量均衡，单日不超过4节',
@@ -4293,6 +4314,9 @@ test('timetable rule review groups smart parse results by readiness and question
   assert.match(html, /可直接生效/);
   assert.match(html, /需要补充信息/);
   assert.match(html, /你说的王老师是哪一位/);
+  assert.match(html, /data-rule-clarify-question="q_1"/);
+  assert.match(html, /data-rule-clarify-option/);
+  assert.match(html, /data-action="submit-rule-clarification"/);
   assert.match(html, /data-rule-question-answer="q_1"/);
   assert.match(html, /id="tt-continue-rule-conversation"/);
   assert.match(html, /id="tt-apply-auto-rules"/);
@@ -4329,6 +4353,8 @@ test('timetable rule review does not render empty candidate questions as blank s
   }));
 
   assert.match(html, /Which all-teacher object/);
+  assert.match(html, /data-rule-clarify-question="q_empty"/);
+  assert.match(html, /data-rule-clarify-input="q_empty"/);
   assert.match(html, /<input[^>]*data-rule-question-answer="q_empty"/);
   assert.doesNotMatch(html, /<select[^>]*data-rule-question-answer="q_empty"/);
 });
@@ -4360,10 +4386,12 @@ test('timetable rule review disables auto apply when blocking conflicts exist', 
 
 test('timetable rule review can clarify questions and request rule diagnosis', async () => {
   const calls = [];
+  let clarifyBody = null;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url: String(url), body: options.body ? JSON.parse(options.body) : null });
     if (String(url).endsWith('/rules/clarify')) {
+      clarifyBody = calls.at(-1).body;
       return {
         ok: true,
         status: 200,
@@ -4432,6 +4460,8 @@ test('timetable rule review can clarify questions and request rule diagnosis', a
       open: true,
       step: 'review',
       mode: 'text',
+      text: 'dialog text',
+      originalText: 'original constraint',
       draftRows: [{
         id: 'review-1',
         type: 'teacher_unavailable',
@@ -4445,13 +4475,35 @@ test('timetable rule review can clarify questions and request rule diagnosis', a
       }],
       clarifyingQuestions: [{
         id: 'q_review-1_target',
+        targetType: 'teacher',
+        targetText: 'Wang',
         question: '你说的王老师是哪一位？',
         options: [{ label: '王华', value: 't_wang_hua' }],
       }],
     };
+    controller.state.pendingRules = [
+      { id: 'old-duplicate' },
+      ...controller.state.ruleReview.draftRows,
+    ];
     controller.state.container = {
       innerHTML: '',
       querySelectorAll(selector) {
+        if (selector === '[data-rule-clarify-question]') {
+          return [{
+            dataset: { ruleClarifyQuestion: 'q_review-1_target', targetType: 'teacher', targetText: 'Wang' },
+            querySelectorAll(innerSelector) {
+              if (innerSelector === '[data-rule-clarify-option]') {
+                return [{
+                  checked: true,
+                  value: 't_wang_hua',
+                  dataset: { label: 'Wang Hua' },
+                }];
+              }
+              return [];
+            },
+            querySelector() { return null; },
+          }];
+        }
         if (selector === '[data-rule-question-answer]') {
           return [{
             dataset: { ruleQuestionAnswer: 'q_review-1_target' },
@@ -4466,9 +4518,20 @@ test('timetable rule review can clarify questions and request rule diagnosis', a
     };
     controller.render = () => {};
 
-    await controller.continueRuleConversation();
+    await controller.submitClarifyingAnswers();
     assert.ok(calls.some(call => call.url.endsWith('/rules/clarify')));
+    assert.ok(clarifyBody.project);
+    assert.equal(clarifyBody.originalText, 'original constraint');
+    assert.equal(clarifyBody.previousResult?.draftRows?.length, 1);
+    assert.deepEqual(clarifyBody.answers, [{
+      questionId: 'q_review-1_target',
+      value: 't_wang_hua',
+      label: 'Wang Hua',
+      targetType: 'teacher',
+      targetText: 'Wang',
+    }]);
     assert.equal(controller.state.ruleReview.draftRows[0].targetId, 't_wang_hua');
+    assert.deepEqual(controller.state.pendingRules.map(row => row.id), ['review-1']);
 
     await controller.diagnoseRules();
     assert.ok(calls.some(call => call.url.endsWith('/rules/diagnose')));

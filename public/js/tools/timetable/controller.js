@@ -512,7 +512,7 @@ export class TimetablePlannerController {
             }
             const result = await requestTimetable('/rules/parse', options);
             const rows = result.draftRows || [];
-            this.state.pendingRules = [...rows, ...(this.state.pendingRules || [])];
+            this.state.pendingRules = rows;
             this.state.ruleInput = { text: '', fileName: '', loading: false };
             this.ruleReviewFile = null;
             // legacy sync
@@ -560,6 +560,10 @@ export class TimetablePlannerController {
             this.setMessage('该约束不能直接生效，请作为建议查看或重新解析。');
             return;
         }
+        if (this.blockingConflictRuleIds().has(ruleId)) {
+            this.setMessage('该约束存在阻塞冲突，请先处理冲突后再应用。');
+            return;
+        }
         try {
             const normalized = await requestTimetable('/rules/normalize', {
                 method: 'POST',
@@ -597,6 +601,14 @@ export class TimetablePlannerController {
         this.render();
     }
 
+    blockingConflictRuleIds() {
+        return new Set(
+            (this.state.ruleReview?.conflicts || [])
+                .filter(item => item.level === 'blocking')
+                .flatMap(item => item.relatedRuleIds || []),
+        );
+    }
+
     isSafeAutoAcceptableRule(rule = {}) {
         const supportedTypes = new Set([
             'teacher_unavailable',
@@ -622,9 +634,15 @@ export class TimetablePlannerController {
     }
 
     async acceptAllRules() {
-        const pending = (this.state.pendingRules || []).filter(item => this.isAutoAcceptablePendingRule(item));
+        const blockingRuleIds = this.blockingConflictRuleIds();
+        const sourceRows = (this.state.ruleReview?.autoAcceptable || []).length
+            ? this.state.ruleReview.autoAcceptable
+            : (this.state.pendingRules || []);
+        const pending = sourceRows
+            .filter(item => this.isAutoAcceptablePendingRule(item))
+            .filter(item => !blockingRuleIds.has(item.id));
         if (!pending.length) {
-            this.setMessage('没有可直接接受的高置信度约束。');
+            this.setMessage('没有可一键应用的高置信度约束；存在歧义、冲突或需要复核的规则请先处理。');
             return;
         }
         try {
@@ -690,6 +708,13 @@ export class TimetablePlannerController {
             mode: this.state.ruleReview?.mode || 'text',
             fileName: this.state.ruleReview?.fileName || this.state.ruleFileName || '',
             text: this.readRuleReviewText(),
+            originalText: payload.originalText
+                || this.state.ruleReview?.originalText
+                || this.readRuleReviewText()
+                || this.getRuleInputText?.()
+                || '',
+            answers: payload.answers || this.state.ruleReview?.answers || [],
+            previousResult: payload.previousResult || null,
             draftRows,
             inputType: payload.inputType || this.state.ruleReview?.inputType || '',
             contextStats: payload.contextStats || null,
@@ -1342,6 +1367,7 @@ export class TimetablePlannerController {
             const result = await requestTimetable('/rules/parse', options);
             this.setRuleReviewProgress('build_review', '生成复核表中...', { step: 'input', mode: hasFile ? 'file' : 'text' });
             this.setRuleReviewState(result);
+            this.state.pendingRules = result.draftRows || [];
             const total = (result.draftRows || []).length;
             const autoCount = (result.autoAcceptable || []).length;
             const reviewCount = (result.needReview || []).length;
@@ -1360,39 +1386,93 @@ export class TimetablePlannerController {
     }
 
     readClarifyingAnswers() {
+        const questionNodes = [...(this.state.container?.querySelectorAll('[data-rule-clarify-question]') || [])];
+        if (questionNodes.length) {
+            return questionNodes.map(node => {
+                const questionId = node.dataset.ruleClarifyQuestion || '';
+                const checkedOption = [...(node.querySelectorAll('[data-rule-clarify-option]') || [])]
+                    .find(option => option.checked
+                        || option.selected
+                        || option.getAttribute?.('aria-pressed') === 'true'
+                        || option.classList?.contains('is-active'));
+                const input = node.querySelector('[data-rule-clarify-input]');
+                const selectedOption = input?.options ? input.options[input.selectedIndex] : null;
+                const value = checkedOption?.value || input?.value || '';
+                const label = checkedOption?.dataset?.label
+                    || selectedOption?.dataset?.label
+                    || selectedOption?.textContent
+                    || input?.dataset?.label
+                    || input?.value
+                    || value;
+                return {
+                    questionId,
+                    value,
+                    label,
+                    targetType: node.dataset.targetType || '',
+                    targetText: node.dataset.targetText || '',
+                };
+            }).filter(item => item.questionId && item.value);
+        }
         return [...(this.state.container?.querySelectorAll('[data-rule-question-answer]') || [])]
             .map(input => ({
-                id: input.dataset.ruleQuestionAnswer || '',
+                questionId: input.dataset.ruleQuestionAnswer || '',
                 value: input.value || '',
                 label: input.options ? input.options[input.selectedIndex]?.textContent || input.value : input.value,
+                targetType: input.dataset.targetType || '',
+                targetText: input.dataset.targetText || '',
             }))
-            .filter(item => item.id && item.value);
+            .filter(item => item.questionId && item.value);
     }
 
-    async continueRuleConversation() {
-        const answers = this.readClarifyingAnswers();
-        if (!answers.length) {
-            this.setMessage('请先回答需要补充的问题。');
+    async submitClarifyingAnswers() {
+        const review = this.state.ruleReview || {};
+        const questions = review.clarifyingQuestions || [];
+        if (!questions.length) {
+            this.setMessage('当前没有需要补充的问题。');
             return;
         }
-        const review = this.state.ruleReview || {};
+        const answers = this.readClarifyingAnswers();
+        if (answers.length < questions.length) {
+            this.setMessage('请先回答所有需要补充的问题。');
+            return;
+        }
         try {
-            this.setRuleReviewProgress('clarify', '根据补充信息继续解析中...', { step: 'review', mode: review.mode || 'text' });
+            this.state.ruleReview = {
+                ...review,
+                loading: true,
+                phase: 'clarify',
+                phaseText: '正在根据补充信息继续解析……',
+                phaseTone: '',
+            };
+            this.render();
             const result = await requestTimetable('/rules/clarify', {
                 method: 'POST',
                 body: JSON.stringify({
-                    draftRows: review.draftRows || [],
+                    project: this.state.project,
+                    originalText: review.originalText || review.text || '',
+                    previousResult: review,
                     answers,
                     inputType: review.inputType || 'clarification',
                     contextStats: review.contextStats || null,
                 }),
             });
             this.setRuleReviewState(result);
-            this.setMessage('已根据补充信息更新复核表。');
+            this.state.pendingRules = result.draftRows || [];
+            const autoCount = (result.autoAcceptable || []).length;
+            const message = {
+                ask_user: '还有信息需要补充，请继续确认。',
+                ready_to_apply: `歧义已解决，已找到 ${autoCount} 条可直接生效的高置信度约束。`,
+                review: '已更新解析结果，请复核后应用。',
+                no_result: '仍未解析出可用约束，请换一种说法。',
+            }[result.nextAction] || '已根据补充信息更新解析结果。';
+            this.setMessage(message);
         } catch (error) {
-            this.stopRuleReviewProgress('继续解析失败，请稍后重试。', 'warning');
             this.handleError(error);
         }
+    }
+
+    async continueRuleConversation() {
+        return this.submitClarifyingAnswers();
     }
 
     async applyAutoAcceptableRules() {
@@ -1456,6 +1536,9 @@ export class TimetablePlannerController {
             const result = await requestTimetable('/rules/diagnose', {
                 method: 'POST',
                 body: JSON.stringify({
+                    project: this.state.project,
+                    activeRules: getSavedRuleItems(this.state.project),
+                    recentDraftRows: review.draftRows || [],
                     draftRows: review.draftRows || [],
                     solverFailure: this.state.lastFailure || this.state.project?.schedule?.solverStats || null,
                 }),

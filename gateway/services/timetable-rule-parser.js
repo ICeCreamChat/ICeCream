@@ -991,6 +991,8 @@ function buildClarifyingQuestions(project = {}, rows = []) {
                 id: `q_${row.id}_${ambiguity.field || index}`,
                 question: `你说的${targetText}是哪一个${typeLabel}？`,
                 reason: `存在多个可匹配的${typeLabel}，系统不会自动猜测。`,
+                targetType: ambiguity.targetType || row.targetType || '',
+                targetText,
                 options,
                 relatedRuleIds: [row.id],
             });
@@ -1209,7 +1211,10 @@ function splitParseResult(options = {}) {
 }
 
 function applyClarifyingAnswers(draftRows = [], answers = []) {
-    const byQuestion = new Map((Array.isArray(answers) ? answers : []).map(answer => [asText(answer.id, 160), answer]));
+    const byQuestion = new Map((Array.isArray(answers) ? answers : []).map(answer => [
+        asText(answer.questionId || answer.id, 160),
+        answer,
+    ]));
     if (!byQuestion.size) return draftRows;
     return draftRows.map(row => {
         const next = cloneValue(row);
@@ -1218,8 +1223,12 @@ function applyClarifyingAnswers(draftRows = [], answers = []) {
             const questionId = `q_${next.id}_${ambiguity.field || 'target'}`;
             const answer = byQuestion.get(questionId);
             if (!answer?.value) continue;
-            const selected = (ambiguity.candidates || []).find(candidate => candidate.id === answer.value || candidate.value === answer.value);
-            if (!selected) continue;
+            const selected = (ambiguity.candidates || []).find(candidate => candidate.id === answer.value || candidate.value === answer.value) || {
+                id: answer.value,
+                value: answer.value,
+                label: answer.label,
+                name: answer.label,
+            };
             if (ambiguity.field === 'teacher' || ambiguity.targetType === 'teacher') {
                 next.teacherId = selected.id || selected.value;
                 next.teacherName = selected.label || selected.name || answer.label || answer.value;
@@ -1258,15 +1267,23 @@ export function continueTimetableRuleConversation({
     answers = [],
     inputType = 'clarification',
     contextStats = null,
+    originalText = '',
+    previousResult = null,
 } = {}) {
     const project = normalizeTimetableProject(inputProject);
-    return normalizeTimetableRuleDraftRows({
+    const result = normalizeTimetableRuleDraftRows({
         project,
         draftRows: applyClarifyingAnswers(draftRows, answers),
         source: 'clarification',
         inputType,
         contextStats,
     });
+    return {
+        ...result,
+        originalText,
+        answers,
+        previousResult,
+    };
 }
 
 function nameById(items = [], id = '', fallback = '') {

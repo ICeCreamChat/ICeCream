@@ -1,4 +1,13 @@
 export function bindGridInteractions(container, controller, state) {
+    container.addEventListener('click', event => {
+        const action = event.target.closest('[data-action]')?.dataset.action || '';
+        if (action === 'submit-rule-clarification') {
+            controller.submitClarifyingAnswers();
+        } else if (action === 'diagnose-rules') {
+            controller.diagnoseRules();
+        }
+    });
+
     container.querySelectorAll('[data-tt-section-toggle]').forEach(button => {
         button.addEventListener('click', () => controller.toggleWorkflowSection(button.dataset.ttSectionToggle));
     });
@@ -84,8 +93,6 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-add-manual-rule-rows')?.addEventListener('click', () => controller.addManualRuleRows());
     container.querySelector('#tt-confirm-rule-review')?.addEventListener('click', () => controller.confirmRuleDraft());
     container.querySelector('#tt-apply-auto-rules')?.addEventListener('click', () => controller.applyAutoAcceptableRules());
-    container.querySelector('#tt-continue-rule-conversation')?.addEventListener('click', () => controller.continueRuleConversation());
-    container.querySelector('#tt-diagnose-rules')?.addEventListener('click', () => controller.diagnoseRules());
     container.querySelector('#tt-add-rule-review-row')?.addEventListener('click', () => controller.addRuleReviewRow());
     container.querySelectorAll('[data-rule-review-field]').forEach(input => {
         input.addEventListener('change', () => controller.updateRuleReviewField());

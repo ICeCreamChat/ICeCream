@@ -5774,8 +5774,15 @@ test('timetable rules clarify and diagnose APIs support autonomous review flow',
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                draftRows,
-                answers: [{ id: 'q_ambiguous_1_target', value: 't_wang_hua', label: '王华' }],
+                originalText: '王老师周三下午不要排',
+                previousResult: { draftRows },
+                answers: [{
+                    questionId: 'q_ambiguous_1_target',
+                    value: 't_wang_hua',
+                    label: '王华',
+                    targetType: 'teacher',
+                    targetText: '王老师',
+                }],
             }),
         });
         const clarified = await clarifyResponse.json();
@@ -5783,6 +5790,9 @@ test('timetable rules clarify and diagnose APIs support autonomous review flow',
         assert.equal(clarifyResponse.status, 200);
         assert.equal(clarified.data.draftRows[0].status, 'effective');
         assert.equal(clarified.data.draftRows[0].targetId, 't_wang_hua');
+        assert.equal(clarified.data.draftRows[0].ambiguity, null);
+        assert.equal((clarified.data.draftRows[0].ambiguities || []).length, 0);
+        assert.equal(clarified.data.clarifyingQuestions.length, 0);
         assert.deepEqual(clarified.data.draftRules.hardRules.teacherUnavailable.t_wang_hua, ['3-5']);
 
         const diagnoseResponse = await fetch(`${baseUrl}/api/tools/timetable/rules/diagnose`, {

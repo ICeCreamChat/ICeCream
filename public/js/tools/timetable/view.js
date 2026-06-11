@@ -839,8 +839,8 @@ function renderRuleReviewDialog(state) {
                 <div class="tt-dialog-header">
                     <div>
                         <span class="tt-eyebrow">智能约束</span>
-                        <h3 id="tt-rule-review-title">${isSaved ? '已生效规则' : isReview ? '复核约束草稿' : '约束复核中心'}</h3>
-                        <p>${isSaved ? '这些规则已经写入项目，并会参与下一次排课。' : isReview ? '只会保存状态为可生效的规则；建议项和未支持项仅供审查。' : '上传 TXT/XLSX、粘贴自然语言，或手动批量新增规则，全部先进入复核表。'}</p>
+                        <h3 id="tt-rule-review-title">${isSaved ? '已生效规则' : isReview ? 'AI 智能约束复核' : '约束复核中心'}</h3>
+                        <p>${isSaved ? '这些规则已经写入项目，并会参与下一次排课。' : isReview ? 'AI 会先把自然语言约束拆分为可直接生效、需要复核、需要补充、冲突风险和暂不支持几类。高置信度规则可一键应用，低置信度或有冲突的规则需要人工确认。' : '上传 TXT/XLSX、粘贴自然语言，或手动批量新增规则，全部先进入复核表。'}</p>
                     </div>
                     <button class="tt-icon-btn" id="tt-rule-review-cancel" type="button" title="关闭约束复核" aria-label="关闭约束复核"><i data-lucide="x"></i></button>
                 </div>
@@ -1309,7 +1309,7 @@ function renderRuleReviewTable(dialog, project = {}) {
         </div>
         <div class="tt-dialog-actions">
             <button class="tt-btn" id="tt-add-rule-review-row" type="button" ${disabled}><i data-lucide="plus"></i><span>新增行</span></button>
-            <button class="tt-btn" id="tt-diagnose-rules" type="button" ${disabled}><i data-lucide="stethoscope"></i><span>试排诊断</span></button>
+            <button class="tt-btn" id="tt-diagnose-rules" type="button" data-action="diagnose-rules" ${disabled}><i data-lucide="stethoscope"></i><span>试排诊断</span></button>
             <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
             <button class="tt-btn tt-btn--primary" id="tt-confirm-rule-review" type="button" ${isBusy || !rows.length ? 'disabled' : ''}><i data-lucide="${isBusy ? 'loader-2' : 'check'}" class="${isBusy ? 'tt-spin' : ''}"></i><span>${isBusy ? '确认中' : '确认生效'}</span></button>
         </div>
@@ -1394,15 +1394,22 @@ function renderClarifyingQuestions(dialog = {}) {
                 <span>${questions.length + missing.length} 条</span>
             </div>
             ${questions.map(question => `
-                <div class="tt-rule-question">
+                <div class="tt-rule-question"
+                    data-rule-clarify-question="${escapeAttr(question.id)}"
+                    data-target-type="${escapeAttr(question.targetType || '')}"
+                    data-target-text="${escapeAttr(question.targetText || '')}"
+                    data-reason="${escapeAttr(question.reason || '')}">
                     <strong>${escapeHtml(question.question || '请补充信息')}</strong>
                     ${question.reason ? `<span>${escapeHtml(question.reason)}</span>` : ''}
                     ${(question.options || []).length ? `
-                        <select class="tt-roster-review-field" data-rule-question-answer="${escapeAttr(question.id)}">
+                        <select class="tt-roster-review-field"
+                            data-rule-question-answer="${escapeAttr(question.id)}"
+                            data-rule-clarify-input="${escapeAttr(question.id)}"
+                            data-question-id="${escapeAttr(question.id)}">
                             <option value="">请选择</option>
-                            ${(question.options || []).map(option => `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label || option.value)}</option>`).join('')}
+                            ${(question.options || []).map(option => `<option data-rule-clarify-option data-question-id="${escapeAttr(question.id)}" data-label="${escapeAttr(option.label || option.value)}" value="${escapeAttr(option.value)}">${escapeHtml(option.label || option.value)}</option>`).join('')}
                         </select>
-                    ` : `<input class="tt-roster-review-field" data-rule-question-answer="${escapeAttr(question.id)}" type="text" placeholder="输入补充说明">`}
+                    ` : `<input class="tt-roster-review-field" data-rule-question-answer="${escapeAttr(question.id)}" data-rule-clarify-input="${escapeAttr(question.id)}" data-question-id="${escapeAttr(question.id)}" data-label="" type="text" placeholder="输入补充说明">`}
                 </div>
             `).join('')}
             ${emptyQuestions.map(question => `
@@ -1418,7 +1425,7 @@ function renderClarifyingQuestions(dialog = {}) {
                 </div>
             `).join('')}
             ${answerableQuestions.length ? `
-                <button class="tt-btn tt-btn--primary tt-btn--sm" id="tt-continue-rule-conversation" type="button">
+                <button class="tt-btn tt-btn--primary tt-btn--sm" id="tt-continue-rule-conversation" type="button" data-action="submit-rule-clarification">
                     <i data-lucide="send"></i><span>提交回答并继续解析</span>
                 </button>
             ` : ''}

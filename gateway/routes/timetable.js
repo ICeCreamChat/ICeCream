@@ -464,12 +464,16 @@ router.post('/rules/clarify', async (req, res) => {
     let current = null;
     try {
         current = await store().loadProject();
+        const previousResult = req.body?.previousResult || {};
+        const draftRows = previousResult.draftRows || req.body?.draftRows || [];
         const result = continueTimetableRuleConversation({
-            project: current,
-            draftRows: req.body?.draftRows || [],
+            project: req.body?.project || current,
+            draftRows,
             answers: req.body?.answers || [],
             inputType: req.body?.inputType || 'clarification',
-            contextStats: req.body?.contextStats || null,
+            contextStats: req.body?.contextStats || previousResult.contextStats || null,
+            originalText: req.body?.originalText || previousResult.originalText || '',
+            previousResult,
         });
         ok(res, result);
     } catch (error) {
@@ -485,8 +489,9 @@ router.post('/rules/diagnose', async (req, res) => {
     try {
         current = await store().loadProject();
         const diagnosis = diagnoseTimetableRules({
-            project: current,
-            draftRows: req.body?.draftRows || [],
+            project: req.body?.project || current,
+            activeRules: req.body?.activeRules || null,
+            draftRows: req.body?.recentDraftRows || req.body?.draftRows || [],
             solverFailure: req.body?.solverFailure || current.schedule?.solverStats || null,
         });
         ok(res, { diagnosis });
