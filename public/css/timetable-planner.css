@@ -668,6 +668,40 @@ button.tt-section-title {
     gap: var(--tt-space-sm);
 }
 
+.tt-rule-review-report {
+    display: grid;
+    gap: var(--tt-space-sm);
+}
+
+.tt-rule-report-group {
+    display: grid;
+    gap: 6px;
+    padding: 8px;
+    background: rgba(148, 163, 184, 0.06);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+}
+
+.tt-rule-report-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+    font-weight: 800;
+}
+
+.tt-rule-report-title .lucide {
+    width: 15px;
+    height: 15px;
+}
+
+.tt-rule-report-title span {
+    margin-left: auto;
+    color: var(--tt-muted);
+    font-weight: 700;
+}
+
 .tt-rule-preview-meta {
     display: flex;
     flex-wrap: wrap;
@@ -712,6 +746,36 @@ button.tt-section-title {
     align-items: center;
     border-color: rgba(245, 158, 11, 0.32);
     color: var(--tt-warning);
+}
+
+.tt-rule-warning--info {
+    border-color: rgba(8, 145, 178, 0.24);
+    background: rgba(8, 145, 178, 0.08);
+    color: var(--tt-primary);
+}
+
+.tt-rule-warning--review {
+    border-color: rgba(245, 158, 11, 0.34);
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--tt-warning);
+}
+
+.tt-rule-warning--suggestion {
+    border-color: rgba(148, 163, 184, 0.28);
+    background: rgba(148, 163, 184, 0.08);
+    color: var(--tt-muted);
+}
+
+.tt-rule-report-group--info .tt-rule-report-title {
+    color: var(--tt-primary);
+}
+
+.tt-rule-report-group--review .tt-rule-report-title {
+    color: var(--tt-warning);
+}
+
+.tt-rule-report-group--suggestion .tt-rule-report-title {
+    color: var(--tt-muted);
 }
 
 .tt-rule-warning .lucide {
@@ -1302,7 +1366,8 @@ button.tt-section-title {
 }
 
 .tt-rule-row-warning,
-.tt-confidence {
+.tt-confidence,
+.tt-rule-row-source {
     display: inline;
     margin-top: 0;
     color: var(--tt-warning);
@@ -1312,6 +1377,10 @@ button.tt-section-title {
 
 .tt-confidence {
     color: var(--tt-muted);
+}
+
+.tt-rule-row-source {
+    color: var(--tt-primary);
 }
 
 .tt-field-hint {
@@ -1350,7 +1419,7 @@ button.tt-section-title {
     min-width: 120px;
 }
 
-/* ── AI 约束：卡片式内联面板 ── */
+/* ── 智能约束：卡片式内联面板 ── */
 .tt-rule-input-area {
     display: flex;
     flex-direction: column;

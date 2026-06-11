@@ -490,7 +490,7 @@ export class TimetablePlannerController {
         return this.state.container?.querySelector('#tt-rule-input-text')?.value ?? this.state.ruleInput?.text ?? '';
     }
 
-    // ── 新卡片式 AI 约束交互 ──
+    // ── 新卡片式智能约束交互 ──
 
     async parseRulesInline() {
         const text = this.getRuleInputText().trim();
@@ -1287,9 +1287,9 @@ export class TimetablePlannerController {
                 body.append('file', this.ruleReviewFile);
                 if (text) body.append('text', text);
                 options = { method: 'POST', body };
-                this.setRuleReviewProgress('parse_ai', 'AI 解析约束中...', { step: 'input', mode: 'file' });
+                this.setRuleReviewProgress('parse_ai', '智能解析约束中...', { step: 'input', mode: 'file' });
             } else {
-                this.setRuleReviewProgress('parse_text', 'AI 理解自然语言中...', { step: 'input', mode: 'text' });
+                this.setRuleReviewProgress('parse_text', '智能理解自然语言中...', { step: 'input', mode: 'text' });
                 await this.waitForRuleReviewFrame();
                 options = {
                     method: 'POST',
@@ -1378,7 +1378,7 @@ export class TimetablePlannerController {
                 step: 'saved',
                 mode: 'file',
             };
-            this.setMessage('AI 约束已确认。');
+            this.setMessage('智能约束已确认。');
         } catch (error) {
             this.stopRuleReviewProgress('写入失败，请稍后重试。', 'warning');
             this.handleError(error);

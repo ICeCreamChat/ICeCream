@@ -18,10 +18,10 @@ const REASON_MESSAGES = {
     published_history_not_found: '没有找到可导出的发布历史版本。',
     published_snapshot_missing: '没有可导出的已发布课表快照。',
     adjustment_failed: '调整失败，旧课表已保留。',
-    ai_not_configured: 'AI 约束解析未配置，请先配置 API Key。',
+    ai_not_configured: '智能约束解析未配置，请先配置 API Key。',
     empty_prompt: '请先输入要解析的约束。',
-    ai_invalid_json: 'AI 解析结果格式异常，请调整描述后重试。',
-    ai_failed: 'AI 约束解析失败，请稍后重试。',
+    ai_invalid_json: '智能解析结果格式异常，请调整描述后重试。',
+    ai_failed: '智能约束解析失败，请稍后重试。',
 };
 
 export async function requestTimetable(path, options = {}) {

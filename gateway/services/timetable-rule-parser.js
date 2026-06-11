@@ -72,7 +72,7 @@ function resolveAiConfig(env = {}) {
     const baseUrl = normalizeBaseUrl(env.DEEPSEEK_API_BASE || env.OPENAI_API_BASE || 'https://api.deepseek.com');
     const model = String(env.DEEPSEEK_MODEL || env.OPENAI_MODEL || env.DEEPSEEK_CHAT_MODEL || 'deepseek-chat').trim();
     if (!apiKey) {
-        throw new TimetableRuleParseError('AI 约束解析未配置，请先配置 API Key。', 'ai_not_configured', 503);
+        throw new TimetableRuleParseError('智能约束解析未配置，请先配置 API Key。', 'ai_not_configured', 503);
     }
     return { apiKey, baseUrl, model };
 }
@@ -80,7 +80,7 @@ function resolveAiConfig(env = {}) {
 function resolveFetch(fetchImpl) {
     if (typeof fetchImpl === 'function') return fetchImpl;
     if (typeof globalThis.fetch === 'function') return globalThis.fetch.bind(globalThis);
-    throw new TimetableRuleParseError('当前环境没有可用 fetch，无法调用 AI 解析。', 'missing_fetch', 503);
+    throw new TimetableRuleParseError('当前环境没有可用 fetch，无法调用智能解析。', 'missing_fetch', 503);
 }
 
 function decodeXml(value = '') {
@@ -255,7 +255,7 @@ function classifyWorkbook(sheets = []) {
     if (constraints && constraints.score >= 2) {
         return { inputType: 'xlsx_constraints', sheet: constraints.sheet, header: constraints.header, headerRowIndex: constraints.rowIndex };
     }
-    throw new TimetableRuleParseError('无法识别 Excel 内容，请上传任课表、AI 约束清单或文本约束文件。', 'unknown_xlsx_shape', 400);
+    throw new TimetableRuleParseError('无法识别 Excel 内容，请上传任课表、智能约束清单或文本约束文件。', 'unknown_xlsx_shape', 400);
 }
 
 function rowsToObjects(rows = [], header = null, headerRowIndex = null, sheetName = '') {
@@ -842,17 +842,17 @@ async function callAi({ project, text, inputType, contextStats, constraintRows, 
     try {
         payload = raw ? JSON.parse(raw) : {};
     } catch {
-        throw new TimetableRuleParseError('AI 返回内容不是有效 JSON。', 'ai_invalid_json', 502);
+        throw new TimetableRuleParseError('智能解析返回内容不是有效 JSON。', 'ai_invalid_json', 502);
     }
     if (!response.ok) {
-        throw new TimetableRuleParseError(payload.error?.message || 'AI 约束解析失败。', 'ai_failed', response.status || 502);
+        throw new TimetableRuleParseError(payload.error?.message || '智能约束解析失败。', 'ai_failed', response.status || 502);
     }
 
     const content = payload.choices?.[0]?.message?.content ?? payload;
     try {
         return normalizeAiContent(content);
     } catch {
-        throw new TimetableRuleParseError('AI 解析结果不是有效 JSON。', 'ai_invalid_json', 502);
+        throw new TimetableRuleParseError('智能解析结果不是有效 JSON。', 'ai_invalid_json', 502);
     }
 }
 
@@ -1153,7 +1153,7 @@ function parseConstraintsWithLocalFallback({ project, text, inputType, contextSt
     const constraints = localTextConstraints(project, text);
     if (!constraints.length) {
         if (error) throw error;
-        throw new TimetableRuleParseError('需要配置 AI 才能智能解析这类约束。', 'ai_not_configured', 503);
+        throw new TimetableRuleParseError('需要配置智能解析服务才能解析这类约束。', 'ai_not_configured', 503);
     }
     return normalizeTimetableRuleDraftRows({
         project,
@@ -1161,7 +1161,7 @@ function parseConstraintsWithLocalFallback({ project, text, inputType, contextSt
         source: 'local_text',
         inputType,
         contextStats,
-        initialWarnings: error ? [`AI 不可用，已仅提取明确规则：${error.reason || error.message}`] : [],
+        initialWarnings: error ? [`智能解析不可用，已仅提取明确规则：${error.reason || error.message}`] : [],
     });
 }
 
@@ -1213,7 +1213,7 @@ async function parseRosterWorkbookRules({ file, project, env, fetchImpl }) {
             contextStats,
             initialWarnings: [
                 ...(parsed.warnings || []),
-                'AI 没有返回可复核的约束，已根据任课表生成本地基础建议。',
+                '智能解析没有返回可复核的约束，已根据任课表生成本地基础建议。',
             ],
         });
     } catch (error) {
@@ -1221,7 +1221,7 @@ async function parseRosterWorkbookRules({ file, project, env, fetchImpl }) {
             project: rosterProject,
             preview,
             contextStats,
-            initialWarnings: [`AI 不可用，已根据任课表生成本地基础建议：${error.reason || error.message}`],
+            initialWarnings: [`智能解析不可用，已根据任课表生成本地基础建议：${error.reason || error.message}`],
         });
     }
 }
@@ -1282,7 +1282,7 @@ export async function parseTimetableRules({
                 fetchImpl,
             });
         }
-        throw new TimetableRuleParseError('AI 约束文件只支持 .txt、.csv、.xlsx、.xls。', 'unsupported_file_type', 400);
+        throw new TimetableRuleParseError('智能约束文件只支持 .txt、.csv、.xlsx、.xls。', 'unsupported_file_type', 400);
     }
 
     const prompt = cleanText(text, 4000);

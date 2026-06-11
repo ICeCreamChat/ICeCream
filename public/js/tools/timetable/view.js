@@ -355,7 +355,7 @@ function renderWorkflow(state) {
             ${renderWorkflowPanel({
                 id: 'rules',
                 icon: 'brain-circuit',
-                title: 'AI 约束',
+                title: '智能约束',
                 chip: `${rules.total} 条`,
                 open: openSections.has('rules'),
                 content: renderRulesSection(state),
@@ -617,7 +617,7 @@ function renderRulesSection(state) {
     const savedCount = savedItems.length;
     const draftCount = draftRows.length;
     const warningCount = (review.warnings || state.ruleWarnings || []).length + (review.unsupportedItems || []).length;
-    const cardTitle = draftCount ? '继续复核 AI 约束' : savedCount ? '查看 AI 约束' : '导入 AI 约束';
+    const cardTitle = draftCount ? '继续复核智能约束' : savedCount ? '查看智能约束' : '导入智能约束';
     const cardDescription = draftCount
         ? `${draftCount} 条草稿${warningCount ? ` / ${warningCount} 条警告` : ''}，进入复核表后确认生效。`
         : savedCount
@@ -657,7 +657,7 @@ function renderRuleInputArea(ruleInput = {}) {
                 </label>
                 <button class="tt-btn tt-btn--primary tt-btn--sm" id="tt-rule-parse-btn" type="button" ${loading ? 'disabled' : ''}>
                     <i data-lucide="${loading ? 'loader-2' : 'sparkles'}"></i>
-                    <span>${loading ? '解析中…' : 'AI 解析'}</span>
+                    <span>${loading ? '解析中…' : '智能解析'}</span>
                 </button>
                 <button class="tt-btn tt-btn--sm" id="tt-rule-manual-add-btn" type="button" ${loading ? 'disabled' : ''}>
                     <i data-lucide="plus"></i>
@@ -801,7 +801,7 @@ function renderRulePreview(state) {
     const inputType = state.ruleDraftInputType || '';
     const stats = state.ruleContextStats || null;
     if (!items.length && !warnings.length) {
-        return '<div class="tt-rule-preview"><span class="tt-muted">AI 解析后会在这里预览，确认后才会保存。</span></div>';
+        return '<div class="tt-rule-preview"><span class="tt-muted">智能解析后会在这里预览，确认后才会保存。</span></div>';
     }
     return `
         <div class="tt-rule-preview">
@@ -838,7 +838,7 @@ function renderRuleReviewDialog(state) {
             <section class="tt-rule-review-dialog" id="tt-rule-review-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-rule-review-title">
                 <div class="tt-dialog-header">
                     <div>
-                        <span class="tt-eyebrow">AI 约束</span>
+                        <span class="tt-eyebrow">智能约束</span>
                         <h3 id="tt-rule-review-title">${isSaved ? '已生效规则' : isReview ? '复核约束草稿' : '约束复核中心'}</h3>
                         <p>${isSaved ? '这些规则已经写入项目，并会参与下一次排课。' : isReview ? '只会保存状态为可生效的规则；建议项和未支持项仅供审查。' : '上传 TXT/XLSX、粘贴自然语言，或手动批量新增规则，全部先进入复核表。'}</p>
                     </div>
@@ -878,7 +878,7 @@ function renderSavedRulesTable(project = {}) {
             <div class="tt-empty-panel">
                 <i data-lucide="clipboard-check"></i>
                 <strong>暂无已生效规则</strong>
-                <span>上传或粘贴 AI 约束，复核确认后会显示在这里。</span>
+                <span>上传或粘贴智能约束，复核确认后会显示在这里。</span>
             </div>
             <div class="tt-dialog-actions">
                 <button class="tt-btn" id="tt-saved-rule-add" type="button"><i data-lucide="plus"></i><span>新增约束</span></button>
@@ -1150,7 +1150,7 @@ function renderRuleReviewInput(state, dialog, mode) {
     const parseIcon = isBusy ? 'loader-2' : 'sparkles';
     const manualIcon = isBusy ? 'loader-2' : 'list-plus';
     const actionIconClass = isBusy ? ' class="tt-spin"' : '';
-    const parseText = isBusy ? 'AI 解析中' : 'AI 解析';
+    const parseText = isBusy ? '智能解析中' : '智能解析';
     const manualText = isBusy ? '生成中' : '生成复核行';
     return `
         <div class="tt-segment tt-import-mode-tabs" role="group" aria-label="约束来源">
@@ -1176,7 +1176,7 @@ function renderRuleReviewInput(state, dialog, mode) {
             <strong>${escapeHtml(fileName)}</strong>
             <span>.txt / .csv / .xlsx / .xls</span>
             <input id="tt-rule-review-file" type="file" accept=".txt,.csv,.xlsx,.xls" ${disabled}>
-            ${dialog.fileName ? '<span class="tt-field-hint">已选择文件，点击「AI 解析」开始识别</span>' : ''}
+            ${dialog.fileName ? '<span class="tt-field-hint">已选择文件，点击「智能解析」开始识别</span>' : ''}
         </label>
         <div class="tt-rule-block ${mode === 'manual' ? 'is-active' : ''}">
             <span class="tt-rule-title">手动批量新增</span>
@@ -1270,16 +1270,7 @@ function renderRuleReviewTable(dialog, project = {}) {
                 ${stats.totalLessons !== undefined ? `<span>${escapeHtml(stats.totalLessons)} 课时</span>` : ''}
             </div>
         ` : ''}
-        ${warnings.length ? `
-            <div class="tt-roster-review-issues">
-                ${warnings.slice(0, 5).map(warning => `
-                    <div class="tt-rule-warning">
-                        <i data-lucide="triangle-alert"></i>
-                        <span>${escapeHtml(warning)}</span>
-                    </div>
-                `).join('')}
-            </div>
-        ` : ''}
+        ${renderRuleReviewReport(warnings)}
         <div class="tt-roster-review-wrap">
             <table class="tt-rule-review-table" id="tt-rule-review-table">
                 <colgroup class="tt-rule-review-cols">
@@ -1313,6 +1304,64 @@ function renderRuleReviewTable(dialog, project = {}) {
             <button class="tt-btn" id="tt-add-rule-review-row" type="button" ${disabled}><i data-lucide="plus"></i><span>新增行</span></button>
             <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
             <button class="tt-btn tt-btn--primary" id="tt-confirm-rule-review" type="button" ${isBusy || !rows.length ? 'disabled' : ''}><i data-lucide="${isBusy ? 'loader-2' : 'check'}" class="${isBusy ? 'tt-spin' : ''}"></i><span>${isBusy ? '确认中' : '确认生效'}</span></button>
+        </div>
+    `;
+}
+
+function ruleReviewWarningInsight(warning = '') {
+    const text = String(warning || '');
+    if (/已自动处理|无需额外|基础规则|默认规则|系统内置|已经处理/.test(text)) {
+        return { group: 'handled', title: '已自动处理', icon: 'check-circle-2', tone: 'info' };
+    }
+    if (/缺少|未指定|未写入|请人工|人工补充|人工在|手动调整|无法.*表达|无法用|精确表达/.test(text)) {
+        return { group: 'review', title: '需要人工补充', icon: 'circle-alert', tone: 'review' };
+    }
+    if (/不支持|暂不支持|仅作建议|建议作为|优化目标|供审查|建议项/.test(text)) {
+        return { group: 'suggestion', title: '暂不支持 / 仅作建议', icon: 'lightbulb', tone: 'suggestion' };
+    }
+    return { group: 'notice', title: '解析提醒', icon: 'triangle-alert', tone: 'warning' };
+}
+
+function renderRuleReviewReport(warnings = []) {
+    if (!warnings.length) return '';
+    const order = ['handled', 'review', 'suggestion', 'notice'];
+    const groups = new Map();
+    warnings.forEach(warning => {
+        const insight = ruleReviewWarningInsight(warning);
+        if (!groups.has(insight.group)) groups.set(insight.group, { ...insight, items: [] });
+        groups.get(insight.group).items.push(String(warning || ''));
+    });
+    return `
+        <div class="tt-rule-review-report" aria-label="智能解析报告">
+            ${order.map(key => {
+                const group = groups.get(key);
+                if (!group) return '';
+                const visible = group.items.slice(0, 4);
+                const rest = group.items.length - visible.length;
+                return `
+                    <div class="tt-rule-report-group tt-rule-report-group--${escapeAttr(group.tone)}">
+                        <div class="tt-rule-report-title">
+                            <i data-lucide="${escapeAttr(group.icon)}"></i>
+                            <strong>${escapeHtml(group.title)}</strong>
+                            <span>${escapeHtml(group.items.length)} 条</span>
+                        </div>
+                        <div class="tt-roster-review-issues">
+                            ${visible.map(warning => `
+                                <div class="tt-rule-warning tt-rule-warning--${escapeAttr(group.tone)}">
+                                    <i data-lucide="${escapeAttr(group.icon)}"></i>
+                                    <span>${escapeHtml(warning)}</span>
+                                </div>
+                            `).join('')}
+                            ${rest > 0 ? `
+                                <div class="tt-rule-warning tt-rule-warning--${escapeAttr(group.tone)}">
+                                    <i data-lucide="more-horizontal"></i>
+                                    <span>还有 ${escapeHtml(rest)} 条同类提示，可继续复核下方草稿。</span>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('')}
         </div>
     `;
 }
@@ -1363,9 +1412,10 @@ function renderRuleReviewRow(row = {}, project = {}, disabled = false) {
     const warningText = warnings.join('；');
     const warning = warnings.length
         ? `<span class="tt-rule-row-warning" title="${escapeAttr(warningText)}">${escapeHtml(warningText)}</span>` : '';
+    const rawHelper = ruleReviewRowSourceLabel(row, status);
     return `
         <tr class="tt-rule-review-row tt-rule-review-row--${escapeAttr(status)}" data-rule-review-row="${escapeAttr(row.id)}">
-            <td>${cell(input('rawText', row.rawText || row.description || ''))}</td>
+            <td>${cell(input('rawText', row.rawText || row.description || ''), rawHelper)}</td>
             <td>${cell(`
                 <select class="tt-roster-review-field" data-rule-review-field="type" ${disabledAttr}>
                     ${typeOptions.map(type => `<option value="${type}" ${row.type === type ? 'selected' : ''}>${escapeHtml(ruleTypeLabel(type))}</option>`).join('')}
@@ -1400,6 +1450,29 @@ function renderRuleReviewRow(row = {}, project = {}, disabled = false) {
             </td>
         </tr>
     `;
+}
+
+function ruleReviewRowSourceLabel(row = {}, status = '') {
+    const source = String(row.source || '').trim();
+    const sourceRow = Number.parseInt(row.sourceRow, 10);
+    const sourceLabel = Number.isFinite(sourceRow)
+        ? `来自第 ${sourceRow} 条`
+        : source === 'manual'
+            ? '手动新增'
+            : source
+                ? `来自 ${source}`
+                : row.rawText
+                    ? '来自原始描述'
+                    : '新建草稿';
+    const stateLabel = ({
+        effective: '智能已转换',
+        needs_review: '需人工确认',
+        suggestion: '建议项',
+        unsupported: '暂不生效',
+        invalid: '需修正',
+        ignored: '已忽略',
+    })[status] || '待复核';
+    return `<span class="tt-rule-row-source" title="${escapeAttr(`${sourceLabel} · ${stateLabel}`)}">${escapeHtml(`${sourceLabel} · ${stateLabel}`)}</span>`;
 }
 
 function renderSolveSection(state) {

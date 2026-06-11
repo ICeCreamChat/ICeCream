@@ -337,7 +337,7 @@ test('timetable publish success clears stale solve failure state', async () => {
   assert.match(controllerSource, /async confirmPublishSchedule\([\s\S]*this\.state\.lastFailure = null;/);
 });
 
-test('timetable AI rule acceptance reuses saved rules response instead of extra bootstrap refresh', async () => {
+test('timetable 智能 rule acceptance reuses saved rules response instead of extra bootstrap refresh', async () => {
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
 
   assert.match(controllerSource, /async acceptRule\([\s\S]*const result = await requestTimetable\('\/rules'/);
@@ -392,7 +392,7 @@ test('timetable mutations that invalidate the current draft clear selected slot 
   }
 });
 
-test('timetable clearRuleDraft clears pending AI rule cards and expanded editor state', () => {
+test('timetable clearRuleDraft clears pending 智能 rule cards and expanded editor state', () => {
   const controller = new TimetablePlannerController();
   controller.state.pendingRules = [{ id: 'draft-1' }];
   controller.state.expandedRuleId = 'draft-1';
@@ -759,7 +759,7 @@ test('timetable publication history dialog refuses missing history versions befo
   assert.match(controller.state.message, /1/);
 });
 
-test('timetable syncPendingRuleDraftState keeps AI draft review state aligned', () => {
+test('timetable syncPendingRuleDraftState keeps 智能 draft review state aligned', () => {
   const controller = new TimetablePlannerController();
   controller.render = () => {};
   controller.state.project = createDefaultTimetableProject({
@@ -808,7 +808,7 @@ test('timetable syncPendingRuleDraftState keeps AI draft review state aligned', 
   assert.equal(controller.state.ruleReview.step, 'input');
 });
 
-test('timetable syncPendingRuleDraftState drops stale unsupported AI items when draft rows shrink', () => {
+test('timetable syncPendingRuleDraftState drops stale unsupported 智能 items when draft rows shrink', () => {
   const controller = new TimetablePlannerController();
   controller.render = () => {};
   controller.state.project = createDefaultTimetableProject();
@@ -3432,7 +3432,7 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.doesNotMatch(html, /id="tt-import-roster"/);
   assert.doesNotMatch(html, /class="tt-plan-list"/);
   assert.doesNotMatch(html, /class="tt-plan-row"/);
-  // AI constraints use the same compact entry + modal workflow as roster import.
+  // 智能 constraints use the same compact entry + modal workflow as roster import.
   assert.match(html, /id="tt-open-rule-review"/);
   assert.doesNotMatch(html, /id="tt-rule-input-area"/);
   assert.doesNotMatch(html, /id="tt-rule-input-text"/);
@@ -3647,7 +3647,7 @@ test('timetable roster import preserves input and review drafts when the modal i
   assert.deepEqual(controller.state.rosterImport.draftRows, []);
 });
 
-test('timetable AI rules support Excel file upload and rich preview metadata', async () => {
+test('timetable 智能 rules support Excel file upload and rich preview metadata', async () => {
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
   const stateSource = await readFile(new URL('state.js', moduleRoot), 'utf8');
   const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
@@ -3781,7 +3781,7 @@ test('timetable rule review keeps parsed drafts inside the modal and preserves t
 
   assert.match(sidebar, /id="tt-open-rule-review"/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
-  assert.match(sidebar, /继续复核 AI 约束/);
+  assert.match(sidebar, /继续复核智能约束/);
   assert.match(sidebar, /2/);
   assert.doesNotMatch(sidebar, /id="tt-pending-rules"/);
   assert.doesNotMatch(sidebar, /data-rule-card="draft-1"/);
@@ -3822,7 +3822,7 @@ test('timetable rule review keeps parsed drafts inside the modal and preserves t
   assert.equal(controller.state.ruleReview.draftRows.length, 2);
 });
 
-test('timetable AI rules sidebar renders roster-style card entry while examples and file upload stay in the modal', async () => {
+test('timetable 智能 rules sidebar renders roster-style card entry while examples and file upload stay in the modal', async () => {
   const viewSource = await readFile(new URL('view.js', moduleRoot), 'utf8');
   const state = sampleWorkbenchState({
     pendingRules: [],
@@ -3846,7 +3846,7 @@ test('timetable AI rules sidebar renders roster-style card entry while examples 
   assert.doesNotMatch(sidebar, /id="tt-add-lock"/);
   assert.doesNotMatch(sidebar, /tt-lock-list/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
-  assert.match(sidebar, /导入 AI 约束/);
+  assert.match(sidebar, /导入智能约束/);
   assert.doesNotMatch(sidebar, /tt-rule-entry-card/);
   // No dialog rendered when no pending rules and no open state
   assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
@@ -3869,22 +3869,22 @@ test('timetable rule review modal shows seating-style parse progress feedback', 
       open: true,
       step: 'input',
       mode: 'file',
-      fileName: 'AI-rules.xlsx',
+      fileName: '智能-rules.xlsx',
       text: 'Math prefers morning',
       draftRows: [],
       warnings: [],
       loading: true,
       phase: 'parse_file',
-      phaseText: 'AI 解析约束中...',
+      phaseText: '智能解析约束中...',
     },
   }));
 
   assert.match(fileHtml, /class="[^"]*tt-process-strip[^"]*"/);
-  assert.match(fileHtml, /AI 解析约束中\.\.\./);
-  assert.match(fileHtml, /AI-rules\.xlsx/);
+  assert.match(fileHtml, /智能解析约束中\.\.\./);
+  assert.match(fileHtml, /智能-rules\.xlsx/);
   assert.match(fileHtml, /id="tt-rule-review-parse"[^>]*disabled/);
   assert.match(fileHtml, /data-lucide="loader-2"[^>]*class="tt-spin"/);
-  assert.match(fileHtml, /AI 解析中/);
+  assert.match(fileHtml, /智能解析中/);
   assert.match(fileHtml, /data-rule-review-mode="file"[^>]*disabled/);
   assert.match(fileHtml, /id="tt-rule-review-file"[^>]*disabled/);
   assert.match(fileHtml, /id="tt-rule-review-text"[^>]*disabled/);
@@ -3919,7 +3919,7 @@ test('timetable rule review modal locks review table while rules are being writt
       open: true,
       step: 'review',
       mode: 'file',
-      fileName: 'AI-rules.xlsx',
+      fileName: '智能-rules.xlsx',
       inputType: 'xlsx_constraints',
       draftRows: [{
         id: 'draft-1',
@@ -3953,6 +3953,73 @@ test('timetable rule review modal locks review table while rules are being writt
   assert.match(html, /id="tt-add-rule-review-row"[^>]*disabled/);
 });
 
+test('timetable rule review explains warning groups and draft row sources separately', async () => {
+  const styles = await readFile(stylePath, 'utf8');
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'file',
+      fileName: '智能-rules.xlsx',
+      inputType: 'xlsx_constraints',
+      draftRows: [{
+        id: 'draft-source-1',
+        source: '智能约束建议',
+        sourceRow: 1,
+        rawText: '同一位教师同一时间只能给一个班上课。',
+        type: 'subject_morning',
+        targetType: 'subject',
+        targetName: '语文',
+        targetId: 'chinese',
+        slots: [],
+        priority: 'soft',
+        status: 'effective',
+        confidence: 0.9,
+        description: '语文尽量安排在上午',
+        warnings: [],
+      }, {
+        id: 'draft-source-2',
+        source: '智能约束建议',
+        sourceRow: 4,
+        rawText: '混合课程连堂块不可拆。',
+        type: 'block_protection',
+        targetType: 'subject',
+        targetName: '化学',
+        slots: [],
+        priority: 'soft',
+        status: 'suggestion',
+        confidence: 0.75,
+        description: '建议项，仅供复核',
+        warnings: ['当前版本只能预览这类建议'],
+      }],
+      contextStats: { rowCount: 2 },
+      warnings: [
+        '第1条（同一教师不冲突）是排课系统的基础规则，已自动处理，无需额外约束。',
+        '第4条（混合课程连堂块不可拆）当前约束类型不支持，请人工在设计时处理。',
+        '第9条（上午主科不过载）无法用现有约束精确表达，建议通过手动调整或后续优化。',
+        '第17条（教师空堂紧凑）建议作为优化目标。',
+      ],
+      loading: false,
+    },
+  }));
+
+  assert.match(html, /tt-rule-review-report/);
+  assert.match(html, /已自动处理/);
+  assert.match(html, /需要人工补充/);
+  assert.match(html, /暂不支持 \/ 仅作建议/);
+  assert.match(html, /tt-rule-warning--info/);
+  assert.match(html, /tt-rule-warning--review/);
+  assert.match(html, /tt-rule-warning--suggestion/);
+  assert.match(html, /来自第 1 条 · 智能已转换/);
+  assert.match(html, /来自第 4 条 · 建议项/);
+  assert.match(html, /data-rule-review-row="draft-source-1"/);
+  assert.match(html, /data-rule-review-row="draft-source-2"/);
+
+  assert.match(styles, /\.tt-rule-review-report\s*{/);
+  assert.match(styles, /\.tt-rule-warning--info\s*{/);
+  assert.match(styles, /\.tt-rule-row-source\s*{/);
+});
+
 test('timetable rule review table aligns controls with fixed helper rows', async () => {
   const styles = await readFile(stylePath, 'utf8');
   const html = renderWorkbench(sampleWorkbenchState({
@@ -3960,7 +4027,7 @@ test('timetable rule review table aligns controls with fixed helper rows', async
       open: true,
       step: 'review',
       mode: 'file',
-      fileName: 'AI-rules.xlsx',
+      fileName: '智能-rules.xlsx',
       inputType: 'xlsx_constraints',
       draftRows: [{
         id: 'draft-align-1',
@@ -3998,7 +4065,7 @@ test('timetable rule review table aligns controls with fixed helper rows', async
   assert.match(styles, /\.tt-rule-review-action-cell\s*{[^}]*align-items:\s*start/s);
 });
 
-test('timetable saved AI rules remain visible after confirmation', async () => {
+test('timetable saved 智能 rules remain visible after confirmation', async () => {
   const styles = await readFile(stylePath, 'utf8');
   const project = createDefaultTimetableProject({
     weekdays: 5,
@@ -4047,7 +4114,7 @@ test('timetable saved AI rules remain visible after confirmation', async () => {
   // New card-based saved rules section
   assert.match(sidebar, /id="tt-open-rule-review"/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
-  assert.match(sidebar, /查看 AI 约束/);
+  assert.match(sidebar, /查看智能约束/);
   assert.match(sidebar, /9/);
   assert.match(sidebar, /id="tt-clear-rules"/);
   assert.doesNotMatch(sidebar, /id="tt-saved-rules"/);
@@ -4081,7 +4148,7 @@ test('timetable saved AI rules remain visible after confirmation', async () => {
   assert.doesNotMatch(styles, /(?:^|\n)\.tt-saved-rule-row\s*\{/);
 });
 
-test('timetable saved AI rules can be removed one at a time without clearing others', () => {
+test('timetable saved 智能 rules can be removed one at a time without clearing others', () => {
   const project = createDefaultTimetableProject({
     weekdays: 5,
     periodsPerDay: 7,
@@ -4157,7 +4224,7 @@ test('timetable left sidebar range workflow applies only from the range popover 
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-multi-select-popover/);
 });
 
-test('timetable inspector surfaces data and AI rule audit summaries', () => {
+test('timetable inspector surfaces data and 智能 rule audit summaries', () => {
   const state = sampleWorkbenchState({
     ruleDraftPreview: [{
       id: 'draft-1',
