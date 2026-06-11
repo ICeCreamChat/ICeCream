@@ -4226,6 +4226,32 @@ test('timetable rule review groups smart parse results by readiness and question
   assert.match(styles, /\.tt-rule-conflict--blocking\s*{/);
 });
 
+test('timetable rule review does not render empty candidate questions as blank selects', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      clarifyingQuestions: [{
+        id: 'q_empty',
+        question: 'Which all-teacher object?',
+        reason: 'No valid candidate should be shown as a dropdown.',
+        options: [
+          { label: '', value: '' },
+          { label: null, value: null },
+        ],
+      }],
+      draftRows: [],
+      warnings: [],
+      unsupportedItems: [],
+    },
+  }));
+
+  assert.match(html, /Which all-teacher object/);
+  assert.doesNotMatch(html, /data-rule-question-answer="q_empty"/);
+  assert.doesNotMatch(html, /<select[^>]*data-rule-question-answer="q_empty"/);
+});
+
 test('timetable rule review can clarify questions and request rule diagnosis', async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;

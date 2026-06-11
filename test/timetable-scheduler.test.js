@@ -1751,6 +1751,63 @@ test('timetable smart rules expand all-teacher limits across uploaded teachers',
     assert.deepEqual(result.draftRules.softRules.teacherLimits.t_li, { daily: 4, consecutive: 2 });
 });
 
+test('timetable smart rules do not ask object questions for all-teacher suggestions', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [
+            { id: 't_zhang', name: 'Zhang', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_li', name: 'Li', subjects: ['chinese'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: [{
+            id: 'all_teacher_balance',
+            rawText: 'Balance workload for all teachers',
+            type: 'teacher_load_balance',
+            targetType: 'teacher',
+            targetName: 'all teachers',
+            priority: 'soft',
+            status: 'needs_review',
+            confidence: 0.82,
+            ambiguity: {
+                field: 'target',
+                targetType: 'teacher',
+                targetText: 'all teachers',
+                candidates: [
+                    { id: 't_zhang', label: 'Zhang' },
+                    { id: 't_li', label: 'Li' },
+                ],
+            },
+            ambiguities: [{
+                field: 'target',
+                targetType: 'teacher',
+                targetText: 'all teachers',
+                candidates: [
+                    { id: 't_zhang', label: 'Zhang' },
+                    { id: 't_li', label: 'Li' },
+                ],
+            }],
+        }],
+    });
+
+    const row = result.draftRows[0];
+    assert.equal(row.status, 'suggestion');
+    assert.equal(row.targetType, 'all_teachers');
+    assert.equal(row.targetId, '__all_teachers');
+    assert.equal(result.clarifyingQuestions.length, 0);
+    assert.equal(result.missingInfo.length, 0);
+    assert.equal(result.nextAction, 'review');
+});
+
 test('timetable rule draft row normalization only saves effective valid rows', () => {
     const project = createDefaultTimetableProject({
         weekdays: 5,

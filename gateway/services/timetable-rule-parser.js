@@ -464,6 +464,25 @@ function isAllTeachersTarget(row = {}) {
     return /(全部|全体|所有|每位|每个|各位|任课|任意)\s*(教师|老师)|all\s+teachers?/i.test(text);
 }
 
+function shouldNormalizeAllTeachersTarget(row = {}, type = row.type || '') {
+    if (!isAllTeachersTarget(row)) return false;
+    return row.targetType === 'all_teachers'
+        || type === 'teacher_daily_limit'
+        || type === 'teacher_consecutive_limit'
+        || String(type || '').startsWith('teacher_');
+}
+
+function normalizeAllTeachersTargetRow(row = {}) {
+    return {
+        ...row,
+        targetType: 'all_teachers',
+        targetId: '__all_teachers',
+        targetName: '全部教师',
+        ambiguity: null,
+        ambiguities: [],
+    };
+}
+
 function matchEntityCandidates(project = {}, targetText = '', targetType = '', { targetId = '' } = {}) {
     const items = entityItemsForType(project, targetType);
     const query = asText(targetText || targetId, 160);
@@ -766,6 +785,9 @@ function classifyDraftRow(row = {}, project = {}) {
     next = { ...next, slots: time.slots.length ? time.slots : next.slots, warnings: [...next.warnings, ...time.warnings] };
 
     if (next.status === 'ignored') return next;
+    if (shouldNormalizeAllTeachersTarget(next, type)) {
+        next = normalizeAllTeachersTargetRow(next);
+    }
     if (!SUPPORTED_EFFECTIVE_TYPES.has(type)) {
         const status = SUGGESTION_ONLY_TYPES.has(type) ? 'suggestion' : 'unsupported';
         return {
@@ -922,8 +944,15 @@ function buildMissingInfo(rows = []) {
 function buildClarifyingQuestions(project = {}, rows = []) {
     const questions = [];
     rows.forEach(row => {
+        if (isAllTeachersTarget(row)) return;
         const ambiguityMap = new Map();
         [...(row.ambiguities || []), row.ambiguity].filter(Boolean).forEach(item => {
+            if (isAllTeachersTarget({
+                targetId: item.targetId,
+                targetName: item.targetText,
+                target: item.target,
+                rawText: item.targetText,
+            })) return;
             const key = JSON.stringify([
                 item.field || '',
                 item.targetType || '',
@@ -934,10 +963,15 @@ function buildClarifyingQuestions(project = {}, rows = []) {
         });
         const ambiguities = [...ambiguityMap.values()];
         ambiguities.forEach((ambiguity, index) => {
+            const seenOptions = new Set();
             const options = (ambiguity.candidates || []).map(candidate => ({
-                label: candidate.label,
-                value: candidate.id,
-            }));
+                label: asText(candidate.label || candidate.name || candidate.value || candidate.id, 120),
+                value: asText(candidate.id || candidate.value, 120),
+            })).filter(option => {
+                if (!option.label || !option.value || seenOptions.has(option.value)) return false;
+                seenOptions.add(option.value);
+                return true;
+            });
             if (!options.length) return;
             const targetText = ambiguity.targetText || row.targetName || row.rawText || '这个对象';
             const typeLabel = {

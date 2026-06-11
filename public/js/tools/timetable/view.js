@@ -1362,10 +1362,29 @@ function ruleNextActionLabel(value = '') {
     }[value] || value;
 }
 
+function normalizeQuestionOptions(options = []) {
+    const seen = new Set();
+    return (Array.isArray(options) ? options : [])
+        .map(option => ({
+            label: String(option?.label || option?.name || option?.value || '').trim(),
+            value: String(option?.value || option?.id || '').trim(),
+        }))
+        .filter(option => {
+            if (!option.label || !option.value || seen.has(option.value)) return false;
+            seen.add(option.value);
+            return true;
+        });
+}
+
 function renderClarifyingQuestions(dialog = {}) {
-    const questions = dialog.clarifyingQuestions || [];
+    const questions = (dialog.clarifyingQuestions || []).map(question => ({
+        ...question,
+        options: normalizeQuestionOptions(question.options),
+    }));
+    const answerableQuestions = questions.filter(question => question.options.length);
+    const emptyQuestions = questions.filter(question => !question.options.length);
     const missing = dialog.missingInfo || [];
-    if (!questions.length && !missing.length) return '';
+    if (!answerableQuestions.length && !emptyQuestions.length && !missing.length) return '';
     return `
         <section class="tt-rule-review-group tt-rule-review-group--question">
             <div class="tt-rule-review-group-title">
@@ -1373,7 +1392,7 @@ function renderClarifyingQuestions(dialog = {}) {
                 <strong>需要补充信息</strong>
                 <span>${questions.length + missing.length} 条</span>
             </div>
-            ${questions.map(question => `
+            ${answerableQuestions.map(question => `
                 <div class="tt-rule-question">
                     <strong>${escapeHtml(question.question || '请补充信息')}</strong>
                     ${question.reason ? `<span>${escapeHtml(question.reason)}</span>` : ''}
@@ -1385,13 +1404,19 @@ function renderClarifyingQuestions(dialog = {}) {
                     ` : `<input class="tt-roster-review-field" data-rule-question-answer="${escapeAttr(question.id)}" type="text" placeholder="输入补充说明">`}
                 </div>
             `).join('')}
+            ${emptyQuestions.map(question => `
+                <div class="tt-rule-warning tt-rule-warning--review">
+                    <i data-lucide="circle-alert"></i>
+                    <span>${escapeHtml(question.question || '这条补充问题没有可选择的候选，请重新解析或修改原始描述。')}</span>
+                </div>
+            `).join('')}
             ${missing.map(item => `
                 <div class="tt-rule-warning tt-rule-warning--review">
                     <i data-lucide="circle-alert"></i>
                     <span>${escapeHtml(item.message || item)}</span>
                 </div>
             `).join('')}
-            ${questions.length ? `
+            ${answerableQuestions.length ? `
                 <button class="tt-btn tt-btn--primary tt-btn--sm" id="tt-continue-rule-conversation" type="button">
                     <i data-lucide="send"></i><span>提交回答并继续解析</span>
                 </button>
