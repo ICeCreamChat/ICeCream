@@ -41,7 +41,7 @@ function bindDelegatedInteractions(container) {
     container.addEventListener('change', event => {
         const controller = container.__ttController;
         if (!controller) return;
-        if (event.target.matches('[data-period-time-start], [data-period-time-end]')) {
+        if (event.target.matches('[data-period-time-draft-start], [data-period-time-draft-end], [data-period-time-start], [data-period-time-end]')) {
             controller.readPeriodTimesFromDom();
         }
     });
@@ -138,6 +138,11 @@ export function bindGridInteractions(container, controller, state) {
             controller.applyRangeDraft();
         });
     });
+    container.querySelector('#tt-open-period-time-dialog')?.addEventListener('click', () => controller.openPeriodTimeDialog());
+    container.querySelector('#tt-clear-period-times')?.addEventListener('click', () => controller.clearPeriodTimes());
+    container.querySelector('#tt-save-period-times')?.addEventListener('click', () => controller.savePeriodTimes());
+    container.querySelector('#tt-cancel-period-times')?.addEventListener('click', () => controller.closePeriodTimeDialog());
+    container.querySelector('#tt-cancel-period-times-secondary')?.addEventListener('click', () => controller.closePeriodTimeDialog());
     container.querySelectorAll('[data-tt-popover-close]').forEach(button => {
         button.addEventListener('click', () => button.closest('details')?.removeAttribute('open'));
     });

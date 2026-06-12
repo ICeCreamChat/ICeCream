@@ -1025,6 +1025,73 @@ button.tt-section-title {
     font-size: 0.86rem;
 }
 
+.tt-period-time-entry {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    margin-top: var(--tt-space-sm);
+    padding: 10px 12px;
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    color: var(--tt-text);
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color var(--tt-transition-fast), box-shadow var(--tt-transition-fast), transform var(--tt-transition-fast);
+}
+
+.tt-period-time-entry:hover,
+.tt-period-time-entry:focus-visible {
+    border-color: var(--tt-primary);
+    box-shadow: var(--tt-primary-glow);
+    outline: none;
+    transform: translateY(-1px);
+}
+
+.tt-period-time-entry-icon {
+    display: inline-grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    background: rgba(8, 145, 178, 0.12);
+    border: 1px solid rgba(8, 145, 178, 0.22);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-primary);
+}
+
+.tt-period-time-entry-icon .lucide {
+    width: 18px;
+    height: 18px;
+}
+
+.tt-period-time-entry-copy {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.tt-period-time-entry-copy strong,
+.tt-period-time-entry-copy em {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-period-time-entry-copy strong {
+    color: var(--tt-text);
+    font-size: 0.82rem;
+}
+
+.tt-period-time-entry-copy em {
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    font-style: normal;
+}
+
 .tt-empty-panel {
     display: grid;
     justify-items: center;
@@ -1473,7 +1540,8 @@ button.tt-section-title {
 }
 
 .tt-roster-import-dialog,
-.tt-rule-review-dialog {
+.tt-rule-review-dialog,
+.tt-period-time-dialog {
     display: grid;
     gap: var(--tt-space-md);
     box-sizing: border-box;
@@ -1508,6 +1576,10 @@ button.tt-section-title {
 
 .tt-rule-review-dialog {
     min-width: min(820px, calc(100vw - 48px));
+}
+
+.tt-period-time-dialog {
+    min-width: min(560px, calc(100vw - 48px));
 }
 
 .tt-publish-summary {
@@ -1904,6 +1976,57 @@ button.tt-section-title {
     border-color: var(--tt-primary);
     box-shadow: var(--tt-primary-glow);
     outline: none;
+}
+
+.tt-period-time-review {
+    overflow: auto;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    background: rgba(15, 23, 42, 0.12);
+}
+
+.tt-period-time-table {
+    width: 100%;
+    min-width: 440px;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.tt-period-time-col-label {
+    width: 96px;
+}
+
+.tt-period-time-col-time {
+    width: 172px;
+}
+
+.tt-period-time-table th,
+.tt-period-time-table td {
+    padding: 8px;
+    border-bottom: 1px solid var(--tt-border);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.tt-period-time-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.tt-period-time-table th {
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
+.tt-period-time-label {
+    color: var(--tt-text-secondary);
+    font-size: 0.78rem;
+    font-weight: 800;
+}
+
+.tt-period-time-input {
+    height: 36px;
+    min-height: 36px;
 }
 
 .tt-roster-review-issue {
@@ -2843,6 +2966,7 @@ button.tt-section-title {
 
     .tt-roster-import-dialog,
     .tt-rule-review-dialog,
+    .tt-period-time-dialog,
     .tt-publish-dialog,
     .tt-publication-history-dialog {
         width: 100%;

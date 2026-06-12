@@ -538,6 +538,7 @@ export function renderWorkbench(state) {
             </aside>
             ${renderAgentFloating(state)}
             ${renderRosterImportDialog(state)}
+            ${renderPeriodTimeDialog(state)}
             ${renderRuleReviewDialog(state)}
             ${renderPublishDialog(state)}
             ${renderRestoreDialog(state)}
@@ -614,36 +615,72 @@ function renderWorkflow(state) {
 function renderPeriodTimesConfig(state) {
     const { activePeriods } = getRangeDraft(state);
     const periodTimes = state.rangeDraft?.periodTimes || state.project?.periodTimes || [];
-    const timeMap = new Map(periodTimes.map(item => [item.period, item]));
-    const hasAnyTime = periodTimes.some(item => item.start || item.end);
+    const validTimes = periodTimes.filter(item => activePeriods.includes(Number(item.period)) && (item.start || item.end));
+    const configuredCount = validTimes.length;
+    const firstStart = validTimes.find(item => item.start)?.start || '';
+    const lastEnd = [...validTimes].reverse().find(item => item.end)?.end || '';
+    const summary = configuredCount
+        ? `${firstStart && lastEnd ? `${firstStart}-${lastEnd} · ` : ''}已配置 ${configuredCount} 节`
+        : '未配置';
     return `
-        <details class="tt-period-times"${hasAnyTime ? ' open' : ''}>
-            <summary class="tt-period-times-summary">
+        <button class="tt-period-time-entry" id="tt-open-period-time-dialog" type="button">
+            <span class="tt-period-time-entry-icon">
                 <i data-lucide="clock"></i>
-                <span>节次时间配置</span>
-                <span class="tt-chip">${hasAnyTime ? '已配置' : '可选'}</span>
-            </summary>
-            <div class="tt-period-time-body">
-                <table class="tt-period-time-table">
-                    <thead><tr><th>节次</th><th>开始</th><th>结束</th></tr></thead>
-                    <tbody>
-                        ${activePeriods.map(period => {
-                            const entry = timeMap.get(period) || {};
-                            return `<tr data-period-time-row="${period}">
-                                <td class="tt-period-time-label">第${period}节</td>
-                                <td><input type="time" class="tt-period-time-input" data-period-time-start="${period}" value="${escapeAttr(entry.start || '')}"></td>
-                                <td><input type="time" class="tt-period-time-input" data-period-time-end="${period}" value="${escapeAttr(entry.end || '')}"></td>
-                            </tr>`;
-                        }).join('')}
-                    </tbody>
-                </table>
-                <div class="tt-action-row">
-                    <button class="tt-btn tt-btn--sm" type="button" data-action="auto-fill-period-times">
-                        <i data-lucide="wand-2"></i><span>一键填充</span>
-                    </button>
+            </span>
+            <span class="tt-period-time-entry-copy">
+                <strong>节次时间</strong>
+                <em>${escapeHtml(summary)}</em>
+            </span>
+            <span class="tt-chip">配置时间</span>
+        </button>
+    `;
+}
+
+function renderPeriodTimeDialog(state) {
+    const dialog = state.periodTimeDialog || {};
+    if (!dialog.open) return '';
+    const { activePeriods } = getRangeDraft(state);
+    const draftTimes = dialog.draftTimes || state.rangeDraft?.periodTimes || state.project?.periodTimes || [];
+    const timeMap = new Map(draftTimes.map(item => [Number(item.period), item]));
+    return `
+        <div class="tt-dialog-overlay" data-period-time-dialog-overlay>
+            <section class="tt-period-time-dialog" id="tt-period-time-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-period-time-title">
+                <div class="tt-dialog-header">
+                    <div>
+                        <span class="tt-eyebrow">排课范围</span>
+                        <h3 id="tt-period-time-title">节次时间配置</h3>
+                        <p>配置每节课的开始和结束时间，用于课表展示与导出，不会单独改变已生成课表。</p>
+                    </div>
+                    <button class="tt-icon-btn" id="tt-cancel-period-times" type="button" title="关闭节次时间配置" aria-label="关闭节次时间配置"><i data-lucide="x"></i></button>
                 </div>
-            </div>
-        </details>
+                <div class="tt-period-time-review">
+                    <table class="tt-period-time-table">
+                        <colgroup>
+                            <col class="tt-period-time-col-label">
+                            <col class="tt-period-time-col-time">
+                            <col class="tt-period-time-col-time">
+                        </colgroup>
+                        <thead><tr><th>节次</th><th>开始时间</th><th>结束时间</th></tr></thead>
+                        <tbody>
+                            ${activePeriods.map(period => {
+                                const entry = timeMap.get(period) || {};
+                                return `<tr data-period-time-row="${period}">
+                                    <td class="tt-period-time-label">第${period}节</td>
+                                    <td><input type="time" class="tt-roster-review-field tt-period-time-input" data-period-time-draft-start="${period}" value="${escapeAttr(entry.start || '')}"></td>
+                                    <td><input type="time" class="tt-roster-review-field tt-period-time-input" data-period-time-draft-end="${period}" value="${escapeAttr(entry.end || '')}"></td>
+                                </tr>`;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="tt-dialog-actions">
+                    <button class="tt-btn" id="tt-auto-fill-period-times" type="button" data-action="auto-fill-period-times"><i data-lucide="wand-2"></i><span>一键填充</span></button>
+                    <button class="tt-btn tt-btn--ghost" id="tt-clear-period-times" type="button"><i data-lucide="eraser"></i><span>清空时间</span></button>
+                    <button class="tt-btn tt-btn--ghost" id="tt-cancel-period-times-secondary" type="button">取消</button>
+                    <button class="tt-btn tt-btn--primary" id="tt-save-period-times" type="button"><i data-lucide="save"></i><span>保存时间</span></button>
+                </div>
+            </section>
+        </div>
     `;
 }
 

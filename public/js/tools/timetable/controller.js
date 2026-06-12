@@ -430,6 +430,7 @@ export class TimetablePlannerController {
         if (!this.state.container) return;
         const payload = readProjectForm(this.state.container);
         this.state.rangeDraft = {
+            ...(this.state.rangeDraft || {}),
             activeWeekdays: payload.activeWeekdays,
             activePeriods: payload.activePeriods,
         };
@@ -449,12 +450,11 @@ export class TimetablePlannerController {
 
     async applyRangeDraft() {
         this.updateRangeDraftFromForm();
-        this.readPeriodTimesFromDom();
         await this.saveProject(this.rangePayloadFromDraft());
     }
 
-    autoFillPeriodTimes() {
-        const activePeriods = this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project);
+    buildDefaultPeriodTimes(periods = null) {
+        const activePeriods = periods || this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project);
         const startHour = 8;
         const durationMinutes = 40;
         const breakMinutes = 10;
@@ -472,9 +472,61 @@ export class TimetablePlannerController {
             minutes += breakMinutes;
             return { period, start, end };
         });
-        this.state.rangeDraft = { ...(this.state.rangeDraft || {}), periodTimes: times };
+        return times;
+    }
+
+    getPeriodTimeDraftSource() {
+        return this.state.rangeDraft?.periodTimes || this.state.project?.periodTimes || [];
+    }
+
+    normalizePeriodTimeDraft(times = []) {
+        const activePeriods = new Set(this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project));
+        return (Array.isArray(times) ? times : [])
+            .map(item => ({
+                period: Number(item.period),
+                start: item.start || '',
+                end: item.end || '',
+            }))
+            .filter(item => activePeriods.has(item.period) && (item.start || item.end))
+            .sort((left, right) => left.period - right.period);
+    }
+
+    openPeriodTimeDialog() {
+        this.updateRangeDraftFromForm();
+        this.state.periodTimeDialog = {
+            open: true,
+            draftTimes: this.normalizePeriodTimeDraft(this.getPeriodTimeDraftSource()),
+        };
         this.render();
-        this.setMessage('已填充默认时间模板。');
+    }
+
+    closePeriodTimeDialog() {
+        this.state.periodTimeDialog = {
+            ...(this.state.periodTimeDialog || {}),
+            open: false,
+        };
+        this.render();
+    }
+
+    autoFillPeriodTimes() {
+        const activePeriods = this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project);
+        const times = this.buildDefaultPeriodTimes(activePeriods);
+        this.state.periodTimeDialog = {
+            ...(this.state.periodTimeDialog || {}),
+            open: true,
+            draftTimes: times,
+        };
+        this.render();
+        this.setMessage('已填充默认时间模板，保存后生效。');
+    }
+
+    clearPeriodTimes() {
+        this.state.periodTimeDialog = {
+            ...(this.state.periodTimeDialog || {}),
+            open: true,
+            draftTimes: [],
+        };
+        this.render();
     }
 
     readPeriodTimesFromDom() {
@@ -484,13 +536,33 @@ export class TimetablePlannerController {
         const times = [];
         rows.forEach(row => {
             const period = Number(row.dataset.periodTimeRow);
-            const startInput = row.querySelector('[data-period-time-start]');
-            const endInput = row.querySelector('[data-period-time-end]');
+            const startInput = row.querySelector('[data-period-time-draft-start], [data-period-time-start]');
+            const endInput = row.querySelector('[data-period-time-draft-end], [data-period-time-end]');
             const start = startInput?.value || '';
             const end = endInput?.value || '';
             if (start || end) times.push({ period, start, end });
         });
-        this.state.rangeDraft = { ...(this.state.rangeDraft || {}), periodTimes: times };
+        const draftTimes = this.normalizePeriodTimeDraft(times);
+        this.state.periodTimeDialog = {
+            ...(this.state.periodTimeDialog || {}),
+            draftTimes,
+        };
+        return draftTimes;
+    }
+
+    async savePeriodTimes() {
+        const draftTimes = this.readPeriodTimesFromDom() || this.state.periodTimeDialog?.draftTimes || [];
+        this.updateRangeDraftFromForm();
+        this.state.rangeDraft = {
+            ...(this.state.rangeDraft || {}),
+            periodTimes: this.normalizePeriodTimeDraft(draftTimes),
+        };
+        this.state.periodTimeDialog = {
+            ...(this.state.periodTimeDialog || {}),
+            open: false,
+            draftTimes: this.state.rangeDraft.periodTimes,
+        };
+        await this.saveProject(this.rangePayloadFromDraft());
     }
 
     updateBulkRuleDraftFromForm() {

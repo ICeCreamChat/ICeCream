@@ -3991,17 +3991,17 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-import-dropzone/);
   assert.match(styles, /\.tt-roster-review-table/);
   assert.match(styles, /\.tt-roster-review-row--error/);
-  assert.match(styles, /\.tt-roster-import-dialog,\s*\n\.tt-rule-review-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
+  assert.match(styles, /\.tt-roster-import-dialog,\s*\n\.tt-rule-review-dialog,\s*\n\.tt-period-time-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
 });
 
 test('timetable dialogs expand to review content on desktop and stay constrained on mobile', async () => {
   const styles = await readFile(stylePath, 'utf8');
 
-  assert.match(styles, /\.tt-roster-import-dialog,\s*\n\.tt-rule-review-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*min-width:\s*min\(640px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
+  assert.match(styles, /\.tt-roster-import-dialog,\s*\n\.tt-rule-review-dialog,\s*\n\.tt-period-time-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*min-width:\s*min\(640px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
   assert.match(styles, /\.tt-rule-review-dialog\s*{[\s\S]*min-width:\s*min\(820px,\s*calc\(100vw - 48px\)\);/);
   assert.match(styles, /\.tt-publication-history-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*min-width:\s*min\(720px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
-  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog,[\s\S]*\.tt-rule-review-dialog,[\s\S]*\.tt-publish-dialog,[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog,[\s\S]*\.tt-rule-review-dialog,[\s\S]*\.tt-period-time-dialog,[\s\S]*\.tt-publish-dialog,[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
 });
 
 test('timetable roster import preserves input and review drafts when the modal is reopened', () => {
@@ -4983,6 +4983,132 @@ test('timetable left sidebar range workflow applies only from the range popover 
   assert.match(styles, /\.tt-multi-select/);
   assert.match(styles, /\.tt-multi-select-popover/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-multi-select-popover/);
+});
+
+test('timetable period time setup uses a compact entry and modal editor', async () => {
+  const styles = await readFile(stylePath, 'utf8');
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      activePeriods: [1, 2, 3],
+      periodTimes: [
+        { period: 1, start: '08:00', end: '08:40' },
+        { period: 2, start: '08:50', end: '09:30' },
+      ],
+    }),
+  });
+
+  const closed = renderWorkbench(state);
+  const sidebar = closed.slice(closed.indexOf('<aside class="tt-sidebar"'), closed.indexOf('<section class="tt-schedule-panel"'));
+
+  assert.match(sidebar, /id="tt-open-period-time-dialog"/);
+  assert.match(sidebar, /节次时间/);
+  assert.match(sidebar, /08:00-09:30 · 已配置 2 节/);
+  assert.doesNotMatch(sidebar, /class="tt-period-time-table"/);
+  assert.doesNotMatch(sidebar, /data-period-time-draft-start/);
+
+  const open = renderWorkbench({
+    ...state,
+    periodTimeDialog: {
+      open: true,
+      draftTimes: state.project.periodTimes,
+    },
+  });
+
+  assert.match(open, /id="tt-period-time-dialog"/);
+  assert.match(open, /data-period-time-row="1"/);
+  assert.match(open, /data-period-time-draft-start="1"/);
+  assert.match(open, /data-period-time-draft-end="1"/);
+  assert.match(open, /id="tt-auto-fill-period-times"/);
+  assert.match(open, /id="tt-clear-period-times"/);
+  assert.match(open, /id="tt-save-period-times"/);
+  assert.match(open, /id="tt-cancel-period-times"/);
+  assert.match(styles, /\.tt-period-time-entry\s*{/);
+  assert.match(styles, /\.tt-period-time-dialog\s*{/);
+  assert.match(styles, /\.tt-period-time-table\s*{/);
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-period-time-dialog/);
+  assert.match(interactionSource, /#tt-open-period-time-dialog/);
+  assert.match(interactionSource, /#tt-save-period-times/);
+});
+
+test('timetable period time dialog drafts fill, clear and save through project payload', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const schedule = {
+    source: 'fast_constructed',
+    slots: [{ id: 'slot_1', classId: 'c1', subjectId: 'math', teacherId: 't_math', day: 1, period: 1 }],
+  };
+  const project = createDefaultTimetableProject({
+    activePeriods: [1, 2, 3],
+    periodTimes: [{ period: 1, start: '07:55', end: '08:35' }],
+    schedule,
+  });
+
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), body });
+    if (String(url).endsWith('/project')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            success: true,
+            data: {
+              project: createDefaultTimetableProject({
+                ...project,
+                ...body,
+                schedule,
+              }),
+            },
+          };
+        },
+      };
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.applyProject(project);
+
+    controller.openPeriodTimeDialog();
+    assert.equal(controller.state.periodTimeDialog.open, true);
+    assert.deepEqual(controller.state.periodTimeDialog.draftTimes, [{ period: 1, start: '07:55', end: '08:35' }]);
+
+    controller.autoFillPeriodTimes();
+    assert.equal(calls.length, 0);
+    assert.equal(controller.state.periodTimeDialog.draftTimes.length, 3);
+    assert.deepEqual(controller.state.periodTimeDialog.draftTimes[0], { period: 1, start: '08:00', end: '08:40' });
+
+    controller.clearPeriodTimes();
+    assert.deepEqual(controller.state.periodTimeDialog.draftTimes, []);
+
+    controller.state.periodTimeDialog.draftTimes = [
+      { period: 1, start: '08:10', end: '08:50' },
+      { period: 9, start: '17:00', end: '17:40' },
+    ];
+    await controller.savePeriodTimes();
+
+    const projectSave = calls.find(call => call.url.endsWith('/project'));
+    assert.ok(projectSave);
+    assert.deepEqual(projectSave.body.periodTimes, [{ period: 1, start: '08:10', end: '08:50' }]);
+    assert.deepEqual(projectSave.body.activePeriods, [1, 2, 3]);
+    assert.equal(controller.state.periodTimeDialog.open, false);
+    assert.equal(controller.state.project.schedule.slots.length, 1);
+    assert.equal(controller.state.project.schedule.slots[0].id, 'slot_1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('timetable project route only clears schedule when active range changes', async () => {
+  const routeSource = await readFile(new URL('../gateway/routes/timetable.js', import.meta.url), 'utf8');
+
+  assert.match(routeSource, /sameNumberList\(current\.activeWeekdays,\s*project\.activeWeekdays\)/);
+  assert.match(routeSource, /sameNumberList\(current\.activePeriods,\s*project\.activePeriods\)/);
+  assert.doesNotMatch(routeSource, /periodTimes[\s\S]{0,160}preservePublishedArchive\(null,\s*current\.schedule\)/);
 });
 
 test('timetable inspector surfaces data and 智能 rule audit summaries', () => {

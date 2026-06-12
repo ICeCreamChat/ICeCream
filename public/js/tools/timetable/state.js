@@ -73,6 +73,10 @@ export function createTimetablePlannerState(overrides = {}) {
         },
         workflowOpenSections: null,
         rangeDraft: null,
+        periodTimeDialog: {
+            open: false,
+            draftTimes: [],
+        },
         bulkRuleDraft: {
             days: [],
             periods: [],
