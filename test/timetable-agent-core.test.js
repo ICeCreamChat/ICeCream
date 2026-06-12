@@ -119,6 +119,7 @@ test('timetable agent constraint skill returns review artifact and approval queu
         sessionId: session.sessionId,
         message: '王老师周三下午没空，数学尽量上午',
         project,
+        env: {},
     });
 
     const artifact = response.artifacts.find(item => item.type === 'rule_review');

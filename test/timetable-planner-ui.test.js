@@ -251,6 +251,16 @@ test('timetable smart agent frontend calls additive agent APIs without touching 
   assert.doesNotMatch(controllerSource, /seating/i);
 });
 
+test('timetable master schedule renderer indexes slots instead of rescanning for every cell', async () => {
+  const viewSource = await readFile(new URL('view.js', moduleRoot), 'utf8');
+
+  assert.match(viewSource, /createScheduleRenderContext/);
+  assert.match(viewSource, /slotsByCell/);
+  assert.match(viewSource, /function renderScheduleCell\(state,\s*context,\s*day,\s*period\)/);
+  assert.doesNotMatch(viewSource, /function renderScheduleCell\(state,\s*day,\s*period\)[\s\S]*getSlotsAt/);
+  assert.doesNotMatch(viewSource, /function renderSlot\(state,\s*slot\)[\s\S]*getSlotDetails/);
+});
+
 test('timetable styles mirror the seating planner theme and font system', async () => {
   const styles = await readFile(stylePath, 'utf8');
 

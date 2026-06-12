@@ -1,5 +1,6 @@
 import {
     dayName,
+    entityMaps,
     ensureOwnerSelection,
     getActivePeriods,
     getActiveWeekdays,
@@ -11,12 +12,11 @@ import {
     getRuleSummary,
     getSavedRuleItems,
     getScore,
-    getSlotsAt,
     getSolveStatus,
     getSlotDetails,
+    getVisibleSlots,
     isPublishedDraftChanged,
     ownerLabel,
-    slotHasConflict,
     totalPlannedLessons,
 } from './selectors.js';
 
@@ -2449,6 +2449,7 @@ function renderScheduleGrid(state) {
 
     const days = getActiveWeekdays(state.project);
     const periods = getActivePeriods(state.project);
+    const context = createScheduleRenderContext(state);
     return `
         <div class="tt-schedule-body">
             <div class="tt-schedule-grid" style="--tt-days:${days.length}">
@@ -2456,7 +2457,7 @@ function renderScheduleGrid(state) {
                 ${days.map(day => `<div class="tt-grid-head">周${dayName(day)}</div>`).join('')}
                 ${periods.map(period => `
                     <div class="tt-period">第${period}节</div>
-                    ${days.map(day => renderScheduleCell(state, day, period)).join('')}
+                    ${days.map(day => renderScheduleCell(state, context, day, period)).join('')}
                 `).join('')}
             </div>
         </div>
@@ -2482,6 +2483,52 @@ function renderEmptyScheduleGrid(state) {
             </div>
         </div>
     `;
+}
+
+function scheduleCellKey(day, period) {
+    return `${day}-${period}`;
+}
+
+function renderSlotTeacherIds(slot = {}) {
+    const ids = Array.isArray(slot.teacherIds) ? [...slot.teacherIds] : [];
+    if (slot.teacherId && !ids.includes(slot.teacherId)) ids.unshift(slot.teacherId);
+    return ids;
+}
+
+function createScheduleRenderContext(state) {
+    const project = state.project || {};
+    const maps = entityMaps(project);
+    const slotsByCell = new Map();
+    const visibleSlots = getVisibleSlots(project, state.viewMode, state.selectedOwnerId);
+    for (const slot of visibleSlots) {
+        const key = scheduleCellKey(slot.day, slot.period);
+        const cellSlots = slotsByCell.get(key) || [];
+        cellSlots.push(slot);
+        slotsByCell.set(key, cellSlots);
+    }
+
+    const conflictSlotIds = new Set();
+    const conflictKeys = new Set();
+    for (const conflict of project.schedule?.conflicts || []) {
+        if (conflict.slot?.id) conflictSlotIds.add(conflict.slot.id);
+        if (conflict.classId && conflict.teacherId && conflict.day && conflict.period) {
+            conflictKeys.add(`${conflict.classId}:${conflict.teacherId}:${conflict.day}:${conflict.period}`);
+        }
+    }
+
+    return {
+        maps,
+        slotsByCell,
+        conflictSlotIds,
+        conflictKeys,
+    };
+}
+
+function slotHasCachedConflict(context, slot) {
+    if (context.conflictSlotIds.has(slot.id)) return true;
+    return renderSlotTeacherIds(slot).some(teacherId => (
+        context.conflictKeys.has(`${slot.classId}:${teacherId}:${slot.day}:${slot.period}`)
+    ));
 }
 
 function renderUnscheduledPlanQueue(state) {
@@ -2513,28 +2560,33 @@ function renderUnscheduledPlanQueue(state) {
     `;
 }
 
-function renderScheduleCell(state, day, period) {
-    const slots = getSlotsAt(state.project, state.viewMode, state.selectedOwnerId, day, period);
+function renderScheduleCell(state, context, day, period) {
+    const slots = context.slotsByCell.get(scheduleCellKey(day, period)) || [];
     return `
         <div class="tt-cell" data-day="${day}" data-period="${period}">
-            ${slots.map(slot => renderSlot(state, slot)).join('')}
+            ${slots.map(slot => renderSlot(state, context, slot)).join('')}
         </div>
     `;
 }
 
-function renderSlot(state, slot) {
-    const detail = getSlotDetails(state.project, slot.id);
-    const subject = detail?.subject;
+function renderSlot(state, context, slot) {
+    const maps = context.maps;
+    const subject = maps.subjects.get(slot.subjectId);
+    const klass = maps.classes.get(slot.classId);
+    const teacherNames = renderSlotTeacherIds(slot)
+        .map(teacherId => maps.teachers.get(teacherId)?.name || teacherId)
+        .join('、');
+    const classLabel = klass ? `${klass.grade}${klass.name}` : slot.classId;
     const blockId = slot.blockId || '';
-    const conflict = slotHasConflict(state.project, slot);
+    const conflict = slotHasCachedConflict(context, slot);
     const primary = state.viewMode === 'teacher'
-        ? `${subject?.name || slot.subjectId} · ${detail?.classLabel || slot.classId}`
+        ? `${subject?.name || slot.subjectId} · ${classLabel}`
         : state.viewMode === 'master'
-            ? `${detail?.classLabel || slot.classId} · ${subject?.name || slot.subjectId}`
-            : `${subject?.name || slot.subjectId} · ${detail?.teacherNames || slot.teacherId}`;
+            ? `${classLabel} · ${subject?.name || slot.subjectId}`
+            : `${subject?.name || slot.subjectId} · ${teacherNames || slot.teacherId}`;
     const secondary = state.viewMode === 'master'
-        ? detail?.teacherNames || slot.teacherId
-        : detail?.timeLabel || `周${dayName(slot.day)} 第${slot.period}节`;
+        ? teacherNames || slot.teacherId
+        : `周${dayName(slot.day)} 第${slot.period}节`;
     return `
         <button class="tt-slot ${slot.locked ? 'is-locked' : ''} ${conflict ? 'has-conflict' : ''} ${state.selectedSlotId === slot.id ? 'is-selected' : ''}"
             draggable="true"
