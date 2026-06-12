@@ -128,6 +128,129 @@ test('timetable planner uses the seating-style control panel and board layout', 
   assert.match(styles, /@media \(max-width:\s*980px\)[\s\S]*\.tt-workbench\s*{[^}]*grid-template-areas:\s*"topbar"\s*"sidebar"\s*"schedule"\s*"inspector"/s);
 });
 
+test('timetable planner renders smart agent workflow panel and approval actions', async () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    agent: {
+      sessionId: 'tt_agent_demo',
+      stage: 'solve_planning',
+      messages: [
+        { role: 'user', content: '开始排课' },
+        { role: 'assistant', content: '我已生成求解计划，确认后才会调用求解器。' },
+      ],
+      plan: [],
+      questions: [{ id: 'q_missing', title: '需要补充', description: '请补充教师名单' }],
+      approvalQueue: [
+        {
+        id: 'act_solve',
+        type: 'execute_solve',
+        title: '执行求解计划',
+        description: '确认后才会调用本地排课算法/Timefold。',
+        },
+        {
+          id: 'act_save_recommended',
+          type: 'save_solution',
+          title: 'save recommended solution',
+          description: 'save the Timefold candidate',
+          recommended: true,
+          payload: {
+            solutionId: 'timefold',
+            diff: { addedSlots: 3, removedSlots: 0, slotDelta: 3 },
+          },
+        },
+        {
+          id: 'act_save_candidate',
+          type: 'save_solution',
+          title: 'save candidate solution',
+          description: 'save the local candidate',
+          recommended: false,
+          payload: {
+            solutionId: 'local',
+            diff: { addedSlots: 3, removedSlots: 0, slotDelta: 3 },
+          },
+        },
+      ],
+      artifacts: [
+        { id: 'a_plan', type: 'solve_plan', title: '求解计划', solverPreference: 'local_only' },
+        {
+          id: 'a_solution',
+          type: 'solve_result',
+          title: '排课方案',
+          score: { hardViolationCount: 0 },
+          bestSolution: { id: 'timefold' },
+          comparison: [
+            { id: 'local', name: '本地快速方案', solverUsed: 'local_scheduler', totalScore: 82, hardViolationCount: 0 },
+            { id: 'timefold', name: 'Timefold 优化方案', solverUsed: 'timefold', totalScore: 88, hardViolationCount: 0 },
+          ],
+          savePreview: {
+            diff: {
+              before: { slotCount: 0 },
+              after: { slotCount: 3 },
+              addedSlots: 3,
+              removedSlots: 0,
+              slotDelta: 3,
+              unplacedDelta: 0,
+            },
+          },
+        },
+        {
+          id: 'a_export',
+          type: 'export_result',
+          title: 'export links',
+          summary: 'saved and ready to export',
+          exportLinks: [
+            { type: 'class', label: 'class timetable' },
+            { type: 'teacher', label: 'teacher timetable' },
+          ],
+        },
+      ],
+      loading: false,
+      error: null,
+      input: '',
+      nextAction: 'await_approval',
+    },
+  }));
+
+  assert.match(html, /data-workflow-step="agent"/);
+  assert.match(html, /智能主导排课/);
+  assert.match(html, /id="tt-timetable-agent-panel"/);
+  assert.match(html, /id="tt-agent-message"/);
+  assert.match(html, /data-action="timetable-agent-send"/);
+  assert.match(html, /data-action="timetable-agent-run"/);
+  assert.match(html, /data-action="timetable-agent-answer"/);
+  assert.match(html, /data-action="timetable-agent-approve"/);
+  assert.match(html, /data-agent-action-id="act_solve"/);
+  assert.match(html, /data-agent-action-id="act_save_recommended"/);
+  assert.match(html, /data-agent-action-id="act_save_candidate"/);
+  assert.match(html, /tt-agent-recommended/);
+  assert.match(html, /data-agent-solution-id="timefold"/);
+  assert.match(html, /data-agent-export-type="class"/);
+  assert.match(html, /data-agent-export-type="teacher"/);
+  assert.match(html, /求解计划/);
+  assert.match(html, /方案对比/);
+  assert.match(html, /Timefold 优化方案/);
+  assert.match(html, /保存预览/);
+  assert.match(html, /新增 3 节/);
+});
+
+test('timetable smart agent frontend calls additive agent APIs without touching seating modules', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+  const apiSource = await readFile(new URL('api.js', moduleRoot), 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(apiSource, /requestTimetableAgent/);
+  assert.match(controllerSource, /startTimetableAgentSession/);
+  assert.match(controllerSource, /sendTimetableAgentMessage/);
+  assert.match(controllerSource, /requestTimetableAgent\('\/session'/);
+  assert.match(controllerSource, /requestTimetableAgent\('\/message'/);
+  assert.match(controllerSource, /requestTimetableAgent\('\/approve'/);
+  assert.match(interactionSource, /timetable-agent-start/);
+  assert.match(interactionSource, /timetable-agent-approve/);
+  assert.match(styles, /\.tt-agent-panel\s*{/);
+  assert.match(styles, /\.tt-agent-comparison\s*,\s*\n\.tt-agent-save-preview\s*,\s*\n\.tt-agent-export-links\s*{/);
+  assert.doesNotMatch(controllerSource, /seating/i);
+});
+
 test('timetable styles mirror the seating planner theme and font system', async () => {
   const styles = await readFile(stylePath, 'utf8');
 

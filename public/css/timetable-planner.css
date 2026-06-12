@@ -228,6 +228,204 @@ body.light-mode .tt-workbench {
     flex: 0 0 auto;
 }
 
+.tt-agent-panel {
+    display: grid;
+    gap: 10px;
+}
+
+.tt-agent-entry {
+    width: 100%;
+    min-height: 140px;
+}
+
+.tt-agent-status,
+.tt-agent-quick,
+.tt-agent-actions,
+.tt-agent-approval-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.tt-agent-status span {
+    display: inline-flex;
+    flex: 1 1 82px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+    padding: 7px 9px;
+    background: rgba(8, 145, 178, 0.1);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+}
+
+.tt-agent-status b {
+    color: var(--tt-text-secondary);
+}
+
+.tt-agent-chat,
+.tt-agent-questions,
+.tt-agent-approvals,
+.tt-agent-artifacts {
+    display: grid;
+    gap: 8px;
+}
+
+.tt-agent-messages {
+    display: grid;
+    gap: 6px;
+    max-height: 132px;
+    overflow: auto;
+}
+
+.tt-agent-message {
+    padding: 8px 10px;
+    background: rgba(148, 163, 184, 0.08);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.45;
+}
+
+.tt-agent-message--user {
+    background: rgba(8, 145, 178, 0.12);
+    border-color: rgba(8, 145, 178, 0.22);
+    color: var(--tt-text);
+}
+
+.tt-agent-input {
+    width: 100%;
+    min-height: 76px;
+    padding: 10px 12px;
+    resize: vertical;
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-text);
+    font: inherit;
+    font-size: 0.82rem;
+    line-height: 1.45;
+}
+
+.tt-agent-question,
+.tt-agent-approval,
+.tt-agent-artifact,
+.tt-agent-empty {
+    display: grid;
+    gap: 5px;
+    padding: 10px;
+    background: rgba(15, 23, 42, 0.24);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+}
+
+.tt-agent-approval--recommended,
+.tt-agent-comparison-item.is-recommended {
+    border-color: rgba(8, 145, 178, 0.42);
+    background: rgba(8, 145, 178, 0.08);
+}
+
+.tt-agent-recommended {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: fit-content;
+    padding: 2px 7px;
+    border: 1px solid rgba(8, 145, 178, 0.28);
+    border-radius: 999px;
+    color: var(--tt-primary);
+    background: rgba(8, 145, 178, 0.10);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.tt-agent-question span,
+.tt-agent-approval span,
+.tt-agent-artifact strong {
+    color: var(--tt-text);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.tt-agent-question em,
+.tt-agent-approval em,
+.tt-agent-artifact span,
+.tt-agent-artifact em,
+.tt-agent-empty {
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+    font-style: normal;
+    line-height: 1.35;
+}
+
+.tt-agent-question input {
+    width: 100%;
+    padding: 8px 9px;
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-text);
+    font: inherit;
+    font-size: 0.8rem;
+}
+
+.tt-agent-comparison,
+.tt-agent-save-preview,
+.tt-agent-export-links {
+    display: grid;
+    gap: 5px;
+    padding-top: 4px;
+    border-top: 1px solid var(--tt-border);
+}
+
+.tt-agent-comparison b,
+.tt-agent-save-preview b,
+.tt-agent-export-links b {
+    color: var(--tt-text-secondary);
+    font-size: 0.74rem;
+}
+
+.tt-agent-comparison span,
+.tt-agent-save-preview span {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.tt-agent-comparison-item {
+    padding: 6px 8px;
+    border: 1px solid transparent;
+    border-radius: var(--tt-radius-sm);
+}
+
+.tt-agent-export-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.tt-agent-export-grid span {
+    padding: 6px 8px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-text);
+    background: rgba(15, 23, 42, 0.2);
+    font-size: 0.74rem;
+}
+
+.tt-agent-comparison strong {
+    overflow: hidden;
+    color: var(--tt-text);
+    font-size: 0.76rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .tt-workflow,
 .tt-inspector-stack {
     display: grid;

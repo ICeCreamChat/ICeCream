@@ -5,6 +5,22 @@ export function bindGridInteractions(container, controller, state) {
             controller.submitClarifyingAnswers();
         } else if (action === 'diagnose-rules') {
             controller.diagnoseRules();
+        } else if (action === 'timetable-agent-start') {
+            controller.startTimetableAgentSession();
+        } else if (action === 'timetable-agent-send') {
+            controller.sendTimetableAgentMessage();
+        } else if (action === 'timetable-agent-run') {
+            controller.runTimetableAgent();
+        } else if (action === 'timetable-agent-answer') {
+            controller.answerTimetableAgentQuestions();
+        } else if (action === 'timetable-agent-approve') {
+            controller.approveTimetableAgentAction(event.target.closest('[data-agent-action-id]')?.dataset.agentActionId, true);
+        } else if (action === 'timetable-agent-reject') {
+            controller.approveTimetableAgentAction(event.target.closest('[data-agent-action-id]')?.dataset.agentActionId, false);
+        } else if (action === 'timetable-agent-reset') {
+            controller.resetTimetableAgentSession();
+        } else if (action === 'timetable-agent-quick') {
+            controller.sendTimetableAgentMessage(event.target.closest('[data-agent-prompt]')?.dataset.agentPrompt || '');
         } else if (action === 'auto-fill-period-times') {
             controller.autoFillPeriodTimes();
         }

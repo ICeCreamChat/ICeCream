@@ -44,6 +44,10 @@ export async function requestTimetable(path, options = {}) {
     return payload.data;
 }
 
+export function requestTimetableAgent(path, options = {}) {
+    return requestTimetable(`/agent${path}`, options);
+}
+
 export function normalizeApiError(error) {
     const payload = error?.payload || {};
     const reason = payload?.data?.reason;

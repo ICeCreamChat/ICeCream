@@ -1,6 +1,7 @@
 import {
     normalizeApiError,
     requestTimetable,
+    requestTimetableAgent,
 } from './api.js';
 import {
     buildManualRuleDraftRows,
@@ -64,6 +65,234 @@ export class TimetablePlannerController {
         this.state.message = message || '';
         this.state.lastFailure = failure;
         this.render();
+    }
+
+    applyAgentResponse(response = {}, userMessage = '') {
+        const agent = this.state.agent || {};
+        const messages = [...(agent.messages || [])];
+        if (userMessage) {
+            messages.push({ role: 'user', content: userMessage });
+        }
+        if (response.reply) {
+            messages.push({ role: 'assistant', content: response.reply });
+        }
+        if (response.project) {
+            this.applyProject(response.project);
+        }
+        this.state.agent = {
+            ...agent,
+            sessionId: response.sessionId || agent.sessionId || null,
+            stage: response.stage || agent.stage || 'idle',
+            plan: response.plan || agent.plan || [],
+            questions: response.questions || [],
+            approvalQueue: response.approvalQueue || [],
+            artifacts: response.artifacts || agent.artifacts || [],
+            currentArtifactId: response.artifacts?.at?.(-1)?.id || agent.currentArtifactId || null,
+            nextAction: response.nextAction || '',
+            messages,
+            loading: false,
+            error: null,
+        };
+        this.state.message = response.reply || this.state.message;
+        this.render();
+    }
+
+    async startTimetableAgentSession() {
+        this.state.agent = {
+            ...(this.state.agent || {}),
+            loading: true,
+            error: null,
+        };
+        this.render();
+        try {
+            const result = await requestTimetableAgent('/session', {
+                method: 'POST',
+                body: JSON.stringify({
+                    project: this.state.project,
+                    mode: this.state.agent?.mode || 'assistant',
+                }),
+            });
+            this.state.agent = {
+                ...(this.state.agent || {}),
+                ...(result.state || {}),
+                sessionId: result.sessionId || result.state?.sessionId || null,
+                loading: false,
+                error: null,
+                messages: [{ role: 'assistant', content: '智能主导排课已准备好，可以检查数据、解析约束或生成求解计划。' }],
+            };
+            this.setMessage('智能主导排课已启动。');
+        } catch (error) {
+            this.state.agent = {
+                ...(this.state.agent || {}),
+                loading: false,
+                error: normalizeApiError(error).message,
+            };
+            this.handleError(error);
+        }
+    }
+
+    async sendTimetableAgentMessage(message = '') {
+        const input = message || this.state.container?.querySelector('#tt-agent-message')?.value || '';
+        const content = String(input || '').trim();
+        if (!content) {
+            this.setMessage('请先输入要交给智能排课助手处理的任务。');
+            return;
+        }
+        this.state.agent = {
+            ...(this.state.agent || {}),
+            loading: true,
+            error: null,
+            input: content,
+        };
+        this.render();
+        try {
+            let sessionId = this.state.agent?.sessionId || null;
+            if (!sessionId) {
+                const session = await requestTimetableAgent('/session', {
+                    method: 'POST',
+                    body: JSON.stringify({ project: this.state.project, mode: 'assistant' }),
+                });
+                sessionId = session.sessionId;
+            }
+            const response = await requestTimetableAgent('/message', {
+                method: 'POST',
+                body: JSON.stringify({
+                    sessionId,
+                    message: content,
+                    project: this.state.project,
+                }),
+            });
+            this.applyAgentResponse(response, content);
+        } catch (error) {
+            this.state.agent = {
+                ...(this.state.agent || {}),
+                loading: false,
+                error: normalizeApiError(error).message,
+            };
+            this.handleError(error);
+        }
+    }
+
+    async runTimetableAgent() {
+        if (!this.state.agent?.sessionId) {
+            await this.startTimetableAgentSession();
+            return;
+        }
+        this.state.agent = { ...(this.state.agent || {}), loading: true, error: null };
+        this.render();
+        try {
+            const response = await requestTimetableAgent('/run', {
+                method: 'POST',
+                body: JSON.stringify({
+                    sessionId: this.state.agent.sessionId,
+                    project: this.state.project,
+                }),
+            });
+            this.applyAgentResponse(response);
+        } catch (error) {
+            this.state.agent = {
+                ...(this.state.agent || {}),
+                loading: false,
+                error: normalizeApiError(error).message,
+            };
+            this.handleError(error);
+        }
+    }
+
+    readTimetableAgentAnswers() {
+        return [...(this.state.container?.querySelectorAll('[data-agent-question]') || [])].map(node => {
+            const selected = node.querySelector('[data-agent-answer]:checked')
+                || node.querySelector('select[data-agent-answer]')
+                || node.querySelector('input[data-agent-answer], textarea[data-agent-answer]');
+            return {
+                questionId: node.dataset.agentQuestion,
+                value: selected?.value || '',
+                label: selected?.selectedOptions?.[0]?.textContent?.trim() || selected?.dataset.label || selected?.value || '',
+            };
+        }).filter(answer => answer.questionId && answer.value);
+    }
+
+    async answerTimetableAgentQuestions() {
+        const answers = this.readTimetableAgentAnswers();
+        if (!answers.length) {
+            this.setMessage('请先填写智能排课助手提出的问题。');
+            return;
+        }
+        this.state.agent = { ...(this.state.agent || {}), loading: true, error: null };
+        this.render();
+        try {
+            const response = await requestTimetableAgent('/answer', {
+                method: 'POST',
+                body: JSON.stringify({
+                    sessionId: this.state.agent.sessionId,
+                    answers,
+                    project: this.state.project,
+                }),
+            });
+            this.applyAgentResponse(response);
+        } catch (error) {
+            this.state.agent = {
+                ...(this.state.agent || {}),
+                loading: false,
+                error: normalizeApiError(error).message,
+            };
+            this.handleError(error);
+        }
+    }
+
+    async approveTimetableAgentAction(actionId, approved = true) {
+        if (!actionId || !this.state.agent?.sessionId) return;
+        this.state.agent = { ...(this.state.agent || {}), loading: true, error: null };
+        this.render();
+        try {
+            const response = await requestTimetableAgent('/approve', {
+                method: 'POST',
+                body: JSON.stringify({
+                    sessionId: this.state.agent.sessionId,
+                    actionId,
+                    approved,
+                    project: this.state.project,
+                }),
+            });
+            this.applyAgentResponse(response);
+        } catch (error) {
+            this.state.agent = {
+                ...(this.state.agent || {}),
+                loading: false,
+                error: normalizeApiError(error).message,
+            };
+            this.handleError(error);
+        }
+    }
+
+    async resetTimetableAgentSession() {
+        this.state.agent = { ...(this.state.agent || {}), loading: true, error: null };
+        this.render();
+        try {
+            const result = await requestTimetableAgent('/reset', {
+                method: 'POST',
+                body: JSON.stringify({
+                    sessionId: this.state.agent?.sessionId || null,
+                    project: this.state.project,
+                    mode: 'assistant',
+                }),
+            });
+            this.state.agent = {
+                ...(result.state || {}),
+                sessionId: result.sessionId || result.state?.sessionId || null,
+                loading: false,
+                error: null,
+                messages: [{ role: 'assistant', content: '智能主导排课会话已重置。' }],
+            };
+            this.setMessage('智能主导排课已重置。');
+        } catch (error) {
+            this.state.agent = {
+                ...(this.state.agent || {}),
+                loading: false,
+                error: normalizeApiError(error).message,
+            };
+            this.handleError(error);
+        }
     }
 
     applyProject(project) {

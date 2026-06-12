@@ -12,6 +12,21 @@ export function createTimetablePlannerState(overrides = {}) {
         message: '',
         lastFailure: null,
         solverJob: null,
+        agent: {
+            sessionId: null,
+            mode: 'assistant',
+            stage: 'idle',
+            messages: [],
+            plan: [],
+            questions: [],
+            approvalQueue: [],
+            artifacts: [],
+            currentArtifactId: null,
+            loading: false,
+            error: null,
+            input: '',
+            nextAction: '',
+        },
         // 智能约束 — 卡片入口与复核弹窗状态
         ruleInput: {
             text: '',

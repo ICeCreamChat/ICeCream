@@ -257,10 +257,10 @@ function getRangeDraft(state) {
 
 function defaultWorkflowOpenSections(state) {
     if (Array.isArray(state.workflowOpenSections)) return new Set(state.workflowOpenSections);
-    if (!(state.project?.lessonPlans || []).length) return new Set(['data']);
-    if ((state.ruleDraftPreview || []).length || (state.ruleWarnings || []).length) return new Set(['rules']);
-    if ((state.project?.schedule?.slots || []).length) return new Set(['solve']);
-    return new Set(['data']);
+    if (!(state.project?.lessonPlans || []).length) return new Set(['agent', 'data']);
+    if ((state.ruleDraftPreview || []).length || (state.ruleWarnings || []).length) return new Set(['agent', 'rules']);
+    if ((state.project?.schedule?.slots || []).length) return new Set(['agent', 'solve']);
+    return new Set(['agent', 'data']);
 }
 
 function renderWorkflowPanel({ id, icon, title, chip = '', open, content }) {
@@ -277,6 +277,213 @@ function renderWorkflowPanel({ id, icon, title, chip = '', open, content }) {
                 ${content}
             </div>
         </section>
+    `;
+}
+
+function agentStageLabel(stage = '') {
+    const labels = {
+        idle: '待开始',
+        data_prep: '数据准备',
+        constraint_review: '约束复核',
+        solve_planning: '求解计划',
+        solving: '执行求解',
+        diagnosis: '诊断',
+        solution_review: '方案确认',
+        finalize: '保存导出',
+    };
+    return labels[stage] || stage || '待开始';
+}
+
+function artifactLabel(type = '') {
+    const labels = {
+        data_quality_report: '数据检查',
+        rule_review: '约束复核',
+        solve_plan: '求解计划',
+        solve_result: '方案结果',
+        diagnosis: '诊断报告',
+        save_preview: '保存预览',
+        export_result: '导出结果',
+    };
+    return labels[type] || type || '产物';
+}
+
+function renderAgentQuestions(agent = {}) {
+    const questions = agent.questions || [];
+    if (!questions.length) return '';
+    return `
+        <div class="tt-agent-questions">
+            <strong>需要补充</strong>
+            ${questions.map(question => `
+                <label class="tt-agent-question" data-agent-question="${escapeAttr(question.id)}">
+                    <span>${escapeHtml(question.title || question.question || '请补充信息')}</span>
+                    <em>${escapeHtml(question.description || '')}</em>
+                    <input data-agent-answer type="text" placeholder="输入后继续" value="">
+                </label>
+            `).join('')}
+            <button class="tt-btn tt-btn--sm" type="button" data-action="timetable-agent-answer">
+                <i data-lucide="send"></i><span>提交补充</span>
+            </button>
+        </div>
+    `;
+}
+
+function renderAgentApprovals(agent = {}) {
+    const approvals = agent.approvalQueue || [];
+    if (!approvals.length) return '';
+    return `
+        <div class="tt-agent-approvals">
+            <strong>等待确认</strong>
+            ${approvals.map(action => `
+                <div class="tt-agent-approval ${action.recommended ? 'tt-agent-approval--recommended' : ''}" data-agent-action-id="${escapeAttr(action.id)}">
+                    <span>${escapeHtml(action.title || action.type)}</span>
+                    ${action.recommended ? '<b class="tt-agent-recommended">推荐</b>' : ''}
+                    <em>${escapeHtml(action.description || '')}</em>
+                    ${action.payload?.diff ? `<em>将新增 ${escapeHtml(action.payload.diff.addedSlots || 0)} 节，移除 ${escapeHtml(action.payload.diff.removedSlots || 0)} 节，课表差异 ${escapeHtml(action.payload.diff.slotDelta || 0)} 节。</em>` : ''}
+                    <div class="tt-agent-approval-actions">
+                        <button class="tt-btn tt-btn--sm tt-btn--primary" type="button" data-action="timetable-agent-approve">
+                            <i data-lucide="check"></i><span>确认</span>
+                        </button>
+                        <button class="tt-btn tt-btn--sm tt-btn--ghost" type="button" data-action="timetable-agent-reject">
+                            <i data-lucide="x"></i><span>取消</span>
+                        </button>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function renderAgentSolutionComparison(artifact = {}) {
+    const comparison = artifact.comparison || [];
+    if (!comparison.length) return '';
+    const recommendedSolutionId = artifact.bestSolution?.id || comparison.find(item => item.recommended)?.id || null;
+    return `
+        <div class="tt-agent-comparison">
+            <b>方案对比</b>
+            ${comparison.map(item => {
+                const recommended = Boolean(item.recommended || (recommendedSolutionId && item.id === recommendedSolutionId));
+                return `
+                <span class="tt-agent-comparison-item ${recommended ? 'is-recommended' : ''}" data-agent-solution-id="${escapeAttr(item.id || item.solverUsed || '')}">
+                    <strong>${escapeHtml(item.name || item.solverUsed)}</strong>
+                    ${recommended ? '<b class="tt-agent-recommended">推荐</b>' : ''}
+                    <em>${escapeHtml(item.solverUsed)} · 总分 ${escapeHtml(item.totalScore ?? 0)} · 硬冲突 ${escapeHtml(item.hardViolationCount ?? 0)}</em>
+                </span>
+            `;
+            }).join('')}
+        </div>
+    `;
+}
+
+function renderAgentSavePreview(artifact = {}) {
+    const diff = artifact.savePreview?.diff || artifact.diff || null;
+    if (!diff) return '';
+    return `
+        <div class="tt-agent-save-preview">
+            <b>保存预览</b>
+            <span>当前 ${escapeHtml(diff.before?.slotCount ?? 0)} 节 -> 推荐 ${escapeHtml(diff.after?.slotCount ?? 0)} 节</span>
+            <span>新增 ${escapeHtml(diff.addedSlots || 0)} 节，移除 ${escapeHtml(diff.removedSlots || 0)} 节，未排变化 ${escapeHtml(diff.unplacedDelta || 0)}</span>
+        </div>
+    `;
+}
+
+function renderAgentExportLinks(artifact = {}) {
+    const links = artifact.exportLinks || [];
+    if (!links.length) return '';
+    return `
+        <div class="tt-agent-export-links">
+            <b>导出入口</b>
+            <div class="tt-agent-export-grid">
+                ${links.map(link => `
+                    <span data-agent-export-type="${escapeAttr(link.type || '')}">
+                        ${escapeHtml(link.label || link.type || '导出')}
+                    </span>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderAgentArtifacts(agent = {}) {
+    const artifacts = agent.artifacts || [];
+    if (!artifacts.length) {
+        return '<div class="tt-agent-empty">智能助手会把数据报告、约束复核、求解计划和方案结果放在这里。</div>';
+    }
+    return `
+        <div class="tt-agent-artifacts">
+            ${artifacts.slice(-4).map(artifact => `
+                <div class="tt-agent-artifact">
+                    <strong>${escapeHtml(artifact.title || artifactLabel(artifact.type))}</strong>
+                    <span>${escapeHtml(artifactLabel(artifact.type))}</span>
+                    ${artifact.dataQuality ? `<em>质量分 ${escapeHtml(artifact.dataQuality.score)}</em>` : ''}
+                    ${artifact.draftRows ? `<em>${escapeHtml(artifact.draftRows.length)} 条草稿</em>` : ''}
+                    ${artifact.score ? `<em>硬冲突 ${escapeHtml(artifact.score.hardViolationCount ?? 0)}</em>` : ''}
+                    ${artifact.summary ? `<em>${escapeHtml(artifact.summary)}</em>` : ''}
+                    ${renderAgentSolutionComparison(artifact)}
+                    ${renderAgentSavePreview(artifact)}
+                    ${renderAgentExportLinks(artifact)}
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function renderAgentPanel(state) {
+    const agent = state.agent || {};
+    const loading = Boolean(agent.loading);
+    const messages = agent.messages || [];
+    const inputValue = agent.input || '';
+    const quick = [
+        { label: '检查数据', prompt: '检查当前排课数据' },
+        { label: '解析约束', prompt: '解析排课约束：主科尽量上午，教师不可用时间需要复核' },
+        { label: '生成计划', prompt: '生成求解计划' },
+        { label: '开始排课', prompt: '开始排课' },
+        { label: '诊断失败', prompt: '诊断当前排课失败原因' },
+    ];
+    return `
+        <div class="tt-agent-panel" id="tt-timetable-agent-panel">
+            <button class="tt-empty-card tt-agent-entry" type="button" data-action="timetable-agent-start">
+                <i data-lucide="${loading ? 'loader-2' : 'bot'}" class="${loading ? 'tt-spin' : ''}"></i>
+                <strong>智能主导排课</strong>
+                <span>用自然语言完成数据检查、约束复核、求解计划、方案确认和保存审批。</span>
+            </button>
+            <div class="tt-agent-status">
+                <span><b>阶段</b>${escapeHtml(agentStageLabel(agent.stage))}</span>
+                <span><b>产物</b>${escapeHtml((agent.artifacts || []).length)}</span>
+                <span><b>确认</b>${escapeHtml((agent.approvalQueue || []).length)}</span>
+            </div>
+            <div class="tt-agent-quick">
+                ${quick.map(item => `
+                    <button class="tt-btn tt-btn--sm" type="button" data-action="timetable-agent-quick" data-agent-prompt="${escapeAttr(item.prompt)}" ${loading ? 'disabled' : ''}>
+                        ${escapeHtml(item.label)}
+                    </button>
+                `).join('')}
+            </div>
+            <div class="tt-agent-chat">
+                <div class="tt-agent-messages">
+                    ${messages.slice(-4).map(item => `
+                        <div class="tt-agent-message tt-agent-message--${escapeAttr(item.role || 'assistant')}">
+                            <span>${escapeHtml(item.content || '')}</span>
+                        </div>
+                    `).join('') || '<div class="tt-agent-message tt-agent-message--assistant"><span>我可以先检查数据，再把规则和求解动作交给你确认。</span></div>'}
+                </div>
+                <textarea id="tt-agent-message" class="tt-agent-input" rows="3" placeholder="例如：帮我检查数据并开始排课，数学尽量上午，王老师周三下午没空。">${escapeHtml(inputValue)}</textarea>
+                <div class="tt-agent-actions">
+                    <button class="tt-btn tt-btn--primary" type="button" data-action="timetable-agent-send" ${loading ? 'disabled' : ''}>
+                        <i data-lucide="${loading ? 'loader-2' : 'send'}" class="${loading ? 'tt-spin' : ''}"></i><span>${loading ? '处理中' : '发送'}</span>
+                    </button>
+                    <button class="tt-btn" type="button" data-action="timetable-agent-run" ${loading || !agent.sessionId ? 'disabled' : ''}>
+                        <i data-lucide="step-forward"></i><span>继续</span>
+                    </button>
+                    <button class="tt-btn tt-btn--ghost" type="button" data-action="timetable-agent-reset" ${loading ? 'disabled' : ''}>
+                        <i data-lucide="rotate-ccw"></i><span>重置</span>
+                    </button>
+                </div>
+            </div>
+            ${agent.error ? `<div class="tt-rule-warning tt-rule-warning--error"><i data-lucide="triangle-alert"></i><span>${escapeHtml(agent.error)}</span></div>` : ''}
+            ${renderAgentQuestions(agent)}
+            ${renderAgentApprovals(agent)}
+            ${renderAgentArtifacts(agent)}
+        </div>
     `;
 }
 
@@ -344,6 +551,14 @@ function renderWorkflow(state) {
     const readiness = getPreparedness(state.project);
     return `
         <div class="tt-workflow">
+            ${renderWorkflowPanel({
+                id: 'agent',
+                icon: 'bot',
+                title: '智能主导排课',
+                chip: agentStageLabel(state.agent?.stage),
+                open: openSections.has('agent') || Boolean(state.agent?.sessionId),
+                content: renderAgentPanel(state),
+            })}
             ${renderWorkflowPanel({
                 id: 'data',
                 icon: 'database',
