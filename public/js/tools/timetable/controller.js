@@ -664,6 +664,11 @@ export class TimetablePlannerController {
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: false,
+            saving: false,
+            cleared: false,
+            errors: [],
+            draftTimes: this.normalizePeriodTimeDraft(this.state.project?.periodTimes || [], getActivePeriods(this.state.project)),
+            settings: this.inferPeriodTimeSettings(this.state.project?.periodTimes || [], getActivePeriods(this.state.project)),
         };
         this.render();
     }
@@ -709,10 +714,16 @@ export class TimetablePlannerController {
     updatePeriodTimeSettingsFromForm() {
         const settings = this.readPeriodTimeSettingsFromDom();
         if (!settings) return;
+        const activePeriods = getActivePeriods(this.state.project);
+        const draftTimes = this.buildPeriodTimesFromSettings(settings, activePeriods);
+        this.writePeriodTimesToDom(draftTimes);
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: true,
             settings,
+            errors: [],
+            cleared: false,
+            draftTimes,
         };
     }
 
@@ -746,6 +757,21 @@ export class TimetablePlannerController {
         });
     }
 
+    writePeriodTimesToDom(times = []) {
+        if (!this.state.container || typeof this.state.container.querySelectorAll !== 'function') return;
+        const timeMap = new Map((Array.isArray(times) ? times : [])
+            .map(item => [Number(item.period), item]));
+        this.state.container.querySelectorAll('[data-period-time-row]').forEach(row => {
+            const period = Number(row.dataset.periodTimeRow);
+            const entry = timeMap.get(period) || {};
+            const startInput = row.querySelector('[data-period-time-draft-start], [data-period-time-start]');
+            const endInput = row.querySelector('[data-period-time-draft-end], [data-period-time-end]');
+            if (startInput) startInput.value = entry.start || '';
+            if (endInput) endInput.value = entry.end || '';
+        });
+        this.refreshPeriodTimeGapInputsFromDom();
+    }
+
     calculatePeriodGap(current = {}, next = {}) {
         const end = this.timeToMinutes(current.end);
         const start = this.timeToMinutes(next.start);
@@ -766,7 +792,7 @@ export class TimetablePlannerController {
             const next = {
                 start: nextRow?.querySelector('[data-period-time-draft-start], [data-period-time-start]')?.value || '',
             };
-            gapInput.value = this.calculatePeriodGap(current, next);
+            gapInput.value = String(this.calculatePeriodGap(current, next));
         });
     }
 
@@ -1652,6 +1678,11 @@ export class TimetablePlannerController {
                 this.state.lastFailure = null;
             } else if (result.job.status === 'failed') {
                 this.state.message = 'Timefold 优化未完成，快速课表已保留。';
+                this.state.lastFailure = null;
+            } else if (result.job.status === 'skipped') {
+                this.state.message = result.job.reason === 'stale_schedule'
+                    ? '课表已变化，已丢弃旧优化结果。'
+                    : '后台优化已跳过，当前课表已保留。';
                 this.state.lastFailure = null;
             }
             this.render();

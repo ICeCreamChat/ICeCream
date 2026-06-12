@@ -379,6 +379,14 @@ function normalizePublishedSnapshot(rawSnapshot, fallback = {}) {
                 periodsPerDay: intInRange(rawSnapshot.projectContext.periodsPerDay, DEFAULT_PROJECT.periodsPerDay, 1, 12),
                 activeWeekdays: normalizeNumberList(rawSnapshot.projectContext.activeWeekdays, [], 1, 7),
                 activePeriods: normalizeNumberList(rawSnapshot.projectContext.activePeriods, [], 1, 12),
+                ...(Object.prototype.hasOwnProperty.call(rawSnapshot.projectContext, 'periodTimes')
+                    ? {
+                        periodTimes: normalizePeriodTimes(
+                            rawSnapshot.projectContext.periodTimes,
+                            normalizeNumberList(rawSnapshot.projectContext.activePeriods, [], 1, 12),
+                        ),
+                    }
+                    : {}),
                 teachers: Array.isArray(rawSnapshot.projectContext.teachers)
                     ? rawSnapshot.projectContext.teachers.map(normalizeTeacher)
                     : [],

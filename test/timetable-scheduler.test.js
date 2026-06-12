@@ -16,6 +16,7 @@ import {
     getTimetableOptimizationJob,
     resetTimetableOptimizationJobs,
 } from '../gateway/services/timetable-optimization-jobs.js';
+import { buildPublishedSnapshot } from '../gateway/services/timetable-publication.js';
 import { buildTimetableProblem } from '../gateway/services/timetable-solver-bridge.js';
 import {
     normalizeTimetableRuleDraftRows,
@@ -2055,6 +2056,87 @@ test('timetable store persists project data atomically in a local data directory
 
     const raw = await readFile(path.join(dataDir, 'projects.json'), 'utf8');
     assert.match(raw, /持久化学校/);
+});
+
+test('timetable project API saves period times without clearing schedule and marks published draft changed', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-period-times-'));
+    const timetableStore = createTimetableStore({ dataDir: process.env.TIMETABLE_DATA_DIR });
+    const schedule = {
+        id: 'sched_period_times',
+        generatedAt: '2026-06-12T08:00:00.000Z',
+        source: 'fast_constructed',
+        slots: [{ id: 'slot_keep', classId: 'c1', subjectId: 'math', teacherId: 't_math', day: 1, period: 1 }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        score: { hardConflicts: 0, unplacedLessons: 0 },
+    };
+    const baseProject = sampleProject({
+        activePeriods: [1, 2],
+        periodTimes: [{ period: 1, start: '08:00', end: '08:40' }],
+        schedule,
+    });
+    const snapshot = buildPublishedSnapshot(schedule, { summary: {} }, baseProject);
+    assert.deepEqual(snapshot.projectContext.periodTimes, [{ period: 1, start: '08:00', end: '08:40' }]);
+    await timetableStore.saveProject(normalizeTimetableProject({
+        ...baseProject,
+        schedule: {
+            ...schedule,
+            published: {
+                status: 'published',
+                version: 1,
+                scheduleId: schedule.id,
+                publishedAt: '2026-06-12T08:10:00.000Z',
+                fingerprint: snapshot.fingerprint,
+                snapshot,
+            },
+        },
+    }));
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const response = await fetch(`${baseUrl}/api/tools/timetable/project`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                periodTimes: [
+                    { period: 1, start: '08:10', end: '08:50' },
+                    { period: 2, start: '09:05', end: '09:45' },
+                ],
+            }),
+        }).then(res => res.json());
+
+        assert.equal(response.success, true);
+        assert.deepEqual(response.data.project.periodTimes, [
+            { period: 1, start: '08:10', end: '08:50' },
+            { period: 2, start: '09:05', end: '09:45' },
+        ]);
+        assert.equal(response.data.project.schedule.slots[0].id, 'slot_keep');
+        assert.equal(response.data.project.schedule.published.status, 'draft_changed');
+        assert.deepEqual(response.data.project.schedule.published.snapshot.projectContext.periodTimes, [
+            { period: 1, start: '08:00', end: '08:40' },
+        ]);
+
+        const persisted = await timetableStore.loadProject();
+        assert.equal(persisted.schedule.slots[0].id, 'slot_keep');
+        assert.equal(persisted.schedule.published.status, 'draft_changed');
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
 });
 
 test('timetable API exposes bootstrap, project save, import and scheduling flow', async () => {

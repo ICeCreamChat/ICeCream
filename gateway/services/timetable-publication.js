@@ -80,6 +80,7 @@ function snapshotProjectContext(project = {}) {
         periodsPerDay: Number(project.periodsPerDay || 0),
         activeWeekdays: Array.isArray(project.activeWeekdays) ? [...project.activeWeekdays] : [],
         activePeriods: Array.isArray(project.activePeriods) ? [...project.activePeriods] : [],
+        periodTimes: Array.isArray(project.periodTimes) ? project.periodTimes.map(item => ({ ...item })) : [],
         teachers: Array.isArray(project.teachers) ? project.teachers.map(item => ({ ...item })) : [],
         classes: Array.isArray(project.classes) ? project.classes.map(item => ({ ...item })) : [],
         subjects: Array.isArray(project.subjects) ? project.subjects.map(item => ({ ...item })) : [],

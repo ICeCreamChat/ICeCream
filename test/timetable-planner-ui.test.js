@@ -498,6 +498,33 @@ test('timetable workbench keeps solving in the board and pending plans in the in
   assert.match(styles, /\.tt-main-empty-cell\s*{/);
 });
 
+test('timetable schedule grid shows configured period times beside period labels', () => {
+  const state = sampleWorkbenchState();
+  state.project = createDefaultTimetableProject({
+    activeWeekdays: [1, 2],
+    activePeriods: [1, 2],
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    periodTimes: [
+      { period: 1, start: '08:00', end: '08:40' },
+      { period: 2, start: '08:55', end: '09:35' },
+    ],
+    schedule: {
+      source: 'fast_constructed',
+      slots: [{ id: 'slot_1', classId: 'c1', subjectId: 'math', teacherId: 't_math', day: 1, period: 1 }],
+    },
+  });
+
+  const panel = renderSchedulePanel(state);
+
+  assert.match(panel, /第1节/);
+  assert.match(panel, /08:00-08:40/);
+  assert.match(panel, /第2节/);
+  assert.match(panel, /08:55-09:35/);
+});
+
 test('timetable manual adjustment success clears stale solve failure state', async () => {
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
 
@@ -587,6 +614,44 @@ test('timetable optimization polling still applies current job responses', async
     assert.match(controller.state.message, /快速|课表|保留|蹇/);
     assert.equal(controller.state.lastFailure, null);
     assert.equal(controller._nextPolledJob.jobId, 'job-current');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('timetable optimization polling explains skipped stale jobs', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async url => {
+    assert.match(String(url), /\/schedule\/jobs\/job_skip$/);
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          success: true,
+          data: {
+            job: { jobId: 'job_skip', status: 'skipped', accepted: false, reason: 'stale_schedule' },
+          },
+        };
+      },
+    };
+  };
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.applyProject(createDefaultTimetableProject({
+      schedule: {
+        id: 'schedule_1',
+        source: 'fast_constructed',
+        slots: [{ id: 'slot_1', classId: 'c1', subjectId: 'math', teacherId: 't_math', day: 1, period: 1 }],
+      },
+    }));
+    controller.state.solverJob = { jobId: 'job_skip', status: 'running' };
+
+    await controller.refreshOptimizationJob('job_skip');
+
+    assert.equal(controller.state.message, '课表已变化，已丢弃旧优化结果。');
+    assert.equal(controller.state.lastFailure, null);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -4029,7 +4094,7 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-roster-review-table/);
   assert.match(styles, /\.tt-roster-review-row--error/);
   assert.match(styles, /\.tt-roster-import-dialog,\s*\n\.tt-rule-review-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
-  assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*width:\s*min\(720px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*min\(720px,\s*calc\(100vw - 48px\)\);/);
+  assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*width:\s*min\(840px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*min\(840px,\s*calc\(100vw - 48px\)\);/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
 });
 
@@ -4038,7 +4103,7 @@ test('timetable dialogs expand to review content on desktop and stay constrained
 
   assert.match(styles, /\.tt-roster-import-dialog,\s*\n\.tt-rule-review-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*min-width:\s*min\(640px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
   assert.match(styles, /\.tt-rule-review-dialog\s*{[\s\S]*min-width:\s*min\(820px,\s*calc\(100vw - 48px\)\);/);
-  assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*width:\s*min\(720px,\s*calc\(100vw - 48px\)\);[\s\S]*min-width:\s*min\(560px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*min\(720px,\s*calc\(100vw - 48px\)\);/);
+  assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*width:\s*min\(840px,\s*calc\(100vw - 48px\)\);[\s\S]*min-width:\s*min\(620px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*min\(840px,\s*calc\(100vw - 48px\)\);/);
   assert.match(styles, /\.tt-publication-history-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*min-width:\s*min\(720px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog,[\s\S]*\.tt-rule-review-dialog,[\s\S]*\.tt-period-time-dialog,[\s\S]*\.tt-publish-dialog,[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
 });
@@ -5067,6 +5132,8 @@ test('timetable period time setup uses a compact entry and modal editor', async 
   assert.match(open, /data-period-time-gap-after="1"/);
   assert.match(open, /data-period-time-gap-after="2"/);
   assert.doesNotMatch(open, /data-period-time-gap-after="3"/);
+  assert.match(open, /data-label="开始时间"/);
+  assert.match(open, /data-label="本节后间隔"/);
   assert.match(open, /id="tt-reset-period-time-settings"/);
   assert.match(open, /id="tt-clear-period-times"/);
   assert.match(open, /id="tt-save-period-times"/);
@@ -5075,7 +5142,11 @@ test('timetable period time setup uses a compact entry and modal editor', async 
   assert.match(styles, /\.tt-period-time-settings\s*{/);
   assert.match(styles, /\.tt-period-time-dialog\s*{/);
   assert.match(styles, /\.tt-period-time-table\s*{/);
+  assert.match(styles, /\.tt-roster-review-field\s*{[\s\S]*box-sizing:\s*border-box;/);
+  assert.match(styles, /@media \(max-width:\s*900px\)[\s\S]*\.tt-period-time-setting-actions\s*{[\s\S]*grid-column:\s*1 \/ -1;/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-period-time-dialog/);
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-period-time-table,[\s\S]*\.tt-period-time-table thead,[\s\S]*\.tt-period-time-table tbody,[\s\S]*\.tt-period-time-table tr,[\s\S]*\.tt-period-time-table th,[\s\S]*\.tt-period-time-table td\s*{[\s\S]*display:\s*block;/);
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-period-time-table td\s*{[\s\S]*grid-template-columns:\s*88px minmax\(0,\s*1fr\);/);
   assert.match(interactionSource, /#tt-open-period-time-dialog/);
   assert.match(interactionSource, /generate-period-times/);
   assert.match(interactionSource, /reset-period-time-settings/);
@@ -5181,25 +5252,24 @@ test('timetable period time dialog drafts fill, clear and save through project p
 
 test('timetable period time settings generate preview drafts from quick settings', () => {
   const controller = new TimetablePlannerController();
-  controller.render = () => {};
+  controller.render = () => {
+    throw new Error('quick setting edits should update the draft without rerendering the modal');
+  };
   controller.applyProject(createDefaultTimetableProject({ activePeriods: [1, 2, 3] }));
+  controller.render = () => {};
   controller.openPeriodTimeDialog();
-
-  const inputs = new Map([
-    ['#tt-period-start-time', { value: '08:10' }],
-    ['#tt-period-class-minutes', { value: '35' }],
-    ['#tt-period-break-minutes', { value: '5' }],
-  ]);
-  controller.state.container = {
-    querySelector(selector) {
-      return inputs.get(selector) || null;
-    },
+  controller.render = () => {
+    throw new Error('quick setting edits should update the draft without rerendering the modal');
   };
 
-  controller.updatePeriodTimeSettingsFromForm();
-  assert.equal(controller.state.periodTimeDialog.draftTimes[0].start, '08:00');
-  controller.generatePeriodTimesFromSettings();
+  const dom = createPeriodTimeDom([
+    { period: 1, start: '08:00', end: '08:40', gapAfter: 10 },
+    { period: 2, start: '08:50', end: '09:30', gapAfter: 10 },
+    { period: 3, start: '09:40', end: '10:20' },
+  ], { startTime: '08:10', classMinutes: 35, breakMinutes: 5 });
+  controller.state.container = dom;
 
+  controller.updatePeriodTimeSettingsFromForm();
   assert.deepEqual(controller.state.periodTimeDialog.settings, {
     startTime: '08:10',
     classMinutes: 35,
@@ -5210,6 +5280,9 @@ test('timetable period time settings generate preview drafts from quick settings
     { period: 2, start: '08:50', end: '09:25' },
     { period: 3, start: '09:30', end: '10:05' },
   ]);
+  assert.equal(dom.rows[0].startInput.value, '08:10');
+  assert.equal(dom.rows[1].startInput.value, '08:50');
+  assert.equal(dom.rows[2].endInput.value, '10:05');
 });
 
 test('timetable period time gap edits shift following periods without rerendering the modal', () => {
@@ -5242,6 +5315,39 @@ test('timetable period time gap edits shift following periods without rerenderin
     { period: 2, start: '08:50', end: '09:30' },
     { period: 3, start: '09:55', end: '10:35' },
     { period: 4, start: '10:45', end: '11:25' },
+  ]);
+});
+
+test('timetable period time manual start and end edits refresh adjacent gap values', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {
+    throw new Error('manual time edits should not rerender the whole dialog');
+  };
+  controller.applyProject(createDefaultTimetableProject({ activePeriods: [1, 2, 3] }));
+  const dom = createPeriodTimeDom([
+    { period: 1, start: '08:00', end: '08:40', gapAfter: 10 },
+    { period: 2, start: '08:50', end: '09:30', gapAfter: 10 },
+    { period: 3, start: '09:40', end: '10:20' },
+  ]);
+  controller.state.container = dom;
+  controller.state.periodTimeDialog = { ...controller.state.periodTimeDialog, open: true };
+
+  dom.rows[1].startInput.value = '09:00';
+  controller.readPeriodTimesFromDom();
+  controller.refreshPeriodTimeGapInputsFromDom();
+
+  assert.equal(dom.rows[0].gapInput.value, '20');
+  assert.equal(dom.rows[1].gapInput.value, '10');
+
+  dom.rows[1].endInput.value = '09:35';
+  controller.readPeriodTimesFromDom();
+  controller.refreshPeriodTimeGapInputsFromDom();
+
+  assert.equal(dom.rows[1].gapInput.value, '5');
+  assert.deepEqual(controller.state.periodTimeDialog.draftTimes, [
+    { period: 1, start: '08:00', end: '08:40' },
+    { period: 2, start: '09:00', end: '09:35' },
+    { period: 3, start: '09:40', end: '10:20' },
   ]);
 });
 
@@ -5301,6 +5407,50 @@ test('timetable period time save reads live inputs and rejects invalid rows', as
     assert.equal(controller.state.periodTimeDialog.errors[0].period, 1);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('timetable period time save blocks incomplete, invalid and overlapping rows', async () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.applyProject(createDefaultTimetableProject({ activePeriods: [1, 2, 3] }));
+  const cases = [
+    {
+      rows: [
+        { period: 1, start: '08:00', end: '', gapAfter: 10 },
+        { period: 2, start: '08:50', end: '09:30', gapAfter: 10 },
+        { period: 3, start: '09:40', end: '10:20' },
+      ],
+      period: 1,
+      message: /请补齐开始和结束时间/,
+    },
+    {
+      rows: [
+        { period: 1, start: '25:00', end: '08:40', gapAfter: 10 },
+        { period: 2, start: '08:50', end: '09:30', gapAfter: 10 },
+        { period: 3, start: '09:40', end: '10:20' },
+      ],
+      period: 1,
+      message: /时间格式无效/,
+    },
+    {
+      rows: [
+        { period: 1, start: '08:00', end: '08:40', gapAfter: -5 },
+        { period: 2, start: '08:35', end: '09:15', gapAfter: 10 },
+        { period: 3, start: '09:25', end: '10:05' },
+      ],
+      period: 2,
+      message: /后一节不能早于前一节结束/,
+    },
+  ];
+
+  for (const item of cases) {
+    controller.state.periodTimeDialog = { ...controller.state.periodTimeDialog, open: true, errors: [] };
+    controller.state.container = createPeriodTimeDom(item.rows);
+    await controller.savePeriodTimes();
+    assert.equal(controller.state.periodTimeDialog.open, true);
+    assert.equal(controller.state.periodTimeDialog.errors[0].period, item.period);
+    assert.match(controller.state.periodTimeDialog.errors[0].message, item.message);
   }
 });
 
@@ -5381,6 +5531,27 @@ test('timetable period time clear can be saved and reopened as empty', async () 
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('timetable period time cancel discards unsaved clear draft', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.applyProject(createDefaultTimetableProject({
+    activePeriods: [1, 2],
+    periodTimes: [{ period: 1, start: '08:00', end: '08:40' }],
+  }));
+
+  controller.openPeriodTimeDialog();
+  controller.clearPeriodTimes();
+  assert.deepEqual(controller.state.periodTimeDialog.draftTimes, []);
+
+  controller.closePeriodTimeDialog();
+  controller.openPeriodTimeDialog();
+
+  assert.deepEqual(controller.state.periodTimeDialog.draftTimes, [
+    { period: 1, start: '08:00', end: '08:40' },
+    { period: 2, start: '08:50', end: '09:30' },
+  ]);
 });
 
 test('timetable project route only clears schedule when active range changes', async () => {

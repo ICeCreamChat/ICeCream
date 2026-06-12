@@ -680,7 +680,7 @@ function renderPeriodTimeDialog(state) {
                 <div class="tt-period-time-settings" aria-label="快速生成节次时间">
                     <div class="tt-period-time-settings-head">
                         <strong>快速生成</strong>
-                        <span>先生成初稿，再逐节调整课后间隔。</span>
+                        <span>参数变更会自动推算初稿；默认模板含中段长休，最终以时间轴为准。</span>
                     </div>
                     <label class="tt-period-time-setting-field">
                         <span>首节开始</span>
@@ -691,12 +691,12 @@ function renderPeriodTimeDialog(state) {
                         <input type="number" class="tt-roster-review-field" id="tt-period-class-minutes" data-period-time-setting="classMinutes" min="1" max="180" step="1" value="${escapeAttr(settings.classMinutes)}" ${saving ? 'disabled' : ''}>
                     </label>
                     <label class="tt-period-time-setting-field">
-                        <span>课间间隔</span>
+                        <span>默认间隔</span>
                         <input type="number" class="tt-roster-review-field" id="tt-period-break-minutes" data-period-time-setting="breakMinutes" min="0" max="120" step="1" value="${escapeAttr(settings.breakMinutes)}" ${saving ? 'disabled' : ''}>
                     </label>
                     <div class="tt-period-time-setting-actions">
                         <button class="tt-btn tt-btn--primary" id="tt-generate-period-times" type="button" data-action="generate-period-times" ${saving ? 'disabled' : ''}><i data-lucide="sparkles"></i><span>生成初稿</span></button>
-                        <button class="tt-btn" id="tt-reset-period-time-settings" type="button" data-action="reset-period-time-settings" ${saving ? 'disabled' : ''}><i data-lucide="wand-2"></i><span>恢复默认</span></button>
+                        <button class="tt-btn" id="tt-reset-period-time-settings" type="button" data-action="reset-period-time-settings" ${saving ? 'disabled' : ''}><i data-lucide="wand-2"></i><span>按默认模板重置</span></button>
                     </div>
                 </div>
                 <div class="tt-period-time-preview-head">
@@ -712,19 +712,19 @@ function renderPeriodTimeDialog(state) {
                             <col class="tt-period-time-col-time">
                             <col class="tt-period-time-col-gap">
                         </colgroup>
-                        <thead><tr><th>节次</th><th>开始时间</th><th>结束时间</th><th>课后间隔</th></tr></thead>
+                        <thead><tr><th>节次</th><th>开始时间</th><th>结束时间</th><th>本节后间隔</th></tr></thead>
                         <tbody>
                             ${activePeriods.map((period, index) => {
                                 const entry = timeMap.get(period) || {};
                                 const next = timeMap.get(activePeriods[index + 1]) || {};
                                 const error = errorMap.get(period) || '';
                                 return `<tr data-period-time-row="${period}" class="${error ? 'is-error' : ''}">
-                                    <td class="tt-period-time-label">第${period}节</td>
-                                    <td><input type="time" class="tt-roster-review-field tt-period-time-input" data-period-time-draft-start="${period}" value="${escapeAttr(entry.start || '')}" ${error ? 'aria-invalid="true"' : ''} ${saving ? 'disabled' : ''}></td>
-                                    <td><input type="time" class="tt-roster-review-field tt-period-time-input" data-period-time-draft-end="${period}" value="${escapeAttr(entry.end || '')}" ${error ? 'aria-invalid="true"' : ''} ${saving ? 'disabled' : ''}></td>
-                                    <td>
+                                    <td class="tt-period-time-label" data-label="节次">第${period}节</td>
+                                    <td data-label="开始时间"><input type="time" class="tt-roster-review-field tt-period-time-input" data-period-time-draft-start="${period}" value="${escapeAttr(entry.start || '')}" ${error ? 'aria-invalid="true"' : ''} ${saving ? 'disabled' : ''}></td>
+                                    <td data-label="结束时间"><input type="time" class="tt-roster-review-field tt-period-time-input" data-period-time-draft-end="${period}" value="${escapeAttr(entry.end || '')}" ${error ? 'aria-invalid="true"' : ''} ${saving ? 'disabled' : ''}></td>
+                                    <td data-label="本节后间隔">
                                         ${index < activePeriods.length - 1
-                                            ? `<input type="number" class="tt-roster-review-field tt-period-time-gap-input" data-period-time-gap-after="${period}" min="-240" max="240" step="1" value="${escapeAttr(gapBetween(entry, next))}" ${saving ? 'disabled' : ''}>`
+                                            ? `<input type="number" class="tt-roster-review-field tt-period-time-gap-input" data-period-time-gap-after="${period}" min="0" max="240" step="1" value="${escapeAttr(gapBetween(entry, next))}" ${saving ? 'disabled' : ''}>`
                                             : '<span class="tt-period-time-gap-empty">无课后间隔</span>'}
                                     </td>
                                 </tr>${error ? `<tr class="tt-period-time-error-row"><td colspan="4">${escapeHtml(error)}</td></tr>` : ''}`;
@@ -2419,7 +2419,7 @@ function renderScheduleGrid(state) {
                 <div class="tt-grid-head">节次</div>
                 ${days.map(day => `<div class="tt-grid-head">周${dayName(day)}</div>`).join('')}
                 ${periods.map(period => `
-                    <div class="tt-period">第${period}节</div>
+                    ${renderPeriodGridLabel(state.project, period)}
                     ${days.map(day => renderScheduleCell(state, context, day, period)).join('')}
                 `).join('')}
             </div>
@@ -2436,7 +2436,7 @@ function renderEmptyScheduleGrid(state) {
                 <div class="tt-grid-head">节次</div>
                 ${days.map(day => `<div class="tt-grid-head">周${dayName(day)}</div>`).join('')}
                 ${periods.map(period => `
-                    <div class="tt-period">第${period}节</div>
+                    ${renderPeriodGridLabel(state.project, period)}
                     ${days.map(day => `
                         <div class="tt-cell tt-main-empty-cell" data-day="${day}" data-period="${period}">
                             <span>待排</span>
@@ -2444,6 +2444,17 @@ function renderEmptyScheduleGrid(state) {
                     `).join('')}
                 `).join('')}
             </div>
+        </div>
+    `;
+}
+
+function renderPeriodGridLabel(project = {}, period) {
+    const periodTime = (project.periodTimes || []).find(item => Number(item.period) === Number(period));
+    const timeLabel = periodTime?.start && periodTime?.end ? `${periodTime.start}-${periodTime.end}` : '';
+    return `
+        <div class="tt-period" title="${escapeAttr(timeLabel ? `第${period}节 ${timeLabel}` : `第${period}节`)}">
+            <strong>第${period}节</strong>
+            ${timeLabel ? `<span>${escapeHtml(timeLabel)}</span>` : ''}
         </div>
     `;
 }

@@ -76,6 +76,26 @@ function sameNumberList(left = [], right = []) {
         && left.every((value, index) => Number(value) === Number(right[index]));
 }
 
+function canonicalPeriodTimes(times = []) {
+    return (Array.isArray(times) ? times : [])
+        .map(item => ({
+            period: Number(item.period || 0),
+            start: String(item.start || ''),
+            end: String(item.end || ''),
+        }))
+        .sort((left, right) => left.period - right.period);
+}
+
+function samePeriodTimes(left = [], right = []) {
+    const leftTimes = canonicalPeriodTimes(left);
+    const rightTimes = canonicalPeriodTimes(right);
+    return leftTimes.length === rightTimes.length
+        && leftTimes.every((item, index) => {
+            const other = rightTimes[index];
+            return item.period === other.period && item.start === other.start && item.end === other.end;
+        });
+}
+
 function preservePublishedArchive(nextSchedule, currentSchedule) {
     const published = currentSchedule?.published || null;
     if (!published) return nextSchedule;
@@ -212,11 +232,14 @@ function canonicalPublishedSlot(slot = {}) {
     });
 }
 
-function scheduleDiffersFromPublishedSnapshot(schedule = {}) {
+function scheduleDiffersFromPublishedSnapshot(schedule = {}, project = {}) {
     const published = schedule?.published || null;
     const snapshotSlots = published?.snapshot?.slots || [];
     const currentSlots = schedule?.slots || [];
     if (published?.status !== 'published' || !snapshotSlots.length) return false;
+    if (published.snapshot?.projectContext?.periodTimes && !samePeriodTimes(published.snapshot.projectContext.periodTimes, project.periodTimes || [])) {
+        return true;
+    }
     if (snapshotSlots.length !== currentSlots.length) return true;
     const snapshotKeys = snapshotSlots.map(canonicalPublishedSlot).sort();
     const currentKeys = currentSlots.map(canonicalPublishedSlot).sort();
@@ -275,6 +298,7 @@ function projectWithPublishedSnapshot(project = {}, version = null) {
         ...(context.term ? { term: context.term } : {}),
         ...(context.activeWeekdays?.length ? { activeWeekdays: context.activeWeekdays } : {}),
         ...(context.activePeriods?.length ? { activePeriods: context.activePeriods } : {}),
+        ...(Array.isArray(context.periodTimes) ? { periodTimes: context.periodTimes } : {}),
         ...(Array.isArray(context.teachers) ? { teachers: context.teachers } : {}),
         ...(Array.isArray(context.classes) ? { classes: context.classes } : {}),
         ...(Array.isArray(context.subjects) ? { subjects: context.subjects } : {}),
@@ -340,6 +364,15 @@ router.post('/project', async (req, res) => {
             project = normalizeTimetableProject({
                 ...project,
                 schedule: preservePublishedArchive(null, current.schedule),
+            });
+        } else if (
+            Object.prototype.hasOwnProperty.call(req.body || {}, 'periodTimes')
+            && !samePeriodTimes(current.periodTimes, project.periodTimes)
+            && project.schedule?.published?.status === 'published'
+        ) {
+            project = normalizeTimetableProject({
+                ...project,
+                schedule: preservePublishedArchive(project.schedule, current.schedule),
             });
         }
         const saved = await store().saveProject(project);
@@ -738,6 +771,7 @@ router.post('/schedule/published/restore', async (req, res) => {
             ...(context.term ? { term: context.term } : {}),
             ...(context.activeWeekdays?.length ? { activeWeekdays: context.activeWeekdays } : {}),
             ...(context.activePeriods?.length ? { activePeriods: context.activePeriods } : {}),
+            ...(Array.isArray(context.periodTimes) ? { periodTimes: context.periodTimes } : {}),
             ...(Array.isArray(context.teachers) ? { teachers: context.teachers } : {}),
             ...(Array.isArray(context.classes) ? { classes: context.classes } : {}),
             ...(Array.isArray(context.subjects) ? { subjects: context.subjects } : {}),
@@ -841,7 +875,7 @@ router.post('/export', async (req, res) => {
         } else if (type !== 'plans') {
             if (
                 current.schedule?.published?.status === 'draft_changed'
-                || scheduleDiffersFromPublishedSnapshot(current.schedule)
+                || scheduleDiffersFromPublishedSnapshot(current.schedule, current)
             ) {
                 const project = current.schedule?.published?.status === 'draft_changed'
                     ? current
