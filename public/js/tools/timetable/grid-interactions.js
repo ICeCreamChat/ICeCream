@@ -27,7 +27,7 @@ function bindDelegatedInteractions(container) {
             controller.resetTimetableAgentSession();
         } else if (action === 'timetable-agent-quick') {
             controller.sendTimetableAgentMessage(event.target.closest('[data-agent-prompt]')?.dataset.agentPrompt || '');
-        } else if (action === 'auto-fill-period-times') {
+        } else if (action === 'auto-fill-period-times' || action === 'reset-period-time-settings') {
             controller.autoFillPeriodTimes();
         } else {
             const slotNode = event.target.closest('.tt-slot');
@@ -41,7 +41,9 @@ function bindDelegatedInteractions(container) {
     container.addEventListener('change', event => {
         const controller = container.__ttController;
         if (!controller) return;
-        if (event.target.matches('[data-period-time-draft-start], [data-period-time-draft-end], [data-period-time-start], [data-period-time-end]')) {
+        if (event.target.matches('[data-period-time-setting]')) {
+            controller.updatePeriodTimeSettingsFromForm();
+        } else if (event.target.matches('[data-period-time-draft-start], [data-period-time-draft-end], [data-period-time-start], [data-period-time-end]')) {
             controller.readPeriodTimesFromDom();
         }
     });

@@ -453,26 +453,136 @@ export class TimetablePlannerController {
         await this.saveProject(this.rangePayloadFromDraft());
     }
 
-    buildDefaultPeriodTimes(periods = null) {
-        const activePeriods = periods || this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project);
-        const startHour = 8;
-        const durationMinutes = 40;
-        const breakMinutes = 10;
-        const lunchMinutes = 60;
-        const lunchAfterPeriod = Math.ceil(activePeriods.length / 2);
-        let minutes = startHour * 60;
-        const times = activePeriods.map((period, index) => {
-            if (period > activePeriods[0] && index === activePeriods.filter(p => p <= activePeriods[lunchAfterPeriod - 1]).length) {
-                const morningEnd = startHour * 60 + lunchAfterPeriod * durationMinutes + (lunchAfterPeriod - 1) * breakMinutes;
-                minutes = morningEnd + lunchMinutes;
+    timeToMinutes(value) {
+        const match = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
+        if (!match) return null;
+        const hours = Number(match[1]);
+        const minutes = Number(match[2]);
+        if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+        return hours * 60 + minutes;
+    }
+
+    minutesToTime(minutes) {
+        const bounded = Math.max(0, Math.min(23 * 60 + 59, Math.round(Number(minutes) || 0)));
+        return `${String(Math.floor(bounded / 60)).padStart(2, '0')}:${String(bounded % 60).padStart(2, '0')}`;
+    }
+
+    getDefaultPeriodTimeSettings(periods = null) {
+        const activePeriods = [...(periods || this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        const lunchIndex = Math.max(0, Math.ceil(activePeriods.length / 2) - 1);
+        return {
+            startTime: '08:00',
+            classMinutes: 40,
+            breakMinutes: 10,
+            lunchAfterPeriod: activePeriods[lunchIndex] || 0,
+            lunchMinutes: 60,
+        };
+    }
+
+    normalizePeriodTimeSettings(settings = {}, periods = null) {
+        const activePeriods = [...(periods || this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        const defaults = this.getDefaultPeriodTimeSettings(activePeriods);
+        const toInteger = (value, fallback, min, max) => {
+            const number = Number(value);
+            if (!Number.isFinite(number)) return fallback;
+            return Math.max(min, Math.min(max, Math.round(number)));
+        };
+        const lunchAfterPeriod = Number(settings.lunchAfterPeriod);
+        const startMinutes = this.timeToMinutes(settings.startTime);
+        return {
+            startTime: startMinutes === null ? defaults.startTime : this.minutesToTime(startMinutes),
+            classMinutes: toInteger(settings.classMinutes, defaults.classMinutes, 1, 180),
+            breakMinutes: toInteger(settings.breakMinutes, defaults.breakMinutes, 0, 120),
+            lunchAfterPeriod: lunchAfterPeriod === 0 || activePeriods.includes(lunchAfterPeriod) ? lunchAfterPeriod : defaults.lunchAfterPeriod,
+            lunchMinutes: toInteger(settings.lunchMinutes, defaults.lunchMinutes, 0, 240),
+        };
+    }
+
+    buildPeriodTimesFromSettings(settings = {}, periods = null) {
+        const activePeriods = [...(periods || this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        const safeSettings = this.normalizePeriodTimeSettings(settings, activePeriods);
+        let minutes = this.timeToMinutes(safeSettings.startTime) ?? this.timeToMinutes('08:00');
+        return activePeriods.map((period, index) => {
+            const start = this.minutesToTime(minutes);
+            minutes += safeSettings.classMinutes;
+            const end = this.minutesToTime(minutes);
+            if (index < activePeriods.length - 1) {
+                minutes += period === safeSettings.lunchAfterPeriod ? safeSettings.lunchMinutes : safeSettings.breakMinutes;
             }
-            const start = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
-            minutes += durationMinutes;
-            const end = `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
-            minutes += breakMinutes;
             return { period, start, end };
         });
-        return times;
+    }
+
+    buildDefaultPeriodTimes(periods = null) {
+        return this.buildPeriodTimesFromSettings(this.getDefaultPeriodTimeSettings(periods), periods);
+    }
+
+    mostCommonNumber(values = [], fallback = 0) {
+        const counts = new Map();
+        values.filter(value => Number.isFinite(value)).forEach(value => {
+            counts.set(value, (counts.get(value) || 0) + 1);
+        });
+        let best = fallback;
+        let bestCount = 0;
+        counts.forEach((count, value) => {
+            if (count > bestCount) {
+                best = value;
+                bestCount = count;
+            }
+        });
+        return best;
+    }
+
+    inferPeriodTimeSettings(times = [], periods = null) {
+        const activePeriods = [...(periods || this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        const defaults = this.getDefaultPeriodTimeSettings(activePeriods);
+        const activeSet = new Set(activePeriods);
+        const entries = (Array.isArray(times) ? times : [])
+            .map(item => ({
+                period: Number(item.period),
+                start: item.start || '',
+                end: item.end || '',
+                startMinutes: this.timeToMinutes(item.start),
+                endMinutes: this.timeToMinutes(item.end),
+            }))
+            .filter(item => activeSet.has(item.period) && item.startMinutes !== null && item.endMinutes !== null && item.endMinutes > item.startMinutes)
+            .sort((left, right) => left.period - right.period);
+        if (!entries.length) return defaults;
+
+        const durations = entries.map(item => item.endMinutes - item.startMinutes).filter(value => value > 0);
+        const gaps = [];
+        entries.forEach((entry, index) => {
+            const next = entries[index + 1];
+            if (!next) return;
+            const minutes = next.startMinutes - entry.endMinutes;
+            if (minutes >= 0) gaps.push({ period: entry.period, minutes });
+        });
+
+        let breakMinutes = defaults.breakMinutes;
+        let lunchAfterPeriod = defaults.lunchAfterPeriod;
+        let lunchMinutes = defaults.lunchMinutes;
+        if (gaps.length) {
+            const largest = gaps.reduce((best, item) => item.minutes > best.minutes ? item : best, gaps[0]);
+            const likelyLunch = largest.minutes >= 30;
+            const regularGaps = likelyLunch ? gaps.filter(item => item !== largest).map(item => item.minutes) : gaps.map(item => item.minutes);
+            breakMinutes = this.mostCommonNumber(regularGaps, likelyLunch ? defaults.breakMinutes : gaps[0].minutes);
+            if (likelyLunch && largest.minutes >= breakMinutes + 20) {
+                lunchAfterPeriod = largest.period;
+                lunchMinutes = largest.minutes;
+            } else {
+                lunchAfterPeriod = 0;
+                lunchMinutes = 0;
+            }
+        }
+
+        return this.normalizePeriodTimeSettings({
+            ...defaults,
+            startTime: entries[0].start,
+            classMinutes: this.mostCommonNumber(durations, defaults.classMinutes),
+            breakMinutes,
+            lunchAfterPeriod,
+            lunchMinutes,
+        }, activePeriods);
     }
 
     getPeriodTimeDraftSource() {
@@ -493,9 +603,13 @@ export class TimetablePlannerController {
 
     openPeriodTimeDialog() {
         this.updateRangeDraftFromForm();
+        const activePeriods = this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project);
+        const draftTimes = this.normalizePeriodTimeDraft(this.getPeriodTimeDraftSource());
+        const settings = this.inferPeriodTimeSettings(draftTimes, activePeriods);
         this.state.periodTimeDialog = {
             open: true,
-            draftTimes: this.normalizePeriodTimeDraft(this.getPeriodTimeDraftSource()),
+            settings,
+            draftTimes: draftTimes.length ? draftTimes : this.buildPeriodTimesFromSettings(settings, activePeriods),
         };
         this.render();
     }
@@ -510,21 +624,49 @@ export class TimetablePlannerController {
 
     autoFillPeriodTimes() {
         const activePeriods = this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project);
-        const times = this.buildDefaultPeriodTimes(activePeriods);
+        const settings = this.getDefaultPeriodTimeSettings(activePeriods);
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: true,
-            draftTimes: times,
+            settings,
+            draftTimes: this.buildPeriodTimesFromSettings(settings, activePeriods),
         };
         this.render();
-        this.setMessage('已填充默认时间模板，保存后生效。');
+        this.setMessage('已恢复默认节次时间，保存后生效。');
     }
 
     clearPeriodTimes() {
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: true,
+            settings: this.state.periodTimeDialog?.settings || this.getDefaultPeriodTimeSettings(),
             draftTimes: [],
+        };
+        this.render();
+    }
+
+    readPeriodTimeSettingsFromDom() {
+        if (!this.state.container) return null;
+        const startInput = this.state.container.querySelector('#tt-period-start-time');
+        if (!startInput) return null;
+        return this.normalizePeriodTimeSettings({
+            startTime: startInput.value,
+            classMinutes: this.state.container.querySelector('#tt-period-class-minutes')?.value,
+            breakMinutes: this.state.container.querySelector('#tt-period-break-minutes')?.value,
+            lunchAfterPeriod: this.state.container.querySelector('#tt-period-lunch-after')?.value,
+            lunchMinutes: this.state.container.querySelector('#tt-period-lunch-minutes')?.value,
+        });
+    }
+
+    updatePeriodTimeSettingsFromForm() {
+        const settings = this.readPeriodTimeSettingsFromDom();
+        if (!settings) return;
+        const activePeriods = this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project);
+        this.state.periodTimeDialog = {
+            ...(this.state.periodTimeDialog || {}),
+            open: true,
+            settings,
+            draftTimes: this.buildPeriodTimesFromSettings(settings, activePeriods),
         };
         this.render();
     }

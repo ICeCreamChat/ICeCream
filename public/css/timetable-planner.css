@@ -1540,8 +1540,7 @@ button.tt-section-title {
 }
 
 .tt-roster-import-dialog,
-.tt-rule-review-dialog,
-.tt-period-time-dialog {
+.tt-rule-review-dialog {
     display: grid;
     gap: var(--tt-space-md);
     box-sizing: border-box;
@@ -1579,7 +1578,20 @@ button.tt-section-title {
 }
 
 .tt-period-time-dialog {
+    display: grid;
+    gap: var(--tt-space-md);
+    box-sizing: border-box;
+    width: min(720px, calc(100vw - 48px));
     min-width: min(560px, calc(100vw - 48px));
+    max-width: min(720px, calc(100vw - 48px));
+    max-height: min(720px, calc(100vh - 48px));
+    overflow: auto;
+    padding: var(--tt-space-md);
+    background: var(--tt-bg-panel);
+    border: 1px solid var(--tt-border-strong);
+    border-radius: var(--tt-radius-lg);
+    color: var(--tt-text);
+    box-shadow: 0 24px 60px rgba(2, 6, 23, 0.38);
 }
 
 .tt-publish-summary {
@@ -1976,6 +1988,51 @@ button.tt-section-title {
     border-color: var(--tt-primary);
     box-shadow: var(--tt-primary-glow);
     outline: none;
+}
+
+.tt-period-time-settings {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--tt-space-xs);
+    padding: var(--tt-space-sm);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    background: var(--tt-bg-soft);
+}
+
+.tt-period-time-setting-field {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.tt-period-time-setting-field span {
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
+.tt-period-time-setting-field .tt-roster-review-field {
+    height: 36px;
+    min-height: 36px;
+}
+
+.tt-period-time-preview-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--tt-space-sm);
+    color: var(--tt-muted);
+    font-size: 0.75rem;
+}
+
+.tt-period-time-preview-head strong {
+    color: var(--tt-text);
+    font-size: 0.82rem;
+}
+
+.tt-period-time-preview-head span {
+    text-align: right;
 }
 
 .tt-period-time-review {
@@ -2986,6 +3043,19 @@ button.tt-section-title {
 
     .tt-dialog-actions .tt-btn {
         flex: 1 1 120px;
+    }
+
+    .tt-period-time-settings {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tt-period-time-preview-head {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .tt-period-time-preview-head span {
+        text-align: left;
     }
 
     .tt-agent-floating {
