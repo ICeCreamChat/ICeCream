@@ -81,6 +81,43 @@ function extractMethodSource(source, methodName) {
   assert.fail(`unable to extract method ${methodName}`);
 }
 
+function createPeriodTimeDom(rows, settings = {}) {
+  const settingInputs = new Map([
+    ['#tt-period-start-time', { value: settings.startTime || '08:00' }],
+    ['#tt-period-class-minutes', { value: String(settings.classMinutes ?? 40) }],
+    ['#tt-period-break-minutes', { value: String(settings.breakMinutes ?? 10) }],
+  ]);
+  const rowNodes = rows.map(row => {
+    const startInput = { value: row.start || '' };
+    const endInput = { value: row.end || '' };
+    const gapInput = row.gapAfter === undefined
+      ? null
+      : { value: String(row.gapAfter), dataset: { periodTimeGapAfter: String(row.period) } };
+    return {
+      dataset: { periodTimeRow: String(row.period) },
+      startInput,
+      endInput,
+      gapInput,
+      querySelector(selector) {
+        if (selector.includes('data-period-time-draft-start') || selector.includes('data-period-time-start')) return startInput;
+        if (selector.includes('data-period-time-draft-end') || selector.includes('data-period-time-end')) return endInput;
+        if (selector.includes('data-period-time-gap-after')) return gapInput;
+        return null;
+      },
+    };
+  });
+  return {
+    rows: rowNodes,
+    settings: settingInputs,
+    querySelector(selector) {
+      return settingInputs.get(selector) || null;
+    },
+    querySelectorAll(selector) {
+      return selector === '[data-period-time-row]' ? rowNodes : [];
+    },
+  };
+}
+
 test('timetable roster stats count multi-teacher plans and allowed rooms', () => {
   const project = createDefaultTimetableProject({
     teachers: [
@@ -5021,12 +5058,15 @@ test('timetable period time setup uses a compact entry and modal editor', async 
   assert.match(open, /id="tt-period-start-time"/);
   assert.match(open, /id="tt-period-class-minutes"/);
   assert.match(open, /id="tt-period-break-minutes"/);
-  assert.match(open, /id="tt-period-lunch-after"/);
-  assert.match(open, /id="tt-period-lunch-minutes"/);
-  assert.match(open, /推算结果预览/);
+  assert.match(open, /id="tt-generate-period-times"/);
+  assert.doesNotMatch(open, /id="tt-period-lunch-after"/);
+  assert.doesNotMatch(open, /id="tt-period-lunch-minutes"/);
   assert.match(open, /data-period-time-row="1"/);
   assert.match(open, /data-period-time-draft-start="1"/);
   assert.match(open, /data-period-time-draft-end="1"/);
+  assert.match(open, /data-period-time-gap-after="1"/);
+  assert.match(open, /data-period-time-gap-after="2"/);
+  assert.doesNotMatch(open, /data-period-time-gap-after="3"/);
   assert.match(open, /id="tt-reset-period-time-settings"/);
   assert.match(open, /id="tt-clear-period-times"/);
   assert.match(open, /id="tt-save-period-times"/);
@@ -5037,8 +5077,10 @@ test('timetable period time setup uses a compact entry and modal editor', async 
   assert.match(styles, /\.tt-period-time-table\s*{/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-period-time-dialog/);
   assert.match(interactionSource, /#tt-open-period-time-dialog/);
+  assert.match(interactionSource, /generate-period-times/);
   assert.match(interactionSource, /reset-period-time-settings/);
   assert.match(interactionSource, /\[data-period-time-setting\]/);
+  assert.match(interactionSource, /\[data-period-time-gap-after\]/);
   assert.match(interactionSource, /#tt-save-period-times/);
 });
 
@@ -5083,12 +5125,19 @@ test('timetable period time dialog drafts fill, clear and save through project p
     const controller = new TimetablePlannerController();
     controller.render = () => {};
     controller.applyProject(project);
+    controller.state.solverJob = { jobId: 'job_keep', status: 'running' };
+    controller.state.ruleDraftPreview = [{ id: 'draft_keep', status: 'needs_review' }];
+    controller.state.ruleWarnings = ['warning_keep'];
 
     controller.openPeriodTimeDialog();
     assert.equal(controller.state.periodTimeDialog.open, true);
     assert.equal(controller.state.periodTimeDialog.settings.startTime, '07:55');
     assert.equal(controller.state.periodTimeDialog.settings.classMinutes, 40);
-    assert.deepEqual(controller.state.periodTimeDialog.draftTimes, [{ period: 1, start: '07:55', end: '08:35' }]);
+    assert.deepEqual(controller.state.periodTimeDialog.draftTimes, [
+      { period: 1, start: '07:55', end: '08:35' },
+      { period: 2, start: '08:45', end: '09:25' },
+      { period: 3, start: '09:35', end: '10:15' },
+    ]);
 
     controller.autoFillPeriodTimes();
     assert.equal(calls.length, 0);
@@ -5096,8 +5145,6 @@ test('timetable period time dialog drafts fill, clear and save through project p
       startTime: '08:00',
       classMinutes: 40,
       breakMinutes: 10,
-      lunchAfterPeriod: 2,
-      lunchMinutes: 60,
     });
     assert.equal(controller.state.periodTimeDialog.draftTimes.length, 3);
     assert.deepEqual(controller.state.periodTimeDialog.draftTimes[0], { period: 1, start: '08:00', end: '08:40' });
@@ -5107,15 +5154,24 @@ test('timetable period time dialog drafts fill, clear and save through project p
 
     controller.state.periodTimeDialog.draftTimes = [
       { period: 1, start: '08:10', end: '08:50' },
-      { period: 9, start: '17:00', end: '17:40' },
+      { period: 2, start: '09:00', end: '09:40' },
+      { period: 3, start: '09:50', end: '10:30' },
     ];
     await controller.savePeriodTimes();
 
     const projectSave = calls.find(call => call.url.endsWith('/project'));
     assert.ok(projectSave);
-    assert.deepEqual(projectSave.body.periodTimes, [{ period: 1, start: '08:10', end: '08:50' }]);
-    assert.deepEqual(projectSave.body.activePeriods, [1, 2, 3]);
+    assert.deepEqual(projectSave.body.periodTimes, [
+      { period: 1, start: '08:10', end: '08:50' },
+      { period: 2, start: '09:00', end: '09:40' },
+      { period: 3, start: '09:50', end: '10:30' },
+    ]);
+    assert.equal(projectSave.body.activePeriods, undefined);
+    assert.equal(projectSave.body.activeWeekdays, undefined);
     assert.equal(controller.state.periodTimeDialog.open, false);
+    assert.deepEqual(controller.state.solverJob, { jobId: 'job_keep', status: 'running' });
+    assert.deepEqual(controller.state.ruleDraftPreview, [{ id: 'draft_keep', status: 'needs_review' }]);
+    assert.deepEqual(controller.state.ruleWarnings, ['warning_keep']);
     assert.equal(controller.state.project.schedule.slots.length, 1);
     assert.equal(controller.state.project.schedule.slots[0].id, 'slot_1');
   } finally {
@@ -5123,7 +5179,7 @@ test('timetable period time dialog drafts fill, clear and save through project p
   }
 });
 
-test('timetable period time settings generate preview drafts automatically', () => {
+test('timetable period time settings generate preview drafts from quick settings', () => {
   const controller = new TimetablePlannerController();
   controller.render = () => {};
   controller.applyProject(createDefaultTimetableProject({ activePeriods: [1, 2, 3] }));
@@ -5133,8 +5189,6 @@ test('timetable period time settings generate preview drafts automatically', () 
     ['#tt-period-start-time', { value: '08:10' }],
     ['#tt-period-class-minutes', { value: '35' }],
     ['#tt-period-break-minutes', { value: '5' }],
-    ['#tt-period-lunch-after', { value: '0' }],
-    ['#tt-period-lunch-minutes', { value: '0' }],
   ]);
   controller.state.container = {
     querySelector(selector) {
@@ -5143,19 +5197,190 @@ test('timetable period time settings generate preview drafts automatically', () 
   };
 
   controller.updatePeriodTimeSettingsFromForm();
+  assert.equal(controller.state.periodTimeDialog.draftTimes[0].start, '08:00');
+  controller.generatePeriodTimesFromSettings();
 
   assert.deepEqual(controller.state.periodTimeDialog.settings, {
     startTime: '08:10',
     classMinutes: 35,
     breakMinutes: 5,
-    lunchAfterPeriod: 0,
-    lunchMinutes: 0,
   });
   assert.deepEqual(controller.state.periodTimeDialog.draftTimes, [
     { period: 1, start: '08:10', end: '08:45' },
     { period: 2, start: '08:50', end: '09:25' },
     { period: 3, start: '09:30', end: '10:05' },
   ]);
+});
+
+test('timetable period time gap edits shift following periods without rerendering the modal', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {
+    throw new Error('gap edits should not rerender the whole dialog');
+  };
+  controller.applyProject(createDefaultTimetableProject({ activePeriods: [1, 2, 3, 4] }));
+  const dom = createPeriodTimeDom([
+    { period: 1, start: '08:00', end: '08:40', gapAfter: 10 },
+    { period: 2, start: '08:50', end: '09:30', gapAfter: 25 },
+    { period: 3, start: '09:40', end: '10:20', gapAfter: 10 },
+    { period: 4, start: '10:30', end: '11:10' },
+  ]);
+  controller.state.container = dom;
+  controller.state.periodTimeDialog = {
+    ...controller.state.periodTimeDialog,
+    open: true,
+    settings: { startTime: '08:00', classMinutes: 40, breakMinutes: 10 },
+  };
+
+  controller.updatePeriodTimeGapFromDom(dom.rows[1].gapInput);
+
+  assert.equal(dom.rows[2].startInput.value, '09:55');
+  assert.equal(dom.rows[2].endInput.value, '10:35');
+  assert.equal(dom.rows[3].startInput.value, '10:45');
+  assert.equal(dom.rows[3].endInput.value, '11:25');
+  assert.deepEqual(controller.state.periodTimeDialog.draftTimes, [
+    { period: 1, start: '08:00', end: '08:40' },
+    { period: 2, start: '08:50', end: '09:30' },
+    { period: 3, start: '09:55', end: '10:35' },
+    { period: 4, start: '10:45', end: '11:25' },
+  ]);
+});
+
+test('timetable period time save reads live inputs and rejects invalid rows', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const schedule = {
+    source: 'fast_constructed',
+    slots: [{ id: 'slot_1', classId: 'c1', subjectId: 'math', teacherId: 't_math', day: 1, period: 1 }],
+  };
+  const project = createDefaultTimetableProject({ activePeriods: [1, 2, 3], schedule });
+
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), body });
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { success: true, data: { project: createDefaultTimetableProject({ ...project, ...body, schedule }) } };
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.applyProject(project);
+    controller.state.periodTimeDialog = { ...controller.state.periodTimeDialog, open: true };
+    controller.state.container = createPeriodTimeDom([
+      { period: 1, start: '08:05', end: '08:45', gapAfter: 15 },
+      { period: 2, start: '09:00', end: '09:40', gapAfter: 10 },
+      { period: 3, start: '09:50', end: '10:30' },
+    ]);
+
+    await controller.savePeriodTimes();
+
+    assert.deepEqual(calls[0].body.periodTimes, [
+      { period: 1, start: '08:05', end: '08:45' },
+      { period: 2, start: '09:00', end: '09:40' },
+      { period: 3, start: '09:50', end: '10:30' },
+    ]);
+    assert.equal(controller.state.project.schedule.slots[0].id, 'slot_1');
+
+    calls.length = 0;
+    controller.state.periodTimeDialog = { ...controller.state.periodTimeDialog, open: true };
+    controller.state.container = createPeriodTimeDom([
+      { period: 1, start: '08:40', end: '08:00', gapAfter: 10 },
+      { period: 2, start: '08:50', end: '09:30', gapAfter: 10 },
+      { period: 3, start: '09:40', end: '10:20' },
+    ]);
+
+    await controller.savePeriodTimes();
+
+    assert.equal(calls.length, 0);
+    assert.equal(controller.state.periodTimeDialog.open, true);
+    assert.equal(controller.state.periodTimeDialog.errors[0].period, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('timetable period time save failure keeps the dialog draft editable', async () => {
+  const originalFetch = globalThis.fetch;
+  const schedule = {
+    source: 'fast_constructed',
+    slots: [{ id: 'slot_1', classId: 'c1', subjectId: 'math', teacherId: 't_math', day: 1, period: 1 }],
+  };
+  const project = createDefaultTimetableProject({ activePeriods: [1, 2, 3], schedule });
+  globalThis.fetch = async () => {
+    throw new Error('project-save-down');
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.applyProject(project);
+    controller.state.periodTimeDialog = { ...controller.state.periodTimeDialog, open: true };
+    controller.state.container = createPeriodTimeDom([
+      { period: 1, start: '08:05', end: '08:45', gapAfter: 15 },
+      { period: 2, start: '09:00', end: '09:40', gapAfter: 10 },
+      { period: 3, start: '09:50', end: '10:30' },
+    ]);
+
+    await controller.savePeriodTimes();
+
+    assert.equal(controller.state.periodTimeDialog.open, true);
+    assert.equal(controller.state.periodTimeDialog.saving, false);
+    assert.deepEqual(controller.state.periodTimeDialog.draftTimes, [
+      { period: 1, start: '08:05', end: '08:45' },
+      { period: 2, start: '09:00', end: '09:40' },
+      { period: 3, start: '09:50', end: '10:30' },
+    ]);
+    assert.equal(controller.state.project.schedule.slots[0].id, 'slot_1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('timetable period time clear can be saved and reopened as empty', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const project = createDefaultTimetableProject({
+    activePeriods: [1, 2, 3],
+    periodTimes: [{ period: 1, start: '08:00', end: '08:40' }],
+  });
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), body });
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { success: true, data: { project: createDefaultTimetableProject({ ...project, ...body }) } };
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.applyProject(project);
+    controller.openPeriodTimeDialog();
+    controller.clearPeriodTimes();
+    controller.state.container = createPeriodTimeDom([
+      { period: 1, start: '', end: '', gapAfter: '' },
+      { period: 2, start: '', end: '', gapAfter: '' },
+      { period: 3, start: '', end: '' },
+    ]);
+
+    await controller.savePeriodTimes();
+
+    assert.deepEqual(calls[0].body.periodTimes, []);
+    assert.equal(controller.state.periodTimeDialog.open, false);
+    controller.openPeriodTimeDialog();
+    assert.deepEqual(controller.state.periodTimeDialog.draftTimes, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('timetable project route only clears schedule when active range changes', async () => {

@@ -56,9 +56,47 @@ export class TimetablePlannerController {
         if (this.state.project) {
             this.state.selectedOwnerId = ensureOwnerSelection(this.state);
         }
+        const periodTimeFocus = this.capturePeriodTimeFocus(container);
         container.innerHTML = renderWorkbench(this.state);
         bindGridInteractions(container, this, this.state);
+        this.restorePeriodTimeFocus(container, periodTimeFocus);
         window.lucide?.createIcons();
+    }
+
+    capturePeriodTimeFocus(container) {
+        if (typeof document === 'undefined' || !this.state.periodTimeDialog?.open) return null;
+        const active = document.activeElement;
+        if (!active || !container.contains(active) || !active.closest?.('#tt-period-time-dialog')) return null;
+        let selector = '';
+        if (active.id) {
+            selector = `#${active.id}`;
+        } else if (active.dataset?.periodTimeDraftStart) {
+            selector = `[data-period-time-draft-start="${active.dataset.periodTimeDraftStart}"]`;
+        } else if (active.dataset?.periodTimeDraftEnd) {
+            selector = `[data-period-time-draft-end="${active.dataset.periodTimeDraftEnd}"]`;
+        } else if (active.dataset?.periodTimeGapAfter) {
+            selector = `[data-period-time-gap-after="${active.dataset.periodTimeGapAfter}"]`;
+        }
+        if (!selector) return null;
+        return {
+            selector,
+            start: typeof active.selectionStart === 'number' ? active.selectionStart : null,
+            end: typeof active.selectionEnd === 'number' ? active.selectionEnd : null,
+        };
+    }
+
+    restorePeriodTimeFocus(container, focusInfo) {
+        if (!focusInfo?.selector) return;
+        const target = container.querySelector(focusInfo.selector);
+        if (!target || typeof target.focus !== 'function') return;
+        target.focus({ preventScroll: true });
+        if (focusInfo.start !== null && typeof target.setSelectionRange === 'function') {
+            try {
+                target.setSelectionRange(focusInfo.start, focusInfo.end ?? focusInfo.start);
+            } catch {
+                // Some input types, notably time, do not support selection ranges.
+            }
+        }
     }
 
     setMessage(message, failure = null) {
@@ -468,38 +506,32 @@ export class TimetablePlannerController {
     }
 
     getDefaultPeriodTimeSettings(periods = null) {
-        const activePeriods = [...(periods || this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
-        const lunchIndex = Math.max(0, Math.ceil(activePeriods.length / 2) - 1);
+        const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
         return {
             startTime: '08:00',
             classMinutes: 40,
             breakMinutes: 10,
-            lunchAfterPeriod: activePeriods[lunchIndex] || 0,
-            lunchMinutes: 60,
         };
     }
 
     normalizePeriodTimeSettings(settings = {}, periods = null) {
-        const activePeriods = [...(periods || this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
         const defaults = this.getDefaultPeriodTimeSettings(activePeriods);
         const toInteger = (value, fallback, min, max) => {
             const number = Number(value);
             if (!Number.isFinite(number)) return fallback;
             return Math.max(min, Math.min(max, Math.round(number)));
         };
-        const lunchAfterPeriod = Number(settings.lunchAfterPeriod);
         const startMinutes = this.timeToMinutes(settings.startTime);
         return {
             startTime: startMinutes === null ? defaults.startTime : this.minutesToTime(startMinutes),
             classMinutes: toInteger(settings.classMinutes, defaults.classMinutes, 1, 180),
             breakMinutes: toInteger(settings.breakMinutes, defaults.breakMinutes, 0, 120),
-            lunchAfterPeriod: lunchAfterPeriod === 0 || activePeriods.includes(lunchAfterPeriod) ? lunchAfterPeriod : defaults.lunchAfterPeriod,
-            lunchMinutes: toInteger(settings.lunchMinutes, defaults.lunchMinutes, 0, 240),
         };
     }
 
-    buildPeriodTimesFromSettings(settings = {}, periods = null) {
-        const activePeriods = [...(periods || this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+    buildPeriodTimesFromGapMap(settings = {}, periods = null, gapByPeriod = new Map()) {
+        const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
         const safeSettings = this.normalizePeriodTimeSettings(settings, activePeriods);
         let minutes = this.timeToMinutes(safeSettings.startTime) ?? this.timeToMinutes('08:00');
         return activePeriods.map((period, index) => {
@@ -507,14 +539,24 @@ export class TimetablePlannerController {
             minutes += safeSettings.classMinutes;
             const end = this.minutesToTime(minutes);
             if (index < activePeriods.length - 1) {
-                minutes += period === safeSettings.lunchAfterPeriod ? safeSettings.lunchMinutes : safeSettings.breakMinutes;
+                const gap = Number(gapByPeriod instanceof Map ? gapByPeriod.get(period) : gapByPeriod?.[period]);
+                minutes += Number.isFinite(gap) ? Math.max(0, Math.round(gap)) : safeSettings.breakMinutes;
             }
             return { period, start, end };
         });
     }
 
+    buildPeriodTimesFromSettings(settings = {}, periods = null) {
+        return this.buildPeriodTimesFromGapMap(settings, periods);
+    }
+
     buildDefaultPeriodTimes(periods = null) {
-        return this.buildPeriodTimesFromSettings(this.getDefaultPeriodTimeSettings(periods), periods);
+        const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        const settings = this.getDefaultPeriodTimeSettings(activePeriods);
+        const gapByPeriod = new Map();
+        const lunchPeriod = activePeriods[Math.max(0, Math.ceil(activePeriods.length / 2) - 1)];
+        if (activePeriods.length >= 5 && lunchPeriod) gapByPeriod.set(lunchPeriod, 60);
+        return this.buildPeriodTimesFromGapMap(settings, activePeriods, gapByPeriod);
     }
 
     mostCommonNumber(values = [], fallback = 0) {
@@ -534,7 +576,7 @@ export class TimetablePlannerController {
     }
 
     inferPeriodTimeSettings(times = [], periods = null) {
-        const activePeriods = [...(periods || this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
         const defaults = this.getDefaultPeriodTimeSettings(activePeriods);
         const activeSet = new Set(activePeriods);
         const entries = (Array.isArray(times) ? times : [])
@@ -559,20 +601,11 @@ export class TimetablePlannerController {
         });
 
         let breakMinutes = defaults.breakMinutes;
-        let lunchAfterPeriod = defaults.lunchAfterPeriod;
-        let lunchMinutes = defaults.lunchMinutes;
         if (gaps.length) {
             const largest = gaps.reduce((best, item) => item.minutes > best.minutes ? item : best, gaps[0]);
             const likelyLunch = largest.minutes >= 30;
             const regularGaps = likelyLunch ? gaps.filter(item => item !== largest).map(item => item.minutes) : gaps.map(item => item.minutes);
             breakMinutes = this.mostCommonNumber(regularGaps, likelyLunch ? defaults.breakMinutes : gaps[0].minutes);
-            if (likelyLunch && largest.minutes >= breakMinutes + 20) {
-                lunchAfterPeriod = largest.period;
-                lunchMinutes = largest.minutes;
-            } else {
-                lunchAfterPeriod = 0;
-                lunchMinutes = 0;
-            }
         }
 
         return this.normalizePeriodTimeSettings({
@@ -580,8 +613,6 @@ export class TimetablePlannerController {
             startTime: entries[0].start,
             classMinutes: this.mostCommonNumber(durations, defaults.classMinutes),
             breakMinutes,
-            lunchAfterPeriod,
-            lunchMinutes,
         }, activePeriods);
     }
 
@@ -589,8 +620,8 @@ export class TimetablePlannerController {
         return this.state.rangeDraft?.periodTimes || this.state.project?.periodTimes || [];
     }
 
-    normalizePeriodTimeDraft(times = []) {
-        const activePeriods = new Set(this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project));
+    normalizePeriodTimeDraft(times = [], periods = null) {
+        const activePeriods = new Set(periods || getActivePeriods(this.state.project));
         return (Array.isArray(times) ? times : [])
             .map(item => ({
                 period: Number(item.period),
@@ -601,15 +632,30 @@ export class TimetablePlannerController {
             .sort((left, right) => left.period - right.period);
     }
 
+    completePeriodTimeDraft(times = [], periods = null, settings = null) {
+        const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        const normalized = this.normalizePeriodTimeDraft(times, activePeriods);
+        if (!normalized.length) return this.buildDefaultPeriodTimes(activePeriods);
+        if (normalized.length >= activePeriods.length) return normalized;
+        const existing = new Map(normalized.map(item => [Number(item.period), item]));
+        const generated = new Map(this.buildPeriodTimesFromSettings(settings || this.inferPeriodTimeSettings(normalized, activePeriods), activePeriods)
+            .map(item => [Number(item.period), item]));
+        return activePeriods
+            .map(period => existing.get(period) || generated.get(period))
+            .filter(Boolean);
+    }
+
     openPeriodTimeDialog() {
-        this.updateRangeDraftFromForm();
-        const activePeriods = this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project);
-        const draftTimes = this.normalizePeriodTimeDraft(this.getPeriodTimeDraftSource());
+        const activePeriods = getActivePeriods(this.state.project);
+        const draftTimes = this.normalizePeriodTimeDraft(this.getPeriodTimeDraftSource(), activePeriods);
         const settings = this.inferPeriodTimeSettings(draftTimes, activePeriods);
+        const wasCleared = Boolean(this.state.periodTimeDialog?.cleared);
         this.state.periodTimeDialog = {
             open: true,
             settings,
-            draftTimes: draftTimes.length ? draftTimes : this.buildPeriodTimesFromSettings(settings, activePeriods),
+            errors: [],
+            cleared: wasCleared && draftTimes.length === 0,
+            draftTimes: wasCleared && draftTimes.length === 0 ? [] : this.completePeriodTimeDraft(draftTimes, activePeriods, settings),
         };
         this.render();
     }
@@ -623,13 +669,15 @@ export class TimetablePlannerController {
     }
 
     autoFillPeriodTimes() {
-        const activePeriods = this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project);
+        const activePeriods = getActivePeriods(this.state.project);
         const settings = this.getDefaultPeriodTimeSettings(activePeriods);
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: true,
             settings,
-            draftTimes: this.buildPeriodTimesFromSettings(settings, activePeriods),
+            errors: [],
+            cleared: false,
+            draftTimes: this.buildDefaultPeriodTimes(activePeriods),
         };
         this.render();
         this.setMessage('已恢复默认节次时间，保存后生效。');
@@ -640,6 +688,8 @@ export class TimetablePlannerController {
             ...(this.state.periodTimeDialog || {}),
             open: true,
             settings: this.state.periodTimeDialog?.settings || this.getDefaultPeriodTimeSettings(),
+            errors: [],
+            cleared: true,
             draftTimes: [],
         };
         this.render();
@@ -653,58 +703,212 @@ export class TimetablePlannerController {
             startTime: startInput.value,
             classMinutes: this.state.container.querySelector('#tt-period-class-minutes')?.value,
             breakMinutes: this.state.container.querySelector('#tt-period-break-minutes')?.value,
-            lunchAfterPeriod: this.state.container.querySelector('#tt-period-lunch-after')?.value,
-            lunchMinutes: this.state.container.querySelector('#tt-period-lunch-minutes')?.value,
         });
     }
 
     updatePeriodTimeSettingsFromForm() {
         const settings = this.readPeriodTimeSettingsFromDom();
         if (!settings) return;
-        const activePeriods = this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project);
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: true,
             settings,
+        };
+    }
+
+    generatePeriodTimesFromSettings() {
+        const activePeriods = getActivePeriods(this.state.project);
+        const settings = this.readPeriodTimeSettingsFromDom() || this.state.periodTimeDialog?.settings || this.getDefaultPeriodTimeSettings(activePeriods);
+        this.state.periodTimeDialog = {
+            ...(this.state.periodTimeDialog || {}),
+            open: true,
+            settings,
+            errors: [],
+            cleared: false,
             draftTimes: this.buildPeriodTimesFromSettings(settings, activePeriods),
         };
         this.render();
     }
 
-    readPeriodTimesFromDom() {
-        if (!this.state.container) return;
-        const rows = this.state.container.querySelectorAll('[data-period-time-row]');
-        if (!rows.length) return;
-        const times = [];
-        rows.forEach(row => {
+    collectPeriodTimesFromDom() {
+        if (!this.state.container) return null;
+        const rows = [...this.state.container.querySelectorAll('[data-period-time-row]')];
+        if (!rows.length) return null;
+        return rows.map(row => {
             const period = Number(row.dataset.periodTimeRow);
             const startInput = row.querySelector('[data-period-time-draft-start], [data-period-time-start]');
             const endInput = row.querySelector('[data-period-time-draft-end], [data-period-time-end]');
-            const start = startInput?.value || '';
-            const end = endInput?.value || '';
-            if (start || end) times.push({ period, start, end });
+            return {
+                period,
+                start: startInput?.value || '',
+                end: endInput?.value || '',
+            };
         });
+    }
+
+    calculatePeriodGap(current = {}, next = {}) {
+        const end = this.timeToMinutes(current.end);
+        const start = this.timeToMinutes(next.start);
+        if (end === null || start === null) return '';
+        return start - end;
+    }
+
+    refreshPeriodTimeGapInputsFromDom() {
+        if (!this.state.container) return;
+        const rows = [...this.state.container.querySelectorAll('[data-period-time-row]')];
+        rows.forEach((row, index) => {
+            const gapInput = row.querySelector('[data-period-time-gap-after]');
+            if (!gapInput) return;
+            const current = {
+                end: row.querySelector('[data-period-time-draft-end], [data-period-time-end]')?.value || '',
+            };
+            const nextRow = rows[index + 1];
+            const next = {
+                start: nextRow?.querySelector('[data-period-time-draft-start], [data-period-time-start]')?.value || '',
+            };
+            gapInput.value = this.calculatePeriodGap(current, next);
+        });
+    }
+
+    updatePeriodTimeGapFromDom(input) {
+        if (!input || !this.state.container) return;
+        const rows = [...this.state.container.querySelectorAll('[data-period-time-row]')];
+        const period = Number(input.dataset.periodTimeGapAfter);
+        const rowIndex = rows.findIndex(row => Number(row.dataset.periodTimeRow) === period);
+        if (rowIndex < 0 || rowIndex >= rows.length - 1) return;
+        const currentEnd = this.timeToMinutes(rows[rowIndex].querySelector('[data-period-time-draft-end], [data-period-time-end]')?.value);
+        if (currentEnd === null) {
+            this.readPeriodTimesFromDom();
+            return;
+        }
+        if (String(input.value || '').trim() === '') {
+            this.readPeriodTimesFromDom();
+            return;
+        }
+        const settings = this.readPeriodTimeSettingsFromDom() || this.state.periodTimeDialog?.settings || this.getDefaultPeriodTimeSettings();
+        const toGap = value => {
+            const number = Number(value);
+            if (!Number.isFinite(number)) return settings.breakMinutes;
+            return Math.max(0, Math.min(240, Math.round(number)));
+        };
+        let nextStart = currentEnd + toGap(input.value);
+        for (let index = rowIndex + 1; index < rows.length; index += 1) {
+            const row = rows[index];
+            const startInput = row.querySelector('[data-period-time-draft-start], [data-period-time-start]');
+            const endInput = row.querySelector('[data-period-time-draft-end], [data-period-time-end]');
+            const existingStart = this.timeToMinutes(startInput?.value);
+            const existingEnd = this.timeToMinutes(endInput?.value);
+            const duration = existingStart !== null && existingEnd !== null && existingEnd > existingStart
+                ? existingEnd - existingStart
+                : settings.classMinutes;
+            if (startInput) startInput.value = this.minutesToTime(nextStart);
+            if (endInput) endInput.value = this.minutesToTime(nextStart + duration);
+            const gapInput = row.querySelector('[data-period-time-gap-after]');
+            nextStart += duration + (gapInput ? toGap(gapInput.value) : 0);
+        }
+        this.readPeriodTimesFromDom();
+        this.refreshPeriodTimeGapInputsFromDom();
+    }
+
+    readPeriodTimesFromDom() {
+        const times = this.collectPeriodTimesFromDom();
+        if (!times) return;
         const draftTimes = this.normalizePeriodTimeDraft(times);
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             draftTimes,
+            errors: [],
+            cleared: draftTimes.length === 0,
         };
         return draftTimes;
     }
 
+    validatePeriodTimes(times = []) {
+        const activePeriods = [...getActivePeriods(this.state.project)].sort((left, right) => left - right);
+        const activeSet = new Set(activePeriods);
+        const rows = activePeriods.map(period => {
+            const item = (Array.isArray(times) ? times : []).find(row => Number(row.period) === Number(period)) || {};
+            return {
+                period,
+                start: item.start || '',
+                end: item.end || '',
+                startMinutes: this.timeToMinutes(item.start),
+                endMinutes: this.timeToMinutes(item.end),
+            };
+        }).filter(row => activeSet.has(row.period));
+        const anyFilled = rows.some(row => row.start || row.end);
+        if (!anyFilled) return [];
+        const errors = [];
+        rows.forEach(row => {
+            if (!row.start || !row.end) {
+                errors.push({ period: row.period, message: '请补齐开始和结束时间' });
+            } else if (row.startMinutes === null || row.endMinutes === null) {
+                errors.push({ period: row.period, message: '时间格式无效' });
+            } else if (row.endMinutes <= row.startMinutes) {
+                errors.push({ period: row.period, message: '结束时间必须晚于开始时间' });
+            }
+        });
+        rows.forEach((row, index) => {
+            const next = rows[index + 1];
+            if (!next || row.endMinutes === null || next.startMinutes === null) return;
+            if (next.startMinutes < row.endMinutes) {
+                errors.push({ period: next.period, message: '后一节不能早于前一节结束' });
+            }
+        });
+        return errors;
+    }
+
     async savePeriodTimes() {
-        const draftTimes = this.readPeriodTimesFromDom() || this.state.periodTimeDialog?.draftTimes || [];
-        this.updateRangeDraftFromForm();
-        this.state.rangeDraft = {
-            ...(this.state.rangeDraft || {}),
-            periodTimes: this.normalizePeriodTimeDraft(draftTimes),
-        };
+        const rawTimes = this.collectPeriodTimesFromDom() || this.state.periodTimeDialog?.draftTimes || [];
+        const errors = this.validatePeriodTimes(rawTimes);
+        if (errors.length) {
+            this.state.periodTimeDialog = {
+                ...(this.state.periodTimeDialog || {}),
+                open: true,
+                errors,
+                draftTimes: this.normalizePeriodTimeDraft(rawTimes),
+            };
+            this.state.message = errors[0].message || '请修正节次时间后再保存。';
+            this.render();
+            return;
+        }
+        const activePeriods = getActivePeriods(this.state.project);
+        const draftTimes = this.normalizePeriodTimeDraft(rawTimes, activePeriods);
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
-            open: false,
-            draftTimes: this.state.rangeDraft.periodTimes,
+            open: true,
+            saving: true,
+            errors: [],
+            cleared: draftTimes.length === 0,
+            draftTimes,
         };
-        await this.saveProject(this.rangePayloadFromDraft());
+        this.render();
+        try {
+            const result = await requestTimetable('/project', {
+                method: 'POST',
+                body: JSON.stringify({ periodTimes: draftTimes }),
+            });
+            this.applyProject(result.project);
+            this.state.lastFailure = null;
+            this.state.periodTimeDialog = {
+                ...(this.state.periodTimeDialog || {}),
+                open: false,
+                saving: false,
+                errors: [],
+                cleared: draftTimes.length === 0,
+                draftTimes: this.state.project?.periodTimes || draftTimes,
+            };
+            this.setMessage('节次时间已保存。');
+        } catch (error) {
+            this.state.periodTimeDialog = {
+                ...(this.state.periodTimeDialog || {}),
+                open: true,
+                saving: false,
+                cleared: draftTimes.length === 0,
+                draftTimes,
+            };
+            this.handleError(error);
+        }
     }
 
     updateBulkRuleDraftFromForm() {

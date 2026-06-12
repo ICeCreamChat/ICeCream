@@ -76,6 +76,9 @@ export function createTimetablePlannerState(overrides = {}) {
         periodTimeDialog: {
             open: false,
             settings: null,
+            saving: false,
+            cleared: false,
+            errors: [],
             draftTimes: [],
         },
         bulkRuleDraft: {

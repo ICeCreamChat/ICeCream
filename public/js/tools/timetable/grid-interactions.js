@@ -27,6 +27,8 @@ function bindDelegatedInteractions(container) {
             controller.resetTimetableAgentSession();
         } else if (action === 'timetable-agent-quick') {
             controller.sendTimetableAgentMessage(event.target.closest('[data-agent-prompt]')?.dataset.agentPrompt || '');
+        } else if (action === 'generate-period-times') {
+            controller.generatePeriodTimesFromSettings();
         } else if (action === 'auto-fill-period-times' || action === 'reset-period-time-settings') {
             controller.autoFillPeriodTimes();
         } else {
@@ -43,8 +45,24 @@ function bindDelegatedInteractions(container) {
         if (!controller) return;
         if (event.target.matches('[data-period-time-setting]')) {
             controller.updatePeriodTimeSettingsFromForm();
+        } else if (event.target.matches('[data-period-time-gap-after]')) {
+            controller.updatePeriodTimeGapFromDom(event.target);
         } else if (event.target.matches('[data-period-time-draft-start], [data-period-time-draft-end], [data-period-time-start], [data-period-time-end]')) {
             controller.readPeriodTimesFromDom();
+            controller.refreshPeriodTimeGapInputsFromDom();
+        }
+    });
+
+    container.addEventListener('input', event => {
+        const controller = container.__ttController;
+        if (!controller) return;
+        if (event.target.matches('[data-period-time-setting]')) {
+            controller.updatePeriodTimeSettingsFromForm();
+        } else if (event.target.matches('[data-period-time-gap-after]')) {
+            controller.updatePeriodTimeGapFromDom(event.target);
+        } else if (event.target.matches('[data-period-time-draft-start], [data-period-time-draft-end], [data-period-time-start], [data-period-time-end]')) {
+            controller.readPeriodTimesFromDom();
+            controller.refreshPeriodTimeGapInputsFromDom();
         }
     });
 
