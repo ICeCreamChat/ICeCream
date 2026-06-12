@@ -536,6 +536,7 @@ export function normalizeTimetableProject(raw = {}) {
         lessonPlans,
         rules: normalizeRules(base.rules),
         schedule: normalizeSchedule(base.schedule),
+        version: base.version || Date.now(), // 版本号用于并发冲突检测
         updatedAt: base.updatedAt || new Date().toISOString(),
     };
 }
