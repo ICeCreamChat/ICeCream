@@ -6,12 +6,22 @@ import ai.timefold.solver.core.api.score.stream.ConstraintFactory;
 import ai.timefold.solver.core.api.score.stream.ConstraintProvider;
 import ai.timefold.solver.core.api.score.stream.Joiners;
 import com.icecream.timetable.domain.LessonAssignment;
+import com.icecream.timetable.domain.ChineseCurriculumContext;
 
 public class TimetableConstraintProvider implements ConstraintProvider {
+
+    private final ChineseCurriculumContext chineseContext;
+    private final ChineseEducationConstraints chineseConstraints;
+
+    public TimetableConstraintProvider() {
+        this.chineseContext = new ChineseCurriculumContext();
+        this.chineseConstraints = new ChineseEducationConstraints(chineseContext);
+    }
 
     @Override
     public Constraint[] defineConstraints(ConstraintFactory factory) {
         return new Constraint[] {
+                // 基础硬约束
                 classConflict(factory),
                 teacherConflict(factory),
                 pinnedTime(factory),
@@ -19,6 +29,8 @@ public class TimetableConstraintProvider implements ConstraintProvider {
                 roomRequirement(factory),
                 roomConflict(factory),
                 consecutiveBlock(factory),
+
+                // 基础软约束
                 spreadSameCourse(factory),
                 avoidAdjacentSameCourse(factory),
                 mainSubjectsEarlier(factory),
@@ -28,6 +40,16 @@ public class TimetableConstraintProvider implements ConstraintProvider {
                 teacherLunchBridge(factory),
                 teacherGap(factory),
                 sameCourseHalfDaySplit(factory),
+
+                // 中国教育场景专用约束
+                chineseConstraints.mainSubjectGoldenHourPreference(factory),
+                chineseConstraints.sportsClassDistribution(factory),
+                chineseConstraints.teacherContinuousTeachingLimit(factory),
+                chineseConstraints.afternoonFatigueAvoidance(factory),
+                chineseConstraints.laboratoryRoomRequirement(factory),
+                chineseConstraints.sameSubjectPreparationTimeGap(factory),
+                chineseConstraints.teacherDailyLoadVarianceMinimization(factory),
+                chineseConstraints.walkingClassTimeAlignment(factory),
         };
     }
 
