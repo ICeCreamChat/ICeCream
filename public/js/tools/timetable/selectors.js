@@ -59,7 +59,13 @@ export function totalPlannedLessons(project) {
 
 export function getRosterStats(project = {}) {
     const lessonPlans = project.lessonPlans || [];
-    const fixedRooms = new Set(lessonPlans.map(plan => plan.roomId).filter(Boolean));
+    const fixedRooms = new Set();
+    for (const plan of lessonPlans) {
+        if (plan.roomId) fixedRooms.add(plan.roomId);
+        for (const roomId of plan.allowedRoomIds || []) {
+            if (roomId) fixedRooms.add(roomId);
+        }
+    }
     const totalLessons = totalPlannedLessons(project);
     const blockLessons = lessonPlans.reduce((sum, plan) => {
         const hours = Number(plan.weeklyHours || 0);
@@ -70,11 +76,15 @@ export function getRosterStats(project = {}) {
     const knownClasses = new Set((project.classes || []).map(item => item.id));
     const knownSubjects = new Set((project.subjects || []).map(item => item.id));
     const knownTeachers = new Set((project.teachers || []).map(item => item.id));
-    const issueCount = lessonPlans.filter(plan => (
-        !knownClasses.has(plan.classId)
-        || !knownSubjects.has(plan.subjectId)
-        || !knownTeachers.has(plan.teacherId)
-    )).length;
+    const issueCount = lessonPlans.filter(plan => {
+        const teacherIds = Array.isArray(plan.teacherIds) && plan.teacherIds.length
+            ? plan.teacherIds
+            : [plan.teacherId].filter(Boolean);
+        return !knownClasses.has(plan.classId)
+            || !knownSubjects.has(plan.subjectId)
+            || !teacherIds.length
+            || teacherIds.some(teacherId => !knownTeachers.has(teacherId));
+    }).length;
     return {
         classCount: (project.classes || []).length,
         teacherCount: (project.teachers || []).length,

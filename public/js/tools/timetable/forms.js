@@ -75,6 +75,7 @@ export function readRulePrompt(container) {
 export function readManualRuleBuilderForm(container) {
     const type = container.querySelector('#tt-manual-rule-type')?.value || 'teacher_unavailable';
     const targetType = type === 'class_unavailable' ? 'class' : type === 'subject_morning' || type.includes('subject_') ? 'subject' : 'teacher';
+    const limit = Number(container.querySelector('#tt-manual-rule-limit')?.value || 0);
     const targetGroups = {
         teacher: checkedTargets(container, 'teacher'),
         class: checkedTargets(container, 'class'),
@@ -85,7 +86,7 @@ export function readManualRuleBuilderForm(container) {
         : targetGroups[targetType] || [];
     const days = checkedNumbers(container, '[data-manual-rule-day]');
     const periods = checkedNumbers(container, '[data-manual-rule-period]');
-    return { type, targetType: type === 'locked_slot' ? 'locked_slot' : targetType, targets, targetGroups, days, periods };
+    return { type, targetType: type === 'locked_slot' ? 'locked_slot' : targetType, targets, targetGroups, days, periods, limit };
 }
 
 function slotsFromDaysAndPeriods(days = [], periods = []) {
@@ -138,23 +139,27 @@ export function buildManualRuleDraftRows(form = {}) {
         }
         return rows;
     }
-    return (form.targets || []).map((target, index) => ({
-        id: `manual_${Date.now()}_${index}`,
-        source: 'manual',
-        rawText: `${target.name} ${form.type}`,
-        type: form.type,
-        targetType: form.targetType,
-        targetId: target.id,
-        targetName: target.name,
-        slots: form.type === 'subject_morning' ? [] : slots,
-        days: form.days,
-        periods: form.periods,
-        priority: form.type.startsWith('subject_') ? 'soft' : 'hard',
-        status: 'effective',
-        confidence: 1,
-        description: '手动批量新增',
-        warnings: [],
-    }));
+    return (form.targets || []).map((target, index) => {
+        const isTeacherLimit = ['teacher_daily_limit', 'teacher_consecutive_limit'].includes(form.type);
+        return {
+            id: `manual_${Date.now()}_${index}`,
+            source: 'manual',
+            rawText: `${target.name} ${form.type}`,
+            type: form.type,
+            targetType: form.targetType,
+            targetId: target.id,
+            targetName: target.name,
+            slots: form.type === 'subject_morning' || isTeacherLimit ? [] : slots,
+            days: form.days,
+            periods: form.periods,
+            limit: isTeacherLimit ? Math.max(1, Number(form.limit) || 1) : undefined,
+            priority: form.type.startsWith('subject_') || isTeacherLimit ? 'soft' : 'hard',
+            status: 'effective',
+            confidence: 1,
+            description: '手动批量新增',
+            warnings: [],
+        };
+    });
 }
 
 export function readBulkRuleForm(container) {
@@ -229,8 +234,11 @@ export function readLockedSlotForm(container, project) {
 export function exportName(type) {
     return ({
         teacher: '教师课表',
+        published_teacher: '正式教师课表',
         plans: '任课信息',
         master: '总课表',
+        published_master: '正式总课表',
         class: '班级课表',
+        published_class: '正式班级课表',
     })[type] || '课表';
 }

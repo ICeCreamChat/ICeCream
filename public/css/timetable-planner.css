@@ -26,11 +26,12 @@
     --tt-transition-fast: 150ms ease;
     --tt-transition-normal: 200ms ease;
     display: grid;
-    grid-template-columns: 300px minmax(520px, 1fr) 300px;
+    position: relative;
+    grid-template-columns: 300px minmax(520px, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
     grid-template-areas:
-        "topbar topbar topbar"
-        "sidebar schedule inspector";
+        "topbar topbar"
+        "sidebar schedule";
     gap: var(--tt-space-md);
     height: 100%;
     min-height: 0;
@@ -83,8 +84,7 @@ body.light-mode .tt-workbench {
 }
 
 .tt-sidebar,
-.tt-schedule-panel,
-.tt-inspector {
+.tt-schedule-panel {
     min-height: 0;
     background: var(--tt-bg-panel);
     border: 1px solid var(--tt-border);
@@ -106,9 +106,86 @@ body.light-mode .tt-workbench {
 }
 
 .tt-inspector {
-    grid-area: inspector;
+    position: absolute;
+    top: calc(56px + var(--tt-space-md));
+    right: 0;
+    z-index: 25;
+    width: min(340px, calc(100vw - 48px));
+    max-width: calc(100% - 320px);
+    min-height: 0;
+    pointer-events: none;
+}
+
+.tt-inspector-drawer {
+    margin-left: auto;
+    overflow: hidden;
+    background: var(--tt-bg-panel);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-lg);
+    box-shadow: 0 18px 44px rgba(2, 6, 23, 0.28);
+    color: var(--tt-text);
+    pointer-events: auto;
+}
+
+.tt-inspector-drawer:not([open]) {
+    width: min(184px, calc(100vw - 48px));
+}
+
+.tt-inspector-drawer[open] {
+    width: min(340px, calc(100vw - 48px));
+}
+
+.tt-inspector-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--tt-space-sm);
+    min-height: 42px;
+    padding: 9px 11px;
+    color: var(--tt-text);
+    cursor: pointer;
+    list-style: none;
+}
+
+.tt-inspector-summary::-webkit-details-marker {
+    display: none;
+}
+
+.tt-inspector-summary span {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+}
+
+.tt-inspector-summary strong,
+.tt-inspector-summary em {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-inspector-summary strong {
+    font-size: 0.82rem;
+}
+
+.tt-inspector-summary em {
+    color: var(--tt-muted);
+    font-size: 0.7rem;
+    font-style: normal;
+}
+
+.tt-inspector-summary .lucide {
+    width: 16px;
+    height: 16px;
+    color: var(--tt-primary);
+}
+
+.tt-inspector-body {
+    max-height: calc(100vh - 150px);
     overflow: auto;
     padding: var(--tt-space-md);
+    border-top: 1px solid var(--tt-border);
 }
 
 .tt-title-block {
@@ -236,6 +313,146 @@ body.light-mode .tt-workbench {
 .tt-agent-entry {
     width: 100%;
     min-height: 140px;
+}
+
+.tt-agent-floating {
+    position: fixed;
+    right: 28px;
+    bottom: 28px;
+    z-index: 70;
+}
+
+.tt-agent-floating[open] {
+    z-index: 95;
+}
+
+.tt-agent-floating summary {
+    list-style: none;
+}
+
+.tt-agent-floating summary::-webkit-details-marker {
+    display: none;
+}
+
+.tt-agent-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 52px;
+    height: 52px;
+    padding: 0 14px;
+    background: var(--tt-bg-panel);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    box-shadow: 0 10px 30px rgba(2, 6, 23, 0.28);
+    color: var(--tt-primary-hover);
+    cursor: pointer;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    transition: all var(--tt-transition-fast);
+}
+
+.tt-agent-toggle:hover {
+    background: linear-gradient(135deg, var(--tt-primary), #0e7490);
+    border-color: var(--tt-primary);
+    box-shadow: var(--tt-primary-glow);
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+.tt-agent-toggle .lucide {
+    width: 21px;
+    height: 21px;
+}
+
+.tt-agent-toggle span {
+    color: inherit;
+    font-size: 0.82rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.tt-agent-toggle b {
+    display: inline-grid;
+    place-items: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    background: var(--tt-danger);
+    border-radius: 999px;
+    color: #fff;
+    font-size: 0.68rem;
+    line-height: 1;
+}
+
+.tt-agent-floating-panel {
+    position: absolute;
+    right: 0;
+    bottom: 64px;
+    display: grid;
+    width: min(420px, calc(100vw - 24px));
+    max-height: min(620px, calc(100vh - 96px));
+    overflow: auto;
+    background: var(--tt-bg-panel);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-lg);
+    box-shadow: 0 18px 48px rgba(2, 6, 23, 0.42);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+}
+
+.tt-agent-floating-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--tt-bg-soft);
+    border-bottom: 1px solid var(--tt-border);
+}
+
+.tt-agent-floating-header span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    color: var(--tt-text);
+}
+
+.tt-agent-floating-header .lucide {
+    width: 16px;
+    height: 16px;
+    color: var(--tt-primary);
+}
+
+.tt-agent-floating-header strong {
+    overflow: hidden;
+    font-size: 0.9rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-agent-floating-header em {
+    flex: 0 0 auto;
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    font-style: normal;
+}
+
+.tt-agent-floating .tt-agent-panel {
+    padding: 12px;
+}
+
+.tt-agent-floating .tt-agent-entry {
+    min-height: 92px;
+}
+
+.tt-agent-floating .tt-agent-messages {
+    max-height: 176px;
 }
 
 .tt-agent-status,
@@ -1752,246 +1969,6 @@ button.tt-section-title {
     min-width: 120px;
 }
 
-/* ── 智能约束：卡片式内联面板 ── */
-.tt-rule-input-area {
-    display: flex;
-    flex-direction: column;
-    gap: var(--tt-space-sm);
-}
-
-.tt-rule-input-text {
-    min-height: 56px;
-    max-height: 120px;
-    resize: vertical;
-    font-family: inherit;
-    font-size: 0.78rem;
-    padding: var(--tt-space-sm);
-    border-radius: var(--tt-radius-md);
-    border: 1px solid var(--tt-border);
-    background: var(--tt-bg-input);
-    color: var(--tt-text);
-}
-
-.tt-rule-input-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--tt-space-xs);
-    flex-wrap: wrap;
-}
-
-.tt-rule-file-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
-    border: 1px solid var(--tt-border);
-    border-radius: var(--tt-radius-sm);
-    background: var(--tt-bg-input);
-    color: var(--tt-text-secondary);
-    font-size: 0.72rem;
-    cursor: pointer;
-}
-
-.tt-rule-file-label input[type="file"] {
-    display: none;
-}
-
-.tt-pending-rules {
-    display: flex;
-    flex-direction: column;
-    gap: var(--tt-space-xs);
-}
-
-.tt-pending-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--tt-space-xs) 0;
-}
-
-.tt-pending-header strong {
-    font-size: 0.76rem;
-    color: var(--tt-text-secondary);
-}
-
-.tt-pending-batch {
-    display: flex;
-    gap: var(--tt-space-xs);
-}
-
-.tt-rule-card {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: var(--tt-space-xs);
-    padding: var(--tt-space-sm);
-    border-radius: var(--tt-radius-md);
-    background: var(--tt-bg-panel);
-    border-left: 3px solid var(--tt-primary);
-    cursor: pointer;
-    transition: background 0.15s;
-}
-
-.tt-rule-card:hover {
-    background: var(--tt-bg-soft);
-}
-
-.tt-rule-card--hard {
-    border-left-color: var(--tt-danger);
-}
-
-.tt-rule-card--soft {
-    border-left-color: var(--tt-primary);
-}
-
-.tt-rule-card--suggestion {
-    border-left-color: var(--tt-muted);
-    opacity: 0.8;
-}
-
-.tt-rule-card--expanded {
-    grid-template-columns: 1fr;
-    cursor: default;
-}
-
-.tt-rule-card-head {
-    display: flex;
-    align-items: center;
-    gap: var(--tt-space-xs);
-}
-
-.tt-rule-card-type {
-    font-size: 0.72rem;
-    font-weight: 700;
-    color: var(--tt-text);
-}
-
-.tt-confidence-badge {
-    font-size: 0.64rem;
-    padding: 2px 6px;
-    border-radius: 999px;
-    background: rgba(148, 163, 184, 0.15);
-    color: var(--tt-muted);
-}
-
-.tt-rule-card-body {
-    display: flex;
-    align-items: baseline;
-    gap: var(--tt-space-xs);
-    font-size: 0.74rem;
-    color: var(--tt-text-secondary);
-}
-
-.tt-rule-card-body strong {
-    color: var(--tt-text);
-}
-
-.tt-rule-card-slots {
-    color: var(--tt-muted);
-    font-size: 0.68rem;
-}
-
-.tt-rule-card-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--tt-space-xs);
-    justify-self: end;
-}
-
-.tt-rule-card-edit {
-    display: flex;
-    flex-direction: column;
-    gap: var(--tt-space-xs);
-    margin: var(--tt-space-xs) 0;
-}
-
-.tt-rule-card-edit label {
-    display: flex;
-    align-items: center;
-    gap: var(--tt-space-xs);
-    font-size: 0.72rem;
-}
-
-.tt-rule-card-edit label > span {
-    min-width: 40px;
-    color: var(--tt-muted);
-}
-
-.tt-rule-card-raw {
-    font-size: 0.66rem;
-    color: var(--tt-muted);
-    padding-top: var(--tt-space-xs);
-}
-
-.tt-saved-rules {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.tt-saved-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--tt-space-xs) 0;
-}
-
-.tt-saved-header strong {
-    font-size: 0.76rem;
-    color: var(--tt-text-secondary);
-}
-
-.tt-saved-rules .tt-saved-rule-row {
-    display: flex;
-    align-items: center;
-    gap: var(--tt-space-xs);
-    padding: 4px var(--tt-space-sm);
-    border-radius: var(--tt-radius-sm);
-    font-size: 0.72rem;
-    background: transparent;
-    transition: background 0.1s;
-}
-
-.tt-saved-rules .tt-saved-rule-row:hover {
-    background: var(--tt-bg-soft);
-}
-
-.tt-saved-rule-target {
-    font-weight: 600;
-    color: var(--tt-text);
-    flex: 0 0 auto;
-}
-
-.tt-saved-rule-desc {
-    color: var(--tt-muted);
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.tt-saved-rule-badge {
-    font-size: 0.6rem;
-    padding: 2px 6px;
-    border-radius: 999px;
-    font-weight: 700;
-}
-
-.tt-saved-rule-badge--hard {
-    background: rgba(239, 68, 68, 0.15);
-    color: var(--tt-danger);
-}
-
-.tt-saved-rule-badge--soft {
-    background: rgba(8, 145, 178, 0.15);
-    color: var(--tt-primary);
-}
-
-.tt-saved-rules-empty {
-    padding: var(--tt-space-md) 0;
-    text-align: center;
-}
-
-
 .tt-rule-manual-checks {
     display: grid;
     gap: var(--tt-space-sm);
@@ -2777,8 +2754,7 @@ button.tt-section-title {
         grid-template-columns: 280px minmax(480px, 1fr);
         grid-template-areas:
             "topbar topbar"
-            "sidebar schedule"
-            "inspector inspector";
+            "sidebar schedule";
     }
 
     .tt-inspector-stack {
@@ -2812,8 +2788,25 @@ button.tt-section-title {
         justify-content: flex-start;
     }
 
-    .tt-sidebar,
+    .tt-sidebar {
+        max-height: none;
+    }
+
     .tt-inspector {
+        position: static;
+        grid-area: inspector;
+        width: 100%;
+        max-width: none;
+        pointer-events: auto;
+    }
+
+    .tt-inspector-drawer,
+    .tt-inspector-drawer:not([open]),
+    .tt-inspector-drawer[open] {
+        width: 100%;
+    }
+
+    .tt-inspector-body {
         max-height: none;
     }
 
@@ -2870,6 +2863,24 @@ button.tt-section-title {
     .tt-dialog-actions .tt-btn {
         flex: 1 1 120px;
     }
+
+    .tt-agent-floating {
+        right: 12px;
+        bottom: 12px;
+    }
+
+    .tt-agent-toggle {
+        height: 48px;
+        min-width: 48px;
+        padding: 0 12px;
+    }
+
+    .tt-agent-floating-panel {
+        right: 0;
+        bottom: 58px;
+        width: calc(100vw - 24px);
+        max-height: min(640px, calc(100vh - 82px));
+    }
 }
 
 @media (max-width: 560px) {
@@ -2885,6 +2896,10 @@ button.tt-section-title {
 
     .tt-export-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tt-agent-toggle span {
+        display: none;
     }
 
     .tt-schedule-toolbar {

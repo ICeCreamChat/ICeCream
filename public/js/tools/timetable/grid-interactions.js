@@ -1,5 +1,11 @@
-export function bindGridInteractions(container, controller, state) {
+function bindDelegatedInteractions(container) {
+    if (container.__ttDelegatedInteractionsBound) return;
+    container.__ttDelegatedInteractionsBound = true;
+
     container.addEventListener('click', event => {
+        const controller = container.__ttController;
+        const state = container.__ttState;
+        if (!controller || !state) return;
         const action = event.target.closest('[data-action]')?.dataset.action || '';
         if (action === 'submit-rule-clarification') {
             controller.submitClarifyingAnswers();
@@ -23,17 +29,89 @@ export function bindGridInteractions(container, controller, state) {
             controller.sendTimetableAgentMessage(event.target.closest('[data-agent-prompt]')?.dataset.agentPrompt || '');
         } else if (action === 'auto-fill-period-times') {
             controller.autoFillPeriodTimes();
+        } else {
+            const slotNode = event.target.closest('.tt-slot');
+            if (slotNode && container.contains(slotNode)) {
+                state.selectedSlotId = slotNode.dataset.slotId;
+                controller.render();
+            }
         }
     });
 
     container.addEventListener('change', event => {
+        const controller = container.__ttController;
+        if (!controller) return;
         if (event.target.matches('[data-period-time-start], [data-period-time-end]')) {
             controller.readPeriodTimesFromDom();
         }
     });
 
+    container.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            container.querySelectorAll('details.tt-multi-select[open]').forEach(details => details.removeAttribute('open'));
+        }
+    });
+
+    container.addEventListener('dragstart', event => {
+        const state = container.__ttState;
+        const slotNode = event.target.closest('.tt-slot');
+        if (!state || !slotNode || !container.contains(slotNode)) return;
+        state.dragSlotId = slotNode.dataset.slotId;
+        state.dragBlockId = slotNode.dataset.blockId || '';
+        event.dataTransfer.effectAllowed = 'move';
+    });
+
+    container.addEventListener('dragover', event => {
+        if (event.target.closest('.tt-cell')) {
+            event.preventDefault();
+        }
+    });
+
+    container.addEventListener('dragenter', event => {
+        const cell = event.target.closest('.tt-cell');
+        if (cell && container.contains(cell)) cell.classList.add('is-drop-target');
+    });
+
+    container.addEventListener('dragleave', event => {
+        const cell = event.target.closest('.tt-cell');
+        if (cell && container.contains(cell)) cell.classList.remove('is-drop-target');
+    });
+
+    container.addEventListener('drop', event => {
+        const controller = container.__ttController;
+        const state = container.__ttState;
+        const cell = event.target.closest('.tt-cell');
+        if (!controller || !state || !cell || !container.contains(cell)) return;
+        event.preventDefault();
+        cell.classList.remove('is-drop-target');
+        const blockId = state.dragBlockId;
+        if (state.dragSlotId) {
+            controller.adjustSlot({
+                type: 'move',
+                slotId: state.dragSlotId,
+                day: Number(cell.dataset.day),
+                period: Number(cell.dataset.period),
+                blockId,
+            });
+            state.dragSlotId = '';
+            state.dragBlockId = '';
+        }
+    });
+}
+
+export function bindGridInteractions(container, controller, state) {
+    container.__ttController = controller;
+    container.__ttState = state;
+    bindDelegatedInteractions(container);
+
     container.querySelectorAll('[data-tt-section-toggle]').forEach(button => {
         button.addEventListener('click', () => controller.toggleWorkflowSection(button.dataset.ttSectionToggle));
+    });
+    container.querySelector('#tt-inspector-drawer')?.addEventListener('toggle', event => {
+        state.inspectorOpen = Boolean(event.target.open);
+    });
+    container.querySelector('#tt-agent-floating')?.addEventListener('toggle', event => {
+        state.agentOpen = Boolean(event.target.open);
     });
     container.querySelector('#tt-save-project')?.addEventListener('click', () => controller.saveProject());
     container.querySelectorAll('[data-active-weekday], [data-active-period]').forEach(input => {
@@ -62,11 +140,6 @@ export function bindGridInteractions(container, controller, state) {
     });
     container.querySelectorAll('[data-tt-popover-close]').forEach(button => {
         button.addEventListener('click', () => button.closest('details')?.removeAttribute('open'));
-    });
-    container.addEventListener('keydown', event => {
-        if (event.key === 'Escape') {
-            container.querySelectorAll('details.tt-multi-select[open]').forEach(details => details.removeAttribute('open'));
-        }
     });
     container.querySelectorAll('[data-roster-import-trigger]').forEach(button => {
         button.addEventListener('click', () => controller.openRosterImport('file'));
@@ -174,40 +247,6 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-cancel-restore-secondary')?.addEventListener('click', () => controller.closeRestoreDialog());
     container.querySelector('#tt-close-publication-history')?.addEventListener('click', () => controller.closePublicationHistoryDialog());
     container.querySelector('#tt-close-publication-history-secondary')?.addEventListener('click', () => controller.closePublicationHistoryDialog());
-
-    container.querySelectorAll('.tt-slot').forEach(slotNode => {
-        slotNode.addEventListener('click', () => {
-            state.selectedSlotId = slotNode.dataset.slotId;
-            controller.render();
-        });
-        slotNode.addEventListener('dragstart', event => {
-            state.dragSlotId = slotNode.dataset.slotId;
-            state.dragBlockId = slotNode.dataset.blockId || '';
-            event.dataTransfer.effectAllowed = 'move';
-        });
-    });
-
-    container.querySelectorAll('.tt-cell').forEach(cell => {
-        cell.addEventListener('dragover', event => event.preventDefault());
-        cell.addEventListener('dragenter', () => cell.classList.add('is-drop-target'));
-        cell.addEventListener('dragleave', () => cell.classList.remove('is-drop-target'));
-        cell.addEventListener('drop', event => {
-            event.preventDefault();
-            cell.classList.remove('is-drop-target');
-            const blockId = state.dragBlockId;
-            if (state.dragSlotId) {
-                controller.adjustSlot({
-                    type: 'move',
-                    slotId: state.dragSlotId,
-                    day: Number(cell.dataset.day),
-                    period: Number(cell.dataset.period),
-                    blockId,
-                });
-                state.dragSlotId = '';
-                state.dragBlockId = '';
-            }
-        });
-    });
 
     container.querySelector('#tt-lock-selected')?.addEventListener('click', () => {
         const slot = state.project?.schedule?.slots?.find(item => item.id === state.selectedSlotId);

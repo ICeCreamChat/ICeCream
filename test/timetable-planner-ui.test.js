@@ -5,12 +5,17 @@ import test from 'node:test';
 import { createDefaultTimetableProject } from '../gateway/services/timetable-scheduler.js';
 import { TimetablePlannerController } from '../public/js/tools/timetable/controller.js';
 import {
+  getRosterStats,
   getPublishedScheduleDiff,
   getRuleSummary,
   getSavedRuleItems,
   getSolveStatus,
   removeSavedRuleById,
 } from '../public/js/tools/timetable/selectors.js';
+import {
+  buildManualRuleDraftRows,
+  exportName,
+} from '../public/js/tools/timetable/forms.js';
 import {
   renderWorkbench,
   renderInspector,
@@ -76,6 +81,65 @@ function extractMethodSource(source, methodName) {
   assert.fail(`unable to extract method ${methodName}`);
 }
 
+test('timetable roster stats count multi-teacher plans and allowed rooms', () => {
+  const project = createDefaultTimetableProject({
+    teachers: [
+      { id: 't_math', name: 'Math Teacher', subjects: ['science'], unavailableSlots: [] },
+      { id: 't_lab', name: 'Lab Teacher', subjects: ['science'], unavailableSlots: [] },
+    ],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'science', name: 'Science', priority: 80, color: '#0891b2' }],
+    lessonPlans: [{
+      id: 'lp_science',
+      classId: 'c1',
+      subjectId: 'science',
+      teacherId: 't_math',
+      teacherIds: ['t_math', 't_lab'],
+      weeklyHours: 4,
+      roomId: 'lab_a',
+      allowedRoomIds: ['lab_a', 'lab_b'],
+    }],
+  });
+
+  const stats = getRosterStats(project);
+
+  assert.equal(stats.fixedRoomCount, 2);
+  assert.equal(stats.issueCount, 0);
+
+  const invalidStats = getRosterStats({
+    ...project,
+    lessonPlans: [{
+      ...project.lessonPlans[0],
+      teacherIds: ['t_math', 'missing_teacher'],
+    }],
+  });
+  assert.equal(invalidStats.issueCount, 1);
+});
+
+test('timetable frontend export names include published timetable files', () => {
+  assert.equal(exportName('published_class'), '正式班级课表');
+  assert.equal(exportName('published_teacher'), '正式教师课表');
+  assert.equal(exportName('published_master'), '正式总课表');
+});
+
+test('timetable manual rule builder creates teacher limit review rows', () => {
+  const rows = buildManualRuleDraftRows({
+    type: 'teacher_daily_limit',
+    targetType: 'teacher',
+    targets: [{ id: 't_math', name: 'Math Teacher' }],
+    days: [1, 2],
+    periods: [1, 2],
+    limit: 4,
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].type, 'teacher_daily_limit');
+  assert.equal(rows[0].targetId, 't_math');
+  assert.equal(rows[0].limit, 4);
+  assert.deepEqual(rows[0].slots, []);
+  assert.equal(rows[0].priority, 'soft');
+});
+
 test('timetable planner is assembled from workbench modules', async () => {
   const source = await readFile(sourcePath, 'utf8');
   const expectedModules = [
@@ -108,10 +172,13 @@ test('timetable planner uses the seating-style control panel and board layout', 
   assert.match(viewSource, /class="tt-sidebar"/);
   assert.match(viewSource, /class="tt-schedule-panel"/);
   assert.match(viewSource, /class="tt-inspector"/);
+  assert.match(viewSource, /id="tt-inspector-drawer"/);
+  assert.match(viewSource, /class="tt-inspector-summary"/);
   assert.match(viewSource, /data-workflow-step="data"/);
   assert.match(viewSource, /data-workflow-step="rules"/);
   assert.match(viewSource, /data-workflow-step="solve"/);
   assert.match(viewSource, /data-workflow-step="review"/);
+  assert.doesNotMatch(viewSource, /id:\s*'agent'/);
   assert.match(viewSource, /renderWorkbench/);
   assert.match(viewSource, /renderSchedulePanel/);
   assert.match(viewSource, /renderInspector/);
@@ -120,15 +187,17 @@ test('timetable planner uses the seating-style control panel and board layout', 
   assert.doesNotMatch(source, /renderActiveTab/);
 
   assert.match(styles, /\.tt-workbench\s*{/);
-  assert.match(styles, /\.tt-workbench\s*{[^}]*grid-template-areas:\s*"topbar topbar topbar"\s*"sidebar schedule inspector"/s);
+  assert.match(styles, /\.tt-workbench\s*{[^}]*grid-template-areas:\s*"topbar topbar"\s*"sidebar schedule"/s);
+  assert.doesNotMatch(styles, /\.tt-workbench\s*{[^}]*"sidebar schedule inspector"/s);
   assert.match(styles, /\.tt-sidebar\s*{[^}]*overflow:\s*auto/s);
   assert.match(styles, /\.tt-schedule-scroll\s*{[^}]*overflow:\s*auto/s);
-  assert.match(styles, /\.tt-inspector\s*{/);
+  assert.match(styles, /\.tt-inspector\s*{[^}]*position:\s*absolute/s);
+  assert.match(styles, /\.tt-inspector-drawer\s*{[^}]*border-radius:\s*var\(--tt-radius-lg\)/s);
   assert.match(styles, /--tt-bg-base:\s*#0f172a/);
   assert.match(styles, /@media \(max-width:\s*980px\)[\s\S]*\.tt-workbench\s*{[^}]*grid-template-areas:\s*"topbar"\s*"sidebar"\s*"schedule"\s*"inspector"/s);
 });
 
-test('timetable planner renders smart agent workflow panel and approval actions', async () => {
+test('timetable planner renders the smart agent as a seating-style floating assistant', async () => {
   const html = renderWorkbench(sampleWorkbenchState({
     agent: {
       sessionId: 'tt_agent_demo',
@@ -210,7 +279,10 @@ test('timetable planner renders smart agent workflow panel and approval actions'
     },
   }));
 
-  assert.match(html, /data-workflow-step="agent"/);
+  assert.doesNotMatch(html, /data-workflow-step="agent"/);
+  assert.match(html, /id="tt-agent-floating"/);
+  assert.match(html, /class="tt-agent-toggle"/);
+  assert.match(html, /class="tt-agent-floating-panel"/);
   assert.match(html, /智能主导排课/);
   assert.match(html, /id="tt-timetable-agent-panel"/);
   assert.match(html, /id="tt-agent-message"/);
@@ -246,7 +318,12 @@ test('timetable smart agent frontend calls additive agent APIs without touching 
   assert.match(controllerSource, /requestTimetableAgent\('\/approve'/);
   assert.match(interactionSource, /timetable-agent-start/);
   assert.match(interactionSource, /timetable-agent-approve/);
+  assert.match(interactionSource, /#tt-agent-floating/);
+  assert.match(interactionSource, /state\.agentOpen = Boolean\(event\.target\.open\)/);
   assert.match(styles, /\.tt-agent-panel\s*{/);
+  assert.match(styles, /\.tt-agent-floating\s*{/);
+  assert.match(styles, /\.tt-agent-toggle\s*{/);
+  assert.match(styles, /\.tt-agent-floating-panel\s*{/);
   assert.match(styles, /\.tt-agent-comparison\s*,\s*\n\.tt-agent-save-preview\s*,\s*\n\.tt-agent-export-links\s*{/);
   assert.doesNotMatch(controllerSource, /seating/i);
 });
@@ -259,6 +336,19 @@ test('timetable master schedule renderer indexes slots instead of rescanning for
   assert.match(viewSource, /function renderScheduleCell\(state,\s*context,\s*day,\s*period\)/);
   assert.doesNotMatch(viewSource, /function renderScheduleCell\(state,\s*day,\s*period\)[\s\S]*getSlotsAt/);
   assert.doesNotMatch(viewSource, /function renderSlot\(state,\s*slot\)[\s\S]*getSlotDetails/);
+});
+
+test('timetable interactions bind delegated hot-path listeners only once', async () => {
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+
+  assert.match(interactionSource, /__ttDelegatedInteractionsBound/);
+  assert.match(interactionSource, /function bindDelegatedInteractions\(container\)/);
+  assert.match(interactionSource, /if \(container\.__ttDelegatedInteractionsBound\) return;/);
+  assert.match(interactionSource, /container\.__ttController = controller;/);
+  assert.match(interactionSource, /container\.addEventListener\('dragstart'/);
+  assert.match(interactionSource, /container\.addEventListener\('drop'/);
+  assert.doesNotMatch(interactionSource, /querySelectorAll\('\.tt-slot'\)/);
+  assert.doesNotMatch(interactionSource, /querySelectorAll\('\.tt-cell'\)/);
 });
 
 test('timetable styles mirror the seating planner theme and font system', async () => {
@@ -280,7 +370,8 @@ test('timetable styles mirror the seating planner theme and font system', async 
   assert.match(styles, /\.tt-topbar\s*{[^}]*flex-wrap:\s*wrap/s);
   assert.match(styles, /\.tt-topbar\s*{[^}]*background:\s*var\(--tt-bg-panel\)/s);
   assert.match(styles, /\.tt-topbar\s*{[^}]*border-radius:\s*var\(--tt-radius-md\)/s);
-  assert.match(styles, /\.tt-sidebar,[\s\S]*?\.tt-inspector\s*{[^}]*border-radius:\s*var\(--tt-radius-lg\)/s);
+  assert.match(styles, /\.tt-sidebar,[\s\S]*?\.tt-schedule-panel\s*{[^}]*border-radius:\s*var\(--tt-radius-lg\)/s);
+  assert.match(styles, /\.tt-inspector-drawer\s*{[^}]*border-radius:\s*var\(--tt-radius-lg\)/s);
   assert.match(styles, /\.tt-btn,[\s\S]*?\.tt-icon-btn\s*{[^}]*transition:\s*all var\(--tt-transition-fast\)/s);
   assert.match(styles, /\.tt-chip\s*{[^}]*background:\s*rgba\(148,\s*163,\s*184,\s*0\.1\)/s);
 
@@ -4204,6 +4295,9 @@ test('timetable 智能 rules sidebar renders roster-style card entry while examp
   assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
   // view.js contains the locked_slot option in the manual rule builder
   assert.match(viewSource, /value="locked_slot"/);
+  assert.match(viewSource, /value="teacher_daily_limit"/);
+  assert.match(viewSource, /value="teacher_consecutive_limit"/);
+  assert.match(viewSource, /id="tt-manual-rule-limit"/);
 
   // Opening directly to manual mode keeps manual rules in the modal.
   const controller = new TimetablePlannerController();
@@ -4212,6 +4306,19 @@ test('timetable 智能 rules sidebar renders roster-style card entry while examp
   assert.equal(controller.state.ruleReview.open, true);
   assert.equal(controller.state.ruleReview.step, 'manual');
   assert.equal(controller.state.ruleReview.mode, 'manual');
+});
+
+test('timetable smart rules no longer keep the old inline sidebar renderer', async () => {
+  const viewSource = await readFile(new URL('view.js', moduleRoot), 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.doesNotMatch(viewSource, /function renderRuleInputArea/);
+  assert.doesNotMatch(viewSource, /function renderRuleCard/);
+  assert.doesNotMatch(viewSource, /function renderSavedRuleList/);
+  assert.doesNotMatch(viewSource, /function renderRulePreview/);
+  assert.doesNotMatch(styles, /(?:^|\n)\.tt-rule-input-area\s*\{/);
+  assert.doesNotMatch(styles, /(?:^|\n)\.tt-pending-rules\s*\{/);
+  assert.doesNotMatch(styles, /(?:^|\n)\.tt-saved-rules\s*\{/);
 });
 
 test('timetable rule review modal shows seating-style parse progress feedback', async () => {
@@ -4798,7 +4905,7 @@ test('timetable saved 智能 rules remain visible after confirmation', async () 
   assert.match(modalHtml, /data-saved-rule-delete=/);
   assert.match(modalHtml, /teacher_daily_limit/);
   assert.match(modalHtml, /subject_spread/);
-  assert.match(styles, /(?:^|\n)\.tt-saved-rules\s+\.tt-saved-rule-row\s*\{/);
+  assert.doesNotMatch(styles, /(?:^|\n)\.tt-saved-rules\s+\.tt-saved-rule-row\s*\{/);
   assert.doesNotMatch(styles, /(?:^|\n)\.tt-saved-rule-row\s*\{/);
 });
 
