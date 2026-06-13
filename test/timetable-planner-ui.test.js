@@ -4476,6 +4476,74 @@ test('timetable rule review modal shows seating-style parse progress feedback', 
   assert.match(styles, /\.tt-process-chip--warning\s*{/);
 });
 
+test('timetable constraint chat is wired into the real planner frontend', async () => {
+  const controllerSource = await readFile(new URL('../public/js/tools/timetable/controller.js', import.meta.url), 'utf8');
+  const interactionSource = await readFile(new URL('../public/js/tools/timetable/grid-interactions.js', import.meta.url), 'utf8');
+  const indexHtml = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  const state = sampleWorkbenchState({
+    constraintChat: {
+      open: true,
+      loading: false,
+      conversationId: 'conv_test',
+      inputText: '请解释这些约束',
+      messages: [{
+        role: 'assistant',
+        content: '我可以帮你解释和优化约束。',
+        timestamp: new Date('2026-06-13T08:00:00+08:00').getTime(),
+      }],
+    },
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'file',
+      draftRows: [{
+        id: 'draft-1',
+        rawText: 'Math Teacher daily limit',
+        type: 'teacher_daily_limit',
+        targetType: 'teacher',
+        targetName: 'Math Teacher',
+        targetId: 't_math',
+        value: 4,
+        slots: [],
+        priority: 'soft',
+        status: 'effective',
+        confidence: 0.9,
+        description: 'Daily limit',
+        warnings: [],
+      }],
+      warnings: [],
+      loading: false,
+    },
+  });
+  const html = renderWorkbench(state);
+
+  assert.doesNotThrow(() => new TimetablePlannerController());
+  assert.equal(typeof TimetablePlannerController.prototype.startConstraintConversation, 'function');
+  assert.equal(typeof TimetablePlannerController.prototype.sendConstraintChatMessage, 'function');
+  assert.equal(typeof TimetablePlannerController.prototype.closeConstraintChat, 'function');
+  assert.equal(typeof TimetablePlannerController.prototype.updateConstraintChatInput, 'function');
+  assert.match(controllerSource, /constraintChatControllerMethods/);
+  assert.match(html, /data-action="constraint-chat-start"/);
+  assert.match(html, /tt-constraint-chat-overlay/);
+  assert.match(html, /我可以帮你解释和优化约束。/);
+  assert.match(html, /请解释这些约束/);
+  assert.match(interactionSource, /constraint-chat-start/);
+  assert.match(interactionSource, /constraint-chat-send/);
+  assert.match(interactionSource, /constraint-chat-input/);
+  assert.match(indexHtml, /css\/timetable-chat\.css/);
+});
+
+test('timetable rule review parse renders the opened input state before progress updates', async () => {
+  const controllerSource = await readFile(new URL('../public/js/tools/timetable/controller.js', import.meta.url), 'utf8');
+  const parseRulesSource = extractMethodSource(controllerSource, 'parseRules');
+
+  assert.match(
+    parseRulesSource,
+    /this\.state\.ruleReview\s*=\s*{[\s\S]*?open:\s*true,[\s\S]*?text,[\s\S]*?};\s*this\.render\(\);\s*try\s*{/
+  );
+});
+
 test('timetable rule review modal locks review table while rules are being written', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     ruleReview: {

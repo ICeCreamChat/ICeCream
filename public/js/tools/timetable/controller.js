@@ -28,6 +28,7 @@ import {
     cloneValue,
     createTimetablePlannerState,
 } from './state.js';
+import { constraintChatControllerMethods } from './controller-chat-extension.js';
 import { renderWorkbench } from './view.js';
 
 export class TimetablePlannerController {
@@ -2091,6 +2092,7 @@ export class TimetablePlannerController {
             open: true,
             text,
         };
+        this.render();
         try {
             let options;
             if (hasFile) {
@@ -2828,3 +2830,5 @@ export class TimetablePlannerController {
         this.render();
     }
 }
+
+Object.assign(TimetablePlannerController.prototype, constraintChatControllerMethods);

@@ -1,3 +1,9 @@
+function resizeConstraintChatInput(textarea) {
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
+}
+
 function bindDelegatedInteractions(container) {
     if (container.__ttDelegatedInteractionsBound) return;
     container.__ttDelegatedInteractionsBound = true;
@@ -6,11 +12,21 @@ function bindDelegatedInteractions(container) {
         const controller = container.__ttController;
         const state = container.__ttState;
         if (!controller || !state) return;
+        if (event.target.matches('[data-constraint-chat-overlay]')) {
+            controller.closeConstraintChat();
+            return;
+        }
         const action = event.target.closest('[data-action]')?.dataset.action || '';
         if (action === 'submit-rule-clarification') {
             controller.submitClarifyingAnswers();
         } else if (action === 'diagnose-rules') {
             controller.diagnoseRules();
+        } else if (action === 'constraint-chat-start') {
+            controller.startConstraintConversation();
+        } else if (action === 'constraint-chat-send') {
+            controller.sendConstraintChatMessage(container.querySelector('[data-constraint-chat-input]')?.value || '');
+        } else if (action === 'constraint-chat-close') {
+            controller.closeConstraintChat();
         } else if (action === 'timetable-agent-start') {
             controller.startTimetableAgentSession();
         } else if (action === 'timetable-agent-send') {
@@ -63,10 +79,24 @@ function bindDelegatedInteractions(container) {
         } else if (event.target.matches('[data-period-time-draft-start], [data-period-time-draft-end], [data-period-time-start], [data-period-time-end]')) {
             controller.readPeriodTimesFromDom();
             controller.refreshPeriodTimeGapInputsFromDom();
+        } else if (event.target.matches('[data-constraint-chat-input]')) {
+            controller.updateConstraintChatInput(event.target.value);
+            resizeConstraintChatInput(event.target);
         }
     });
 
     container.addEventListener('keydown', event => {
+        const controller = container.__ttController;
+        if (
+            controller
+            && event.target.matches('[data-constraint-chat-input]')
+            && event.key === 'Enter'
+            && !event.shiftKey
+        ) {
+            event.preventDefault();
+            controller.sendConstraintChatMessage(event.target.value);
+            return;
+        }
         if (event.key === 'Escape') {
             container.querySelectorAll('details.tt-multi-select[open]').forEach(details => details.removeAttribute('open'));
         }

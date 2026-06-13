@@ -20,6 +20,45 @@ test('gateway app can be constructed without starting the HTTP listener', () => 
     assert.equal(app.get('trust proxy'), 1);
 });
 
+test('gateway mounts timetable constraint chat APIs under tools timetable routes', async () => {
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0);
+    await new Promise(resolve => server.once('listening', resolve));
+    const { port } = server.address();
+
+    try {
+        const response = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/constraints/chat/init`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                constraints: [{
+                    id: 'draft-1',
+                    type: 'teacher_daily_limit',
+                    targetType: 'teacher',
+                    targetId: 't_math',
+                    targetName: 'Math Teacher',
+                    value: 4,
+                    status: 'effective',
+                }],
+                project: {
+                    teachers: [{ id: 't_math', name: 'Math Teacher' }],
+                    classes: [{ id: 'c1', name: '1' }],
+                    subjects: [{ id: 'math', name: 'Math' }],
+                },
+            }),
+        });
+        const payload = await response.json();
+
+        assert.equal(response.status, 200);
+        assert.equal(payload.success, true);
+        assert.match(payload.data.conversationId, /^conv_/);
+        assert.match(payload.data.welcomeMessage, /1/);
+        assert.equal(payload.data.constraints.length, 1);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+    }
+});
+
 test('development static headers prevent stale GeoGebra runtime caching', () => {
     const headers = {};
     const res = {

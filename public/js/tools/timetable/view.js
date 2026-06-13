@@ -19,6 +19,7 @@ import {
     ownerLabel,
     totalPlannedLessons,
 } from './selectors.js';
+import { renderConstraintChatDialog, renderConstraintOptimizeButton } from './view-chat.js';
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -540,6 +541,7 @@ export function renderWorkbench(state) {
             ${renderRosterImportDialog(state)}
             ${renderPeriodTimeDialog(state)}
             ${renderRuleReviewDialog(state)}
+            ${renderConstraintChatDialog(state)}
             ${renderPublishDialog(state)}
             ${renderRestoreDialog(state)}
             ${renderPublicationHistoryDialog(state)}
@@ -1525,6 +1527,7 @@ function renderRuleReviewTable(dialog, project = {}) {
         <div class="tt-dialog-actions">
             <button class="tt-btn" id="tt-add-rule-review-row" type="button" ${disabled}><i data-lucide="plus"></i><span>新增行</span></button>
             <button class="tt-btn" id="tt-diagnose-rules" type="button" data-action="diagnose-rules" ${disabled}><i data-lucide="stethoscope"></i><span>试排诊断</span></button>
+            ${renderConstraintOptimizeButton({ disabled: isBusy || !rows.length })}
             <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
             <button class="tt-btn tt-btn--primary" id="tt-confirm-rule-review" type="button" ${isBusy || !rows.length ? 'disabled' : ''}><i data-lucide="${isBusy ? 'loader-2' : 'check'}" class="${isBusy ? 'tt-spin' : ''}"></i><span>${isBusy ? '确认中' : '确认生效'}</span></button>
         </div>

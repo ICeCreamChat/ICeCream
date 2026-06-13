@@ -1,59 +1,83 @@
-/**
- * 智能约束对话优化管理器
- * 支持用户通过自然语言与AI讨论并优化排课约束
- */
-
-/**
- * 约束解释器 - 将技术约束转为自然语言
- */
-export function explainConstraintToUser(constraint, project = {}) {
-    const { type, targetName, targetId, value, slots = [] } = constraint;
-
-    const teacherMap = new Map((project.teachers || []).map(t => [t.id, t.name]));
-    const classMap = new Map((project.classes || []).map(c => [c.id, c.className || c.name]));
-    const subjectMap = new Map((project.subjects || []).map(s => [s.id, s.name]));
-
-    const teacher = targetName || teacherMap.get(targetId) || '教师';
-    const klass = targetName || classMap.get(targetId) || '班级';
-    const subject = targetName || subjectMap.get(targetId) || '课程';
-
-    const slotText = slots.length ? ` (${formatSlots(slots, project)})` : '';
-
-    const explanations = {
-        teacher_daily_limit: `${teacher}每天最多上${value}节课`,
-        teacher_consecutive_limit: `${teacher}连续上课不超过${value}节`,
-        teacher_unavailable: `${teacher}在${slotText}时段不可用`,
-        class_unavailable: `${klass}在${slotText}时段不可用`,
-        locked_slot: `${teacher}给${klass}上${subject}固定在${slotText}`,
-        subject_morning: `${subject}优先安排在上午`,
-        subject_preferred_periods: `${subject}优先安排在${slotText}`,
-        subject_avoid_periods: `${subject}避开${slotText}时段`,
-        subject_spread: `${subject}的课程要分散在不同天`,
-        teacher_load_balance: `${teacher}的工作量要尽量均衡`,
-        class_daily_balance: `${klass}每天的课程要均衡安排`,
-    };
-
-    return explanations[type] || `${type}约束`;
+function cloneValue(value) {
+    return JSON.parse(JSON.stringify(value ?? null));
 }
 
-/**
- * 格式化时段为自然语言
- */
-function formatSlots(slots, project) {
+function byId(items = []) {
+    return new Map(items.map(item => [item.id, item]));
+}
+
+function itemName(item, fallback = '') {
+    return item?.name || item?.className || item?.label || fallback;
+}
+
+function resolveName(map, id, fallback) {
+    return itemName(map.get(id), fallback || id || '未指定对象');
+}
+
+export function explainConstraintToUser(constraint = {}, project = {}) {
+    const teachers = byId(project.teachers || []);
+    const classes = byId(project.classes || []);
+    const subjects = byId(project.subjects || []);
+
+    const teacher = constraint.targetName
+        || resolveName(teachers, constraint.teacherId || constraint.targetId, '教师');
+    const klass = constraint.className
+        || resolveName(classes, constraint.classId || constraint.targetId, '班级');
+    const subject = constraint.subjectName
+        || resolveName(subjects, constraint.subjectId || constraint.targetId, '课程');
+    const value = constraint.value ?? constraint.limit ?? '默认';
+    const slotText = formatSlots(constraint.slots || constraint.periods || [], project);
+
+    switch (constraint.type) {
+        case 'teacher_daily_limit':
+            return `${teacher} 每天最多上 ${value} 节课`;
+        case 'teacher_consecutive_limit':
+            return `${teacher} 连续上课不超过 ${value} 节`;
+        case 'teacher_unavailable':
+            return `${teacher} 在 ${slotText} 不可排课`;
+        case 'class_unavailable':
+            return `${klass} 在 ${slotText} 不可排课`;
+        case 'locked_slot':
+            return `${teacher} 给 ${klass} 上 ${subject}，固定在 ${slotText}`;
+        case 'subject_morning':
+            return `${subject} 优先安排在上午`;
+        case 'subject_preferred_periods':
+            return `${subject} 优先安排在 ${slotText}`;
+        case 'subject_avoid_periods':
+            return `${subject} 避开 ${slotText}`;
+        case 'subject_spread':
+            return `${subject} 尽量分散到不同日期`;
+        case 'teacher_load_balance':
+            return `${teacher} 的工作量尽量均衡`;
+        case 'class_daily_balance':
+            return `${klass} 每天的课程尽量均衡`;
+        default:
+            return constraint.description || constraint.rawText || `${constraint.type || '未知'} 约束`;
+    }
+}
+
+export function formatSlots(slots = []) {
+    if (!Array.isArray(slots) || !slots.length) return '指定时段';
+
     const weekdayNames = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-    const formatted = slots.map(slot => {
+    return slots.map(slot => {
+        if (typeof slot === 'object' && slot) {
+            const day = Number(slot.day);
+            const period = Number(slot.period);
+            if (Number.isFinite(day) && Number.isFinite(period)) {
+                return `${weekdayNames[day - 1] || `周${day}`}第 ${period} 节`;
+            }
+        }
+
         const match = String(slot).match(/^(\d+)-(\d+)$/);
-        if (!match) return slot;
+        if (!match) return String(slot);
+
         const day = Number(match[1]);
         const period = Number(match[2]);
-        return `${weekdayNames[day - 1] || `周${day}`}第${period}节`;
-    });
-    return formatted.join('、');
+        return `${weekdayNames[day - 1] || `周${day}`}第 ${period} 节`;
+    }).join('、');
 }
 
-/**
- * 约束对话管理器
- */
 export class TimetableConstraintConversation {
     constructor() {
         this.history = [];
@@ -61,375 +85,277 @@ export class TimetableConstraintConversation {
         this.project = {};
     }
 
-    /**
-     * 初始化对话
-     */
-    initialize(constraints, project) {
-        this.constraints = constraints;
-        this.project = project;
+    initialize(constraints = [], project = {}) {
+        if (!Array.isArray(constraints)) {
+            throw new Error('constraints 必须是数组。');
+        }
+
+        this.constraints = cloneValue(constraints) || [];
+        this.project = cloneValue(project) || {};
         this.history = [{
             role: 'assistant',
-            content: this.generateWelcomeMessage(constraints, project)
+            content: this.generateWelcomeMessage(),
+            timestamp: Date.now(),
         }];
     }
 
-    /**
-     * 生成欢迎消息
-     */
-    generateWelcomeMessage(constraints, project) {
-        const count = constraints.length;
-        const examples = constraints.slice(0, 3).map(c =>
-            `• ${explainConstraintToUser(c, project)}`
-        ).join('\n');
+    generateWelcomeMessage() {
+        const count = this.constraints.length;
+        const examples = this.constraints
+            .slice(0, 3)
+            .map((constraint, index) => `${index + 1}. ${explainConstraintToUser(constraint, this.project)}`)
+            .join('\n');
 
-        return `我已经为您解析出${count}条排课约束：
-
-${examples}
-${count > 3 ? `\n...还有${count - 3}条约束\n` : ''}
-您可以：
-1. 用自然语言告诉我需要调整的地方，比如"张老师的课太多了"
-2. 询问任何约束的含义，比如"为什么王老师不能上第一节？"
-3. 说"可以了"完成优化
-
-有什么需要调整的吗？`;
+        return `我已经读取到 ${count} 条排课约束。\n\n${examples || '还没有可展示的约束。'}${count > 3 ? `\n还有 ${count - 3} 条约束可继续查看。` : ''}\n\n你可以让我解释约束、调整数值、删除不需要的规则，或回复“确认”完成优化。`;
     }
 
-    /**
-     * 处理用户消息
-     */
-    async chat(userMessage, env, fetchImpl) {
-        this.history.push({ role: 'user', content: userMessage });
-
-        // 识别用户意图
-        const intent = this.recognizeIntent(userMessage);
-
-        let response;
-        switch (intent.type) {
-            case 'confirm':
-                response = this.handleConfirm();
-                break;
-            case 'query':
-                response = await this.handleQuery(userMessage, intent, env, fetchImpl);
-                break;
-            case 'modify':
-                response = await this.handleModify(userMessage, intent, env, fetchImpl);
-                break;
-            case 'delete':
-                response = await this.handleDelete(userMessage, intent, env, fetchImpl);
-                break;
-            default:
-                response = await this.handleGeneral(userMessage, env, fetchImpl);
+    async chat(userMessage, env = {}, fetchImpl = globalThis.fetch) {
+        const message = String(userMessage || '').trim();
+        if (!message) {
+            throw new Error('message 不能为空。');
         }
 
-        this.history.push({ role: 'assistant', content: response.message });
+        this.history.push({ role: 'user', content: message, timestamp: Date.now() });
+
+        const intent = this.recognizeIntent(message);
+        const response = await this.respond(message, intent, env, fetchImpl);
+
+        this.history.push({
+            role: 'assistant',
+            content: response.message,
+            timestamp: Date.now(),
+        });
 
         return {
             message: response.message,
             constraints: this.constraints,
             suggestedActions: response.actions || [],
-            completed: intent.type === 'confirm'
+            completed: intent.type === 'confirm',
         };
     }
 
-    /**
-     * 识别用户意图（增强版）
-     */
     recognizeIntent(message) {
-        const lower = message.toLowerCase();
+        const normalized = message.trim().toLowerCase();
+        const entities = this.extractEntities(message);
 
-        // 优先级匹配：精确模式
-        const patterns = [
-            { regex: /^(可以了|确认|没问题|就这样吧?)$/, type: 'confirm', confidence: 0.95 },
-            { regex: /为什么.+(不能|不可以|要)/, type: 'query', confidence: 0.9 },
-            { regex: /(删除|取消).+(约束|规则)/, type: 'delete', confidence: 0.9 },
-            { regex: /(改成|调整|修改).+/, type: 'modify', confidence: 0.85 },
-            // 模糊模式
-            { regex: /(好|行|OK)/i, type: 'confirm', confidence: 0.7 },
-            { regex: /\?$/, type: 'query', confidence: 0.6 },
-            { regex: /(删除|去掉|移除|不要)/, type: 'delete', confidence: 0.7 },
-            { regex: /(能不能|可以|帮我)/, type: 'modify', confidence: 0.6 },
-        ];
-
-        // 多模式匹配，返回最高置信度
-        let bestMatch = { type: 'general', confidence: 0.5 };
-        for (const pattern of patterns) {
-            if (pattern.regex.test(lower)) {
-                if (pattern.confidence > bestMatch.confidence) {
-                    bestMatch = { type: pattern.type, confidence: pattern.confidence };
-                }
-            }
+        if (/^(确认|可以|没问题|就这样|完成|好了|ok|okay|yes)$/i.test(normalized)) {
+            return { type: 'confirm', confidence: 0.95, entities };
+        }
+        if (/(为什么|解释|含义|什么意思|怎么看|说明)/.test(normalized) || /[?？]$/.test(normalized)) {
+            return { type: 'query', confidence: 0.85, entities };
+        }
+        if (/(删除|取消|移除|不要).*(约束|规则)?/.test(normalized)) {
+            return { type: 'delete', confidence: 0.85, entities };
+        }
+        if (/(改成|调整|修改|最多|不超过|限制|换成|设为)/.test(normalized)) {
+            return { type: 'modify', confidence: 0.8, entities };
         }
 
-        // 实体提取
-        const entities = this.extractEntities(message);
-        return { ...bestMatch, entities };
+        return { type: 'general', confidence: 0.5, entities };
     }
 
-    /**
-     * 提取实体（新增）
-     */
     extractEntities(message) {
         const entities = {
             teachers: [],
             classes: [],
             subjects: [],
-            numbers: []
+            numbers: [],
         };
 
-        // 提取教师名称
-        (this.project.teachers || []).forEach(t => {
-            if (message.includes(t.name)) {
-                entities.teachers.push({ id: t.id, name: t.name });
+        for (const teacher of this.project.teachers || []) {
+            if (teacher.name && message.includes(teacher.name)) {
+                entities.teachers.push({ id: teacher.id, name: teacher.name });
             }
-        });
+        }
 
-        // 提取班级
-        (this.project.classes || []).forEach(c => {
-            const className = c.className || c.name;
-            if (className && message.includes(className)) {
-                entities.classes.push({ id: c.id, name: className });
+        for (const klass of this.project.classes || []) {
+            const name = itemName(klass);
+            if (name && message.includes(name)) {
+                entities.classes.push({ id: klass.id, name });
             }
-        });
+        }
 
-        // 提取课程
-        (this.project.subjects || []).forEach(s => {
-            if (s.name && message.includes(s.name)) {
-                entities.subjects.push({ id: s.id, name: s.name });
+        for (const subject of this.project.subjects || []) {
+            if (subject.name && message.includes(subject.name)) {
+                entities.subjects.push({ id: subject.id, name: subject.name });
             }
-        });
+        }
 
-        // 提取数字（用于限制调整）
         const numbers = message.match(/\d+/g);
         if (numbers) entities.numbers = numbers.map(Number);
 
         return entities;
     }
 
-    /**
-     * 处理确认
-     */
-    handleConfirm() {
-        return {
-            message: `好的！约束优化完成。共有${this.constraints.length}条约束已生效。\n\n您可以点击"确认导入"将这些约束应用到排课系统。`,
-            actions: []
-        };
-    }
-
-    /**
-     * 处理询问
-     */
-    async handleQuery(message, intent, env, fetchImpl) {
-        // 使用AI理解并回答
-        const aiResponse = await this.callAI({
-            instruction: '用户在询问约束的含义。请用通俗易懂的语言解释。',
-            userMessage: message,
-            constraints: this.constraints,
-            project: this.project
-        }, env, fetchImpl);
-
-        return {
-            message: aiResponse,
-            actions: []
-        };
-    }
-
-    /**
-     * 处理修改
-     */
-    async handleModify(message, intent, env, fetchImpl) {
-        // 使用AI理解修改意图并生成建议
-        const aiResponse = await this.callAI({
-            instruction: `用户想要修改约束。请：
-1. 理解用户想修改什么
-2. 提出具体的修改建议（用JSON格式）
-3. 询问用户确认
-
-返回格式：
-{
-  "explanation": "我理解您想...",
-  "suggestion": "建议将...",
-  "action": {
-    "type": "modify",
-    "targetConstraintIndex": 0,
-    "changes": {...}
-  }
-}`,
-            userMessage: message,
-            constraints: this.constraints,
-            project: this.project
-        }, env, fetchImpl);
-
-        // 解析AI响应并执行修改
-        try {
-            const parsed = JSON.parse(aiResponse);
-            if (parsed.action && message.includes('确认')) {
-                this.applyModification(parsed.action);
-                return {
-                    message: `✅ ${parsed.explanation}\n\n${parsed.suggestion}\n\n已应用修改。还需要其他调整吗？`,
-                    actions: []
-                };
-            }
+    async respond(message, intent, env, fetchImpl) {
+        if (intent.type === 'confirm') {
             return {
-                message: `${parsed.explanation}\n\n${parsed.suggestion}\n\n回复"确认"来应用这个修改。`,
-                actions: [parsed.action]
-            };
-        } catch (e) {
-            return {
-                message: aiResponse,
-                actions: []
+                message: `好的，约束优化完成。当前共有 ${this.constraints.length} 条约束，可以确认生效。`,
             };
         }
-    }
 
-    /**
-     * 处理删除
-     */
-    async handleDelete(message, intent, env, fetchImpl) {
-        const aiResponse = await this.callAI({
-            instruction: '用户想删除某个约束。请识别是哪个约束，并询问确认。',
-            userMessage: message,
-            constraints: this.constraints,
-            project: this.project
-        }, env, fetchImpl);
-
-        return {
-            message: aiResponse,
-            actions: []
-        };
-    }
-
-    /**
-     * 处理通用消息
-     */
-    async handleGeneral(message, env, fetchImpl) {
-        const aiResponse = await this.callAI({
-            instruction: '理解用户的需求，提供帮助。',
-            userMessage: message,
-            constraints: this.constraints,
-            project: this.project
-        }, env, fetchImpl);
-
-        return {
-            message: aiResponse,
-            actions: []
-        };
-    }
-
-    /**
-     * 应用修改
-     */
-    applyModification(action) {
-        if (action.type === 'modify' && action.targetConstraintIndex !== undefined) {
-            const index = action.targetConstraintIndex;
-            if (this.constraints[index]) {
-                this.constraints[index] = {
-                    ...this.constraints[index],
-                    ...action.changes
-                };
-            }
+        if (intent.type === 'modify') {
+            const localResult = this.applySimpleModification(intent.entities);
+            if (localResult) return localResult;
         }
+
+        if (intent.type === 'delete') {
+            const localResult = this.applySimpleDelete(intent.entities);
+            if (localResult) return localResult;
+        }
+
+        const aiMessage = await this.callAI({
+            instruction: this.instructionForIntent(intent.type),
+            userMessage: message,
+        }, env, fetchImpl);
+
+        return { message: aiMessage };
     }
 
-    /**
-     * 调用AI（增强版：超时控制+错误恢复）
-     */
-    async callAI({ instruction, userMessage, constraints, project }, env, fetchImpl) {
+    instructionForIntent(intentType) {
+        const instructions = {
+            query: '用户在询问约束含义，请用简洁中文解释，并指出可能的排课影响。',
+            modify: '用户想调整约束。请先说明理解到的修改目标，再给出建议；不要输出无法解析的 JSON。',
+            delete: '用户想删除约束。请说明你识别到的目标，并提醒用户确认。',
+            general: '用户正在讨论排课约束，请提供简洁、可执行的建议。',
+        };
+        return instructions[intentType] || instructions.general;
+    }
+
+    applySimpleModification(entities) {
+        const teacher = entities.teachers[0];
+        const value = entities.numbers[0];
+        if (!teacher || !Number.isFinite(value)) return null;
+
+        const index = this.constraints.findIndex(constraint => {
+            const typeMatches = ['teacher_daily_limit', 'teacher_consecutive_limit'].includes(constraint.type);
+            const targetMatches = constraint.targetId === teacher.id
+                || constraint.teacherId === teacher.id
+                || constraint.targetName === teacher.name;
+            return typeMatches && targetMatches;
+        });
+
+        if (index < 0) return null;
+
+        const previous = this.constraints[index];
+        this.constraints[index] = {
+            ...previous,
+            value,
+            description: `${teacher.name} 每天最多上 ${value} 节课`,
+            status: previous.status === 'invalid' ? 'needs_review' : previous.status,
+        };
+
+        return {
+            message: `已把 ${teacher.name} 的约束调整为最多 ${value} 节。请在复核表中确认后生效。`,
+            actions: [{
+                type: 'modify',
+                targetConstraintId: previous.id,
+                changes: { value },
+            }],
+        };
+    }
+
+    applySimpleDelete(entities) {
+        const candidates = [
+            ...entities.teachers,
+            ...entities.classes,
+            ...entities.subjects,
+        ];
+        if (!candidates.length) return null;
+
+        const names = new Set(candidates.map(item => item.name));
+        const ids = new Set(candidates.map(item => item.id));
+        const before = this.constraints.length;
+        this.constraints = this.constraints.filter(constraint => {
+            return !ids.has(constraint.targetId)
+                && !ids.has(constraint.teacherId)
+                && !ids.has(constraint.classId)
+                && !ids.has(constraint.subjectId)
+                && !names.has(constraint.targetName)
+                && !names.has(constraint.className)
+                && !names.has(constraint.subjectName);
+        });
+
+        const removed = before - this.constraints.length;
+        if (!removed) return null;
+
+        return {
+            message: `已移除 ${removed} 条相关约束，请复核后确认生效。`,
+            actions: [{ type: 'delete', count: removed }],
+        };
+    }
+
+    async callAI({ instruction, userMessage }, env = {}, fetchImpl = globalThis.fetch) {
         const apiKey = env.AI_API_KEY;
         const baseUrl = env.AI_BASE_URL || 'https://api.anthropic.com';
+        const model = env.AI_MODEL || 'claude-3-5-sonnet-20241022';
 
-        if (!apiKey) {
-            return this.fallbackResponse(userMessage, instruction);
+        if (!apiKey || typeof fetchImpl !== 'function') {
+            return this.fallbackResponse(userMessage);
         }
 
-        const constraintList = constraints.map((c, i) =>
-            `${i + 1}. ${explainConstraintToUser(c, project)}`
-        ).join('\n');
+        const constraintList = this.constraints
+            .map((constraint, index) => `${index + 1}. ${explainConstraintToUser(constraint, this.project)}`)
+            .join('\n');
 
-        const systemPrompt = `你是ICeCream排课系统的智能助手。帮助用户理解和优化排课约束。
+        const system = `你是 ICeCream 排课系统的约束优化助手。当前约束如下：\n${constraintList || '暂无约束'}\n\n${instruction}`;
+        const messages = this.history
+            .slice(-6)
+            .filter(item => ['user', 'assistant'].includes(item.role))
+            .map(item => ({ role: item.role, content: item.content }));
 
-当前约束：
-${constraintList}
-
-教师：${(project.teachers || []).map(t => t.name).join('、')}
-班级：${(project.classes || []).map(c => c.className || c.name).join('、')}
-课程：${(project.subjects || []).map(s => s.name).join('、')}
-
-${instruction}`;
-
-        const messages = [
-            ...this.history.slice(-5), // 只保留最近5轮对话
-            { role: 'user', content: userMessage }
-        ];
-
-        // 超时控制
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒超时
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
 
         try {
-            const fetch = fetchImpl || globalThis.fetch;
-            const response = await fetch(`${baseUrl}/v1/messages`, {
+            const response = await fetchImpl(`${baseUrl}/v1/messages`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'x-api-key': apiKey,
-                    'anthropic-version': '2023-06-01'
+                    'anthropic-version': '2023-06-01',
                 },
                 body: JSON.stringify({
-                    model: 'claude-3-5-sonnet-20241022',
-                    max_tokens: 1024,
-                    system: systemPrompt,
-                    messages
+                    model,
+                    max_tokens: 900,
+                    system,
+                    messages,
                 }),
-                signal: controller.signal
+                signal: controller.signal,
             });
 
-            clearTimeout(timeoutId);
-
             if (!response.ok) {
-                throw new Error(`API error: ${response.status}`);
+                throw new Error(`AI request failed with status ${response.status}`);
             }
 
             const data = await response.json();
-            return data.content?.[0]?.text || '抱歉，AI暂时无法响应。';
-
+            return data.content?.[0]?.text || this.fallbackResponse(userMessage);
         } catch (error) {
+            console.error('Constraint AI call failed:', error);
+            return this.fallbackResponse(userMessage);
+        } finally {
             clearTimeout(timeoutId);
-
-            if (error.name === 'AbortError') {
-                console.error('AI request timeout');
-                return '⏱️ AI响应超时。您可以：\n1. 简化您的问题后重试\n2. 直接在表格中编辑约束';
-            }
-
-            console.error('AI call failed:', error);
-
-            // 降级到规则响应
-            return this.fallbackResponse(userMessage, instruction);
         }
     }
 
-    /**
-     * 降级响应（新增）
-     */
-    fallbackResponse(userMessage, instruction) {
-        const lower = userMessage.toLowerCase();
-
-        // 基于规则的简单响应
-        if (/为什么/.test(lower)) {
-            return '抱歉，AI服务暂时不可用。您可以在约束列表中查看每条约束的详细说明。';
+    fallbackResponse(userMessage) {
+        const lower = String(userMessage || '').toLowerCase();
+        if (/(为什么|解释|含义|什么意思|说明)/.test(lower) || /[?？]$/.test(lower)) {
+            const examples = this.constraints
+                .slice(0, 3)
+                .map((constraint, index) => `${index + 1}. ${explainConstraintToUser(constraint, this.project)}`)
+                .join('\n');
+            return `这些约束会影响排课求解器的可选空间：\n\n${examples || '当前没有可解释的约束。'}\n\n如果某条约束过严，可能导致课表冲突或无法排满。`;
         }
 
-        if (/(修改|调整|改成)/.test(lower)) {
-            const entities = this.extractEntities(userMessage);
-            if (entities.teachers.length > 0) {
-                return `我理解您想调整${entities.teachers[0].name}的约束。\n\n由于AI服务暂时不可用，请在下方约束表格中直接编辑。`;
-            }
-            return '请在下方约束表格中直接编辑您想修改的内容。';
+        if (/(删除|取消|移除|不要)/.test(lower)) {
+            return '我还没能精确定位要删除的约束。请在消息里带上教师、班级或课程名称，例如“删除王老师相关约束”。';
         }
 
-        if (/(删除|去掉)/.test(lower)) {
-            return '请在下方约束表格中找到对应的约束，点击删除按钮即可移除。';
+        if (/(改成|调整|修改|最多|不超过|限制|换成|设为)/.test(lower)) {
+            return '我还没能自动完成这次修改。可以写得更具体一些，例如“王老师每天最多 4 节”，也可以直接在复核表里编辑数值。';
         }
 
-        return '抱歉，AI服务暂时不可用。您可以：\n1. 稍后重试\n2. 手动编辑约束表格\n3. 联系技术支持';
+        return '我可以帮你解释、调整或删除当前约束。试着问“解释这些约束”，或说“王老师每天最多 4 节”。';
     }
 }

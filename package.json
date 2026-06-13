@@ -8,9 +8,9 @@
         "dev": "node --watch gateway/server.js",
         "manim": "node scripts/run-manim.js",
         "dev:all": "concurrently \"npm start\" \"node scripts/run-manim.js\"",
-        "solver:dev": "cd solver && mvnw.cmd quarkus:dev",
-        "solver:test": "cd solver && mvnw.cmd test",
-        "solver:build": "cd solver && mvnw.cmd package -DskipTests",
+        "solver:dev": "cd solver && .\\mvnw.cmd quarkus:dev",
+        "solver:test": "cd solver && .\\mvnw.cmd test",
+        "solver:build": "cd solver && .\\mvnw.cmd package -DskipTests",
         "build:studio": "esbuild src/manim-studio/main.jsx --bundle --format=iife --global-name=ManimStudioCanvas --outfile=public/js/studio/manim-studio-canvas.js --jsx=automatic --loader:.jsx=jsx",
         "test": "node --test test/*.js"
     },
