@@ -88,6 +88,8 @@ function renderProblemCards(problems, stats) {
                 </div>
                 <span class="tt-completeness-text">完成度 ${stats.completeness || 0}%</span>
             </div>
+
+            ${renderPerformanceMetrics(stats)}
         </div>
 
         <div class="tt-problem-cards">
@@ -127,6 +129,47 @@ function renderProblemGroup(severity, title, problems) {
             </div>
             <div class="tt-problem-list ${collapsed ? 'tt-collapsed' : ''}">
                 ${problems.map(problem => renderProblemCard(problem)).join('')}
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * 渲染性能指标
+ */
+function renderPerformanceMetrics(stats) {
+    const scanDuration = stats.scanDuration || 0;
+    const checksPerformed = stats.checksPerformed || 0;
+    const complianceScore = stats.complianceScore || 0;
+
+    return `
+        <div class="tt-performance-metrics">
+            <div class="tt-metric-card">
+                <div class="tt-metric-icon">
+                    <i data-lucide="timer"></i>
+                </div>
+                <div class="tt-metric-content">
+                    <span class="tt-metric-label">扫描耗时</span>
+                    <span class="tt-metric-value">${scanDuration} ms</span>
+                </div>
+            </div>
+            <div class="tt-metric-card">
+                <div class="tt-metric-icon">
+                    <i data-lucide="check-square"></i>
+                </div>
+                <div class="tt-metric-content">
+                    <span class="tt-metric-label">检查项</span>
+                    <span class="tt-metric-value">${checksPerformed}</span>
+                </div>
+            </div>
+            <div class="tt-metric-card">
+                <div class="tt-metric-icon">
+                    <i data-lucide="award"></i>
+                </div>
+                <div class="tt-metric-content">
+                    <span class="tt-metric-label">行业合规度</span>
+                    <span class="tt-metric-value">${complianceScore}%</span>
+                </div>
             </div>
         </div>
     `;

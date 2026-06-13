@@ -4,6 +4,16 @@
  */
 
 /**
+ * 约束类型分类
+ * HARD: 必须修复的硬约束，违反会导致排课失败
+ * SOFT: 建议优化的软约束，违反会影响排课质量但不阻塞
+ */
+const CONSTRAINT_TYPES = {
+    HARD: ['time_conflicts', 'missing_slots'],
+    SOFT: ['teacher_overload', 'uneven_distribution'],
+};
+
+/**
  * 自动扫描约束问题
  * @param {Object} constraints - 约束列表
  * @param {Object} project - 项目数据
@@ -12,65 +22,26 @@
 export async function autoScanConstraints(constraints, project) {
     const problems = [];
 
-    // 1. 检测缺少节次的约束
-    const missingSlots = constraints.filter(c =>
-        needsSlots(c.type) && (!c.slots || c.slots.length === 0)
-    );
+    // 并行执行所有约束检测
+    const [
+        conflicts,
+        missingSlots,
+        teacherOverload,
+        unevenDistribution,
+        unreasonable
+    ] = await Promise.all([
+        detectTimeConflicts(constraints),
+        detectMissingSlots(constraints),
+        detectTeacherOverload(constraints, project),
+        detectUnevenDistribution(constraints, project),
+        detectUnreasonableConstraints(constraints, project)
+    ]);
 
-    if (missingSlots.length > 0) {
-        problems.push({
-            id: 'missing_slots',
-            severity: 'urgent',
-            title: `有 ${missingSlots.length} 条约束还没安排具体时间`,
-            description: '比如"王老师周三下午不排课"，但没说是第几节',
-            icon: 'calendar-clock',
-            color: '#ef4444',
-            count: missingSlots.length,
-            constraints: missingSlots,
-            autoFixable: true,
-            fixSuggestion: '让AI自动推荐合适的时段',
-        });
-    }
-
-    // 2. 检测教师工作量超标
-    const teacherOverload = detectTeacherOverload(constraints, project);
-    if (teacherOverload.length > 0) {
-        problems.push({
-            id: 'teacher_overload',
-            severity: 'optimize',
-            title: `${teacherOverload.length} 位教师每天课太多了`,
-            description: teacherOverload.map(t => `${t.name}每天${t.current}节课`).join('、'),
-            icon: 'user-x',
-            color: '#f59e0b',
-            count: teacherOverload.length,
-            teachers: teacherOverload,
-            autoFixable: true,
-            fixSuggestion: '建议减少到每天4-5节',
-        });
-    }
-
-    // 3. 检测课程分布不均
-    const unevenDistribution = detectUnevenDistribution(constraints, project);
-    if (unevenDistribution.length > 0) {
-        problems.push({
-            id: 'uneven_distribution',
-            severity: 'optimize',
-            title: '有些课程都集中在同一天了',
-            description: unevenDistribution.map(s => `${s.subject}${s.days}`).join('、'),
-            icon: 'calendar-range',
-            color: '#f59e0b',
-            count: unevenDistribution.length,
-            subjects: unevenDistribution,
-            autoFixable: true,
-            fixSuggestion: '自动分散到不同天',
-        });
-    }
-
-    // 4. 检测时间冲突
-    const conflicts = detectTimeConflicts(constraints);
+    // 1. 检测时间冲突（硬约束）
     if (conflicts.length > 0) {
         problems.push({
             id: 'time_conflicts',
+            type: 'HARD',
             severity: 'urgent',
             title: `发现 ${conflicts.length} 处时间冲突`,
             description: conflicts.map(c => c.description).join('、'),
@@ -83,11 +54,62 @@ export async function autoScanConstraints(constraints, project) {
         });
     }
 
-    // 5. 检测不合理的约束
-    const unreasonable = detectUnreasonableConstraints(constraints, project);
+    // 2. 检测缺少节次的约束（硬约束）
+    if (missingSlots.length > 0) {
+        problems.push({
+            id: 'missing_slots',
+            type: 'HARD',
+            severity: 'urgent',
+            title: `有 ${missingSlots.length} 条约束还没安排具体时间`,
+            description: '比如"王老师周三下午不排课"，但没说是第几节',
+            icon: 'calendar-clock',
+            color: '#ef4444',
+            count: missingSlots.length,
+            constraints: missingSlots,
+            autoFixable: true,
+            fixSuggestion: '让AI自动推荐合适的时段',
+        });
+    }
+
+    // 3. 检测教师工作量超标（软约束）
+    if (teacherOverload.length > 0) {
+        problems.push({
+            id: 'teacher_overload',
+            type: 'SOFT',
+            severity: 'optimize',
+            title: `${teacherOverload.length} 位教师每天课太多了`,
+            description: teacherOverload.map(t => `${t.name}每天${t.current}节课`).join('、'),
+            icon: 'user-x',
+            color: '#f59e0b',
+            count: teacherOverload.length,
+            teachers: teacherOverload,
+            autoFixable: true,
+            fixSuggestion: '建议减少到每天4-5节',
+        });
+    }
+
+    // 4. 检测课程分布不均（软约束）
+    if (unevenDistribution.length > 0) {
+        problems.push({
+            id: 'uneven_distribution',
+            type: 'SOFT',
+            severity: 'optimize',
+            title: '有些课程都集中在同一天了',
+            description: unevenDistribution.map(s => `${s.subject}${s.days}`).join('、'),
+            icon: 'calendar-range',
+            color: '#f59e0b',
+            count: unevenDistribution.length,
+            subjects: unevenDistribution,
+            autoFixable: true,
+            fixSuggestion: '自动分散到不同天',
+        });
+    }
+
+    // 5. 检测不合理的约束（信息提示）
     if (unreasonable.length > 0) {
         problems.push({
             id: 'unreasonable',
+            type: 'INFO',
             severity: 'info',
             title: '有些约束可能不太合理',
             description: unreasonable.map(u => u.reason).join('、'),
@@ -100,7 +122,7 @@ export async function autoScanConstraints(constraints, project) {
         });
     }
 
-    // 按严重程度排序
+    // 按严重程度排序：硬约束 > 软约束 > 信息提示
     const severityOrder = { urgent: 0, optimize: 1, info: 2 };
     problems.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
 
@@ -109,11 +131,15 @@ export async function autoScanConstraints(constraints, project) {
     const autoFixableIssues = problems
         .filter(p => p.autoFixable)
         .reduce((sum, p) => sum + p.count, 0);
+    const hardConstraintIssues = problems
+        .filter(p => p.type === 'HARD')
+        .reduce((sum, p) => sum + p.count, 0);
 
     return {
         problems,
         stats: {
             total: totalIssues,
+            hard: hardConstraintIssues,
             urgent: problems.filter(p => p.severity === 'urgent').reduce((s, p) => s + p.count, 0),
             optimize: problems.filter(p => p.severity === 'optimize').reduce((s, p) => s + p.count, 0),
             info: problems.filter(p => p.severity === 'info').reduce((s, p) => s + p.count, 0),
@@ -125,9 +151,18 @@ export async function autoScanConstraints(constraints, project) {
 }
 
 /**
+ * 检测缺少节次的约束
+ */
+async function detectMissingSlots(constraints) {
+    return constraints.filter(c =>
+        needsSlots(c.type) && (!c.slots || c.slots.length === 0)
+    );
+}
+
+/**
  * 检测教师工作量超标
  */
-function detectTeacherOverload(constraints, project) {
+async function detectTeacherOverload(constraints, project) {
     const teacherHours = new Map();
 
     // 统计每个教师的课时
@@ -162,7 +197,7 @@ function detectTeacherOverload(constraints, project) {
 /**
  * 检测课程分布不均
  */
-function detectUnevenDistribution(constraints, project) {
+async function detectUnevenDistribution(constraints, project) {
     // 简化实现：检测同一课程的课节是否过于集中
     const subjectDays = new Map();
 
@@ -174,7 +209,7 @@ function detectUnevenDistribution(constraints, project) {
 /**
  * 检测时间冲突
  */
-function detectTimeConflicts(constraints) {
+async function detectTimeConflicts(constraints) {
     const conflicts = [];
     const slotMap = new Map();
 
@@ -203,7 +238,7 @@ function detectTimeConflicts(constraints) {
 /**
  * 检测不合理的约束
  */
-function detectUnreasonableConstraints(constraints, project) {
+async function detectUnreasonableConstraints(constraints, project) {
     const unreasonable = [];
 
     constraints.forEach(constraint => {
