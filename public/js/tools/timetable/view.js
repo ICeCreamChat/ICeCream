@@ -20,6 +20,7 @@ import {
     totalPlannedLessons,
 } from './selectors.js';
 import { renderConstraintChatDialog, renderConstraintOptimizeButton } from './view-chat.js';
+import { renderSmartConstraintHelper, renderFixPreview } from './view-smart-helper.js';
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -1104,6 +1105,11 @@ function renderRuleReviewDialog(state) {
     const mode = dialog.mode || 'text';
     const isReview = dialog.step === 'review';
     const isSaved = dialog.step === 'saved';
+
+    // 智能助手UI
+    const smartHelperUI = state.constraintScan ? renderSmartConstraintHelper(state) : '';
+    const fixPreviewUI = state.fixPreview ? renderFixPreview(state.fixPreview.fix, state.fixPreview.problem) : '';
+
     return `
         <div class="tt-dialog-overlay" data-rule-review-close>
             <section class="tt-rule-review-dialog" id="tt-rule-review-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-rule-review-title">
@@ -1116,6 +1122,19 @@ function renderRuleReviewDialog(state) {
                     <button class="tt-icon-btn" id="tt-rule-review-cancel" type="button" title="关闭约束复核" aria-label="关闭约束复核"><i data-lucide="x"></i></button>
                 </div>
                 ${renderRuleReviewProcess(dialog)}
+
+                ${isReview && !smartHelperUI ? `
+                    <div class="tt-smart-helper-cta">
+                        <button class="tt-btn tt-btn--primary tt-btn--large" id="tt-open-smart-helper" type="button" style="width: 100%; margin: 16px 0;">
+                            <i data-lucide="sparkles"></i>
+                            <span>🔍 智能助手扫描 - 自动检测问题</span>
+                        </button>
+                    </div>
+                ` : ''}
+
+                ${smartHelperUI}
+                ${fixPreviewUI}
+
                 ${renderRuleReviewBeginnerGuide(dialog, { isReview, isSaved })}
                 ${isSaved ? renderSavedRulesTable(state.project) : isReview ? renderRuleReviewTable(dialog, state.project) : renderRuleReviewInput(state, dialog, mode)}
             </section>

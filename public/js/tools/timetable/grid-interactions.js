@@ -17,7 +17,34 @@ function bindDelegatedInteractions(container) {
             return;
         }
         const action = event.target.closest('[data-action]')?.dataset.action || '';
-        if (action === 'submit-rule-clarification') {
+
+        // 智能助手actions
+        if (action === 'apply-fix') {
+            const problemId = event.target.closest('[data-problem-id]')?.dataset.problemId;
+            controller.applySingleFix(problemId);
+        } else if (action === 'apply-all-fixes') {
+            controller.applyAllFixes();
+        } else if (action === 'view-problem-details') {
+            const problemId = event.target.closest('[data-problem-id]')?.dataset.problemId;
+            controller.viewProblemDetails(problemId);
+        } else if (action === 'confirm-fix') {
+            const problemId = event.target.closest('[data-problem-id]')?.dataset.problemId;
+            controller.confirmApplyFix(problemId);
+        } else if (action === 'close-smart-helper') {
+            controller.closeSmartHelper();
+        } else if (action === 'open-ai-chat') {
+            controller.openAIChatFromHelper();
+        } else if (action === 'toggle-group') {
+            const groupId = event.target.closest('[data-group]')?.dataset.group;
+            controller.toggleProblemGroup(groupId);
+        } else if (action === 'close-preview') {
+            controller.state.fixPreview = null;
+            controller.render();
+        } else if (action === 'discuss-with-ai') {
+            controller.openAIChatFromHelper();
+        }
+        // 原有actions
+        else if (action === 'submit-rule-clarification') {
             controller.submitClarifyingAnswers();
         } else if (action === 'diagnose-rules') {
             controller.diagnoseRules();
