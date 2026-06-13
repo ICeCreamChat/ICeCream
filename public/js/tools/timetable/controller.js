@@ -2770,6 +2770,25 @@ export class TimetablePlannerController {
 
     handleError(error, options = {}) {
         const normalized = normalizeApiError(error);
+
+        // 处理版本冲突特殊情况（409状态码）
+        if (normalized.status === 409 || normalized.reason === 'VERSION_CONFLICT') {
+            const shouldRefresh = confirm(
+                `${normalized.message}\n\n` +
+                '点击"确定"刷新页面加载最新数据，点击"取消"继续编辑（可能导致数据冲突）。'
+            );
+            if (shouldRefresh) {
+                window.location.reload();
+                return;
+            }
+            // 用户选择继续编辑，显示警告
+            this.state.message = `⚠️ 版本冲突警告：${normalized.message}`;
+            this.state.lastFailure = options.keepFailure ? normalized : null;
+            this.render();
+            return;
+        }
+
+        // 原有错误处理逻辑
         if (normalized.project) {
             this.applyProject(normalized.project);
         } else if (normalized.publication && this.state.project?.schedule) {
