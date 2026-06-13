@@ -132,32 +132,77 @@ ${count > 3 ? `\n...还有${count - 3}条约束\n` : ''}
     }
 
     /**
-     * 识别用户意图
+     * 识别用户意图（增强版）
      */
     recognizeIntent(message) {
         const lower = message.toLowerCase();
 
-        // 确认型
-        if (/(可以了|没问题|就这样|确认|完成|ok|好的|行|确定)/.test(lower)) {
-            return { type: 'confirm' };
+        // 优先级匹配：精确模式
+        const patterns = [
+            { regex: /^(可以了|确认|没问题|就这样吧?)$/, type: 'confirm', confidence: 0.95 },
+            { regex: /为什么.+(不能|不可以|要)/, type: 'query', confidence: 0.9 },
+            { regex: /(删除|取消).+(约束|规则)/, type: 'delete', confidence: 0.9 },
+            { regex: /(改成|调整|修改).+/, type: 'modify', confidence: 0.85 },
+            // 模糊模式
+            { regex: /(好|行|OK)/i, type: 'confirm', confidence: 0.7 },
+            { regex: /\?$/, type: 'query', confidence: 0.6 },
+            { regex: /(删除|去掉|移除|不要)/, type: 'delete', confidence: 0.7 },
+            { regex: /(能不能|可以|帮我)/, type: 'modify', confidence: 0.6 },
+        ];
+
+        // 多模式匹配，返回最高置信度
+        let bestMatch = { type: 'general', confidence: 0.5 };
+        for (const pattern of patterns) {
+            if (pattern.regex.test(lower)) {
+                if (pattern.confidence > bestMatch.confidence) {
+                    bestMatch = { type: pattern.type, confidence: pattern.confidence };
+                }
+            }
         }
 
-        // 询问型
-        if (/(为什么|怎么|什么意思|什么是|解释|说明|\?)/.test(lower)) {
-            return { type: 'query' };
-        }
+        // 实体提取
+        const entities = this.extractEntities(message);
+        return { ...bestMatch, entities };
+    }
 
-        // 删除型
-        if (/(删除|去掉|移除|不要|取消)/.test(lower)) {
-            return { type: 'delete' };
-        }
+    /**
+     * 提取实体（新增）
+     */
+    extractEntities(message) {
+        const entities = {
+            teachers: [],
+            classes: [],
+            subjects: [],
+            numbers: []
+        };
 
-        // 修改型
-        if (/(改成|调整|修改|变成|设置|增加|减少|能不能)/.test(lower)) {
-            return { type: 'modify' };
-        }
+        // 提取教师名称
+        (this.project.teachers || []).forEach(t => {
+            if (message.includes(t.name)) {
+                entities.teachers.push({ id: t.id, name: t.name });
+            }
+        });
 
-        return { type: 'general' };
+        // 提取班级
+        (this.project.classes || []).forEach(c => {
+            const className = c.className || c.name;
+            if (className && message.includes(className)) {
+                entities.classes.push({ id: c.id, name: className });
+            }
+        });
+
+        // 提取课程
+        (this.project.subjects || []).forEach(s => {
+            if (s.name && message.includes(s.name)) {
+                entities.subjects.push({ id: s.id, name: s.name });
+            }
+        });
+
+        // 提取数字（用于限制调整）
+        const numbers = message.match(/\d+/g);
+        if (numbers) entities.numbers = numbers.map(Number);
+
+        return entities;
     }
 
     /**
@@ -286,14 +331,14 @@ ${count > 3 ? `\n...还有${count - 3}条约束\n` : ''}
     }
 
     /**
-     * 调用AI
+     * 调用AI（增强版：超时控制+错误恢复）
      */
     async callAI({ instruction, userMessage, constraints, project }, env, fetchImpl) {
         const apiKey = env.AI_API_KEY;
         const baseUrl = env.AI_BASE_URL || 'https://api.anthropic.com';
 
         if (!apiKey) {
-            return '智能对话功能未配置API Key。请在设置中配置。';
+            return this.fallbackResponse(userMessage, instruction);
         }
 
         const constraintList = constraints.map((c, i) =>
@@ -316,6 +361,10 @@ ${instruction}`;
             { role: 'user', content: userMessage }
         ];
 
+        // 超时控制
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒超时
+
         try {
             const fetch = fetchImpl || globalThis.fetch;
             const response = await fetch(`${baseUrl}/v1/messages`, {
@@ -330,14 +379,57 @@ ${instruction}`;
                     max_tokens: 1024,
                     system: systemPrompt,
                     messages
-                })
+                }),
+                signal: controller.signal
             });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                throw new Error(`API error: ${response.status}`);
+            }
 
             const data = await response.json();
             return data.content?.[0]?.text || '抱歉，AI暂时无法响应。';
+
         } catch (error) {
+            clearTimeout(timeoutId);
+
+            if (error.name === 'AbortError') {
+                console.error('AI request timeout');
+                return '⏱️ AI响应超时。您可以：\n1. 简化您的问题后重试\n2. 直接在表格中编辑约束';
+            }
+
             console.error('AI call failed:', error);
-            return '抱歉，AI服务暂时不可用。您可以手动编辑约束表格。';
+
+            // 降级到规则响应
+            return this.fallbackResponse(userMessage, instruction);
         }
+    }
+
+    /**
+     * 降级响应（新增）
+     */
+    fallbackResponse(userMessage, instruction) {
+        const lower = userMessage.toLowerCase();
+
+        // 基于规则的简单响应
+        if (/为什么/.test(lower)) {
+            return '抱歉，AI服务暂时不可用。您可以在约束列表中查看每条约束的详细说明。';
+        }
+
+        if (/(修改|调整|改成)/.test(lower)) {
+            const entities = this.extractEntities(userMessage);
+            if (entities.teachers.length > 0) {
+                return `我理解您想调整${entities.teachers[0].name}的约束。\n\n由于AI服务暂时不可用，请在下方约束表格中直接编辑。`;
+            }
+            return '请在下方约束表格中直接编辑您想修改的内容。';
+        }
+
+        if (/(删除|去掉)/.test(lower)) {
+            return '请在下方约束表格中找到对应的约束，点击删除按钮即可移除。';
+        }
+
+        return '抱歉，AI服务暂时不可用。您可以：\n1. 稍后重试\n2. 手动编辑约束表格\n3. 联系技术支持';
     }
 }
