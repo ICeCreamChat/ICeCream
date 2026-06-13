@@ -1055,6 +1055,49 @@ function renderRuleReviewStatus({ savedCount = 0, draftCount = 0, warningCount =
     `;
 }
 
+function renderRuleReviewBeginnerGuide(dialog = {}, { isReview = false, isSaved = false } = {}) {
+    if (isSaved) return '';
+    const rows = dialog.draftRows || [];
+    const questions = dialog.clarifyingQuestions || [];
+    const missing = dialog.missingInfo || [];
+    const conflicts = dialog.conflicts || [];
+    const review = dialog.needReview || rows.filter(row => ['needs_review', 'invalid'].includes(row.status));
+    const unsupported = dialog.unsupportedItems || [];
+    const problemCount = questions.length + missing.length + conflicts.length;
+    const cards = isReview
+        ? [
+            ['1', '先处理红黄项', problemCount ? `${problemCount} 条会影响生效` : '暂无阻塞问题', 'triangle-alert', problemCount ? 'warning' : ''],
+            ['2', '不确定就点 AI', '让 AI 围绕当前复核表解释、补节次或过滤错误节次', 'message-circle', 'primary'],
+            ['3', '再确认生效', `${rows.length} 条草稿，${review.length} 条需人工确认，${unsupported.length} 条仅作建议`, 'check-circle', ''],
+        ]
+        : [
+            ['1', '选择来源', '自然语言、上传文件、手动批量都可以', 'mouse-pointer-click', ''],
+            ['2', '点击智能解析', '这里只生成草稿，不会直接改排课规则', 'wand-sparkles', 'primary'],
+            ['3', '复核后生效', '表格里确认过的规则才会写入项目', 'clipboard-check', ''],
+        ];
+    return `
+        <section class="tt-rule-beginner-guide" aria-label="新手操作流程">
+            <div class="tt-rule-beginner-head">
+                <i data-lucide="route"></i>
+                <div>
+                    <strong>${isReview ? '按这个顺序复核就行' : '第一次用智能约束，按三步走'}</strong>
+                    <span>${isReview ? '不用一次看完整张表，先处理会影响生效的问题。' : 'AI 只是先帮你拆成草稿，最终是否生效由你确认。'}</span>
+                </div>
+                ${dialog.nextAction ? `<em>${escapeHtml(ruleNextActionLabel(dialog.nextAction))}</em>` : ''}
+            </div>
+            <div class="tt-rule-beginner-steps">
+                ${cards.map(([step, title, text, icon, tone]) => `
+                    <article class="tt-rule-beginner-card ${tone ? `tt-rule-beginner-card--${tone}` : ''}">
+                        <b>${escapeHtml(step)}</b>
+                        <i data-lucide="${escapeAttr(icon)}"></i>
+                        <span><strong>${escapeHtml(title)}</strong><em>${escapeHtml(text)}</em></span>
+                    </article>
+                `).join('')}
+            </div>
+        </section>
+    `;
+}
+
 function renderRuleReviewDialog(state) {
     const dialog = state.ruleReview || {};
     if (!dialog.open) return '';
@@ -1068,11 +1111,12 @@ function renderRuleReviewDialog(state) {
                     <div>
                         <span class="tt-eyebrow">智能约束</span>
                         <h3 id="tt-rule-review-title">${isSaved ? '已生效规则' : isReview ? '智能约束复核' : '约束复核中心'}</h3>
-                        <p>${isSaved ? '这些规则已经写入项目，并会参与下一次排课。' : isReview ? '智能会先把自然语言约束拆分为可直接生效、需要复核、需要补充、冲突风险和暂不支持几类。高置信度规则可一键应用，低置信度或有冲突的规则需要人工确认。' : '上传 TXT/XLSX、粘贴自然语言，或手动批量新增规则，全部先进入复核表。'}</p>
+                        <p>${isSaved ? '这些规则已经写入项目，并会参与下一次排课。' : isReview ? '先看新手流程和红黄提示；不确定的内容可以交给 AI 围绕当前复核表解释或修改。' : '先选择一种来源并解析成草稿，解析不会直接生效，确认后才会写入项目。'}</p>
                     </div>
                     <button class="tt-icon-btn" id="tt-rule-review-cancel" type="button" title="关闭约束复核" aria-label="关闭约束复核"><i data-lucide="x"></i></button>
                 </div>
                 ${renderRuleReviewProcess(dialog)}
+                ${renderRuleReviewBeginnerGuide(dialog, { isReview, isSaved })}
                 ${isSaved ? renderSavedRulesTable(state.project) : isReview ? renderRuleReviewTable(dialog, state.project) : renderRuleReviewInput(state, dialog, mode)}
             </section>
         </div>
@@ -1563,7 +1607,7 @@ function renderRuleReviewOverview(dialog = {}) {
         ['已识别', rows.length, 'list-checks'],
         ['可直接生效', auto.length, 'badge-check'],
         ['需要复核', review.length, 'edit-3'],
-        ['需要补充', questions.length + missing.length, 'message-square-question'],
+        ['需要补充', questions.length + missing.length, 'help-circle'],
         ['冲突风险', conflicts.length, 'triangle-alert'],
         ['暂不支持', unsupported.length, 'lightbulb'],
     ];
@@ -1623,7 +1667,7 @@ function renderClarifyingQuestions(dialog = {}) {
     return `
         <section class="tt-rule-review-group tt-rule-review-group--question">
             <div class="tt-rule-review-group-title">
-                <i data-lucide="message-square-question"></i>
+                <i data-lucide="help-circle"></i>
                 <strong>需要补充信息</strong>
                 <span>${questions.length + missing.length} 条</span>
             </div>

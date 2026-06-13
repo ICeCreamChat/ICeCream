@@ -4508,6 +4508,8 @@ test('timetable constraint chat is wired into the real planner frontend', async 
   const controllerSource = await readFile(new URL('../public/js/tools/timetable/controller.js', import.meta.url), 'utf8');
   const interactionSource = await readFile(new URL('../public/js/tools/timetable/grid-interactions.js', import.meta.url), 'utf8');
   const indexHtml = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
+  const chatStyles = await readFile(new URL('../public/css/timetable-chat.css', import.meta.url), 'utf8');
+  const plannerStyles = await readFile(stylePath, 'utf8');
 
   const state = sampleWorkbenchState({
     constraintChat: {
@@ -4579,6 +4581,12 @@ test('timetable constraint chat is wired into the real planner frontend', async 
   assert.match(controllerSource, /reviewContext/);
   assert.match(html, /data-action="constraint-chat-start"/);
   assert.match(html, /tt-constraint-chat-overlay/);
+  assert.match(html, /AI 帮我处理/);
+  assert.match(html, /按这个顺序复核就行/);
+  assert.match(html, /先处理当前复核表里的问题/);
+  assert.match(html, /不需要懂排课规则/);
+  assert.match(html, /今天要处理的复核任务/);
+  assert.match(html, /点推荐操作/);
   assert.match(html, /当前复核重点/);
   assert.match(html, /需要补充信息/);
   assert.match(html, /34/);
@@ -4590,6 +4598,12 @@ test('timetable constraint chat is wired into the real planner frontend', async 
   assert.match(interactionSource, /constraint-chat-input/);
   assert.match(interactionSource, /constraint-chat-suggest/);
   assert.match(indexHtml, /css\/timetable-chat\.css/);
+  assert.match(chatStyles, /\.tt-constraint-chat-body\s*{/);
+  assert.match(chatStyles, /\.tt-constraint-chat-guide\s*{/);
+  assert.match(chatStyles, /\.tt-chat-step-guide/);
+  assert.match(chatStyles, /@media \(max-width:\s*780px\)/);
+  assert.match(plannerStyles, /\.tt-rule-beginner-guide\s*{/);
+  assert.match(plannerStyles, /\.tt-rule-beginner-steps\s*{/);
 });
 
 test('timetable rule review parse renders the opened input state before progress updates', async () => {

@@ -1164,6 +1164,130 @@ button.tt-section-title {
     border-radius: var(--tt-radius-md);
 }
 
+.tt-rule-beginner-guide {
+    display: grid;
+    gap: var(--tt-space-sm);
+    padding: 10px;
+    background: linear-gradient(135deg, rgba(8, 145, 178, 0.1), rgba(20, 184, 166, 0.06));
+    border: 1px solid rgba(8, 145, 178, 0.22);
+    border-radius: var(--tt-radius-md);
+}
+
+.tt-rule-beginner-head {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 8px;
+    min-width: 0;
+}
+
+.tt-rule-beginner-head > .lucide {
+    width: 17px;
+    height: 17px;
+    margin-top: 2px;
+    color: var(--tt-primary);
+}
+
+.tt-rule-beginner-head div {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.tt-rule-beginner-head strong {
+    color: var(--tt-text);
+    font-size: 0.84rem;
+}
+
+.tt-rule-beginner-head span {
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+    line-height: 1.45;
+}
+
+.tt-rule-beginner-head em {
+    padding: 3px 7px;
+    background: rgba(8, 145, 178, 0.1);
+    border: 1px solid rgba(8, 145, 178, 0.2);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-primary);
+    font-size: 0.72rem;
+    font-style: normal;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.tt-rule-beginner-steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.tt-rule-beginner-card {
+    display: grid;
+    grid-template-columns: 24px 17px minmax(0, 1fr);
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    padding: 8px;
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+}
+
+.tt-rule-beginner-card--primary {
+    background: rgba(8, 145, 178, 0.08);
+    border-color: rgba(8, 145, 178, 0.24);
+}
+
+.tt-rule-beginner-card--warning {
+    background: rgba(245, 158, 11, 0.09);
+    border-color: rgba(245, 158, 11, 0.28);
+}
+
+.tt-rule-beginner-card > b {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    background: rgba(8, 145, 178, 0.1);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: 999px;
+    color: var(--tt-primary);
+    font-size: 0.72rem;
+}
+
+.tt-rule-beginner-card > .lucide {
+    width: 16px;
+    height: 16px;
+    color: var(--tt-primary);
+}
+
+.tt-rule-beginner-card span {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.tt-rule-beginner-card strong,
+.tt-rule-beginner-card em {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-rule-beginner-card strong {
+    color: var(--tt-text);
+    font-size: 0.75rem;
+}
+
+.tt-rule-beginner-card em {
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    font-style: normal;
+}
+
 .tt-rule-review-group {
     display: grid;
     gap: var(--tt-space-sm);
@@ -1391,6 +1515,15 @@ button.tt-section-title {
 @media (max-width: 640px) {
     .tt-rule-overview-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tt-rule-beginner-head,
+    .tt-rule-beginner-steps {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .tt-rule-beginner-head em {
+        justify-self: start;
     }
 }
 
