@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import express from 'express';
 import { TimetableConstraintConversation } from '../services/timetable-constraint-conversation.js';
+import { autoScanConstraints, generateAutoFix } from '../services/timetable-auto-scanner.js';
 
 const router = express.Router();
 const conversations = new Map();
@@ -127,6 +128,35 @@ router.post('/constraints/chat/:conversationId/finalize', (req, res) => {
         });
     } catch (error) {
         sendError(res, error, '约束对话结束失败');
+    }
+});
+
+// 智能助手：自动扫描约束问题
+router.post('/constraints/scan', async (req, res) => {
+    try {
+        const { constraints = [], project = {} } = req.body || {};
+        const result = await autoScanConstraints(constraints, project);
+        res.json({
+            success: true,
+            data: result,
+        });
+    } catch (error) {
+        sendError(res, error, '约束扫描失败');
+    }
+});
+
+// 智能助手：生成单个问题的修复方案
+router.post('/constraints/generate-fix', async (req, res) => {
+    try {
+        const { problem = null, project = {} } = req.body || {};
+        if (!problem) throw badRequest('缺少要修复的问题信息。');
+        const fix = await generateAutoFix(problem, project);
+        res.json({
+            success: true,
+            data: { fix },
+        });
+    } catch (error) {
+        sendError(res, error, '修复方案生成失败');
     }
 });
 

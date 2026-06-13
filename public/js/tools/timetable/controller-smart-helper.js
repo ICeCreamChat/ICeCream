@@ -1,9 +1,13 @@
 /**
  * 智能约束助手Controller扩展
  * 处理自动扫描、一键修复等交互
+ *
+ * 注意：扫描和修复逻辑在后端（timetable-auto-scanner.js），
+ * 前端通过 /api/tools/timetable/constraints/scan 等API调用。
+ * 前端不能直接import后端gateway文件（浏览器无法访问）。
  */
 
-import { autoScanConstraints, generateAutoFix } from '../../../gateway/services/timetable-auto-scanner.js';
+import { requestTimetable } from './api.js';
 
 /**
  * 打开智能约束助手（自动扫描）
@@ -26,8 +30,11 @@ export async function openSmartConstraintHelper() {
         // 模拟扫描进度
         await this.simulateScanProgress();
 
-        // 执行自动扫描
-        const scanResult = await autoScanConstraints(constraints, project);
+        // 调用后端API执行自动扫描
+        const scanResult = await requestTimetable('/constraints/scan', {
+            method: 'POST',
+            body: JSON.stringify({ constraints, project }),
+        });
 
         // 更新状态
         this.state.constraintScan = {
@@ -102,8 +109,11 @@ export async function applySingleFix(problemId) {
     if (!problem || !problem.autoFixable) return;
 
     try {
-        // 生成修复方案
-        const fix = await generateAutoFix(problem, this.state.project);
+        // 调用后端API生成修复方案
+        const { fix } = await requestTimetable('/constraints/generate-fix', {
+            method: 'POST',
+            body: JSON.stringify({ problem, project: this.state.project }),
+        });
 
         // 显示预览
         this.state.fixPreview = {
@@ -177,7 +187,10 @@ export async function applyAllFixes() {
 
         // 逐个应用修复
         for (const problem of problems) {
-            const fix = await generateAutoFix(problem, this.state.project);
+            const { fix } = await requestTimetable('/constraints/generate-fix', {
+                method: 'POST',
+                body: JSON.stringify({ problem, project: this.state.project }),
+            });
             if (fix) {
                 updatedConstraints = this.applyFixToConstraints(updatedConstraints, fix);
             }

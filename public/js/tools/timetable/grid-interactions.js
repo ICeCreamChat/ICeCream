@@ -282,6 +282,10 @@ export function bindGridInteractions(container, controller, state) {
         button.addEventListener('click', () => controller.deleteRuleReviewRow(button.dataset.ruleReviewDeleteRow));
     });
     container.querySelector('#tt-clear-rules')?.addEventListener('click', () => controller.clearRules());
+
+    // 智能约束助手
+    container.querySelector('#tt-open-smart-helper')?.addEventListener('click', () => controller.openSmartConstraintHelper());
+
     container.querySelectorAll('#tt-run-schedule, [data-run-schedule]').forEach(button => {
         button.addEventListener('click', () => controller.runSchedule());
     });
