@@ -25,6 +25,8 @@ function bindDelegatedInteractions(container) {
             controller.startConstraintConversation();
         } else if (action === 'constraint-chat-send') {
             controller.sendConstraintChatMessage(container.querySelector('[data-constraint-chat-input]')?.value || '');
+        } else if (action === 'constraint-chat-suggest') {
+            controller.sendConstraintChatMessage(event.target.closest('[data-constraint-chat-suggest]')?.dataset.constraintChatSuggest || '');
         } else if (action === 'constraint-chat-close') {
             controller.closeConstraintChat();
         } else if (action === 'timetable-agent-start') {

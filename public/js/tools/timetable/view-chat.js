@@ -45,6 +45,46 @@ function renderChatMessage(message = {}) {
     `;
 }
 
+function renderReviewContext(context = {}) {
+    const groups = context.groups || [];
+    if (!groups.length) return '';
+    const prompts = context.suggestedPrompts || [];
+    return `
+        <section class="tt-chat-review-context" aria-label="当前复核重点">
+            <div class="tt-chat-review-title">
+                <i data-lucide="list-checks"></i>
+                <strong>当前复核重点</strong>
+            </div>
+            <div class="tt-chat-context-grid">
+                ${groups.slice(0, 5).map(group => `
+                    <article class="tt-chat-context-item tt-chat-context-item--${escapeAttr(group.type || 'issue')}">
+                        <div>
+                            <strong>${escapeHtml(group.label || '待处理')}</strong>
+                            <b>${escapeHtml(group.count || 0)}</b>
+                        </div>
+                        ${(group.examples || []).length ? `
+                            <p>${escapeHtml(group.examples[0])}</p>
+                        ` : ''}
+                    </article>
+                `).join('')}
+            </div>
+            ${prompts.length ? `
+                <div class="tt-chat-suggested-prompts" aria-label="建议讨论动作">
+                    ${prompts.slice(0, 4).map(prompt => `
+                        <button
+                            class="tt-chat-suggested-prompt"
+                            type="button"
+                            data-action="constraint-chat-suggest"
+                            data-constraint-chat-suggest="${escapeAttr(prompt)}">
+                            ${escapeHtml(prompt)}
+                        </button>
+                    `).join('')}
+                </div>
+            ` : ''}
+        </section>
+    `;
+}
+
 export function renderConstraintChatDialog(state = {}) {
     const chat = state.constraintChat;
     if (!chat?.open) return '';
@@ -53,6 +93,7 @@ export function renderConstraintChatDialog(state = {}) {
     const loading = Boolean(chat.loading);
     const inputText = chat.inputText || '';
     const canSend = !loading && inputText.trim().length > 0;
+    const reviewContext = chat.reviewContext || {};
 
     return `
         <div class="tt-constraint-chat-overlay" data-constraint-chat-overlay>
@@ -68,6 +109,10 @@ export function renderConstraintChatDialog(state = {}) {
                 </header>
 
                 <div class="tt-constraint-chat-messages" id="tt-chat-messages" aria-live="polite">
+                    ${renderReviewContext({
+                        ...reviewContext,
+                        suggestedPrompts: chat.suggestedPrompts?.length ? chat.suggestedPrompts : reviewContext.suggestedPrompts,
+                    })}
                     ${messages.map(message => renderChatMessage(message)).join('')}
                     ${loading ? `
                         <div class="tt-chat-message tt-chat-message--assistant tt-chat-message--loading">
@@ -120,8 +165,8 @@ export function renderConstraintChatDialog(state = {}) {
                     </div>
 
                     <div class="tt-chat-hints">
-                        <span class="tt-chat-hint">可以问：解释一下这些约束。</span>
-                        <span class="tt-chat-hint">也可以说：王老师每天最多 4 节。</span>
+                        <span class="tt-chat-hint">优先回答当前复核重点，例如统一节次、过滤超出范围节次、展开全部班级。</span>
+                        <span class="tt-chat-hint">也可以直接说：把缺少节次的约束统一设为周一到周五第7节。</span>
                     </div>
                 </footer>
             </section>

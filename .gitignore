@@ -56,6 +56,9 @@ task_plan.md
 findings.md
 progress.md
 
+# Local UI/browser audit artifacts
+artifacts/ui-audit/
+
 # Debug / scratch files
 list_models.js
 models.json

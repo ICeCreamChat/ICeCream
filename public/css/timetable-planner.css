@@ -3154,6 +3154,129 @@ button.tt-section-title {
         flex: 1 1 120px;
     }
 
+    .tt-roster-review-wrap {
+        overflow: visible;
+        border: 0;
+        background: transparent;
+    }
+
+    .tt-roster-review-table,
+    .tt-rule-review-table,
+    .tt-roster-review-table thead,
+    .tt-rule-review-table thead,
+    .tt-roster-review-table tbody,
+    .tt-rule-review-table tbody,
+    .tt-roster-review-table tr,
+    .tt-rule-review-table tr,
+    .tt-roster-review-table th,
+    .tt-rule-review-table th,
+    .tt-roster-review-table td,
+    .tt-rule-review-table td {
+        display: block;
+        width: 100%;
+        min-width: 0;
+    }
+
+    .tt-roster-review-table,
+    .tt-rule-review-table,
+    .tt-saved-rule-table {
+        min-width: 0;
+        border-collapse: separate;
+        table-layout: auto;
+    }
+
+    .tt-roster-review-table colgroup,
+    .tt-rule-review-table colgroup,
+    .tt-roster-review-table thead,
+    .tt-rule-review-table thead {
+        display: none;
+    }
+
+    .tt-roster-review-table tbody,
+    .tt-rule-review-table tbody {
+        display: grid;
+        gap: var(--tt-space-sm);
+    }
+
+    .tt-roster-review-table tr,
+    .tt-rule-review-table tr {
+        display: grid;
+        gap: var(--tt-space-xs);
+        padding: var(--tt-space-sm);
+        border: 1px solid var(--tt-border);
+        border-radius: var(--tt-radius-md);
+        background: var(--tt-bg-soft);
+    }
+
+    .tt-rule-review-row--needs_review,
+    .tt-rule-review-row--invalid {
+        background: rgba(245, 158, 11, 0.08);
+    }
+
+    .tt-rule-review-row--suggestion,
+    .tt-rule-review-row--unsupported {
+        background: rgba(148, 163, 184, 0.08);
+    }
+
+    .tt-roster-review-row--error {
+        background: rgba(239, 68, 68, 0.08);
+    }
+
+    .tt-roster-review-table td,
+    .tt-rule-review-table td {
+        display: grid;
+        grid-template-columns: 76px minmax(0, 1fr);
+        align-items: start;
+        gap: var(--tt-space-xs);
+        padding: 0;
+        border-bottom: 0;
+        background: transparent;
+    }
+
+    .tt-roster-review-table td::before,
+    .tt-rule-review-table td::before {
+        content: attr(data-label);
+        min-height: 32px;
+        padding-top: 8px;
+        color: var(--tt-muted);
+        font-size: 0.7rem;
+        font-weight: 800;
+    }
+
+    .tt-roster-review-table td[data-label="操作"],
+    .tt-rule-review-table td[data-label="操作"] {
+        align-items: center;
+    }
+
+    .tt-roster-review-table td[data-label="操作"]::before,
+    .tt-rule-review-table td[data-label="操作"]::before {
+        padding-top: 0;
+    }
+
+    .tt-rule-review-cell {
+        grid-template-rows: auto;
+        min-height: 0;
+    }
+
+    .tt-rule-review-cell-main {
+        min-height: 0;
+    }
+
+    .tt-rule-review-cell-helper,
+    .tt-saved-rule-cell {
+        min-height: 0;
+        overflow: visible;
+        line-height: 1.35;
+        text-overflow: clip;
+        white-space: normal;
+    }
+
+    .tt-rule-review-action-cell,
+    .tt-saved-rule-action-cell {
+        justify-content: flex-start;
+        min-height: 0;
+    }
+
     .tt-period-time-settings {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }

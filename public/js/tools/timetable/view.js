@@ -844,26 +844,42 @@ function renderRosterImportDialog(state) {
 }
 
 function renderRosterImportInput(dialog, mode, fileName) {
+    const isBusy = Boolean(dialog.loading);
+    const disabled = isBusy ? 'disabled' : '';
+    const previewIcon = isBusy ? 'loader-2' : 'file-search';
+    const previewIconClass = isBusy ? ' class="tt-spin"' : '';
+    const previewText = isBusy ? '解析中' : '解析复核';
+    const phaseText = dialog.phaseText || '解析任课数据中...';
+    const phaseTone = dialog.phaseTone === 'warning' ? ' tt-process-chip--warning' : '';
     return `
         <div class="tt-segment tt-import-mode-tabs" role="group" aria-label="导入方式">
-            <button class="${mode === 'file' ? 'is-active' : ''}" type="button" data-roster-import-mode="file">上传文件</button>
-            <button class="${mode === 'text' ? 'is-active' : ''}" type="button" data-roster-import-mode="text">粘贴文本</button>
+            <button class="${mode === 'file' ? 'is-active' : ''}" type="button" data-roster-import-mode="file" ${disabled}>上传文件</button>
+            <button class="${mode === 'text' ? 'is-active' : ''}" type="button" data-roster-import-mode="text" ${disabled}>粘贴文本</button>
         </div>
         <label class="tt-import-dropzone ${mode === 'file' ? 'is-active' : ''}">
-            <i data-lucide="upload-cloud"></i>
+            <i data-lucide="${isBusy ? 'loader-2' : 'upload-cloud'}" class="${isBusy ? 'tt-spin' : ''}"></i>
             <strong>${escapeHtml(fileName)}</strong>
             <span>.csv / .txt / .xlsx / .xls</span>
-            <input id="tt-roster-import-file" type="file" accept=".csv,.txt,.xlsx,.xls">
+            <input id="tt-roster-import-file" type="file" accept=".csv,.txt,.xlsx,.xls" ${disabled}>
         </label>
         <div class="tt-rule-block ${mode === 'text' ? 'is-active' : ''}">
             <span class="tt-rule-title">粘贴任课数据</span>
-            <textarea id="tt-roster-import-text" class="tt-import-text" spellcheck="false" placeholder="年级,班级,课程,教师,周课时,连堂,教室">${escapeHtml(dialog.text || '')}</textarea>
+            <textarea id="tt-roster-import-text" class="tt-import-text" spellcheck="false" placeholder="年级,班级,课程,教师,周课时,连堂,教室" ${disabled}>${escapeHtml(dialog.text || '')}</textarea>
         </div>
+        ${isBusy || dialog.phaseText ? `
+            <div class="tt-process-strip tt-roster-import-process" aria-live="polite">
+                <span class="tt-process-chip${phaseTone}">
+                    <i data-lucide="${isBusy ? 'loader-2' : dialog.phaseTone === 'warning' ? 'triangle-alert' : 'activity'}" class="${isBusy ? 'tt-spin' : ''}"></i>
+                    <strong>${escapeHtml(phaseText)}</strong>
+                </span>
+                <span class="tt-process-chip tt-process-chip--muted">任课数据</span>
+            </div>
+        ` : ''}
         <div class="tt-dialog-actions">
-            <button class="tt-btn" id="tt-fill-roster-sample" type="button"><i data-lucide="wand-sparkles"></i><span>示例</span></button>
-            <button class="tt-btn" id="tt-start-empty-roster-review" type="button"><i data-lucide="plus"></i><span>手动新增</span></button>
+            <button class="tt-btn" id="tt-fill-roster-sample" type="button" ${disabled}><i data-lucide="wand-sparkles"></i><span>示例</span></button>
+            <button class="tt-btn" id="tt-start-empty-roster-review" type="button" ${disabled}><i data-lucide="plus"></i><span>手动新增</span></button>
             <button class="tt-btn" id="tt-cancel-roster-import-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
-            <button class="tt-btn tt-btn--primary" id="tt-preview-roster-import" type="button"><i data-lucide="file-search"></i><span>解析复核</span></button>
+            <button class="tt-btn tt-btn--primary" id="tt-preview-roster-import" type="button" ${disabled}><i data-lucide="${previewIcon}"${previewIconClass}></i><span>${escapeHtml(previewText)}</span></button>
         </div>
     `;
 }
@@ -929,10 +945,10 @@ function renderRosterReviewRow(row) {
     `;
     return `
         <tr class="tt-roster-review-row ${hasError ? 'tt-roster-review-row--error' : ''}" data-roster-review-row="${escapeAttr(row.id)}">
-            <td>${input('grade', row.grade)}</td>
-            <td>${input('className', row.className)}</td>
-            <td>${input('subjectName', row.subjectName)}</td>
-            <td>
+            <td data-label="年级">${input('grade', row.grade)}</td>
+            <td data-label="班级">${input('className', row.className)}</td>
+            <td data-label="课程">${input('subjectName', row.subjectName)}</td>
+            <td data-label="类型">
                 <select class="tt-roster-review-field" data-roster-field="subjectCategory">
                     <option value="normal" ${row.subjectCategory === 'normal' ? 'selected' : ''}>普通</option>
                     <option value="main" ${row.subjectCategory === 'main' ? 'selected' : ''}>主科</option>
@@ -940,19 +956,19 @@ function renderRosterReviewRow(row) {
                     <option value="lab" ${row.subjectCategory === 'lab' ? 'selected' : ''}>实验</option>
                 </select>
             </td>
-            <td>${input('subjectTags', Array.isArray(row.subjectTags) ? row.subjectTags.join('、') : row.subjectTags)}</td>
-            <td>${input('teacherName', row.teacherName)}</td>
-            <td>${input('weeklyHours', row.weeklyHours, 'number')}</td>
-            <td>
+            <td data-label="标签">${input('subjectTags', Array.isArray(row.subjectTags) ? row.subjectTags.join('、') : row.subjectTags)}</td>
+            <td data-label="教师">${input('teacherName', row.teacherName)}</td>
+            <td data-label="周课时">${input('weeklyHours', row.weeklyHours, 'number')}</td>
+            <td data-label="连堂">
                 <select class="tt-roster-review-field" data-roster-field="blockPreference">
                     <option value="single" ${row.blockPreference === 'single' ? 'selected' : ''}>单节</option>
                     <option value="double" ${row.blockPreference === 'double' ? 'selected' : ''}>双连堂</option>
                     <option value="mixed" ${row.blockPreference === 'mixed' ? 'selected' : ''}>混合</option>
                 </select>
             </td>
-            <td>${input('roomName', row.roomName)}</td>
-            <td><span class="tt-roster-review-issue">${escapeHtml(issueText)}</span></td>
-            <td>
+            <td data-label="教室">${input('roomName', row.roomName)}</td>
+            <td data-label="问题"><span class="tt-roster-review-issue">${escapeHtml(issueText)}</span></td>
+            <td data-label="操作">
                 <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-roster-delete-row="${escapeAttr(row.id)}" title="删除此行" aria-label="删除此行"><i data-lucide="trash-2"></i></button>
             </td>
         </tr>
@@ -1122,17 +1138,17 @@ function renderSavedRulesTable(project = {}) {
                 <tbody>
                     ${items.map(item => `
                         <tr class="tt-saved-rule-table-row" data-saved-rule-row="${escapeAttr(item.id)}">
-                            <td>
+                            <td data-label="类型">
                                 <span class="tt-saved-rule-cell tt-saved-rule-cell--type">
                                     <strong>${escapeHtml(ruleTypeLabel(item.type))}</strong>
                                     <small>${escapeHtml(item.type)}</small>
                                 </span>
                             </td>
-                            <td><span class="tt-saved-rule-cell">${escapeHtml(item.targetName || '-')}</span></td>
-                            <td><span class="tt-saved-rule-cell">${escapeHtml((item.slots || []).join(', ') || '全局')}</span></td>
-                            <td><span class="tt-saved-rule-cell">${escapeHtml(item.priority === 'hard' ? '硬性' : '软性')}</span></td>
-                            <td><span class="tt-saved-rule-cell tt-saved-rule-cell--description">${escapeHtml(item.description || item.source || '')}</span></td>
-                            <td>
+                            <td data-label="对象"><span class="tt-saved-rule-cell">${escapeHtml(item.targetName || '-')}</span></td>
+                            <td data-label="节次"><span class="tt-saved-rule-cell">${escapeHtml((item.slots || []).join(', ') || '全局')}</span></td>
+                            <td data-label="强弱"><span class="tt-saved-rule-cell">${escapeHtml(item.priority === 'hard' ? '硬性' : '软性')}</span></td>
+                            <td data-label="说明"><span class="tt-saved-rule-cell tt-saved-rule-cell--description">${escapeHtml(item.description || item.source || '')}</span></td>
+                            <td data-label="操作">
                                 <div class="tt-saved-rule-action-cell">
                                     <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-saved-rule-delete="${escapeAttr(item.id)}" title="删除已生效规则" aria-label="删除已生效规则"><i data-lucide="trash-2"></i></button>
                                 </div>
@@ -1893,8 +1909,8 @@ function renderRuleReviewRow(row = {}, project = {}, disabled = false) {
     const rawHelper = ruleReviewRowSourceLabel(row, status);
     return `
         <tr class="tt-rule-review-row tt-rule-review-row--${escapeAttr(status)}" data-rule-review-row="${escapeAttr(row.id)}">
-            <td>${cell(input('rawText', row.rawText || row.description || ''), rawHelper)}</td>
-            <td>${cell(`
+            <td data-label="原始内容">${cell(input('rawText', row.rawText || row.description || ''), rawHelper)}</td>
+            <td data-label="类型">${cell(`
                 <select class="tt-roster-review-field" data-rule-review-field="type" ${disabledAttr}>
                     ${typeOptions.map(type => `<option value="${type}" ${row.type === type ? 'selected' : ''}>${escapeHtml(ruleTypeLabel(type))}</option>`).join('')}
                 </select>
@@ -1907,21 +1923,21 @@ function renderRuleReviewRow(row = {}, project = {}, disabled = false) {
                 <input type="hidden" data-rule-review-field="teacherId" value="${escapeAttr(row.teacherId || '')}">
                 <input type="hidden" data-rule-review-field="teacherName" value="${escapeAttr(row.teacherName || '')}">
             `)}</td>
-            <td>${cell(renderRuleTargetField(displayRow, project, disabled))}</td>
-            <td>${cell(input('slots', (row.slots || []).join(', ')), slotHint)}</td>
-            <td>${cell(`
+            <td data-label="对象">${cell(renderRuleTargetField(displayRow, project, disabled))}</td>
+            <td data-label="节次">${cell(input('slots', (row.slots || []).join(', ')), slotHint)}</td>
+            <td data-label="强弱">${cell(`
                 <select class="tt-roster-review-field" data-rule-review-field="priority" ${disabledAttr}>
                     <option value="hard" ${row.priority === 'hard' ? 'selected' : ''}>硬性（必须）</option>
                     <option value="soft" ${row.priority === 'soft' ? 'selected' : ''}>软性（尽量）</option>
                 </select>
             `)}</td>
-            <td>${cell(`
+            <td data-label="状态">${cell(`
                 <select class="tt-roster-review-field" data-rule-review-field="status" ${disabledAttr}>
                     ${statusOptions.map(item => `<option value="${item}" ${status === item ? 'selected' : ''}>${escapeHtml(ruleStatusLabel(item))}</option>`).join('')}
                 </select>
             `, confidence)}</td>
-            <td>${cell(input('description', row.description || warningText), warning)}</td>
-            <td>
+            <td data-label="说明">${cell(input('description', row.description || warningText), warning)}</td>
+            <td data-label="操作">
                 <div class="tt-rule-review-action-cell">
                     <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-rule-review-delete-row="${escapeAttr(row.id)}" title="删除规则行" aria-label="删除规则行" ${disabledAttr}><i data-lucide="trash-2"></i></button>
                 </div>

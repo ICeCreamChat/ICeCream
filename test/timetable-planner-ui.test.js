@@ -4055,6 +4055,33 @@ test('timetable roster import is opened from a data card instead of permanent si
   assert.match(review, /id="tt-confirm-roster-import"/);
 });
 
+test('timetable roster import shows a loading state while parsing before review', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    rosterImport: {
+      open: true,
+      step: 'input',
+      mode: 'file',
+      fileName: '教师配置排课数据.xlsx',
+      text: '',
+      loading: true,
+      phaseText: '读取并解析任课文件中...',
+      phaseTone: '',
+    },
+  }));
+
+  assert.match(html, /id="tt-roster-import-dialog"/);
+  assert.match(html, /data-lucide="loader-2" class="tt-spin"/);
+  assert.match(html, /id="tt-preview-roster-import"[^>]*disabled/);
+  assert.match(html, />解析中<\/span>/);
+  assert.match(html, /tt-roster-import-process/);
+  assert.match(html, /读取并解析任课文件中/);
+  assert.match(html, /id="tt-roster-import-file"[^>]*disabled/);
+  assert.match(html, /id="tt-roster-import-text"[^>]*disabled/);
+  assert.match(html, /data-roster-import-mode="file" disabled/);
+  assert.match(html, /id="tt-fill-roster-sample"[^>]*disabled/);
+  assert.match(html, /id="tt-start-empty-roster-review"[^>]*disabled/);
+});
+
 test('timetable roster import controller exposes modal workflow methods and bindings', async () => {
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
   const stateSource = await readFile(new URL('state.js', moduleRoot), 'utf8');
@@ -4067,6 +4094,7 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(controllerSource, /setRosterImportMode\(/);
   assert.match(controllerSource, /selectRosterImportFile\(/);
   assert.match(controllerSource, /previewRosterImport\(/);
+  assert.match(controllerSource, /phaseText:\s*hasFile\s*\?\s*'读取并解析任课文件中\.\.\.'/);
   assert.match(controllerSource, /startEmptyRosterReview\(/);
   assert.match(controllerSource, /openRosterEditor\(/);
   assert.match(controllerSource, /updateRosterReviewField\(/);
@@ -4492,6 +4520,21 @@ test('timetable constraint chat is wired into the real planner frontend', async 
         content: '我可以帮你解释和优化约束。',
         timestamp: new Date('2026-06-13T08:00:00+08:00').getTime(),
       }],
+      reviewContext: {
+        counts: {
+          needsInput: 34,
+          needReview: 101,
+          unsupported: 1,
+          warnings: 76,
+        },
+        groups: [{
+          type: 'missing_info',
+          label: '需要补充信息',
+          count: 34,
+          examples: ['缺少明确节次，请补充后再生效。'],
+        }],
+        suggestedPrompts: ['先处理缺少明确节次的问题'],
+      },
     },
     ruleReview: {
       open: true,
@@ -4512,6 +4555,14 @@ test('timetable constraint chat is wired into the real planner frontend', async 
         description: 'Daily limit',
         warnings: [],
       }],
+      missingInfo: [{
+        id: 'missing-1',
+        message: '缺少明确节次，请补充后再生效。',
+        relatedRuleIds: ['draft-1'],
+      }],
+      needReview: [],
+      unsupportedItems: [],
+      warnings: ['H-004 和 H-005 涉及连堂保护，无法直接映射。'],
       warnings: [],
       loading: false,
     },
@@ -4524,13 +4575,20 @@ test('timetable constraint chat is wired into the real planner frontend', async 
   assert.equal(typeof TimetablePlannerController.prototype.closeConstraintChat, 'function');
   assert.equal(typeof TimetablePlannerController.prototype.updateConstraintChatInput, 'function');
   assert.match(controllerSource, /constraintChatControllerMethods/);
+  assert.match(controllerSource, /buildConstraintReviewContext/);
+  assert.match(controllerSource, /reviewContext/);
   assert.match(html, /data-action="constraint-chat-start"/);
   assert.match(html, /tt-constraint-chat-overlay/);
+  assert.match(html, /当前复核重点/);
+  assert.match(html, /需要补充信息/);
+  assert.match(html, /34/);
+  assert.match(html, /data-action="constraint-chat-suggest"/);
   assert.match(html, /我可以帮你解释和优化约束。/);
   assert.match(html, /请解释这些约束/);
   assert.match(interactionSource, /constraint-chat-start/);
   assert.match(interactionSource, /constraint-chat-send/);
   assert.match(interactionSource, /constraint-chat-input/);
+  assert.match(interactionSource, /constraint-chat-suggest/);
   assert.match(indexHtml, /css\/timetable-chat\.css/);
 });
 

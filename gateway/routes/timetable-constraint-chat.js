@@ -38,13 +38,16 @@ function scheduleCleanup(conversationId) {
 
 router.post('/constraints/chat/init', async (req, res) => {
     try {
-        const { constraints, project = {} } = req.body || {};
+        const { constraints, project = {}, reviewContext = {} } = req.body || {};
         if (!Array.isArray(constraints)) {
             throw badRequest('constraints 必须是数组。');
         }
+        if (reviewContext && typeof reviewContext !== 'object') {
+            throw badRequest('reviewContext 必须是对象。');
+        }
 
         const conversation = new TimetableConstraintConversation();
-        conversation.initialize(constraints, project);
+        conversation.initialize(constraints, project, reviewContext);
 
         const conversationId = `conv_${Date.now()}_${randomUUID()}`;
         conversations.set(conversationId, conversation);
@@ -56,6 +59,8 @@ router.post('/constraints/chat/init', async (req, res) => {
                 conversationId,
                 welcomeMessage: conversation.history[0]?.content || '',
                 constraints: conversation.constraints,
+                reviewContext: conversation.reviewContext,
+                suggestedPrompts: conversation.suggestedPrompts,
             },
         });
     } catch (error) {

@@ -96,6 +96,9 @@ export function createTimetablePlannerState(overrides = {}) {
             warnings: [],
             issues: [],
             hasBlockingIssues: false,
+            loading: false,
+            phaseText: '',
+            phaseTone: '',
         },
         publishDialog: {
             open: false,

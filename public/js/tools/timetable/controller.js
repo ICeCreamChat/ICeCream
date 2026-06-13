@@ -28,7 +28,7 @@ import {
     cloneValue,
     createTimetablePlannerState,
 } from './state.js';
-import { constraintChatControllerMethods } from './controller-chat-extension.js';
+import { buildConstraintReviewContext, constraintChatControllerMethods } from './controller-chat-extension.js';
 import { renderWorkbench } from './view.js';
 
 export class TimetablePlannerController {
@@ -1585,6 +1585,9 @@ export class TimetablePlannerController {
             warnings: [],
             issues: [],
             hasBlockingIssues: false,
+            loading: false,
+            phaseText: '',
+            phaseTone: '',
         };
     }
 
@@ -1891,6 +1894,9 @@ export class TimetablePlannerController {
             warnings,
             issues,
             hasBlockingIssues: Boolean(payload.hasBlockingIssues) || issues.some(issue => issue.severity === 'error'),
+            loading: false,
+            phaseText: '',
+            phaseTone: '',
         };
     }
 
@@ -1952,13 +1958,25 @@ export class TimetablePlannerController {
     }
 
     async previewRosterImport() {
+        const text = this.readRosterImportText();
+        const mode = this.state.rosterImport?.mode === 'text' ? 'text' : 'file';
+        const hasFile = mode === 'file' && this.rosterImportFile;
+        this.state.rosterImport = {
+            ...(this.state.rosterImport || createTimetablePlannerState().rosterImport),
+            open: true,
+            step: 'input',
+            mode,
+            text,
+            loading: true,
+            phaseText: hasFile ? '读取并解析任课文件中...' : '解析任课文本中...',
+            phaseTone: '',
+        };
+        this.state.loading = true;
+        this.state.message = '解析任课数据中...';
+        this.render();
         try {
-            this.state.loading = true;
-            this.setMessage('解析任课数据中...');
-            this.render();
-            const text = this.readRosterImportText();
             let options;
-            if (this.state.rosterImport?.mode === 'file' && this.rosterImportFile) {
+            if (hasFile) {
                 const body = new FormData();
                 body.append('file', this.rosterImportFile);
                 options = { method: 'POST', body };
@@ -1969,9 +1987,21 @@ export class TimetablePlannerController {
             this.setRosterReviewState(result);
             this.setMessage('任课数据已解析，请复核后确认导入。');
         } catch (error) {
+            this.state.rosterImport = {
+                ...(this.state.rosterImport || createTimetablePlannerState().rosterImport),
+                loading: false,
+                phaseText: '解析失败，请检查文件或文本后重试。',
+                phaseTone: 'warning',
+            };
             this.handleError(error);
         } finally {
             this.state.loading = false;
+            if (this.state.rosterImport?.loading) {
+                this.state.rosterImport = {
+                    ...this.state.rosterImport,
+                    loading: false,
+                };
+            }
             this.render();
         }
     }
@@ -2831,4 +2861,5 @@ export class TimetablePlannerController {
     }
 }
 
+TimetablePlannerController.reviewContextBuilder = buildConstraintReviewContext;
 Object.assign(TimetablePlannerController.prototype, constraintChatControllerMethods);
