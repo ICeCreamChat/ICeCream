@@ -29,6 +29,7 @@ import {
     createTimetablePlannerState,
 } from './state.js';
 import { buildConstraintReviewContext, constraintChatControllerMethods } from './controller-chat-extension.js';
+import smartHelperMethods from './controller-smart-helper.js';
 import { renderWorkbench } from './view.js';
 
 export class TimetablePlannerController {
@@ -2863,3 +2864,4 @@ export class TimetablePlannerController {
 
 TimetablePlannerController.reviewContextBuilder = buildConstraintReviewContext;
 Object.assign(TimetablePlannerController.prototype, constraintChatControllerMethods);
+Object.assign(TimetablePlannerController.prototype, smartHelperMethods);
