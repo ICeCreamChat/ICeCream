@@ -1935,6 +1935,8 @@ export class TimetablePlannerController {
             return;
         }
         try {
+            this.state.loading = true;
+            this.render();
             const result = await requestTimetable('/roster/preview', {
                 method: 'POST',
                 body: JSON.stringify({ text }),
@@ -1942,11 +1944,17 @@ export class TimetablePlannerController {
             this.refreshRosterReviewFromRows([...this.readRosterReviewRows(), ...(result.draftRows || [])]);
         } catch (error) {
             this.handleError(error);
+        } finally {
+            this.state.loading = false;
+            this.render();
         }
     }
 
     async previewRosterImport() {
         try {
+            this.state.loading = true;
+            this.setMessage('解析任课数据中...');
+            this.render();
             const text = this.readRosterImportText();
             let options;
             if (this.state.rosterImport?.mode === 'file' && this.rosterImportFile) {
@@ -1961,6 +1969,9 @@ export class TimetablePlannerController {
             this.setMessage('任课数据已解析，请复核后确认导入。');
         } catch (error) {
             this.handleError(error);
+        } finally {
+            this.state.loading = false;
+            this.render();
         }
     }
 
@@ -1995,6 +2006,9 @@ export class TimetablePlannerController {
 
     async importRoster({ file = null, text = '', rows = null } = {}) {
         try {
+            this.state.loading = true;
+            this.setMessage('导入任课数据中...');
+            this.render();
             let options;
             if (Array.isArray(rows)) {
                 options = { method: 'POST', body: JSON.stringify({ rows }) };
@@ -2017,11 +2031,17 @@ export class TimetablePlannerController {
             this.setMessage(`已导入 ${result.import.count} 条任课信息。`);
         } catch (error) {
             this.handleError(error);
+        } finally {
+            this.state.loading = false;
+            this.render();
         }
     }
 
     async clearRoster() {
         try {
+            this.state.loading = true;
+            this.setMessage('清空任课数据中...');
+            this.render();
             const result = await requestTimetable('/roster/clear', { method: 'POST' });
             this.applyProject(result.project);
             this.state.viewMode = 'class';
@@ -2033,6 +2053,9 @@ export class TimetablePlannerController {
             this.setMessage('任课数据已清空。');
         } catch (error) {
             this.handleError(error);
+        } finally {
+            this.state.loading = false;
+            this.render();
         }
     }
 
