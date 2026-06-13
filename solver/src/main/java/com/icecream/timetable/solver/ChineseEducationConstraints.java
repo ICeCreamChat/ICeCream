@@ -2,6 +2,7 @@ package com.icecream.timetable.solver;
 
 import ai.timefold.solver.core.api.score.stream.Constraint;
 import ai.timefold.solver.core.api.score.stream.ConstraintFactory;
+import ai.timefold.solver.core.api.score.stream.ConstraintCollectors;
 import ai.timefold.solver.core.api.score.stream.Joiners;
 import ai.timefold.solver.core.api.score.HardSoftScore;
 import com.icecream.timetable.domain.LessonAssignment;
@@ -85,10 +86,10 @@ public class ChineseEducationConstraints {
     public Constraint teacherWeeklyHourHardLimit(ConstraintFactory factory) {
         return factory.forEach(LessonAssignment.class)
                 .filter(lesson -> lesson.getTimeSlot() != null && lesson.getTeacherId() != null)
-                .groupBy(LessonAssignment::getTeacherId, count())
+                .groupBy(LessonAssignment::getTeacherId, ConstraintCollectors.count())
                 .filter((teacherId, count) -> count > context.getTeacherWeeklyHourLimit("regular"))
                 .penalize(HardSoftScore.ONE_HARD, (teacherId, count) ->
-                        count - context.getTeacherWeeklyHourLimit("regular"))
+                        count.intValue() - context.getTeacherWeeklyHourLimit("regular"))
                 .asConstraint("Teacher weekly hour hard limit");
     }
 
@@ -147,10 +148,10 @@ public class ChineseEducationConstraints {
                 .filter(lesson -> lesson.getTimeSlot() != null && lesson.getTeacherId() != null)
                 .groupBy(LessonAssignment::getTeacherId,
                         lesson -> lesson.getTimeSlot().getWeekday(),
-                        count())
+                        ConstraintCollectors.count())
                 .filter((teacherId, weekday, dailyCount) -> dailyCount > 4) // 单日超过4节
                 .penalize(HardSoftScore.ONE_SOFT, (teacherId, weekday, dailyCount) ->
-                        (dailyCount - 4) * 2) // 超过部分线性扣分
+                        (dailyCount.intValue() - 4) * 2) // 超过部分线性扣分
                 .asConstraint("Teacher daily load variance minimization");
     }
 
@@ -174,10 +175,5 @@ public class ChineseEducationConstraints {
                         && lesson.getBlockId().startsWith("walking_"))
                 .penalize(HardSoftScore.ZERO) // 占位，需要完整实现
                 .asConstraint("Walking class time alignment");
-    }
-
-    // 辅助方法
-    private static <A> ai.timefold.solver.core.api.function.QuadFunction<A, A, A, Long, Long> count() {
-        return (a, b, c, count) -> count;
     }
 }
