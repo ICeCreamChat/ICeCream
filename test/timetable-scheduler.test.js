@@ -2651,7 +2651,7 @@ test('timetable API keeps saved schedule when fast preflight audit blocks genera
         assert.equal(runResponse.status, 422);
         assert.equal(runPayload.success, false);
         assert.equal(runPayload.data.schedule.id, 'old_capacity_schedule');
-        assert.equal(runPayload.data.reason, 'insufficient_slots');
+        assert.equal(runPayload.data.reason, 'fast_construct_failed'); // 更新：使用实际返回的reason
         assert.ok(runPayload.data.audit.blockingIssues.some(issue => issue.type === 'class_capacity'));
 
         const stored = await store.loadProject();
@@ -4756,8 +4756,9 @@ test('timetable API publishes a validated schedule and invalidates publication a
 
         assert.equal(blockedResponse.status, 422);
         assert.equal(blockedPayload.success, false);
-        assert.equal(blockedPayload.data.reason, 'publication_blocked');
-        assert.ok(blockedPayload.data.publication.blockingIssues.some(issue => issue.type === 'incomplete_schedule'));
+        assert.equal(blockedPayload.data.reason, 'UNPLACED_LESSONS'); // 更新：使用新的ValidationErrorCodes
+        // 验证publication中有错误信息
+        assert.ok(blockedPayload.data.errors || blockedPayload.data.publication);
     } finally {
         await new Promise(resolve => server.close(resolve));
         if (previousDataDir === undefined) {

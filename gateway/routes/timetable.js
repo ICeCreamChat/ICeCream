@@ -42,6 +42,7 @@ import {
     resolvePublishedRestoreEntry,
     verifyPublishedSnapshotFingerprint,
 } from '../services/timetable-publication.js';
+import { validationService, ValidationErrorCodes } from '../services/timetable-validation-service.js';
 
 const router = express.Router();
 const upload = multer({
@@ -351,11 +352,24 @@ router.get('/bootstrap', async (req, res) => {
 router.post('/project', async (req, res) => {
     try {
         const current = await store().loadProject();
+
+        // 版本冲突检查 - 防止并发修改
+        const versionCheck = validationService.checkVersionConflict(req.body, current);
+        if (versionCheck.hasConflict) {
+            return fail(res, versionCheck.error, 409, {
+                reason: ValidationErrorCodes.VERSION_CONFLICT,
+                currentProject: current,
+                incomingVersion: req.body.version,
+                currentVersion: current.version,
+            });
+        }
+
         let project = normalizeTimetableProject({
             ...current,
             ...req.body,
             rules: req.body.rules || current.rules,
             schedule: req.body.schedule === undefined ? current.schedule : req.body.schedule,
+            version: Date.now(), // 生成新版本号
         });
         if (
             !sameNumberList(current.activeWeekdays, project.activeWeekdays)
@@ -553,12 +567,16 @@ router.post('/schedule/run', async (req, res) => {
         const timetableStore = store();
         const current = await timetableStore.loadProject();
         const audit = auditTimetableProject(current);
-        const validation = validateTimetableProjectForSolve(current);
+
+        // 使用统一验证服务 - 替代旧的validateTimetableProjectForSolve
+        const validation = validationService.validateForSolve(current);
         if (!validation.ok) {
-            fail(res, new Error(validation.message), 422, {
+            fail(res, validation.errors[0], 422, {
                 project: current,
                 schedule: current.schedule,
                 reason: validation.reason,
+                errors: validation.errors,
+                warnings: validation.warnings,
                 audit,
                 solverStats: current.schedule?.solverStats || null,
             });
@@ -620,6 +638,34 @@ router.post('/schedule/publish', async (req, res) => {
     try {
         const timetableStore = store();
         const current = await timetableStore.loadProject();
+
+        // 使用统一验证服务进行发布前验证
+        const validation = validationService.validateForPublish(current);
+        if (!validation.ok) {
+            const project = normalizeTimetableProject({
+                ...current,
+                schedule: current.schedule ? {
+                    ...current.schedule,
+                    publication: {
+                        ok: false,
+                        reason: validation.reason,
+                        message: validation.message,
+                        errors: validation.errors,
+                    }
+                } : current.schedule,
+            });
+            await timetableStore.saveProject(project);
+            fail(res, validation.errors[0], 422, {
+                project,
+                schedule: project.schedule,
+                reason: validation.reason,
+                errors: validation.errors,
+                publication: project.schedule?.publication,
+            });
+            return;
+        }
+
+        // 原有的publication逻辑保持不变
         const publication = validateTimetablePublication(current);
         if (!publication.ok) {
             const project = normalizeTimetableProject({
