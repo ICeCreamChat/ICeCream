@@ -102,6 +102,14 @@ export function viewProblemDetails(problemId) {
 }
 
 /**
+ * 关闭问题详情
+ */
+export function closeProblemDetails() {
+    this.state.problemDetailDialog = null;
+    this.render();
+}
+
+/**
  * 应用单个修复
  */
 export async function applySingleFix(problemId) {
@@ -219,19 +227,40 @@ export async function applyAllFixes() {
 function applyFixToConstraints(constraints, fix) {
     const updated = [...constraints];
 
-    fix.fixes.forEach(f => {
+    (fix.fixes || []).forEach(f => {
         if (f.action === 'add_slots') {
             // 添加节次
             const constraint = updated.find(c => c.id === f.constraintId);
             if (constraint) {
-                constraint.slots = f.slots;
+                constraint.slots = [...new Set([...(constraint.slots || []), ...(f.slots || [])])];
+                constraint.status = constraint.status === 'invalid' ? 'needs_review' : (constraint.status || 'needs_review');
+                constraint.warnings = (constraint.warnings || []).filter(warning => !/缺少明确节次/.test(warning));
             }
-        } else if (f.action === 'reduce_hours') {
-            // 减少课时（需要修改项目数据，这里简化处理）
-            // 实际应该调用后端API
-        } else if (f.action === 'resolve_conflict') {
-            // 解决冲突
-            // 实际应该调用后端API重新分配时间
+        } else if (f.action === 'set_slots') {
+            const constraint = updated.find(c => c.id === f.constraintId);
+            if (constraint) {
+                constraint.slots = f.slots || [];
+                constraint.status = constraint.status === 'invalid' ? 'needs_review' : (constraint.status || 'needs_review');
+                constraint.warnings = (constraint.warnings || []).filter(warning => !/缺少明确节次/.test(warning));
+            }
+        } else if (f.action === 'replace_slot') {
+            const constraint = updated.find(c => c.id === f.constraintId);
+            if (constraint) {
+                const slots = (constraint.slots || []).map(slot => slot === f.from ? f.to : slot);
+                constraint.slots = [...new Set(slots)];
+                constraint.status = 'needs_review';
+                constraint.warnings = [...(constraint.warnings || []), `已自动把冲突节次 ${f.from} 改为 ${f.to}，请复核。`];
+            }
+        } else if (f.action === 'mark_needs_review') {
+            const constraint = updated.find(c => c.id === f.constraintId);
+            if (constraint) {
+                constraint.status = 'needs_review';
+                constraint.warnings = [...(constraint.warnings || []), f.warning || '请人工复核。'];
+            }
+        } else if (f.action === 'add_constraint' && f.constraint) {
+            if (!updated.some(row => row.id === f.constraint.id)) {
+                updated.push(f.constraint);
+            }
         }
     });
 
@@ -239,12 +268,24 @@ function applyFixToConstraints(constraints, fix) {
 }
 
 /**
- * 打开AI聊天助手
+ * 打开智能聊天助手
  */
-export function openAIChatFromHelper() {
-    // 切换到传统AI聊天界面
-    this.state.constraintScan = { ...this.state.constraintScan, showChat: true };
-    this.render();
+export async function openAIChatFromHelper(problemId = '') {
+    const problem = this.state.constraintScan?.problems?.find(item => item.id === problemId);
+    if (typeof this.startConstraintConversation !== 'function') {
+        this.setMessage('智能对话暂不可用。');
+        return;
+    }
+
+    await this.startConstraintConversation();
+
+    if (problem && this.state.constraintChat?.open) {
+        this.state.constraintChat = {
+            ...this.state.constraintChat,
+            inputText: buildProblemPrompt(problem),
+        };
+        this.render();
+    }
 }
 
 /**
@@ -609,6 +650,7 @@ export default {
     openSmartConstraintHelper,
     simulateScanProgress,
     viewProblemDetails,
+    closeProblemDetails,
     applySingleFix,
     confirmApplyFix,
     applyAllFixes,
@@ -626,3 +668,12 @@ export default {
     validateAgainstProject,
     showValidationFeedback,
 };
+
+function buildProblemPrompt(problem = {}) {
+    return [
+        `请帮我处理这个复核问题：${problem.title || problem.id || '未命名问题'}`,
+        problem.description ? `问题描述：${problem.description}` : '',
+        problem.fixSuggestion ? `建议方向：${problem.fixSuggestion}` : '',
+        '请用当前项目里的教师、班级、课程和节次，给出可写入复核表的修改建议。',
+    ].filter(Boolean).join('\n');
+}

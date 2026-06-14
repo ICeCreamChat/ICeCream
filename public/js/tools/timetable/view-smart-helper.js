@@ -11,12 +11,16 @@ export function renderSmartConstraintHelper(state) {
     const scanning = scan.scanning;
     const problems = scan.problems || [];
     const stats = scan.stats || {};
+    const detail = state.problemDetailDialog?.open ? state.problemDetailDialog.problem : null;
+    const expandedGroups = scan.expandedGroups instanceof Set ? scan.expandedGroups : new Set(scan.expandedGroups || []);
 
     return `
         <div class="tt-smart-helper" data-smart-helper>
             ${scanning ? renderScanningProgress(scan) : ''}
-            ${!scanning && problems.length > 0 ? renderProblemCards(problems, stats) : ''}
+            ${!scanning && scan.error ? renderScanError(scan) : ''}
+            ${!scanning && !scan.error && problems.length > 0 ? renderProblemCards(problems, stats, expandedGroups, scan) : ''}
             ${!scanning && problems.length === 0 && scan.completed ? renderAllClear() : ''}
+            ${detail ? renderProblemDetail(detail) : ''}
         </div>
     `;
 }
@@ -61,10 +65,24 @@ function renderAllClear() {
     `;
 }
 
+function renderScanError(scan = {}) {
+    return `
+        <div class="tt-scan-error" role="alert">
+            <i data-lucide="triangle-alert"></i>
+            <strong>智能扫描失败</strong>
+            <span>${escapeHtml(scan.error || '请稍后重试。')}</span>
+            <button class="tt-btn tt-btn--secondary" type="button" data-action="rescan-smart-helper">
+                <i data-lucide="rotate-ccw"></i>
+                <span>重新扫描</span>
+            </button>
+        </div>
+    `;
+}
+
 /**
  * 渲染问题卡片
  */
-function renderProblemCards(problems, stats) {
+function renderProblemCards(problems, stats, expandedGroups = new Set(), scan = {}) {
     const urgentProblems = problems.filter(p => p.severity === 'urgent');
     const optimizeProblems = problems.filter(p => p.severity === 'optimize');
     const infoProblems = problems.filter(p => p.severity === 'info');
@@ -93,21 +111,21 @@ function renderProblemCards(problems, stats) {
         </div>
 
         <div class="tt-problem-cards">
-            ${urgentProblems.length > 0 ? renderProblemGroup('urgent', '🔴 紧急问题', urgentProblems) : ''}
-            ${optimizeProblems.length > 0 ? renderProblemGroup('optimize', '🟡 可优化', optimizeProblems) : ''}
-            ${infoProblems.length > 0 ? renderProblemGroup('info', '🔵 信息提示', infoProblems) : ''}
+            ${urgentProblems.length > 0 ? renderProblemGroup('urgent', '紧急问题', urgentProblems, expandedGroups) : ''}
+            ${optimizeProblems.length > 0 ? renderProblemGroup('optimize', '可优化', optimizeProblems, expandedGroups) : ''}
+            ${infoProblems.length > 0 ? renderProblemGroup('info', '信息提示', infoProblems, expandedGroups) : ''}
         </div>
 
         <div class="tt-helper-actions">
             ${stats.autoFixable > 0 ? `
-                <button class="tt-btn tt-btn--primary tt-btn--large" data-action="apply-all-fixes">
-                    <i data-lucide="wand-sparkles"></i>
-                    <span>一键修复全部（${stats.autoFixable}个）</span>
+                <button class="tt-btn tt-btn--primary tt-btn--large" data-action="apply-all-fixes" ${scan.applyingAll ? 'disabled' : ''}>
+                    <i data-lucide="${scan.applyingAll ? 'loader-2' : 'wand-sparkles'}" class="${scan.applyingAll ? 'tt-spin' : ''}"></i>
+                    <span>${scan.applyingAll ? '生成修复中' : `一键修复全部（${stats.autoFixable}个）`}</span>
                 </button>
             ` : ''}
             <button class="tt-btn tt-btn--secondary" data-action="open-ai-chat">
                 <i data-lucide="message-circle"></i>
-                <span>💬 不确定？问问AI助手</span>
+                <span>不确定？问问智能助手</span>
             </button>
         </div>
     `;
@@ -116,19 +134,20 @@ function renderProblemCards(problems, stats) {
 /**
  * 渲染问题组
  */
-function renderProblemGroup(severity, title, problems) {
-    const collapsed = problems.length > 3;
+function renderProblemGroup(severity, title, problems, expandedGroups = new Set()) {
+    const collapsed = problems.length > 3 && !expandedGroups.has(severity);
 
     return `
         <div class="tt-problem-group tt-problem-group--${severity}">
             <div class="tt-problem-group-header">
                 <h4>${escapeHtml(title)} (${problems.length})</h4>
-                ${collapsed ? `<button class="tt-expand-btn" data-action="toggle-group" data-group="${severity}">
-                    <i data-lucide="chevron-down"></i>
+                ${problems.length > 3 ? `<button class="tt-expand-btn" data-action="toggle-group" data-group="${severity}" aria-expanded="${collapsed ? 'false' : 'true'}">
+                    <i data-lucide="${collapsed ? 'chevron-down' : 'chevron-up'}"></i>
                 </button>` : ''}
             </div>
             <div class="tt-problem-list ${collapsed ? 'tt-collapsed' : ''}">
-                ${problems.map(problem => renderProblemCard(problem)).join('')}
+                ${(collapsed ? problems.slice(0, 3) : problems).map(problem => renderProblemCard(problem)).join('')}
+                ${collapsed ? `<div class="tt-problem-more">还有 ${problems.length - 3} 个问题，展开后查看。</div>` : ''}
             </div>
         </div>
     `;
@@ -227,7 +246,7 @@ function renderProblemCard(problem) {
                         data-action="discuss-with-ai"
                         data-problem-id="${problem.id}">
                         <i data-lucide="message-circle"></i>
-                        <span>问AI</span>
+                        <span>问智能</span>
                     </button>
                 `}
             </div>
@@ -235,19 +254,79 @@ function renderProblemCard(problem) {
     `;
 }
 
+function renderProblemDetail(problem = {}) {
+    const items = [
+        ['类型', problem.type || '未分类'],
+        ['级别', problem.severity || '提示'],
+        ['数量', problem.count ?? 1],
+        ['修复建议', problem.fixSuggestion || '暂无自动建议'],
+    ];
+    const related = [
+        ...(problem.constraints || []),
+        ...(problem.conflicts || []),
+        ...(problem.teachers || []),
+        ...(problem.subjects || []),
+    ];
+    return `
+        <div class="tt-smart-detail-backdrop" data-smart-detail-backdrop>
+            <section class="tt-smart-detail" role="dialog" aria-modal="true" aria-labelledby="tt-smart-detail-title">
+                <header class="tt-smart-detail-header">
+                    <div>
+                        <span>问题详情</span>
+                        <h3 id="tt-smart-detail-title">${escapeHtml(problem.title || '待处理问题')}</h3>
+                    </div>
+                    <button class="tt-icon-btn" type="button" data-action="close-problem-detail" aria-label="关闭问题详情">
+                        <i data-lucide="x"></i>
+                    </button>
+                </header>
+                <p class="tt-smart-detail-desc">${escapeHtml(problem.description || '暂无详细说明。')}</p>
+                <dl class="tt-smart-detail-list">
+                    ${items.map(([label, value]) => `
+                        <div>
+                            <dt>${escapeHtml(label)}</dt>
+                            <dd>${escapeHtml(value)}</dd>
+                        </div>
+                    `).join('')}
+                </dl>
+                ${related.length ? `
+                    <div class="tt-smart-detail-related">
+                        <strong>关联内容</strong>
+                        ${related.slice(0, 8).map(item => `
+                            <span>${escapeHtml(item.description || item.rawText || item.name || item.slot || item.id || '关联项')}</span>
+                        `).join('')}
+                    </div>
+                ` : ''}
+                <footer class="tt-smart-detail-actions">
+                    <button class="tt-btn tt-btn--secondary" type="button" data-action="discuss-with-ai" data-problem-id="${escapeAttr(problem.id || '')}">
+                        <i data-lucide="message-circle"></i>
+                        <span>问智能</span>
+                    </button>
+                    ${problem.autoFixable ? `
+                        <button class="tt-btn tt-btn--primary" type="button" data-action="apply-fix" data-problem-id="${escapeAttr(problem.id || '')}">
+                            <i data-lucide="wand-sparkles"></i>
+                            <span>生成修复预览</span>
+                        </button>
+                    ` : ''}
+                </footer>
+            </section>
+        </div>
+    `;
+}
+
 /**
  * 渲染修复预览
  */
-export function renderFixPreview(fix, problem) {
+export function renderFixPreview(fix, problem, previewState = {}) {
+    const applying = Boolean(previewState.applying);
     return `
-        <div class="tt-fix-preview-modal">
-            <div class="tt-fix-preview-content">
+        <div class="tt-fix-preview-modal" role="presentation">
+            <div class="tt-fix-preview-content" role="dialog" aria-modal="true" aria-labelledby="tt-fix-preview-title">
                 <div class="tt-fix-preview-header">
-                    <h3>
+                    <h3 id="tt-fix-preview-title">
                         <i data-lucide="wrench"></i>
                         修复预览：${escapeHtml(problem.title)}
                     </h3>
-                    <button class="tt-icon-btn" data-action="close-preview">
+                    <button class="tt-icon-btn" data-action="close-preview" ${applying ? 'disabled' : ''}>
                         <i data-lucide="x"></i>
                     </button>
                 </div>
@@ -282,13 +361,13 @@ export function renderFixPreview(fix, problem) {
                 </div>
 
                 <div class="tt-fix-preview-actions">
-                    <button class="tt-btn tt-btn--ghost" data-action="close-preview">
+                    <button class="tt-btn tt-btn--ghost" data-action="close-preview" ${applying ? 'disabled' : ''}>
                         <i data-lucide="x"></i>
                         <span>取消</span>
                     </button>
-                    <button class="tt-btn tt-btn--primary" data-action="confirm-fix" data-problem-id="${problem.id}">
-                        <i data-lucide="check"></i>
-                        <span>应用此修复</span>
+                    <button class="tt-btn tt-btn--primary" data-action="confirm-fix" data-problem-id="${problem.id}" ${applying ? 'disabled' : ''}>
+                        <i data-lucide="${applying ? 'loader-2' : 'check'}" class="${applying ? 'tt-spin' : ''}"></i>
+                        <span>${applying ? '应用中' : '应用此修复'}</span>
                     </button>
                 </div>
             </div>
@@ -300,7 +379,15 @@ export function renderFixPreview(fix, problem) {
  * 辅助函数
  */
 function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    return String(str ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    })[char]);
+}
+
+function escapeAttr(str) {
+    return escapeHtml(str);
 }

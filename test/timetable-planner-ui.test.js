@@ -4723,6 +4723,229 @@ test('timetable rule review explains warning groups and draft row sources separa
   assert.match(styles, /\.tt-rule-row-source\s*{/);
 });
 
+test('timetable smart helper renders problem details and uses smart wording', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'file',
+      draftRows: [{
+        id: 'row-1',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetId: 't_math',
+        targetName: 'Math Teacher',
+        slots: [],
+        status: 'needs_review',
+        warnings: ['缺少明确节次，请补充后再生效。'],
+      }],
+      warnings: [],
+    },
+    constraintScan: {
+      completed: true,
+      scanning: false,
+      stats: { total: 1, autoFixable: 1, completeness: 95, scanDuration: 12, checksPerformed: 5, complianceScore: 95 },
+      problems: [{
+        id: 'missing_slots',
+        type: 'HARD',
+        severity: 'urgent',
+        title: '有 1 条约束还没安排具体时间',
+        description: '缺少明确节次',
+        count: 1,
+        autoFixable: true,
+        fixSuggestion: '可自动补齐 1 条已能识别的时段',
+        constraints: [{ id: 'row-1', rawText: 'Math Teacher 周三下午不排课' }],
+      }],
+    },
+    problemDetailDialog: {
+      open: true,
+      problem: {
+        id: 'missing_slots',
+        type: 'HARD',
+        severity: 'urgent',
+        title: '有 1 条约束还没安排具体时间',
+        description: '缺少明确节次',
+        count: 1,
+        autoFixable: true,
+        fixSuggestion: '可自动补齐 1 条已能识别的时段',
+        constraints: [{ id: 'row-1', rawText: 'Math Teacher 周三下午不排课' }],
+      },
+    },
+  }));
+
+  assert.match(html, /data-smart-detail-backdrop/);
+  assert.match(html, /id="tt-smart-detail-title"/);
+  assert.match(html, /data-action="close-problem-detail"/);
+  assert.match(html, /问智能/);
+  assert.doesNotMatch(html, /问AI/);
+  assert.match(html, /扫描耗时/);
+  assert.match(html, /行业合规度/);
+});
+
+test('timetable smart helper applies generated fixes to review draft rows', () => {
+  const controller = new TimetablePlannerController();
+  const rows = [{
+    id: 'row-1',
+    type: 'teacher_unavailable',
+    targetType: 'teacher',
+    targetId: 't_math',
+    targetName: 'Math Teacher',
+    slots: [],
+    status: 'invalid',
+    warnings: ['缺少明确节次，请补充后再生效。'],
+  }, {
+    id: 'row-2',
+    type: 'teacher_unavailable',
+    targetType: 'teacher',
+    targetId: 't_math',
+    targetName: 'Math Teacher',
+    slots: ['1-1'],
+    status: 'effective',
+    warnings: [],
+  }];
+
+  const updated = controller.applyFixToConstraints(rows, {
+    fixes: [{
+      action: 'set_slots',
+      constraintId: 'row-1',
+      slots: ['3-5', '3-6', '3-7'],
+    }, {
+      action: 'replace_slot',
+      constraintId: 'row-2',
+      from: '1-1',
+      to: '1-2',
+    }, {
+      action: 'add_constraint',
+      constraint: {
+        id: 'auto_teacher_daily_limit_t_math',
+        type: 'teacher_daily_limit',
+        targetType: 'teacher',
+        targetId: 't_math',
+        targetName: 'Math Teacher',
+        value: 5,
+        priority: 'soft',
+        status: 'effective',
+      },
+    }],
+  });
+
+  assert.deepEqual(updated[0].slots, ['3-5', '3-6', '3-7']);
+  assert.equal(updated[0].status, 'needs_review');
+  assert.equal(updated[0].warnings.length, 0);
+  assert.deepEqual(updated[1].slots, ['1-2']);
+  assert.equal(updated[1].status, 'needs_review');
+  assert.ok(updated.some(row => row.id === 'auto_teacher_daily_limit_t_math'));
+});
+
+test('timetable smart helper asks through the existing constraint chat with problem context', async () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.setMessage = message => {
+    controller.state.message = message;
+  };
+  controller.state.ruleReview = {
+    open: true,
+    step: 'review',
+    draftRows: [{ id: 'row-1', type: 'teacher_unavailable', status: 'needs_review' }],
+  };
+  controller.state.constraintScan = {
+    problems: [{
+      id: 'missing_slots',
+      title: '缺少节次',
+      description: '王老师没说明第几节',
+      fixSuggestion: '补充具体节次',
+    }],
+  };
+  controller.startConstraintConversation = async () => {
+    controller.state.constraintChat = { open: true, inputText: '', messages: [] };
+  };
+
+  await controller.openAIChatFromHelper('missing_slots');
+
+  assert.equal(controller.state.constraintChat.open, true);
+  assert.match(controller.state.constraintChat.inputText, /缺少节次/);
+  assert.match(controller.state.constraintChat.inputText, /王老师没说明第几节/);
+});
+
+test('timetable smart helper interactions include detail close and problem-aware chat', async () => {
+  const interactionSource = await readFile(new URL('../public/js/tools/timetable/grid-interactions.js', import.meta.url), 'utf8');
+
+  assert.match(interactionSource, /data-smart-detail-backdrop/);
+  assert.match(interactionSource, /closeProblemDetails/);
+  assert.match(interactionSource, /openAIChatFromHelper\(event\.target\.closest\('\[data-problem-id\]'\)/);
+});
+
+test('timetable smart helper renders error, loading and real collapsed groups', () => {
+  const baseReview = {
+    open: true,
+    step: 'review',
+    mode: 'file',
+    draftRows: [{ id: 'row-1', type: 'teacher_unavailable', status: 'needs_review' }],
+    warnings: [],
+  };
+  const problem = index => ({
+    id: `urgent-${index}`,
+    type: 'HARD',
+    severity: 'urgent',
+    title: `紧急问题 ${index}`,
+    description: `问题 ${index}`,
+    count: 1,
+    autoFixable: true,
+    fixSuggestion: '生成修复预览',
+  });
+
+  const errorHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: baseReview,
+    constraintScan: {
+      scanning: false,
+      error: '扫描服务暂不可用',
+      problems: [],
+      stats: {},
+    },
+  }));
+  assert.match(errorHtml, /智能扫描失败/);
+  assert.match(errorHtml, /data-action="rescan-smart-helper"/);
+
+  const collapsedHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: baseReview,
+    constraintScan: {
+      scanning: false,
+      applyingAll: true,
+      expandedGroups: new Set(),
+      stats: { total: 4, autoFixable: 4, completeness: 80, scanDuration: 3, checksPerformed: 5, complianceScore: 80 },
+      problems: [problem(1), problem(2), problem(3), problem(4)],
+    },
+  }));
+  assert.match(collapsedHtml, /aria-expanded="false"/);
+  assert.match(collapsedHtml, /还有 1 个问题/);
+  assert.match(collapsedHtml, /生成修复中/);
+  assert.match(collapsedHtml, /data-action="apply-all-fixes" disabled/);
+  assert.doesNotMatch(collapsedHtml, /紧急问题 4<\/h5>/);
+
+  const expandedHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: baseReview,
+    constraintScan: {
+      scanning: false,
+      expandedGroups: new Set(['urgent']),
+      stats: { total: 4, autoFixable: 4, completeness: 80, scanDuration: 3, checksPerformed: 5, complianceScore: 80 },
+      problems: [problem(1), problem(2), problem(3), problem(4)],
+    },
+    fixPreview: {
+      open: true,
+      applying: true,
+      problem: problem(1),
+      fix: {
+        preview: { before: '修复前', after: '修复后' },
+        fixes: [{ reason: '测试修复' }],
+      },
+    },
+  }));
+  assert.match(expandedHtml, /aria-expanded="true"/);
+  assert.match(expandedHtml, /紧急问题 4/);
+  assert.match(expandedHtml, /应用中/);
+  assert.match(expandedHtml, /data-action="confirm-fix"[^>]*disabled/);
+});
+
 test('timetable rule review groups smart parse results by readiness and questions', async () => {
   const styles = await readFile(stylePath, 'utf8');
   const html = renderWorkbench(sampleWorkbenchState({

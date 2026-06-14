@@ -1108,7 +1108,7 @@ function renderRuleReviewDialog(state) {
 
     // 智能助手UI
     const smartHelperUI = state.constraintScan ? renderSmartConstraintHelper(state) : '';
-    const fixPreviewUI = state.fixPreview ? renderFixPreview(state.fixPreview.fix, state.fixPreview.problem) : '';
+    const fixPreviewUI = state.fixPreview ? renderFixPreview(state.fixPreview.fix, state.fixPreview.problem, state.fixPreview) : '';
 
     return `
         <div class="tt-dialog-overlay" data-rule-review-close>

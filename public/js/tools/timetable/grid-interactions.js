@@ -12,6 +12,10 @@ function bindDelegatedInteractions(container) {
         const controller = container.__ttController;
         const state = container.__ttState;
         if (!controller || !state) return;
+        if (event.target.matches('[data-smart-detail-backdrop]')) {
+            controller.closeProblemDetails();
+            return;
+        }
         if (event.target.matches('[data-constraint-chat-overlay]')) {
             controller.closeConstraintChat();
             return;
@@ -27,13 +31,17 @@ function bindDelegatedInteractions(container) {
         } else if (action === 'view-problem-details') {
             const problemId = event.target.closest('[data-problem-id]')?.dataset.problemId;
             controller.viewProblemDetails(problemId);
+        } else if (action === 'close-problem-detail') {
+            controller.closeProblemDetails();
         } else if (action === 'confirm-fix') {
             const problemId = event.target.closest('[data-problem-id]')?.dataset.problemId;
             controller.confirmApplyFix(problemId);
         } else if (action === 'close-smart-helper') {
             controller.closeSmartHelper();
+        } else if (action === 'rescan-smart-helper') {
+            controller.rescanConstraints();
         } else if (action === 'open-ai-chat') {
-            controller.openAIChatFromHelper();
+            controller.openAIChatFromHelper(event.target.closest('[data-problem-id]')?.dataset.problemId || '');
         } else if (action === 'toggle-group') {
             const groupId = event.target.closest('[data-group]')?.dataset.group;
             controller.toggleProblemGroup(groupId);
@@ -41,7 +49,7 @@ function bindDelegatedInteractions(container) {
             controller.state.fixPreview = null;
             controller.render();
         } else if (action === 'discuss-with-ai') {
-            controller.openAIChatFromHelper();
+            controller.openAIChatFromHelper(event.target.closest('[data-problem-id]')?.dataset.problemId || '');
         }
         // 原有actions
         else if (action === 'submit-rule-clarification') {

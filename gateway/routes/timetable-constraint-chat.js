@@ -135,6 +135,7 @@ router.post('/constraints/chat/:conversationId/finalize', (req, res) => {
 router.post('/constraints/scan', async (req, res) => {
     try {
         const { constraints = [], project = {} } = req.body || {};
+        if (!Array.isArray(constraints)) throw badRequest('constraints 必须是数组。');
         const result = await autoScanConstraints(constraints, project);
         res.json({
             success: true,
