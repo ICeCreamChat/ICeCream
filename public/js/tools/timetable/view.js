@@ -1007,11 +1007,11 @@ function renderRulesSection(state) {
     const savedCount = savedItems.length;
     const draftCount = draftRows.length;
     const warningCount = (review.warnings || state.ruleWarnings || []).length + (review.unsupportedItems || []).length;
-    const cardTitle = draftCount ? '继续复核智能约束' : savedCount ? '查看智能约束' : '导入智能约束';
+    const cardTitle = draftCount ? '继续处理约束草稿' : savedCount ? '查看已生效约束' : '导入智能约束';
     const cardDescription = draftCount
         ? `${draftCount} 条草稿${warningCount ? ` / ${warningCount} 条警告` : ''}，进入复核表后确认生效。`
         : savedCount
-            ? `已保存 ${savedCount} 条规则，可查看、删除或重新解析。`
+            ? `已生效 ${savedCount} 条约束，可查看、删除或继续新增。`
             : '上传 TXT/XLSX 或粘贴自然语言，复核后生效。';
 
     return `
@@ -1048,9 +1048,9 @@ function renderRuleReviewStatus({ savedCount = 0, draftCount = 0, warningCount =
             : '等待解析';
     return `
         <div class="tt-rule-summary">
-            <span><b>已保存</b>${escapeHtml(savedCount)} 条</span>
-            <span><b>待复核</b>${escapeHtml(draftCount)} 条</span>
-            <span class="${warningCount ? 'is-warning' : ''}"><b>警告</b>${escapeHtml(warningCount)} 条</span>
+            <span><b>已生效</b>${escapeHtml(savedCount)} 条</span>
+            <span><b>待处理</b>${escapeHtml(draftCount)} 条</span>
+            <span class="${warningCount ? 'is-warning' : ''}"><b>需注意</b>${escapeHtml(warningCount)} 条</span>
             <em>${escapeHtml(status)}</em>
         </div>
     `;
@@ -1067,9 +1067,9 @@ function renderRuleReviewBeginnerGuide(dialog = {}, { isReview = false, isSaved 
     const problemCount = questions.length + missing.length + conflicts.length;
     const cards = isReview
         ? [
-            ['1', '先处理红黄项', problemCount ? `${problemCount} 条会影响生效` : '暂无阻塞问题', 'triangle-alert', problemCount ? 'warning' : ''],
-            ['2', '不确定就点 AI', '让 AI 围绕当前复核表解释、补节次或过滤错误节次', 'message-circle', 'primary'],
-            ['3', '再确认生效', `${rows.length} 条草稿，${review.length} 条需人工确认，${unsupported.length} 条仅作建议`, 'check-circle', ''],
+            ['1', '先看要处理的项', problemCount ? `${problemCount} 条会影响生效` : '暂无阻塞问题', 'triangle-alert', problemCount ? 'warning' : ''],
+            ['2', '不确定就问智能', '智能助手会围绕当前复核表解释、补节次或过滤错误节次', 'message-circle', 'primary'],
+            ['3', '确认后才生效', `${rows.length} 条草稿，${review.length} 条需你确认，${unsupported.length} 条仅作建议`, 'check-circle', ''],
         ]
         : [
             ['1', '选择来源', '自然语言、上传文件、手动批量都可以', 'mouse-pointer-click', ''],
@@ -1081,8 +1081,8 @@ function renderRuleReviewBeginnerGuide(dialog = {}, { isReview = false, isSaved 
             <div class="tt-rule-beginner-head">
                 <i data-lucide="route"></i>
                 <div>
-                    <strong>${isReview ? '按这个顺序复核就行' : '第一次用智能约束，按三步走'}</strong>
-                    <span>${isReview ? '不用一次看完整张表，先处理会影响生效的问题。' : 'AI 只是先帮你拆成草稿，最终是否生效由你确认。'}</span>
+                    <strong>${isReview ? '按提示处理约束' : '第一次用智能约束，按三步走'}</strong>
+                    <span>${isReview ? '不用一次看完整张表，先处理会影响生效的问题。' : '智能助手只是先帮你拆成草稿，最终是否生效由你确认。'}</span>
                 </div>
                 ${dialog.nextAction ? `<em>${escapeHtml(ruleNextActionLabel(dialog.nextAction))}</em>` : ''}
             </div>
@@ -1096,6 +1096,38 @@ function renderRuleReviewBeginnerGuide(dialog = {}, { isReview = false, isSaved 
                 `).join('')}
             </div>
         </section>
+    `;
+}
+
+function ruleReviewWizardStep(dialog = {}, { isReview = false, isSaved = false } = {}) {
+    if (isSaved || dialog.step === 'saved') return 'saved';
+    if (dialog.loading || dialog.uiStep === 'understanding') return 'understanding';
+    if (isReview || (dialog.draftRows || []).length) return 'issues';
+    return 'input';
+}
+
+function renderRuleWizard(dialog = {}, options = {}) {
+    const active = ruleReviewWizardStep(dialog, options);
+    const steps = [
+        ['input', '1', '添加约束', '上传、粘贴或手动新增'],
+        ['understanding', '2', '智能理解', '先生成草稿，不会直接生效'],
+        ['issues', '3', '处理问题', '按提示确认、补充或忽略'],
+        ['saved', '4', '确认生效', '写入项目后可查看删除'],
+    ];
+    const activeIndex = Math.max(0, steps.findIndex(([key]) => key === active));
+    return `
+        <nav class="tt-rule-wizard" aria-label="智能约束处理步骤">
+            ${steps.map(([key, number, title, text], index) => {
+                const stateClass = index < activeIndex ? 'is-done' : index === activeIndex ? 'is-active' : '';
+                return `
+                    <span class="tt-rule-wizard-step ${stateClass}" data-rule-wizard-step="${escapeAttr(key)}">
+                        <b>${escapeHtml(number)}</b>
+                        <em>${escapeHtml(title)}</em>
+                        <small>${escapeHtml(text)}</small>
+                    </span>
+                `;
+            }).join('')}
+        </nav>
     `;
 }
 
@@ -1116,18 +1148,19 @@ function renderRuleReviewDialog(state) {
                 <div class="tt-dialog-header">
                     <div>
                         <span class="tt-eyebrow">智能约束</span>
-                        <h3 id="tt-rule-review-title">${isSaved ? '已生效规则' : isReview ? '智能约束复核' : '约束复核中心'}</h3>
-                        <p>${isSaved ? '这些规则已经写入项目，并会参与下一次排课。' : isReview ? '先看新手流程和红黄提示；不确定的内容可以交给 AI 围绕当前复核表解释或修改。' : '先选择一种来源并解析成草稿，解析不会直接生效，确认后才会写入项目。'}</p>
+                        <h3 id="tt-rule-review-title">${isSaved ? '已生效约束' : isReview ? '处理智能约束' : '导入智能约束'}</h3>
+                        <p>${isSaved ? '这些约束已经写入项目，并会参与下一次排课。' : isReview ? '按提示逐项处理；不确定的内容可以交给智能助手解释或修改。' : '先选择一种来源并解析成草稿，解析不会直接生效，确认后才会写入项目。'}</p>
                     </div>
                     <button class="tt-icon-btn" id="tt-rule-review-cancel" type="button" title="关闭约束复核" aria-label="关闭约束复核"><i data-lucide="x"></i></button>
                 </div>
                 ${renderRuleReviewProcess(dialog)}
+                ${renderRuleWizard(dialog, { isReview, isSaved })}
 
                 ${isReview && !smartHelperUI ? `
                     <div class="tt-smart-helper-cta">
-                        <button class="tt-btn tt-btn--primary tt-btn--large" id="tt-open-smart-helper" type="button" style="width: 100%; margin: 16px 0;">
+                        <button class="tt-btn tt-btn--primary tt-btn--large" id="tt-open-smart-helper" type="button">
                             <i data-lucide="sparkles"></i>
-                            <span>🔍 智能助手扫描 - 自动检测问题</span>
+                            <span>智能检查这些约束</span>
                         </button>
                     </div>
                 ` : ''}
@@ -1444,14 +1477,18 @@ function renderRuleReviewInput(state, dialog, mode) {
     const parseText = isBusy ? '智能解析中' : '智能解析';
     const manualText = isBusy ? '生成中' : '生成复核行';
     return `
+        <section class="tt-rule-input-intro">
+            <strong>选择一种方式添加约束</strong>
+            <span>这里只会生成可复核的草稿，不会直接改变排课规则。</span>
+        </section>
         <div class="tt-segment tt-import-mode-tabs" role="group" aria-label="约束来源">
-            <button class="${mode === 'text' ? 'is-active' : ''}" type="button" data-rule-review-mode="text" ${disabled}>自然语言</button>
             <button class="${mode === 'file' ? 'is-active' : ''}" type="button" data-rule-review-mode="file" ${disabled}>上传文件</button>
-            <button class="${mode === 'manual' ? 'is-active' : ''}" type="button" data-rule-review-mode="manual" ${disabled}>手动批量</button>
+            <button class="${mode === 'text' ? 'is-active' : ''}" type="button" data-rule-review-mode="text" ${disabled}>粘贴文本</button>
+            <button class="${mode === 'manual' ? 'is-active' : ''}" type="button" data-rule-review-mode="manual" ${disabled}>手动新增</button>
         </div>
         <div class="tt-rule-block ${mode === 'text' ? 'is-active' : ''}">
-            <span class="tt-rule-title">自然语言描述</span>
-            <textarea id="tt-rule-review-text" class="tt-import-text tt-rule-prompt" spellcheck="false" placeholder="例如：王老师周三下午不要排课，语数英尽量上午，七年级1班周五第7节不要排" ${disabled}>${escapeHtml(dialog.text || '')}</textarea>
+            <span class="tt-rule-title">粘贴老师写的要求</span>
+            <textarea id="tt-rule-review-text" class="tt-import-text tt-rule-prompt" spellcheck="false" placeholder="例如：王老师周三下午不要排课；语文、数学、英语尽量上午；七年级1班周五第7节不要排。" ${disabled}>${escapeHtml(dialog.text || '')}</textarea>
             <div class="tt-rule-examples" aria-label="示例约束">
                 <span class="tt-muted">点此填入示例：</span>
                 ${[
@@ -1465,12 +1502,12 @@ function renderRuleReviewInput(state, dialog, mode) {
         <label class="tt-import-dropzone ${mode === 'file' ? 'is-active' : ''}">
             <i data-lucide="upload-cloud"></i>
             <strong>${escapeHtml(fileName)}</strong>
-            <span>.txt / .csv / .xlsx / .xls</span>
+            <span>支持 .txt / .csv / .xlsx / .xls。上传后会先进入复核，不会直接生效。</span>
             <input id="tt-rule-review-file" type="file" accept=".txt,.csv,.xlsx,.xls" ${disabled}>
             ${dialog.fileName ? '<span class="tt-field-hint">已选择文件，点击「智能解析」开始识别</span>' : ''}
         </label>
         <div class="tt-rule-block ${mode === 'manual' ? 'is-active' : ''}">
-            <span class="tt-rule-title">手动批量新增</span>
+            <span class="tt-rule-title">手动新增一批规则</span>
             ${renderManualRuleBuilder(state, isBusy)}
         </div>
         <div class="tt-dialog-actions">
@@ -1554,6 +1591,7 @@ function renderRuleReviewTable(dialog, project = {}) {
     const stats = dialog.contextStats || null;
     const isBusy = Boolean(dialog.loading);
     const disabled = isBusy ? 'disabled' : '';
+    const advancedOpen = Boolean(dialog.advancedOpen);
     return `
         ${stats ? `
             <div class="tt-rule-preview-meta">
@@ -1574,35 +1612,41 @@ function renderRuleReviewTable(dialog, project = {}) {
         ${renderUnsupportedRuleItems(dialog)}
         ${renderRuleDiagnosis(dialog)}
         ${renderRuleReviewReport(warnings)}
-        <div class="tt-roster-review-wrap">
-            <table class="tt-rule-review-table" id="tt-rule-review-table">
-                <colgroup class="tt-rule-review-cols">
-                    <col class="tt-rule-review-col-raw">
-                    <col class="tt-rule-review-col-type">
-                    <col class="tt-rule-review-col-target">
-                    <col class="tt-rule-review-col-slots">
-                    <col class="tt-rule-review-col-priority">
-                    <col class="tt-rule-review-col-status">
-                    <col class="tt-rule-review-col-description">
-                    <col class="tt-rule-review-col-action">
-                </colgroup>
-                <thead>
-                    <tr>
-                        <th>原始内容</th>
-                        <th>类型</th>
-                        <th>对象</th>
-                        <th>节次</th>
-                        <th>强弱</th>
-                        <th>状态</th>
-                        <th>说明</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${rows.map(row => renderRuleReviewRow(row, project, isBusy)).join('')}
-                </tbody>
-            </table>
-        </div>
+        <details class="tt-rule-advanced-editor" ${advancedOpen ? 'open' : ''}>
+            <summary>
+                <span><i data-lucide="sliders-horizontal"></i><strong>高级编辑</strong></span>
+                <em>需要精确改类型、对象或节次时再展开</em>
+            </summary>
+            <div class="tt-roster-review-wrap">
+                <table class="tt-rule-review-table" id="tt-rule-review-table">
+                    <colgroup class="tt-rule-review-cols">
+                        <col class="tt-rule-review-col-raw">
+                        <col class="tt-rule-review-col-type">
+                        <col class="tt-rule-review-col-target">
+                        <col class="tt-rule-review-col-slots">
+                        <col class="tt-rule-review-col-priority">
+                        <col class="tt-rule-review-col-status">
+                        <col class="tt-rule-review-col-description">
+                        <col class="tt-rule-review-col-action">
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th>原始内容</th>
+                            <th>类型</th>
+                            <th>对象</th>
+                            <th>节次</th>
+                            <th>强弱</th>
+                            <th>状态</th>
+                            <th>说明</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows.map(row => renderRuleReviewRow(row, project, isBusy)).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </details>
         <div class="tt-dialog-actions">
             <button class="tt-btn" id="tt-add-rule-review-row" type="button" ${disabled}><i data-lucide="plus"></i><span>新增行</span></button>
             <button class="tt-btn" id="tt-diagnose-rules" type="button" data-action="diagnose-rules" ${disabled}><i data-lucide="stethoscope"></i><span>试排诊断</span></button>
@@ -1623,18 +1667,18 @@ function renderRuleReviewOverview(dialog = {}) {
     const unsupported = dialog.unsupportedItems || [];
     const summary = dialog.confidenceSummary || {};
     const items = [
-        ['已识别', rows.length, 'list-checks'],
+        ['智能已理解', rows.length, 'list-checks'],
         ['可直接生效', auto.length, 'badge-check'],
-        ['需要复核', review.length, 'edit-3'],
-        ['需要补充', questions.length + missing.length, 'help-circle'],
+        ['需要你确认', review.length, 'edit-3'],
+        ['需要你补充', questions.length + missing.length, 'help-circle'],
         ['冲突风险', conflicts.length, 'triangle-alert'],
         ['暂不支持', unsupported.length, 'lightbulb'],
     ];
     return `
-        <section class="tt-rule-review-overview" aria-label="智能建议总览">
+        <section class="tt-rule-review-overview" aria-label="处理约束问题">
             <div class="tt-rule-review-group-title">
                 <i data-lucide="sparkles"></i>
-                <strong>智能建议总览</strong>
+                <strong>处理约束问题</strong>
                 ${dialog.nextAction ? `<span>${escapeHtml(ruleNextActionLabel(dialog.nextAction))}</span>` : ''}
             </div>
             <div class="tt-rule-overview-grid">
@@ -1646,7 +1690,7 @@ function renderRuleReviewOverview(dialog = {}) {
                     </span>
                 `).join('')}
             </div>
-            <p class="tt-muted">置信度：高 ${escapeHtml(summary.high || 0)} / 中 ${escapeHtml(summary.medium || 0)} / 低 ${escapeHtml(summary.low || 0)}</p>
+            <p class="tt-muted">系统先帮你拆成草稿；只有状态为“可生效”的约束，确认后才会写入项目。置信度：高 ${escapeHtml(summary.high || 0)} / 中 ${escapeHtml(summary.medium || 0)} / 低 ${escapeHtml(summary.low || 0)}</p>
         </section>
     `;
 }
@@ -1655,7 +1699,7 @@ function ruleNextActionLabel(value = '') {
     return {
         ask_user: '需要补充信息',
         ready_to_apply: '可一键生效',
-        review: '需要复核',
+        review: '需要你确认',
         no_result: '没有可用结果',
     }[value] || value;
 }
@@ -1687,7 +1731,7 @@ function renderClarifyingQuestions(dialog = {}) {
         <section class="tt-rule-review-group tt-rule-review-group--question">
             <div class="tt-rule-review-group-title">
                 <i data-lucide="help-circle"></i>
-                <strong>需要补充信息</strong>
+                <strong>需要你补充</strong>
                 <span>${questions.length + missing.length} 条</span>
             </div>
             ${questions.map(question => `
@@ -1730,6 +1774,71 @@ function renderClarifyingQuestions(dialog = {}) {
     `;
 }
 
+function ruleDisplayTarget(row = {}) {
+    return row.targetName || row.className || row.teacherName || row.subjectName || row.targetId || '还没确定对象';
+}
+
+function ruleSlotsLabel(row = {}) {
+    const slots = Array.isArray(row.slots) ? row.slots : [];
+    return slots.length ? slots.join('、') : '未指定节次';
+}
+
+function rulePriorityText(row = {}) {
+    return row.priority === 'hard' ? '必须满足' : '尽量满足';
+}
+
+function renderRuleCardList(rows = [], project = {}, { disabled = false, allowEffective = true } = {}) {
+    if (!rows.length) return '';
+    return `
+        <div class="tt-rule-card-list">
+            ${rows.map(row => renderRuleReviewCard(row, project, { disabled, allowEffective })).join('')}
+        </div>
+    `;
+}
+
+function renderRuleReviewCard(row = {}, project = {}, { disabled = false, allowEffective = true } = {}) {
+    const status = row.status || 'needs_review';
+    const warnings = row.warnings || [];
+    const disabledAttr = disabled ? 'disabled' : '';
+    const canEffective = allowEffective && !['unsupported', 'suggestion'].includes(status);
+    const confidence = row.confidence !== null && row.confidence !== undefined
+        ? `${Math.round(Number(row.confidence) * 100)}%`
+        : '待确认';
+    return `
+        <article class="tt-rule-review-card tt-rule-review-card--${escapeAttr(status)}" data-rule-id="${escapeAttr(row.id || '')}">
+            <div class="tt-rule-review-card-head">
+                <span class="tt-chip">${escapeHtml(ruleStatusLabel(status))}</span>
+                <strong>${escapeHtml(ruleTypeLabel(row.type || '') || row.type || '约束')}</strong>
+                <em>${escapeHtml(confidence)}</em>
+            </div>
+            <p>系统理解为：<b>${escapeHtml(ruleDisplayTarget(row))}</b>，${escapeHtml(ruleTypeLabel(row.type || '') || row.type || '约束')}，时间是 <b>${escapeHtml(ruleSlotsLabel(row))}</b>，${escapeHtml(rulePriorityText(row))}。</p>
+            ${row.rawText || row.description ? `<span class="tt-rule-card-raw">${escapeHtml(row.rawText || row.description)}</span>` : ''}
+            ${warnings.length ? `
+                <div class="tt-rule-card-warning">
+                    <i data-lucide="triangle-alert"></i>
+                    <span>${escapeHtml(warnings.join('；'))}</span>
+                </div>
+            ` : ''}
+            <div class="tt-rule-card-actions">
+                <button class="tt-btn tt-btn--sm" type="button" data-action="rule-card-edit" data-rule-id="${escapeAttr(row.id || '')}" ${disabledAttr}>
+                    <i data-lucide="pencil"></i><span>编辑</span>
+                </button>
+                ${canEffective ? `
+                    <button class="tt-btn tt-btn--sm tt-btn--primary" type="button" data-action="rule-card-effective" data-rule-id="${escapeAttr(row.id || '')}" ${disabledAttr}>
+                        <i data-lucide="check"></i><span>设为生效</span>
+                    </button>
+                ` : ''}
+                <button class="tt-btn tt-btn--sm" type="button" data-action="rule-card-ignore" data-rule-id="${escapeAttr(row.id || '')}" ${disabledAttr}>
+                    <i data-lucide="eye-off"></i><span>忽略</span>
+                </button>
+                <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-action="rule-card-delete" data-rule-id="${escapeAttr(row.id || '')}" title="删除这条草稿" aria-label="删除这条草稿" ${disabledAttr}>
+                    <i data-lucide="trash-2"></i>
+                </button>
+            </div>
+        </article>
+    `;
+}
+
 function renderAutoAcceptableRules(dialog = {}) {
     const rows = dialog.autoAcceptable || [];
     if (!rows.length) return '';
@@ -1741,10 +1850,8 @@ function renderAutoAcceptableRules(dialog = {}) {
                 <strong>可直接生效</strong>
                 <span>${rows.length} 条</span>
             </div>
-            <div class="tt-rule-mini-list">
-                ${rows.slice(0, 5).map(row => renderRuleMiniItem(row)).join('')}
-                ${rows.length > 5 ? `<span class="tt-muted">还有 ${escapeHtml(rows.length - 5)} 条可在下方表格查看。</span>` : ''}
-            </div>
+            ${renderRuleCardList(rows.slice(0, 5), {}, { allowEffective: true })}
+            ${rows.length > 5 ? `<span class="tt-muted">还有 ${escapeHtml(rows.length - 5)} 条可在高级编辑里查看。</span>` : ''}
             <button class="tt-btn tt-btn--primary tt-btn--sm" id="tt-apply-auto-rules" type="button" ${blocked ? 'disabled' : ''}>
                 <i data-lucide="check-check"></i><span>一键应用这些高置信度约束</span>
             </button>
@@ -1753,20 +1860,20 @@ function renderAutoAcceptableRules(dialog = {}) {
 }
 
 function renderNeedReviewRules(dialog = {}) {
-    const rows = dialog.needReview || [];
+    const rows = (dialog.needReview || []).length
+        ? dialog.needReview
+        : (dialog.draftRows || []).filter(row => ['needs_review', 'invalid', 'ignored'].includes(row.status));
     if (!rows.length) return '';
     return `
         <section class="tt-rule-review-group tt-rule-review-group--review">
             <div class="tt-rule-review-group-title">
                 <i data-lucide="edit-3"></i>
-                <strong>需要复核</strong>
+                <strong>需要你确认</strong>
                 <span>${rows.length} 条</span>
             </div>
-            <p class="tt-muted">这些约束需要在下方复核表确认对象、节次或置信度。</p>
-            <div class="tt-rule-mini-list">
-                ${rows.slice(0, 6).map(row => renderRuleMiniItem(row)).join('')}
-                ${rows.length > 6 ? `<span class="tt-muted">还有 ${escapeHtml(rows.length - 6)} 条可在下方表格查看。</span>` : ''}
-            </div>
+            <p class="tt-muted">这些约束需要你看一眼对象、节次或强弱，再决定是否生效。</p>
+            ${renderRuleCardList(rows.slice(0, 6), {}, { allowEffective: true })}
+            ${rows.length > 6 ? `<span class="tt-muted">还有 ${escapeHtml(rows.length - 6)} 条可在高级编辑里查看。</span>` : ''}
         </section>
     `;
 }
@@ -1778,7 +1885,7 @@ function renderRuleConflictSection(dialog = {}) {
         <section class="tt-rule-review-group tt-rule-review-group--conflict">
             <div class="tt-rule-review-group-title">
                 <i data-lucide="triangle-alert"></i>
-                <strong>冲突与风险</strong>
+                <strong>冲突风险</strong>
                 <span>${conflicts.length} 条</span>
             </div>
             ${conflicts.map(conflict => `
@@ -1803,9 +1910,7 @@ function renderUnsupportedRuleItems(dialog = {}) {
                 <span>${items.length} 条</span>
             </div>
             <p class="tt-muted">当前版本只能作为建议，不会写入排课规则。</p>
-            <div class="tt-rule-mini-list">
-                ${items.slice(0, 6).map(item => renderRuleMiniItem(item)).join('')}
-            </div>
+            ${renderRuleCardList(items.slice(0, 6), {}, { allowEffective: false })}
         </section>
     `;
 }

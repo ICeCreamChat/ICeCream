@@ -1,572 +1,454 @@
-/* 智能约束助手UI样式 */
+/* Timetable smart constraint helper */
 
-/* 主容器 */
 .tt-smart-helper {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    padding: 24px;
-    background: #f8fafc;
+    display: grid;
+    gap: var(--tt-space-md, 14px);
+    padding: 0;
 }
 
-/* 扫描进度 */
-.tt-scan-progress {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-    padding: 48px 24px;
-    background: white;
-    border-radius: 16px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+.tt-scan-progress,
+.tt-all-clear,
+.tt-scan-error,
+.tt-problem-summary,
+.tt-problem-group {
+    display: grid;
+    gap: var(--tt-space-sm, 10px);
+    padding: 12px;
+    background: var(--tt-surface, #fff);
+    border: 1px solid var(--tt-border, #e2e8f0);
+    border-radius: var(--tt-radius-md, 8px);
 }
 
-.tt-scan-icon {
-    width: 64px;
-    height: 64px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
+.tt-scan-progress,
+.tt-all-clear,
+.tt-scan-error {
+    justify-items: center;
+    text-align: center;
 }
 
-.tt-scan-icon i {
-    width: 32px;
-    height: 32px;
+.tt-scan-icon,
+.tt-success-icon {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    color: var(--tt-primary, #0891b2);
+    background: rgba(8, 145, 178, 0.1);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: 999px;
 }
 
-.tt-pulse {
-    animation: pulse 1.5s ease-in-out infinite;
+.tt-scan-progress h3,
+.tt-all-clear h3,
+.tt-problem-summary h3 {
+    margin: 0;
+    color: var(--tt-text, #0f172a);
+    font-size: 0.96rem;
 }
 
-@keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.7; transform: scale(1.1); }
+.tt-scan-phase,
+.tt-all-clear p {
+    margin: 0;
+    color: var(--tt-muted, #64748b);
+    font-size: 0.78rem;
 }
 
 .tt-progress-bar {
-    width: 100%;
-    max-width: 400px;
-    height: 8px;
-    background: #e2e8f0;
-    border-radius: 4px;
+    width: min(420px, 100%);
+    height: 7px;
     overflow: hidden;
+    background: rgba(148, 163, 184, 0.24);
+    border-radius: 999px;
 }
 
 .tt-progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-    transition: width 0.3s ease;
-}
-
-.tt-scan-phase {
-    color: #64748b;
-    font-size: 0.875rem;
-}
-
-/* 全部完成状态 */
-.tt-all-clear {
-    text-align: center;
-    padding: 64px 24px;
-    background: white;
-    border-radius: 16px;
+    background: var(--tt-primary, #0891b2);
+    transition: width 0.25s ease;
 }
 
 .tt-scan-error {
-    display: grid;
-    justify-items: center;
-    gap: 10px;
-    padding: 32px 24px;
-    color: #991b1b;
-    background: #fef2f2;
-    border: 1px solid #fecaca;
-    border-radius: 10px;
-    text-align: center;
-}
-
-.tt-scan-error i {
-    width: 28px;
-    height: 28px;
-}
-
-.tt-success-icon {
-    width: 80px;
-    height: 80px;
-    margin: 0 auto 24px;
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-}
-
-.tt-success-icon i {
-    width: 40px;
-    height: 40px;
-}
-
-/* 问题汇总 */
-.tt-problem-summary {
-    background: white;
-    border-radius: 16px;
-    padding: 24px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    color: var(--tt-danger, #dc2626);
+    background: rgba(220, 38, 38, 0.08);
+    border-color: rgba(220, 38, 38, 0.24);
 }
 
 .tt-summary-header {
     display: flex;
-    align-items: center;
+    align-items: start;
     justify-content: space-between;
-    margin-bottom: 16px;
+    gap: 10px;
 }
 
 .tt-summary-header h3 {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 8px;
-    font-size: 1.25rem;
-    margin: 0;
+    gap: 7px;
 }
 
-.tt-summary-stats {
+.tt-summary-header .lucide {
+    width: 17px;
+    height: 17px;
+    color: var(--tt-primary, #0891b2);
+}
+
+.tt-summary-stats,
+.tt-helper-actions,
+.tt-problem-actions,
+.tt-smart-detail-actions,
+.tt-fix-preview-actions {
     display: flex;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
 }
 
 .tt-stat {
-    padding: 4px 12px;
-    background: #f1f5f9;
-    border-radius: 12px;
-    font-size: 0.875rem;
-    color: #475569;
+    padding: 4px 8px;
+    color: var(--tt-muted, #64748b);
+    background: var(--tt-bg-input, #f8fafc);
+    border: 1px solid var(--tt-border, #e2e8f0);
+    border-radius: var(--tt-radius-sm, 6px);
+    font-size: 0.72rem;
+    font-weight: 700;
 }
 
 .tt-stat--success {
-    background: #d1fae5;
-    color: #059669;
+    color: var(--tt-success, #059669);
+    background: rgba(5, 150, 105, 0.08);
+    border-color: rgba(5, 150, 105, 0.22);
 }
 
-/* 完成度条 */
-.tt-completeness {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+.tt-helper-insight-grid,
+.tt-performance-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
 }
 
-.tt-completeness-bar {
-    flex: 1;
-    height: 12px;
-    background: #e2e8f0;
-    border-radius: 6px;
-    overflow: hidden;
+.tt-helper-insight-grid article,
+.tt-metric-card {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 6px 8px;
+    align-items: start;
+    min-width: 0;
+    padding: 9px;
+    background: var(--tt-bg-input, #f8fafc);
+    border: 1px solid var(--tt-border, #e2e8f0);
+    border-radius: var(--tt-radius-sm, 6px);
 }
 
-.tt-completeness-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #10b981 0%, #059669 100%);
-    transition: width 0.5s ease;
+.tt-helper-insight-grid .lucide,
+.tt-metric-card .lucide {
+    width: 16px;
+    height: 16px;
+    color: var(--tt-primary, #0891b2);
 }
 
-.tt-completeness-text {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: #059669;
+.tt-helper-insight-grid strong,
+.tt-metric-label {
+    color: var(--tt-text, #0f172a);
+    font-size: 0.76rem;
 }
 
-/* 问题卡片容器 */
+.tt-helper-insight-grid span,
+.tt-metric-value {
+    grid-column: 2;
+    min-width: 0;
+    color: var(--tt-muted, #64748b);
+    font-size: 0.72rem;
+    line-height: 1.4;
+}
+
 .tt-problem-cards {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-}
-
-/* 问题组 */
-.tt-problem-group {
-    background: white;
-    border-radius: 16px;
-    padding: 20px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    display: grid;
+    gap: var(--tt-space-sm, 10px);
 }
 
 .tt-problem-group-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 16px;
+    gap: 8px;
 }
 
 .tt-problem-group-header h4 {
     margin: 0;
-    font-size: 1rem;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    color: var(--tt-text, #0f172a);
+    font-size: 0.86rem;
 }
 
 .tt-expand-btn {
-    background: none;
-    border: none;
-    padding: 4px;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    color: var(--tt-muted, #64748b);
+    background: transparent;
+    border: 1px solid var(--tt-border, #e2e8f0);
+    border-radius: var(--tt-radius-sm, 6px);
     cursor: pointer;
-    color: #64748b;
-    transition: transform 0.2s;
 }
 
+.tt-expand-btn[aria-expanded="true"],
 .tt-expand-btn:hover {
-    color: #0f172a;
+    color: var(--tt-primary, #0891b2);
+    border-color: rgba(8, 145, 178, 0.24);
 }
 
-.tt-problem-list.tt-collapsed {
-    overflow: hidden;
+.tt-problem-list {
+    display: grid;
+    gap: 8px;
 }
 
-.tt-problem-more {
-    padding: 10px 12px;
-    color: #64748b;
-    background: #f8fafc;
-    border-radius: 8px;
-    font-size: 0.84rem;
-    text-align: center;
-}
-
-.tt-expand-btn[aria-expanded="true"] {
-    color: #0f172a;
-}
-
-/* 问题卡片 */
 .tt-problem-card {
-    padding: 16px;
-    background: #f8fafc;
-    border-left: 4px solid;
-    border-radius: 12px;
-    margin-bottom: 12px;
-    transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.tt-problem-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    background: var(--tt-bg-input, #f8fafc);
+    border: 1px solid var(--tt-border, #e2e8f0);
+    border-left-width: 3px;
+    border-radius: var(--tt-radius-sm, 6px);
 }
 
 .tt-problem-card--urgent {
-    border-left-color: #ef4444;
-    background: linear-gradient(135deg, #fef2f2 0%, #ffffff 100%);
+    border-left-color: var(--tt-danger, #dc2626);
 }
 
 .tt-problem-card--optimize {
-    border-left-color: #f59e0b;
-    background: linear-gradient(135deg, #fffbeb 0%, #ffffff 100%);
+    border-left-color: var(--tt-warning, #f59e0b);
 }
 
 .tt-problem-card--info {
-    border-left-color: #3b82f6;
-    background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%);
+    border-left-color: var(--tt-primary, #0891b2);
 }
 
 .tt-problem-header {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    margin-bottom: 12px;
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: start;
 }
 
 .tt-problem-icon {
-    width: 40px;
-    height: 40px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    color: var(--tt-primary, #0891b2);
 }
 
-.tt-problem-card--urgent .tt-problem-icon {
-    background: #fee2e2;
-    color: #ef4444;
-}
-
-.tt-problem-card--optimize .tt-problem-icon {
-    background: #fef3c7;
-    color: #f59e0b;
-}
-
-.tt-problem-card--info .tt-problem-icon {
-    background: #dbeafe;
-    color: #3b82f6;
+.tt-problem-icon .lucide {
+    width: 17px;
+    height: 17px;
 }
 
 .tt-problem-info {
-    flex: 1;
+    display: grid;
+    gap: 2px;
     min-width: 0;
 }
 
-.tt-problem-info h5 {
-    margin: 0 0 4px;
-    font-size: 1rem;
-    color: #0f172a;
-}
-
+.tt-problem-info h5,
 .tt-problem-info p {
     margin: 0;
-    font-size: 0.875rem;
-    color: #64748b;
-    line-height: 1.5;
+}
+
+.tt-problem-info h5 {
+    color: var(--tt-text, #0f172a);
+    font-size: 0.82rem;
+}
+
+.tt-problem-info p,
+.tt-problem-suggestion,
+.tt-problem-more {
+    color: var(--tt-muted, #64748b);
+    font-size: 0.73rem;
+    line-height: 1.45;
 }
 
 .tt-problem-count {
-    background: #0f172a;
-    color: white;
-    padding: 4px 10px;
-    border-radius: 12px;
-    font-size: 0.75rem;
-    font-weight: 600;
+    padding: 2px 7px;
+    color: var(--tt-text, #0f172a);
+    background: var(--tt-surface, #fff);
+    border: 1px solid var(--tt-border, #e2e8f0);
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 800;
 }
 
-/* 修复建议 */
 .tt-problem-suggestion {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px;
-    background: rgba(102, 126, 234, 0.1);
-    border-radius: 8px;
-    margin-bottom: 12px;
-    font-size: 0.875rem;
-    color: #475569;
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    gap: 6px;
+    padding: 7px 8px;
+    background: rgba(8, 145, 178, 0.07);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-sm, 6px);
 }
 
-.tt-problem-suggestion i {
-    width: 16px;
-    height: 16px;
-    color: #667eea;
+.tt-problem-suggestion .lucide {
+    width: 15px;
+    height: 15px;
+    color: var(--tt-primary, #0891b2);
 }
 
-/* 问题操作按钮 */
-.tt-problem-actions {
-    display: flex;
-    gap: 8px;
+.tt-problem-more {
+    padding: 8px;
+    text-align: center;
+    background: rgba(148, 163, 184, 0.08);
+    border-radius: var(--tt-radius-sm, 6px);
 }
 
-/* 助手底部操作 */
 .tt-helper-actions {
-    display: flex;
-    gap: 12px;
-    justify-content: center;
+    justify-content: flex-end;
 }
 
-.tt-btn--large {
-    padding: 16px 32px;
-    font-size: 1rem;
-    font-weight: 600;
-}
-
-/* 修复预览模态框 */
+.tt-smart-detail-backdrop,
 .tt-fix-preview-modal {
     position: fixed;
     inset: 0;
-    z-index: 1100;
-    background: rgba(0,0,0,0.5);
-    backdrop-filter: blur(4px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    z-index: 1200;
+    display: grid;
+    place-items: center;
     padding: 20px;
-    animation: fadeIn 0.2s ease;
+    background: rgba(15, 23, 42, 0.34);
 }
 
+.tt-smart-detail,
 .tt-fix-preview-content {
-    background: white;
-    border-radius: 16px;
-    max-width: 800px;
-    width: 100%;
-    max-height: 90vh;
+    display: grid;
+    gap: 12px;
+    width: min(720px, calc(100vw - 40px));
+    max-height: calc(100vh - 48px);
     overflow: auto;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    padding: 16px;
+    background: var(--tt-surface, #fff);
+    border: 1px solid var(--tt-border, #e2e8f0);
+    border-radius: var(--tt-radius-md, 8px);
+    box-shadow: var(--tt-shadow-lg, 0 16px 36px rgba(15, 23, 42, 0.16));
 }
 
+.tt-smart-detail-header,
 .tt-fix-preview-header {
     display: flex;
-    align-items: center;
+    align-items: start;
     justify-content: space-between;
-    padding: 24px;
-    border-bottom: 1px solid #e2e8f0;
-}
-
-.tt-fix-preview-header h3 {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 0;
-}
-
-/* 修复对比 */
-.tt-fix-comparison {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    gap: 24px;
-    padding: 24px;
-    align-items: center;
-}
-
-.tt-comparison-side {
-    background: #f8fafc;
-    border-radius: 12px;
-    padding: 20px;
-}
-
-.tt-comparison-side h4 {
-    margin: 0 0 12px;
-    font-size: 1rem;
-}
-
-.tt-comparison-side--after {
-    background: #ecfdf5;
-    border: 2px solid #10b981;
-}
-
-.tt-comparison-arrow {
-    color: #667eea;
-}
-
-.tt-comparison-arrow i {
-    width: 32px;
-    height: 32px;
-}
-
-/* 修复详情 */
-.tt-fix-details {
-    padding: 0 24px 24px;
-}
-
-.tt-fix-details h4 {
-    margin: 0 0 12px;
-}
-
-.tt-fix-details ul {
-    margin: 0;
-    padding-left: 20px;
-}
-
-.tt-fix-details li {
-    margin-bottom: 8px;
-    color: #475569;
-}
-
-.tt-fix-preview-actions {
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
-    padding: 20px 24px;
-    border-top: 1px solid #e2e8f0;
-}
-
-.tt-smart-detail-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 1110;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-    background: rgba(15, 23, 42, 0.45);
-}
-
-.tt-smart-detail {
-    width: min(720px, 100%);
-    max-height: min(82vh, 720px);
-    overflow: auto;
-    background: #fff;
-    border-radius: 10px;
-    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
-}
-
-.tt-smart-detail-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 20px 22px;
-    border-bottom: 1px solid #e2e8f0;
+    gap: 10px;
 }
 
 .tt-smart-detail-header span {
-    display: block;
-    margin-bottom: 4px;
-    color: #64748b;
-    font-size: 0.78rem;
+    color: var(--tt-muted, #64748b);
+    font-size: 0.72rem;
+    font-weight: 800;
 }
 
-.tt-smart-detail-header h3 {
-    margin: 0;
-    color: #0f172a;
-    font-size: 1.08rem;
+.tt-smart-detail-header h3,
+.tt-fix-preview-header h3 {
+    margin: 2px 0 0;
+    color: var(--tt-text, #0f172a);
+    font-size: 1rem;
 }
 
 .tt-smart-detail-desc {
     margin: 0;
-    padding: 18px 22px 0;
-    color: #475569;
-    line-height: 1.6;
+    color: var(--tt-text-secondary, #334155);
+    font-size: 0.8rem;
+    line-height: 1.55;
 }
 
 .tt-smart-detail-list {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-    margin: 18px 22px;
+    gap: 8px;
+    margin: 0;
 }
 
-.tt-smart-detail-list div {
-    padding: 12px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-}
-
-.tt-smart-detail-list dt {
-    color: #64748b;
-    font-size: 0.78rem;
-}
-
-.tt-smart-detail-list dd {
-    margin: 4px 0 0;
-    color: #0f172a;
-    font-weight: 650;
-}
-
+.tt-smart-detail-list div,
 .tt-smart-detail-related {
     display: grid;
-    gap: 8px;
-    margin: 0 22px 18px;
+    gap: 4px;
+    padding: 9px;
+    background: var(--tt-bg-input, #f8fafc);
+    border: 1px solid var(--tt-border, #e2e8f0);
+    border-radius: var(--tt-radius-sm, 6px);
 }
 
+.tt-smart-detail-list dt,
 .tt-smart-detail-related strong {
-    color: #334155;
-    font-size: 0.86rem;
+    color: var(--tt-muted, #64748b);
+    font-size: 0.7rem;
+    font-weight: 800;
 }
 
+.tt-smart-detail-list dd,
 .tt-smart-detail-related span {
-    display: block;
-    padding: 9px 10px;
-    color: #475569;
-    background: #f8fafc;
-    border-radius: 7px;
-    font-size: 0.84rem;
+    margin: 0;
+    color: var(--tt-text, #0f172a);
+    font-size: 0.76rem;
+    line-height: 1.45;
 }
 
-.tt-smart-detail-actions {
-    display: flex;
+.tt-smart-detail-actions,
+.tt-fix-preview-actions {
     justify-content: flex-end;
-    gap: 10px;
-    padding: 16px 22px 20px;
-    border-top: 1px solid #e2e8f0;
 }
 
-/* 响应式 */
-@media (max-width: 768px) {
+.tt-fix-comparison {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 32px minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+}
+
+.tt-comparison-side,
+.tt-fix-details {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+    padding: 10px;
+    background: var(--tt-bg-input, #f8fafc);
+    border: 1px solid var(--tt-border, #e2e8f0);
+    border-radius: var(--tt-radius-sm, 6px);
+}
+
+.tt-comparison-side h4,
+.tt-fix-details h4 {
+    margin: 0;
+    color: var(--tt-text, #0f172a);
+    font-size: 0.8rem;
+}
+
+.tt-comparison-content,
+.tt-fix-details li {
+    color: var(--tt-text-secondary, #334155);
+    font-size: 0.76rem;
+    line-height: 1.45;
+}
+
+.tt-comparison-arrow {
+    display: grid;
+    place-items: center;
+    color: var(--tt-primary, #0891b2);
+}
+
+.tt-fix-details ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+@media (max-width: 780px) {
+    .tt-summary-header,
+    .tt-helper-actions,
+    .tt-problem-actions,
+    .tt-smart-detail-actions,
+    .tt-fix-preview-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .tt-helper-insight-grid,
+    .tt-performance-metrics,
+    .tt-smart-detail-list,
     .tt-fix-comparison {
         grid-template-columns: 1fr;
     }
@@ -574,25 +456,4 @@
     .tt-comparison-arrow {
         transform: rotate(90deg);
     }
-
-    .tt-helper-actions {
-        flex-direction: column;
-    }
-
-    .tt-btn--large {
-        width: 100%;
-    }
-
-    .tt-smart-detail-list {
-        grid-template-columns: 1fr;
-    }
-
-    .tt-smart-detail-actions {
-        flex-direction: column;
-    }
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
 }

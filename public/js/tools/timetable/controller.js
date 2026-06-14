@@ -1081,6 +1081,7 @@ export class TimetablePlannerController {
                 ...current,
                 open: true,
                 step: 'review',
+                uiStep: 'issues',
                 draftRows,
             };
             this.render();
@@ -1091,6 +1092,7 @@ export class TimetablePlannerController {
                 ...createTimetablePlannerState().ruleReview,
                 open: true,
                 step: 'saved',
+                uiStep: 'saved',
                 mode: nextMode,
             };
             this.render();
@@ -1100,6 +1102,7 @@ export class TimetablePlannerController {
             ...createTimetablePlannerState().ruleReview,
             open: true,
             step: nextMode === 'manual' ? 'manual' : 'input',
+            uiStep: 'input',
             mode: nextMode,
         };
         this.render();
@@ -1112,6 +1115,7 @@ export class TimetablePlannerController {
             ...current,
             open: true,
             step: nextMode === 'manual' ? 'manual' : 'input',
+            uiStep: 'input',
             mode: nextMode,
             text: this.readRuleReviewText(),
         };
@@ -1132,6 +1136,7 @@ export class TimetablePlannerController {
             ...(this.state.ruleReview || {}),
             open: true,
             step: step || this.state.ruleReview?.step || 'input',
+            uiStep: 'understanding',
             mode: mode || this.state.ruleReview?.mode || 'file',
             loading: true,
             phase,
@@ -1150,6 +1155,7 @@ export class TimetablePlannerController {
             phase: tone ? 'error' : '',
             phaseText,
             phaseTone: tone,
+            uiStep: this.state.ruleReview?.draftRows?.length ? 'issues' : 'input',
         };
         this.render();
     }
@@ -1165,6 +1171,7 @@ export class TimetablePlannerController {
             ...(this.state.ruleReview || {}),
             open: true,
             step: nextMode === 'manual' ? 'manual' : 'input',
+            uiStep: 'input',
             mode: nextMode,
             text: this.readRuleReviewText(),
         };
@@ -1177,6 +1184,7 @@ export class TimetablePlannerController {
             ...(this.state.ruleReview || {}),
             open: true,
             step: 'input',
+            uiStep: 'input',
             mode: 'file',
             fileName: file?.name || '',
             text: this.readRuleReviewText(),
@@ -1198,6 +1206,7 @@ export class TimetablePlannerController {
             ...(this.state.ruleReview || createTimetablePlannerState().ruleReview),
             open: true,
             step: 'input',
+            uiStep: 'input',
             mode: 'text',
             text: next,
         };
@@ -1241,7 +1250,7 @@ export class TimetablePlannerController {
             const message = {
                 ask_user: '需要补充信息后才能继续。',
                 ready_to_apply: `已找到 ${autoCount} 条高置信度约束，可一键生效。`,
-                review: `已解析 ${rows.length} 条约束，其中 ${reviewCount} 条需要复核。`,
+                review: `已解析 ${rows.length} 条约束，其中 ${reviewCount} 条需要你确认。`,
                 no_result: '未解析出可用约束，请换一种说法。',
             }[result.nextAction] || (rows.length ? `已解析 ${rows.length} 条约束，请在复核表确认。` : '未能解析出可用约束，请调整描述后重试。');
             this.setMessage(questionCount ? `${message} 有 ${questionCount} 个问题需要确认。` : message);
@@ -1360,7 +1369,7 @@ export class TimetablePlannerController {
             .filter(item => this.isAutoAcceptablePendingRule(item))
             .filter(item => !blockingRuleIds.has(item.id));
         if (!pending.length) {
-            this.setMessage('没有可一键应用的高置信度约束；存在歧义、冲突或需要复核的规则请先处理。');
+            this.setMessage('没有可一键应用的高置信度约束；存在歧义、冲突或需要你确认的规则请先处理。');
             return;
         }
         try {
@@ -1423,6 +1432,8 @@ export class TimetablePlannerController {
             ...(this.state.ruleReview || {}),
             open: true,
             step: 'review',
+            uiStep: payload.uiStep
+                || (draftRows.length ? 'issues' : (this.state.ruleReview?.uiStep || 'input')),
             mode: this.state.ruleReview?.mode || 'text',
             fileName: this.state.ruleReview?.fileName || this.state.ruleFileName || '',
             text: this.readRuleReviewText(),
@@ -1447,6 +1458,9 @@ export class TimetablePlannerController {
             nextAction: payload.nextAction || '',
             diagnosis: payload.diagnosis || this.state.ruleReview?.diagnosis || null,
             hasBlockingIssues,
+            advancedOpen: Boolean(payload.advancedOpen ?? this.state.ruleReview?.advancedOpen),
+            selectedSection: payload.selectedSection || this.state.ruleReview?.selectedSection || '',
+            selectedRuleId: payload.selectedRuleId || this.state.ruleReview?.selectedRuleId || '',
             loading: false,
             phase: '',
             phaseText: '',
@@ -1538,6 +1552,63 @@ export class TimetablePlannerController {
 
     addRuleReviewRow() {
         this.refreshRuleReviewFromRows([...this.readRuleReviewRows(), this.emptyRuleDraftRow()]);
+    }
+
+    updateRuleReviewRowsFromCards(transform, extraState = {}) {
+        const current = this.state.ruleReview || {};
+        const rows = Array.isArray(current.draftRows) ? current.draftRows : [];
+        const nextRows = rows.map(row => ({ ...row }));
+        const transformed = typeof transform === 'function' ? transform(nextRows) : nextRows;
+        const finalRows = Array.isArray(transformed) ? transformed : nextRows;
+        this.setRuleReviewState({
+            ...current,
+            draftRows: finalRows,
+            inputType: current.inputType || 'review',
+            contextStats: current.contextStats || null,
+            warnings: current.warnings || [],
+            autoAcceptable: finalRows.filter(row => row.status === 'effective'),
+            needReview: finalRows.filter(row => ['needs_review', 'invalid'].includes(row.status)),
+            unsupportedItems: [
+                ...(current.unsupportedItems || []).filter(item => finalRows.some(row => row.id === item.id)),
+                ...finalRows.filter(row => ['suggestion', 'unsupported'].includes(row.status)),
+            ],
+            draftRules: this.state.ruleDraft,
+            previewItems: finalRows,
+            ...extraState,
+        });
+        this.render();
+    }
+
+    editRuleReviewRow(rowId) {
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || createTimetablePlannerState().ruleReview),
+            advancedOpen: true,
+            selectedRuleId: rowId || '',
+        };
+        this.render();
+    }
+
+    ignoreRuleReviewRow(rowId) {
+        this.updateRuleReviewRowsFromCards(rows => rows.map(row => (
+            row.id === rowId ? { ...row, status: 'ignored' } : row
+        )));
+    }
+
+    markRuleReviewRowEffective(rowId) {
+        this.updateRuleReviewRowsFromCards(rows => rows.map(row => (
+            row.id === rowId
+                ? {
+                    ...row,
+                    status: 'effective',
+                    priority: row.priority || 'hard',
+                    warnings: (row.warnings || []).filter(warning => !/需要人工确认|请人工复核/.test(warning)),
+                }
+                : row
+        )));
+    }
+
+    deleteRuleReviewCard(rowId) {
+        this.updateRuleReviewRowsFromCards(rows => rows.filter(row => row.id !== rowId));
     }
 
     addManualRuleRows() {
@@ -2153,7 +2224,7 @@ export class TimetablePlannerController {
             const message = {
                 ask_user: '需要补充信息后才能继续。',
                 ready_to_apply: `已找到 ${autoCount} 条高置信度约束，可一键生效。`,
-                review: `已解析 ${total} 条约束，其中 ${reviewCount} 条需要复核。`,
+                review: `已解析 ${total} 条约束，其中 ${reviewCount} 条需要你确认。`,
                 no_result: '未解析出可用约束，请换一种说法。',
             }[result.nextAction] || (total ? `已解析 ${total} 条约束，请在复核表确认。` : '未能解析出可用约束，请调整描述后重试。');
             this.setMessage(questionCount ? `${message} 有 ${questionCount} 个问题需要确认。` : message);
@@ -2372,6 +2443,7 @@ export class TimetablePlannerController {
                     ...createTimetablePlannerState().ruleReview,
                     open: true,
                     step: 'saved',
+                    uiStep: 'saved',
                     mode: 'file',
                 };
                 this.setMessage('约束已确认生效。');
@@ -2402,6 +2474,7 @@ export class TimetablePlannerController {
                 ...createTimetablePlannerState().ruleReview,
                 open: true,
                 step: 'saved',
+                uiStep: 'saved',
                 mode: 'file',
             };
             this.setMessage('智能约束已确认。');
@@ -2433,6 +2506,7 @@ export class TimetablePlannerController {
                 ...createTimetablePlannerState().ruleReview,
                 open: true,
                 step: 'saved',
+                uiStep: 'saved',
                 mode: 'file',
             };
             this.setMessage('已删除一条约束。');

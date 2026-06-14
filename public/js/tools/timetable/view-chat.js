@@ -24,7 +24,7 @@ const issueGuides = {
     missing_slots: {
         icon: 'calendar-clock',
         title: '缺少节次',
-        action: '告诉 AI 要补到周几、第几节，或点推荐按钮让它统一处理。',
+        action: '告诉智能助手要补到周几、第几节，或点推荐按钮让它统一处理。',
         tone: 'warning',
     },
     missing_info: {
@@ -42,18 +42,18 @@ const issueGuides = {
     out_of_range_slots: {
         icon: 'calendar-x',
         title: '超出范围',
-        action: '当前项目没有这些节次，建议让 AI 过滤或改成现有节次。',
+        action: '当前项目没有这些节次，建议让智能助手过滤或改成现有节次。',
         tone: 'danger',
     },
     all_classes_unmatched: {
         icon: 'users',
         title: '全部班级未匹配',
-        action: '让 AI 展开为当前项目里的具体班级，避免规则找不到对象。',
+        action: '让智能助手展开为当前项目里的具体班级，避免规则找不到对象。',
         tone: 'warning',
     },
     need_review: {
         icon: 'edit-3',
-        title: '需要复核',
+        title: '需要你确认',
         action: '这些规则能理解，但还需要你确认对象、节次或置信度。',
         tone: 'review',
     },
@@ -93,7 +93,7 @@ function guideForGroup(group = {}) {
     return issueGuides[group.type] || {
         icon: 'list-checks',
         title: group.label || '待处理',
-        action: '可以直接问 AI 这类问题应该怎么处理。',
+        action: '可以直接问智能助手这类问题应该怎么处理。',
         tone: 'info',
     };
 }
@@ -217,7 +217,7 @@ function renderReviewContext(context = {}, { disabled = false } = {}) {
                 <div class="tt-chat-empty-guide">
                     <i data-lucide="badge-check"></i>
                     <strong>暂时没有明显待处理项</strong>
-                    <span>你仍然可以让 AI 解释当前规则，或要求它检查是否有遗漏。</span>
+                    <span>你仍然可以让智能助手解释当前规则，或要求它检查是否有遗漏。</span>
                 </div>
             `}
             ${renderSuggestedPrompts(prompts, { disabled })}
@@ -246,7 +246,7 @@ export function renderConstraintChatDialog(state = {}) {
                     <div class="tt-constraint-chat-titleblock">
                         <span class="tt-chat-eyebrow"><i data-lucide="bot"></i> 智能约束助手</span>
                         <h3 id="tt-constraint-chat-title">先处理当前复核表里的问题</h3>
-                        <p id="tt-constraint-chat-description">不需要懂排课规则，按左侧推荐操作点选，或用白话告诉 AI 你想怎么改。</p>
+                        <p id="tt-constraint-chat-description">不需要懂排课规则，按左侧推荐操作点选，或用白话告诉智能助手你想怎么改。</p>
                     </div>
                     <button class="tt-icon-btn" type="button" data-action="constraint-chat-close" aria-label="关闭对话">
                         <i data-lucide="x"></i>
@@ -265,7 +265,7 @@ export function renderConstraintChatDialog(state = {}) {
                                 <div class="tt-chat-empty-message">
                                     <i data-lucide="mouse-pointer-click"></i>
                                     <strong>建议先点左侧推荐操作</strong>
-                                    <span>AI 会围绕当前复核表回答，不会开启无关闲聊。</span>
+                                    <span>智能助手会围绕当前复核表回答，不会开启无关闲聊。</span>
                                 </div>
                             `}
                             ${loading ? `
@@ -339,7 +339,7 @@ export function renderConstraintOptimizeButton({ disabled = false } = {}) {
             ${disabled ? 'disabled' : ''}
             title="通过对话解释和优化当前约束">
             <i data-lucide="message-circle"></i>
-            <span>AI 帮我处理</span>
+            <span>智能帮我处理</span>
         </button>
     `;
 }

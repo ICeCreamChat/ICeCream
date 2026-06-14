@@ -18,7 +18,7 @@ export async function openSmartConstraintHelper() {
         open: true,
         scanning: true,
         progress: 0,
-        phase: '准备分析约束配置...',
+        phase: '准备检查约束草稿...',
     };
     this.render();
 
@@ -49,17 +49,17 @@ export async function openSmartConstraintHelper() {
 
         // 如果有可自动修复的问题，显示提示
         if (scanResult.stats.autoFixable > 0) {
-            this.setMessage(`发现 ${scanResult.stats.total} 个问题，其中 ${scanResult.stats.autoFixable} 个可自动修复`);
+            this.setMessage(`发现 ${scanResult.stats.total} 个问题，其中 ${scanResult.stats.autoFixable} 个可生成修正预览。`);
         } else if (scanResult.stats.total === 0) {
-            this.setMessage('太棒了！您的约束配置很完善');
+            this.setMessage('没有发现需要处理的问题。');
         } else {
-            this.setMessage(`发现 ${scanResult.stats.total} 个问题需要处理`);
+            this.setMessage(`发现 ${scanResult.stats.total} 个问题需要处理。`);
         }
     } catch (error) {
         this.state.constraintScan = {
             ...this.state.constraintScan,
             scanning: false,
-            error: error.message || '扫描失败，请重试',
+            error: error.message || '检查失败，请重试',
         };
         this.render();
         this.handleError(error);
@@ -71,11 +71,11 @@ export async function openSmartConstraintHelper() {
  */
 async function simulateScanProgress() {
     const phases = [
-        { progress: 20, phase: '检查教师排课情况...' },
-        { progress: 40, phase: '分析课程分布...' },
-        { progress: 60, phase: '检测时间冲突...' },
-        { progress: 80, phase: '评估约束合理性...' },
-        { progress: 95, phase: '生成优化建议...' },
+        { progress: 20, phase: '检查约束对象是否能匹配...' },
+        { progress: 40, phase: '检查是否缺少周几和节次...' },
+        { progress: 60, phase: '检查可能冲突的规则...' },
+        { progress: 80, phase: '整理可修正的问题...' },
+        { progress: 95, phase: '生成处理建议...' },
     ];
 
     for (const { progress, phase } of phases) {
@@ -164,7 +164,7 @@ export async function confirmApplyFix(problemId) {
         // 重新扫描
         await this.openSmartConstraintHelper();
 
-        this.setMessage(`✅ 已修复：${problem.title}`);
+        this.setMessage(`已应用修正：${problem.title}`);
     } catch (error) {
         this.state.fixPreview = { ...this.state.fixPreview, applying: false };
         this.render();
@@ -180,7 +180,7 @@ export async function applyAllFixes() {
     if (!problems.length) return;
 
     const confirmed = confirm(
-        `将自动修复 ${problems.length} 个问题。\n\n` +
+        `将为 ${problems.length} 个问题生成并应用修正。\n\n` +
         problems.map(p => `• ${p.title}`).join('\n') +
         '\n\n确认继续吗？'
     );
@@ -213,7 +213,7 @@ export async function applyAllFixes() {
         // 重新扫描
         await this.openSmartConstraintHelper();
 
-        this.setMessage(`✅ 已成功修复 ${problems.length} 个问题！`);
+        this.setMessage(`已应用 ${problems.length} 个修正。`);
     } catch (error) {
         this.state.constraintScan = { ...this.state.constraintScan, applyingAll: false };
         this.render();

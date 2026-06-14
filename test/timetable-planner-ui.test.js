@@ -4322,7 +4322,7 @@ test('timetable rule review keeps parsed drafts inside the modal and preserves t
 
   assert.match(sidebar, /id="tt-open-rule-review"/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
-  assert.match(sidebar, /继续复核智能约束/);
+  assert.match(sidebar, /继续处理约束草稿/);
   assert.match(sidebar, /2/);
   assert.doesNotMatch(sidebar, /id="tt-pending-rules"/);
   assert.doesNotMatch(sidebar, /data-rule-card="draft-1"/);
@@ -4422,6 +4422,9 @@ test('timetable 智能 rules sidebar renders roster-style card entry while examp
   assert.doesNotMatch(sidebar, /tt-lock-list/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
   assert.match(sidebar, /导入智能约束/);
+  assert.match(sidebar, /已生效/);
+  assert.match(sidebar, /待处理/);
+  assert.match(sidebar, /需注意/);
   assert.doesNotMatch(sidebar, /tt-rule-entry-card/);
   // No dialog rendered when no pending rules and no open state
   assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
@@ -4445,7 +4448,7 @@ test('timetable smart rules no longer keep the old inline sidebar renderer', asy
   const styles = await readFile(stylePath, 'utf8');
 
   assert.doesNotMatch(viewSource, /function renderRuleInputArea/);
-  assert.doesNotMatch(viewSource, /function renderRuleCard/);
+  assert.doesNotMatch(viewSource, /function renderRuleCard\(/);
   assert.doesNotMatch(viewSource, /function renderSavedRuleList/);
   assert.doesNotMatch(viewSource, /function renderRulePreview/);
   assert.doesNotMatch(styles, /(?:^|\n)\.tt-rule-input-area\s*\{/);
@@ -4581,8 +4584,9 @@ test('timetable constraint chat is wired into the real planner frontend', async 
   assert.match(controllerSource, /reviewContext/);
   assert.match(html, /data-action="constraint-chat-start"/);
   assert.match(html, /tt-constraint-chat-overlay/);
-  assert.match(html, /AI 帮我处理/);
-  assert.match(html, /按这个顺序复核就行/);
+  assert.match(html, /智能帮我处理/);
+  assert.doesNotMatch(html, /AI 帮我处理/);
+  assert.match(html, /按提示处理约束/);
   assert.match(html, /先处理当前复核表里的问题/);
   assert.match(html, /不需要懂排课规则/);
   assert.match(html, /今天要处理的复核任务/);
@@ -4778,8 +4782,10 @@ test('timetable smart helper renders problem details and uses smart wording', ()
   assert.match(html, /data-action="close-problem-detail"/);
   assert.match(html, /问智能/);
   assert.doesNotMatch(html, /问AI/);
-  assert.match(html, /扫描耗时/);
-  assert.match(html, /行业合规度/);
+  assert.match(html, /还缺什么/);
+  assert.match(html, /哪里可能冲突/);
+  assert.match(html, /哪些可以一键修正/);
+  assert.match(html, /会改哪几条/);
 });
 
 test('timetable smart helper applies generated fixes to review draft rows', () => {
@@ -4835,6 +4841,56 @@ test('timetable smart helper applies generated fixes to review draft rows', () =
   assert.deepEqual(updated[1].slots, ['1-2']);
   assert.equal(updated[1].status, 'needs_review');
   assert.ok(updated.some(row => row.id === 'auto_teacher_daily_limit_t_math'));
+});
+
+test('timetable beginner rule cards update the underlying review draft rows', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.ruleReview = {
+    open: true,
+    step: 'review',
+    mode: 'text',
+    advancedOpen: false,
+    draftRows: [{
+      id: 'card-1',
+      rawText: '王老师周三下午不排课',
+      type: 'teacher_unavailable',
+      targetType: 'teacher',
+      targetId: 't_math',
+      targetName: 'Math Teacher',
+      slots: ['3-5'],
+      priority: 'hard',
+      status: 'needs_review',
+      description: '教师不可排',
+      warnings: [],
+    }, {
+      id: 'card-2',
+      rawText: '体育课尽量分散',
+      type: 'subject_spread',
+      targetType: 'subject',
+      targetId: 'pe',
+      targetName: '体育',
+      slots: [],
+      priority: 'soft',
+      status: 'needs_review',
+      description: '同科分散',
+      warnings: [],
+    }],
+    warnings: [],
+  };
+
+  controller.markRuleReviewRowEffective('card-1');
+  assert.equal(controller.state.ruleReview.draftRows.find(row => row.id === 'card-1').status, 'effective');
+
+  controller.ignoreRuleReviewRow('card-1');
+  assert.equal(controller.state.ruleReview.draftRows.find(row => row.id === 'card-1').status, 'ignored');
+
+  controller.editRuleReviewRow('card-1');
+  assert.equal(controller.state.ruleReview.advancedOpen, true);
+  assert.equal(controller.state.ruleReview.selectedRuleId, 'card-1');
+
+  controller.deleteRuleReviewCard('card-2');
+  assert.deepEqual(controller.state.ruleReview.draftRows.map(row => row.id), ['card-1']);
 });
 
 test('timetable smart helper asks through the existing constraint chat with problem context', async () => {
@@ -4918,7 +4974,7 @@ test('timetable smart helper renders error, loading and real collapsed groups', 
   }));
   assert.match(collapsedHtml, /aria-expanded="false"/);
   assert.match(collapsedHtml, /还有 1 个问题/);
-  assert.match(collapsedHtml, /生成修复中/);
+  assert.match(collapsedHtml, /准备修正中/);
   assert.match(collapsedHtml, /data-action="apply-all-fixes" disabled/);
   assert.doesNotMatch(collapsedHtml, /紧急问题 4<\/h5>/);
 
@@ -5016,10 +5072,10 @@ test('timetable rule review groups smart parse results by readiness and question
     },
   }));
 
-  assert.match(html, /智能建议总览/);
-  assert.match(html, /已识别/);
+  assert.match(html, /处理约束问题/);
+  assert.match(html, /智能已理解/);
   assert.match(html, /可直接生效/);
-  assert.match(html, /需要补充信息/);
+  assert.match(html, /需要你补充/);
   assert.match(html, /你说的王老师是哪一位/);
   assert.match(html, /data-rule-clarify-question="q_1"/);
   assert.match(html, /data-rule-clarify-option/);
@@ -5027,13 +5083,26 @@ test('timetable rule review groups smart parse results by readiness and question
   assert.match(html, /data-rule-question-answer="q_1"/);
   assert.match(html, /id="tt-continue-rule-conversation"/);
   assert.match(html, /id="tt-apply-auto-rules"/);
-  assert.match(html, /需要复核/);
-  assert.match(html, /冲突与风险/);
+  assert.match(html, /需要你确认/);
+  assert.match(html, /冲突风险/);
   assert.match(html, /李老师不可排与锁定课节冲突/);
   assert.match(html, /暂不支持/);
   assert.match(html, /teacher_free_period_compact/);
+  assert.match(html, /class="tt-rule-card-list/);
+  assert.match(html, /系统理解为/);
+  assert.match(html, /data-action="rule-card-edit"/);
+  assert.match(html, /data-action="rule-card-ignore"/);
+  assert.match(html, /data-action="rule-card-delete"/);
+  assert.match(html, /data-action="rule-card-effective"/);
+  assert.match(html, /<details class="tt-rule-advanced-editor"/);
+  assert.doesNotMatch(html, /<details class="tt-rule-advanced-editor" open/);
+  assert.match(html, /data-rule-review-row="auto-1"/);
+  assert.match(html, /data-rule-review-field="rawText"/);
 
   assert.match(styles, /\.tt-rule-review-overview\s*{/);
+  assert.match(styles, /\.tt-rule-wizard\s*{/);
+  assert.match(styles, /\.tt-rule-card-list\s*{/);
+  assert.match(styles, /\.tt-rule-advanced-editor\s*{/);
   assert.match(styles, /\.tt-rule-review-group\s*{/);
   assert.match(styles, /\.tt-rule-conflict--blocking\s*{/);
 });
@@ -5342,7 +5411,7 @@ test('timetable saved 智能 rules remain visible after confirmation', async () 
   // New card-based saved rules section
   assert.match(sidebar, /id="tt-open-rule-review"/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
-  assert.match(sidebar, /查看智能约束/);
+  assert.match(sidebar, /查看已生效约束/);
   assert.match(sidebar, /9/);
   assert.match(sidebar, /id="tt-clear-rules"/);
   assert.doesNotMatch(sidebar, /id="tt-saved-rules"/);

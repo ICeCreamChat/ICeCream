@@ -54,6 +54,14 @@ function bindDelegatedInteractions(container) {
         // 原有actions
         else if (action === 'submit-rule-clarification') {
             controller.submitClarifyingAnswers();
+        } else if (action === 'rule-card-edit') {
+            controller.editRuleReviewRow(event.target.closest('[data-rule-id]')?.dataset.ruleId || '');
+        } else if (action === 'rule-card-ignore') {
+            controller.ignoreRuleReviewRow(event.target.closest('[data-rule-id]')?.dataset.ruleId || '');
+        } else if (action === 'rule-card-delete') {
+            controller.deleteRuleReviewCard(event.target.closest('[data-rule-id]')?.dataset.ruleId || '');
+        } else if (action === 'rule-card-effective') {
+            controller.markRuleReviewRowEffective(event.target.closest('[data-rule-id]')?.dataset.ruleId || '');
         } else if (action === 'diagnose-rules') {
             controller.diagnoseRules();
         } else if (action === 'constraint-chat-start') {

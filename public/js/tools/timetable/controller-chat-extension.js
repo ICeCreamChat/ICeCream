@@ -52,7 +52,7 @@ function buildSuggestedPrompts(groups = [], counts = {}) {
         prompts.push('把全部班级展开为当前所有班级');
     }
     if (counts.needReview) {
-        prompts.push('解释需要复核的约束里哪些最影响排课');
+        prompts.push('解释需要你确认的约束里哪些最影响排课');
     }
     if (counts.unsupported) {
         prompts.push('说明暂不支持的建议如何人工处理');
@@ -123,7 +123,7 @@ export function buildConstraintReviewContext(state = {}) {
 
     addContextGroup(groups, {
         type: 'need_review',
-        label: '需要复核',
+        label: '需要你确认',
         count: needReview.length,
         examples: needReview.map(row => rowTitle(row)),
         relatedRuleIds: needReview.map(row => row.id),

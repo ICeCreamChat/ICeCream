@@ -49,6 +49,7 @@ export function createTimetablePlannerState(overrides = {}) {
         ruleReview: {
             open: false,
             step: 'input',
+            uiStep: 'input',
             mode: 'file',
             fileName: '',
             text: '',
@@ -66,6 +67,9 @@ export function createTimetablePlannerState(overrides = {}) {
             nextAction: '',
             diagnosis: null,
             hasBlockingIssues: false,
+            advancedOpen: false,
+            selectedSection: '',
+            selectedRuleId: '',
             loading: false,
             phase: '',
             phaseText: '',

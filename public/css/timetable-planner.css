@@ -1155,6 +1155,94 @@ button.tt-section-title {
     gap: var(--tt-space-sm);
 }
 
+.tt-rule-wizard {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    padding: 8px;
+    background: rgba(148, 163, 184, 0.06);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+}
+
+.tt-rule-wizard-step {
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 2px 7px;
+    align-items: center;
+    min-width: 0;
+    padding: 8px;
+    color: var(--tt-muted);
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+}
+
+.tt-rule-wizard-step b {
+    display: grid;
+    grid-row: span 2;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    color: var(--tt-muted);
+    background: rgba(148, 163, 184, 0.12);
+    border-radius: 999px;
+    font-size: 0.72rem;
+}
+
+.tt-rule-wizard-step em,
+.tt-rule-wizard-step small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-style: normal;
+}
+
+.tt-rule-wizard-step em {
+    color: var(--tt-text);
+    font-size: 0.76rem;
+    font-weight: 800;
+}
+
+.tt-rule-wizard-step small {
+    font-size: 0.68rem;
+}
+
+.tt-rule-wizard-step.is-active {
+    background: rgba(8, 145, 178, 0.08);
+    border-color: rgba(8, 145, 178, 0.24);
+}
+
+.tt-rule-wizard-step.is-active b,
+.tt-rule-wizard-step.is-done b {
+    color: #fff;
+    background: var(--tt-primary);
+}
+
+.tt-rule-input-intro {
+    display: grid;
+    gap: 3px;
+    padding: 10px;
+    color: var(--tt-text);
+    background: rgba(8, 145, 178, 0.08);
+    border: 1px solid rgba(8, 145, 178, 0.2);
+    border-radius: var(--tt-radius-md);
+}
+
+.tt-rule-input-intro strong {
+    font-size: 0.86rem;
+}
+
+.tt-rule-input-intro span {
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+}
+
+.tt-smart-helper-cta .tt-btn {
+    width: 100%;
+}
+
 .tt-rule-review-overview {
     display: grid;
     gap: var(--tt-space-sm);
@@ -1295,6 +1383,138 @@ button.tt-section-title {
     background: rgba(148, 163, 184, 0.06);
     border: 1px solid var(--tt-border);
     border-radius: var(--tt-radius-md);
+}
+
+.tt-rule-card-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 8px;
+}
+
+.tt-rule-review-card {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+    padding: 10px;
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-left: 3px solid var(--tt-primary);
+    border-radius: var(--tt-radius-sm);
+}
+
+.tt-rule-review-card--needs_review,
+.tt-rule-review-card--invalid {
+    border-left-color: var(--tt-warning);
+}
+
+.tt-rule-review-card--unsupported,
+.tt-rule-review-card--suggestion,
+.tt-rule-review-card--ignored {
+    border-left-color: var(--tt-muted);
+    opacity: 0.9;
+}
+
+.tt-rule-review-card-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 7px;
+    align-items: center;
+    min-width: 0;
+}
+
+.tt-rule-review-card-head strong,
+.tt-rule-review-card-head em {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-rule-review-card-head strong {
+    color: var(--tt-text);
+    font-size: 0.8rem;
+}
+
+.tt-rule-review-card-head em {
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    font-style: normal;
+    font-weight: 800;
+}
+
+.tt-rule-review-card p,
+.tt-rule-card-raw,
+.tt-rule-card-warning {
+    margin: 0;
+    color: var(--tt-text-secondary);
+    font-size: 0.74rem;
+    line-height: 1.45;
+}
+
+.tt-rule-card-raw {
+    display: block;
+    color: var(--tt-muted);
+}
+
+.tt-rule-card-warning {
+    display: grid;
+    grid-template-columns: 15px minmax(0, 1fr);
+    gap: 5px;
+    padding: 6px 7px;
+    color: var(--tt-warning);
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.22);
+    border-radius: var(--tt-radius-sm);
+}
+
+.tt-rule-card-warning .lucide {
+    width: 14px;
+    height: 14px;
+}
+
+.tt-rule-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.tt-rule-advanced-editor {
+    display: grid;
+    gap: 0;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    overflow: hidden;
+}
+
+.tt-rule-advanced-editor > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px;
+    cursor: pointer;
+    background: rgba(148, 163, 184, 0.06);
+}
+
+.tt-rule-advanced-editor > summary span {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--tt-text);
+    font-size: 0.8rem;
+}
+
+.tt-rule-advanced-editor > summary em {
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    font-style: normal;
+}
+
+.tt-rule-advanced-editor .tt-roster-review-wrap {
+    border: 0;
+    border-top: 1px solid var(--tt-border);
+    border-radius: 0;
 }
 
 .tt-rule-review-group-title {
@@ -1513,6 +1733,11 @@ button.tt-section-title {
 }
 
 @media (max-width: 640px) {
+    .tt-rule-wizard,
+    .tt-rule-card-list {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
     .tt-rule-overview-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -1524,6 +1749,12 @@ button.tt-section-title {
 
     .tt-rule-beginner-head em {
         justify-self: start;
+    }
+
+    .tt-rule-advanced-editor > summary,
+    .tt-rule-card-actions {
+        align-items: stretch;
+        flex-direction: column;
     }
 }
 

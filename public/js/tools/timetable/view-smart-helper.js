@@ -30,14 +30,14 @@ export function renderSmartConstraintHelper(state) {
  */
 function renderScanningProgress(scan) {
     const progress = scan.progress || 0;
-    const phase = scan.phase || '准备分析';
+    const phase = scan.phase || '准备检查约束';
 
     return `
         <div class="tt-scan-progress">
             <div class="tt-scan-icon">
-                <i data-lucide="scan" class="tt-pulse"></i>
+                <i data-lucide="loader-2" class="tt-spin"></i>
             </div>
-            <h3>🔍 智能助手正在分析...</h3>
+            <h3>智能助手正在检查约束</h3>
             <div class="tt-progress-bar">
                 <div class="tt-progress-fill" style="width: ${progress}%"></div>
             </div>
@@ -55,8 +55,8 @@ function renderAllClear() {
             <div class="tt-success-icon">
                 <i data-lucide="check-circle"></i>
             </div>
-            <h3>✅ 太棒了！没有发现问题</h3>
-            <p>您的约束配置看起来很合理</p>
+            <h3>没有发现需要处理的问题</h3>
+            <p>当前约束可以继续复核或确认生效。</p>
             <button class="tt-btn tt-btn--secondary" data-action="close-smart-helper">
                 <i data-lucide="check"></i>
                 <span>完成</span>
@@ -92,27 +92,20 @@ function renderProblemCards(problems, stats, expandedGroups = new Set(), scan = 
             <div class="tt-summary-header">
                 <h3>
                     <i data-lucide="sparkles"></i>
-                    智能分析完成！
+                    智能检查完成
                 </h3>
                 <div class="tt-summary-stats">
                     <span class="tt-stat">发现 ${stats.total || 0} 个问题</span>
-                    ${stats.autoFixable > 0 ? `<span class="tt-stat tt-stat--success">${stats.autoFixable} 个可自动修复</span>` : ''}
+                    ${stats.autoFixable > 0 ? `<span class="tt-stat tt-stat--success">${stats.autoFixable} 个可生成修正</span>` : ''}
                 </div>
             </div>
 
-            <div class="tt-completeness">
-                <div class="tt-completeness-bar">
-                    <div class="tt-completeness-fill" style="width: ${stats.completeness || 0}%"></div>
-                </div>
-                <span class="tt-completeness-text">完成度 ${stats.completeness || 0}%</span>
-            </div>
-
-            ${renderPerformanceMetrics(stats)}
+            ${renderBeginnerScanSummary(problems, stats)}
         </div>
 
         <div class="tt-problem-cards">
-            ${urgentProblems.length > 0 ? renderProblemGroup('urgent', '紧急问题', urgentProblems, expandedGroups) : ''}
-            ${optimizeProblems.length > 0 ? renderProblemGroup('optimize', '可优化', optimizeProblems, expandedGroups) : ''}
+            ${urgentProblems.length > 0 ? renderProblemGroup('urgent', '还缺什么', urgentProblems, expandedGroups) : ''}
+            ${optimizeProblems.length > 0 ? renderProblemGroup('optimize', '哪些可以优化', optimizeProblems, expandedGroups) : ''}
             ${infoProblems.length > 0 ? renderProblemGroup('info', '信息提示', infoProblems, expandedGroups) : ''}
         </div>
 
@@ -120,13 +113,38 @@ function renderProblemCards(problems, stats, expandedGroups = new Set(), scan = 
             ${stats.autoFixable > 0 ? `
                 <button class="tt-btn tt-btn--primary tt-btn--large" data-action="apply-all-fixes" ${scan.applyingAll ? 'disabled' : ''}>
                     <i data-lucide="${scan.applyingAll ? 'loader-2' : 'wand-sparkles'}" class="${scan.applyingAll ? 'tt-spin' : ''}"></i>
-                    <span>${scan.applyingAll ? '生成修复中' : `一键修复全部（${stats.autoFixable}个）`}</span>
+                    <span>${scan.applyingAll ? '准备修正中' : `一键生成可修正项（${stats.autoFixable}个）`}</span>
                 </button>
             ` : ''}
             <button class="tt-btn tt-btn--secondary" data-action="open-ai-chat">
                 <i data-lucide="message-circle"></i>
-                <span>不确定？问问智能助手</span>
+                <span>问智能助手</span>
             </button>
+        </div>
+    `;
+}
+
+function renderBeginnerScanSummary(problems = [], stats = {}) {
+    const urgent = problems.filter(problem => problem.severity === 'urgent').length;
+    const conflict = problems.filter(problem => /conflict|冲突|time_conflicts/i.test(`${problem.id || ''} ${problem.type || ''} ${problem.title || ''}`)).length;
+    const autoFixable = stats.autoFixable || problems.filter(problem => problem.autoFixable).length;
+    return `
+        <div class="tt-helper-insight-grid">
+            <article>
+                <i data-lucide="circle-help"></i>
+                <strong>还缺什么</strong>
+                <span>${urgent ? `${urgent} 类问题需要先看` : '没有明显缺失'}</span>
+            </article>
+            <article>
+                <i data-lucide="triangle-alert"></i>
+                <strong>哪里可能冲突</strong>
+                <span>${conflict ? `${conflict} 类冲突需要确认` : '暂未发现硬冲突'}</span>
+            </article>
+            <article>
+                <i data-lucide="wand-sparkles"></i>
+                <strong>哪些可以一键修正</strong>
+                <span>${autoFixable ? `${autoFixable} 项可生成修正预览` : '暂无可自动修正项'}</span>
+            </article>
         </div>
     `;
 }
@@ -168,7 +186,7 @@ function renderPerformanceMetrics(stats) {
                     <i data-lucide="timer"></i>
                 </div>
                 <div class="tt-metric-content">
-                    <span class="tt-metric-label">扫描耗时</span>
+                    <span class="tt-metric-label">检查耗时</span>
                     <span class="tt-metric-value">${scanDuration} ms</span>
                 </div>
             </div>
@@ -186,7 +204,7 @@ function renderPerformanceMetrics(stats) {
                     <i data-lucide="award"></i>
                 </div>
                 <div class="tt-metric-content">
-                    <span class="tt-metric-label">行业合规度</span>
+                    <span class="tt-metric-label">可用度</span>
                     <span class="tt-metric-value">${complianceScore}%</span>
                 </div>
             </div>
@@ -230,7 +248,7 @@ function renderProblemCard(problem) {
                     data-action="view-problem-details"
                     data-problem-id="${problem.id}">
                     <i data-lucide="eye"></i>
-                    <span>查看详情</span>
+                    <span>查看原因</span>
                 </button>
                 ${problem.autoFixable ? `
                     <button
@@ -238,7 +256,7 @@ function renderProblemCard(problem) {
                         data-action="apply-fix"
                         data-problem-id="${problem.id}">
                         <i data-lucide="wand-sparkles"></i>
-                        <span>一键修复</span>
+                        <span>生成修正</span>
                     </button>
                 ` : `
                     <button
@@ -246,7 +264,7 @@ function renderProblemCard(problem) {
                         data-action="discuss-with-ai"
                         data-problem-id="${problem.id}">
                         <i data-lucide="message-circle"></i>
-                        <span>问智能</span>
+                        <span>问智能助手</span>
                     </button>
                 `}
             </div>
@@ -259,7 +277,7 @@ function renderProblemDetail(problem = {}) {
         ['类型', problem.type || '未分类'],
         ['级别', problem.severity || '提示'],
         ['数量', problem.count ?? 1],
-        ['修复建议', problem.fixSuggestion || '暂无自动建议'],
+        ['修正建议', problem.fixSuggestion || '暂无自动建议'],
     ];
     const related = [
         ...(problem.constraints || []),
@@ -296,6 +314,10 @@ function renderProblemDetail(problem = {}) {
                         `).join('')}
                     </div>
                 ` : ''}
+                <div class="tt-smart-detail-related">
+                    <strong>会改哪几条</strong>
+                    <span>${problem.autoFixable ? '点击“生成修正”后，会先生成预览，不会直接写入项目。' : '这类问题需要你确认后再处理。'}</span>
+                </div>
                 <footer class="tt-smart-detail-actions">
                     <button class="tt-btn tt-btn--secondary" type="button" data-action="discuss-with-ai" data-problem-id="${escapeAttr(problem.id || '')}">
                         <i data-lucide="message-circle"></i>
@@ -304,7 +326,7 @@ function renderProblemDetail(problem = {}) {
                     ${problem.autoFixable ? `
                         <button class="tt-btn tt-btn--primary" type="button" data-action="apply-fix" data-problem-id="${escapeAttr(problem.id || '')}">
                             <i data-lucide="wand-sparkles"></i>
-                            <span>生成修复预览</span>
+                            <span>生成修正</span>
                         </button>
                     ` : ''}
                 </footer>
@@ -324,7 +346,7 @@ export function renderFixPreview(fix, problem, previewState = {}) {
                 <div class="tt-fix-preview-header">
                     <h3 id="tt-fix-preview-title">
                         <i data-lucide="wrench"></i>
-                        修复预览：${escapeHtml(problem.title)}
+                        修正预览：${escapeHtml(problem.title)}
                     </h3>
                     <button class="tt-icon-btn" data-action="close-preview" ${applying ? 'disabled' : ''}>
                         <i data-lucide="x"></i>
@@ -333,7 +355,7 @@ export function renderFixPreview(fix, problem, previewState = {}) {
 
                 <div class="tt-fix-comparison">
                     <div class="tt-comparison-side">
-                        <h4>❌ 修复前</h4>
+                        <h4>当前理解</h4>
                         <div class="tt-comparison-content">
                             ${escapeHtml(fix.preview.before)}
                         </div>
@@ -344,7 +366,7 @@ export function renderFixPreview(fix, problem, previewState = {}) {
                     </div>
 
                     <div class="tt-comparison-side tt-comparison-side--after">
-                        <h4>✅ 修复后</h4>
+                        <h4>准备改成</h4>
                         <div class="tt-comparison-content">
                             ${escapeHtml(fix.preview.after)}
                         </div>
@@ -352,12 +374,13 @@ export function renderFixPreview(fix, problem, previewState = {}) {
                 </div>
 
                 <div class="tt-fix-details">
-                    <h4>修复详情：</h4>
+                    <h4>会改哪几条</h4>
                     <ul>
                         ${fix.fixes.map(f => `
                             <li>${escapeHtml(f.reason || '自动调整')}</li>
                         `).join('')}
                     </ul>
+                    <p class="tt-muted">需要你再确认什么：应用后请回到复核卡片，确认对象、节次和强弱是否符合教务要求。</p>
                 </div>
 
                 <div class="tt-fix-preview-actions">
@@ -367,7 +390,7 @@ export function renderFixPreview(fix, problem, previewState = {}) {
                     </button>
                     <button class="tt-btn tt-btn--primary" data-action="confirm-fix" data-problem-id="${problem.id}" ${applying ? 'disabled' : ''}>
                         <i data-lucide="${applying ? 'loader-2' : 'check'}" class="${applying ? 'tt-spin' : ''}"></i>
-                        <span>${applying ? '应用中' : '应用此修复'}</span>
+                        <span>${applying ? '应用中' : '应用此修正'}</span>
                     </button>
                 </div>
             </div>
