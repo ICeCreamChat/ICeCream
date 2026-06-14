@@ -29,6 +29,7 @@ import {
     createTimetablePlannerState,
 } from './state.js';
 import { buildConstraintReviewContext, constraintChatControllerMethods } from './controller-chat-extension.js';
+import { buildRuleReviewTasks } from './rule-review-tasks.js';
 import smartHelperMethods from './controller-smart-helper.js';
 import { renderWorkbench } from './view.js';
 
@@ -1428,7 +1429,7 @@ export class TimetablePlannerController {
         const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
         const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
         const hasBlockingIssues = draftRows.some(row => ['invalid'].includes(row.status)) || conflicts.some(item => item.level === 'blocking');
-        this.state.ruleReview = {
+        const nextReview = {
             ...(this.state.ruleReview || {}),
             open: true,
             step: 'review',
@@ -1465,6 +1466,15 @@ export class TimetablePlannerController {
             phase: '',
             phaseText: '',
             phaseTone: '',
+        };
+        const taskList = buildRuleReviewTasks(nextReview);
+        this.state.ruleReview = {
+            ...nextReview,
+            taskList,
+            activeTaskId: payload.activeTaskId
+                || nextReview.activeTaskId
+                || taskList[0]?.id
+                || '',
         };
         this.state.ruleDraft = payload.draftRules || this.state.ruleDraft;
         this.state.ruleDraftPreview = payload.previewItems || draftRows;

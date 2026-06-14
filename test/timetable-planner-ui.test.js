@@ -4507,8 +4507,10 @@ test('timetable rule review modal shows seating-style parse progress feedback', 
   assert.match(styles, /\.tt-process-chip--warning\s*{/);
 });
 
-test('timetable constraint chat is wired into the real planner frontend', async () => {
+test('timetable constraint chat is docked inside the rule review workbench', async () => {
   const controllerSource = await readFile(new URL('../public/js/tools/timetable/controller.js', import.meta.url), 'utf8');
+  const chatControllerSource = await readFile(new URL('../public/js/tools/timetable/controller-chat-extension.js', import.meta.url), 'utf8');
+  const viewSource = await readFile(new URL('../public/js/tools/timetable/view.js', import.meta.url), 'utf8');
   const interactionSource = await readFile(new URL('../public/js/tools/timetable/grid-interactions.js', import.meta.url), 'utf8');
   const indexHtml = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
   const chatStyles = await readFile(new URL('../public/css/timetable-chat.css', import.meta.url), 'utf8');
@@ -4522,9 +4524,19 @@ test('timetable constraint chat is wired into the real planner frontend', async 
       inputText: '请解释这些约束',
       messages: [{
         role: 'assistant',
-        content: '我可以帮你解释和优化约束。',
+        content: '问题是什么：缺少节次会导致规则不能执行。\n建议怎么处理：补充可用节次。\n准备改成什么：先生成预览。',
         timestamp: new Date('2026-06-13T08:00:00+08:00').getTime(),
       }],
+      docked: true,
+      activeTaskId: 'fix_slot_range',
+      actionPreview: {
+        title: '过滤超出范围节次',
+        before: '包含第 8 节',
+        after: '只保留当前排课范围内节次',
+        affectedRuleIds: ['draft-1'],
+        changes: [{ ruleId: 'draft-1', updates: { slots: ['1-7'] } }],
+        requiresConfirmation: true,
+      },
       reviewContext: {
         counts: {
           needsInput: 34,
@@ -4579,35 +4591,42 @@ test('timetable constraint chat is wired into the real planner frontend', async 
   assert.equal(typeof TimetablePlannerController.prototype.sendConstraintChatMessage, 'function');
   assert.equal(typeof TimetablePlannerController.prototype.closeConstraintChat, 'function');
   assert.equal(typeof TimetablePlannerController.prototype.updateConstraintChatInput, 'function');
+  assert.equal(typeof TimetablePlannerController.prototype.applyConstraintChatPreview, 'function');
   assert.match(controllerSource, /constraintChatControllerMethods/);
   assert.match(controllerSource, /buildConstraintReviewContext/);
+  assert.match(chatControllerSource, /taskContext/);
   assert.match(controllerSource, /reviewContext/);
-  assert.match(html, /data-action="constraint-chat-start"/);
-  assert.match(html, /tt-constraint-chat-overlay/);
-  assert.match(html, /智能帮我处理/);
+  assert.doesNotMatch(viewSource, /renderConstraintChatDialog\(state\)/);
+  assert.match(html, /tt-rule-workbench/);
+  assert.match(html, /tt-constraint-chat-dock/);
+  assert.doesNotMatch(html, /tt-constraint-chat-overlay/);
+  assert.match(html, /当前办理事项/);
+  assert.match(html, /问题是什么/);
+  assert.match(html, /建议怎么处理/);
+  assert.match(html, /准备改成什么/);
+  assert.match(html, /data-action="constraint-chat-apply-preview"/);
+  assert.match(html, /过滤超出范围节次/);
   assert.doesNotMatch(html, /AI 帮我处理/);
-  assert.match(html, /按提示处理约束/);
-  assert.match(html, /先处理当前复核表里的问题/);
-  assert.match(html, /不需要懂排课规则/);
-  assert.match(html, /今天要处理的复核任务/);
-  assert.match(html, /点推荐操作/);
-  assert.match(html, /当前复核重点/);
+  assert.match(html, /办理清单/);
+  assert.match(html, /同一个弹窗里解释和生成预览/);
   assert.match(html, /需要补充信息/);
   assert.match(html, /34/);
   assert.match(html, /data-action="constraint-chat-suggest"/);
-  assert.match(html, /我可以帮你解释和优化约束。/);
+  assert.match(html, /缺少节次会导致规则不能执行/);
   assert.match(html, /请解释这些约束/);
+  assert.match(interactionSource, /rule-task-explain/);
+  assert.match(interactionSource, /rule-task-preview-fix/);
+  assert.match(interactionSource, /constraint-chat-apply-preview/);
   assert.match(interactionSource, /constraint-chat-start/);
   assert.match(interactionSource, /constraint-chat-send/);
   assert.match(interactionSource, /constraint-chat-input/);
   assert.match(interactionSource, /constraint-chat-suggest/);
   assert.match(indexHtml, /css\/timetable-chat\.css/);
-  assert.match(chatStyles, /\.tt-constraint-chat-body\s*{/);
-  assert.match(chatStyles, /\.tt-constraint-chat-guide\s*{/);
-  assert.match(chatStyles, /\.tt-chat-step-guide/);
+  assert.match(chatStyles, /\.tt-constraint-chat-dock\s*{/);
+  assert.match(chatStyles, /\.tt-chat-preview-card\s*{/);
   assert.match(chatStyles, /@media \(max-width:\s*780px\)/);
-  assert.match(plannerStyles, /\.tt-rule-beginner-guide\s*{/);
-  assert.match(plannerStyles, /\.tt-rule-beginner-steps\s*{/);
+  assert.match(plannerStyles, /\.tt-rule-workbench\s*{/);
+  assert.match(plannerStyles, /\.tt-rule-task-list\s*{/);
 });
 
 test('timetable rule review parse renders the opened input state before progress updates', async () => {
@@ -4727,7 +4746,7 @@ test('timetable rule review explains warning groups and draft row sources separa
   assert.match(styles, /\.tt-rule-row-source\s*{/);
 });
 
-test('timetable smart helper renders problem details and uses smart wording', () => {
+test('timetable smart scan renders problem details inline with beginner actions', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
       open: true,
@@ -4777,15 +4796,15 @@ test('timetable smart helper renders problem details and uses smart wording', ()
     },
   }));
 
-  assert.match(html, /data-smart-detail-backdrop/);
-  assert.match(html, /id="tt-smart-detail-title"/);
+  assert.match(html, /tt-rule-task-expanded-detail/);
+  assert.match(html, /问题原因/);
   assert.match(html, /data-action="close-problem-detail"/);
-  assert.match(html, /问智能/);
+  assert.match(html, /data-action="apply-fix"/);
+  assert.match(html, /data-action="discuss-with-ai"/);
+  assert.match(html, /问智能助手/);
   assert.doesNotMatch(html, /问AI/);
-  assert.match(html, /还缺什么/);
-  assert.match(html, /哪里可能冲突/);
-  assert.match(html, /哪些可以一键修正/);
   assert.match(html, /会改哪几条/);
+  assert.doesNotMatch(html, /data-smart-detail-backdrop/);
 });
 
 test('timetable smart helper applies generated fixes to review draft rows', () => {
@@ -4912,15 +4931,25 @@ test('timetable smart helper asks through the existing constraint chat with prob
       fixSuggestion: '补充具体节次',
     }],
   };
-  controller.startConstraintConversation = async () => {
-    controller.state.constraintChat = { open: true, inputText: '', messages: [] };
+  let optionsSeen = null;
+  controller.startConstraintConversation = async options => {
+    optionsSeen = options;
+    controller.state.constraintChat = {
+      open: true,
+      inputText: '',
+      messages: [],
+      activeTaskId: options?.taskContext?.taskId || '',
+    };
   };
 
   await controller.openAIChatFromHelper('missing_slots');
 
   assert.equal(controller.state.constraintChat.open, true);
-  assert.match(controller.state.constraintChat.inputText, /缺少节次/);
-  assert.match(controller.state.constraintChat.inputText, /王老师没说明第几节/);
+  assert.equal(optionsSeen.intent, 'explain');
+  assert.equal(optionsSeen.taskContext.taskId, 'missing_slots');
+  assert.equal(optionsSeen.taskContext.taskType, 'missing_slots');
+  assert.match(optionsSeen.taskContext.examples.join('\n'), /王老师没说明第几节/);
+  assert.equal(controller.state.constraintChat.activeTaskId, 'missing_slots');
 });
 
 test('timetable smart helper interactions include detail close and problem-aware chat', async () => {
@@ -4931,7 +4960,58 @@ test('timetable smart helper interactions include detail close and problem-aware
   assert.match(interactionSource, /openAIChatFromHelper\(event\.target\.closest\('\[data-problem-id\]'\)/);
 });
 
-test('timetable smart helper renders error, loading and real collapsed groups', () => {
+test('timetable constraint chat preview application updates drafts only after confirmation', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.ruleReview = {
+    open: true,
+    step: 'review',
+    draftRows: [{
+      id: 'draft-1',
+      type: 'teacher_unavailable',
+      targetName: '王老师',
+      slots: ['1-8', '1-7'],
+      warnings: ['节次 1-8 不在当前排课范围内。'],
+      status: 'needs_review',
+    }],
+  };
+  controller.state.project = createDefaultTimetableProject({
+    teachers: [{ id: 't_wang', name: '王老师' }],
+    classes: [{ id: 'c1', name: '七年级1班' }],
+    subjects: [{ id: 'math', name: '数学' }],
+    lessonPlans: [],
+    rules: { hardRules: {}, softRules: {} },
+  });
+  controller.state.constraintChat = {
+    open: true,
+    docked: true,
+    actionPreview: {
+      title: '过滤超出范围节次',
+      affectedRuleIds: ['draft-1'],
+      changes: [{
+        ruleId: 'draft-1',
+        updates: {
+          slots: ['1-7'],
+          warnings: [],
+          status: 'effective',
+        },
+      }],
+      requiresConfirmation: true,
+    },
+  };
+
+  const savedRulesBefore = JSON.stringify(controller.state.project.rules);
+  assert.deepEqual(controller.state.ruleReview.draftRows[0].slots, ['1-8', '1-7']);
+
+  controller.applyConstraintChatPreview();
+
+  assert.deepEqual(controller.state.ruleReview.draftRows[0].slots, ['1-7']);
+  assert.equal(controller.state.ruleReview.draftRows[0].status, 'effective');
+  assert.deepEqual(controller.state.ruleReview.draftRows[0].warnings, []);
+  assert.equal(JSON.stringify(controller.state.project.rules), savedRulesBefore);
+});
+
+test('timetable smart scan status stays compact and completed problems join the task workbench', () => {
   const baseReview = {
     open: true,
     step: 'review',
@@ -4962,7 +5042,20 @@ test('timetable smart helper renders error, loading and real collapsed groups', 
   assert.match(errorHtml, /智能扫描失败/);
   assert.match(errorHtml, /data-action="rescan-smart-helper"/);
 
-  const collapsedHtml = renderWorkbench(sampleWorkbenchState({
+  const loadingHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: baseReview,
+    constraintScan: {
+      scanning: true,
+      progress: 60,
+      phase: '检查可能冲突的规则...',
+      problems: [],
+      stats: {},
+    },
+  }));
+  assert.match(loadingHtml, /智能助手正在检查约束/);
+  assert.match(loadingHtml, /检查可能冲突的规则/);
+
+  const scanHtml = renderWorkbench(sampleWorkbenchState({
     ruleReview: baseReview,
     constraintScan: {
       scanning: false,
@@ -4972,17 +5065,20 @@ test('timetable smart helper renders error, loading and real collapsed groups', 
       problems: [problem(1), problem(2), problem(3), problem(4)],
     },
   }));
-  assert.match(collapsedHtml, /aria-expanded="false"/);
-  assert.match(collapsedHtml, /还有 1 个问题/);
-  assert.match(collapsedHtml, /准备修正中/);
-  assert.match(collapsedHtml, /data-action="apply-all-fixes" disabled/);
-  assert.doesNotMatch(collapsedHtml, /紧急问题 4<\/h5>/);
+  assert.match(scanHtml, /智能检查结果已加入办理清单/);
+  assert.match(scanHtml, /处理智能检查建议/);
+  assert.match(scanHtml, /紧急问题 1/);
+  assert.match(scanHtml, /紧急问题 4/);
+  assert.match(scanHtml, /data-scan-problem-id="urgent-1"/);
+  assert.match(scanHtml, /data-action="apply-fix"/);
+  assert.doesNotMatch(scanHtml, /class="tt-smart-helper"/);
+  assert.doesNotMatch(scanHtml, /data-action="apply-all-fixes"/);
 
-  const expandedHtml = renderWorkbench(sampleWorkbenchState({
+  const previewHtml = renderWorkbench(sampleWorkbenchState({
     ruleReview: baseReview,
     constraintScan: {
       scanning: false,
-      expandedGroups: new Set(['urgent']),
+      expandedGroups: new Set(),
       stats: { total: 4, autoFixable: 4, completeness: 80, scanDuration: 3, checksPerformed: 5, complianceScore: 80 },
       problems: [problem(1), problem(2), problem(3), problem(4)],
     },
@@ -4996,21 +5092,19 @@ test('timetable smart helper renders error, loading and real collapsed groups', 
       },
     },
   }));
-  assert.match(expandedHtml, /aria-expanded="true"/);
-  assert.match(expandedHtml, /紧急问题 4/);
-  assert.match(expandedHtml, /应用中/);
-  assert.match(expandedHtml, /data-action="confirm-fix"[^>]*disabled/);
+  assert.match(previewHtml, /应用中/);
+  assert.match(previewHtml, /data-action="confirm-fix"[^>]*disabled/);
 });
 
-test('timetable rule review groups smart parse results by readiness and questions', async () => {
+test('timetable rule review renders a beginner task workbench instead of raw question lists', async () => {
   const styles = await readFile(stylePath, 'utf8');
-  const html = renderWorkbench(sampleWorkbenchState({
-    ruleReview: {
+  const ruleReview = {
       open: true,
       step: 'review',
       mode: 'text',
       inputType: 'text',
       nextAction: 'ask_user',
+      activeTaskId: 'confirm_teacher_names',
       autoAcceptable: [{
         id: 'auto-1',
         rawText: '数学尽量上午',
@@ -5036,13 +5130,25 @@ test('timetable rule review groups smart parse results by readiness and question
         id: 'q_1',
         question: '你说的王老师是哪一位？',
         reason: '存在多个同姓教师',
+        targetType: 'teacher',
+        targetText: '王老师',
         options: [
           { label: '王明', value: 't_wang_ming' },
           { label: '王华', value: 't_wang_hua' },
         ],
         relatedRuleIds: ['review-1'],
       }],
-      missingInfo: [{ id: 'm_1', message: '没有找到物理这门课', relatedRuleIds: ['review-2'] }],
+      missingInfo: [{
+        id: 'm_1',
+        message: '你说的道法、地理、劳动是哪个课程？',
+        targetType: 'subject',
+        targetText: '道法、地理、劳动',
+        relatedRuleIds: ['review-2'],
+      }, {
+        id: 'm_2',
+        message: '节次 1-8、2-8 不在当前排课范围内。',
+        relatedRuleIds: ['review-1'],
+      }],
       conflicts: [{ level: 'blocking', message: '李老师不可排与锁定课节冲突', suggestion: '取消其中一个硬约束。', relatedRuleIds: ['lock-1'] }],
       unsupportedItems: [{ id: 'u_1', type: 'teacher_free_period_compact', targetName: '全部教师', description: '当前仅作为建议。' }],
       confidenceSummary: { high: 1, medium: 1, low: 0 },
@@ -5069,45 +5175,68 @@ test('timetable rule review groups smart parse results by readiness and question
         warnings: ['存在多个候选教师'],
       }],
       warnings: [],
-    },
+  };
+  const html = renderWorkbench(sampleWorkbenchState({ ruleReview }));
+  const readyHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: { ...ruleReview, activeTaskId: 'ready_to_apply' },
+  }));
+  const conflictHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: { ...ruleReview, activeTaskId: 'handle_conflicts' },
+  }));
+  const unsupportedHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: { ...ruleReview, activeTaskId: 'unsupported_items' },
   }));
 
-  assert.match(html, /处理约束问题/);
-  assert.match(html, /智能已理解/);
-  assert.match(html, /可直接生效/);
-  assert.match(html, /需要你补充/);
-  assert.match(html, /你说的王老师是哪一位/);
+  assert.match(html, /tt-rule-workbench/);
+  assert.match(html, /办理清单/);
+  assert.match(html, /还差/);
+  assert.match(html, /确认教师名称/);
+  assert.match(html, /确认课程名称/);
+  assert.match(html, /修正节次范围/);
+  assert.match(html, /处理冲突风险/);
+  assert.match(html, /查看暂不支持建议/);
+  assert.match(html, /核对可生效约束/);
+  assert.match(html, /data-rule-task-id="confirm_teacher_names"/);
+  assert.match(html, /data-rule-task-id="confirm_subject_names"/);
+  assert.match(html, /data-rule-task-id="fix_slot_range"/);
+  assert.match(html, /data-action="rule-task-select"/);
+  assert.match(html, /data-action="rule-task-explain"/);
+  assert.match(html, /data-action="rule-task-preview-fix"/);
+  assert.match(html, /当前办理事项/);
+  assert.match(html, /原文出现/);
+  assert.match(html, /系统为什么不确定/);
+  assert.match(html, /王老师/);
+  assert.doesNotMatch(html, /你说的王老师是哪一位/);
+  assert.doesNotMatch(html, /你说的道法、地理、劳动是哪个课程/);
   assert.match(html, /data-rule-clarify-question="q_1"/);
   assert.match(html, /data-rule-clarify-option/);
   assert.match(html, /data-action="submit-rule-clarification"/);
   assert.match(html, /data-rule-question-answer="q_1"/);
   assert.match(html, /id="tt-continue-rule-conversation"/);
-  assert.match(html, /id="tt-apply-auto-rules"/);
-  assert.match(html, /需要你确认/);
-  assert.match(html, /冲突风险/);
-  assert.match(html, /李老师不可排与锁定课节冲突/);
-  assert.match(html, /暂不支持/);
-  assert.match(html, /teacher_free_period_compact/);
-  assert.match(html, /class="tt-rule-card-list/);
-  assert.match(html, /系统理解为/);
-  assert.match(html, /data-action="rule-card-edit"/);
-  assert.match(html, /data-action="rule-card-ignore"/);
-  assert.match(html, /data-action="rule-card-delete"/);
-  assert.match(html, /data-action="rule-card-effective"/);
+  assert.match(readyHtml, /id="tt-apply-auto-rules"/);
+  assert.match(conflictHtml, /李老师不可排与锁定课节冲突/);
+  assert.match(unsupportedHtml, /teacher_free_period_compact/);
+  assert.match(readyHtml, /系统理解为/);
+  assert.match(readyHtml, /data-action="rule-card-edit"/);
+  assert.match(readyHtml, /data-action="rule-card-ignore"/);
+  assert.match(readyHtml, /data-action="rule-card-delete"/);
+  assert.match(readyHtml, /data-action="rule-card-effective"/);
   assert.match(html, /<details class="tt-rule-advanced-editor"/);
   assert.doesNotMatch(html, /<details class="tt-rule-advanced-editor" open/);
   assert.match(html, /data-rule-review-row="auto-1"/);
   assert.match(html, /data-rule-review-field="rawText"/);
+  assert.match(html, /<details class="tt-rule-parse-details"/);
+  assert.doesNotMatch(html, /<details class="tt-rule-parse-details" open/);
 
-  assert.match(styles, /\.tt-rule-review-overview\s*{/);
+  assert.match(styles, /\.tt-rule-workbench\s*{/);
+  assert.match(styles, /\.tt-rule-task-list\s*{/);
+  assert.match(styles, /\.tt-rule-task-detail\s*{/);
   assert.match(styles, /\.tt-rule-wizard\s*{/);
-  assert.match(styles, /\.tt-rule-card-list\s*{/);
   assert.match(styles, /\.tt-rule-advanced-editor\s*{/);
-  assert.match(styles, /\.tt-rule-review-group\s*{/);
-  assert.match(styles, /\.tt-rule-conflict--blocking\s*{/);
+  assert.match(styles, /\.tt-rule-parse-details\s*{/);
 });
 
-test('timetable rule review does not render empty candidate questions as blank selects', () => {
+test('timetable rule review renders empty candidate questions as no-candidate tasks', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
       open: true,
@@ -5128,7 +5257,8 @@ test('timetable rule review does not render empty candidate questions as blank s
     },
   }));
 
-  assert.match(html, /Which all-teacher object/);
+  assert.match(html, /当前项目里没有匹配对象/);
+  assert.match(html, /确认名称/);
   assert.match(html, /data-rule-clarify-question="q_empty"/);
   assert.match(html, /data-rule-clarify-input="q_empty"/);
   assert.match(html, /<input[^>]*data-rule-question-answer="q_empty"/);
@@ -5141,6 +5271,7 @@ test('timetable rule review disables auto apply when blocking conflicts exist', 
       open: true,
       step: 'review',
       mode: 'text',
+      activeTaskId: 'ready_to_apply',
       autoAcceptable: [{
         id: 'auto-1',
         type: 'subject_morning',

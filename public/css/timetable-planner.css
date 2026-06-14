@@ -1243,6 +1243,157 @@ button.tt-section-title {
     width: 100%;
 }
 
+.tt-smart-scan-status {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--tt-border);
+    border-radius: 6px;
+    background: var(--tt-bg-soft);
+    color: var(--tt-text);
+}
+
+.tt-smart-scan-status > i {
+    width: 18px;
+    height: 18px;
+    color: var(--tt-primary);
+}
+
+.tt-smart-scan-status > span {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.tt-smart-scan-status strong,
+.tt-smart-scan-status em {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-smart-scan-status strong {
+    font-size: 13px;
+}
+
+.tt-smart-scan-status em {
+    color: var(--tt-muted);
+    font-size: 12px;
+    font-style: normal;
+}
+
+.tt-smart-scan-status > b {
+    color: var(--tt-primary);
+    font-size: 12px;
+}
+
+.tt-smart-scan-status.is-error {
+    border-color: color-mix(in srgb, var(--tt-danger) 38%, var(--tt-border));
+    background: color-mix(in srgb, var(--tt-danger) 7%, var(--tt-bg-panel));
+}
+
+.tt-smart-scan-status.is-error > i {
+    color: var(--tt-danger);
+}
+
+.tt-rule-task-card--scan {
+    border-left: 3px solid var(--tt-primary);
+}
+
+.tt-rule-task-card--scan.tt-rule-task-card--urgent {
+    border-left-color: var(--tt-danger);
+}
+
+.tt-rule-task-card--scan.tt-rule-task-card--optimize {
+    border-left-color: var(--tt-warning);
+}
+
+.tt-rule-task-suggestion {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0;
+    color: var(--tt-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.tt-rule-task-suggestion i {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    margin-top: 1px;
+    color: var(--tt-primary);
+}
+
+.tt-rule-task-expanded-detail {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid var(--tt-border);
+    border-radius: 6px;
+    background: var(--tt-bg-input);
+}
+
+.tt-rule-task-expanded-detail header,
+.tt-rule-task-expanded-detail header > span {
+    display: flex;
+    align-items: center;
+}
+
+.tt-rule-task-expanded-detail header {
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.tt-rule-task-expanded-detail header > span {
+    gap: 6px;
+}
+
+.tt-rule-task-expanded-detail header i {
+    width: 16px;
+    height: 16px;
+}
+
+.tt-rule-task-expanded-detail p,
+.tt-rule-task-expanded-detail dl {
+    margin: 0;
+}
+
+.tt-rule-task-expanded-detail p {
+    color: var(--tt-text-secondary);
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.tt-rule-task-expanded-detail dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.tt-rule-task-expanded-detail dl > div,
+.tt-rule-task-detail-change {
+    display: grid;
+    gap: 3px;
+}
+
+.tt-rule-task-expanded-detail dt,
+.tt-rule-task-detail-change strong {
+    color: var(--tt-muted);
+    font-size: 11px;
+}
+
+.tt-rule-task-expanded-detail dd,
+.tt-rule-task-detail-change span {
+    margin: 0;
+    color: var(--tt-text);
+    font-size: 12px;
+}
+
 .tt-rule-review-overview {
     display: grid;
     gap: var(--tt-space-sm);
@@ -1477,6 +1628,309 @@ button.tt-section-title {
     flex-wrap: wrap;
     gap: 6px;
     align-items: center;
+}
+
+.tt-rule-workbench {
+    display: grid;
+    grid-template-columns: minmax(190px, 230px) minmax(360px, 1fr) minmax(280px, 340px);
+    gap: var(--tt-space-sm);
+    min-height: 440px;
+    min-width: 0;
+}
+
+.tt-rule-task-list,
+.tt-rule-task-detail {
+    min-width: 0;
+    background: var(--tt-bg-panel);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+}
+
+.tt-rule-task-list {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+}
+
+.tt-rule-task-list-head {
+    display: grid;
+    gap: 4px;
+    padding: 11px;
+    border-bottom: 1px solid var(--tt-border);
+}
+
+.tt-rule-task-list-head span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--tt-primary);
+    font-size: 0.75rem;
+    font-weight: 800;
+}
+
+.tt-rule-task-list-head .lucide {
+    width: 15px;
+    height: 15px;
+}
+
+.tt-rule-task-list-head strong {
+    color: var(--tt-text);
+    font-size: 0.9rem;
+}
+
+.tt-rule-task-list-head em {
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    font-style: normal;
+    line-height: 1.4;
+}
+
+.tt-rule-task-items {
+    display: grid;
+    align-content: start;
+    gap: 7px;
+    min-height: 0;
+    overflow: auto;
+    padding: 9px;
+}
+
+.tt-rule-task-button {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    padding: 9px;
+    text-align: left;
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-left: 3px solid var(--tt-primary);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-text);
+    cursor: pointer;
+}
+
+.tt-rule-task-button:hover,
+.tt-rule-task-button.is-active {
+    background: rgba(8, 145, 178, 0.08);
+    border-color: rgba(8, 145, 178, 0.26);
+}
+
+.tt-rule-task-button--warning {
+    border-left-color: var(--tt-warning);
+}
+
+.tt-rule-task-button--danger {
+    border-left-color: var(--tt-danger);
+}
+
+.tt-rule-task-button--success {
+    border-left-color: #059669;
+}
+
+.tt-rule-task-button--muted {
+    border-left-color: #94a3b8;
+}
+
+.tt-rule-task-button .lucide {
+    width: 17px;
+    height: 17px;
+    color: var(--tt-primary);
+}
+
+.tt-rule-task-button span {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.tt-rule-task-button strong,
+.tt-rule-task-button em {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-rule-task-button strong {
+    font-size: 0.78rem;
+}
+
+.tt-rule-task-button em {
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    font-style: normal;
+}
+
+.tt-rule-task-button b {
+    display: grid;
+    place-items: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    background: rgba(8, 145, 178, 0.1);
+    border: 1px solid rgba(8, 145, 178, 0.22);
+    border-radius: 999px;
+    color: var(--tt-primary);
+    font-size: 0.72rem;
+}
+
+.tt-rule-task-detail {
+    display: grid;
+    align-content: start;
+    gap: var(--tt-space-sm);
+    overflow: auto;
+    padding: 12px;
+}
+
+.tt-rule-task-detail-head {
+    display: grid;
+    gap: 7px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--tt-border);
+}
+
+.tt-rule-task-detail-head > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--tt-primary);
+    font-size: 0.75rem;
+    font-weight: 800;
+}
+
+.tt-rule-task-detail-head h4 {
+    margin: 0;
+    color: var(--tt-text);
+    font-size: 1rem;
+}
+
+.tt-rule-task-detail-head p {
+    margin: 0;
+    color: var(--tt-muted);
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+.tt-rule-task-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.tt-rule-task-card-list {
+    display: grid;
+    gap: 8px;
+}
+
+.tt-rule-task-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(220px, 0.9fr);
+    gap: 10px;
+    align-items: start;
+    min-width: 0;
+    padding: 10px;
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+}
+
+.tt-rule-task-card--slot {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.tt-rule-task-card-main,
+.tt-rule-task-field {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.tt-rule-task-card-main span,
+.tt-rule-task-field span {
+    color: var(--tt-muted);
+    font-size: 0.7rem;
+    font-weight: 800;
+}
+
+.tt-rule-task-card-main strong {
+    color: var(--tt-text);
+    font-size: 0.86rem;
+    line-height: 1.35;
+}
+
+.tt-rule-task-card-main em {
+    color: var(--tt-text-secondary);
+    font-size: 0.74rem;
+    font-style: normal;
+    line-height: 1.45;
+}
+
+.tt-rule-task-field--empty {
+    padding: 8px;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.24);
+    border-radius: var(--tt-radius-sm);
+}
+
+.tt-rule-task-empty {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    padding: 16px;
+    color: var(--tt-muted);
+    text-align: center;
+}
+
+.tt-rule-task-empty--large {
+    align-self: center;
+}
+
+.tt-rule-task-empty .lucide {
+    width: 24px;
+    height: 24px;
+    color: var(--tt-primary);
+}
+
+.tt-rule-task-empty strong {
+    color: var(--tt-text);
+    font-size: 0.86rem;
+}
+
+.tt-rule-task-empty span {
+    font-size: 0.74rem;
+    line-height: 1.45;
+}
+
+.tt-rule-parse-details {
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    overflow: hidden;
+}
+
+.tt-rule-parse-details > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px;
+    cursor: pointer;
+    background: rgba(148, 163, 184, 0.06);
+}
+
+.tt-rule-parse-details > summary span {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--tt-text);
+    font-size: 0.8rem;
+}
+
+.tt-rule-parse-details > summary em {
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    font-style: normal;
 }
 
 .tt-rule-advanced-editor {
@@ -3413,6 +3867,14 @@ button.tt-section-title {
     .tt-inspector-stack {
         grid-template-columns: repeat(3, minmax(0, 1fr));
     }
+
+    .tt-rule-workbench {
+        grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+    }
+
+    .tt-rule-workbench .tt-constraint-chat-dock {
+        grid-column: 1 / -1;
+    }
 }
 
 @media (max-width: 980px) {
@@ -3516,6 +3978,21 @@ button.tt-section-title {
 
     .tt-dialog-actions .tt-btn {
         flex: 1 1 120px;
+    }
+
+    .tt-rule-workbench {
+        grid-template-columns: 1fr;
+        min-height: 0;
+    }
+
+    .tt-rule-task-list,
+    .tt-rule-task-detail,
+    .tt-constraint-chat-dock {
+        max-height: none;
+    }
+
+    .tt-rule-task-card {
+        grid-template-columns: 1fr;
     }
 
     .tt-roster-review-wrap {

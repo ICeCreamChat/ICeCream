@@ -8,6 +8,7 @@
  */
 
 import { requestTimetable } from './api.js';
+import { ruleTaskIdForScanProblem } from './rule-review-tasks.js';
 
 /**
  * 打开智能约束助手（自动扫描）
@@ -44,6 +45,14 @@ export async function openSmartConstraintHelper() {
             problems: scanResult.problems,
             stats: scanResult.stats,
         };
+        if (scanResult.problems?.length) {
+            const activeTaskId = ruleTaskIdForScanProblem(scanResult.problems[0]);
+            this.state.ruleReview = {
+                ...(this.state.ruleReview || {}),
+                activeTaskId,
+                selectedSection: activeTaskId,
+            };
+        }
 
         this.render();
 
@@ -277,12 +286,29 @@ export async function openAIChatFromHelper(problemId = '') {
         return;
     }
 
-    await this.startConstraintConversation();
+    await this.startConstraintConversation({
+        intent: 'explain',
+        taskContext: problem ? {
+            taskId: problem.id,
+            taskType: problem.type || problem.id,
+            relatedRuleIds: [
+                ...(problem.constraints || []).map(item => item.id).filter(Boolean),
+                ...(problem.relatedRuleIds || []),
+            ],
+            examples: [
+                problem.title,
+                problem.description,
+                problem.fixSuggestion,
+            ].filter(Boolean),
+        } : null,
+    });
 
     if (problem && this.state.constraintChat?.open) {
         this.state.constraintChat = {
             ...this.state.constraintChat,
-            inputText: buildProblemPrompt(problem),
+            inputText: '',
+            activeTaskId: problem.id,
+            docked: true,
         };
         this.render();
     }

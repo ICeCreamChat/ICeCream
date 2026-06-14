@@ -88,3 +88,93 @@ test('constraint chat can apply a concrete slot answer to rows missing slots', a
     assert.equal(row.warnings.some(warning => warning.includes('缺少明确节次')), false);
     assert.match(result.message, /已为 1 条缺少节次的约束补充/);
 });
+
+test('constraint chat explains a focused task without changing constraints', async () => {
+    const conversation = new TimetableConstraintConversation();
+    conversation.initialize([{
+        id: 'ambiguous-teacher-1',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetName: '王老师',
+        slots: ['3-5'],
+        status: 'needs_review',
+        warnings: ['存在多个候选教师。'],
+    }], project, {
+        groups: [{
+            type: 'clarifying_questions',
+            label: '确认教师名称',
+            count: 1,
+            examples: ['王老师可能对应多位教师'],
+            relatedRuleIds: ['ambiguous-teacher-1'],
+        }],
+    });
+    const before = JSON.stringify(conversation.constraints);
+
+    const result = await conversation.chat('解释这个问题', {}, undefined, {
+        intent: 'explain',
+        taskContext: {
+            taskId: 'confirm_teacher_names',
+            taskType: 'clarifying_questions',
+            relatedRuleIds: ['ambiguous-teacher-1'],
+            examples: ['王老师可能对应多位教师'],
+        },
+    });
+
+    assert.equal(JSON.stringify(conversation.constraints), before);
+    assert.match(result.message, /问题是什么/);
+    assert.match(result.message, /建议怎么处理/);
+    assert.match(result.explanation.problem, /王老师/);
+    assert.equal(result.actionPreview, null);
+});
+
+test('constraint chat returns a confirmation preview before changing draft constraints', async () => {
+    const conversation = new TimetableConstraintConversation();
+    conversation.initialize([{
+        id: 'range-1',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetId: 't_wang',
+        targetName: '王老师',
+        slots: ['1-7', '1-8', '2-8'],
+        status: 'needs_review',
+        warnings: ['节次 1-8、2-8 不在当前排课范围内。'],
+    }], project, {
+        groups: [{
+            type: 'out_of_range_slots',
+            label: '修正节次范围',
+            count: 1,
+            examples: ['节次 1-8、2-8 不在当前排课范围内。'],
+            relatedRuleIds: ['range-1'],
+        }],
+    });
+    const before = JSON.stringify(conversation.constraints);
+
+    const preview = await conversation.chat('帮我生成修正', {}, undefined, {
+        intent: 'preview_fix',
+        taskContext: {
+            taskId: 'fix_slot_range',
+            taskType: 'out_of_range_slots',
+            relatedRuleIds: ['range-1'],
+            examples: ['节次 1-8、2-8 不在当前排课范围内。'],
+        },
+    });
+
+    assert.equal(JSON.stringify(conversation.constraints), before);
+    assert.match(preview.message, /准备改成什么/);
+    assert.equal(preview.actionPreview.requiresConfirmation, true);
+    assert.deepEqual(preview.actionPreview.affectedRuleIds, ['range-1']);
+    assert.deepEqual(preview.actionPreview.changes[0].updates.slots, ['1-7']);
+
+    const applied = await conversation.chat('应用这个预览', {}, undefined, {
+        intent: 'apply_preview',
+        taskContext: {
+            taskId: 'fix_slot_range',
+            taskType: 'out_of_range_slots',
+            relatedRuleIds: ['range-1'],
+        },
+    });
+
+    assert.deepEqual(applied.constraints[0].slots, ['1-7']);
+    assert.equal(applied.constraints[0].warnings.length, 0);
+    assert.match(applied.message, /已应用/);
+});

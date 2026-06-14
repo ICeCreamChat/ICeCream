@@ -367,6 +367,7 @@ export class TimetableConstraintConversation {
         this.project = {};
         this.reviewContext = normalizeReviewContext();
         this.suggestedPrompts = [];
+        this.pendingPreview = null;
     }
 
     initialize(constraints = [], project = {}, reviewContext = {}) {
@@ -412,13 +413,17 @@ export class TimetableConstraintConversation {
         return `我已经读取到 ${this.constraints.length} 条排课约束。\n\n${examples || '还没有可展示的约束。'}\n\n你可以让我解释约束、调整数值、删除不需要的规则，或回复“确认”完成优化。`;
     }
 
-    async chat(userMessage, env = {}, fetchImpl = globalThis.fetch) {
+    async chat(userMessage, env = {}, fetchImpl = globalThis.fetch, options = {}) {
         const message = String(userMessage || '').trim();
         if (!message) throw new Error('message 不能为空。');
 
         this.history.push({ role: 'user', content: message, timestamp: Date.now() });
         const intent = this.recognizeIntent(message);
-        const response = await this.respond(message, intent, env, fetchImpl);
+        const response = await this.respond(message, {
+            ...intent,
+            requestedIntent: options.intent || '',
+            taskContext: options.taskContext || null,
+        }, env, fetchImpl);
         this.reviewContext = normalizeReviewContext(this.reviewContext, this.constraints, this.project);
         this.suggestedPrompts = response.suggestedPrompts || this.reviewContext.suggestedPrompts;
 
@@ -430,8 +435,10 @@ export class TimetableConstraintConversation {
 
         return {
             message: response.message,
+            explanation: response.explanation || null,
             constraints: this.constraints,
             suggestedActions: response.actions || [],
+            actionPreview: response.actionPreview || null,
             reviewContext: this.reviewContext,
             suggestedPrompts: this.suggestedPrompts,
             completed: Boolean(response.completed),
@@ -492,6 +499,30 @@ export class TimetableConstraintConversation {
     }
 
     async respond(message, intent, env, fetchImpl) {
+        if (intent.requestedIntent === 'apply_preview') {
+            const applied = this.applyPendingPreview();
+            if (applied) return applied;
+        }
+        if (intent.requestedIntent === 'preview_fix') {
+            const preview = this.buildActionPreview(intent.taskContext, message);
+            if (preview) {
+                this.pendingPreview = preview;
+                return {
+                    message: `问题是什么：${this.explainTaskProblem(intent.taskContext)}\n\n建议怎么处理：先查看下面的修改预览。\n\n准备改成什么：${preview.after}`,
+                    explanation: this.buildTaskExplanation(intent.taskContext),
+                    actionPreview: preview,
+                    actions: [{ type: 'preview_fix', taskId: intent.taskContext?.taskId || '' }],
+                };
+            }
+        }
+        if (intent.requestedIntent === 'explain') {
+            return {
+                message: `问题是什么：${this.explainTaskProblem(intent.taskContext)}\n\n建议怎么处理：${this.explainTaskAction(intent.taskContext)}\n\n准备改成什么：如果需要修改，请先点“帮我生成修正”，我会先给预览。`,
+                explanation: this.buildTaskExplanation(intent.taskContext),
+                actionPreview: null,
+            };
+        }
+
         const slotResult = this.applyMissingSlotsFromMessage(message);
         if (slotResult) return slotResult;
 
@@ -518,6 +549,144 @@ export class TimetableConstraintConversation {
             userMessage: message,
         }, env, fetchImpl);
         return { message: aiMessage };
+    }
+
+    taskRows(taskContext = null) {
+        const ids = new Set(taskContext?.relatedRuleIds || []);
+        if (!ids.size) return this.constraints;
+        return this.constraints.filter(row => ids.has(row.id));
+    }
+
+    explainTaskProblem(taskContext = null) {
+        const example = taskContext?.examples?.[0] || '';
+        const type = taskContext?.taskType || taskContext?.taskId || '';
+        if (/out_of_range|slot/.test(type)) {
+            return example || '有些节次不在当前排课范围内，系统不能直接写入。';
+        }
+        if (/clarifying|teacher|subject|class|confirm/.test(type)) {
+            return example || '系统找到了多个可能对象，不能替你猜是哪一个。';
+        }
+        if (/conflict/.test(type)) {
+            return example || '存在可能互相矛盾的硬约束，需要先确认取舍。';
+        }
+        if (/unsupported/.test(type)) {
+            return example || '这类要求当前只能作为建议，不能直接由排课器执行。';
+        }
+        return example || '这项约束还需要复核后才能安全生效。';
+    }
+
+    explainTaskAction(taskContext = null) {
+        const type = taskContext?.taskType || taskContext?.taskId || '';
+        if (/out_of_range|slot/.test(type)) return '删除超出范围的节次，或改成当前排课范围内的节次。';
+        if (/clarifying|teacher|subject|class|confirm/.test(type)) return '从候选里选择真实对象；没有候选时先回任课数据补充。';
+        if (/conflict/.test(type)) return '保留更重要的硬约束，删除或放宽另一条。';
+        if (/unsupported/.test(type)) return '把它留作建议，后续通过人工调整或质量优化处理。';
+        return '先核对对象、节次和强弱，再确认是否生效。';
+    }
+
+    buildTaskExplanation(taskContext = null) {
+        return {
+            problem: this.explainTaskProblem(taskContext),
+            recommendation: this.explainTaskAction(taskContext),
+            relatedRuleIds: taskContext?.relatedRuleIds || [],
+            examples: taskContext?.examples || [],
+        };
+    }
+
+    buildActionPreview(taskContext = null, message = '') {
+        const type = `${taskContext?.taskType || ''} ${taskContext?.taskId || ''}`;
+        if (/out_of_range|slot/.test(type)) {
+            return this.previewFilterOutOfRangeSlots(taskContext);
+        }
+        const slots = extractSlotKeysFromMessage(message, this.project);
+        if (slots.length) return this.previewFillMissingSlots(taskContext, slots);
+        return null;
+    }
+
+    previewFilterOutOfRangeSlots(taskContext = null) {
+        const changes = [];
+        for (const row of this.taskRows(taskContext)) {
+            const beforeSlots = row.slots || [];
+            const nextSlots = beforeSlots.filter(slot => slotInProject(slot, this.project));
+            const hasRangeWarning = rowWarnings(row).some(warning => /不在当前排课范围内/.test(warning));
+            if (!hasRangeWarning && nextSlots.length === beforeSlots.length) continue;
+            const next = {
+                ...row,
+                slots: nextSlots,
+                warnings: rowWarnings(row).filter(warning => !/不在当前排课范围内/.test(warning)),
+            };
+            changes.push({
+                ruleId: row.id,
+                reason: `${rowTitle(row, this.project)}：过滤超出范围节次`,
+                updates: {
+                    slots: nextSlots,
+                    warnings: next.warnings,
+                    status: maybeEffective(next),
+                },
+            });
+        }
+        if (!changes.length) return null;
+        return {
+            title: '过滤超出范围节次',
+            before: '包含当前排课范围外的节次',
+            after: '只保留当前排课范围内节次',
+            affectedRuleIds: changes.map(change => change.ruleId),
+            changes,
+            requiresConfirmation: true,
+        };
+    }
+
+    previewFillMissingSlots(taskContext = null, slots = []) {
+        const changes = [];
+        for (const row of this.taskRows(taskContext)) {
+            const hasMissingWarning = rowWarnings(row).some(warning => /缺少明确节次/.test(warning));
+            if (!hasMissingWarning && !((rowNeedsSlots(row) && !(row.slots || []).length))) continue;
+            const next = {
+                ...row,
+                slots,
+                warnings: removeWarnings(row, /缺少明确节次/),
+            };
+            changes.push({
+                ruleId: row.id,
+                reason: `${rowTitle(row, this.project)}：补充节次`,
+                updates: {
+                    slots,
+                    warnings: next.warnings,
+                    status: maybeEffective(next),
+                },
+            });
+        }
+        if (!changes.length) return null;
+        return {
+            title: '补充缺少的节次',
+            before: '缺少明确节次',
+            after: `改为 ${formatSlots(slots)}`,
+            affectedRuleIds: changes.map(change => change.ruleId),
+            changes,
+            requiresConfirmation: true,
+        };
+    }
+
+    applyPendingPreview() {
+        const preview = this.pendingPreview;
+        if (!preview?.changes?.length) return null;
+        const changeById = new Map(preview.changes.map(change => [change.ruleId, change]));
+        this.constraints = this.constraints.map(row => {
+            const change = changeById.get(row.id);
+            return change ? { ...row, ...(change.updates || {}) } : row;
+        });
+        this.pendingPreview = null;
+        return {
+            message: `已应用“${preview.title || '修正预览'}”到草稿。请回到复核表确认后生效。`,
+            explanation: {
+                problem: '修正已应用到草稿。',
+                recommendation: '继续核对草稿，然后确认生效。',
+                relatedRuleIds: preview.affectedRuleIds || [],
+                examples: [],
+            },
+            actionPreview: null,
+            actions: [{ type: 'apply_preview', count: preview.changes.length }],
+        };
     }
 
     unresolvedCount() {

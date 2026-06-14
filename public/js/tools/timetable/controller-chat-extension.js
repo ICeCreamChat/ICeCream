@@ -1,4 +1,5 @@
 import { normalizeApiError, requestTimetable } from './api.js';
+import { buildRuleReviewTasks, ruleTaskContext } from './rule-review-tasks.js';
 
 function currentRuleDraftRows(state = {}) {
     const reviewRows = state.ruleReview?.draftRows || [];
@@ -179,6 +180,9 @@ function normalizeChatState(chat = {}) {
         messages: [],
         reviewContext: null,
         suggestedPrompts: [],
+        docked: true,
+        activeTaskId: '',
+        actionPreview: null,
         error: null,
         completed: false,
         ...chat,
@@ -209,11 +213,55 @@ function applyConstraintDrafts(state, constraints) {
     state.pendingRules = constraints;
 }
 
+function defaultMessageForIntent(intent = '', taskContext = null) {
+    if (intent === 'preview_fix') return `帮我生成修正：${taskContext?.examples?.[0] || taskContext?.taskType || '当前事项'}`;
+    if (intent === 'explain') return `解释这个问题：${taskContext?.examples?.[0] || taskContext?.taskType || '当前事项'}`;
+    return '';
+}
+
+function taskContextById(state = {}, taskId = '') {
+    const tasks = buildRuleReviewTasks(state.ruleReview || {}, state.constraintScan || null);
+    const task = tasks.find(item => item.id === taskId) || tasks[0] || null;
+    return ruleTaskContext(task);
+}
+
+function applyPreviewChanges(rows = [], preview = {}) {
+    const changes = Array.isArray(preview.changes) ? preview.changes : [];
+    if (!changes.length) return rows;
+    const byId = new Map(changes.map(change => [change.ruleId || change.constraintId || change.id, change]));
+    return rows.map(row => {
+        const change = byId.get(row.id);
+        if (!change) return row;
+        return {
+            ...row,
+            ...(change.updates || {}),
+        };
+    });
+}
+
 export const constraintChatControllerMethods = {
-    async startConstraintConversation() {
+    async startConstraintConversation(options = {}) {
         const constraints = currentRuleDraftRows(this.state);
         if (!constraints.length) {
             this.setMessage('没有可优化的约束。请先解析约束。');
+            return;
+        }
+
+        const taskContext = options.taskContext || taskContextById(this.state, options.taskId || this.state.ruleReview?.activeTaskId || '');
+        if (this.state.constraintChat?.conversationId && this.state.constraintChat?.open) {
+            this.state.constraintChat = normalizeChatState({
+                ...this.state.constraintChat,
+                docked: true,
+                activeTaskId: taskContext?.taskId || this.state.constraintChat.activeTaskId || '',
+            });
+            if (options.intent) {
+                await this.sendConstraintChatMessage(
+                    options.message || defaultMessageForIntent(options.intent, taskContext),
+                    { intent: options.intent, taskContext }
+                );
+            } else {
+                this.render();
+            }
             return;
         }
 
@@ -224,6 +272,8 @@ export const constraintChatControllerMethods = {
             inputText: '',
             reviewContext,
             suggestedPrompts: reviewContext.suggestedPrompts || [],
+            docked: true,
+            activeTaskId: taskContext?.taskId || '',
             error: null,
             completed: false,
         });
@@ -245,6 +295,8 @@ export const constraintChatControllerMethods = {
                 conversationId: result.conversationId,
                 reviewContext: result.reviewContext || reviewContext,
                 suggestedPrompts: result.suggestedPrompts || reviewContext.suggestedPrompts || [],
+                docked: true,
+                activeTaskId: taskContext?.taskId || '',
                 messages: [{
                     role: 'assistant',
                     content: result.welcomeMessage || '我可以帮你解释和优化这些约束。',
@@ -254,6 +306,12 @@ export const constraintChatControllerMethods = {
             });
             applyConstraintDrafts(this.state, result.constraints);
             this.render();
+            if (options.intent) {
+                await this.sendConstraintChatMessage(
+                    options.message || defaultMessageForIntent(options.intent, taskContext),
+                    { intent: options.intent, taskContext }
+                );
+            }
         } catch (error) {
             const normalized = normalizeApiError(error);
             this.state.constraintChat = normalizeChatState({
@@ -265,7 +323,7 @@ export const constraintChatControllerMethods = {
         }
     },
 
-    async sendConstraintChatMessage(messageOverride = null) {
+    async sendConstraintChatMessage(messageOverride = null, options = {}) {
         const chat = normalizeChatState(this.state.constraintChat);
         if (chat.loading) return;
 
@@ -295,6 +353,8 @@ export const constraintChatControllerMethods = {
                 body: JSON.stringify({
                     conversationId: chat.conversationId,
                     message,
+                    intent: options.intent || 'general',
+                    taskContext: options.taskContext || taskContextById(this.state, chat.activeTaskId || this.state.ruleReview?.activeTaskId || ''),
                 }),
             });
 
@@ -306,6 +366,9 @@ export const constraintChatControllerMethods = {
                 completed: Boolean(result.completed),
                 reviewContext: result.reviewContext || this.state.constraintChat.reviewContext,
                 suggestedPrompts: result.suggestedPrompts || this.state.constraintChat.suggestedPrompts || [],
+                actionPreview: result.actionPreview || null,
+                activeTaskId: options.taskContext?.taskId || this.state.constraintChat.activeTaskId || '',
+                docked: true,
                 error: null,
             });
 
@@ -344,5 +407,79 @@ export const constraintChatControllerMethods = {
             ...(this.state.constraintChat || {}),
             inputText: text,
         });
+    },
+
+    selectRuleReviewTask(taskId = '') {
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || {}),
+            activeTaskId: taskId,
+            selectedSection: taskId,
+        };
+        this.state.constraintChat = normalizeChatState({
+            ...(this.state.constraintChat || {}),
+            activeTaskId: taskId,
+            docked: true,
+        });
+        this.render();
+    },
+
+    explainRuleReviewTask(taskId = '') {
+        const taskContext = taskContextById(this.state, taskId);
+        if (!taskContext) return;
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || {}),
+            activeTaskId: taskContext.taskId,
+            selectedSection: taskContext.taskId,
+        };
+        return this.startConstraintConversation({ intent: 'explain', taskContext });
+    },
+
+    previewRuleReviewTaskFix(taskId = '') {
+        const taskContext = taskContextById(this.state, taskId);
+        if (!taskContext) return;
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || {}),
+            activeTaskId: taskContext.taskId,
+            selectedSection: taskContext.taskId,
+        };
+        return this.startConstraintConversation({ intent: 'preview_fix', taskContext });
+    },
+
+    applyConstraintChatPreview() {
+        const chat = normalizeChatState(this.state.constraintChat);
+        const preview = chat.actionPreview;
+        if (!preview?.changes?.length) {
+            this.setMessage?.('没有可应用的修正预览。');
+            return;
+        }
+        const currentRows = this.state.ruleReview?.draftRows || [];
+        const nextRows = applyPreviewChanges(currentRows, preview);
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || {}),
+            draftRows: nextRows,
+        };
+        this.state.pendingRules = nextRows;
+        this.state.constraintChat = normalizeChatState({
+            ...(this.state.constraintChat || {}),
+            actionPreview: null,
+            completed: false,
+        });
+        this.setMessage?.('修正已应用到草稿，请核对后确认生效。');
+        this.render();
+        if (chat.conversationId) {
+            const taskContext = taskContextById(this.state, chat.activeTaskId || this.state.ruleReview?.activeTaskId || '');
+            return this.sendConstraintChatMessage('应用这个修正预览', {
+                intent: 'apply_preview',
+                taskContext,
+            });
+        }
+    },
+
+    dismissConstraintChatPreview() {
+        this.state.constraintChat = normalizeChatState({
+            ...(this.state.constraintChat || {}),
+            actionPreview: null,
+        });
+        this.render();
     },
 };

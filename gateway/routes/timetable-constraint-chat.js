@@ -72,7 +72,7 @@ router.post('/constraints/chat/init', async (req, res) => {
 
 router.post('/constraints/chat/message', async (req, res) => {
     try {
-        const { conversationId, message } = req.body || {};
+        const { conversationId, message, intent = 'general', taskContext = null } = req.body || {};
         if (!conversationId || typeof conversationId !== 'string') {
             throw badRequest('conversationId 不能为空。');
         }
@@ -84,7 +84,7 @@ router.post('/constraints/chat/message', async (req, res) => {
         }
 
         const conversation = requireConversation(conversationId);
-        const result = await conversation.chat(message.trim(), process.env, globalThis.fetch);
+        const result = await conversation.chat(message.trim(), process.env, globalThis.fetch, { intent, taskContext });
 
         res.json({
             success: true,

@@ -54,6 +54,12 @@ function bindDelegatedInteractions(container) {
         // 原有actions
         else if (action === 'submit-rule-clarification') {
             controller.submitClarifyingAnswers();
+        } else if (action === 'rule-task-select') {
+            controller.selectRuleReviewTask(event.target.closest('[data-rule-task-id]')?.dataset.ruleTaskId || '');
+        } else if (action === 'rule-task-explain') {
+            controller.explainRuleReviewTask(event.target.closest('[data-rule-task-id]')?.dataset.ruleTaskId || '');
+        } else if (action === 'rule-task-preview-fix') {
+            controller.previewRuleReviewTaskFix(event.target.closest('[data-rule-task-id]')?.dataset.ruleTaskId || '');
         } else if (action === 'rule-card-edit') {
             controller.editRuleReviewRow(event.target.closest('[data-rule-id]')?.dataset.ruleId || '');
         } else if (action === 'rule-card-ignore') {
@@ -72,6 +78,10 @@ function bindDelegatedInteractions(container) {
             controller.sendConstraintChatMessage(event.target.closest('[data-constraint-chat-suggest]')?.dataset.constraintChatSuggest || '');
         } else if (action === 'constraint-chat-close') {
             controller.closeConstraintChat();
+        } else if (action === 'constraint-chat-apply-preview') {
+            controller.applyConstraintChatPreview();
+        } else if (action === 'constraint-chat-dismiss-preview') {
+            controller.dismissConstraintChatPreview();
         } else if (action === 'timetable-agent-start') {
             controller.startTimetableAgentSession();
         } else if (action === 'timetable-agent-send') {

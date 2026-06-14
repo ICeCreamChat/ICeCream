@@ -228,6 +228,7 @@ function renderReviewContext(context = {}, { disabled = false } = {}) {
 export function renderConstraintChatDialog(state = {}) {
     const chat = state.constraintChat;
     if (!chat?.open) return '';
+    if (chat.docked || state.ruleReview?.open) return '';
 
     const messages = chat.messages || [];
     const loading = Boolean(chat.loading);
@@ -327,6 +328,122 @@ export function renderConstraintChatDialog(state = {}) {
                 </div>
             </section>
         </div>
+    `;
+}
+
+function renderActionPreview(preview = null, { disabled = false } = {}) {
+    if (!preview) return '';
+    return `
+        <article class="tt-chat-preview-card" aria-label="智能助手生成的修改预览">
+            <div class="tt-chat-preview-head">
+                <i data-lucide="wand-sparkles"></i>
+                <div>
+                    <strong>${escapeHtml(preview.title || '修改预览')}</strong>
+                    <span>应用后只会更新草稿，不会直接保存项目规则。</span>
+                </div>
+            </div>
+            <div class="tt-chat-preview-compare">
+                <span><b>当前理解</b>${escapeHtml(preview.before || '按当前草稿')}</span>
+                <i data-lucide="arrow-right"></i>
+                <span><b>准备改成</b>${escapeHtml(preview.after || '按建议修正')}</span>
+            </div>
+            ${(preview.changes || []).length ? `
+                <div class="tt-chat-preview-list">
+                    ${(preview.changes || []).slice(0, 6).map(change => `
+                        <span>${escapeHtml(change.reason || change.ruleId || '更新一条草稿')}</span>
+                    `).join('')}
+                </div>
+            ` : ''}
+            <div class="tt-chat-preview-actions">
+                <button class="tt-btn tt-btn--primary tt-btn--sm" type="button" data-action="constraint-chat-apply-preview" ${disabled ? 'disabled' : ''}>
+                    <i data-lucide="check"></i>
+                    <span>应用到草稿</span>
+                </button>
+                <button class="tt-btn tt-btn--ghost tt-btn--sm" type="button" data-action="constraint-chat-dismiss-preview" ${disabled ? 'disabled' : ''}>
+                    <i data-lucide="x"></i>
+                    <span>先不应用</span>
+                </button>
+            </div>
+        </article>
+    `;
+}
+
+export function renderConstraintChatDock(state = {}, { task = null } = {}) {
+    const chat = state.constraintChat || {};
+    const messages = chat.messages || [];
+    const loading = Boolean(chat.loading);
+    const inputText = chat.inputText || '';
+    const canSend = !loading && inputText.trim().length > 0;
+    const reviewContext = chat.reviewContext || {};
+    const contextForGuide = {
+        ...reviewContext,
+        suggestedPrompts: chat.suggestedPrompts?.length ? chat.suggestedPrompts : reviewContext.suggestedPrompts,
+    };
+    const taskTitle = task?.title || '当前办理事项';
+    const taskDescription = task?.description || '选中左侧事项后，智能助手会围绕这件事解释和生成预览。';
+
+    return `
+        <aside class="tt-constraint-chat-dock" aria-label="智能约束助手">
+            <div class="tt-chat-dock-head">
+                <span><i data-lucide="bot"></i> 智能助手</span>
+                <strong>同一个弹窗里解释和生成预览</strong>
+                <em>当前办理事项：${escapeHtml(taskTitle)}</em>
+            </div>
+            <div class="tt-chat-dock-task">
+                <b>问题是什么</b>
+                <span>${escapeHtml(taskDescription)}</span>
+                ${(task?.examples || []).length ? `<small>${escapeHtml(task.examples[0])}</small>` : ''}
+            </div>
+            ${renderReviewContext(contextForGuide, { disabled: loading })}
+            ${renderActionPreview(chat.actionPreview, { disabled: loading })}
+            <section class="tt-chat-dock-messages" aria-live="polite">
+                ${messages.length ? messages.map(message => renderChatMessage(message)).join('') : `
+                    <div class="tt-chat-empty-message">
+                        <i data-lucide="mouse-pointer-click"></i>
+                        <strong>先点任务卡上的操作</strong>
+                        <span>例如“解释这个问题”或“帮我生成修正”。</span>
+                    </div>
+                `}
+                ${loading ? `
+                    <div class="tt-chat-message tt-chat-message--assistant tt-chat-message--loading">
+                        <div class="tt-chat-avatar" aria-hidden="true"><i data-lucide="bot"></i></div>
+                        <div class="tt-chat-bubble">
+                            <div class="tt-typing-indicator" aria-label="正在生成回复">
+                                <span></span><span></span><span></span>
+                            </div>
+                        </div>
+                    </div>
+                ` : ''}
+                ${chat.error ? `
+                    <div class="tt-chat-error">
+                        <i data-lucide="alert-circle"></i>
+                        <span>${escapeHtml(chat.error)}</span>
+                    </div>
+                ` : ''}
+            </section>
+            <footer class="tt-chat-dock-footer">
+                ${renderSuggestedPrompts(contextForGuide.suggestedPrompts || [], { disabled: loading })}
+                <div class="tt-constraint-chat-input-area">
+                    <textarea
+                        id="tt-chat-input"
+                        class="tt-constraint-chat-input"
+                        data-constraint-chat-input
+                        data-action="constraint-chat-input"
+                        placeholder="可以这样说：解释这个问题，或帮我生成修正预览"
+                        rows="1"
+                        ${loading ? 'disabled' : ''}
+                    >${escapeHtml(inputText)}</textarea>
+                    <button
+                        class="tt-btn tt-btn--primary tt-btn--icon"
+                        type="button"
+                        data-action="constraint-chat-send"
+                        ${canSend ? '' : 'disabled'}
+                        aria-label="发送消息">
+                        <i data-lucide="send"></i>
+                    </button>
+                </div>
+            </footer>
+        </aside>
     `;
 }
 
