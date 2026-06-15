@@ -703,8 +703,8 @@ function renderInsight(state, stage) {
     const saved = getSavedRuleItems(state.project).length;
 
     const insightContent = `
-        <header><i data-lucide=”lightbulb”></i><span><strong>当前情况</strong><em>只显示这一步需要知道的内容</em></span></header>
-        <div class=”tt-smart-insight-stats”>
+        <header><i data-lucide="lightbulb"></i><span><strong>当前情况</strong><em>只显示这一步需要知道的内容</em></span></header>
+        <div class="tt-smart-insight-stats">
             <span><b>${saved}</b><em>已生效</em></span>
             <span><b>${ready}</b><em>可应用</em></span>
             <span><b>${reviewCount + conflicts}</b><em>需处理</em></span>
@@ -715,7 +715,7 @@ function renderInsight(state, stage) {
                 idle: '先检查任课数据是否完整。',
                 checking_data: '检查完成后，我会告诉你能否继续。',
                 data_need_fix: '回到任课数据补齐缺少内容，再重新检查。',
-                ready_for_constraints: '输入要求后点击”帮我理解这些要求”。',
+                ready_for_constraints: '输入要求后点击“帮我理解这些要求”。',
                 parsing_constraints: '正在整理草稿，请稍候。',
                 reviewing_constraints: '逐项核对系统理解，优先处理冲突和不确定内容。',
                 waiting_user_confirmation: state.smartWorkbench?.ruleChangePreview ? '核对规则变化后再确认写入。' : '先完成需要确认的事项。',
@@ -725,40 +725,40 @@ function renderInsight(state, stage) {
                 diagnosing: '选择一个调整方向，预览后重新生成。',
             }[stage] || '按中间区域的提示继续。')}</p>
         </section>
-        <section class=”tt-smart-assistant-slot”>
+        <section class="tt-smart-assistant-slot">
             <h3>智能助手</h3>
             ${state.constraintChat?.open
                 ? renderConstraintChatDock(state, { task: null })
-                : `<button class=”tt-smart-assistant-entry” type=”button” data-action=”constraint-chat-start”><i data-lucide=”message-circle”></i><span><strong>有看不懂的地方？</strong><em>我只解释当前步骤，不会直接修改规则。</em></span></button>`}
+                : `<button class="tt-smart-assistant-entry" type="button" data-action="constraint-chat-start"><i data-lucide="message-circle"></i><span><strong>有看不懂的地方？</strong><em>我只解释当前步骤，不会直接修改规则。</em></span></button>`}
         </section>
     `;
 
     return `
         <!-- 桌面端右侧栏 -->
-        <aside class=”tt-smart-insight-rail”>
+        <aside class="tt-smart-insight-rail">
             ${insightContent}
         </aside>
         <!-- 移动端遮罩层 -->
-        <div class=”tt-smart-assistant-overlay” data-action=”close-mobile-drawer”></div>
+        <div class="tt-smart-assistant-overlay" data-action="close-mobile-drawer"></div>
         <!-- 移动端底部抽屉 -->
-        <aside class=”tt-smart-insight-rail-mobile” role=”dialog” aria-label=”智能助手” data-drawer-height=”half”>
-            <div class=”tt-smart-drawer-handle” aria-label=”拖动调整高度”></div>
-            <div class=”tt-smart-drawer-header”>
+        <aside class="tt-smart-insight-rail-mobile" role="dialog" aria-label="智能助手" data-drawer-height="half">
+            <div class="tt-smart-drawer-handle" aria-label="拖动调整高度"></div>
+            <div class="tt-smart-drawer-header">
                 <span>
-                    <i data-lucide=”lightbulb”></i>
+                    <i data-lucide="lightbulb"></i>
                     <strong>智能助手</strong>
                 </span>
-                <button class=”tt-smart-drawer-close” type=”button” data-action=”close-mobile-drawer” aria-label=”关闭”>
-                    <i data-lucide=”x”></i>
+                <button class="tt-smart-drawer-close" type="button" data-action="close-mobile-drawer" aria-label="关闭">
+                    <i data-lucide="x"></i>
                 </button>
             </div>
-            <div class=”tt-smart-drawer-content”>
+            <div class="tt-smart-drawer-content">
                 ${insightContent}
             </div>
         </aside>
         <!-- 移动端收起标签 -->
-        <button class=”tt-smart-drawer-tab” type=”button” data-action=”open-mobile-drawer” aria-label=”打开智能助手”>
-            <i data-lucide=”sparkles”></i>
+        <button class="tt-smart-drawer-tab" type="button" data-action="open-mobile-drawer" aria-label="打开智能助手">
+            <i data-lucide="sparkles"></i>
             <span>助手</span>
         </button>
     `;

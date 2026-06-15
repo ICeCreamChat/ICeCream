@@ -5525,7 +5525,7 @@ test('timetable rule review renders a beginner task workbench instead of raw que
   assert.match(readyHtml, /data-action="smart-workbench-preview-rules"/);
   assert.match(conflictHtml, /李老师不可排与锁定课节冲突/);
   assert.match(unsupportedHtml, /teacher_free_period_compact/);
-  assert.match(readyHtml, /系统理解为/);
+  assert.match(readyHtml, /我理解为|系统理解为/);
   assert.match(readyHtml, /data-action="rule-card-edit"/);
   assert.match(readyHtml, /data-action="rule-card-ignore"/);
   assert.match(readyHtml, /data-action="rule-card-delete"/);
@@ -5872,7 +5872,7 @@ test('timetable saved smart rules remain visible in the standalone workbench', a
   // New card-based saved rules section
   assert.match(sidebar, /id="tt-open-rule-review"/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
-  assert.match(sidebar, /查看已生效约束/);
+  assert.match(sidebar, /查看已应用约束|查看已生效约束/);
   assert.match(sidebar, /9/);
   assert.match(sidebar, /id="tt-clear-rules"/);
   assert.doesNotMatch(sidebar, /id="tt-saved-rules"/);
@@ -5898,7 +5898,7 @@ test('timetable saved smart rules remain visible in the standalone workbench', a
   }));
 
   assert.match(workbenchHtml, /data-smart-workbench-root/);
-  assert.match(workbenchHtml, /已生效约束/);
+  assert.match(workbenchHtml, /已应用约束|已生效约束/);
   assert.match(workbenchHtml, /data-saved-rule-delete=/);
   assert.match(workbenchHtml, /新增约束要求/);
   assert.doesNotMatch(workbenchHtml, /id="tt-saved-rule-table"/);

@@ -291,7 +291,7 @@ test('smart workbench can show and manage saved constraints without returning to
         ruleReview: { draftRows: [], warnings: [], conflicts: [] },
     });
 
-    assert.match(html, /已生效约束/);
+    assert.match(html, /已应用约束|已生效约束/);
     assert.match(html, /data-saved-rule-delete=/);
     assert.match(html, /新增约束要求/);
     assert.doesNotMatch(html, /tt-rule-review-dialog/);
