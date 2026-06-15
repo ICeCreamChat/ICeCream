@@ -1,3 +1,5 @@
+import { createSmartWorkbenchState } from './smart-workbench/workbench-state.js';
+
 export function createTimetablePlannerState(overrides = {}) {
     return {
         container: null,
@@ -6,7 +8,6 @@ export function createTimetablePlannerState(overrides = {}) {
         selectedOwnerId: '',
         selectedSlotId: '',
         inspectorOpen: false,
-        agentOpen: false,
         dragSlotId: '',
         dragBlockId: '',
         loading: false,
@@ -78,6 +79,7 @@ export function createTimetablePlannerState(overrides = {}) {
             phaseTone: '',
         },
         constraintChat: null,
+        smartWorkbench: createSmartWorkbenchState(),
         workflowOpenSections: null,
         rangeDraft: null,
         periodTimeDialog: {

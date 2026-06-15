@@ -13,6 +13,11 @@ import { runDiagnosisSkill } from './skills/diagnosis-skill.js';
 import { runPublicationSkill } from './skills/publication-skill.js';
 import { runSolvePlanSkill } from './skills/solve-plan-skill.js';
 import { runSolveSkill } from './skills/solve-skill.js';
+import {
+    classifyTimetableIntent,
+    planTimetableAgentAction,
+    plannerForStage,
+} from './timetable-agent-planner.js';
 
 function stageReply(stage, nextAction, extra = {}) {
     if (stage === 'data_prep') {
@@ -47,6 +52,54 @@ function classifyIntent(message = '') {
     return 'data_prep';
 }
 
+function toolResultSummary(result = {}) {
+    const status = result.status || 'success';
+    const label = {
+        'project.validate': '数据检查',
+        'project.audit': '数据审计',
+        'rules.parse': '约束理解',
+        'rules.clarify': '歧义确认',
+        'rules.normalize': '规则校验',
+        'rules.diagnose': '规则诊断',
+        'solve.precheck': '求解前检查',
+        'solve.local': '本地快排',
+        'solve.timefold': 'Timefold 优化',
+        'diagnose.failure': '失败诊断',
+        'publish.save': '保存课表',
+    }[result.tool] || result.tool || '排课步骤';
+    return `${label}${status === 'success' ? '已完成' : status === 'warning' ? '需要注意' : '未通过'}`;
+}
+
+function normalizeToolResults(results = [], nextAction = 'continue') {
+    return (results || []).map(result => ({
+        ...result,
+        summary: result.summary || toolResultSummary(result),
+        nextActions: Array.isArray(result.nextActions)
+            ? result.nextActions
+            : nextAction === 'ask_user'
+                ? ['补充缺少的信息', '重新检查']
+                : nextAction === 'await_approval'
+                    ? ['查看预览', '确认或取消']
+                    : ['继续下一步'],
+        artifacts: Array.isArray(result.artifacts) ? result.artifacts : [],
+    }));
+}
+
+function buildAgentUi({ stage, reply, nextAction, approvalQueue, artifacts, lastToolResults }) {
+    const planner = plannerForStage(stage);
+    return {
+        surface: 'smart_workbench',
+        stage,
+        status: nextAction === 'failed' ? 'error' : nextAction === 'ask_user' ? 'needs_input' : 'ready',
+        headline: reply,
+        nextActions: planner.nextActions,
+        requiresApproval: Boolean((approvalQueue || []).length),
+        approvalCount: (approvalQueue || []).length,
+        artifactTypes: [...new Set((artifacts || []).map(item => item.type).filter(Boolean))],
+        toolResults: lastToolResults,
+    };
+}
+
 function responseFromSession(session, {
     reply = '',
     stage = session.stage,
@@ -59,6 +112,8 @@ function responseFromSession(session, {
     lastToolResults = [],
     project = null,
 } = {}) {
+    const resolvedReply = reply || stageReply(stage, nextAction);
+    const normalizedToolResults = normalizeToolResults(lastToolResults, nextAction);
     const next = saveTimetableAgentState({
         ...session,
         stage,
@@ -67,22 +122,32 @@ function responseFromSession(session, {
         artifacts: [...(session.artifacts || []), ...artifacts],
         warnings,
         errors,
-        lastToolResults,
+        lastToolResults: normalizedToolResults,
         plan: updateTimetableAgentPlan(session.plan || [], stage),
     });
+    const planner = next.lastPlanner || plannerForStage(stage);
     return {
         sessionId: next.sessionId,
-        reply: reply || stageReply(stage, nextAction),
+        reply: resolvedReply,
         stage,
         plan: next.plan,
         questions: next.questions,
         approvalQueue: next.approvalQueue,
         artifacts: next.artifacts,
-        lastToolResults: next.lastToolResults,
+        lastToolResults: normalizedToolResults,
         warnings: next.warnings,
         errors: next.errors,
         ...(project ? { project } : {}),
         nextAction,
+        planner,
+        ui: buildAgentUi({
+            stage,
+            reply: resolvedReply,
+            nextAction,
+            approvalQueue: next.approvalQueue,
+            artifacts: next.artifacts,
+            lastToolResults: normalizedToolResults,
+        }),
     };
 }
 
@@ -210,7 +275,9 @@ export async function handleTimetableAgentMessage({
     let session = sessionId ? requireTimetableAgentState(sessionId) : createTimetableAgentSession({ project });
     session = saveTimetableAgentState(appendMessage(session, 'user', message));
     const normalizedProject = currentProject(session, project);
-    const intent = classifyIntent(message);
+    const planner = planTimetableAgentAction({ message, project: normalizedProject });
+    session = saveTimetableAgentState({ ...session, lastPlanner: planner });
+    const intent = classifyTimetableIntent(message);
 
     if (intent === 'constraint') return runConstraint(session, normalizedProject, { message, env, fetchImpl });
     if (intent === 'solve') return runSolvePlan(session, normalizedProject, { message, env });
@@ -392,3 +459,5 @@ export async function approveTimetableAgentAction({
         errors: [{ type: 'unsupported_approval', message: `暂不支持的确认动作：${action.type}` }],
     });
 }
+
+export { planTimetableAgentAction };

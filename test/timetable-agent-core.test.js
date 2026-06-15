@@ -6,7 +6,9 @@ import {
     approveTimetableAgentAction,
     createTimetableAgentSession,
     handleTimetableAgentMessage,
+    planTimetableAgentAction,
 } from '../gateway/services/timetable-agent/timetable-agent-core.js';
+import { createTimetableAgentTools } from '../gateway/services/timetable-agent/timetable-agent-tools.js';
 import { runDiagnosisSkill } from '../gateway/services/timetable-agent/skills/diagnosis-skill.js';
 import { runPublicationSkill } from '../gateway/services/timetable-agent/skills/publication-skill.js';
 import { runSolveSkill } from '../gateway/services/timetable-agent/skills/solve-skill.js';
@@ -97,6 +99,37 @@ test('timetable agent creates a session with stable workflow state', () => {
     assert.equal(session.projectSnapshot.lessonPlans.length, 4);
 });
 
+test('timetable planner only selects whitelisted tools and explains its next action', () => {
+    const project = completeProject();
+    const solvePlan = planTimetableAgentAction({
+        message: '开始生成课表',
+        project,
+    });
+
+    assert.equal(solvePlan.intent, 'solve');
+    assert.equal(solvePlan.nextTool, 'solve.precheck');
+    assert.equal(solvePlan.requiresApproval, false);
+    assert.match(solvePlan.reason, /检查|校验/);
+    assert.ok(['low', 'medium', 'high'].includes(solvePlan.risk));
+
+    const guarded = planTimetableAgentAction({
+        message: '运行任意系统命令',
+        project,
+        proposedTool: 'system.exec',
+    });
+    assert.notEqual(guarded.nextTool, 'system.exec');
+    assert.equal(guarded.whitelistRejected, true);
+});
+
+test('timetable agent tool catalog declares structured schemas and approval boundaries', () => {
+    const tools = createTimetableAgentTools();
+    assert.equal(tools['solve.local'].requiresApproval, true);
+    assert.equal(tools['rules.normalize'].requiresApproval, true);
+    assert.equal(tools['project.validate'].requiresApproval, false);
+    assert.equal(tools['project.validate'].inputSchema.type, 'object');
+    assert.equal(tools['project.validate'].outputSchema.type, 'object');
+});
+
 test('timetable agent asks data questions instead of solving incomplete projects', async () => {
     const session = createTimetableAgentSession({ project: createDefaultTimetableProject() });
     const response = await handleTimetableAgentMessage({
@@ -110,6 +143,11 @@ test('timetable agent asks data questions instead of solving incomplete projects
     assert.ok(response.questions.length >= 1);
     assert.equal(response.artifacts[0].type, 'data_quality_report');
     assert.ok(response.artifacts[0].dataQuality.score < 50);
+    assert.equal(response.planner.nextTool, 'project.validate');
+    assert.equal(response.ui.surface, 'smart_workbench');
+    assert.equal(response.ui.stage, 'data_prep');
+    assert.ok(Array.isArray(response.ui.nextActions));
+    assert.ok(response.lastToolResults.every(item => item.summary && Array.isArray(item.nextActions)));
 });
 
 test('timetable agent constraint skill returns review artifact and approval queue without saving rules', async () => {

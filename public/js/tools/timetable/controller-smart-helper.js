@@ -11,7 +11,10 @@ import { requestTimetable } from './api.js';
 import { ruleTaskIdForScanProblem } from './rule-review-tasks.js';
 
 function renderSmartSurface(controller) {
-    if (typeof controller.renderRuleReviewSurface === 'function' && controller.state?.ruleReview?.open) {
+    if (
+        typeof controller.renderRuleReviewSurface === 'function'
+        && (controller.state?.ruleReview?.open || controller.state?.smartWorkbench?.open)
+    ) {
         controller.renderRuleReviewSurface();
         return;
     }

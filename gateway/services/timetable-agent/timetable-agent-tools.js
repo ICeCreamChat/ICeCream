@@ -14,8 +14,14 @@ function tool(name, description, risk, requiresApproval, run) {
         description,
         risk,
         requiresApproval,
-        inputSchema: {},
-        outputSchema: {},
+        inputSchema: {
+            type: 'object',
+            additionalProperties: true,
+        },
+        outputSchema: {
+            type: 'object',
+            additionalProperties: true,
+        },
         run,
     };
 }

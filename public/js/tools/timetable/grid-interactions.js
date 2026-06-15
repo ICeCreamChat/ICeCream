@@ -22,8 +22,34 @@ function bindDelegatedInteractions(container) {
         }
         const action = event.target.closest('[data-action]')?.dataset.action || '';
 
+        // 智能排课工作台
+        if (action === 'close-smart-workbench') {
+            controller.closeSmartWorkbench();
+        } else if (action === 'smart-workbench-recheck') {
+            controller.recheckSmartWorkbenchData();
+        } else if (action === 'smart-workbench-continue-input') {
+            controller.continueSmartWorkbenchToInput();
+        } else if (action === 'smart-workbench-mode') {
+            controller.setSmartWorkbenchMode(event.target.closest('[data-rule-review-mode]')?.dataset.ruleReviewMode || 'text');
+        } else if (action === 'smart-workbench-section') {
+            controller.setSmartWorkbenchSection(event.target.closest('[data-smart-section]')?.dataset.smartSection || 'ready');
+        } else if (action === 'smart-workbench-preview-rules') {
+            controller.previewSmartRuleChanges();
+        } else if (action === 'smart-workbench-back-review') {
+            controller.backToSmartRuleReview();
+        } else if (action === 'smart-workbench-run-schedule') {
+            controller.runSmartSchedule();
+        } else if (action === 'smart-workbench-open-publish') {
+            controller.openSmartPublish();
+        } else if (action === 'smart-workbench-step') {
+            controller.navigateSmartWorkbenchStep(event.target.closest('[data-smart-stage-key]')?.dataset.smartStageKey || '');
+        } else if (action === 'smart-workbench-relax-preview') {
+            controller.previewSmartRelaxation(event.target.closest('[data-relax-index]')?.dataset.relaxIndex || 0);
+        } else if (action === 'smart-workbench-new-constraint') {
+            controller.startRuleReviewInput('text');
+        }
         // 智能助手actions
-        if (action === 'apply-fix') {
+        else if (action === 'apply-fix') {
             const problemId = event.target.closest('[data-problem-id]')?.dataset.problemId;
             controller.applySingleFix(problemId);
         } else if (action === 'apply-all-fixes') {
@@ -247,9 +273,6 @@ export function bindGridInteractions(container, controller, state) {
     });
     container.querySelector('#tt-inspector-drawer')?.addEventListener('toggle', event => {
         state.inspectorOpen = Boolean(event.target.open);
-    });
-    container.querySelector('#tt-agent-floating')?.addEventListener('toggle', event => {
-        state.agentOpen = Boolean(event.target.open);
     });
     container.querySelector('#tt-save-project')?.addEventListener('click', () => controller.saveProject());
     container.querySelectorAll('[data-active-weekday], [data-active-period]').forEach(input => {

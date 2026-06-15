@@ -31,7 +31,17 @@ import {
 import { buildConstraintReviewContext, constraintChatControllerMethods } from './controller-chat-extension.js';
 import { buildRuleReviewTasks } from './rule-review-tasks.js';
 import smartHelperMethods from './controller-smart-helper.js';
-import { renderRuleReviewDialog, renderWorkbench } from './view.js';
+import { renderWorkbench } from './view.js';
+import {
+    createSmartWorkbenchState,
+    buildSmartDataAudit,
+    deriveSmartWorkbenchStage,
+    recoverSmartWorkbench,
+    transitionSmartWorkbench,
+} from './smart-workbench/workbench-state.js';
+import { buildRuleChangePreview } from './smart-workbench/constraint-adapter.js';
+import { createRenderScheduler } from './smart-workbench/render-scheduler.js';
+import { renderSmartWorkbench } from './smart-workbench/workbench-view.js';
 
 export class TimetablePlannerController {
     constructor() {
@@ -41,6 +51,19 @@ export class TimetablePlannerController {
         this.ruleReviewFile = null;
         this.rosterDraftCounter = 0;
         this.ruleDraftCounter = 0;
+        this.smartRenderScheduler = createRenderScheduler({
+            scheduleFrame: callback => (
+                typeof requestAnimationFrame === 'function'
+                    ? requestAnimationFrame(callback)
+                    : setTimeout(callback, 0)
+            ),
+            cancelFrame: handle => (
+                typeof cancelAnimationFrame === 'function'
+                    ? cancelAnimationFrame(handle)
+                    : clearTimeout(handle)
+            ),
+            onFlush: scopes => this.flushSmartWorkbenchRender(scopes),
+        });
     }
 
     async init(container) {
@@ -52,6 +75,7 @@ export class TimetablePlannerController {
 
     destroy() {
         this.clearOptimizationPolling();
+        this.smartRenderScheduler?.cancel();
         this.timetableToolHost?.classList?.remove('tool-container--timetable');
         this.timetableToolHost = null;
         this.state.container = null;
@@ -70,90 +94,105 @@ export class TimetablePlannerController {
         window.lucide?.createIcons();
     }
 
-    renderRuleReviewSurface() {
-        const { container } = this.state;
-        if (!container) return;
-        if (typeof document === 'undefined') {
+    flushSmartWorkbenchRender(scopes = []) {
+        if (!this.state.smartWorkbench?.open || scopes.includes('full')) {
             this.render();
             return;
         }
-        const currentOverlay = container.querySelector('[data-rule-review-close]');
-        const currentDialog = currentOverlay?.querySelector('#tt-rule-review-dialog');
-        const currentStep = currentDialog?.dataset.ruleReviewStep || '';
-        const scrollState = new Map();
-        currentOverlay?.querySelectorAll('[data-rule-review-scroll]').forEach(node => {
-            scrollState.set(node.dataset.ruleReviewScroll, node.scrollTop);
-        });
-        const answerState = new Map();
-        currentOverlay?.querySelectorAll('[data-rule-question-answer]').forEach(node => {
-            answerState.set(node.dataset.ruleQuestionAnswer, node.value);
-        });
-        const active = typeof document !== 'undefined' ? document.activeElement : null;
-        const focusState = active && currentOverlay?.contains(active)
+        this.renderSmartWorkbenchSurface();
+    }
+
+    requestSmartRender(scope = 'smart-stage') {
+        if (!this.state.smartWorkbench?.open) {
+            this.render();
+            return;
+        }
+        this.smartRenderScheduler.request(scope);
+    }
+
+    renderSmartWorkbenchSurface() {
+        const { container } = this.state;
+        if (!container || typeof document === 'undefined') {
+            this.render();
+            return;
+        }
+        const current = container.querySelector('[data-smart-workbench-root]');
+        if (!current) {
+            this.render();
+            return;
+        }
+        const textValue = current.querySelector('#tt-rule-review-text')?.value;
+        const fileScroll = current.querySelector('[data-smart-workbench-stage]')?.scrollTop || 0;
+        const active = document.activeElement;
+        const focus = active && current.contains(active)
             ? {
                 id: active.id || '',
                 action: active.dataset?.action || '',
-                question: active.dataset?.ruleQuestionAnswer || '',
-                field: active.dataset?.ruleReviewField || '',
-                row: active.closest?.('[data-rule-review-row]')?.dataset.ruleReviewRow || '',
+                ruleId: active.closest?.('[data-rule-id]')?.dataset.ruleId || '',
                 start: typeof active.selectionStart === 'number' ? active.selectionStart : null,
                 end: typeof active.selectionEnd === 'number' ? active.selectionEnd : null,
             }
             : null;
-        const dialogScrollTop = currentDialog?.scrollTop || 0;
-        const html = renderRuleReviewDialog(this.state);
-        if (!html) {
-            currentOverlay?.remove();
-            return;
+
+        if (textValue !== undefined) {
+            this.state.ruleReview = {
+                ...(this.state.ruleReview || {}),
+                text: textValue,
+            };
         }
 
         const template = document.createElement('template');
-        template.innerHTML = html.trim();
-        const nextOverlay = template.content.firstElementChild;
-        if (!nextOverlay) return;
-        if (currentOverlay) {
-            currentOverlay.replaceWith(nextOverlay);
-        } else {
-            (container.querySelector('.tt-workbench') || container).append(nextOverlay);
-        }
-        bindRuleReviewInteractions(nextOverlay, this);
+        template.innerHTML = renderSmartWorkbench(this.state).trim();
+        const next = template.content.firstElementChild;
+        if (!next) return;
+        current.replaceWith(next);
+        bindRuleReviewInteractions(next, this);
+        const stage = next.querySelector('[data-smart-workbench-stage]');
+        if (stage) stage.scrollTop = fileScroll;
 
-        const nextDialog = nextOverlay.querySelector('#tt-rule-review-dialog');
-        const nextStep = nextDialog?.dataset.ruleReviewStep || '';
-        if (nextDialog) nextDialog.scrollTop = currentStep && currentStep === nextStep ? dialogScrollTop : 0;
-        nextOverlay.querySelectorAll('[data-rule-review-scroll]').forEach(node => {
-            node.scrollTop = scrollState.get(node.dataset.ruleReviewScroll) || 0;
-        });
-        nextOverlay.querySelectorAll('[data-rule-question-answer]').forEach(node => {
-            const savedValue = answerState.get(node.dataset.ruleQuestionAnswer);
-            if (savedValue !== undefined) node.value = savedValue;
-        });
-
-        if (focusState) {
-            let target = focusState.id ? nextOverlay.querySelector(`#${focusState.id}`) : null;
-            if (!target && focusState.question) {
-                target = [...nextOverlay.querySelectorAll('[data-rule-question-answer]')]
-                    .find(node => node.dataset.ruleQuestionAnswer === focusState.question);
+        if (focus) {
+            let target = focus.id ? next.querySelector(`#${focus.id}`) : null;
+            if (!target && focus.ruleId) {
+                target = next.querySelector(`[data-rule-id="${focus.ruleId}"] [data-action="${focus.action}"]`);
             }
-            if (!target && focusState.field && focusState.row) {
-                target = [...nextOverlay.querySelectorAll('[data-rule-review-row]')]
-                    .find(node => node.dataset.ruleReviewRow === focusState.row)
-                    ?.querySelector(`[data-rule-review-field="${focusState.field}"]`);
-            }
-            if (!target && focusState.action) {
-                target = [...nextOverlay.querySelectorAll('[data-action]')]
-                    .find(node => node.dataset.action === focusState.action);
-            }
+            if (!target && focus.action) target = next.querySelector(`[data-action="${focus.action}"]`);
             target?.focus?.({ preventScroll: true });
-            if (target && focusState.start !== null && typeof target.setSelectionRange === 'function') {
+            if (target && focus.start !== null && typeof target.setSelectionRange === 'function') {
                 try {
-                    target.setSelectionRange(focusState.start, focusState.end ?? focusState.start);
+                    target.setSelectionRange(focus.start, focus.end ?? focus.start);
                 } catch {
-                    // Some input types do not support selection ranges.
+                    // Some input types do not expose a text selection.
                 }
             }
         }
         window.lucide?.createIcons();
+    }
+
+    renderRuleReviewSurface() {
+        if (!this.state.smartWorkbench?.open) {
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                open: true,
+                sourceMode: this.state.ruleReview?.mode || 'text',
+                stage: deriveSmartWorkbenchStage(this.state),
+                dataAudit: this.smartDataAudit(),
+            };
+            this.render();
+            return;
+        }
+        this.renderSmartWorkbenchSurface();
+    }
+
+    scrollSmartWorkbenchToTop() {
+        if (typeof requestAnimationFrame !== 'function' || !this.state.container) return;
+        requestAnimationFrame(() => {
+            const root = this.state.container?.querySelector?.('[data-smart-workbench-root]');
+            if (!root) return;
+            this.state.container?.closest?.('.tool-body')?.scrollTo?.({ top: 0, left: 0 });
+            this.state.container?.scrollTo?.({ top: 0, left: 0 });
+            root.scrollIntoView?.({ block: 'start', inline: 'nearest' });
+            root.querySelector?.('[data-smart-workbench-stage]')?.scrollTo?.({ top: 0, left: 0 });
+        });
     }
 
     capturePeriodTimeFocus(container) {
@@ -195,7 +234,9 @@ export class TimetablePlannerController {
     setMessage(message, failure = null) {
         this.state.message = message || '';
         this.state.lastFailure = failure;
-        if (this.state.ruleReview?.open) {
+        if (this.state.smartWorkbench?.open) {
+            this.renderSmartWorkbenchSurface();
+        } else if (this.state.ruleReview?.open) {
             this.renderRuleReviewSurface();
         } else {
             this.render();
@@ -229,7 +270,11 @@ export class TimetablePlannerController {
             error: null,
         };
         this.state.message = response.reply || this.state.message;
-        this.render();
+        if (this.state.smartWorkbench?.open) {
+            this.renderSmartWorkbenchSurface();
+        } else {
+            this.render();
+        }
     }
 
     async startTimetableAgentSession() {
@@ -448,6 +493,14 @@ export class TimetablePlannerController {
         this.syncPublicationDialogState();
         this.syncPublishDialogState();
         this.syncRangeDraftFromProject();
+        if (
+            this.state.smartWorkbench?.open
+            && ['solving', 'solution_review', 'finished'].includes(this.state.smartWorkbench.stage)
+            && (project?.schedule?.slots || []).length
+        ) {
+            const candidate = this.smartCandidateFromProject();
+            if (candidate) this.mergeSmartWorkbenchCandidate(candidate);
+        }
     }
 
     resetPublishDialog() {
@@ -463,6 +516,43 @@ export class TimetablePlannerController {
         const hardConflicts = Number(summary.hardConflicts ?? schedule.score?.hardConflicts ?? (schedule.conflicts || []).length ?? 0);
         const unplacedLessons = Number(summary.unplacedLessons ?? schedule.score?.unplacedLessons ?? (schedule.unplaced || []).length ?? 0);
         return hardConflicts === 0 && unplacedLessons === 0;
+    }
+
+    smartScheduleDiagnosis(project = this.state.project) {
+        const schedule = project?.schedule || null;
+        if (!schedule || !(schedule.slots || []).length) {
+            return {
+                summary: '还没有生成可检查的课表。',
+                suggestions: [{ label: '先返回求解计划，重新生成课表。' }],
+            };
+        }
+        const publication = schedule.publication || null;
+        const summary = publication?.summary || schedule.score || {};
+        const hardConflicts = Number(summary.hardConflicts ?? schedule.score?.hardConflicts ?? (schedule.conflicts || []).length ?? 0);
+        const unplacedLessons = Number(summary.unplacedLessons ?? schedule.score?.unplacedLessons ?? (schedule.unplaced || []).length ?? 0);
+        const issues = [];
+        if (hardConflicts > 0) issues.push(`还有 ${hardConflicts} 个硬冲突`);
+        if (unplacedLessons > 0) issues.push(`还有 ${unplacedLessons} 节课未排`);
+        if (publication?.ok === false) issues.push('发布前校验没有通过');
+        const rawSuggestions = [
+            ...(publication?.issues || []),
+            ...(schedule.audit?.blockingIssues || []),
+            ...(schedule.audit?.warnings || []),
+            ...(schedule.qualityIssues || []).filter(item => item.severity === 'high').slice(0, 3),
+        ];
+        const suggestions = rawSuggestions.map(item => ({
+            label: item.label || item.message || item.type || String(item),
+            message: item.message || item.label || String(item),
+        }));
+        if (!suggestions.length) {
+            suggestions.push({ label: '返回调整规则，减少互相冲突的必须满足条件后再生成。' });
+        }
+        return {
+            summary: issues.length
+                ? `当前课表不能保存为正式课表：${issues.join('，')}。`
+                : '当前课表还不能保存为正式课表，请先处理发布前校验提示。',
+            suggestions,
+        };
     }
 
     syncPublishDialogState() {
@@ -533,7 +623,7 @@ export class TimetablePlannerController {
         if (!(this.state.project.lessonPlans || []).length) return ['data'];
         if ((this.state.ruleDraftPreview || []).length || (this.state.ruleWarnings || []).length) return ['rules'];
         if ((this.state.project.schedule?.slots || []).length) return ['solve'];
-        return ['data'];
+        return ['rules'];
     }
 
     toggleWorkflowSection(section) {
@@ -1167,40 +1257,184 @@ export class TimetablePlannerController {
         this.state.ruleReview = createTimetablePlannerState().ruleReview;
     }
 
-    openRuleReview(mode = 'file') {
-        const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'file';
-        const current = this.state.ruleReview || {};
-        const draftRows = (current.draftRows || []).length ? (current.draftRows || []) : (this.state.pendingRules || []);
-        if (draftRows.length) {
-            this.state.ruleReview = {
-                ...current,
-                open: true,
-                step: 'review',
-                uiStep: 'issues',
-                draftRows,
-            };
-            this.renderRuleReviewSurface();
-            return;
-        }
-        if (getSavedRuleItems(this.state.project).length) {
-            this.state.ruleReview = {
-                ...createTimetablePlannerState().ruleReview,
-                open: true,
-                step: 'saved',
-                uiStep: 'saved',
-                mode: nextMode,
-            };
-            this.renderRuleReviewSurface();
-            return;
-        }
+    smartDataAudit() {
+        return buildSmartDataAudit(this.state.project || {});
+    }
+
+    openSmartWorkbench(mode = 'text') {
+        const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'text';
+        const currentReview = this.state.ruleReview || createTimetablePlannerState().ruleReview;
+        const draftRows = (currentReview.draftRows || []).length
+            ? currentReview.draftRows
+            : this.state.pendingRules || [];
+        const savedCount = getSavedRuleItems(this.state.project).length;
         this.state.ruleReview = {
-            ...createTimetablePlannerState().ruleReview,
-            open: true,
-            step: nextMode === 'manual' ? 'manual' : 'input',
-            uiStep: 'input',
+            ...currentReview,
+            open: false,
             mode: nextMode,
+            draftRows,
         };
-        this.renderRuleReviewSurface();
+        this.state.smartWorkbench = createSmartWorkbenchState({
+            ...(this.state.smartWorkbench || {}),
+            open: true,
+            sourceMode: nextMode,
+            dataAudit: this.smartDataAudit(),
+            selectedSection: draftRows.length ? (this.state.smartWorkbench?.selectedSection || 'ready') : (savedCount ? 'saved' : 'ready'),
+        });
+        this.state.smartWorkbench.stage = draftRows.length || savedCount
+            ? 'reviewing_constraints'
+            : 'checking_data';
+        this.render();
+        this.scrollSmartWorkbenchToTop();
+        if (!draftRows.length && !savedCount) {
+            const finish = () => {
+                if (!this.state.smartWorkbench?.open || this.state.smartWorkbench.stage !== 'checking_data') return;
+                const dataAudit = this.smartDataAudit();
+                this.state.smartWorkbench = {
+                    ...this.state.smartWorkbench,
+                    dataAudit,
+                    previousStage: 'checking_data',
+                    stage: dataAudit.canContinue ? 'ready_for_constraints' : 'data_need_fix',
+                    busy: false,
+                    error: '',
+                };
+                this.renderSmartWorkbenchSurface();
+            };
+            if (typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(finish);
+            } else {
+                setTimeout(finish, 0);
+            }
+        }
+    }
+
+    closeSmartWorkbench() {
+        this.state.smartWorkbench = {
+            ...createSmartWorkbenchState(),
+            ...(this.state.smartWorkbench || {}),
+            open: false,
+            busy: false,
+        };
+        if (this.state.constraintChat) {
+            this.state.constraintChat = {
+                ...this.state.constraintChat,
+                open: false,
+                loading: false,
+            };
+        }
+        this.render();
+    }
+
+    recheckSmartWorkbenchData() {
+        this.state.smartWorkbench = transitionSmartWorkbench(
+            this.state.smartWorkbench,
+            'checking_data',
+            { dataAudit: null },
+        );
+        this.renderSmartWorkbenchSurface();
+        const finish = () => {
+            const dataAudit = this.smartDataAudit();
+            this.state.smartWorkbench = {
+                ...this.state.smartWorkbench,
+                dataAudit,
+                previousStage: 'checking_data',
+                stage: dataAudit.canContinue ? 'ready_for_constraints' : 'data_need_fix',
+                busy: false,
+                error: '',
+            };
+            this.renderSmartWorkbenchSurface();
+        };
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(finish);
+        } else {
+            setTimeout(finish, 0);
+        }
+    }
+
+    continueSmartWorkbenchToInput() {
+        this.state.smartWorkbench = {
+            ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+            stage: 'ready_for_constraints',
+            busy: false,
+            error: '',
+        };
+        this.renderSmartWorkbenchSurface();
+    }
+
+    setSmartWorkbenchSection(section = 'ready') {
+        if (!['ready', 'review', 'conflict', 'unsupported', 'saved'].includes(section)) return;
+        this.state.smartWorkbench = {
+            ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+            selectedSection: section,
+        };
+        this.renderSmartWorkbenchSurface();
+    }
+
+    navigateSmartWorkbenchStep(step = '') {
+        const target = {
+            data: 'checking_data',
+            input: 'ready_for_constraints',
+            review: 'reviewing_constraints',
+            plan: 'waiting_solve_approval',
+            solve: 'solution_review',
+            finish: this.state.smartWorkbench?.diagnosis ? 'diagnosing' : 'finished',
+        }[step];
+        if (!target) return;
+        const currentIndex = [
+            'idle',
+            'checking_data',
+            'data_need_fix',
+            'ready_for_constraints',
+            'parsing_constraints',
+            'reviewing_constraints',
+            'waiting_user_confirmation',
+            'building_solve_plan',
+            'waiting_solve_approval',
+            'solving',
+            'solution_review',
+            'diagnosing',
+            'finished',
+            'failed',
+        ].indexOf(this.state.smartWorkbench?.stage || 'idle');
+        const targetIndex = [
+            'checking_data',
+            'ready_for_constraints',
+            'reviewing_constraints',
+            'waiting_solve_approval',
+            'solution_review',
+            'finished',
+        ].indexOf(target);
+        if (targetIndex > currentIndex && !['data', 'input'].includes(step)) return;
+        this.state.smartWorkbench = {
+            ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+            stage: target,
+            busy: target === 'checking_data',
+            error: '',
+        };
+        if (target === 'checking_data') {
+            this.recheckSmartWorkbenchData();
+        } else {
+            this.renderSmartWorkbenchSurface();
+        }
+    }
+
+    setSmartWorkbenchMode(mode = 'text') {
+        const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'text';
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || createTimetablePlannerState().ruleReview),
+            mode: nextMode,
+            text: this.readRuleReviewText(),
+        };
+        this.state.smartWorkbench = {
+            ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+            sourceMode: nextMode,
+            stage: 'ready_for_constraints',
+        };
+        this.renderSmartWorkbenchSurface();
+    }
+
+    openRuleReview(mode = 'file') {
+        this.openSmartWorkbench(mode === 'file' ? 'file' : mode);
     }
 
     startRuleReviewInput(mode = 'file') {
@@ -1208,16 +1442,28 @@ export class TimetablePlannerController {
         const current = this.state.ruleReview || {};
         this.state.ruleReview = {
             ...current,
-            open: true,
+            open: false,
             step: nextMode === 'manual' ? 'manual' : 'input',
             uiStep: 'input',
             mode: nextMode,
             text: this.readRuleReviewText(),
         };
-        this.renderRuleReviewSurface();
+        this.state.smartWorkbench = {
+            ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+            open: true,
+            sourceMode: nextMode,
+            stage: 'ready_for_constraints',
+            ruleChangePreview: null,
+        };
+        this.render();
+        this.scrollSmartWorkbenchToTop();
     }
 
     closeRuleReview() {
+        if (this.state.smartWorkbench?.open) {
+            this.closeSmartWorkbench();
+            return;
+        }
         this.state.ruleReview = {
             ...(this.state.ruleReview || createTimetablePlannerState().ruleReview),
             open: false,
@@ -1229,7 +1475,7 @@ export class TimetablePlannerController {
         this.state.ruleReview = {
             ...createTimetablePlannerState().ruleReview,
             ...(this.state.ruleReview || {}),
-            open: true,
+            open: !this.state.smartWorkbench?.open,
             step: step || this.state.ruleReview?.step || 'input',
             uiStep: 'understanding',
             mode: mode || this.state.ruleReview?.mode || 'file',
@@ -1239,6 +1485,16 @@ export class TimetablePlannerController {
             phaseTone: tone,
             text: this.state.ruleReview?.text ?? this.readRuleReviewText(),
         };
+        if (this.state.smartWorkbench?.open) {
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                stage: phase === 'save' || phase === 'save_auto'
+                    ? 'waiting_user_confirmation'
+                    : 'parsing_constraints',
+                busy: true,
+                error: '',
+            };
+        }
         this.renderRuleReviewSurface();
     }
 
@@ -1252,6 +1508,16 @@ export class TimetablePlannerController {
             phaseTone: tone,
             uiStep: this.state.ruleReview?.draftRows?.length ? 'issues' : 'input',
         };
+        if (this.state.smartWorkbench?.open) {
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                stage: tone
+                    ? 'ready_for_constraints'
+                    : deriveSmartWorkbenchStage(this.state),
+                busy: false,
+                error: tone ? phaseText : '',
+            };
+        }
         this.renderRuleReviewSurface();
     }
 
@@ -1261,6 +1527,10 @@ export class TimetablePlannerController {
     }
 
     setRuleReviewMode(mode) {
+        if (this.state.smartWorkbench?.open) {
+            this.setSmartWorkbenchMode(mode);
+            return;
+        }
         const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'text';
         this.state.ruleReview = {
             ...(this.state.ruleReview || {}),
@@ -1277,7 +1547,7 @@ export class TimetablePlannerController {
         this.ruleReviewFile = file || null;
         this.state.ruleReview = {
             ...(this.state.ruleReview || {}),
-            open: true,
+            open: !this.state.smartWorkbench?.open,
             step: 'input',
             uiStep: 'input',
             mode: 'file',
@@ -1525,7 +1795,7 @@ export class TimetablePlannerController {
         const hasBlockingIssues = draftRows.some(row => ['invalid'].includes(row.status)) || conflicts.some(item => item.level === 'blocking');
         const nextReview = {
             ...(this.state.ruleReview || {}),
-            open: true,
+            open: !this.state.smartWorkbench?.open,
             step: 'review',
             uiStep: payload.uiStep
                 || (draftRows.length ? 'issues' : (this.state.ruleReview?.uiStep || 'input')),
@@ -1576,6 +1846,18 @@ export class TimetablePlannerController {
         this.state.ruleDraftInputType = payload.inputType || '';
         this.state.ruleContextStats = payload.contextStats || null;
         this.state.ruleUnsupportedItems = payload.unsupportedItems || [];
+        if (this.state.smartWorkbench?.open) {
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                stage: deriveSmartWorkbenchStage({
+                    ...this.state,
+                    ruleReview: this.state.ruleReview,
+                }),
+                busy: false,
+                error: '',
+                ruleChangePreview: null,
+            };
+        }
     }
 
     nextRuleDraftId() {
@@ -2512,11 +2794,323 @@ export class TimetablePlannerController {
                 phaseTone: '',
                 diagnosis: result.diagnosis || null,
             };
+            if (this.state.smartWorkbench?.open) {
+                this.state.smartWorkbench = {
+                    ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                    stage: 'diagnosing',
+                    busy: false,
+                    diagnosis: result.diagnosis || null,
+                    error: '',
+                };
+                this.renderSmartWorkbenchSurface();
+            }
             this.setMessage('智能诊断已更新。');
         } catch (error) {
             this.stopRuleReviewProgress('诊断失败，请稍后重试。', 'warning');
             this.handleError(error);
         }
+    }
+
+    async previewSmartRuleChanges() {
+        const rows = this.state.ruleReview?.advancedOpen
+            ? this.readRuleReviewRows()
+            : this.state.ruleReview?.draftRows || [];
+        if (!rows.length) {
+            this.setMessage('当前没有可以核对的约束草稿。');
+            return;
+        }
+        try {
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                stage: 'waiting_user_confirmation',
+                busy: true,
+                error: '',
+            };
+            this.renderSmartWorkbenchSurface();
+            const normalized = await requestTimetable('/rules/normalize', {
+                method: 'POST',
+                body: JSON.stringify({
+                    draftRows: rows,
+                    inputType: this.state.ruleReview?.inputType || 'review',
+                    contextStats: this.state.ruleReview?.contextStats || null,
+                }),
+            });
+            this.setRuleReviewState(normalized);
+            const currentItems = getSavedRuleItems(this.state.project);
+            const nextItems = getSavedRuleItems({
+                ...this.state.project,
+                rules: normalized.draftRules,
+            });
+            this.state.ruleDraft = normalized.draftRules;
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                stage: 'waiting_user_confirmation',
+                busy: false,
+                ruleChangePreview: buildRuleChangePreview({
+                    currentItems,
+                    nextItems,
+                    draftRows: normalized.draftRows || rows,
+                }),
+            };
+            this.renderSmartWorkbenchSurface();
+        } catch (error) {
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                stage: 'reviewing_constraints',
+                busy: false,
+                error: normalizeApiError(error).message,
+            };
+            this.handleError(error);
+        }
+    }
+
+    backToSmartRuleReview() {
+        this.state.smartWorkbench = {
+            ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+            stage: (this.state.ruleReview?.draftRows || []).length
+                ? 'reviewing_constraints'
+                : 'ready_for_constraints',
+            ruleChangePreview: null,
+            solvePlan: null,
+            busy: false,
+            error: '',
+        };
+        this.renderSmartWorkbenchSurface();
+    }
+
+    async refreshSmartWorkbenchRuleScan(constraints = null) {
+        if (!this.state.smartWorkbench?.open) return null;
+        const reviewRows = Array.isArray(constraints)
+            ? constraints
+            : (this.state.ruleReview?.draftRows || getSavedRuleItems(this.state.project));
+        this.state.constraintScan = {
+            ...(this.state.constraintScan || {}),
+            open: true,
+            scanning: true,
+            phase: '正在重新检查规则冲突...',
+            error: '',
+        };
+        this.renderSmartWorkbenchSurface();
+        try {
+            const result = await requestTimetable('/constraints/scan', {
+                method: 'POST',
+                body: JSON.stringify({
+                    constraints: reviewRows,
+                    project: this.state.project,
+                }),
+            });
+            this.state.constraintScan = {
+                open: true,
+                scanning: false,
+                completed: true,
+                problems: result.problems || [],
+                stats: result.stats || {},
+                error: '',
+            };
+            return result;
+        } catch (error) {
+            this.state.constraintScan = {
+                ...(this.state.constraintScan || {}),
+                open: true,
+                scanning: false,
+                completed: false,
+                error: normalizeApiError(error).message,
+            };
+            return null;
+        }
+    }
+
+    async buildSmartSolvePlan() {
+        const items = getSavedRuleItems(this.state.project);
+        const hardCount = items.filter(item => item.priority === 'hard').length;
+        const softCount = items.length - hardCount;
+        const audit = this.state.project?.schedule?.audit || null;
+        const fallbackPlan = {
+            hardCount,
+            softCount,
+            hardSummary: hardCount
+                ? `优先满足 ${hardCount} 条必须条件，以及教师、班级和教室不冲突`
+                : '先保证教师、班级、教室不冲突，并满足固定课节',
+            softSummary: softCount
+                ? `在可行课表上继续优化 ${softCount} 条偏好`
+                : '继续优化课程分散、教师负载和班级日课时均衡',
+            strategySummary: '先用本地算法快速生成可用课表，再由 Timefold 在后台寻找更优结果',
+            riskSummary: (audit?.warnings || []).length
+                ? `当前有 ${(audit.warnings || []).length} 项风险，生成后会再次校验`
+                : '当前没有发现阻断风险，生成后仍会再次校验',
+        };
+        this.state.smartWorkbench = {
+            ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+            stage: 'building_solve_plan',
+            busy: true,
+            ruleChangePreview: null,
+            solvePlan: fallbackPlan,
+        };
+        this.renderSmartWorkbenchSurface();
+        try {
+            let sessionId = this.state.agent?.sessionId || null;
+            if (!sessionId) {
+                const session = await requestTimetableAgent('/session', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        project: this.state.project,
+                        mode: 'assistant',
+                    }),
+                });
+                sessionId = session.sessionId || session.state?.sessionId || null;
+            }
+            const response = await requestTimetableAgent('/message', {
+                method: 'POST',
+                body: JSON.stringify({
+                    sessionId,
+                    message: '开始生成课表',
+                    project: this.state.project,
+                }),
+            });
+            const solveArtifact = [...(response.artifacts || [])].reverse().find(item => item.type === 'solve_plan') || {};
+            const executeApproval = (response.approvalQueue || []).find(item => item.type === 'execute_solve');
+            this.state.agent = {
+                ...(this.state.agent || {}),
+                sessionId: response.sessionId || sessionId,
+                stage: response.stage || 'solve_planning',
+                planner: response.planner || null,
+                ui: response.ui || null,
+                artifacts: response.artifacts || [],
+                approvalQueue: response.approvalQueue || [],
+                loading: false,
+                error: null,
+            };
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                stage: response.stage === 'diagnosis' ? 'diagnosing' : 'waiting_solve_approval',
+                busy: false,
+                solvePlan: {
+                    ...fallbackPlan,
+                    solverPreference: solveArtifact.solverPreference || executeApproval?.payload?.solvePlan?.solverPreference || '',
+                    strategy: solveArtifact.strategy || executeApproval?.payload?.solvePlan?.strategy || 'balanced',
+                    planner: response.planner || null,
+                    agentApprovalId: executeApproval?.id || '',
+                },
+                diagnosis: response.stage === 'diagnosis'
+                    ? {
+                        summary: response.reply || '求解前检查发现需要先处理的问题。',
+                        suggestions: response.warnings || [],
+                    }
+                    : null,
+            };
+        } catch (error) {
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                stage: 'waiting_solve_approval',
+                busy: false,
+                solvePlan: fallbackPlan,
+                error: '',
+            };
+        }
+        this.renderSmartWorkbenchSurface();
+    }
+
+    smartCandidateFromProject() {
+        const schedule = this.state.project?.schedule;
+        if (!schedule) return null;
+        const score = schedule.score || {};
+        return {
+            id: schedule.id || schedule.generatedAt || 'current',
+            label: schedule.source === 'timefold_solver' ? 'Timefold 优化方案' : '本地快速方案',
+            source: schedule.source || 'fast_constructed',
+            sourceLabel: schedule.source === 'timefold_solver' ? 'Timefold 后台优化' : '本地快速生成',
+            hardConflicts: Number(score.hardConflicts ?? (schedule.conflicts || []).length ?? 0),
+            softScore: Number(score.softScore ?? score.qualityScore ?? 0),
+            completeness: score.completeness
+                || `${Math.max(0, Number(score.totalLessons || 0) - Number(score.unplacedLessons || 0))}/${Number(score.totalLessons || 0)}`,
+        };
+    }
+
+    mergeSmartWorkbenchCandidate(candidate) {
+        if (!candidate) return;
+        const current = this.state.smartWorkbench?.candidates || [];
+        const key = item => `${item.source || ''}:${item.id || ''}`;
+        const byKey = new Map(current.map(item => [key(item), item]));
+        byKey.set(key(candidate), candidate);
+        const candidates = [...byKey.values()].sort((left, right) => {
+            const hardDelta = Number(left.hardConflicts || 0) - Number(right.hardConflicts || 0);
+            if (hardDelta) return hardDelta;
+            const leftCompleteness = Number.parseFloat(String(left.completeness || '0').replace('%', ''));
+            const rightCompleteness = Number.parseFloat(String(right.completeness || '0').replace('%', ''));
+            if (leftCompleteness !== rightCompleteness) return rightCompleteness - leftCompleteness;
+            return Number(right.softScore || 0) - Number(left.softScore || 0);
+        });
+        this.state.smartWorkbench = {
+            ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+            candidates,
+            activeCandidateId: candidates[0]?.id || candidate.id,
+        };
+    }
+
+    async runSmartSchedule() {
+        this.state.smartWorkbench = {
+            ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+            stage: 'solving',
+            busy: true,
+            error: '',
+        };
+        this.renderSmartWorkbenchSurface();
+        await this.runSchedule();
+        const candidate = this.smartCandidateFromProject();
+        if (candidate) {
+            this.mergeSmartWorkbenchCandidate(candidate);
+        }
+        if (candidate && !this.state.lastFailure && this.isSchedulePublicationReady()) {
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                stage: 'solution_review',
+                busy: false,
+                diagnosis: null,
+            };
+        } else {
+            const failure = this.state.lastFailure || {};
+            const scheduleDiagnosis = this.smartScheduleDiagnosis();
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                stage: 'diagnosing',
+                busy: false,
+                diagnosis: failure.message
+                    ? {
+                        summary: failure.message || '这次没有得到可保存的课表。',
+                        suggestions: failure.audit?.warnings
+                            || failure.warnings
+                            || scheduleDiagnosis.suggestions,
+                    }
+                    : scheduleDiagnosis,
+            };
+        }
+        this.renderSmartWorkbenchSurface();
+    }
+
+    openSmartPublish() {
+        if (!this.isSchedulePublicationReady()) {
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                open: true,
+                stage: 'diagnosing',
+                busy: false,
+                diagnosis: this.smartScheduleDiagnosis(),
+                error: '',
+            };
+            this.renderSmartWorkbenchSurface();
+            return;
+        }
+        this.closeSmartWorkbench();
+        this.openPublishDialog();
+    }
+
+    previewSmartRelaxation(index = 0) {
+        const suggestions = this.state.smartWorkbench?.diagnosis?.suggestions || [];
+        const suggestion = suggestions[Number(index)] || suggestions[0];
+        this.state.message = suggestion
+            ? `建议调整：${suggestion.label || suggestion.message || suggestion}`
+            : '当前没有可以自动应用的调整方案。';
+        this.backToSmartRuleReview();
     }
 
     async confirmRuleDraft() {
@@ -2546,6 +3140,7 @@ export class TimetablePlannerController {
                     body: JSON.stringify({ rules: normalized.draftRules }),
                 });
                 this.applyProject(result.project);
+                await this.refreshSmartWorkbenchRuleScan(getSavedRuleItems(result.project));
                 this.clearOptimizationPolling();
                 this.state.solverJob = null;
                 this.state.lastFailure = null;
@@ -2553,11 +3148,20 @@ export class TimetablePlannerController {
                 this.clearRuleDraft();
                 this.state.ruleReview = {
                     ...createTimetablePlannerState().ruleReview,
-                    open: true,
+                    open: false,
                     step: 'saved',
                     uiStep: 'saved',
                     mode: 'file',
                 };
+                if (this.state.smartWorkbench?.open) {
+                    this.state.smartWorkbench = {
+                        ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                        stage: 'building_solve_plan',
+                        ruleChangePreview: null,
+                        busy: false,
+                    };
+                    await this.buildSmartSolvePlan();
+                }
                 this.setMessage('约束已确认生效。');
                 return;
             } catch (error) {
@@ -2577,6 +3181,7 @@ export class TimetablePlannerController {
                 body: JSON.stringify({ rules: this.state.ruleDraft }),
             });
             this.applyProject(result.project);
+            await this.refreshSmartWorkbenchRuleScan(getSavedRuleItems(result.project));
             this.clearOptimizationPolling();
             this.state.solverJob = null;
             this.state.lastFailure = null;
@@ -2584,11 +3189,20 @@ export class TimetablePlannerController {
             this.clearRuleDraft();
             this.state.ruleReview = {
                 ...createTimetablePlannerState().ruleReview,
-                open: true,
+                open: false,
                 step: 'saved',
                 uiStep: 'saved',
                 mode: 'file',
             };
+            if (this.state.smartWorkbench?.open) {
+                this.state.smartWorkbench = {
+                    ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                    stage: 'building_solve_plan',
+                    ruleChangePreview: null,
+                    busy: false,
+                };
+                await this.buildSmartSolvePlan();
+            }
             this.setMessage('智能约束已确认。');
         } catch (error) {
             this.stopRuleReviewProgress('写入失败，请稍后重试。', 'warning');
@@ -2695,15 +3309,18 @@ export class TimetablePlannerController {
             setTimeout(() => {
                 if (!this.state.loading) return;
                 this.state.solvePhaseText = '快速生成中';
-                this.render();
+                if (this.state.smartWorkbench?.open) this.renderSmartWorkbenchSurface();
+                else this.render();
             }, 80),
             setTimeout(() => {
                 if (!this.state.loading) return;
                 this.state.solvePhaseText = '局部优化中';
-                this.render();
+                if (this.state.smartWorkbench?.open) this.renderSmartWorkbenchSurface();
+                else this.render();
             }, 500),
         ];
-        this.render();
+        if (this.state.smartWorkbench?.open) this.renderSmartWorkbenchSurface();
+        else this.render();
         try {
             const result = await requestTimetable('/schedule/run', { method: 'POST' });
             this.applyProject(result.project);
@@ -2724,7 +3341,8 @@ export class TimetablePlannerController {
             phaseTimers.forEach(timer => clearTimeout(timer));
             this.state.loading = false;
             this.state.solvePhaseText = '';
-            this.render();
+            if (this.state.smartWorkbench?.open) this.renderSmartWorkbenchSurface();
+            else this.render();
         }
     }
 
@@ -3044,7 +3662,23 @@ export class TimetablePlannerController {
         }
         this.state.message = normalized.message;
         this.state.lastFailure = options.keepFailure ? normalized : null;
-        this.render();
+        if (this.state.smartWorkbench?.open) {
+            if (options.keepFailure) {
+                this.state.smartWorkbench = {
+                    ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                    stage: 'diagnosing',
+                    busy: false,
+                    error: normalized.message,
+                    diagnosis: {
+                        summary: normalized.message,
+                        suggestions: normalized.warnings || normalized.audit?.warnings || [],
+                    },
+                };
+            }
+            this.renderSmartWorkbenchSurface();
+        } else {
+            this.render();
+        }
     }
 }
 

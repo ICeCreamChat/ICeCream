@@ -190,7 +190,10 @@ function normalizeChatState(chat = {}) {
 }
 
 function renderConstraintSurface(controller) {
-    if (typeof controller.renderRuleReviewSurface === 'function' && controller.state?.ruleReview?.open) {
+    if (
+        typeof controller.renderRuleReviewSurface === 'function'
+        && (controller.state?.ruleReview?.open || controller.state?.smartWorkbench?.open)
+    ) {
         controller.renderRuleReviewSurface();
         return;
     }
