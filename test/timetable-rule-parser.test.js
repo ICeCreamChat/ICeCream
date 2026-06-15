@@ -177,6 +177,76 @@ test('local fallback parses "语数英尽量上午" as 3 subject_morning rules',
     assert.ok(morningRows.length >= 3, `expected >= 3 subject_morning effective rows, got ${morningRows.length}`);
 });
 
+test('normalize splits a grouped subject target into independent effective rules', () => {
+    const project = makeProject();
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        source: 'ai',
+        draftRows: [{
+            id: 'grouped-subjects',
+            rawText: '语文、数学、英语尽量安排到上午',
+            type: 'subject_morning',
+            targetType: 'subject',
+            targetName: '语文,数学,英语',
+            priority: 'soft',
+            status: 'effective',
+            confidence: 0.92,
+        }],
+    });
+
+    const rows = result.draftRows.filter(row => row.type === 'subject_morning');
+    assert.deepEqual(rows.map(row => row.targetId), ['s1', 's2', 's3']);
+    assert.deepEqual(rows.map(row => row.targetName), ['语文', '数学', '英语']);
+    assert.ok(rows.every(row => row.status === 'effective'));
+    assert.deepEqual(result.clarifyingQuestions, []);
+    assert.deepEqual(result.missingInfo, []);
+});
+
+test('normalize splits a grouped ambiguous teacher target before asking questions', () => {
+    const project = makeProject();
+    const groupedCandidates = project.teachers.slice(0, 2).map(teacher => ({
+        id: teacher.id,
+        label: teacher.name,
+        confidence: 0.7,
+    }));
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        source: 'ai',
+        draftRows: [{
+            id: 'grouped-teachers',
+            rawText: '张老师、李老师周一第一节不排',
+            type: 'teacher_unavailable',
+            targetType: 'teacher',
+            targetName: '张老师、李老师',
+            slots: ['1-1'],
+            priority: 'hard',
+            status: 'needs_review',
+            confidence: 0.9,
+            warnings: ['存在多个候选，系统不会自动猜测。'],
+            ambiguity: {
+                field: 'target',
+                targetType: 'teacher',
+                targetText: '张老师、李老师',
+                candidates: groupedCandidates,
+            },
+            ambiguities: [{
+                field: 'target',
+                targetType: 'teacher',
+                targetText: '张老师、李老师',
+                candidates: groupedCandidates,
+            }],
+        }],
+    });
+
+    assert.deepEqual(result.draftRows.map(row => row.targetId), ['t1', 't2']);
+    assert.ok(result.draftRows.every(row => row.status === 'effective'));
+    assert.deepEqual(result.clarifyingQuestions, []);
+    assert.deepEqual(result.draftRules.hardRules.teacherUnavailable, {
+        t1: ['1-1'],
+        t2: ['1-1'],
+    });
+});
+
 // ============================================================
 // 5. Local fallback: class_unavailable
 // ============================================================

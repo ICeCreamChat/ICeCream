@@ -696,6 +696,71 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
     };
 }
 
+function splitGroupedTargetText(value = '') {
+    const text = asText(value, 600);
+    if (!/[,，、;；|\r\n]/.test(text)) return [];
+    return [...new Set(text
+        .split(/\s*[,，、;；|\r\n]+\s*/)
+        .map(item => asText(item, 160))
+        .filter(Boolean))];
+}
+
+function expandGroupedEntityTarget(row = {}, index = 0, project = {}) {
+    const type = normalizeConstraintType(row.type || row.ruleType);
+    const targetType = targetTypeFor(type, row);
+    if (!['teacher', 'class', 'subject'].includes(targetType)) return [row];
+
+    const specificId = targetType === 'teacher'
+        ? row.teacherId
+        : targetType === 'class'
+            ? row.classId
+            : row.subjectId;
+    if (row.targetId || specificId) return [row];
+
+    const targetText = row.targetName
+        || row.target
+        || (targetType === 'teacher' ? row.teacherName || row.teacher : '')
+        || (targetType === 'class' ? row.className || row.class : '')
+        || (targetType === 'subject' ? row.subjectName || row.subject : '');
+    const parts = splitGroupedTargetText(targetText);
+    if (parts.length < 2) return [row];
+
+    const hadGroupedAmbiguity = Boolean(row.ambiguity)
+        || (Array.isArray(row.ambiguities) && row.ambiguities.length > 0)
+        || (row.warnings || []).some(warning => /多个候选|不会自动猜测/.test(String(warning || '')));
+    const baseId = asText(row.id, 120) || `rule_draft_${index + 1}`;
+
+    return parts.map((part, partIndex) => {
+        const match = matchEntityCandidates(project, part, targetType);
+        const exact = match.candidates.length === 1 && match.candidates[0].confidence >= 0.96
+            ? match.candidates[0]
+            : null;
+        const next = {
+            ...row,
+            id: `${baseId}__${partIndex + 1}`,
+            targetType,
+            targetId: exact?.id || '',
+            targetName: exact?.label || part,
+            ambiguity: null,
+            ambiguities: [],
+            warnings: (row.warnings || []).filter(warning => !/多个候选|不会自动猜测/.test(String(warning || ''))),
+            status: hadGroupedAmbiguity && row.status === 'needs_review' ? 'effective' : row.status,
+        };
+
+        if (targetType === 'teacher') {
+            next.teacherId = exact?.id || '';
+            next.teacherName = exact?.label || part;
+        } else if (targetType === 'class') {
+            next.classId = exact?.id || '';
+            next.className = exact?.label || part;
+        } else if (targetType === 'subject') {
+            next.subjectId = exact?.id || '';
+            next.subjectName = exact?.label || part;
+        }
+        return next;
+    });
+}
+
 function validateTimeExpression(row = {}, project = {}) {
     const activeDays = new Set(getActiveWeekdays(project));
     const activePeriods = new Set(getActivePeriods(project));
@@ -1382,6 +1447,7 @@ export function normalizeTimetableRuleDraftRows({
     const unsupportedItems = [];
 
     const rows = (Array.isArray(draftRows) ? draftRows : [])
+        .flatMap((row, index) => expandGroupedEntityTarget(row, index, project))
         .map((row, index) => classifyDraftRow(normalizeDraftRow(row, index, project), project))
         .map(row => {
             if (['ignored', 'suggestion', 'unsupported', 'invalid', 'needs_review'].includes(row.status)) {
