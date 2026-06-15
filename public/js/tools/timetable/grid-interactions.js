@@ -68,6 +68,8 @@ function bindDelegatedInteractions(container) {
             controller.deleteRuleReviewCard(event.target.closest('[data-rule-id]')?.dataset.ruleId || '');
         } else if (action === 'rule-card-effective') {
             controller.markRuleReviewRowEffective(event.target.closest('[data-rule-id]')?.dataset.ruleId || '');
+        } else if (action === 'rule-review-toggle-advanced') {
+            controller.toggleRuleReviewAdvanced();
         } else if (action === 'diagnose-rules') {
             controller.diagnoseRules();
         } else if (action === 'constraint-chat-start') {
@@ -204,6 +206,37 @@ function bindDelegatedInteractions(container) {
     });
 }
 
+export function bindRuleReviewInteractions(root, controller) {
+    if (!root || !controller) return;
+    root.querySelectorAll('[data-rule-example]').forEach(button => {
+        button.addEventListener('click', () => controller.fillRuleExample(button.dataset.ruleExample));
+    });
+    root.querySelectorAll('[data-saved-rule-delete]').forEach(button => {
+        button.addEventListener('click', () => controller.removeSavedRule(button.dataset.savedRuleDelete));
+    });
+    root.querySelector('#tt-rule-review-cancel')?.addEventListener('click', () => controller.closeRuleReview());
+    root.querySelector('#tt-rule-review-cancel-secondary')?.addEventListener('click', () => controller.closeRuleReview());
+    root.querySelector('#tt-saved-rule-add')?.addEventListener('click', () => controller.startRuleReviewInput('file'));
+    root.querySelectorAll('[data-rule-review-mode]').forEach(button => {
+        button.addEventListener('click', () => controller.setRuleReviewMode(button.dataset.ruleReviewMode));
+    });
+    root.querySelector('#tt-rule-review-file')?.addEventListener('change', event => {
+        controller.selectRuleReviewFile(event.target.files?.[0] || null);
+    });
+    root.querySelector('#tt-rule-review-parse')?.addEventListener('click', () => controller.parseRules());
+    root.querySelector('#tt-add-manual-rule-rows')?.addEventListener('click', () => controller.addManualRuleRows());
+    root.querySelector('#tt-confirm-rule-review')?.addEventListener('click', () => controller.confirmRuleDraft());
+    root.querySelector('#tt-apply-auto-rules')?.addEventListener('click', () => controller.applyAutoAcceptableRules());
+    root.querySelector('#tt-add-rule-review-row')?.addEventListener('click', () => controller.addRuleReviewRow());
+    root.querySelectorAll('[data-rule-review-field]').forEach(input => {
+        input.addEventListener('change', () => controller.updateRuleReviewField());
+    });
+    root.querySelectorAll('[data-rule-review-delete-row]').forEach(button => {
+        button.addEventListener('click', () => controller.deleteRuleReviewRow(button.dataset.ruleReviewDeleteRow));
+    });
+    root.querySelector('#tt-open-smart-helper')?.addEventListener('click', () => controller.openSmartConstraintHelper());
+}
+
 export function bindGridInteractions(container, controller, state) {
     container.__ttController = controller;
     container.__ttState = state;
@@ -279,38 +312,10 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-clear-roster')?.addEventListener('click', () => controller.clearRoster());
     container.querySelector('#tt-save-rules')?.addEventListener('click', () => controller.saveRules());
 
-    container.querySelectorAll('[data-rule-example]').forEach(button => {
-        button.addEventListener('click', () => controller.fillRuleExample(button.dataset.ruleExample));
-    });
-    container.querySelectorAll('[data-saved-rule-delete]').forEach(button => {
-        button.addEventListener('click', () => controller.removeSavedRule(button.dataset.savedRuleDelete));
-    });
     container.querySelector('#tt-open-rule-review')?.addEventListener('click', () => controller.openRuleReview('file'));
     container.querySelector('#tt-reparse-rule-review')?.addEventListener('click', () => controller.startRuleReviewInput('file'));
-    container.querySelector('#tt-rule-review-cancel')?.addEventListener('click', () => controller.closeRuleReview());
-    container.querySelector('#tt-rule-review-cancel-secondary')?.addEventListener('click', () => controller.closeRuleReview());
-    container.querySelector('#tt-saved-rule-add')?.addEventListener('click', () => controller.startRuleReviewInput('file'));
-    container.querySelectorAll('[data-rule-review-mode]').forEach(button => {
-        button.addEventListener('click', () => controller.setRuleReviewMode(button.dataset.ruleReviewMode));
-    });
-    container.querySelector('#tt-rule-review-file')?.addEventListener('change', event => {
-        controller.selectRuleReviewFile(event.target.files?.[0] || null);
-    });
-    container.querySelector('#tt-rule-review-parse')?.addEventListener('click', () => controller.parseRules());
-    container.querySelector('#tt-add-manual-rule-rows')?.addEventListener('click', () => controller.addManualRuleRows());
-    container.querySelector('#tt-confirm-rule-review')?.addEventListener('click', () => controller.confirmRuleDraft());
-    container.querySelector('#tt-apply-auto-rules')?.addEventListener('click', () => controller.applyAutoAcceptableRules());
-    container.querySelector('#tt-add-rule-review-row')?.addEventListener('click', () => controller.addRuleReviewRow());
-    container.querySelectorAll('[data-rule-review-field]').forEach(input => {
-        input.addEventListener('change', () => controller.updateRuleReviewField());
-    });
-    container.querySelectorAll('[data-rule-review-delete-row]').forEach(button => {
-        button.addEventListener('click', () => controller.deleteRuleReviewRow(button.dataset.ruleReviewDeleteRow));
-    });
     container.querySelector('#tt-clear-rules')?.addEventListener('click', () => controller.clearRules());
-
-    // 智能约束助手
-    container.querySelector('#tt-open-smart-helper')?.addEventListener('click', () => controller.openSmartConstraintHelper());
+    bindRuleReviewInteractions(container, controller);
 
     container.querySelectorAll('#tt-run-schedule, [data-run-schedule]').forEach(button => {
         button.addEventListener('click', () => controller.runSchedule());

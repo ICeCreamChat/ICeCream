@@ -189,6 +189,14 @@ function normalizeChatState(chat = {}) {
     };
 }
 
+function renderConstraintSurface(controller) {
+    if (typeof controller.renderRuleReviewSurface === 'function' && controller.state?.ruleReview?.open) {
+        controller.renderRuleReviewSurface();
+        return;
+    }
+    controller.render();
+}
+
 function appendChatMessage(chat, role, content) {
     return {
         ...chat,
@@ -260,7 +268,7 @@ export const constraintChatControllerMethods = {
                     { intent: options.intent, taskContext }
                 );
             } else {
-                this.render();
+                renderConstraintSurface(this);
             }
             return;
         }
@@ -277,7 +285,7 @@ export const constraintChatControllerMethods = {
             error: null,
             completed: false,
         });
-        this.render();
+        renderConstraintSurface(this);
 
         try {
             const result = await requestTimetable('/constraints/chat/init', {
@@ -305,7 +313,7 @@ export const constraintChatControllerMethods = {
                 error: null,
             });
             applyConstraintDrafts(this.state, result.constraints);
-            this.render();
+            renderConstraintSurface(this);
             if (options.intent) {
                 await this.sendConstraintChatMessage(
                     options.message || defaultMessageForIntent(options.intent, taskContext),
@@ -319,7 +327,7 @@ export const constraintChatControllerMethods = {
                 loading: false,
                 error: normalized.message,
             });
-            this.render();
+            renderConstraintSurface(this);
         }
     },
 
@@ -335,7 +343,7 @@ export const constraintChatControllerMethods = {
                 ...chat,
                 error: '对话会话不存在或已过期，请重新开始。',
             });
-            this.render();
+            renderConstraintSurface(this);
             return;
         }
 
@@ -345,7 +353,7 @@ export const constraintChatControllerMethods = {
             loading: true,
             error: null,
         });
-        this.render();
+        renderConstraintSurface(this);
 
         try {
             const result = await requestTimetable('/constraints/chat/message', {
@@ -376,7 +384,7 @@ export const constraintChatControllerMethods = {
                 this.state.message = '约束优化完成，可以确认生效或继续调整。';
             }
 
-            this.render();
+            renderConstraintSurface(this);
         } catch (error) {
             const normalized = normalizeApiError(error);
             this.state.constraintChat = normalizeChatState({
@@ -384,7 +392,7 @@ export const constraintChatControllerMethods = {
                 loading: false,
                 error: normalized.message,
             });
-            this.render();
+            renderConstraintSurface(this);
         }
     },
 
@@ -395,11 +403,12 @@ export const constraintChatControllerMethods = {
                 method: 'POST',
             }).then(result => {
                 applyConstraintDrafts(this.state, result.constraints);
+                renderConstraintSurface(this);
             }).catch(() => {});
         }
 
         this.state.constraintChat = chat ? { ...chat, open: false, loading: false } : null;
-        this.render();
+        renderConstraintSurface(this);
     },
 
     updateConstraintChatInput(text) {
@@ -410,17 +419,20 @@ export const constraintChatControllerMethods = {
     },
 
     selectRuleReviewTask(taskId = '') {
+        if (!taskId) return;
         this.state.ruleReview = {
             ...(this.state.ruleReview || {}),
             activeTaskId: taskId,
             selectedSection: taskId,
         };
-        this.state.constraintChat = normalizeChatState({
-            ...(this.state.constraintChat || {}),
-            activeTaskId: taskId,
-            docked: true,
-        });
-        this.render();
+        if (this.state.constraintChat) {
+            this.state.constraintChat = normalizeChatState({
+                ...this.state.constraintChat,
+                activeTaskId: taskId,
+                docked: true,
+            });
+        }
+        renderConstraintSurface(this);
     },
 
     explainRuleReviewTask(taskId = '') {
@@ -465,7 +477,7 @@ export const constraintChatControllerMethods = {
             completed: false,
         });
         this.setMessage?.('修正已应用到草稿，请核对后确认生效。');
-        this.render();
+        renderConstraintSurface(this);
         if (chat.conversationId) {
             const taskContext = taskContextById(this.state, chat.activeTaskId || this.state.ruleReview?.activeTaskId || '');
             return this.sendConstraintChatMessage('应用这个修正预览', {
@@ -480,6 +492,6 @@ export const constraintChatControllerMethods = {
             ...(this.state.constraintChat || {}),
             actionPreview: null,
         });
-        this.render();
+        renderConstraintSurface(this);
     },
 };

@@ -198,6 +198,30 @@ test('timetable planner is assembled from workbench modules', async () => {
   }
 });
 
+test('timetable immersive mode hides global click particles without affecting seating', async () => {
+  const controller = new TimetablePlannerController();
+  const classes = new Set();
+  const host = {
+    classList: {
+      add: value => classes.add(value),
+      remove: value => classes.delete(value),
+    },
+  };
+  const container = {
+    closest: selector => selector === '.tool-container' ? host : null,
+  };
+  controller.load = async () => {};
+
+  await controller.init(container);
+  assert.equal(classes.has('tool-container--timetable'), true);
+
+  controller.destroy();
+  assert.equal(classes.has('tool-container--timetable'), false);
+
+  const styles = await readFile(stylePath, 'utf8');
+  assert.match(styles, /\.tool-container--timetable\.active\s*~\s*\.math-particle-dom/);
+});
+
 test('timetable planner uses the seating-style control panel and board layout', async () => {
   const source = await readFile(sourcePath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
@@ -4130,7 +4154,7 @@ test('timetable dialogs expand to review content on desktop and stay constrained
   const styles = await readFile(stylePath, 'utf8');
 
   assert.match(styles, /\.tt-roster-import-dialog,\s*\n\.tt-rule-review-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*min-width:\s*min\(640px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
-  assert.match(styles, /\.tt-rule-review-dialog\s*{[\s\S]*min-width:\s*min\(820px,\s*calc\(100vw - 48px\)\);/);
+  assert.match(styles, /\.tt-rule-review-dialog\s*{[\s\S]*width:\s*min\(760px,\s*calc\(100vw - 48px\)\);[\s\S]*min-width:\s*min\(680px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*min\(760px,\s*calc\(100vw - 48px\)\);/);
   assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*width:\s*min\(840px,\s*calc\(100vw - 48px\)\);[\s\S]*min-width:\s*min\(620px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*min\(840px,\s*calc\(100vw - 48px\)\);/);
   assert.match(styles, /\.tt-publication-history-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*min-width:\s*min\(720px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog,[\s\S]*\.tt-rule-review-dialog,[\s\S]*\.tt-period-time-dialog,[\s\S]*\.tt-publish-dialog,[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
@@ -4336,12 +4360,17 @@ test('timetable rule review keeps parsed drafts inside the modal and preserves t
   // No dialog overlay
   assert.match(html, /id="tt-rule-review-dialog"/);
   assert.match(html, /xlsx_constraints/);
-  assert.match(html, /data-rule-review-row="draft-1"/);
-  assert.match(html, /data-rule-review-row="draft-2"/);
+  assert.doesNotMatch(html, /data-rule-review-row="draft-1"/);
+  assert.doesNotMatch(html, /data-rule-review-row="draft-2"/);
   assert.match(html, /Unknown object ignored/);
+  assert.match(html, /data-action="rule-review-toggle-advanced"/);
 
-  // Re-rendering with a different expanded state preserves pending rules
-  const expandedHtml = renderWorkbench({ ...state, expandedRuleId: 'draft-2' });
+  // Advanced rows are rendered only after the user explicitly opens them.
+  const expandedHtml = renderWorkbench({
+    ...state,
+    ruleReview: { ...state.ruleReview, advancedOpen: true },
+  });
+  assert.match(expandedHtml, /data-rule-review-row="draft-1"/);
   assert.match(expandedHtml, /data-rule-review-row="draft-2"/);
   assert.doesNotMatch(expandedHtml, /tt-rule-card--expanded/);
   assert.doesNotMatch(expandedHtml, /data-pending-field="slots"/);
@@ -4371,6 +4400,7 @@ test('timetable rule review shows all-teacher limit targets instead of an unmatc
       mode: 'text',
       text: 'dialog text',
       originalText: 'original constraint',
+      advancedOpen: true,
       draftRows: [{
         id: 'all-teachers-limit',
         rawText: '每位教师每天授课量尽量均衡，单日不超过4节',
@@ -4607,10 +4637,9 @@ test('timetable constraint chat is docked inside the rule review workbench', asy
   assert.match(html, /data-action="constraint-chat-apply-preview"/);
   assert.match(html, /过滤超出范围节次/);
   assert.doesNotMatch(html, /AI 帮我处理/);
-  assert.match(html, /办理清单/);
-  assert.match(html, /同一个弹窗里解释和生成预览/);
-  assert.match(html, /需要补充信息/);
-  assert.match(html, /34/);
+  assert.match(html, /待处理事项/);
+  assert.match(html, /只围绕当前事项解释或生成修改预览/);
+  assert.match(html, /data-action="constraint-chat-close"/);
   assert.match(html, /data-action="constraint-chat-suggest"/);
   assert.match(html, /缺少节次会导致规则不能执行/);
   assert.match(html, /请解释这些约束/);
@@ -4626,7 +4655,8 @@ test('timetable constraint chat is docked inside the rule review workbench', asy
   assert.match(chatStyles, /\.tt-chat-preview-card\s*{/);
   assert.match(chatStyles, /@media \(max-width:\s*780px\)/);
   assert.match(plannerStyles, /\.tt-rule-workbench\s*{/);
-  assert.match(plannerStyles, /\.tt-rule-task-list\s*{/);
+  assert.match(plannerStyles, /\.tt-rule-task-nav\s*{/);
+  assert.match(plannerStyles, /\.tt-rule-assistant-inline\s*{/);
 });
 
 test('timetable rule review parse renders the opened input state before progress updates', async () => {
@@ -4635,8 +4665,45 @@ test('timetable rule review parse renders the opened input state before progress
 
   assert.match(
     parseRulesSource,
-    /this\.state\.ruleReview\s*=\s*{[\s\S]*?open:\s*true,[\s\S]*?text,[\s\S]*?};\s*this\.render\(\);\s*try\s*{/
+    /this\.state\.ruleReview\s*=\s*{[\s\S]*?open:\s*true,[\s\S]*?text,[\s\S]*?};\s*this\.renderRuleReviewSurface\(\);\s*try\s*{/
   );
+});
+
+test('timetable rule review updates only the modal and lazily renders advanced rows', async () => {
+  const controllerSource = await readFile(new URL('../public/js/tools/timetable/controller.js', import.meta.url), 'utf8');
+  const chatControllerSource = await readFile(new URL('../public/js/tools/timetable/controller-chat-extension.js', import.meta.url), 'utf8');
+  const helperControllerSource = await readFile(new URL('../public/js/tools/timetable/controller-smart-helper.js', import.meta.url), 'utf8');
+  const closedHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      advancedOpen: false,
+      draftRows: [{
+        id: 'lazy-row',
+        rawText: 'Math should be in the morning',
+        type: 'subject_morning',
+        targetType: 'subject',
+        targetId: 'math',
+        targetName: 'Math',
+        status: 'effective',
+        priority: 'soft',
+        warnings: [],
+      }],
+      warnings: [],
+    },
+  }));
+
+  assert.match(controllerSource, /renderRuleReviewSurface\(\)\s*{/);
+  assert.match(controllerSource, /currentOverlay\.replaceWith\(nextOverlay\)/);
+  assert.match(controllerSource, /container\.querySelector\('\.tt-workbench'\)\s*\|\|\s*container/);
+  assert.match(controllerSource, /currentStep\s*&&\s*currentStep\s*===\s*nextStep\s*\?\s*dialogScrollTop\s*:\s*0/);
+  assert.match(controllerSource, /bindRuleReviewInteractions\(nextOverlay,\s*this\)/);
+  assert.match(chatControllerSource, /renderConstraintSurface\(this\)/);
+  assert.match(helperControllerSource, /renderSmartSurface\(this\)/);
+  assert.match(closedHtml, /data-action="rule-review-toggle-advanced"/);
+  assert.doesNotMatch(closedHtml, /id="tt-rule-review-table"/);
+  assert.doesNotMatch(closedHtml, /data-rule-review-row="lazy-row"/);
 });
 
 test('timetable rule review modal locks review table while rules are being written', () => {
@@ -4663,6 +4730,7 @@ test('timetable rule review modal locks review table while rules are being writt
       }],
       contextStats: { rowCount: 1 },
       warnings: [],
+      advancedOpen: true,
       loading: true,
       phase: 'saving',
       phaseText: '写入项目中...',
@@ -4676,7 +4744,7 @@ test('timetable rule review modal locks review table while rules are being writt
   assert.match(html, /data-rule-review-field="rawText"[^>]*disabled/);
   assert.match(html, /data-rule-review-field="type"[^>]*disabled/);
   assert.match(html, /data-rule-review-delete-row="draft-1"[^>]*disabled/);
-  assert.match(html, /id="tt-add-rule-review-row"[^>]*disabled/);
+  assert.match(html, /data-action="rule-review-toggle-advanced"/);
 });
 
 test('timetable rule review explains warning groups and draft row sources separately', async () => {
@@ -4725,6 +4793,7 @@ test('timetable rule review explains warning groups and draft row sources separa
         '第9条（上午主科不过载）无法用现有约束精确表达，建议通过手动调整或后续优化。',
         '第17条（教师空堂紧凑）建议作为优化目标。',
       ],
+      advancedOpen: true,
       loading: false,
     },
   }));
@@ -5186,10 +5255,13 @@ test('timetable rule review renders a beginner task workbench instead of raw que
   const unsupportedHtml = renderWorkbench(sampleWorkbenchState({
     ruleReview: { ...ruleReview, activeTaskId: 'unsupported_items' },
   }));
+  const advancedHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: { ...ruleReview, advancedOpen: true },
+  }));
 
   assert.match(html, /tt-rule-workbench/);
-  assert.match(html, /办理清单/);
-  assert.match(html, /还差/);
+  assert.match(html, /待处理事项/);
+  assert.match(html, /\d+\s*\/\s*\d+/);
   assert.match(html, /确认教师名称/);
   assert.match(html, /确认课程名称/);
   assert.match(html, /修正节次范围/);
@@ -5221,16 +5293,18 @@ test('timetable rule review renders a beginner task workbench instead of raw que
   assert.match(readyHtml, /data-action="rule-card-ignore"/);
   assert.match(readyHtml, /data-action="rule-card-delete"/);
   assert.match(readyHtml, /data-action="rule-card-effective"/);
-  assert.match(html, /<details class="tt-rule-advanced-editor"/);
-  assert.doesNotMatch(html, /<details class="tt-rule-advanced-editor" open/);
-  assert.match(html, /data-rule-review-row="auto-1"/);
-  assert.match(html, /data-rule-review-field="rawText"/);
+  assert.match(html, /class="tt-rule-advanced-editor/);
+  assert.match(html, /data-action="rule-review-toggle-advanced"/);
+  assert.doesNotMatch(html, /data-rule-review-row="auto-1"/);
+  assert.match(advancedHtml, /data-rule-review-row="auto-1"/);
+  assert.match(advancedHtml, /data-rule-review-field="rawText"/);
   assert.match(html, /<details class="tt-rule-parse-details"/);
   assert.doesNotMatch(html, /<details class="tt-rule-parse-details" open/);
 
   assert.match(styles, /\.tt-rule-workbench\s*{/);
-  assert.match(styles, /\.tt-rule-task-list\s*{/);
+  assert.match(styles, /\.tt-rule-task-nav\s*{/);
   assert.match(styles, /\.tt-rule-task-detail\s*{/);
+  assert.match(styles, /\.tt-rule-assistant-launch\s*{/);
   assert.match(styles, /\.tt-rule-wizard\s*{/);
   assert.match(styles, /\.tt-rule-advanced-editor\s*{/);
   assert.match(styles, /\.tt-rule-parse-details\s*{/);
@@ -5473,6 +5547,7 @@ test('timetable rule review table aligns controls with fixed helper rows', async
       }],
       contextStats: { rowCount: 1 },
       warnings: [],
+      advancedOpen: true,
       loading: false,
     },
   }));

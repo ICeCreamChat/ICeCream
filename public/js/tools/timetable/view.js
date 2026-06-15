@@ -20,7 +20,7 @@ import {
     totalPlannedLessons,
 } from './selectors.js';
 import { buildRuleReviewTasks, getActiveRuleReviewTask } from './rule-review-tasks.js';
-import { renderConstraintChatDock, renderConstraintOptimizeButton } from './view-chat.js';
+import { renderConstraintChatDock } from './view-chat.js';
 import { renderFixPreview } from './view-smart-helper.js';
 
 function escapeHtml(value) {
@@ -1115,23 +1115,29 @@ function renderRuleWizard(dialog = {}, options = {}) {
         ['saved', '4', '确认生效', '写入项目后可查看删除'],
     ];
     const activeIndex = Math.max(0, steps.findIndex(([key]) => key === active));
+    const current = steps[activeIndex] || steps[0];
     return `
         <nav class="tt-rule-wizard" aria-label="智能约束处理步骤">
-            ${steps.map(([key, number, title, text], index) => {
-                const stateClass = index < activeIndex ? 'is-done' : index === activeIndex ? 'is-active' : '';
-                return `
-                    <span class="tt-rule-wizard-step ${stateClass}" data-rule-wizard-step="${escapeAttr(key)}">
-                        <b>${escapeHtml(number)}</b>
-                        <em>${escapeHtml(title)}</em>
-                        <small>${escapeHtml(text)}</small>
-                    </span>
-                `;
-            }).join('')}
+            <div class="tt-rule-wizard-current">
+                <span>第 ${escapeHtml(current[1])} 步，共 4 步</span>
+                <strong>${escapeHtml(current[2])}</strong>
+                <em>${escapeHtml(current[3])}</em>
+            </div>
+            <div class="tt-rule-wizard-track" aria-hidden="true">
+                ${steps.map(([key, number, title], index) => {
+                    const stateClass = index < activeIndex ? 'is-done' : index === activeIndex ? 'is-active' : '';
+                    return `
+                        <span class="tt-rule-wizard-step ${stateClass}" data-rule-wizard-step="${escapeAttr(key)}" title="${escapeAttr(title)}">
+                            <b>${escapeHtml(index < activeIndex ? '✓' : number)}</b>
+                        </span>
+                    `;
+                }).join('')}
+            </div>
         </nav>
     `;
 }
 
-function renderRuleReviewDialog(state) {
+export function renderRuleReviewDialog(state) {
     const dialog = state.ruleReview || {};
     if (!dialog.open) return '';
     const mode = dialog.mode || 'text';
@@ -1143,7 +1149,7 @@ function renderRuleReviewDialog(state) {
 
     return `
         <div class="tt-dialog-overlay" data-rule-review-close>
-            <section class="tt-rule-review-dialog" id="tt-rule-review-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-rule-review-title">
+            <section class="tt-rule-review-dialog" id="tt-rule-review-dialog" data-rule-review-step="${escapeAttr(dialog.step || 'input')}" role="dialog" aria-modal="true" aria-labelledby="tt-rule-review-title">
                 <div class="tt-dialog-header">
                     <div>
                         <span class="tt-eyebrow">智能约束</span>
@@ -1154,15 +1160,6 @@ function renderRuleReviewDialog(state) {
                 </div>
                 ${renderRuleReviewProcess(dialog)}
                 ${renderRuleWizard(dialog, { isReview, isSaved })}
-
-                ${isReview && !state.constraintScan ? `
-                    <div class="tt-smart-helper-cta">
-                        <button class="tt-btn tt-btn--primary tt-btn--large" id="tt-open-smart-helper" type="button">
-                            <i data-lucide="sparkles"></i>
-                            <span>智能检查这些约束</span>
-                        </button>
-                    </div>
-                ` : ''}
 
                 ${scanStatusUI}
                 ${fixPreviewUI}
@@ -1649,45 +1646,45 @@ function renderRuleReviewTable(dialog, project = {}, state = {}) {
         ${renderRuleReviewTaskWorkbench(dialog, project, state)}
         ${renderRuleDiagnosis(dialog)}
         ${renderRuleParseDetails(dialog, warnings)}
-        <details class="tt-rule-advanced-editor" ${advancedOpen ? 'open' : ''}>
-            <summary>
+        <section class="tt-rule-advanced-editor ${advancedOpen ? 'is-open' : ''}">
+            <button class="tt-rule-advanced-toggle" type="button" data-action="rule-review-toggle-advanced" aria-expanded="${advancedOpen ? 'true' : 'false'}">
                 <span><i data-lucide="sliders-horizontal"></i><strong>高级编辑</strong></span>
-                <em>需要精确改类型、对象或节次时再展开</em>
-            </summary>
-            <div class="tt-roster-review-wrap">
-                <table class="tt-rule-review-table" id="tt-rule-review-table">
-                    <colgroup class="tt-rule-review-cols">
-                        <col class="tt-rule-review-col-raw">
-                        <col class="tt-rule-review-col-type">
-                        <col class="tt-rule-review-col-target">
-                        <col class="tt-rule-review-col-slots">
-                        <col class="tt-rule-review-col-priority">
-                        <col class="tt-rule-review-col-status">
-                        <col class="tt-rule-review-col-description">
-                        <col class="tt-rule-review-col-action">
-                    </colgroup>
-                    <thead>
-                        <tr>
-                            <th>原始内容</th>
-                            <th>类型</th>
-                            <th>对象</th>
-                            <th>节次</th>
-                            <th>强弱</th>
-                            <th>状态</th>
-                            <th>说明</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${rows.map(row => renderRuleReviewRow(row, project, isBusy)).join('')}
-                    </tbody>
-                </table>
-            </div>
-        </details>
+                <em>${advancedOpen ? '收起精确编辑' : '需要修改类型、对象或节次时再打开'}</em>
+                <i data-lucide="${advancedOpen ? 'chevron-up' : 'chevron-down'}"></i>
+            </button>
+            ${advancedOpen ? `
+                <div class="tt-roster-review-wrap">
+                    <table class="tt-rule-review-table" id="tt-rule-review-table">
+                        <colgroup class="tt-rule-review-cols">
+                            <col class="tt-rule-review-col-raw">
+                            <col class="tt-rule-review-col-type">
+                            <col class="tt-rule-review-col-target">
+                            <col class="tt-rule-review-col-slots">
+                            <col class="tt-rule-review-col-priority">
+                            <col class="tt-rule-review-col-status">
+                            <col class="tt-rule-review-col-description">
+                            <col class="tt-rule-review-col-action">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th>原始内容</th>
+                                <th>类型</th>
+                                <th>对象</th>
+                                <th>节次</th>
+                                <th>强弱</th>
+                                <th>状态</th>
+                                <th>说明</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows.map(row => renderRuleReviewRow(row, project, isBusy)).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            ` : ''}
+        </section>
         <div class="tt-dialog-actions">
-            <button class="tt-btn" id="tt-add-rule-review-row" type="button" ${disabled}><i data-lucide="plus"></i><span>新增行</span></button>
-            <button class="tt-btn" id="tt-diagnose-rules" type="button" data-action="diagnose-rules" ${disabled}><i data-lucide="stethoscope"></i><span>试排诊断</span></button>
-            ${renderConstraintOptimizeButton({ disabled: isBusy || !rows.length })}
             <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
             <button class="tt-btn tt-btn--primary" id="tt-confirm-rule-review" type="button" ${isBusy || !rows.length ? 'disabled' : ''}><i data-lucide="${isBusy ? 'loader-2' : 'check'}" class="${isBusy ? 'tt-spin' : ''}"></i><span>${isBusy ? '确认中' : '确认生效'}</span></button>
         </div>
@@ -1697,28 +1694,51 @@ function renderRuleReviewTable(dialog, project = {}, state = {}) {
 function renderRuleReviewTaskWorkbench(dialog = {}, project = {}, state = {}) {
     const tasks = buildRuleReviewTasks(dialog, state.constraintScan || null);
     const activeTask = getActiveRuleReviewTask(dialog, state.constraintScan || null);
+    const activeIndex = Math.max(0, tasks.findIndex(task => task.id === activeTask?.id));
+    const previousTask = activeIndex > 0 ? tasks[activeIndex - 1] : null;
+    const nextTask = activeIndex < tasks.length - 1 ? tasks[activeIndex + 1] : null;
+    const chatOpen = Boolean(state.constraintChat?.open);
     return `
-        <section class="tt-rule-workbench" aria-label="智能约束办理工作台">
-            <aside class="tt-rule-task-list" aria-label="办理清单">
-                <div class="tt-rule-task-list-head">
-                    <span><i data-lucide="list-checks"></i> 办理清单</span>
-                    <strong>${tasks.length ? `还差 ${tasks.length} 件事` : '暂无待处理事项'}</strong>
-                    <em>按顺序处理，不需要看懂完整规则表。</em>
+        <section class="tt-rule-workbench" aria-label="智能约束办理流程">
+            <header class="tt-rule-task-nav">
+                <div>
+                    <span><i data-lucide="list-checks"></i> 待处理事项</span>
+                    <strong>${tasks.length ? `${activeIndex + 1} / ${tasks.length}` : '已处理完成'}</strong>
                 </div>
-                <div class="tt-rule-task-items">
+                <div class="tt-rule-task-tabs" role="tablist" aria-label="选择待处理事项">
                     ${tasks.length ? tasks.map(task => renderRuleTaskButton(task, activeTask)).join('') : `
-                        <div class="tt-rule-task-empty">
-                            <i data-lucide="badge-check"></i>
-                            <strong>没有需要补充的问题</strong>
-                            <span>可以进入核对生效，或展开高级编辑查看明细。</span>
-                        </div>
+                        <span class="tt-rule-task-complete"><i data-lucide="badge-check"></i> 没有待处理事项</span>
                     `}
                 </div>
-            </aside>
-            <main class="tt-rule-task-detail" aria-label="当前办理事项">
+                ${!state.constraintScan ? `
+                    <button class="tt-btn tt-btn--sm" id="tt-open-smart-helper" type="button" ${dialog.loading ? 'disabled' : ''}>
+                        <i data-lucide="scan-search"></i><span>检查遗漏</span>
+                    </button>
+                ` : ''}
+            </header>
+            <main class="tt-rule-task-detail" aria-label="当前办理事项" data-rule-review-scroll="task">
                 ${renderRuleTaskDetail(activeTask, dialog, project, state)}
             </main>
-            ${renderConstraintChatDock({ ...state, ruleReview: dialog }, { task: activeTask })}
+            ${chatOpen ? `
+                <section class="tt-rule-assistant-inline" data-rule-review-scroll="assistant">
+                    ${renderConstraintChatDock({ ...state, ruleReview: dialog }, { task: activeTask })}
+                </section>
+            ` : `
+                <button class="tt-rule-assistant-launch" type="button" data-action="rule-task-explain" data-rule-task-id="${escapeAttr(activeTask?.id || '')}" ${activeTask ? '' : 'disabled'}>
+                    <i data-lucide="message-circle"></i>
+                    <span><strong>看不懂这一步？</strong><em>让智能助手只解释当前事项，不会直接修改规则。</em></span>
+                    <b>问智能助手</b>
+                </button>
+            `}
+            <footer class="tt-rule-task-pager">
+                <button class="tt-btn tt-btn--sm" type="button" data-action="rule-task-select" data-rule-task-id="${escapeAttr(previousTask?.id || '')}" ${previousTask ? '' : 'disabled'}>
+                    <i data-lucide="chevron-left"></i><span>上一项</span>
+                </button>
+                <span>${tasks.length ? `当前：${escapeHtml(activeTask?.title || '')}` : '所有事项已处理'}</span>
+                <button class="tt-btn tt-btn--sm" type="button" data-action="rule-task-select" data-rule-task-id="${escapeAttr(nextTask?.id || '')}" ${nextTask ? '' : 'disabled'}>
+                    <span>下一项</span><i data-lucide="chevron-right"></i>
+                </button>
+            </footer>
         </section>
     `;
 }
@@ -1731,12 +1751,10 @@ function renderRuleTaskButton(task = {}, activeTask = null) {
             type="button"
             data-action="rule-task-select"
             data-rule-task-id="${escapeAttr(task.id)}"
+            role="tab"
             aria-pressed="${active ? 'true' : 'false'}">
             <i data-lucide="${escapeAttr(task.icon || 'circle-dot')}"></i>
-            <span>
-                <strong>${escapeHtml(task.title || '待处理事项')}</strong>
-                <em>${escapeHtml(task.description || '')}</em>
-            </span>
+            <span>${escapeHtml(task.title || '待处理事项')}</span>
             <b>${escapeHtml(count)}</b>
         </button>
     `;
@@ -1760,10 +1778,10 @@ function renderRuleTaskDetail(task = null, dialog = {}, project = {}, state = {}
             <p>${escapeHtml(task.description)}</p>
             <div class="tt-rule-task-actions">
                 <button class="tt-btn tt-btn--sm" type="button" data-action="rule-task-explain" data-rule-task-id="${escapeAttr(task.id)}" ${disabled ? 'disabled' : ''}>
-                    <i data-lucide="message-circle"></i><span>解释这个问题</span>
+                    <i data-lucide="message-circle"></i><span>这是什么意思？</span>
                 </button>
                 <button class="tt-btn tt-btn--sm tt-btn--primary" type="button" data-action="rule-task-preview-fix" data-rule-task-id="${escapeAttr(task.id)}" ${disabled ? 'disabled' : ''}>
-                    <i data-lucide="wand-sparkles"></i><span>帮我生成修正</span>
+                    <i data-lucide="wand-sparkles"></i><span>帮我处理</span>
                 </button>
             </div>
         </div>

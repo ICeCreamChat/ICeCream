@@ -14,7 +14,7 @@ import {
     readRulesForm,
     sampleRosterText,
 } from './forms.js';
-import { bindGridInteractions } from './grid-interactions.js';
+import { bindGridInteractions, bindRuleReviewInteractions } from './grid-interactions.js';
 import {
     ensureOwnerSelection,
     getActivePeriods,
@@ -31,7 +31,7 @@ import {
 import { buildConstraintReviewContext, constraintChatControllerMethods } from './controller-chat-extension.js';
 import { buildRuleReviewTasks } from './rule-review-tasks.js';
 import smartHelperMethods from './controller-smart-helper.js';
-import { renderWorkbench } from './view.js';
+import { renderRuleReviewDialog, renderWorkbench } from './view.js';
 
 export class TimetablePlannerController {
     constructor() {
@@ -45,11 +45,15 @@ export class TimetablePlannerController {
 
     async init(container) {
         this.state.container = container;
+        this.timetableToolHost = container?.closest?.('.tool-container') || null;
+        this.timetableToolHost?.classList?.add('tool-container--timetable');
         await this.load();
     }
 
     destroy() {
         this.clearOptimizationPolling();
+        this.timetableToolHost?.classList?.remove('tool-container--timetable');
+        this.timetableToolHost = null;
         this.state.container = null;
     }
 
@@ -63,6 +67,92 @@ export class TimetablePlannerController {
         container.innerHTML = renderWorkbench(this.state);
         bindGridInteractions(container, this, this.state);
         this.restorePeriodTimeFocus(container, periodTimeFocus);
+        window.lucide?.createIcons();
+    }
+
+    renderRuleReviewSurface() {
+        const { container } = this.state;
+        if (!container) return;
+        if (typeof document === 'undefined') {
+            this.render();
+            return;
+        }
+        const currentOverlay = container.querySelector('[data-rule-review-close]');
+        const currentDialog = currentOverlay?.querySelector('#tt-rule-review-dialog');
+        const currentStep = currentDialog?.dataset.ruleReviewStep || '';
+        const scrollState = new Map();
+        currentOverlay?.querySelectorAll('[data-rule-review-scroll]').forEach(node => {
+            scrollState.set(node.dataset.ruleReviewScroll, node.scrollTop);
+        });
+        const answerState = new Map();
+        currentOverlay?.querySelectorAll('[data-rule-question-answer]').forEach(node => {
+            answerState.set(node.dataset.ruleQuestionAnswer, node.value);
+        });
+        const active = typeof document !== 'undefined' ? document.activeElement : null;
+        const focusState = active && currentOverlay?.contains(active)
+            ? {
+                id: active.id || '',
+                action: active.dataset?.action || '',
+                question: active.dataset?.ruleQuestionAnswer || '',
+                field: active.dataset?.ruleReviewField || '',
+                row: active.closest?.('[data-rule-review-row]')?.dataset.ruleReviewRow || '',
+                start: typeof active.selectionStart === 'number' ? active.selectionStart : null,
+                end: typeof active.selectionEnd === 'number' ? active.selectionEnd : null,
+            }
+            : null;
+        const dialogScrollTop = currentDialog?.scrollTop || 0;
+        const html = renderRuleReviewDialog(this.state);
+        if (!html) {
+            currentOverlay?.remove();
+            return;
+        }
+
+        const template = document.createElement('template');
+        template.innerHTML = html.trim();
+        const nextOverlay = template.content.firstElementChild;
+        if (!nextOverlay) return;
+        if (currentOverlay) {
+            currentOverlay.replaceWith(nextOverlay);
+        } else {
+            (container.querySelector('.tt-workbench') || container).append(nextOverlay);
+        }
+        bindRuleReviewInteractions(nextOverlay, this);
+
+        const nextDialog = nextOverlay.querySelector('#tt-rule-review-dialog');
+        const nextStep = nextDialog?.dataset.ruleReviewStep || '';
+        if (nextDialog) nextDialog.scrollTop = currentStep && currentStep === nextStep ? dialogScrollTop : 0;
+        nextOverlay.querySelectorAll('[data-rule-review-scroll]').forEach(node => {
+            node.scrollTop = scrollState.get(node.dataset.ruleReviewScroll) || 0;
+        });
+        nextOverlay.querySelectorAll('[data-rule-question-answer]').forEach(node => {
+            const savedValue = answerState.get(node.dataset.ruleQuestionAnswer);
+            if (savedValue !== undefined) node.value = savedValue;
+        });
+
+        if (focusState) {
+            let target = focusState.id ? nextOverlay.querySelector(`#${focusState.id}`) : null;
+            if (!target && focusState.question) {
+                target = [...nextOverlay.querySelectorAll('[data-rule-question-answer]')]
+                    .find(node => node.dataset.ruleQuestionAnswer === focusState.question);
+            }
+            if (!target && focusState.field && focusState.row) {
+                target = [...nextOverlay.querySelectorAll('[data-rule-review-row]')]
+                    .find(node => node.dataset.ruleReviewRow === focusState.row)
+                    ?.querySelector(`[data-rule-review-field="${focusState.field}"]`);
+            }
+            if (!target && focusState.action) {
+                target = [...nextOverlay.querySelectorAll('[data-action]')]
+                    .find(node => node.dataset.action === focusState.action);
+            }
+            target?.focus?.({ preventScroll: true });
+            if (target && focusState.start !== null && typeof target.setSelectionRange === 'function') {
+                try {
+                    target.setSelectionRange(focusState.start, focusState.end ?? focusState.start);
+                } catch {
+                    // Some input types do not support selection ranges.
+                }
+            }
+        }
         window.lucide?.createIcons();
     }
 
@@ -105,7 +195,11 @@ export class TimetablePlannerController {
     setMessage(message, failure = null) {
         this.state.message = message || '';
         this.state.lastFailure = failure;
-        this.render();
+        if (this.state.ruleReview?.open) {
+            this.renderRuleReviewSurface();
+        } else {
+            this.render();
+        }
     }
 
     applyAgentResponse(response = {}, userMessage = '') {
@@ -1085,7 +1179,7 @@ export class TimetablePlannerController {
                 uiStep: 'issues',
                 draftRows,
             };
-            this.render();
+            this.renderRuleReviewSurface();
             return;
         }
         if (getSavedRuleItems(this.state.project).length) {
@@ -1096,7 +1190,7 @@ export class TimetablePlannerController {
                 uiStep: 'saved',
                 mode: nextMode,
             };
-            this.render();
+            this.renderRuleReviewSurface();
             return;
         }
         this.state.ruleReview = {
@@ -1106,7 +1200,7 @@ export class TimetablePlannerController {
             uiStep: 'input',
             mode: nextMode,
         };
-        this.render();
+        this.renderRuleReviewSurface();
     }
 
     startRuleReviewInput(mode = 'file') {
@@ -1120,7 +1214,7 @@ export class TimetablePlannerController {
             mode: nextMode,
             text: this.readRuleReviewText(),
         };
-        this.render();
+        this.renderRuleReviewSurface();
     }
 
     closeRuleReview() {
@@ -1128,7 +1222,7 @@ export class TimetablePlannerController {
             ...(this.state.ruleReview || createTimetablePlannerState().ruleReview),
             open: false,
         };
-        this.render();
+        this.renderRuleReviewSurface();
     }
 
     setRuleReviewProgress(phase, phaseText, { tone = '', step = null, mode = null } = {}) {
@@ -1145,7 +1239,7 @@ export class TimetablePlannerController {
             phaseTone: tone,
             text: this.state.ruleReview?.text ?? this.readRuleReviewText(),
         };
-        this.render();
+        this.renderRuleReviewSurface();
     }
 
     stopRuleReviewProgress(phaseText = '', tone = '') {
@@ -1158,7 +1252,7 @@ export class TimetablePlannerController {
             phaseTone: tone,
             uiStep: this.state.ruleReview?.draftRows?.length ? 'issues' : 'input',
         };
-        this.render();
+        this.renderRuleReviewSurface();
     }
 
     async waitForRuleReviewFrame() {
@@ -1176,7 +1270,7 @@ export class TimetablePlannerController {
             mode: nextMode,
             text: this.readRuleReviewText(),
         };
-        this.render();
+        this.renderRuleReviewSurface();
     }
 
     selectRuleReviewFile(file) {
@@ -1191,7 +1285,7 @@ export class TimetablePlannerController {
             text: this.readRuleReviewText(),
         };
         this.state.ruleFileName = file?.name || '';
-        this.render();
+        this.renderRuleReviewSurface();
     }
 
     readRuleReviewText() {
@@ -1211,7 +1305,7 @@ export class TimetablePlannerController {
             mode: 'text',
             text: next,
         };
-        this.render();
+        this.renderRuleReviewSurface();
     }
 
     getRuleInputText() {
@@ -1549,7 +1643,7 @@ export class TimetablePlannerController {
             draftRules: this.state.ruleDraft,
             previewItems: rows,
         });
-        this.render();
+        this.renderRuleReviewSurface();
     }
 
     updateRuleReviewField() {
@@ -1586,7 +1680,7 @@ export class TimetablePlannerController {
             previewItems: finalRows,
             ...extraState,
         });
-        this.render();
+        this.renderRuleReviewSurface();
     }
 
     editRuleReviewRow(rowId) {
@@ -1595,7 +1689,15 @@ export class TimetablePlannerController {
             advancedOpen: true,
             selectedRuleId: rowId || '',
         };
-        this.render();
+        this.renderRuleReviewSurface();
+    }
+
+    toggleRuleReviewAdvanced() {
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || createTimetablePlannerState().ruleReview),
+            advancedOpen: !this.state.ruleReview?.advancedOpen,
+        };
+        this.renderRuleReviewSurface();
     }
 
     ignoreRuleReviewRow(rowId) {
@@ -2204,7 +2306,7 @@ export class TimetablePlannerController {
             open: true,
             text,
         };
-        this.render();
+        this.renderRuleReviewSurface();
         try {
             let options;
             if (hasFile) {
@@ -2303,7 +2405,7 @@ export class TimetablePlannerController {
                 phaseText: '正在根据补充信息继续解析……',
                 phaseTone: '',
             };
-            this.render();
+            this.renderRuleReviewSurface();
             const result = await requestTimetable('/rules/clarify', {
                 method: 'POST',
                 body: JSON.stringify({
@@ -2418,7 +2520,7 @@ export class TimetablePlannerController {
     }
 
     async confirmRuleDraft() {
-        const rows = this.state.ruleReview?.step === 'review'
+        const rows = this.state.ruleReview?.step === 'review' && this.state.ruleReview?.advancedOpen
             ? this.readRuleReviewRows()
             : this.state.ruleReview?.draftRows || [];
         if (rows.length) {

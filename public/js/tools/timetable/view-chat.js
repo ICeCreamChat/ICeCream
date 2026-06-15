@@ -380,28 +380,26 @@ export function renderConstraintChatDock(state = {}, { task = null } = {}) {
         suggestedPrompts: chat.suggestedPrompts?.length ? chat.suggestedPrompts : reviewContext.suggestedPrompts,
     };
     const taskTitle = task?.title || '当前办理事项';
-    const taskDescription = task?.description || '选中左侧事项后，智能助手会围绕这件事解释和生成预览。';
 
     return `
         <aside class="tt-constraint-chat-dock" aria-label="智能约束助手">
             <div class="tt-chat-dock-head">
-                <span><i data-lucide="bot"></i> 智能助手</span>
-                <strong>同一个弹窗里解释和生成预览</strong>
-                <em>当前办理事项：${escapeHtml(taskTitle)}</em>
+                <div>
+                    <span><i data-lucide="bot"></i> 智能助手</span>
+                    <strong>${escapeHtml(taskTitle)}</strong>
+                    <em>只围绕当前事项解释或生成修改预览</em>
+                </div>
+                <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-action="constraint-chat-close" aria-label="收起智能助手" title="收起智能助手">
+                    <i data-lucide="x"></i>
+                </button>
             </div>
-            <div class="tt-chat-dock-task">
-                <b>问题是什么</b>
-                <span>${escapeHtml(taskDescription)}</span>
-                ${(task?.examples || []).length ? `<small>${escapeHtml(task.examples[0])}</small>` : ''}
-            </div>
-            ${renderReviewContext(contextForGuide, { disabled: loading })}
             ${renderActionPreview(chat.actionPreview, { disabled: loading })}
             <section class="tt-chat-dock-messages" aria-live="polite">
                 ${messages.length ? messages.map(message => renderChatMessage(message)).join('') : `
                     <div class="tt-chat-empty-message">
-                        <i data-lucide="mouse-pointer-click"></i>
-                        <strong>先点任务卡上的操作</strong>
-                        <span>例如“解释这个问题”或“帮我生成修正”。</span>
+                        <i data-lucide="message-circle"></i>
+                        <strong>可以直接提问</strong>
+                        <span>例如“这一步是什么意思”或“帮我生成一个可确认的修正”。</span>
                     </div>
                 `}
                 ${loading ? `
