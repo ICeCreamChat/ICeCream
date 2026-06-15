@@ -12,7 +12,16 @@
         "solver:test": "cd solver && .\\mvnw.cmd test",
         "solver:build": "cd solver && .\\mvnw.cmd package -DskipTests",
         "build:studio": "esbuild src/manim-studio/main.jsx --bundle --format=iife --global-name=ManimStudioCanvas --outfile=public/js/studio/manim-studio-canvas.js --jsx=automatic --loader:.jsx=jsx",
-        "test": "node --test test/*.js"
+        "test": "node --test test/*.js",
+        "test:e2e": "playwright test",
+        "test:e2e:ui": "playwright test --ui",
+        "test:e2e:debug": "playwright test --debug",
+        "test:e2e:report": "playwright show-report test-results/html",
+        "test:e2e:headed": "playwright test --headed",
+        "test:e2e:chromium": "playwright test --project=desktop-chromium",
+        "test:e2e:firefox": "playwright test --project=desktop-firefox",
+        "test:e2e:mobile": "playwright test --project=mobile-iphone --project=mobile-android",
+        "test:e2e:performance": "playwright test --project=performance"
     },
     "keywords": [
         "ai",
@@ -49,9 +58,11 @@
         "zustand": "^5.0.13"
     },
     "devDependencies": {
+        "@playwright/test": "^1.60.0",
         "@vitejs/plugin-react": "^6.0.2",
         "concurrently": "^9.2.1",
         "esbuild": "^0.28.0",
+        "playwright": "^1.60.0",
         "vite": "^8.0.13"
     }
 }

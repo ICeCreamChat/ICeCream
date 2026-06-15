@@ -172,7 +172,7 @@ export function renderWorkbenchClarifications(review = {}) {
         <section class="tt-smart-clarifications" aria-label="需要补充的信息">
             <header>
                 <span><i data-lucide="circle-help"></i><strong>有 ${questions.length} 处需要你确认</strong></span>
-                <p>这些不是考试题，而是系统遇到了重名或缺失对象。确认一次后会继续匹配草稿。</p>
+                <p>这不是考试题，只是我遇到了重名或缺失对象。确认一次后会继续匹配草稿。</p>
             </header>
             <div class="tt-smart-clarification-list">
                 ${questions.map(question => `
@@ -184,7 +184,7 @@ export function renderWorkbenchClarifications(review = {}) {
                         <div>
                             <span>原文出现</span>
                             <strong>${escapeHtml(question.targetText || question.question || '未识别内容')}</strong>
-                            <em>${escapeHtml(question.reason || '系统无法唯一匹配到项目中的对象')}</em>
+                            <em>${escapeHtml(question.reason || '我无法唯一匹配到项目中的对象')}</em>
                         </div>
                         <label>
                             <span>${question.options.length ? '请选择项目里的真实对象' : '当前项目里没有匹配对象，请补充说明或回到任课数据补充'}</span>
@@ -216,7 +216,7 @@ export function renderWorkbenchClarifications(review = {}) {
                 `).join('')}
             </div>
             <button class="tt-btn tt-btn--primary tt-btn--sm" type="button" data-action="submit-rule-clarification">
-                <i data-lucide="send"></i><span>确认这些对象并继续理解</span>
+                <i data-lucide="send"></i><span>确认这些对象并继续匹配</span>
             </button>
         </section>
     `;

@@ -105,9 +105,9 @@ const RULE_TYPE_LABELS = {
 };
 
 const RULE_STATUS_LABELS = {
-    effective: '已生效',
-    ready: '可生效',
-    needs_review: '需复核',
+    effective: '已应用',
+    ready: '可应用',
+    needs_review: '需要检查',
     suggestion: '仅建议',
     unsupported: '暂不支持',
     invalid: '无效',
@@ -291,6 +291,7 @@ export function renderWorkbench(state) {
 
     state.selectedOwnerId = ensureOwnerSelection(state);
     const inspectorOpen = Boolean(state.inspectorOpen || state.selectedSlotId || state.lastFailure || state.solverJob);
+    // @deprecated state.ruleReview.open 保留用于向后兼容，实际已切换到 state.smartWorkbench.open
     const smartOpen = Boolean(state.smartWorkbench?.open || state.ruleReview?.open);
     return `
         <div class="tt-workbench ${smartOpen ? 'is-smart-workbench-open' : ''}">
@@ -606,7 +607,7 @@ function renderRosterImportDialog(state) {
                 <div class="tt-dialog-header">
                     <div>
                         <span class="tt-eyebrow">任课数据${isReview && dialog.source ? ` · <span class="tt-badge tt-badge--${dialog.source === 'ai' ? 'success' : 'neutral'}">${dialog.source === 'ai' ? '智能辅助解析' : '本地解析'}</span>` : ''}</span>
-                        <h3 id="tt-roster-import-title">${isReview ? '复核任课数据' : '导入任课数据'}</h3>
+                        <h3 id="tt-roster-import-title">${isReview ? '检查任课数据' : '导入任课数据'}</h3>
                         <p>${isReview ? '检查解析后的任课表，可以增删改；确认后才会写入项目并清空旧课表。' : '上传文件、粘贴文本，或直接手动新增任课表。'}</p>
                     </div>
                     <button class="tt-icon-btn" id="tt-cancel-roster-import" type="button" title="关闭导入" aria-label="关闭导入"><i data-lucide="x"></i></button>
@@ -622,7 +623,7 @@ function renderRosterImportInput(dialog, mode, fileName) {
     const disabled = isBusy ? 'disabled' : '';
     const previewIcon = isBusy ? 'loader-2' : 'file-search';
     const previewIconClass = isBusy ? ' class="tt-spin"' : '';
-    const previewText = isBusy ? '解析中' : '解析复核';
+    const previewText = isBusy ? '解析中' : '解析检查';
     const phaseText = dialog.phaseText || '解析任课数据中...';
     const phaseTone = dialog.phaseTone === 'warning' ? ' tt-process-chip--warning' : '';
     return `
@@ -697,7 +698,7 @@ function renderRosterReview(dialog) {
             </table>
         </div>
         <div class="tt-roster-bulk-panel">
-            <textarea id="tt-roster-bulk-text" class="tt-import-text" spellcheck="false" placeholder="可粘贴多行任课数据并追加到复核表"></textarea>
+            <textarea id="tt-roster-bulk-text" class="tt-import-text" spellcheck="false" placeholder="可粘贴多行任课数据并追加到检查表"></textarea>
             <div class="tt-action-row tt-action-row--end">
                 <button class="tt-btn" id="tt-add-roster-review-row" type="button"><i data-lucide="plus"></i><span>新增行</span></button>
                 <button class="tt-btn" id="tt-append-roster-rows" type="button"><i data-lucide="list-plus"></i><span>追加粘贴</span></button>
@@ -783,12 +784,12 @@ function renderRulesSection(state) {
     const cardTitle = draftCount
         ? '继续智能排课'
         : savedCount
-            ? '查看已生效约束'
+            ? '查看已应用约束'
             : '打开智能排课助手';
     const cardDescription = draftCount
         ? `${draftCount} 条要求待处理${warningCount ? ` / ${warningCount} 条需注意` : ''}，继续完成确认和排课。`
         : savedCount
-            ? `已有 ${savedCount} 条要求生效，可继续检查、调整并生成课表。`
+            ? `已有 ${savedCount} 条要求应用，可继续检查、调整并生成课表。`
             : '告诉我排课要求，我会检查数据、整理规则并生成课表。';
 
     return `
@@ -819,13 +820,13 @@ function renderNumberSelect(id, values, labelFor) {
 
 function renderRuleReviewStatus({ savedCount = 0, draftCount = 0, warningCount = 0 } = {}) {
     const status = draftCount
-        ? `${draftCount} 条待复核`
+        ? `${draftCount} 条待检查`
         : savedCount
-            ? '规则已生效'
+            ? '规则已应用'
             : '等待解析';
     return `
         <div class="tt-rule-summary">
-            <span><b>已生效</b>${escapeHtml(savedCount)} 条</span>
+            <span><b>已应用</b>${escapeHtml(savedCount)} 条</span>
             <span><b>待处理</b>${escapeHtml(draftCount)} 条</span>
             <span class="${warningCount ? 'is-warning' : ''}"><b>需注意</b>${escapeHtml(warningCount)} 条</span>
             <em>${escapeHtml(status)}</em>
@@ -833,258 +834,12 @@ function renderRuleReviewStatus({ savedCount = 0, draftCount = 0, warningCount =
     `;
 }
 
-function renderRuleReviewBeginnerGuide(dialog = {}, { isReview = false, isSaved = false } = {}) {
-    if (isSaved) return '';
-    const rows = dialog.draftRows || [];
-    const questions = dialog.clarifyingQuestions || [];
-    const missing = dialog.missingInfo || [];
-    const conflicts = dialog.conflicts || [];
-    const review = dialog.needReview || rows.filter(row => ['needs_review', 'invalid'].includes(row.status));
-    const unsupported = dialog.unsupportedItems || [];
-    const problemCount = questions.length + missing.length + conflicts.length;
-    const cards = isReview
-        ? [
-            ['1', '先看要处理的项', problemCount ? `${problemCount} 条会影响生效` : '暂无阻塞问题', 'triangle-alert', problemCount ? 'warning' : ''],
-            ['2', '不确定就问智能', '智能助手会围绕当前复核表解释、补节次或过滤错误节次', 'message-circle', 'primary'],
-            ['3', '确认后才生效', `${rows.length} 条草稿，${review.length} 条需你确认，${unsupported.length} 条仅作建议`, 'check-circle', ''],
-        ]
-        : [
-            ['1', '选择来源', '自然语言、上传文件、手动批量都可以', 'mouse-pointer-click', ''],
-            ['2', '点击智能解析', '这里只生成草稿，不会直接改排课规则', 'wand-sparkles', 'primary'],
-            ['3', '复核后生效', '表格里确认过的规则才会写入项目', 'clipboard-check', ''],
-        ];
-    return `
-        <section class="tt-rule-beginner-guide" aria-label="新手操作流程">
-            <div class="tt-rule-beginner-head">
-                <i data-lucide="route"></i>
-                <div>
-                    <strong>${isReview ? '按提示处理约束' : '第一次用智能约束，按三步走'}</strong>
-                    <span>${isReview ? '不用一次看完整张表，先处理会影响生效的问题。' : '智能助手只是先帮你拆成草稿，最终是否生效由你确认。'}</span>
-                </div>
-                ${dialog.nextAction ? `<em>${escapeHtml(ruleNextActionLabel(dialog.nextAction))}</em>` : ''}
-            </div>
-            <div class="tt-rule-beginner-steps">
-                ${cards.map(([step, title, text, icon, tone]) => `
-                    <article class="tt-rule-beginner-card ${tone ? `tt-rule-beginner-card--${tone}` : ''}">
-                        <b>${escapeHtml(step)}</b>
-                        <i data-lucide="${escapeAttr(icon)}"></i>
-                        <span><strong>${escapeHtml(title)}</strong><em>${escapeHtml(text)}</em></span>
-                    </article>
-                `).join('')}
-            </div>
-        </section>
-    `;
-}
+// 已删除的废弃函数：renderRuleReviewBeginnerGuide、ruleReviewWizardStep、renderRuleWizard
+// 这些函数仅用于旧弹窗，已不再需要
 
-function ruleReviewWizardStep(dialog = {}, { isReview = false, isSaved = false } = {}) {
-    if (isSaved || dialog.step === 'saved') return 'saved';
-    if (dialog.loading || dialog.uiStep === 'understanding') return 'understanding';
-    if (isReview || (dialog.draftRows || []).length) return 'issues';
-    return 'input';
-}
-
-function renderRuleWizard(dialog = {}, options = {}) {
-    const active = ruleReviewWizardStep(dialog, options);
-    const steps = [
-        ['input', '1', '添加约束', '上传、粘贴或手动新增'],
-        ['understanding', '2', '智能理解', '先生成草稿，不会直接生效'],
-        ['issues', '3', '处理问题', '按提示确认、补充或忽略'],
-        ['saved', '4', '确认生效', '写入项目后可查看删除'],
-    ];
-    const activeIndex = Math.max(0, steps.findIndex(([key]) => key === active));
-    const current = steps[activeIndex] || steps[0];
-    return `
-        <nav class="tt-rule-wizard" aria-label="智能约束处理步骤">
-            <div class="tt-rule-wizard-current">
-                <span>第 ${escapeHtml(current[1])} 步，共 4 步</span>
-                <strong>${escapeHtml(current[2])}</strong>
-                <em>${escapeHtml(current[3])}</em>
-            </div>
-            <div class="tt-rule-wizard-track" aria-hidden="true">
-                ${steps.map(([key, number, title], index) => {
-                    const stateClass = index < activeIndex ? 'is-done' : index === activeIndex ? 'is-active' : '';
-                    return `
-                        <span class="tt-rule-wizard-step ${stateClass}" data-rule-wizard-step="${escapeAttr(key)}" title="${escapeAttr(title)}">
-                            <b>${escapeHtml(index < activeIndex ? '✓' : number)}</b>
-                        </span>
-                    `;
-                }).join('')}
-            </div>
-        </nav>
-    `;
-}
-
-/**
- * @deprecated 旧弹窗渲染函数，已被 smart-workbench 替代，仅保留用于向后兼容
- * 主路径已切换到 renderSmartWorkbench()，此函数不再通过主入口调用
- * TODO: 下一阶段清理时删除此函数及其依赖的子函数
- * 相关清理范围：
- * - renderRuleReviewDialog() 及其所有子函数
- * - CSS 中的 .tt-rule-review-dialog 相关样式
- * - 所有引用 state.ruleReview.open 的旧路径判断（统一用 state.smartWorkbench.open）
- */
-export function renderRuleReviewDialog(state) {
-    const dialog = state.ruleReview || {};
-    if (!dialog.open) return '';
-    const mode = dialog.mode || 'text';
-    const isReview = dialog.step === 'review';
-    const isSaved = dialog.step === 'saved';
-
-    const scanStatusUI = isReview ? renderConstraintScanStatus(state.constraintScan) : '';
-    const fixPreviewUI = state.fixPreview ? renderFixPreview(state.fixPreview.fix, state.fixPreview.problem, state.fixPreview) : '';
-
-    return `
-        <div class="tt-dialog-overlay" data-rule-review-close>
-            <section class="tt-rule-review-dialog" id="tt-rule-review-dialog" data-rule-review-step="${escapeAttr(dialog.step || 'input')}" role="dialog" aria-modal="true" aria-labelledby="tt-rule-review-title">
-                <div class="tt-dialog-header">
-                    <div>
-                        <span class="tt-eyebrow">智能约束</span>
-                        <h3 id="tt-rule-review-title">${isSaved ? '已生效约束' : isReview ? '处理智能约束' : '导入智能约束'}</h3>
-                        <p>${isSaved ? '这些约束已经写入项目，并会参与下一次排课。' : isReview ? '按提示逐项处理；不确定的内容可以交给智能助手解释或修改。' : '先选择一种来源并解析成草稿，解析不会直接生效，确认后才会写入项目。'}</p>
-                    </div>
-                    <button class="tt-icon-btn" id="tt-rule-review-cancel" type="button" title="关闭约束复核" aria-label="关闭约束复核"><i data-lucide="x"></i></button>
-                </div>
-                ${renderRuleReviewProcess(dialog)}
-                ${renderRuleWizard(dialog, { isReview, isSaved })}
-
-                ${scanStatusUI}
-                ${fixPreviewUI}
-
-                ${!isReview && !isSaved ? renderRuleReviewBeginnerGuide(dialog, { isReview, isSaved }) : ''}
-                ${isSaved ? renderSavedRulesTable(state.project) : isReview ? renderRuleReviewTable(dialog, state.project, state) : renderRuleReviewInput(state, dialog, mode)}
-            </section>
-        </div>
-    `;
-}
-
-function renderConstraintScanStatus(scan = null) {
-    if (!scan) return '';
-    if (scan.scanning) {
-        return `
-            <div class="tt-smart-scan-status is-loading" aria-live="polite">
-                <i data-lucide="loader-2" class="tt-spin"></i>
-                <span>
-                    <strong>智能助手正在检查约束</strong>
-                    <em>${escapeHtml(scan.phase || '整理需要办理的事项...')}</em>
-                </span>
-                <b>${escapeHtml(scan.progress || 0)}%</b>
-            </div>
-        `;
-    }
-    if (scan.error) {
-        return `
-            <div class="tt-smart-scan-status is-error" role="alert">
-                <i data-lucide="triangle-alert"></i>
-                <span>
-                    <strong>智能扫描失败</strong>
-                    <em>${escapeHtml(scan.error)}</em>
-                </span>
-                <button class="tt-btn tt-btn--sm" type="button" data-action="rescan-smart-helper">
-                    <i data-lucide="rotate-ccw"></i><span>重新扫描</span>
-                </button>
-            </div>
-        `;
-    }
-    const problemCount = scan.stats?.total ?? scan.problems?.length ?? 0;
-    return `
-        <div class="tt-smart-scan-status is-complete">
-            <i data-lucide="${problemCount ? 'list-checks' : 'badge-check'}"></i>
-            <span>
-                <strong>${problemCount ? '智能检查结果已加入办理清单' : '智能检查未发现新问题'}</strong>
-                <em>${problemCount ? `共 ${escapeHtml(problemCount)} 项，请按左侧清单逐项处理。` : '可以继续核对并确认生效。'}</em>
-            </span>
-            <button class="tt-btn tt-btn--sm" type="button" data-action="rescan-smart-helper">
-                <i data-lucide="refresh-cw"></i><span>重新检查</span>
-            </button>
-        </div>
-    `;
-}
-
-function renderRuleReviewProcess(dialog = {}) {
-    const rows = dialog.draftRows || [];
-    const sourceLabel = dialog.fileName
-        || dialog.inputType
-        || (dialog.mode === 'manual' ? '手动新增' : dialog.mode === 'text' ? '自然语言' : '上传文件');
-    if (!dialog.loading && !dialog.phaseText && !dialog.fileName && !dialog.inputType && !rows.length) return '';
-    const toneClass = dialog.phaseTone === 'warning' ? 'tt-process-chip--warning' : '';
-    const phaseText = dialog.phaseText || (dialog.loading ? '处理中...' : '等待复核');
-    return `
-        <div class="tt-process-strip" aria-live="polite">
-            <span class="tt-process-chip ${toneClass}">
-                <i data-lucide="${dialog.loading ? 'loader-2' : dialog.phaseTone === 'warning' ? 'triangle-alert' : 'activity'}" class="${dialog.loading ? 'tt-spin' : ''}"></i>
-                <strong>${escapeHtml(phaseText)}</strong>
-            </span>
-            <span class="tt-process-chip tt-process-chip--muted">${escapeHtml(sourceLabel)}</span>
-            <span class="tt-process-chip tt-process-chip--muted">${rows.length} 条草稿</span>
-        </div>
-    `;
-}
-
-function renderSavedRulesTable(project = {}) {
-    const items = getSavedRuleItems(project);
-    if (!items.length) {
-        return `
-            <div class="tt-empty-panel">
-                <i data-lucide="clipboard-check"></i>
-                <strong>暂无已生效规则</strong>
-                <span>上传或粘贴智能约束，复核确认后会显示在这里。</span>
-            </div>
-            <div class="tt-dialog-actions">
-                <button class="tt-btn" id="tt-saved-rule-add" type="button"><i data-lucide="plus"></i><span>新增约束</span></button>
-                <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>关闭</span></button>
-            </div>
-        `;
-    }
-    return `
-        <div class="tt-roster-review-wrap">
-            <table class="tt-rule-review-table tt-saved-rule-table" id="tt-saved-rule-table">
-                <colgroup class="tt-saved-rule-cols">
-                    <col class="tt-saved-rule-col-type">
-                    <col class="tt-saved-rule-col-target">
-                    <col class="tt-saved-rule-col-slots">
-                    <col class="tt-saved-rule-col-priority">
-                    <col class="tt-saved-rule-col-description">
-                    <col class="tt-saved-rule-col-action">
-                </colgroup>
-                <thead>
-                    <tr>
-                        <th>类型</th>
-                        <th>对象</th>
-                        <th>节次</th>
-                        <th>强弱</th>
-                        <th>说明</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${items.map(item => `
-                        <tr class="tt-saved-rule-table-row" data-saved-rule-row="${escapeAttr(item.id)}">
-                            <td data-label="类型">
-                                <span class="tt-saved-rule-cell tt-saved-rule-cell--type">
-                                    <strong>${escapeHtml(ruleTypeLabel(item.type))}</strong>
-                                    <small>${escapeHtml(item.type)}</small>
-                                </span>
-                            </td>
-                            <td data-label="对象"><span class="tt-saved-rule-cell">${escapeHtml(item.targetName || '-')}</span></td>
-                            <td data-label="节次"><span class="tt-saved-rule-cell">${escapeHtml((item.slots || []).join(', ') || '全局')}</span></td>
-                            <td data-label="强弱"><span class="tt-saved-rule-cell">${escapeHtml(item.priority === 'hard' ? '硬性' : '软性')}</span></td>
-                            <td data-label="说明"><span class="tt-saved-rule-cell tt-saved-rule-cell--description">${escapeHtml(item.description || item.source || '')}</span></td>
-                            <td data-label="操作">
-                                <div class="tt-saved-rule-action-cell">
-                                    <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-saved-rule-delete="${escapeAttr(item.id)}" title="删除已生效规则" aria-label="删除已生效规则"><i data-lucide="trash-2"></i></button>
-                                </div>
-                            </td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-        <div class="tt-dialog-actions">
-            <button class="tt-btn" id="tt-saved-rule-add" type="button"><i data-lucide="plus"></i><span>新增约束</span></button>
-            <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>关闭</span></button>
-        </div>
-    `;
-}
+// 旧弹窗函数 renderRuleReviewDialog 及其13个子函数（约450行）已完全删除
+// 主入口已切换到 smart-workbench/workbench-view.js 的 renderSmartWorkbench()
+// 以下保留的共享函数（renderRuleCardList、renderRuleReviewCard 等）已被 smart-workbench 使用
 
 function renderPublishDialog(state) {
     const dialog = state.publishDialog || {};
@@ -1176,7 +931,7 @@ function renderRestoreDialog(state) {
                     <div>
                         <span class="tt-eyebrow">恢复确认</span>
                         <h3 id="tt-restore-title">恢复发布版</h3>
-                        <p>当前草稿将被覆盖，恢复后请复核并重新发布。</p>
+                        <p>当前草稿将被覆盖，恢复后请检查并重新发布。</p>
                     </div>
                     <button class="tt-icon-btn" id="tt-cancel-restore" type="button" title="关闭恢复确认" aria-label="关闭恢复确认" ${isBusy ? 'disabled' : ''}><i data-lucide="x"></i></button>
                 </div>
@@ -1248,7 +1003,7 @@ function renderPublicationHistoryDialog(state) {
                     <div>
                         <span class="tt-eyebrow">发布历史</span>
                         <h3 id="tt-publication-history-title">发布版本 V${escapeHtml(item.version || '')}</h3>
-                        <p>查看该版本的发布备注、快照摘要和部分课节，用于教务复核。</p>
+                        <p>查看该版本的发布备注、快照摘要和部分课节，用于教务检查。</p>
                     </div>
                     <button class="tt-icon-btn" id="tt-close-publication-history" type="button" title="关闭发布历史" aria-label="关闭发布历史"><i data-lucide="x"></i></button>
                 </div>
@@ -1292,572 +1047,24 @@ function renderPublicationHistoryDialog(state) {
     `;
 }
 
-function renderRuleReviewInput(state, dialog, mode) {
-    const fileName = dialog.fileName || '选择 TXT / XLSX 约束文件';
-    const isBusy = Boolean(dialog.loading);
-    const disabled = isBusy ? 'disabled' : '';
-    const parseIcon = isBusy ? 'loader-2' : 'sparkles';
-    const manualIcon = isBusy ? 'loader-2' : 'list-plus';
-    const actionIconClass = isBusy ? ' class="tt-spin"' : '';
-    const parseText = isBusy ? '智能解析中' : '智能解析';
-    const manualText = isBusy ? '生成中' : '生成复核行';
-    return `
-        <section class="tt-rule-input-intro">
-            <strong>选择一种方式添加约束</strong>
-            <span>这里只会生成可复核的草稿，不会直接改变排课规则。</span>
-        </section>
-        <div class="tt-segment tt-import-mode-tabs" role="group" aria-label="约束来源">
-            <button class="${mode === 'file' ? 'is-active' : ''}" type="button" data-rule-review-mode="file" ${disabled}>上传文件</button>
-            <button class="${mode === 'text' ? 'is-active' : ''}" type="button" data-rule-review-mode="text" ${disabled}>粘贴文本</button>
-            <button class="${mode === 'manual' ? 'is-active' : ''}" type="button" data-rule-review-mode="manual" ${disabled}>手动新增</button>
-        </div>
-        <div class="tt-rule-block ${mode === 'text' ? 'is-active' : ''}">
-            <span class="tt-rule-title">粘贴老师写的要求</span>
-            <textarea id="tt-rule-review-text" class="tt-import-text tt-rule-prompt" spellcheck="false" placeholder="例如：王老师周三下午不要排课；语文、数学、英语尽量上午；七年级1班周五第7节不要排。" ${disabled}>${escapeHtml(dialog.text || '')}</textarea>
-            <div class="tt-rule-examples" aria-label="示例约束">
-                <span class="tt-muted">点此填入示例：</span>
-                ${[
-                    '王老师周三下午不要排课',
-                    '语文数学英语尽量排上午',
-                    '李老师每天最多上3节课',
-                    '体育课一周内分散开',
-                ].map(example => `<button type="button" class="tt-rule-example-chip" data-rule-example="${escapeAttr(example)}">${escapeHtml(example)}</button>`).join('')}
-            </div>
-        </div>
-        <label class="tt-import-dropzone ${mode === 'file' ? 'is-active' : ''}">
-            <i data-lucide="upload-cloud"></i>
-            <strong>${escapeHtml(fileName)}</strong>
-            <span>支持 .txt / .csv / .xlsx / .xls。上传后会先进入复核，不会直接生效。</span>
-            <input id="tt-rule-review-file" type="file" accept=".txt,.csv,.xlsx,.xls" ${disabled}>
-            ${dialog.fileName ? '<span class="tt-field-hint">已选择文件，点击「智能解析」开始识别</span>' : ''}
-        </label>
-        <div class="tt-rule-block ${mode === 'manual' ? 'is-active' : ''}">
-            <span class="tt-rule-title">手动新增一批规则</span>
-            ${renderManualRuleBuilder(state, isBusy)}
-        </div>
-        <div class="tt-dialog-actions">
-            <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
-            ${mode === 'manual'
-                ? `<button class="tt-btn tt-btn--primary" id="tt-add-manual-rule-rows" type="button" ${disabled}><i data-lucide="${manualIcon}"${actionIconClass}></i><span>${escapeHtml(manualText)}</span></button>`
-                : `<button class="tt-btn tt-btn--primary" id="tt-rule-review-parse" type="button" ${disabled}><i data-lucide="${parseIcon}"${actionIconClass}></i><span>${escapeHtml(parseText)}</span></button>`}
-        </div>
-    `;
-}
+// 已删除：renderRuleReviewInput、renderManualRuleBuilder、renderManualTargets、renderManualCheckGroup
+// 这些函数仅用于旧弹窗的输入界面，已不再需要
 
-function renderManualRuleBuilder(state, disabled = false) {
-    const project = state.project;
-    const days = getActiveWeekdays(project).map(value => ({ value, label: `周${dayName(value)}` }));
-    const periods = getActivePeriods(project).map(value => ({ value, label: `第${value}节` }));
-    const disabledAttr = disabled ? 'disabled' : '';
-    return `
-        <div class="tt-form-grid">
-            <label><span>规则类型</span>
-                <select id="tt-manual-rule-type" ${disabledAttr}>
-                    <option value="teacher_unavailable">教师不可排</option>
-                    <option value="class_unavailable">班级不可排</option>
-                    <option value="locked_slot">锁定课节</option>
-                    <option value="subject_morning">课程上午优先</option>
-                    <option value="subject_preferred_periods">课程偏好节次</option>
-                    <option value="subject_avoid_periods">课程避开节次</option>
-                    <option value="teacher_daily_limit">教师每日上限</option>
-                    <option value="teacher_consecutive_limit">教师连续上限</option>
-                    <option value="subject_spread">同科分散</option>
-                </select>
-            </label>
-            <label><span>上限</span>
-                <input id="tt-manual-rule-limit" type="number" min="1" max="12" value="3" ${disabledAttr}>
-            </label>
-        </div>
-        <p class="tt-muted">锁定课节会按所选班级、课程、教师和节次生成复核行，确认后才生效。</p>
-        ${renderManualTargets(project, disabled)}
-        <div class="tt-range-summary-grid">
-            ${renderManualCheckGroup('适用周几', days, 'data-manual-rule-day', disabled)}
-            ${renderManualCheckGroup('适用节次', periods, 'data-manual-rule-period', disabled)}
-        </div>
-    `;
-}
+// 已删除：renderRuleReviewTable 及相关子函数
+// 旧弹窗的表格渲染已不再需要
 
-function renderManualTargets(project, disabled = false) {
-    const groups = [
-        ['teacher', '教师', project.teachers || [], item => item.name],
-        ['class', '班级', project.classes || [], ownerLabel],
-        ['subject', '课程', project.subjects || [], item => item.name],
-    ];
-    return groups.map(([type, label, items, labelFor]) => `
-        <div class="tt-bulk-target-group">
-            <span>${label}</span>
-            <div class="tt-chip-grid">
-                ${items.map(item => {
-                    const labelText = labelFor(item);
-                    return `
-                        <label class="tt-check-chip">
-                            <input type="checkbox" data-manual-rule-target data-manual-rule-target-type="${type}" data-target-name="${escapeAttr(labelText)}" value="${escapeAttr(item.id)}" ${disabled ? 'disabled' : ''}>
-                            <span>${escapeHtml(labelText)}</span>
-                        </label>
-                    `;
-                }).join('') || '<span class="tt-muted">暂无数据</span>'}
-            </div>
-        </div>
-    `).join('');
-}
+// 已删除：renderRuleReviewOverview、renderClarifyingQuestions、renderRuleDiagnosis
+// 这些死代码函数已不再被调用
 
-function renderManualCheckGroup(title, items, attr, disabled = false) {
-    return `
-        <div class="tt-rule-manual-checks">
-            <span>${escapeHtml(title)}</span>
-            ${renderCheckList({ items, activeValues: items.map(item => item.value), dataAttr: attr, disabled })}
-        </div>
-    `;
-}
+// 以下共享函数保留，供 smart-workbench 使用：
+// - renderRuleCardList
+// - renderRuleReviewCard
+// - renderAutoAcceptableRules
+// - renderNeedReviewRules
+// - renderRuleConflictSection
+// - renderUnsupportedRuleItems
 
-function renderRuleReviewTable(dialog, project = {}, state = {}) {
-    const rows = dialog.draftRows || [];
-    const warnings = dialog.warnings || [];
-    const stats = dialog.contextStats || null;
-    const isBusy = Boolean(dialog.loading);
-    const disabled = isBusy ? 'disabled' : '';
-    const advancedOpen = Boolean(dialog.advancedOpen);
-    return `
-        ${stats ? `
-            <div class="tt-rule-preview-meta">
-                ${dialog.inputType ? `<span class="tt-chip">${escapeHtml(dialog.inputType)}</span>` : ''}
-                ${dialog.fileName ? `<span>${escapeHtml(dialog.fileName)}</span>` : ''}
-                ${stats.sheetName ? `<span>${escapeHtml(stats.sheetName)}</span>` : ''}
-                ${stats.rowCount !== undefined ? `<span>${escapeHtml(stats.rowCount)} 行</span>` : ''}
-                ${stats.classCount !== undefined ? `<span>${escapeHtml(stats.classCount)} 班</span>` : ''}
-                ${stats.teacherCount !== undefined ? `<span>${escapeHtml(stats.teacherCount)} 教师</span>` : ''}
-                ${stats.totalLessons !== undefined ? `<span>${escapeHtml(stats.totalLessons)} 课时</span>` : ''}
-            </div>
-        ` : ''}
-        ${renderRuleReviewTaskWorkbench(dialog, project, state)}
-        ${renderRuleDiagnosis(dialog)}
-        ${renderRuleParseDetails(dialog, warnings)}
-        <section class="tt-rule-advanced-editor ${advancedOpen ? 'is-open' : ''}">
-            <button class="tt-rule-advanced-toggle" type="button" data-action="rule-review-toggle-advanced" aria-expanded="${advancedOpen ? 'true' : 'false'}">
-                <span><i data-lucide="sliders-horizontal"></i><strong>高级编辑</strong></span>
-                <em>${advancedOpen ? '收起精确编辑' : '需要修改类型、对象或节次时再打开'}</em>
-                <i data-lucide="${advancedOpen ? 'chevron-up' : 'chevron-down'}"></i>
-            </button>
-            ${advancedOpen ? `
-                <div class="tt-roster-review-wrap">
-                    <table class="tt-rule-review-table" id="tt-rule-review-table">
-                        <colgroup class="tt-rule-review-cols">
-                            <col class="tt-rule-review-col-raw">
-                            <col class="tt-rule-review-col-type">
-                            <col class="tt-rule-review-col-target">
-                            <col class="tt-rule-review-col-slots">
-                            <col class="tt-rule-review-col-priority">
-                            <col class="tt-rule-review-col-status">
-                            <col class="tt-rule-review-col-description">
-                            <col class="tt-rule-review-col-action">
-                        </colgroup>
-                        <thead>
-                            <tr>
-                                <th>原始内容</th>
-                                <th>类型</th>
-                                <th>对象</th>
-                                <th>节次</th>
-                                <th>强弱</th>
-                                <th>状态</th>
-                                <th>说明</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${rows.map(row => renderRuleReviewRow(row, project, isBusy)).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            ` : ''}
-        </section>
-        <div class="tt-dialog-actions">
-            <button class="tt-btn" id="tt-rule-review-cancel-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
-            <button class="tt-btn tt-btn--primary" id="tt-confirm-rule-review" type="button" ${isBusy || !rows.length ? 'disabled' : ''}><i data-lucide="${isBusy ? 'loader-2' : 'check'}" class="${isBusy ? 'tt-spin' : ''}"></i><span>${isBusy ? '确认中' : '确认生效'}</span></button>
-        </div>
-    `;
-}
-
-function renderRuleReviewTaskWorkbench(dialog = {}, project = {}, state = {}) {
-    const tasks = buildRuleReviewTasks(dialog, state.constraintScan || null);
-    const activeTask = getActiveRuleReviewTask(dialog, state.constraintScan || null);
-    const activeIndex = Math.max(0, tasks.findIndex(task => task.id === activeTask?.id));
-    const previousTask = activeIndex > 0 ? tasks[activeIndex - 1] : null;
-    const nextTask = activeIndex < tasks.length - 1 ? tasks[activeIndex + 1] : null;
-    const chatOpen = Boolean(state.constraintChat?.open);
-    return `
-        <section class="tt-rule-workbench" aria-label="智能约束办理流程">
-            <header class="tt-rule-task-nav">
-                <div>
-                    <span><i data-lucide="list-checks"></i> 待处理事项</span>
-                    <strong>${tasks.length ? `${activeIndex + 1} / ${tasks.length}` : '已处理完成'}</strong>
-                </div>
-                <div class="tt-rule-task-tabs" role="tablist" aria-label="选择待处理事项">
-                    ${tasks.length ? tasks.map(task => renderRuleTaskButton(task, activeTask)).join('') : `
-                        <span class="tt-rule-task-complete"><i data-lucide="badge-check"></i> 没有待处理事项</span>
-                    `}
-                </div>
-                ${!state.constraintScan ? `
-                    <button class="tt-btn tt-btn--sm" id="tt-open-smart-helper" type="button" ${dialog.loading ? 'disabled' : ''}>
-                        <i data-lucide="scan-search"></i><span>检查遗漏</span>
-                    </button>
-                ` : ''}
-            </header>
-            <main class="tt-rule-task-detail" aria-label="当前办理事项" data-rule-review-scroll="task">
-                ${renderRuleTaskDetail(activeTask, dialog, project, state)}
-            </main>
-            ${chatOpen ? `
-                <section class="tt-rule-assistant-inline" data-rule-review-scroll="assistant">
-                    ${renderConstraintChatDock({ ...state, ruleReview: dialog }, { task: activeTask })}
-                </section>
-            ` : `
-                <button class="tt-rule-assistant-launch" type="button" data-action="rule-task-explain" data-rule-task-id="${escapeAttr(activeTask?.id || '')}" ${activeTask ? '' : 'disabled'}>
-                    <i data-lucide="message-circle"></i>
-                    <span><strong>看不懂这一步？</strong><em>让智能助手只解释当前事项，不会直接修改规则。</em></span>
-                    <b>问智能助手</b>
-                </button>
-            `}
-            <footer class="tt-rule-task-pager">
-                <button class="tt-btn tt-btn--sm" type="button" data-action="rule-task-select" data-rule-task-id="${escapeAttr(previousTask?.id || '')}" ${previousTask ? '' : 'disabled'}>
-                    <i data-lucide="chevron-left"></i><span>上一项</span>
-                </button>
-                <span>${tasks.length ? `当前：${escapeHtml(activeTask?.title || '')}` : '所有事项已处理'}</span>
-                <button class="tt-btn tt-btn--sm" type="button" data-action="rule-task-select" data-rule-task-id="${escapeAttr(nextTask?.id || '')}" ${nextTask ? '' : 'disabled'}>
-                    <span>下一项</span><i data-lucide="chevron-right"></i>
-                </button>
-            </footer>
-        </section>
-    `;
-}
-
-function renderRuleTaskButton(task = {}, activeTask = null) {
-    const active = activeTask?.id === task.id;
-    const count = task.items?.length || 0;
-    return `
-        <button class="tt-rule-task-button tt-rule-task-button--${escapeAttr(task.tone || 'info')} ${active ? 'is-active' : ''}"
-            type="button"
-            data-action="rule-task-select"
-            data-rule-task-id="${escapeAttr(task.id)}"
-            role="tab"
-            aria-pressed="${active ? 'true' : 'false'}">
-            <i data-lucide="${escapeAttr(task.icon || 'circle-dot')}"></i>
-            <span>${escapeHtml(task.title || '待处理事项')}</span>
-            <b>${escapeHtml(count)}</b>
-        </button>
-    `;
-}
-
-function renderRuleTaskDetail(task = null, dialog = {}, project = {}, state = {}) {
-    if (!task) {
-        return `
-            <div class="tt-rule-task-empty tt-rule-task-empty--large">
-                <i data-lucide="clipboard-check"></i>
-                <strong>当前没有需要办理的事项</strong>
-                <span>如果已经核对无误，可以点击“确认生效”。</span>
-            </div>
-        `;
-    }
-    const disabled = Boolean(dialog.loading);
-    return `
-        <div class="tt-rule-task-detail-head">
-            <span><i data-lucide="${escapeAttr(task.icon || 'circle-dot')}"></i> 当前办理事项</span>
-            <h4>${escapeHtml(task.title)}</h4>
-            <p>${escapeHtml(task.description)}</p>
-            <div class="tt-rule-task-actions">
-                <button class="tt-btn tt-btn--sm" type="button" data-action="rule-task-explain" data-rule-task-id="${escapeAttr(task.id)}" ${disabled ? 'disabled' : ''}>
-                    <i data-lucide="message-circle"></i><span>这是什么意思？</span>
-                </button>
-                <button class="tt-btn tt-btn--sm tt-btn--primary" type="button" data-action="rule-task-preview-fix" data-rule-task-id="${escapeAttr(task.id)}" ${disabled ? 'disabled' : ''}>
-                    <i data-lucide="wand-sparkles"></i><span>帮我处理</span>
-                </button>
-            </div>
-        </div>
-        ${renderRuleTaskItems(task, dialog, project, state)}
-    `;
-}
-
-function renderRuleTaskItems(task = {}, dialog = {}, project = {}, state = {}) {
-    const scanItems = (task.items || []).filter(item => item.kind === 'scan_problem');
-    const scanHtml = renderScanProblemTaskItems(scanItems, state.problemDetailDialog);
-    if (task.id === 'ready_to_apply') return `${renderAutoAcceptableRules(dialog)}${scanHtml}`;
-    if (task.id === 'review_rules') return `${renderNeedReviewRules(dialog)}${scanHtml}`;
-    if (task.id === 'handle_conflicts') return `${renderRuleConflictSection(dialog)}${scanHtml}`;
-    if (task.id === 'unsupported_items') return `${renderUnsupportedRuleItems(dialog)}${scanHtml}`;
-    if (task.id === 'fix_slot_range') return `${renderSlotRangeTask(task, dialog)}${scanHtml}`;
-    if (task.id === 'scan_recommendations') return scanHtml;
-    const nameItems = (task.items || []).filter(item => item.kind !== 'scan_problem');
-    return `
-        <div class="tt-rule-task-card-list">
-            ${nameItems.map(item => renderNameConfirmationItem(item)).join('')}
-        </div>
-        ${nameItems.some(item => item.kind === 'question') ? `
-            <button class="tt-btn tt-btn--primary tt-btn--sm" id="tt-continue-rule-conversation" type="button" data-action="submit-rule-clarification">
-                <i data-lucide="send"></i><span>提交回答并继续解析</span>
-            </button>
-        ` : ''}
-        ${scanHtml}
-    `;
-}
-
-function renderScanProblemTaskItems(items = [], detailDialog = null) {
-    if (!items.length) return '';
-    return `
-        <div class="tt-rule-task-card-list tt-rule-task-card-list--scan">
-            ${items.map(item => {
-                const detail = detailDialog?.open && detailDialog.problem?.id === item.problemId
-                    ? detailDialog.problem
-                    : null;
-                return `
-                <article class="tt-rule-task-card tt-rule-task-card--scan tt-rule-task-card--${escapeAttr(item.severity || 'info')}"
-                    data-scan-problem-id="${escapeAttr(item.problemId || '')}">
-                    <div class="tt-rule-task-card-main">
-                        <span>智能检查发现</span>
-                        <strong>${escapeHtml(item.title || '需要处理的问题')}</strong>
-                        <em>${escapeHtml(item.message || '请查看原因后决定如何处理。')}</em>
-                    </div>
-                    ${item.fixSuggestion ? `<p class="tt-rule-task-suggestion"><i data-lucide="sparkles"></i>${escapeHtml(item.fixSuggestion)}</p>` : ''}
-                    <div class="tt-rule-card-actions">
-                        <button class="tt-btn tt-btn--sm" type="button" data-action="view-problem-details" data-problem-id="${escapeAttr(item.problemId || '')}">
-                            <i data-lucide="eye"></i><span>查看原因</span>
-                        </button>
-                        ${item.autoFixable ? `
-                            <button class="tt-btn tt-btn--sm tt-btn--primary" type="button" data-action="apply-fix" data-problem-id="${escapeAttr(item.problemId || '')}">
-                                <i data-lucide="wand-sparkles"></i><span>生成修正</span>
-                            </button>
-                        ` : ''}
-                        <button class="tt-btn tt-btn--sm" type="button" data-action="discuss-with-ai" data-problem-id="${escapeAttr(item.problemId || '')}">
-                            <i data-lucide="message-circle"></i><span>问智能助手</span>
-                        </button>
-                    </div>
-                    ${detail ? renderInlineScanProblemDetail(detail) : ''}
-                </article>
-            `;
-            }).join('')}
-        </div>
-    `;
-}
-
-function renderInlineScanProblemDetail(problem = {}) {
-    const related = [
-        ...(problem.constraints || []),
-        ...(problem.conflicts || []),
-        ...(problem.teachers || []),
-        ...(problem.subjects || []),
-    ];
-    return `
-        <section class="tt-rule-task-expanded-detail" aria-label="问题原因">
-            <header>
-                <span><i data-lucide="search"></i><strong>问题原因</strong></span>
-                <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-action="close-problem-detail" aria-label="收起问题原因">
-                    <i data-lucide="x"></i>
-                </button>
-            </header>
-            <p>${escapeHtml(problem.description || '暂无更多说明。')}</p>
-            <dl>
-                <div><dt>影响范围</dt><dd>${escapeHtml(problem.count ?? 1)} 项</dd></div>
-                <div><dt>处理建议</dt><dd>${escapeHtml(problem.fixSuggestion || '请核对后手动处理。')}</dd></div>
-            </dl>
-            <div class="tt-rule-task-detail-change">
-                <strong>会改哪几条</strong>
-                ${related.length
-                    ? related.slice(0, 6).map(item => `<span>${escapeHtml(item.description || item.rawText || item.name || item.slot || item.id || '关联草稿')}</span>`).join('')
-                    : '<span>生成修正预览后会列出受影响的草稿，不会直接保存。</span>'}
-            </div>
-        </section>
-    `;
-}
-
-function renderNameConfirmationItem(item = {}) {
-    const hasOptions = (item.options || []).length > 0;
-    const targetLabel = item.targetText || '未识别内容';
-    return `
-        <article class="tt-rule-task-card"
-            ${item.questionId ? `data-rule-clarify-question="${escapeAttr(item.questionId)}"` : ''}
-            data-target-type="${escapeAttr(item.targetType || '')}"
-            data-target-text="${escapeAttr(targetLabel)}"
-            data-reason="${escapeAttr(item.reason || '')}">
-            <div class="tt-rule-task-card-main">
-                <span>原文出现</span>
-                <strong>${escapeHtml(targetLabel)}</strong>
-                <em>系统为什么不确定：${escapeHtml(item.reason || '存在多个可能对象。')}</em>
-            </div>
-            ${hasOptions ? `
-                <label class="tt-rule-task-field">
-                    <span>请选择项目里的真实对象</span>
-                    <select class="tt-roster-review-field"
-                        data-rule-question-answer="${escapeAttr(item.questionId || '')}"
-                        data-rule-clarify-input="${escapeAttr(item.questionId || '')}"
-                        data-question-id="${escapeAttr(item.questionId || '')}">
-                        <option value="">请选择</option>
-                        ${(item.options || []).map(option => `<option data-rule-clarify-option data-question-id="${escapeAttr(item.questionId || '')}" data-label="${escapeAttr(option.label || option.value)}" value="${escapeAttr(option.value)}">${escapeHtml(option.label || option.value)}</option>`).join('')}
-                    </select>
-                </label>
-            ` : `
-                <label class="tt-rule-task-field tt-rule-task-field--empty">
-                    <span>当前项目里没有匹配对象</span>
-                    <input class="tt-roster-review-field"
-                        data-rule-question-answer="${escapeAttr(item.questionId || '')}"
-                        data-rule-clarify-input="${escapeAttr(item.questionId || '')}"
-                        data-question-id="${escapeAttr(item.questionId || '')}"
-                        data-label=""
-                        type="text"
-                        placeholder="可输入说明，或先回到任课数据补充">
-                </label>
-            `}
-        </article>
-    `;
-}
-
-function renderSlotRangeTask(task = {}, dialog = {}) {
-    const rows = dialog.draftRows || [];
-    const related = new Set(task.relatedRuleIds || []);
-    const slotItems = (task.items || []).filter(item => item.kind !== 'scan_problem');
-    const outOfRangeRows = rows.filter(row => related.has(row.id) || (row.warnings || []).some(warning => /不在当前排课范围内/.test(warning)));
-    return `
-        <div class="tt-rule-task-card-list">
-            ${slotItems.map(item => `
-                <article class="tt-rule-task-card tt-rule-task-card--slot">
-                    <div class="tt-rule-task-card-main">
-                        <span>需要修正</span>
-                        <strong>${escapeHtml(item.message || '节次不在当前排课范围内')}</strong>
-                        <em>系统不会把超出范围的节次直接写入项目。</em>
-                    </div>
-                </article>
-            `).join('')}
-        </div>
-        ${outOfRangeRows.length ? renderRuleCardList(outOfRangeRows.slice(0, 5), {}, { allowEffective: true }) : ''}
-    `;
-}
-
-function renderRuleParseDetails(dialog = {}, warnings = []) {
-    const hasDetails = warnings.length || dialog.inputType || dialog.fileName || dialog.contextStats;
-    if (!hasDetails) return '';
-    return `
-        <details class="tt-rule-parse-details">
-            <summary>
-                <span><i data-lucide="file-search"></i><strong>解析详情</strong></span>
-                <em>${escapeHtml(warnings.length ? `${warnings.length} 条提醒` : '查看来源和识别细节')}</em>
-            </summary>
-            ${renderRuleReviewReport(warnings)}
-        </details>
-    `;
-}
-
-function renderRuleReviewOverview(dialog = {}) {
-    const rows = dialog.draftRows || [];
-    const auto = dialog.autoAcceptable || [];
-    const review = dialog.needReview || rows.filter(row => ['needs_review', 'invalid'].includes(row.status));
-    const questions = dialog.clarifyingQuestions || [];
-    const missing = dialog.missingInfo || [];
-    const conflicts = dialog.conflicts || [];
-    const unsupported = dialog.unsupportedItems || [];
-    const summary = dialog.confidenceSummary || {};
-    const items = [
-        ['智能已理解', rows.length, 'list-checks'],
-        ['可直接生效', auto.length, 'badge-check'],
-        ['需要你确认', review.length, 'edit-3'],
-        ['需要你补充', questions.length + missing.length, 'help-circle'],
-        ['冲突风险', conflicts.length, 'triangle-alert'],
-        ['暂不支持', unsupported.length, 'lightbulb'],
-    ];
-    return `
-        <section class="tt-rule-review-overview" aria-label="处理约束问题">
-            <div class="tt-rule-review-group-title">
-                <i data-lucide="sparkles"></i>
-                <strong>处理约束问题</strong>
-                ${dialog.nextAction ? `<span>${escapeHtml(ruleNextActionLabel(dialog.nextAction))}</span>` : ''}
-            </div>
-            <div class="tt-rule-overview-grid">
-                ${items.map(([label, value, icon]) => `
-                    <span class="tt-rule-overview-chip">
-                        <i data-lucide="${escapeAttr(icon)}"></i>
-                        <b>${escapeHtml(value)}</b>
-                        <em>${escapeHtml(label)}</em>
-                    </span>
-                `).join('')}
-            </div>
-            <p class="tt-muted">系统先帮你拆成草稿；只有状态为“可生效”的约束，确认后才会写入项目。置信度：高 ${escapeHtml(summary.high || 0)} / 中 ${escapeHtml(summary.medium || 0)} / 低 ${escapeHtml(summary.low || 0)}</p>
-        </section>
-    `;
-}
-
-function ruleNextActionLabel(value = '') {
-    return {
-        ask_user: '需要补充信息',
-        ready_to_apply: '可一键生效',
-        review: '需要你确认',
-        no_result: '没有可用结果',
-    }[value] || value;
-}
-
-function normalizeQuestionOptions(options = []) {
-    const seen = new Set();
-    return (Array.isArray(options) ? options : [])
-        .map(option => ({
-            label: String(option?.label || option?.name || option?.value || '').trim(),
-            value: String(option?.value || option?.id || '').trim(),
-        }))
-        .filter(option => {
-            if (!option.label || !option.value || seen.has(option.value)) return false;
-            seen.add(option.value);
-            return true;
-        });
-}
-
-function renderClarifyingQuestions(dialog = {}) {
-    const questions = (dialog.clarifyingQuestions || []).map(question => ({
-        ...question,
-        options: normalizeQuestionOptions(question.options),
-    }));
-    const answerableQuestions = questions;
-    const emptyQuestions = [];
-    const missing = dialog.missingInfo || [];
-    if (!questions.length && !missing.length) return '';
-    return `
-        <section class="tt-rule-review-group tt-rule-review-group--question">
-            <div class="tt-rule-review-group-title">
-                <i data-lucide="help-circle"></i>
-                <strong>需要你补充</strong>
-                <span>${questions.length + missing.length} 条</span>
-            </div>
-            ${questions.map(question => `
-                <div class="tt-rule-question"
-                    data-rule-clarify-question="${escapeAttr(question.id)}"
-                    data-target-type="${escapeAttr(question.targetType || '')}"
-                    data-target-text="${escapeAttr(question.targetText || '')}"
-                    data-reason="${escapeAttr(question.reason || '')}">
-                    <strong>${escapeHtml(question.question || '请补充信息')}</strong>
-                    ${question.reason ? `<span>${escapeHtml(question.reason)}</span>` : ''}
-                    ${(question.options || []).length ? `
-                        <select class="tt-roster-review-field"
-                            data-rule-question-answer="${escapeAttr(question.id)}"
-                            data-rule-clarify-input="${escapeAttr(question.id)}"
-                            data-question-id="${escapeAttr(question.id)}">
-                            <option value="">请选择</option>
-                            ${(question.options || []).map(option => `<option data-rule-clarify-option data-question-id="${escapeAttr(question.id)}" data-label="${escapeAttr(option.label || option.value)}" value="${escapeAttr(option.value)}">${escapeHtml(option.label || option.value)}</option>`).join('')}
-                        </select>
-                    ` : `<input class="tt-roster-review-field" data-rule-question-answer="${escapeAttr(question.id)}" data-rule-clarify-input="${escapeAttr(question.id)}" data-question-id="${escapeAttr(question.id)}" data-label="" type="text" placeholder="输入补充说明">`}
-                </div>
-            `).join('')}
-            ${emptyQuestions.map(question => `
-                <div class="tt-rule-warning tt-rule-warning--review">
-                    <i data-lucide="circle-alert"></i>
-                    <span>${escapeHtml(question.question || '这条补充问题没有可选择的候选，请重新解析或修改原始描述。')}</span>
-                </div>
-            `).join('')}
-            ${missing.map(item => `
-                <div class="tt-rule-warning tt-rule-warning--review">
-                    <i data-lucide="circle-alert"></i>
-                    <span>${escapeHtml(item.message || item)}</span>
-                </div>
-            `).join('')}
-            ${answerableQuestions.length ? `
-                <button class="tt-btn tt-btn--primary tt-btn--sm" id="tt-continue-rule-conversation" type="button" data-action="submit-rule-clarification">
-                    <i data-lucide="send"></i><span>提交回答并继续解析</span>
-                </button>
-            ` : ''}
-        </section>
-    `;
-}
+// 保留共享函数供 smart-workbench 使用
 
 function ruleDisplayTarget(row = {}) {
     return row.targetName || row.className || row.teacherName || row.subjectName || row.targetId || '还没确定对象';
@@ -1896,7 +1103,7 @@ function renderRuleReviewCard(row = {}, project = {}, { disabled = false, allowE
                 <strong>${escapeHtml(ruleTypeLabel(row.type || '') || row.type || '约束')}</strong>
                 <em>${escapeHtml(confidence)}</em>
             </div>
-            <p>系统理解为：<b>${escapeHtml(ruleDisplayTarget(row))}</b>，${escapeHtml(ruleTypeLabel(row.type || '') || row.type || '约束')}，时间是 <b>${escapeHtml(ruleSlotsLabel(row))}</b>，${escapeHtml(rulePriorityText(row))}。</p>
+            <p>我理解为：<b>${escapeHtml(ruleDisplayTarget(row))}</b>，${escapeHtml(ruleTypeLabel(row.type || '') || row.type || '约束')}，时间是 <b>${escapeHtml(ruleSlotsLabel(row))}</b>，${escapeHtml(rulePriorityText(row))}。</p>
             ${row.rawText || row.description ? `<span class="tt-rule-card-raw">${escapeHtml(row.rawText || row.description)}</span>` : ''}
             ${warnings.length ? `
                 <div class="tt-rule-card-warning">
@@ -1910,7 +1117,7 @@ function renderRuleReviewCard(row = {}, project = {}, { disabled = false, allowE
                 </button>
                 ${canEffective ? `
                     <button class="tt-btn tt-btn--sm tt-btn--primary" type="button" data-action="rule-card-effective" data-rule-id="${escapeAttr(row.id || '')}" ${disabledAttr}>
-                        <i data-lucide="check"></i><span>设为生效</span>
+                        <i data-lucide="check"></i><span>确认应用</span>
                     </button>
                 ` : ''}
                 <button class="tt-btn tt-btn--sm" type="button" data-action="rule-card-ignore" data-rule-id="${escapeAttr(row.id || '')}" ${disabledAttr}>
@@ -1932,7 +1139,7 @@ function renderAutoAcceptableRules(dialog = {}) {
         <section class="tt-rule-review-group tt-rule-review-group--auto">
             <div class="tt-rule-review-group-title">
                 <i data-lucide="badge-check"></i>
-                <strong>可直接生效</strong>
+                <strong>可直接应用</strong>
                 <span>${rows.length} 条</span>
             </div>
             ${renderRuleCardList(rows.slice(0, 5), {}, { allowEffective: true })}
@@ -1956,7 +1163,7 @@ function renderNeedReviewRules(dialog = {}) {
                 <strong>需要你确认</strong>
                 <span>${rows.length} 条</span>
             </div>
-            <p class="tt-muted">这些约束需要你看一眼对象、节次或强弱，再决定是否生效。</p>
+            <p class="tt-muted">这些约束需要你看一眼对象、节次或强弱，再决定是否应用。</p>
             ${renderRuleCardList(rows.slice(0, 6), {}, { allowEffective: true })}
             ${rows.length > 6 ? `<span class="tt-muted">还有 ${escapeHtml(rows.length - 6)} 条可在高级编辑里查看。</span>` : ''}
         </section>
@@ -2000,31 +1207,8 @@ function renderUnsupportedRuleItems(dialog = {}) {
     `;
 }
 
-function renderRuleDiagnosis(dialog = {}) {
-    const diagnosis = dialog.diagnosis;
-    if (!diagnosis) return '';
-    return `
-        <section class="tt-rule-review-group tt-rule-review-group--diagnosis">
-            <div class="tt-rule-review-group-title">
-                <i data-lucide="stethoscope"></i>
-                <strong>智能诊断</strong>
-            </div>
-            <p>${escapeHtml(diagnosis.summary || '')}</p>
-            ${(diagnosis.blockingRules || []).map(item => `<div class="tt-rule-warning tt-rule-warning--review"><i data-lucide="circle-alert"></i><span>${escapeHtml(item)}</span></div>`).join('')}
-            ${(diagnosis.suggestedRelaxations || []).map(item => `<div class="tt-rule-warning tt-rule-warning--info"><i data-lucide="lightbulb"></i><span>${escapeHtml(item)}</span></div>`).join('')}
-        </section>
-    `;
-}
-
-function renderRuleMiniItem(row = {}) {
-    return `
-        <div class="tt-rule-mini-item">
-            <strong>${escapeHtml(ruleTypeLabel(row.type || '') || row.type || '约束')}</strong>
-            <span>${escapeHtml(row.targetName || row.targetId || row.description || row.rawText || '-')}</span>
-            <em>${escapeHtml((row.slots || []).join(', ') || row.priority || '')}</em>
-        </div>
-    `;
-}
+// 已删除：renderRuleTargetField、renderRuleReviewRow、ruleReviewRowSourceLabel
+// 这些函数仅用于旧弹窗的高级编辑表格，已不再需要
 
 function ruleReviewWarningInsight(warning = '') {
     const text = String(warning || '');
@@ -2073,7 +1257,7 @@ function renderRuleReviewReport(warnings = []) {
                             ${rest > 0 ? `
                                 <div class="tt-rule-warning tt-rule-warning--${escapeAttr(group.tone)}">
                                     <i data-lucide="more-horizontal"></i>
-                                    <span>还有 ${escapeHtml(rest)} 条同类提示，可继续复核下方草稿。</span>
+                                    <span>还有 ${escapeHtml(rest)} 条同类提示，可继续检查下方草稿。</span>
                                 </div>
                             ` : ''}
                         </div>

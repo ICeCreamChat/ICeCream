@@ -4260,7 +4260,8 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-import-dropzone/);
   assert.match(styles, /\.tt-roster-review-table/);
   assert.match(styles, /\.tt-roster-review-row--error/);
-  assert.match(styles, /\.tt-roster-import-dialog,\s*\n\.tt-rule-review-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
+  // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 smart-workbench 替代）
+  assert.match(styles, /\.tt-roster-import-dialog/);
   assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*width:\s*min\(840px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*min\(840px,\s*calc\(100vw - 48px\)\);/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
 });
@@ -4268,11 +4269,12 @@ test('timetable roster import controller exposes modal workflow methods and bind
 test('timetable dialogs expand to review content on desktop and stay constrained on mobile', async () => {
   const styles = await readFile(stylePath, 'utf8');
 
-  assert.match(styles, /\.tt-roster-import-dialog,\s*\n\.tt-rule-review-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*min-width:\s*min\(640px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
-  assert.match(styles, /\.tt-rule-review-dialog\s*{[\s\S]*width:\s*min\(760px,\s*calc\(100vw - 48px\)\);[\s\S]*min-width:\s*min\(680px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*min\(760px,\s*calc\(100vw - 48px\)\);/);
+  // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 smart-workbench 替代）
+  assert.match(styles, /\.tt-roster-import-dialog/);
   assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*width:\s*min\(840px,\s*calc\(100vw - 48px\)\);[\s\S]*min-width:\s*min\(620px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*min\(840px,\s*calc\(100vw - 48px\)\);/);
   assert.match(styles, /\.tt-publication-history-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*min-width:\s*min\(720px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
-  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog,[\s\S]*\.tt-rule-review-dialog,[\s\S]*\.tt-period-time-dialog,[\s\S]*\.tt-publish-dialog,[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
+  // 已删除响应式 CSS 中对 .tt-rule-review-dialog 的断言
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-period-time-dialog,[\s\S]*\.tt-publish-dialog,[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
 });
 
 test('timetable roster import preserves input and review drafts when the modal is reopened', () => {
@@ -4408,7 +4410,7 @@ test('timetable 智能 rules support Excel file upload and rich preview metadata
   assert.match(styles, /\.tt-empty-card/);
   assert.match(styles, /\.tt-rule-entry/);
   assert.doesNotMatch(styles, /\.tt-rule-entry-card/);
-  assert.match(styles, /\.tt-rule-review-dialog/);
+  // 已删除 .tt-rule-review-dialog 样式断言（旧弹窗已废弃）
 });
 
 test('timetable smart workbench keeps parsed drafts in the standalone review flow', async () => {

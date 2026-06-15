@@ -51,6 +51,8 @@ export function createSmartWorkbenchState(overrides = {}) {
         sourceMode: 'text',
         selectedSection: 'ready',
         selectedRuleId: '',
+        currentPage: 1,
+        pageSize: 20,
         dataAudit: null,
         ruleChangePreview: null,
         solvePlan: null,

@@ -2105,22 +2105,7 @@ button.tt-section-title {
 }
 
 .tt-roster-import-dialog,
-.tt-rule-review-dialog {
-    display: grid;
-    gap: var(--tt-space-md);
-    box-sizing: border-box;
-    width: max-content;
-    min-width: min(640px, calc(100vw - 48px));
-    max-width: calc(100vw - 48px);
-    max-height: min(720px, calc(100vh - 48px));
-    overflow: auto;
-    padding: var(--tt-space-md);
-    background: var(--tt-bg-panel);
-    border: 1px solid var(--tt-border-strong);
-    border-radius: var(--tt-radius-lg);
-    color: var(--tt-text);
-    box-shadow: 0 24px 60px rgba(2, 6, 23, 0.38);
-}
+/* 已删除 .tt-rule-review-dialog 样式（旧弹窗已废弃，使用 smart-workbench 替代） */
 
 .tt-publish-dialog {
     display: grid;
@@ -2138,11 +2123,7 @@ button.tt-section-title {
     box-shadow: 0 24px 60px rgba(2, 6, 23, 0.38);
 }
 
-.tt-rule-review-dialog {
-    width: min(760px, calc(100vw - 48px));
-    min-width: min(680px, calc(100vw - 48px));
-    max-width: min(760px, calc(100vw - 48px));
-}
+/* 已删除 .tt-rule-review-dialog 宽度覆盖（旧弹窗已废弃） */
 
 .tt-period-time-dialog {
     display: grid;
@@ -2316,10 +2297,7 @@ button.tt-section-title {
 
 .tt-roster-import-dialog .tt-import-dropzone:not(.is-active),
 .tt-roster-import-dialog .tt-rule-block:not(.is-active),
-.tt-rule-review-dialog .tt-import-dropzone:not(.is-active),
-.tt-rule-review-dialog .tt-rule-block:not(.is-active) {
-    display: none;
-}
+/* 已删除 .tt-rule-review-dialog 模式切换样式（旧弹窗已废弃） */
 
 .tt-dialog-actions {
     display: flex;
@@ -3691,7 +3669,7 @@ button.tt-section-title {
     }
 
     .tt-roster-import-dialog,
-    .tt-rule-review-dialog,
+    /* 已删除 .tt-rule-review-dialog 响应式样式（旧弹窗已废弃） */
     .tt-period-time-dialog,
     .tt-publish-dialog,
     .tt-publication-history-dialog {

@@ -326,6 +326,6 @@ test('smart workbench shows human source labels instead of raw parser ids', () =
         constraintScan: null,
     });
 
-    assert.match(html, /来源：智能解析/);
+    assert.match(html, /来源：AI 理解/);
     assert.doesNotMatch(html, /来源：ai/);
 });

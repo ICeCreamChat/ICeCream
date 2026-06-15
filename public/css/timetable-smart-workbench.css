@@ -1513,6 +1513,13 @@
     .tt-smart-insight-rail {
         max-height: 300px;
     }
+
+    /* 移动端组件在此断点隐藏 */
+    .tt-smart-assistant-overlay,
+    .tt-smart-insight-rail-mobile,
+    .tt-smart-drawer-tab {
+        display: none;
+    }
 }
 
 @media (max-width: 980px) {
@@ -1554,6 +1561,13 @@
 
     .tt-smart-insight-rail {
         max-height: none;
+    }
+
+    /* 移动端组件在此断点隐藏 */
+    .tt-smart-assistant-overlay,
+    .tt-smart-insight-rail-mobile,
+    .tt-smart-drawer-tab {
+        display: none;
     }
 }
 
@@ -1624,6 +1638,92 @@
         transform: rotate(90deg);
         justify-self: center;
     }
+}
+
+.tt-smart-paginator {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--tt-space-sm);
+    padding: var(--tt-space-md) var(--tt-space-sm);
+    margin-top: var(--tt-space-md);
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    font-size: 13px;
+}
+
+.tt-smart-paginator > button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    color: var(--tt-text-primary);
+    background: var(--tt-bg-panel);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.tt-smart-paginator > button:hover:not(:disabled) {
+    background: var(--tt-bg-hover);
+    border-color: var(--tt-border-hover);
+}
+
+.tt-smart-paginator > button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.tt-smart-paginator > button .lucide {
+    width: 16px;
+    height: 16px;
+}
+
+.tt-smart-page-numbers {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.tt-smart-page-numbers > button {
+    min-width: 32px;
+    height: 32px;
+    padding: 0 8px;
+    color: var(--tt-text-primary);
+    background: var(--tt-bg-panel);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.tt-smart-page-numbers > button:hover {
+    background: var(--tt-bg-hover);
+    border-color: var(--tt-border-hover);
+}
+
+.tt-smart-page-numbers > button.is-active {
+    color: var(--tt-color-primary);
+    background: var(--tt-color-primary-bg);
+    border-color: var(--tt-color-primary);
+    font-weight: 600;
+}
+
+.tt-smart-page-ellipsis {
+    padding: 0 4px;
+    color: var(--tt-text-muted);
+}
+
+.tt-smart-page-info {
+    color: var(--tt-text-muted);
+    font-size: 12px;
+    white-space: nowrap;
 }
 
 @media (prefers-reduced-motion: reduce) {

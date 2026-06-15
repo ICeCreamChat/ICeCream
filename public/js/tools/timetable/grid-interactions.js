@@ -33,6 +33,8 @@ function bindDelegatedInteractions(container) {
             controller.setSmartWorkbenchMode(event.target.closest('[data-rule-review-mode]')?.dataset.ruleReviewMode || 'text');
         } else if (action === 'smart-workbench-section') {
             controller.setSmartWorkbenchSection(event.target.closest('[data-smart-section]')?.dataset.smartSection || 'ready');
+        } else if (action === 'smart-workbench-page') {
+            controller.setSmartWorkbenchPage(event.target.closest('[data-page]')?.dataset.page || 1);
         } else if (action === 'smart-workbench-preview-rules') {
             controller.previewSmartRuleChanges();
         } else if (action === 'smart-workbench-back-review') {
@@ -47,6 +49,12 @@ function bindDelegatedInteractions(container) {
             controller.previewSmartRelaxation(event.target.closest('[data-relax-index]')?.dataset.relaxIndex || 0);
         } else if (action === 'smart-workbench-new-constraint') {
             controller.startRuleReviewInput('text');
+        }
+        // 移动端抽屉actions
+        else if (action === 'open-mobile-drawer') {
+            controller.mobileDrawer?.openDrawer('half');
+        } else if (action === 'close-mobile-drawer') {
+            controller.mobileDrawer?.closeDrawer();
         }
         // 智能助手actions
         else if (action === 'apply-fix') {

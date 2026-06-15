@@ -27,7 +27,7 @@ function escapeAttr(value) {
 function sourceLabel(value = '') {
     const key = String(value || '').trim().toLowerCase();
     return ({
-        ai: '智能解析',
+        ai: 'AI 理解',
         local: '本地解析',
         text: '粘贴文本',
         manual: '手动新增',
@@ -82,8 +82,8 @@ function renderDataStage(state, stage) {
         <section class="tt-smart-task-panel" aria-busy="${loading ? 'true' : 'false'}">
             <header>
                 <span class="tt-eyebrow">第 1 步</span>
-                <h2>${loading ? '正在检查排课数据' : audit.canContinue ? '排课数据可以继续使用' : '先补齐这些排课数据'}</h2>
-                <p>${loading ? '我正在核对班级、教师、课程、任课关系和课时。' : '这些数据决定约束能否正确匹配，也决定课表能不能排完整。'}</p>
+                <h2>${loading ? '我正在检查排课数据' : audit.canContinue ? '排课数据已经准备好了' : '还需要补齐这些排课数据'}</h2>
+                <p>${loading ? '马上帮你核对班级、教师、课程、任课关系和课时。' : '这些数据会影响约束能不能正确匹配，也决定课表能不能排完整。'}</p>
             </header>
             <div class="tt-smart-audit-grid">
                 <span><b>${audit.stats.classCount}</b><em>班级</em></span>
@@ -95,11 +95,11 @@ function renderDataStage(state, stage) {
                 <div class="tt-smart-action-list" role="list">
                     ${audit.issues.map(issue => `<div role="listitem"><i data-lucide="circle-alert"></i><span>${escapeHtml(issue)}</span></div>`).join('')}
                 </div>
-            ` : '<div class="tt-smart-success"><i data-lucide="badge-check"></i><span>基础数据完整，可以开始描述排课要求。</span></div>'}
+            ` : '<div class="tt-smart-success"><i data-lucide="badge-check"></i><span>基础数据完整，现在可以开始描述排课要求了。</span></div>'}
             <div class="tt-smart-primary-action">
                 <button class="tt-btn tt-btn--primary" type="button" data-action="${audit.canContinue ? 'smart-workbench-continue-input' : 'smart-workbench-recheck'}" ${loading ? 'disabled' : ''}>
                     <i data-lucide="${loading ? 'loader-2' : audit.canContinue ? 'arrow-right' : 'refresh-cw'}" class="${loading ? 'tt-spin' : ''}"></i>
-                    <span>${loading ? '检查中' : audit.canContinue ? '开始描述要求' : '我已补充，重新检查'}</span>
+                    <span>${loading ? '检查中' : audit.canContinue ? '开始描述要求' : '我已补充好了，重新检查'}</span>
                 </button>
             </div>
         </section>
@@ -115,7 +115,7 @@ function renderInputStage(state, stage) {
             <header>
                 <span class="tt-eyebrow">第 2 步</span>
                 <h2>告诉我你的排课要求</h2>
-                <p>像和教务同事说话一样描述。我会先理解你的要求，你确认后才会真正生效。</p>
+<p>像和教务同事说话一样描述就行。我会先理解你的意思，你确认后才会真正应用。</p>
             </header>
             <div class="tt-smart-source-tabs" role="tablist" aria-label="选择约束来源">
                 ${[['text', '粘贴文字', 'message-square'], ['file', '上传文件', 'upload'], ['manual', '手动新增', 'list-plus']].map(([key, label, icon]) => `
@@ -127,7 +127,7 @@ function renderInputStage(state, stage) {
             ${mode === 'file' ? `
                 <label class="tt-smart-upload">
                     <i data-lucide="file-up"></i>
-                    <span><strong>${escapeHtml(review.fileName || '选择 TXT、CSV、XLSX 文件')}</strong><em>系统会读取所有工作表和自然语言内容</em></span>
+                    <span><strong>${escapeHtml(review.fileName || '选择 TXT、CSV、XLSX 文件')}</strong><em>我会读取所有工作表和自然语言内容</em></span>
                     <input id="tt-rule-review-file" type="file" accept=".txt,.csv,.xlsx,.xls" ${loading ? 'disabled' : ''}>
                 </label>
             ` : mode === 'manual' ? `
@@ -146,7 +146,7 @@ function renderInputStage(state, stage) {
             ${loading ? `
                 <div class="tt-process-strip" aria-live="polite">
                     <i data-lucide="loader-2" class="tt-spin"></i>
-                    <span><strong>${escapeHtml(review.phaseText || '智能理解中...')}</strong><em>正在匹配当前项目里的教师、班级、课程和节次</em></span>
+                    <span><strong>${escapeHtml(review.phaseText || '我正在理解中...')}</strong><em>正在匹配当前项目里的教师、班级、课程和节次</em></span>
                 </div>
             ` : ''}
             <div class="tt-smart-primary-action">
@@ -158,7 +158,7 @@ function renderInputStage(state, stage) {
                 ` : `
                     <button class="tt-btn tt-btn--primary" id="tt-rule-review-parse" type="button" ${loading ? 'disabled' : ''}>
                         <i data-lucide="${loading ? 'loader-2' : 'wand-sparkles'}" class="${loading ? 'tt-spin' : ''}"></i>
-                        <span>${loading ? '正在理解要求' : '帮我理解这些要求'}</span>
+                        <span>${loading ? '我正在理解要求' : '帮我理解这些要求'}</span>
                     </button>
                 `}
             </div>
@@ -183,9 +183,9 @@ function renderConstraintCard(row, section) {
                 <span>${escapeHtml(row.typeLabel)}</span>
                 <div><b class="tt-confidence tt-confidence--${escapeAttr(row.confidenceTone)}">${escapeHtml(row.confidenceLabel)}置信</b><em>${escapeHtml(row.strengthLabel)}</em></div>
             </div>
-            <span class="tt-smart-rule-understanding-label">系统理解为</span>
+            <span class="tt-smart-rule-understanding-label">我理解为</span>
             <strong>${escapeHtml(row.understanding)}</strong>
-            <p>原话：${escapeHtml(row.sourceText || '手动新增')}</p>
+            <p>你的原话：${escapeHtml(row.sourceText || '手动新增')}</p>
             ${sourceParts.length ? `<p class="tt-smart-rule-source">来源：${escapeHtml(sourceParts.join(' · '))}</p>` : ''}
             <dl>
                 <div><dt>对象</dt><dd>${escapeHtml(row.target.name)}</dd></div>
@@ -195,7 +195,7 @@ function renderConstraintCard(row, section) {
             <div class="tt-rule-card-actions">
                 <button class="tt-btn tt-btn--sm" type="button" data-action="rule-task-explain" data-rule-task-id="${escapeAttr(taskId)}"><i data-lucide="message-circle"></i><span>解释</span></button>
                 <button class="tt-btn tt-btn--sm" type="button" data-action="rule-card-edit"><i data-lucide="pencil"></i><span>编辑</span></button>
-                <button class="tt-btn tt-btn--sm" type="button" data-action="rule-card-effective"><i data-lucide="check"></i><span>设为生效</span></button>
+                <button class="tt-btn tt-btn--sm" type="button" data-action="rule-card-effective"><i data-lucide="check"></i><span>确认应用</span></button>
                 <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-action="rule-card-ignore" title="暂不处理" aria-label="暂不处理"><i data-lucide="eye-off"></i></button>
                 <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-action="rule-card-delete" title="删除这条" aria-label="删除这条"><i data-lucide="trash-2"></i></button>
             </div>
@@ -207,7 +207,7 @@ function renderSavedConstraints(state, savedItems) {
     return `
         <section class="tt-smart-saved-panel">
             <header>
-                <span class="tt-eyebrow">已生效约束</span>
+                <span class="tt-eyebrow">已应用约束</span>
                 <h2>当前参与排课的规则</h2>
                 <p>这些规则已经写入项目。删除后会使旧课表失效，下一次生成将使用更新后的规则。</p>
             </header>
@@ -252,7 +252,7 @@ function renderSmartScan(state) {
         return `
             <div class="tt-process-strip" aria-live="polite">
                 <i data-lucide="loader-2" class="tt-spin"></i>
-                <span><strong>${escapeHtml(scan.phase || '正在检查约束...')}</strong><em>不会修改草稿，也不会重绘课表网格</em></span>
+                <span><strong>${escapeHtml(scan.phase || '我正在检查约束...')}</strong><em>不会修改草稿，也不会重绘课表网格</em></span>
             </div>
         `;
     }
@@ -354,7 +354,7 @@ function renderReviewTaskChecklist(review = {}, groups = {}, savedItems = [], se
             id: 'review_rules',
             section: 'review',
             title: '核对需要确认',
-            detail: '系统已理解大意，但需要你点开看一下。',
+            detail: '我已理解大意，但需要你点开看一下。',
             count: groups.review?.length || 0,
             icon: 'clipboard-pen',
         },
@@ -362,7 +362,7 @@ function renderReviewTaskChecklist(review = {}, groups = {}, savedItems = [], se
             id: 'confirm_subject_names',
             section: 'review',
             title: '确认课程名称',
-            detail: '系统不确定原文对应哪门课程。',
+            detail: '我还不确定原文对应哪门课程。',
             count: countQuestionsByTarget(review, 'subject'),
             icon: 'book-open',
         },
@@ -386,7 +386,7 @@ function renderReviewTaskChecklist(review = {}, groups = {}, savedItems = [], se
             id: 'confirm_names',
             section: 'review',
             title: '确认名称',
-            detail: '系统还不知道这句话对应项目里的哪个对象。',
+            detail: '我还不知道这句话对应项目里的哪个对象。',
             count: genericQuestionCount(review),
             icon: 'circle-help',
         },
@@ -417,7 +417,7 @@ function renderReviewTaskChecklist(review = {}, groups = {}, savedItems = [], se
         {
             id: 'saved_rules',
             section: 'saved',
-            title: '查看已生效约束',
+            title: '查看已应用约束',
             detail: '已经写入项目的规则可以在这里管理。',
             count: savedItems.length,
             icon: 'clipboard-check',
@@ -459,6 +459,41 @@ function renderBlockingConflictSummary(review = {}) {
     `;
 }
 
+function renderPaginator(currentPage, totalPages, totalItems) {
+    if (totalPages <= 1) return '';
+    const pages = [];
+    const maxVisible = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+    if (endPage - startPage < maxVisible - 1) {
+        startPage = Math.max(1, endPage - maxVisible + 1);
+    }
+    return `
+        <nav class="tt-smart-paginator" role="navigation" aria-label="约束分页">
+            <button type="button" data-action="smart-workbench-page" data-page="${currentPage - 1}" ${currentPage <= 1 ? 'disabled' : ''}>
+                <i data-lucide="chevron-left"></i><span>上一页</span>
+            </button>
+            <div class="tt-smart-page-numbers">
+                ${startPage > 1 ? `
+                    <button type="button" data-action="smart-workbench-page" data-page="1">1</button>
+                    ${startPage > 2 ? '<span class="tt-smart-page-ellipsis">…</span>' : ''}
+                ` : ''}
+                ${Array.from({ length: endPage - startPage + 1 }, (_, i) => startPage + i).map(page => `
+                    <button type="button" class="${page === currentPage ? 'is-active' : ''}" data-action="smart-workbench-page" data-page="${page}" ${page === currentPage ? 'aria-current="page"' : ''}>${page}</button>
+                `).join('')}
+                ${endPage < totalPages ? `
+                    ${endPage < totalPages - 1 ? '<span class="tt-smart-page-ellipsis">…</span>' : ''}
+                    <button type="button" data-action="smart-workbench-page" data-page="${totalPages}">${totalPages}</button>
+                ` : ''}
+            </div>
+            <button type="button" data-action="smart-workbench-page" data-page="${currentPage + 1}" ${currentPage >= totalPages ? 'disabled' : ''}>
+                <span>下一页</span><i data-lucide="chevron-right"></i>
+            </button>
+            <span class="tt-smart-page-info">第 ${currentPage} / ${totalPages} 页，共 ${totalItems} 条</span>
+        </nav>
+    `;
+}
+
 function renderReviewStage(state) {
     const review = state.ruleReview || {};
     const isBusy = Boolean(review.loading || state.smartWorkbench?.busy);
@@ -488,17 +523,27 @@ function renderReviewStage(state) {
         || 'ready';
     const active = sections.find(([key]) => key === selected) || sections[0];
     if (active[0] === 'saved') return renderSavedConstraints(state, savedItems);
+
+    const pageSize = state.smartWorkbench?.pageSize || 20;
+    const currentPage = state.smartWorkbench?.currentPage || 1;
+    const allItems = active[3];
+    const totalItems = allItems.length;
+    const totalPages = Math.ceil(totalItems / pageSize);
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = Math.min(startIndex + pageSize, totalItems);
+    const pageItems = allItems.slice(startIndex, endIndex);
+
     return `
         <section class="tt-smart-review-panel">
             <header>
                 <span class="tt-eyebrow">第 3 步</span>
-                <h2>核对系统理解的要求</h2>
-                <p>先处理需要确认和冲突的内容，再统一查看将要生效的规则。</p>
+                <h2>核对我理解的要求</h2>
+                <p>先处理需要确认和冲突的内容，再统一查看将要应用的规则。</p>
             </header>
             ${isBusy ? `
                 <div class="tt-process-strip" aria-live="polite">
                     <i data-lucide="loader-2" class="tt-spin"></i>
-                    <span><strong>${escapeHtml(review.phaseText || '正在处理约束草稿...')}</strong><em>当前不会保存项目，完成后会回到可编辑状态</em></span>
+                    <span><strong>${escapeHtml(review.phaseText || '我正在处理约束草稿...')}</strong><em>当前不会保存项目，完成后会回到可编辑状态</em></span>
                 </div>
             ` : ''}
             ${renderReviewTaskChecklist(review, groups, savedItems, selected)}
@@ -513,11 +558,12 @@ function renderReviewStage(state) {
             <div class="tt-smart-section-intro"><strong>${escapeHtml(active[1])}</strong><span>${escapeHtml(active[2])}</span></div>
             ${renderWorkbenchClarifications(review)}
             ${renderSmartScan(state)}
-            <div class="tt-smart-rule-list" role="list">
-                ${active[3].length ? active[3].map(row => renderConstraintCard(row, active[0])).join('') : `
+            <div class="tt-smart-rule-list" role="list" data-total-items="${totalItems}" data-current-page="${currentPage}">
+                ${pageItems.length ? pageItems.map(row => renderConstraintCard(row, active[0])).join('') : `
                     <div class="tt-empty-panel"><i data-lucide="check-circle"></i><strong>这一类暂时没有内容</strong><span>可以继续查看其他分区。</span></div>
                 `}
             </div>
+            ${renderPaginator(currentPage, totalPages, totalItems)}
             <details class="tt-smart-details">
                 <summary>解析详情与高级编辑</summary>
                 <div>
@@ -528,7 +574,7 @@ function renderReviewStage(state) {
             ${renderWorkbenchAdvancedEditor(review, state.project)}
             <div class="tt-smart-primary-action">
                 <button class="tt-btn tt-btn--primary" type="button" data-action="smart-workbench-preview-rules" ${isBusy || blockingConflicts || !rows.length ? 'disabled' : ''}>
-                    <i data-lucide="${isBusy ? 'loader-2' : 'list-checks'}" class="${isBusy ? 'tt-spin' : ''}"></i><span>${isBusy ? '处理中' : '核对将要生效的规则'}</span>
+                    <i data-lucide="${isBusy ? 'loader-2' : 'list-checks'}" class="${isBusy ? 'tt-spin' : ''}"></i><span>${isBusy ? '处理中' : '核对将要应用的规则'}</span>
                 </button>
             </div>
         </section>
@@ -545,7 +591,7 @@ function renderRulePreview(state) {
         ['将新增', preview.added || [], 'plus-circle'],
         ['将修改', preview.updated || [], 'pencil'],
         ['将删除', preview.removed || [], 'trash-2'],
-        ['不会生效', preview.ignored || [], 'circle-slash'],
+        ['不会应用', preview.ignored || [], 'circle-slash'],
     ];
     return `
         <section class="tt-smart-task-panel">
@@ -570,7 +616,7 @@ function renderSolvePlan(state) {
     const building = state.smartWorkbench?.stage === 'building_solve_plan' || state.smartWorkbench?.busy;
     return `
         <section class="tt-smart-task-panel">
-            <header><span class="tt-eyebrow">第 5 步</span><h2>${building ? '正在准备排课计划' : '确认本次排课计划'}</h2><p>先保证必须满足的规则，再优化课程时段和教师负载。</p></header>
+            <header><span class="tt-eyebrow">第 5 步</span><h2>${building ? '我正在准备排课计划' : '确认本次排课计划'}</h2><p>先保证必须满足的规则，再优化课程时段和教师负载。</p></header>
             ${building ? `<div class="tt-process-strip"><i data-lucide="loader-2" class="tt-spin"></i><span><strong>正在检查下一步</strong><em>只会生成计划，不会自动开始排课</em></span></div>` : ''}
             <div class="tt-smart-plan-list">
                 <div><i data-lucide="shield-check"></i><span><strong>必须满足</strong><em>${escapeHtml(plan.hardSummary || '教师、班级、教室不冲突，固定课和不可排时间必须满足')}</em></span></div>
@@ -655,37 +701,66 @@ function renderInsight(state, stage) {
     const reviewCount = rows.filter(row => ['needs_review', 'invalid'].includes(row.status)).length;
     const conflicts = (review.conflicts || []).filter(item => item.level === 'blocking').length;
     const saved = getSavedRuleItems(state.project).length;
+
+    const insightContent = `
+        <header><i data-lucide=”lightbulb”></i><span><strong>当前情况</strong><em>只显示这一步需要知道的内容</em></span></header>
+        <div class=”tt-smart-insight-stats”>
+            <span><b>${saved}</b><em>已生效</em></span>
+            <span><b>${ready}</b><em>可应用</em></span>
+            <span><b>${reviewCount + conflicts}</b><em>需处理</em></span>
+        </div>
+        <section>
+            <h3>下一步</h3>
+            <p>${escapeHtml({
+                idle: '先检查任课数据是否完整。',
+                checking_data: '检查完成后，我会告诉你能否继续。',
+                data_need_fix: '回到任课数据补齐缺少内容，再重新检查。',
+                ready_for_constraints: '输入要求后点击”帮我理解这些要求”。',
+                parsing_constraints: '正在整理草稿，请稍候。',
+                reviewing_constraints: '逐项核对系统理解，优先处理冲突和不确定内容。',
+                waiting_user_confirmation: state.smartWorkbench?.ruleChangePreview ? '核对规则变化后再确认写入。' : '先完成需要确认的事项。',
+                waiting_solve_approval: '确认求解计划后开始生成课表。',
+                solving: '本地可用方案生成后会立即显示。',
+                solution_review: '查看结果后可返回课表或保存正式版本。',
+                diagnosing: '选择一个调整方向，预览后重新生成。',
+            }[stage] || '按中间区域的提示继续。')}</p>
+        </section>
+        <section class=”tt-smart-assistant-slot”>
+            <h3>智能助手</h3>
+            ${state.constraintChat?.open
+                ? renderConstraintChatDock(state, { task: null })
+                : `<button class=”tt-smart-assistant-entry” type=”button” data-action=”constraint-chat-start”><i data-lucide=”message-circle”></i><span><strong>有看不懂的地方？</strong><em>我只解释当前步骤，不会直接修改规则。</em></span></button>`}
+        </section>
+    `;
+
     return `
-        <aside class="tt-smart-insight-rail">
-            <header><i data-lucide="lightbulb"></i><span><strong>当前情况</strong><em>只显示这一步需要知道的内容</em></span></header>
-            <div class="tt-smart-insight-stats">
-                <span><b>${saved}</b><em>已生效</em></span>
-                <span><b>${ready}</b><em>可应用</em></span>
-                <span><b>${reviewCount + conflicts}</b><em>需处理</em></span>
-            </div>
-            <section>
-                <h3>下一步</h3>
-                <p>${escapeHtml({
-                    idle: '先检查任课数据是否完整。',
-                    checking_data: '检查完成后，我会告诉你能否继续。',
-                    data_need_fix: '回到任课数据补齐缺少内容，再重新检查。',
-                    ready_for_constraints: '输入要求后点击“帮我理解这些要求”。',
-                    parsing_constraints: '正在整理草稿，请稍候。',
-                    reviewing_constraints: '逐项核对系统理解，优先处理冲突和不确定内容。',
-                    waiting_user_confirmation: state.smartWorkbench?.ruleChangePreview ? '核对规则变化后再确认写入。' : '先完成需要确认的事项。',
-                    waiting_solve_approval: '确认求解计划后开始生成课表。',
-                    solving: '本地可用方案生成后会立即显示。',
-                    solution_review: '查看结果后可返回课表或保存正式版本。',
-                    diagnosing: '选择一个调整方向，预览后重新生成。',
-                }[stage] || '按中间区域的提示继续。')}</p>
-            </section>
-            <section class="tt-smart-assistant-slot">
-                <h3>智能助手</h3>
-                ${state.constraintChat?.open
-                    ? renderConstraintChatDock(state, { task: null })
-                    : `<button class="tt-smart-assistant-entry" type="button" data-action="constraint-chat-start"><i data-lucide="message-circle"></i><span><strong>有看不懂的地方？</strong><em>我只解释当前步骤，不会直接修改规则。</em></span></button>`}
-            </section>
+        <!-- 桌面端右侧栏 -->
+        <aside class=”tt-smart-insight-rail”>
+            ${insightContent}
         </aside>
+        <!-- 移动端遮罩层 -->
+        <div class=”tt-smart-assistant-overlay” data-action=”close-mobile-drawer”></div>
+        <!-- 移动端底部抽屉 -->
+        <aside class=”tt-smart-insight-rail-mobile” role=”dialog” aria-label=”智能助手” data-drawer-height=”half”>
+            <div class=”tt-smart-drawer-handle” aria-label=”拖动调整高度”></div>
+            <div class=”tt-smart-drawer-header”>
+                <span>
+                    <i data-lucide=”lightbulb”></i>
+                    <strong>智能助手</strong>
+                </span>
+                <button class=”tt-smart-drawer-close” type=”button” data-action=”close-mobile-drawer” aria-label=”关闭”>
+                    <i data-lucide=”x”></i>
+                </button>
+            </div>
+            <div class=”tt-smart-drawer-content”>
+                ${insightContent}
+            </div>
+        </aside>
+        <!-- 移动端收起标签 -->
+        <button class=”tt-smart-drawer-tab” type=”button” data-action=”open-mobile-drawer” aria-label=”打开智能助手”>
+            <i data-lucide=”sparkles”></i>
+            <span>助手</span>
+        </button>
     `;
 }
 

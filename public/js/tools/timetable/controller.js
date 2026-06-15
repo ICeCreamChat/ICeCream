@@ -42,6 +42,7 @@ import {
 import { buildRuleChangePreview } from './smart-workbench/constraint-adapter.js';
 import { createRenderScheduler } from './smart-workbench/render-scheduler.js';
 import { renderSmartWorkbench } from './smart-workbench/workbench-view.js';
+import { createMobileDrawerController } from './smart-workbench/mobile-drawer.js';
 
 export class TimetablePlannerController {
     constructor() {
@@ -64,6 +65,7 @@ export class TimetablePlannerController {
             ),
             onFlush: scopes => this.flushSmartWorkbenchRender(scopes),
         });
+        this.mobileDrawer = createMobileDrawerController();
     }
 
     async init(container) {
@@ -76,6 +78,7 @@ export class TimetablePlannerController {
     destroy() {
         this.clearOptimizationPolling();
         this.smartRenderScheduler?.cancel();
+        this.mobileDrawer?.destroy();
         this.timetableToolHost?.classList?.remove('tool-container--timetable');
         this.timetableToolHost = null;
         this.state.container = null;
@@ -166,6 +169,13 @@ export class TimetablePlannerController {
             }
         }
         window.lucide?.createIcons();
+
+        // 在移动端初始化抽屉控制器
+        if (this.state.smartWorkbench?.open) {
+            requestAnimationFrame(() => {
+                this.mobileDrawer?.init();
+            });
+        }
     }
 
     renderRuleReviewSurface() {
@@ -1366,8 +1376,22 @@ export class TimetablePlannerController {
         this.state.smartWorkbench = {
             ...(this.state.smartWorkbench || createSmartWorkbenchState()),
             selectedSection: section,
+            currentPage: 1,
         };
         this.renderSmartWorkbenchSurface();
+    }
+
+    setSmartWorkbenchPage(page = 1) {
+        const currentPage = Math.max(1, parseInt(page, 10) || 1);
+        this.state.smartWorkbench = {
+            ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+            currentPage,
+        };
+        this.renderSmartWorkbenchSurface();
+        const listEl = this.state.container?.querySelector('.tt-smart-rule-list');
+        if (listEl) {
+            listEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
     }
 
     navigateSmartWorkbenchStep(step = '') {
