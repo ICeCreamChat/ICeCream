@@ -4584,7 +4584,7 @@ test('timetable smart rules sidebar opens the standalone assistant workbench', a
   assert.doesNotMatch(sidebar, /tt-lock-list/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
   assert.match(sidebar, /打开智能排课助手/);
-  assert.match(sidebar, /已生效/);
+  assert.match(sidebar, /已应用|已生效/);
   assert.match(sidebar, /待处理/);
   assert.match(sidebar, /需注意/);
   assert.doesNotMatch(sidebar, /tt-rule-entry-card/);

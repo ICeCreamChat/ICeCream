@@ -17,6 +17,9 @@ export function createMobileDrawerController() {
      * 初始化抽屉控制器
      */
     function init() {
+        if (typeof window === 'undefined' || typeof document === 'undefined') {
+            return; // Node.js 环境不初始化
+        }
         if (window.innerWidth >= 768) {
             return; // 桌面端不初始化
         }
@@ -193,6 +196,9 @@ export function createMobileDrawerController() {
      * 处理窗口大小变化
      */
     function handleResize() {
+        if (typeof window === 'undefined') {
+            return; // Node.js 环境不处理
+        }
         if (window.innerWidth >= 768) {
             // 切换到桌面端，清理移动端状态
             cleanup();
@@ -206,6 +212,9 @@ export function createMobileDrawerController() {
      * 清理控制器
      */
     function cleanup() {
+        if (typeof document === 'undefined') {
+            return; // Node.js 环境不执行清理
+        }
         if (drawerElement?.classList.contains('is-open')) {
             closeDrawer();
         }
