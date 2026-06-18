@@ -75,3 +75,19 @@ test_students_60.csv
 
 # Robustness audit plan (local reference only)
 ROBUSTNESS_PLAN.md
+
+# Reverse engineering / probe data
+*.mdb
+*_probe_export/
+*_probe/
+script_export_test/
+_reverse_tmp/
+
+# Claude Code config
+.claude/
+
+# Data files (not code)
+*.xlsx
+
+# Deprecated config
+vite.studio.config.js
