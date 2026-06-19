@@ -42,3 +42,10 @@ export { createRng, randInt, weightedPick, shuffle } from './solver/rng.js';
 export { calculateActivityDifficulty, computeIncompatibility } from './solver/difficulty.js';
 export { candidateScore, normalizePressure } from './solver/pressure.js';
 export { softScoreOf } from './solver/score.js';
+
+// 导入器（Phase 3：异构来源 → SchoolProjectV2，纯读取层、零写回）
+export { createMigrationReport, verifyReportConsistency, REPORT_CATEGORIES } from './importers/migration-report.js';
+export { importLegacyProject } from './importers/legacy-project.js';
+export { importExcelPlans } from './importers/excel.js';
+export { importCrystalCloneSeed } from './importers/crystal-mapping.js';
+export { importYqdTables } from './importers/yqd.js';
