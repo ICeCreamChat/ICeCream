@@ -1,7 +1,7 @@
 /**
  * timetable-v2 / index.js
  *
- * Phase 1 子树聚合导出。导入硬约束模块以触发自注册。
+ * 子树聚合导出。导入硬/软约束模块以触发自注册。
  * 零 IO，不被任何现有路由引用（并行子树）。
  */
 
@@ -14,7 +14,7 @@ export { Solution, createSolution } from './domain/solution.js';
 export * from './domain/project.js';
 
 // 约束基础设施
-export { Constraint, STRENGTH } from './constraints/base.js';
+export { Constraint, STRENGTH, shouldEnforce } from './constraints/base.js';
 export * from './constraints/dsl.js';
 export { register, getConstraintClass, hasConstraint, registeredTypes } from './constraints/registry.js';
 export { buildContext, detectHardConflicts } from './constraints/index-builder.js';
@@ -29,4 +29,16 @@ import './constraints/hard/fixed-locked.js';
 import './constraints/hard/consecutive.js';
 import './constraints/hard/valid-timeslot.js';
 
+// 软约束（MVP：主科上午/同科分散/教师日上限）
+import './constraints/soft/morning-subjects.js';
+import './constraints/soft/spread-subjects.js';
+import './constraints/soft/teacher-limits.js';
+
 export { isLocked } from './constraints/hard/fixed-locked.js';
+
+// 求解器
+export { solve } from './solver/pipeline.js';
+export { createRng, randInt, weightedPick, shuffle } from './solver/rng.js';
+export { calculateActivityDifficulty, computeIncompatibility } from './solver/difficulty.js';
+export { candidateScore, normalizePressure } from './solver/pressure.js';
+export { softScoreOf } from './solver/score.js';

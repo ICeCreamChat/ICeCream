@@ -49,9 +49,24 @@ export class Constraint {
     }
 
     /**
-     * 软约束压力（Phase 2 实现）。本阶段占位返回 0。
+     * 软约束压力（Phase 2 实现）：返回该活动在某起点 time 放置时的压力增量（越大越不该放）。
+     * 硬约束不参与；软约束子类覆盖。默认 0。
      */
     pressure(activityIdx, time, room, state, ctx) {
         return 0;
     }
+}
+
+/**
+ * 软约束概率执行（FET skipRandom，generate.cpp:4287）：
+ *   weight>=100 必守；weight<0 忽略；否则按 weight% 概率本次"当作硬约束"。
+ * rng 必须是种子化 RNG，否则破坏复现性。
+ * @param {number} weight
+ * @param {() => number} rng [0,1)
+ * @returns {boolean} 本次是否强制执行
+ */
+export function shouldEnforce(weight, rng) {
+    if (weight >= 100) return true;
+    if (weight < 0) return false;
+    return rng() * 100 < weight;
 }
