@@ -8,8 +8,12 @@ import assert from 'node:assert/strict';
 
 import { solve } from '../gateway/services/timetable-v2/solver/pipeline.js';
 import { createRng, weightedPick } from '../gateway/services/timetable-v2/solver/rng.js';
-import { candidateScore, normalizePressure } from '../gateway/services/timetable-v2/solver/pressure.js';
+import { candidateScore, normalizePressure, scoreCandidates } from '../gateway/services/timetable-v2/solver/pressure.js';
+import { OccupancyIndex } from '../gateway/services/timetable-v2/solver/placement.js';
 import { detectHardConflicts } from '../gateway/services/timetable-v2/constraints/index-builder.js';
+import {
+    createProject, expandActivityPlans, createSolution, buildContext,
+} from '../gateway/services/timetable-v2/index.js';
 import '../gateway/services/timetable-v2/index.js';
 import {
     solvableProject, projectWithUnavailableAndLocked, unsolvableProject,
@@ -155,4 +159,36 @@ test('pressure：归一化把压力压进有界区间', () => {
     // denom 固定时，归一化分母固定，raw 增大 norm 增大但被 /denom² 压制
     assert.ok(normalizePressure(1, 100) <= 1, '大 denom 把压力压到很小');
     assert.ok(Number.isFinite(huge) && huge >= 0);
+});
+
+// ---- 回归守卫：scoreCandidates 必须保留拥挤度区分（防归一化 denom 抹平权重）----
+test('pressure：scoreCandidates 让被占用格权重低于空闲格', () => {
+    // 两班共用教师 t1：放下 A 后，B 落在 t1 已占的同一 time 应被压低权重。
+    const project = createProject({
+        calendar: { weekdays: 5, periodsPerDay: 6 },
+        classes: [{ id: 'c1' }, { id: 'c2' }],
+        teachers: [{ id: 't1' }],
+        subjects: [{ id: 's', name: 'x', category: 'main', priority: 50 }],
+        rooms: [],
+        activityPlans: [
+            { id: 'A', classId: 'c1', subjectId: 's', teacherId: 't1', weeklyHours: 1 },
+            { id: 'B', classId: 'c2', subjectId: 's', teacherId: 't1', weeklyHours: 1 },
+        ],
+        constraints: [],
+    });
+    const acts = expandActivityPlans(project.activityPlans);
+    const ctx = buildContext(project, acts, []);
+    const sol = createSolution(acts.length);
+    const occ = new OccupancyIndex(ctx);
+
+    const aIdx = acts.findIndex(a => a.planId === 'A');
+    const bIdx = acts.findIndex(a => a.planId === 'B');
+    const crowdedTime = 0; // 把 A 放到 time 0，占住 t1
+    sol.move(aIdx, crowdedTime);
+    occ.place(aIdx, crowdedTime, -1);
+
+    const emptyTime = 3; // t1 在 time 3 空闲
+    const weights = scoreCandidates(ctx, bIdx, [crowdedTime, emptyTime], occ, sol);
+    assert.ok(weights[1] > weights[0],
+        `空闲格权重应高于被占格，实际 crowded=${weights[0]} empty=${weights[1]}`);
 });

@@ -54,8 +54,13 @@ export function scoreCandidates(ctx, idx, candidates, occ, solution) {
     const weights = new Array(candidates.length);
     for (let i = 0; i < candidates.length; i++) {
         const start = candidates[i];
-        const slotPressure = estimateSlotPressure(ctx, idx, start, occ)
+        const rawPressure = estimateSlotPressure(ctx, idx, start, occ)
             + sumSoftPressure(softs, idx, start, solution, ctx);
+        // 归一化只为压制极端原始累加值（防热点格无界膨胀），denom=1 是温和压缩：
+        // 大值被压（100→50），小值保留区分度（0→0,1→1,2→1,3→2）。
+        // 不能用 candidates.length：平方项会把常见小整数压力全压成 0，候选权重坍缩成相等，
+        // 使加权随机退化为均匀随机，抹平 original-pressure 的拥挤度分级。
+        const slotPressure = normalizePressure(rawPressure, 1);
         weights[i] = candidateScore({ total: 1000, slotPressure, workMetric });
         if (weights[i] < 1) weights[i] = 1; // 保证可被抽中
     }
