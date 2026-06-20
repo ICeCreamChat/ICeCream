@@ -49,3 +49,11 @@ export { importLegacyProject } from './importers/legacy-project.js';
 export { importExcelPlans } from './importers/excel.js';
 export { importCrystalCloneSeed } from './importers/crystal-mapping.js';
 export { importYqdTables } from './importers/yqd.js';
+
+// 诊断（Phase 4：归因解释 + 输入审计 + 修复建议草稿 + 报告聚合，纯只读层）
+export { explainUnplaced, explainHardConflicts, explainSoftViolations } from './diagnostics/explain.js';
+export {
+    auditProject, auditMissingObjects, auditUnitConsistency, auditImpossibleConstraints,
+} from './diagnostics/audit.js';
+export { suggestForUnplaced, suggestForConflict, suggestForAudit } from './diagnostics/suggest.js';
+export { buildDiagnostics } from './diagnostics/report.js';
