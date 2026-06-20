@@ -33,6 +33,7 @@ uploads/*
 !uploads/.gitkeep
 data/timetable/*
 !data/timetable/.gitkeep
+data/timetable-v2/*
 
 # Manim outputs
 manim-service/media/
@@ -68,6 +69,9 @@ test_students_60.csv
 /public/js/studio/*
 !/public/js/studio/
 !/public/js/studio/manim-studio-canvas.js
+# timetable-v2 工作台 bundle（React-Konva 网格，构建产物，按 studio 先例提交以便开箱即用）
+!/public/js/tools/timetable-v2/dist/
+!/public/js/tools/timetable-v2/dist/workbench.bundle.js
 /index.html
 /tsconfig.json
 /vite.config.ts

@@ -6,7 +6,7 @@
  */
 
 // Phase 6 真实路由就绪后置 false（或由构建注入）。
-export const USE_MOCK = true;
+export const USE_MOCK = false;
 
 const REASON_MESSAGES = {
     version_conflict: '项目已被其他窗口修改，请刷新后重试。',
@@ -35,7 +35,7 @@ export function messageForReason(reason, fallback = '请求失败') {
  * @returns {Promise<any>} data
  */
 export async function requestV2(path, options = {}) {
-    const response = await fetch(`/api/timetable-v2${path}`, {
+    const response = await fetch(`/api/tools/timetable-v2${path}`, {
         ...options,
         headers: {
             ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),

@@ -255,7 +255,7 @@ test('seating planner exposes a feedback entry before the tool theme toggle', as
   assert.match(launcherSource, /tool\.id === 'seating'/);
   assert.match(launcherSource, /openFeedbackDialog/);
   assert.match(launcherSource, /const moduleVersion = encodeURIComponent\(window\.ICeCream\?\.assetVersion \|\| Date\.now\(\)\)/);
-  assert.match(launcherSource, /import\(`\.\/\$\{tool\.module\}\.js\?v=\$\{moduleVersion\}`\)/);
+  assert.match(launcherSource, /`\.\/\$\{tool\.module\}\.js\?v=\$\{moduleVersion\}`/);
 
   assert.match(plannerSource, /openFeedbackDialog/);
   assert.match(plannerSource, /buildFeedbackSnapshot/);

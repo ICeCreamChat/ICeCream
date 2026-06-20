@@ -22,28 +22,36 @@ import { sampleDiagnostics } from './mock/diagnostics.sample.js';
 // ───────────────────────── 读接口 ─────────────────────────
 // 只读取后端真相，前端不缓存可重算的派生状态（冲突 / 候选位）。
 
-/** 读取项目（domain normalize 结果）。 */
+/** 读取项目（后端 /bootstrap 返回 {project, needsMigration, capabilities}）。 */
 export async function getProject() {
     if (USE_MOCK) return sampleProject;
-    return requestV2('/project');
+    const boot = await requestV2('/bootstrap');
+    return boot?.project ?? null;
 }
 
-/** 读取当前解（placements / unplaced / hardConflicts / softScore / stats）。 */
+/** 读取 bootstrap 全量（含 needsMigration / capabilities），供工作台初始化。 */
+export async function getBootstrap() {
+    if (USE_MOCK) return { project: sampleProject, needsMigration: false, capabilities: {} };
+    return requestV2('/bootstrap');
+}
+
+/** 当前解：后端无持久化 solution 读路由，解经 solve() 获得；未求解时返回 null。 */
 export async function getSolution() {
     if (USE_MOCK) return sampleSolution;
-    return requestV2('/solution');
+    return null;
 }
 
-/** 读取诊断报告（items / byObject / suggestions / summary）。 */
+/** 诊断报告：经 solve() 结果的 diagnostics 字段或 diagnose() 获得；无解时返回 null。 */
 export async function getDiagnostics() {
     if (USE_MOCK) return sampleDiagnostics;
-    return requestV2('/diagnostics');
+    return null;
 }
 
-/** 读取求解任务状态（进度轮询）。 */
-export async function getSolverJob() {
+/** 读取后台优化任务状态（Timefold）。需 jobId。 */
+export async function getSolverJob(jobId) {
     if (USE_MOCK) return { status: 'done', progress: 100, softScore: sampleSolution.softScore, stats: sampleSolution.stats };
-    return requestV2('/solver/job');
+    if (!jobId) return null;
+    return requestV2(`/schedule/jobs/${encodeURIComponent(jobId)}`);
 }
 
 // ───────────────────────── 写入口（唯一） ─────────────────────────
@@ -59,52 +67,53 @@ export async function getSolverJob() {
  */
 export async function commitRules(rawDraft) {
     if (USE_MOCK) {
-        // 模拟后端接受草稿：回放 project 桩（真实后端会返回 normalize 后的新 project）。
-        // 这里不做任何校验 / 构造，只是把桩当作「后端 normalize 结果」回放。
         return sampleProject;
     }
-    return requestV2('/rules/commit', {
+    // 后端 /rules：把规则原始输入并入 project.constraints 经 createProject 校验后返回新 project。
+    return requestV2('/rules', {
         method: 'POST',
-        body: JSON.stringify({ draft: rawDraft }),
+        body: JSON.stringify(rawDraft && rawDraft.project ? rawDraft : { rules: rawDraft }),
     });
 }
 
 /**
  * 提交手动调整（移动 / 锁定课节等原始操作意图）。
- * @param {object} payload 原始调整意图
- * @returns {Promise<object>} 更新后的 solution 引用
+ * 注：V2 后端手动调整路由尚未提供（不在 Phase 6 e2e 核心门禁内），
+ * 真实模式下经 /schedule/run 带调整意图重排，由后端校验后返回新解。
+ * @param {object} payload { project, adjustment }
+ * @returns {Promise<object>} 更新后的求解结果
  */
 export async function commitAdjustment(payload) {
     if (USE_MOCK) return sampleSolution;
-    return requestV2('/adjustment/commit', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-    });
-}
-
-/**
- * 发布 / 导出课表（经后端发布前校验）。
- * @param {object} payload 发布参数
- * @returns {Promise<object>} 发布结果
- */
-export async function publish(payload) {
-    if (USE_MOCK) return { published: true, solution: sampleSolution };
-    return requestV2('/publish', {
+    return requestV2('/schedule/run', {
         method: 'POST',
         body: JSON.stringify(payload || {}),
     });
 }
 
 /**
- * 触发求解（提交求解请求，由后端运行求解器）。
- * @param {object} opts 求解参数（seed / 迭代上限等原始入参）
- * @returns {Promise<object>} 求解任务句柄或结果
+ * 发布课表（经后端发布前校验：零硬冲突 + 无未排才可发布）。
+ * @param {object} payload { project, solution }
+ * @returns {Promise<object>} 发布结果
+ */
+export async function publish(payload) {
+    if (USE_MOCK) return { published: true, solution: sampleSolution };
+    return requestV2('/schedule/publish', {
+        method: 'POST',
+        body: JSON.stringify(payload || {}),
+    });
+}
+
+/**
+ * 触发求解（后端运行本地启发式求解器，立即返回解 + 诊断）。
+ * @param {object} opts { project, opts }
+ * @returns {Promise<object>} 求解结果（placements/unplaced/hardConflicts/softScore/diagnostics/stats）
  */
 export async function solve(opts) {
     if (USE_MOCK) {
         return { status: 'done', progress: 100, solution: sampleSolution, stats: sampleSolution.stats };
     }
-    return requestV2('/solve', {
+    return requestV2('/schedule/run', {
         method: 'POST',
         body: JSON.stringify(opts || {}),
     });

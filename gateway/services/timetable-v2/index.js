@@ -57,3 +57,10 @@ export {
 } from './diagnostics/audit.js';
 export { suggestForUnplaced, suggestForConflict, suggestForAudit } from './diagnostics/suggest.js';
 export { buildDiagnostics } from './diagnostics/report.js';
+
+// 导出（Phase 6：网格视图 + xlsx，前端渲染与导出共用单一真相源）
+export { buildGridView } from './export/grid.js';
+export { buildV2ExportXlsx, V2_XLSX_MIME } from './export/xlsx.js';
+
+// API（Phase 6：独立持久化 store，与旧 timetable 数据隔离）
+export { timetableV2Store, createTimetableV2Store } from './api/store.js';
