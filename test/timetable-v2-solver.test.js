@@ -192,3 +192,87 @@ test('pressure：scoreCandidates 让被占用格权重低于空闲格', () => {
     assert.ok(weights[1] > weights[0],
         `空闲格权重应高于被占格，实际 crowded=${weights[0]} empty=${weights[1]}`);
 });
+
+// ---- 教室资源硬可行性（修复 room_clash 假完成缺陷）----
+
+function roomProject(extra = {}) {
+    return createProject({
+        calendar: extra.calendar ?? { weekdays: 1, periodsPerDay: 1 },
+        classes: [{ id: 'c1', name: '一班' }, { id: 'c2', name: '二班' }],
+        teachers: [{ id: 't1', name: '张' }, { id: 't2', name: '李' }],
+        subjects: [{ id: 's1', name: '物理', category: 'lab', priority: 60 }],
+        rooms: extra.rooms ?? [{ id: 'r1', name: '物理实验室' }],
+        activityPlans: extra.activityPlans,
+        constraints: extra.constraints ?? [],
+    });
+}
+
+test('教室门禁1：两活动争一间专用教室一个时段 → 1排1未排，零硬冲突', () => {
+    const project = roomProject({
+        activityPlans: [
+            { id: 'a1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyUnits: 1, roomRequirements: ['r1'] },
+            { id: 'a2', classId: 'c2', subjectId: 's1', teacherId: 't2', weeklyUnits: 1, roomRequirements: ['r1'] },
+        ],
+    });
+    const r = solve(project, { seed: 1 });
+    assert.equal(r.hardConflicts.length, 0, '已排部分必须零硬冲突');
+    assert.equal(r.stats.unplaced, 1, '一个活动应进 unplaced');
+    assert.equal(r.stats.placed, 1);
+});
+
+test('教室门禁2：争同教室但有其他时段 → 构造/换位排出零硬冲突全解', () => {
+    const project = roomProject({
+        calendar: { weekdays: 1, periodsPerDay: 2 }, // 两个时段
+        activityPlans: [
+            { id: 'a1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyUnits: 1, roomRequirements: ['r1'] },
+            { id: 'a2', classId: 'c2', subjectId: 's1', teacherId: 't2', weeklyUnits: 1, roomRequirements: ['r1'] },
+        ],
+    });
+    const r = solve(project, { seed: 1 });
+    assert.equal(r.hardConflicts.length, 0);
+    assert.equal(r.stats.unplaced, 0, '两时段足够错开，应全排下');
+});
+
+test('教室门禁3：活动允许多教室 → 任一空闲即可排，不误判 blocker', () => {
+    const project = roomProject({
+        rooms: [{ id: 'r1', name: '实验室1' }, { id: 'r2', name: '实验室2' }],
+        activityPlans: [
+            { id: 'a1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyUnits: 1, roomRequirements: ['r1', 'r2'] },
+            { id: 'a2', classId: 'c2', subjectId: 's1', teacherId: 't2', weeklyUnits: 1, roomRequirements: ['r1', 'r2'] },
+        ],
+    });
+    const r = solve(project, { seed: 1 });
+    assert.equal(r.hardConflicts.length, 0);
+    assert.equal(r.stats.unplaced, 0, '两间教室够用，应全排下');
+});
+
+test('教室门禁4：锁定活动占专用教室 → 锁定不动，另一活动进 unplaced', () => {
+    const project = roomProject({
+        activityPlans: [
+            { id: 'a1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyUnits: 1, roomRequirements: ['r1'] },
+            { id: 'a2', classId: 'c2', subjectId: 's1', teacherId: 't2', weeklyUnits: 1, roomRequirements: ['r1'] },
+        ],
+        constraints: [{
+            id: 'lock', type: 'fixed_locked', strength: 'hard', weight: 100,
+            target: { classId: 'c1', subjectId: 's1', teacherId: 't1' },
+            params: { day: 1, period: 1, roomId: 'r1' }, source: 'a1 固定',
+        }],
+    });
+    const r = solve(project, { seed: 1 });
+    assert.equal(r.hardConflicts.length, 0, '零硬冲突');
+    assert.equal(r.stats.unplaced, 1, '另一活动进 unplaced');
+});
+
+test('教室门禁5：同 seed 的 times/rooms/unplaced 一致（复现性）', () => {
+    const mk = () => roomProject({
+        activityPlans: [
+            { id: 'a1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyUnits: 1, roomRequirements: ['r1'] },
+            { id: 'a2', classId: 'c2', subjectId: 's1', teacherId: 't2', weeklyUnits: 1, roomRequirements: ['r1'] },
+        ],
+    });
+    const r1 = solve(mk(), { seed: 7 });
+    const r2 = solve(mk(), { seed: 7 });
+    assert.deepEqual(Array.from(r1.solution.times), Array.from(r2.solution.times));
+    assert.deepEqual(Array.from(r1.solution.rooms), Array.from(r2.solution.rooms));
+    assert.deepEqual(r1.unplaced.map(u => u.activityId), r2.unplaced.map(u => u.activityId));
+});

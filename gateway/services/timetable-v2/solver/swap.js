@@ -38,6 +38,7 @@ function swap(ctx, solution, idx, depth, state) {
     for (const s of scored) {
         if (s.blockers.length === 0) {
             const room = chooseRoom(ctx, idx, s.start, state);
+            if (room === null) continue; // 无空闲教室，非真正零冲突位
             solution.move(idx, s.start, room);
             state.occ.place(idx, s.start, room);
             return true;
@@ -55,7 +56,7 @@ function swap(ctx, solution, idx, depth, state) {
         const restoreLen = solution.historyLength;
         const ejected = [];
 
-        // 弹出全部 blocker（含同教师冲突行——blockersAt 已含教师维度）
+        // 弹出全部 blocker（含同教师冲突行 + 教室占用者——blockersAt 已含教师/班级/教室维度）
         for (const b of cand.blockers) {
             const bt = solution.timeOf(b);
             const br = solution.roomOf(b);
@@ -64,8 +65,13 @@ function swap(ctx, solution, idx, depth, state) {
             solution.move(b, -1, -1); // UNALLOCATED
             bumpTabu(state, b, bt);
         }
-        // 放入当前活动
+        // 放入当前活动（弹出 blocker 后教室应已腾出；若仍无则回滚此候选）
         const room = chooseRoom(ctx, idx, cand.start, state);
+        if (room === null) {
+            solution.undo(solution.historyLength - restoreLen);
+            state.occ.rebuildFrom(solution);
+            continue;
+        }
         solution.move(idx, cand.start, room);
         state.occ.place(idx, cand.start, room);
 

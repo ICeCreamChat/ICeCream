@@ -17,6 +17,7 @@ import { constructInitialSolution } from './construct.js';
 import { localImproveSoftScore } from './improve.js';
 import { softScoreOf } from './score.js';
 import { auditInputData } from './audit.js';
+import { buildDiagnostics } from '../diagnostics/report.js';
 
 /**
  * 求解入口。
@@ -82,6 +83,8 @@ export function solve(rawProject, opts = {}) {
         hardConflicts,
         softScore: softScoreOf(ctx, solution),
         audit,
+        // Phase 4：人类可读归因报告（可关闭以保留纯求解轻量返回）
+        diagnostics: opts.diagnostics === false ? null : buildDiagnostics(project, solution, ctx, hardConflicts),
         stats: {
             seed,
             total: activities.length,
