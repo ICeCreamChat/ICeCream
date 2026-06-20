@@ -206,7 +206,6 @@ test('report：极端样本均返回可读可定位原因，无静默失败', ()
 });
 
 test('report：教室不足样本定位到争用教室的活动', () => {
-    // 两活动需同一专用教室同时段 → room_clash
     const project = createProject({
         calendar: { weekdays: 5, periodsPerDay: 6 },
         classes: [{ id: 'c1', name: '一班' }, { id: 'c2', name: '二班' }],
@@ -229,3 +228,25 @@ test('report：教室不足样本定位到争用教室的活动', () => {
     assert.equal(roomConf.resourceName, '物理实验室', '定位到具体教室');
 });
 
+
+test('report：教室不足 → 未排归因 cause=room-shortage 且建议增加教室', () => {
+    const project = createProject({
+        calendar: { weekdays: 1, periodsPerDay: 1 },
+        classes: [{ id: 'c1', name: '一班' }, { id: 'c2', name: '二班' }],
+        teachers: [{ id: 't1', name: '张' }, { id: 't2', name: '李' }],
+        subjects: [{ id: 's1', name: '物理', category: 'lab', priority: 60 }],
+        rooms: [{ id: 'r1', name: '物理实验室' }],
+        activityPlans: [
+            { id: 'a1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyUnits: 1, roomRequirements: ['r1'] },
+            { id: 'a2', classId: 'c2', subjectId: 's1', teacherId: 't2', weeklyUnits: 1, roomRequirements: ['r1'] },
+        ],
+        constraints: [],
+    });
+    const r = solve(project, { seed: 1 });
+    const item = r.diagnostics.items.find(i => i.category === 'unplaced');
+    assert.equal(item.cause, 'room-shortage', '未排根因应识别为教室不足');
+    assert.match(item.message, /教室/, '原因点明教室');
+    const addRoom = r.diagnostics.suggestions.find(s => s.kind === 'add-room');
+    assert.ok(addRoom, '应有增加教室建议');
+    assert.match(addRoom.message, /物理实验室/, '建议指明具体教室');
+});

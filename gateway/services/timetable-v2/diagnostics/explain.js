@@ -100,6 +100,47 @@ function rootConstraintsFor(ctx, names, idx) {
 }
 
 /**
+ * 仅教师/班级维度的 blocker（不含教室维），用于区分"时段争用"与"教室不足"。
+ */
+function teacherClassBlockersAt(occ, idx, startTime) {
+    const m = occ.ctx.meta[idx];
+    const out = new Set();
+    const times = occ.ctx.occupiedTimes(idx, startTime);
+    for (const t of times) {
+        for (const tt of m.teacherIdxs) {
+            const set = occ.teacher.get(occ._key(tt, t));
+            if (set) for (const o of set) if (o !== idx) out.add(o);
+        }
+        for (const cc of m.classIdxs) {
+            const set = occ.klass.get(occ._key(cc, t));
+            if (set) for (const o of set) if (o !== idx) out.add(o);
+        }
+    }
+    return [...out];
+}
+
+/** 占用了该活动所需教室的活动（教室不足时的 blocker），定位到具体时段。 */
+function roomOccupantBlockers(ctx, names, solution, occ, idx, legal) {
+    const seen = new Set();
+    const out = [];
+    for (const start of legal) {
+        for (const b of occ.blockersAt(idx, start)) {
+            if (seen.has(b)) continue;
+            seen.add(b);
+            const bd = describeActivity(ctx, names, b);
+            const t = solution.timeOf(b);
+            const dp = t !== UNALLOCATED ? ctx.calendar.decodeTime(t) : null;
+            out.push({
+                activityId: bd.activityId, classes: bd.classes, teachers: bd.teachers, subject: bd.subject,
+                day: dp?.day ?? null, period: dp?.period ?? null,
+                timeLabel: t !== UNALLOCATED ? timeLabel(ctx, t) : null,
+            });
+        }
+    }
+    return out;
+}
+
+/**
  * 对每个未排活动给出可读归因。
  * @returns {Array<{activityId,planId,kind,teachers,classes,subject,rootConstraints?,blockers?,triedSlots?,message}>}
  */
@@ -125,13 +166,31 @@ export function explainUnplaced(project, solution, ctx) {
             };
         }
 
-        // all-blocked：有合法候选位但都被占。收集 blocker。
+        // all-blocked：有合法候选位但都被占。先判定主导根因：教室不足 vs 时段争用。
+        const m = ctx.meta[idx];
+        const needsRoom = m.roomIdxs && m.roomIdxs.length > 0;
+        let roomShortageSlots = 0;       // 教师/班级都空、仅因无空闲教室而不可行的候选数
         const blockerSet = new Set();
         const triedSlots = [];
         for (const start of legal) {
             const bs = occ.blockersAt(idx, start);
             triedSlots.push(timeLabel(ctx, start));
             for (const b of bs) blockerSet.add(b);
+            if (needsRoom) {
+                const tcBlockers = teacherClassBlockersAt(occ, idx, start);
+                if (tcBlockers.length === 0 && occ.freeRoomAt(idx, start) === null) roomShortageSlots++;
+            }
+        }
+        // 教室不足主导：每个合法候选位的教师/班级都空闲，唯独无空闲教室
+        if (needsRoom && roomShortageSlots === legal.length && legal.length > 0) {
+            const roomNames = m.roomIdxs.map(i => names.room.get(ctx.indexes.rooms.toId(i)) ?? ctx.indexes.rooms.toId(i));
+            return {
+                ...desc, planId, kind: 'all-blocked', cause: 'room-shortage',
+                rooms: roomNames,
+                blockers: roomOccupantBlockers(ctx, names, solution, occ, idx, legal),
+                triedSlots,
+                message: `${desc.subject}（${desc.classes.join('、')} / ${desc.teachers.join('、')}）排不下：所需教室 ${roomNames.join('或')} 在其全部 ${legal.length} 个可用时段都被占满（教室资源不足）`,
+            };
         }
         if (blockerSet.size === 0) {
             // 有空位却未排：信息不足，不编造

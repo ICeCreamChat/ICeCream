@@ -73,13 +73,23 @@ export function suggestForUnplaced(explainItem) {
             }));
         }
     } else if (explainItem.kind === 'all-blocked') {
-        out.push(make('adjust-blocker', {
-            targetDiagnostics: [explainItem.activityId],
-            action: { type: 'adjust-competing-activities', target: { activityId: explainItem.activityId, blockers: (explainItem.blockers ?? []).map(b => b.activityId) } },
-            expectedRelief: '调整占位的竞争活动或放宽软约束，腾出候选时段',
-            impactScope: 'multi', confidence: 'medium',
-            message: `${explainItem.subject} 候选位被占，建议调整竞争活动或软约束`,
-        }));
+        if (explainItem.cause === 'room-shortage') {
+            out.push(make('add-room', {
+                targetDiagnostics: [explainItem.activityId],
+                action: { type: 'add-room', target: { activityId: explainItem.activityId, rooms: explainItem.rooms ?? [] } },
+                expectedRelief: `增加 ${(explainItem.rooms ?? []).join('或')} 类教室，或错开占用该教室的其他活动`,
+                impactScope: 'room', confidence: 'high',
+                message: `${explainItem.subject} 因教室不足排不下，建议增加 ${(explainItem.rooms ?? []).join('或')} 或调整占用该教室的活动`,
+            }));
+        } else {
+            out.push(make('adjust-blocker', {
+                targetDiagnostics: [explainItem.activityId],
+                action: { type: 'adjust-competing-activities', target: { activityId: explainItem.activityId, blockers: (explainItem.blockers ?? []).map(b => b.activityId) } },
+                expectedRelief: '调整占位的竞争活动或放宽软约束，腾出候选时段',
+                impactScope: 'multi', confidence: 'medium',
+                message: `${explainItem.subject} 候选位被占，建议调整竞争活动或软约束`,
+            }));
+        }
     }
     return out;
 }
