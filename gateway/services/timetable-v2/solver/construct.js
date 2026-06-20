@@ -13,7 +13,6 @@ import { OccupancyIndex, legalStartTimes } from './placement.js';
 import { scoreCandidates } from './pressure.js';
 import { resolveByRecursiveSwap } from './swap.js';
 import { shouldEnforce } from '../constraints/base.js';
-import { NO_ROOM } from '../domain/calendar.js';
 
 /**
  * 构造初始解。
@@ -86,6 +85,8 @@ export function placeActivity(ctx, solution, idx, state) {
     const pick = weightedPick(state.rng, weights);
     const start = pool[pick >= 0 ? pick : 0];
     const finalRoom = chooseRoom(ctx, idx, start, state);
+    // blockersAt 已把"无空闲教室"计入 blocker，故 free 候选必有教室；null 仅防御性兜底。
+    if (finalRoom === null) return false;
 
     solution.move(idx, start, finalRoom);
     state.occ.place(idx, start, finalRoom);
@@ -111,18 +112,9 @@ function violatesEnforced(enforced, idx, start, solution, ctx) {
 }
 
 /**
- * 教室选择（简化版）：从 allowedRooms 里选一个在该 time 空闲的；无需求则 NO_ROOM。
+ * 教室选择：从 allowedRooms 里选一个在该 time 空闲的；无需求返回 NO_ROOM。
+ * 需要教室但全被占时返回 null（硬不可行信号，调用方须据此判定该候选位不可用）。
  */
 export function chooseRoom(ctx, idx, start, state) {
-    const rooms = ctx.meta[idx].roomIdxs;
-    if (!rooms || rooms.length === 0) return NO_ROOM;
-    for (const r of rooms) {
-        let free = true;
-        for (const t of ctx.occupiedTimes(idx, start)) {
-            const set = state.occ.room.get(r * 100000 + t);
-            if (set && set.size > 0) { free = false; break; }
-        }
-        if (free) return r;
-    }
-    return rooms[0]; // 都不空也先占第一个（room_clash 会在检测时暴露，留给 swap/improve）
+    return state.occ.freeRoomAt(idx, start);
 }

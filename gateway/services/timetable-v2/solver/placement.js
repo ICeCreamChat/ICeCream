@@ -54,7 +54,6 @@ export class OccupancyIndex {
     place(idx, startTime, room) {
         this._apply(idx, startTime, true);
         if (room !== undefined && room !== NO_ROOM && room >= 0) {
-            const m = this.ctx.meta[idx];
             for (const t of this.ctx.occupiedTimes(idx, startTime)) {
                 this._touch(this.room, room, t, idx, true);
             }
@@ -89,7 +88,55 @@ export class OccupancyIndex {
             for (const tt of m.teacherIdxs) this._collect(this.teacher, tt, t, idx, m.weekPattern, out);
             for (const cc of m.classIdxs) this._collect(this.klass, cc, t, idx, m.weekPattern, out);
         }
+        // 教室维：活动需要教室且所有允许教室在该时段全被占用时，
+        // 把"占用者最少的那间教室"的占用活动并入 blocker，使换位可通过弹出它们腾出教室。
+        const rooms = m.roomIdxs;
+        if (rooms && rooms.length > 0) {
+            if (this.freeRoomAt(idx, startTime) === null) {
+                const occupants = this._leastOccupiedRoomBlockers(idx, times);
+                for (const o of occupants) out.add(o);
+            }
+        }
         return [...out];
+    }
+
+    /**
+     * 返回该活动在 startTime 的一间空闲教室下标；
+     * 无教室需求返回 NO_ROOM；需要教室但全被占返回 null（硬不可行信号）。
+     */
+    freeRoomAt(idx, startTime) {
+        const rooms = this.ctx.meta[idx].roomIdxs;
+        if (!rooms || rooms.length === 0) return NO_ROOM;
+        const times = this.ctx.occupiedTimes(idx, startTime);
+        for (const r of rooms) {
+            if (this._roomFreeAt(r, times, idx)) return r;
+        }
+        return null;
+    }
+
+    _roomFreeAt(room, times, selfIdx) {
+        for (const t of times) {
+            const set = this.room.get(this._key(room, t));
+            if (set) {
+                for (const o of set) if (o !== selfIdx) return false;
+            }
+        }
+        return true;
+    }
+
+    /** 占用者最少的允许教室的占用活动集合（供换位弹出以腾出教室）。 */
+    _leastOccupiedRoomBlockers(idx, times) {
+        const rooms = this.ctx.meta[idx].roomIdxs;
+        let best = null;
+        for (const r of rooms) {
+            const occ = new Set();
+            for (const t of times) {
+                const set = this.room.get(this._key(r, t));
+                if (set) for (const o of set) if (o !== idx) occ.add(o);
+            }
+            if (best === null || occ.size < best.size) best = occ;
+        }
+        return best ? [...best] : [];
     }
 
     _collect(map, res, time, selfIdx, selfWp, out) {
