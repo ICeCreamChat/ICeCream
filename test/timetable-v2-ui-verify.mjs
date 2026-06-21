@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { chromium } from 'playwright-core';
+import { sampleProject } from '../public/js/tools/timetable-v2/api/mock/project.sample.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
@@ -77,6 +78,25 @@ const server = http.createServer((req, res) => {
         fs.createReadStream(bundlePath)
             .on('error', () => { res.writeHead(500); res.end('bundle unavailable'); })
             .pipe(res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' }));
+        return;
+    }
+    if (urlPath === '/api/tools/timetable-v2/bootstrap') {
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({
+            success: true,
+            data: {
+                project: sampleProject,
+                needsMigration: false,
+                capabilities: {
+                    solver: true,
+                    diagnostics: true,
+                    gridView: true,
+                    xlsxExport: true,
+                    importSources: ['legacy', 'excel', 'crystal', 'yqd'],
+                    timefold: false,
+                },
+            },
+        }));
         return;
     }
     const filePath = path.join(ROOT, 'public', urlPath);

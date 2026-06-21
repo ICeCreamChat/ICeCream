@@ -20,40 +20,36 @@ test('gateway app can be constructed without starting the HTTP listener', () => 
     assert.equal(app.get('trust proxy'), 1);
 });
 
-test('gateway mounts timetable constraint chat APIs under tools timetable routes', async () => {
+test('gateway mounts timetable V2 APIs and legacy routes are removed', async () => {
     const app = createGatewayApp({ isDev: false });
     const server = app.listen(0);
     await new Promise(resolve => server.once('listening', resolve));
     const { port } = server.address();
 
     try {
-        const response = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/constraints/chat/init`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                constraints: [{
-                    id: 'draft-1',
-                    type: 'teacher_daily_limit',
-                    targetType: 'teacher',
-                    targetId: 't_math',
-                    targetName: 'Math Teacher',
-                    value: 4,
-                    status: 'effective',
-                }],
-                project: {
-                    teachers: [{ id: 't_math', name: 'Math Teacher' }],
-                    classes: [{ id: 'c1', name: '1' }],
-                    subjects: [{ id: 'math', name: 'Math' }],
-                },
-            }),
+        // V2 bootstrap endpoint should be mounted and return proper structure
+        const response = await fetch(`http://127.0.0.1:${port}/api/tools/timetable-v2/bootstrap`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
         });
-        const payload = await response.json();
 
         assert.equal(response.status, 200);
+        assert.ok(response.headers.get('content-type').includes('application/json'));
+
+        const payload = await response.json();
         assert.equal(payload.success, true);
-        assert.match(payload.data.conversationId, /^conv_/);
-        assert.match(payload.data.welcomeMessage, /1/);
-        assert.equal(payload.data.constraints.length, 1);
+        assert.ok(payload.data);
+        assert.ok('project' in payload.data);
+        assert.ok('needsMigration' in payload.data);
+        assert.ok('capabilities' in payload.data);
+
+        // Legacy constraint chat route should return 404 (removed in Phase 7)
+        const legacyResponse = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/constraints/chat/init`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        assert.equal(legacyResponse.status, 404);
     } finally {
         await new Promise(resolve => server.close(resolve));
     }

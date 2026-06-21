@@ -16,7 +16,7 @@ const TOOLS_CONFIG = [
         lucide: 'calendar-check',
         title: '智能排课',
         desc: '导入任课 · 一键生成',
-        module: 'timetable-planner'
+        module: 'timetable-v2/dist/workbench.bundle'
     },
     {
         id: 'picker',
