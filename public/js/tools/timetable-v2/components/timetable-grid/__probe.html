@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<!--
+  timetable-v2 / components / timetable-grid / __probe.html
+
+  仅供本地浏览器验证（非生产）。先用 esbuild 把 __probe.entry.jsx 打包成
+  __probe.bundle.js（见 __probe.entry.jsx 顶部注释的命令），再用浏览器打开本页，
+  应能看到 5×6 课表网格：单节单元格、a2 的 2 连堂跨双行高亮块、物理活动标注教室。
+  点击单元格在控制台打印 [probe] onCellClick（验证「事件回调出」）。
+-->
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>课表网格验证 · timetable-v2</title>
+    <style>
+        body { margin: 0; padding: 24px; font-family: system-ui, sans-serif; background: #f8fafc; color: #0f172a; }
+        h1 { font-size: 16px; font-weight: 600; }
+        p { font-size: 13px; color: #64748b; }
+        #grid-root { display: inline-block; margin-top: 16px; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; padding: 8px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>课表网格验证</h1>
+    <p>需先打包：<code>node_modules/.bin/esbuild __probe.entry.jsx --bundle --format=esm --jsx=automatic --loader:.jsx=jsx --outfile=__probe.bundle.js</code></p>
+    <div id="grid-root"></div>
+    <script type="module" src="./__probe.bundle.js"></script>
+</body>
+</html>

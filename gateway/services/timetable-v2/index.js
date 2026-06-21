@@ -18,6 +18,7 @@ export { Constraint, STRENGTH, shouldEnforce } from './constraints/base.js';
 export * from './constraints/dsl.js';
 export { register, getConstraintClass, hasConstraint, registeredTypes } from './constraints/registry.js';
 export { buildContext, detectHardConflicts } from './constraints/index-builder.js';
+export { parseNaturalLanguageConstraints } from './constraints/nl-parser.js';
 
 // 硬约束（import 触发 register 自注册）
 import './constraints/hard/teacher-clash.js';
@@ -29,10 +30,11 @@ import './constraints/hard/fixed-locked.js';
 import './constraints/hard/consecutive.js';
 import './constraints/hard/valid-timeslot.js';
 
-// 软约束（MVP：主科上午/同科分散/教师日上限）
+// 软约束（主科上午/同科分散/教师日与连续上限/科目偏好节次）
 import './constraints/soft/morning-subjects.js';
 import './constraints/soft/spread-subjects.js';
 import './constraints/soft/teacher-limits.js';
+import './constraints/soft/subject-preferred-periods.js';
 
 export { isLocked } from './constraints/hard/fixed-locked.js';
 
@@ -57,3 +59,10 @@ export {
 } from './diagnostics/audit.js';
 export { suggestForUnplaced, suggestForConflict, suggestForAudit } from './diagnostics/suggest.js';
 export { buildDiagnostics } from './diagnostics/report.js';
+
+// 导出（Phase 6：网格视图 + xlsx，前端渲染与导出共用单一真相源）
+export { buildGridView } from './export/grid.js';
+export { buildV2ExportXlsx, V2_XLSX_MIME } from './export/xlsx.js';
+
+// API（Phase 6：独立持久化 store，与旧 timetable 数据隔离）
+export { timetableV2Store, createTimetableV2Store } from './api/store.js';

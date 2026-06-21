@@ -12,6 +12,7 @@
         "solver:test": "cd solver && .\\mvnw.cmd test",
         "solver:build": "cd solver && .\\mvnw.cmd package -DskipTests",
         "build:studio": "esbuild src/manim-studio/main.jsx --bundle --format=iife --global-name=ManimStudioCanvas --outfile=public/js/studio/manim-studio-canvas.js --jsx=automatic --loader:.jsx=jsx",
+        "build:timetable-v2": "esbuild public/js/tools/timetable-v2/entry.js --bundle --format=esm --outfile=public/js/tools/timetable-v2/dist/workbench.bundle.js --jsx=automatic --loader:.jsx=jsx",
         "test": "node --test test/*.js"
     },
     "keywords": [
