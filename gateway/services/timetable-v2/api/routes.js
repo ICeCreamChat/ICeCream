@@ -23,10 +23,8 @@ import {
     importCrystalCloneSeed,
     importYqdTables,
     timetableV2Store,
+    parseNaturalLanguageConstraints,
 } from '../index.js';
-import {
-    getTimetableOptimizationJob,
-} from '../../timetable-optimization-jobs.js';
 
 /** 响应壳：成功。 */
 function ok(res, data) {
@@ -135,7 +133,8 @@ export function createTimetableV2Router(options = {}) {
     });
 
     // POST /rules：把规则原始输入并入 project.constraints，经 createProject 校验。
-    // 规则规范化即"约束 DSL 合并 + schema 校验"，全部由 core 的 createProject 承担。
+    // 接受两种输入：已结构化的 DSL（rules:[...] / rules.constraints）与自然语言原文
+    // （rules.nl / naturalLanguage），后者先经 nl-parser 解析为 DSL，unsupported 项随响应返回。
     router.post('/rules', (req, res) => {
         try {
             const project = req.body?.project;
@@ -144,17 +143,32 @@ export function createTimetableV2Router(options = {}) {
                 return;
             }
             const incoming = req.body?.rules;
-            const ruleList = Array.isArray(incoming)
+            const structured = Array.isArray(incoming)
                 ? incoming
                 : Array.isArray(incoming?.constraints)
                     ? incoming.constraints
                     : [];
+            // 自然语言原文：body.naturalLanguage 或 rules.nl
+            const nlText = typeof req.body?.naturalLanguage === 'string'
+                ? req.body.naturalLanguage
+                : (typeof incoming?.nl === 'string' ? incoming.nl : '');
+            let parsed = [];
+            let unsupported = [];
+            if (nlText.trim()) {
+                const result = parseNaturalLanguageConstraints(nlText, project);
+                parsed = result.constraints;
+                unsupported = result.unsupported;
+            }
             const merged = {
                 ...project,
-                constraints: [...(Array.isArray(project.constraints) ? project.constraints : []), ...ruleList],
+                constraints: [
+                    ...(Array.isArray(project.constraints) ? project.constraints : []),
+                    ...structured,
+                    ...parsed,
+                ],
             };
             const validated = createProject(merged); // 校验失败抛错 → catch
-            ok(res, { project: validated });
+            ok(res, { project: validated, parsed, unsupported });
         } catch (error) {
             fail(res, error, 400, { errors: error.validationErrors });
         }
@@ -273,14 +287,11 @@ export function createTimetableV2Router(options = {}) {
         }
     });
 
-    // GET /schedule/jobs/:jobId：查 Timefold 后台优化任务（采纳为显式动作，此处仅查询）。
+    // GET /schedule/jobs/:jobId：查 Timefold 后台优化任务。
+    // V2→Timefold 桥尚未接入（决策 5：本地求解器先满足，Timefold 为后续可选优化器），
+    // 当前不创建后台任务，故恒返回 job_not_found，待 V2 Timefold 适配后再接真实任务存储。
     router.get('/schedule/jobs/:jobId', (req, res) => {
-        const job = getTimetableOptimizationJob(req.params.jobId);
-        if (!job) {
-            fail(res, new Error('排课优化任务不存在'), 404, { job: null, reason: 'job_not_found' });
-            return;
-        }
-        ok(res, { job });
+        fail(res, new Error('排课优化任务不存在（V2 Timefold 后台优化尚未接入）'), 404, { job: null, reason: 'job_not_found' });
     });
 
     return router;
