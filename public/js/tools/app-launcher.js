@@ -229,24 +229,11 @@ class AppLauncher {
     }
 
     async _resolveToolModulePath(tool, moduleVersion) {
-        // 智能排课：按 TIMETABLE_V2_ENABLED 回退开关在 V2 工作台与旧版间切换。
+        // 智能排课已全量切换到 V2 工作台（Phase 7 删除旧版，不再回退）。
         if (tool.id === 'timetable') {
-            const v2 = await this._isTimetableV2Enabled();
-            if (v2) return `./timetable-v2/dist/workbench.bundle.js?v=${moduleVersion}`;
+            return `./timetable-v2/dist/workbench.bundle.js?v=${moduleVersion}`;
         }
         return `./${tool.module}.js?v=${moduleVersion}`;
-    }
-
-    async _isTimetableV2Enabled() {
-        if (this._timetableV2Flag !== undefined) return this._timetableV2Flag;
-        try {
-            const res = await fetch('/api/health');
-            const data = await res.json();
-            this._timetableV2Flag = data?.timetableV2Enabled !== false;
-        } catch {
-            this._timetableV2Flag = true; // 健康检查失败时默认 V2（与后端默认一致）
-        }
-        return this._timetableV2Flag;
     }
 
     _renderToolIcon(tool) {
