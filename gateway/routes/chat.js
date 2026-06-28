@@ -3,6 +3,7 @@
  */
 
 import express from 'express';
+import { sendHttpError } from '../middleware/error-handler.js';
 const router = express.Router();
 
 // POST /api/chat
@@ -12,7 +13,7 @@ router.post('/', async (req, res) => {
         return chatHandler.handleChat(req, res);
     } catch (error) {
         console.error('[Chat Route] Error:', error);
-        res.status(500).json({ success: false, error: error.message });
+        return sendHttpError(res, error, { fallbackMessage: '聊天服务暂时不可用' });
     }
 });
 
@@ -23,7 +24,7 @@ router.post('/stream', async (req, res) => {
         return chatHandler.handleChatStream(req, res);
     } catch (error) {
         console.error('[Chat Route] Stream Error:', error);
-        res.status(500).json({ success: false, error: error.message });
+        return sendHttpError(res, error, { fallbackMessage: '聊天流式服务暂时不可用' });
     }
 });
 

@@ -4,6 +4,7 @@
 
 import express from 'express';
 import { upload } from '../middleware/upload.js';
+import { sendHttpError } from '../middleware/error-handler.js';
 const router = express.Router();
 
 // POST /api/solver - 解题
@@ -13,7 +14,7 @@ router.post('/', upload.single('image'), async (req, res) => {
         return solverHandler.handleSolve(req, res);
     } catch (error) {
         console.error('[Solver Route] Error:', error);
-        res.status(500).json({ success: false, error: error.message });
+        return sendHttpError(res, error, { fallbackMessage: '解题服务暂时不可用' });
     }
 });
 
@@ -24,7 +25,7 @@ router.post('/chat', async (req, res) => {
         return solverHandler.handleFollowUp(req, res);
     } catch (error) {
         console.error('[Solver Route] Chat Error:', error);
-        res.status(500).json({ success: false, error: error.message });
+        return sendHttpError(res, error, { fallbackMessage: '解题追问服务暂时不可用' });
     }
 });
 

@@ -8,6 +8,7 @@ import { adjustGeoGebraStudio, createGeoGebraAgentStep, createGeoGebraPlan, hasG
 import { createGeoGebraImagePlan } from '../../services/geogebra/geogebra-image-agent.js';
 import { getGeoGebraManualIndexStatus, normalizeManualSearchLimit, searchGeoGebraManual } from '../../services/geogebra/manual-search.js';
 import { createGeoGebraCoursewarePackage, GEOGEBRA_COURSEWARE_MIME } from '../../services/geogebra/courseware-export.js';
+import { sendHttpError } from '../middleware/error-handler.js';
 
 const router = express.Router();
 const GEOGEBRA_DEPLOY_URL = new URL('../../public/vendor/geogebra/deployggb.js', import.meta.url);
@@ -23,10 +24,9 @@ async function geogebraAssetsAvailable() {
 }
 
 function sendGeoGebraError(res, error) {
-    const status = Number.isInteger(error.status) ? error.status : 500;
-    return res.status(status).json({
-        success: false,
-        error: error.message || 'GeoGebra 服务暂时不可用',
+    return sendHttpError(res, error, {
+        status: Number.isInteger(error.status) ? error.status : 500,
+        fallbackMessage: 'GeoGebra 服务暂时不可用',
     });
 }
 
