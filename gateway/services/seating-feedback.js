@@ -1,4 +1,4 @@
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { gatewayPaths } from '../config/paths.js';
@@ -7,6 +7,7 @@ import { redactSensitiveText, sanitizeDiagnosticValue } from './diagnostic-redac
 const FEEDBACK_FILE = 'seating-feedback.jsonl';
 const FEEDBACK_ASSET_DIR = 'seating-feedback-assets';
 const MAX_SCREENSHOT_DATA_URL_LENGTH = 1_500_000;
+const DEFAULT_FEEDBACK_RETENTION_DAYS = 180;
 const CATEGORY_LABELS = {
     understand: '排座要求没听懂',
     result: '座位结果不对',
@@ -150,6 +151,68 @@ export function getFeedbackLogPath(env = process.env) {
 function getFeedbackAssetPath(fileName, env = process.env) {
     const safeName = path.basename(String(fileName || '').replace(/\\/g, '/'));
     return path.join(path.dirname(getFeedbackLogPath(env)), FEEDBACK_ASSET_DIR, safeName);
+}
+
+export function getFeedbackAssetDir(env = process.env) {
+    return path.join(path.dirname(getFeedbackLogPath(env)), FEEDBACK_ASSET_DIR);
+}
+
+export function getFeedbackRetentionDays(env = process.env) {
+    const raw = env.FEEDBACK_RETENTION_DAYS;
+    if (raw === '0') return 0;
+    const days = Number(raw);
+    if (!Number.isFinite(days) || days <= 0) return DEFAULT_FEEDBACK_RETENTION_DAYS;
+    return Math.floor(Math.min(days, 3650));
+}
+
+function isExpiredIsoDate(value, cutoffMs) {
+    const time = Date.parse(value);
+    return Number.isFinite(time) && time < cutoffMs;
+}
+
+function parseFeedbackLine(line) {
+    try {
+        return JSON.parse(line);
+    } catch {
+        return null;
+    }
+}
+
+function collectFeedbackAssetName(record) {
+    const fileName = record?.raw?.screenshot?.fileName;
+    if (!fileName) return null;
+    return path.basename(String(fileName).replace(/\\/g, '/'));
+}
+
+async function safeUnlink(filePath) {
+    try {
+        await unlink(filePath);
+        return true;
+    } catch (error) {
+        if (error?.code === 'ENOENT') return false;
+        throw error;
+    }
+}
+
+async function cleanupOrphanFeedbackAssets(assetDir, cutoffMs, keptAssetNames) {
+    let removed = 0;
+    let entries = [];
+    try {
+        entries = await readdir(assetDir, { withFileTypes: true });
+    } catch (error) {
+        if (error?.code === 'ENOENT') return 0;
+        throw error;
+    }
+
+    for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        if (keptAssetNames.has(entry.name)) continue;
+        const filePath = path.join(assetDir, entry.name);
+        const info = await stat(filePath);
+        if (info.mtimeMs >= cutoffMs) continue;
+        if (await safeUnlink(filePath)) removed += 1;
+    }
+    return removed;
 }
 
 async function saveFeedbackScreenshotAsset(id, upload, env = process.env) {
@@ -329,5 +392,78 @@ export async function submitSeatingFeedback(options = {}) {
         emailSkippedReason: record.email?.skippedReason || null,
         emailError: record.email?.error || null,
         record,
+    };
+}
+
+export async function cleanupSeatingFeedback(options = {}) {
+    const env = options.env || process.env;
+    const now = options.now || new Date();
+    const retentionDays = options.retentionDays ?? getFeedbackRetentionDays(env);
+    if (!retentionDays || retentionDays <= 0) {
+        return {
+            skipped: true,
+            retentionDays,
+            removedRecords: 0,
+            removedAssets: 0,
+            keptRecords: 0,
+        };
+    }
+
+    const cutoffMs = now.getTime() - retentionDays * 24 * 60 * 60 * 1000;
+    const logPath = getFeedbackLogPath(env);
+    const assetDir = getFeedbackAssetDir(env);
+    let content = '';
+    try {
+        content = await readFile(logPath, 'utf8');
+    } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+        const removedAssets = await cleanupOrphanFeedbackAssets(assetDir, cutoffMs, new Set());
+        return {
+            skipped: false,
+            retentionDays,
+            removedRecords: 0,
+            removedAssets,
+            keptRecords: 0,
+        };
+    }
+
+    const keptLines = [];
+    const keptAssetNames = new Set();
+    const expiredAssetNames = new Set();
+    let removedRecords = 0;
+
+    for (const line of content.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        const record = parseFeedbackLine(line);
+        if (!record || !isExpiredIsoDate(record.createdAt, cutoffMs)) {
+            keptLines.push(line);
+            const keptAssetName = collectFeedbackAssetName(record);
+            if (keptAssetName) keptAssetNames.add(keptAssetName);
+            continue;
+        }
+
+        removedRecords += 1;
+        const expiredAssetName = collectFeedbackAssetName(record);
+        if (expiredAssetName) expiredAssetNames.add(expiredAssetName);
+    }
+
+    if (removedRecords > 0) {
+        const nextContent = keptLines.length ? `${keptLines.join('\n')}\n` : '';
+        await writeFile(logPath, nextContent, 'utf8');
+    }
+
+    let removedAssets = 0;
+    for (const assetName of expiredAssetNames) {
+        const filePath = path.join(assetDir, assetName);
+        if (await safeUnlink(filePath)) removedAssets += 1;
+    }
+    removedAssets += await cleanupOrphanFeedbackAssets(assetDir, cutoffMs, keptAssetNames);
+
+    return {
+        skipped: false,
+        retentionDays,
+        removedRecords,
+        removedAssets,
+        keptRecords: keptLines.length,
     };
 }

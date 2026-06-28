@@ -10,8 +10,8 @@ import {
 } from '../gateway/services/seating-roster.js';
 
 const ocrSourcePath = new URL('../gateway/services/ocr.js', import.meta.url);
-const toolsRoutePath = new URL('../gateway/routes/tools.js', import.meta.url);
-const plannerSourcePath = new URL('../public/js/tools/seating-planner.js', import.meta.url);
+const seatingRosterRoutePath = new URL('../gateway/routes/tools/seating/roster.js', import.meta.url);
+const rosterPanelPath = new URL('../public/js/tools/seating-planner/roster-panel.js', import.meta.url);
 
 test('seating image OCR prompts require height extraction', async () => {
   const source = await readFile(ocrSourcePath, 'utf8');
@@ -22,14 +22,14 @@ test('seating image OCR prompts require height extraction', async () => {
 });
 
 test('seating image import preserves recognized height end to end', async () => {
-  const routeSource = await readFile(toolsRoutePath, 'utf8');
-  const plannerSource = await readFile(plannerSourcePath, 'utf8');
+  const routeSource = await readFile(seatingRosterRoutePath, 'utf8');
+  const rosterSource = await readFile(rosterPanelPath, 'utf8');
 
   assert.match(routeSource, /normalizeSeatingStudents\(students\)/);
   assert.match(routeSource, /mergeStudentDetails\(studentsWithIds, parsed\)/);
   assert.match(routeSource, /buildImageImportReview\(studentsWithIds\)/);
-  assert.match(plannerSource, /s\.height !== undefined/);
-  assert.match(plannerSource, /line \+= ` \$\{s\.height\}`/);
+  assert.match(rosterSource, /s\.height !== undefined/);
+  assert.match(rosterSource, /line \+= ` \$\{s\.height\}`/);
 });
 
 test('seating image import can merge OCR table heights into VLM students', () => {

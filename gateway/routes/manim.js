@@ -1,7 +1,12 @@
 import express from 'express';
 import { upload } from '../middleware/upload.js';
+import { requireLocalApiToken } from '../security.js';
 
 const router = express.Router();
+const adminGuard = requireLocalApiToken({
+    token: () => process.env.ICECREAM_LOCAL_TOKEN || process.env.ICECREAM_ADMIN_TOKEN || '',
+    allowLoopback: true,
+});
 
 router.post('/', async (req, res) => {
     try {
@@ -71,7 +76,7 @@ router.get('/skills', async (req, res) => {
     }
 });
 
-router.get('/jobs', async (req, res) => {
+router.get('/jobs', adminGuard, async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');
         return manimClient.listJobs(req, res);
@@ -80,7 +85,7 @@ router.get('/jobs', async (req, res) => {
     }
 });
 
-router.get('/jobs/:jobId', async (req, res) => {
+router.get('/jobs/:jobId', adminGuard, async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');
         return manimClient.getJob(req, res);
@@ -89,7 +94,7 @@ router.get('/jobs/:jobId', async (req, res) => {
     }
 });
 
-router.post('/jobs/:jobId/cancel', async (req, res) => {
+router.post('/jobs/:jobId/cancel', adminGuard, async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');
         return manimClient.cancelJob(req, res);
@@ -98,7 +103,7 @@ router.post('/jobs/:jobId/cancel', async (req, res) => {
     }
 });
 
-router.get('/failures', async (req, res) => {
+router.get('/failures', adminGuard, async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');
         return manimClient.listFailures(req, res);
@@ -107,7 +112,7 @@ router.get('/failures', async (req, res) => {
     }
 });
 
-router.post('/failures/:eventId/replay', async (req, res) => {
+router.post('/failures/:eventId/replay', adminGuard, async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');
         return manimClient.replayFailure(req, res);
@@ -116,7 +121,7 @@ router.post('/failures/:eventId/replay', async (req, res) => {
     }
 });
 
-router.post('/reference-images', upload.single('image'), async (req, res) => {
+router.post('/reference-images', adminGuard, upload.single('image'), async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');
         return manimClient.uploadReferenceImage(req, res);
@@ -125,7 +130,7 @@ router.post('/reference-images', upload.single('image'), async (req, res) => {
     }
 });
 
-router.post('/patch', async (req, res) => {
+router.post('/patch', adminGuard, async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');
         return manimClient.patchScene(req, res);
@@ -134,7 +139,7 @@ router.post('/patch', async (req, res) => {
     }
 });
 
-router.post('/layout-rebuild', async (req, res) => {
+router.post('/layout-rebuild', adminGuard, async (req, res) => {
     try {
         const manimClient = await import('../../services/manim/manim-client.js');
         return manimClient.layoutRebuild(req, res);

@@ -53,6 +53,10 @@ async function postJson(baseUrl, route, body) {
     return { status: res.status, json };
 }
 
+function clone(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
 test('POST /project 合法→200{success:true}，缺字段→4xx+可读 error', async () => {
     const srv = await startServer();
     try {
@@ -60,6 +64,7 @@ test('POST /project 合法→200{success:true}，缺字段→4xx+可读 error', 
         assert.equal(okRes.status, 200);
         assert.equal(okRes.json.success, true);
         assert.equal(okRes.json.data.project.id, 'p_solve');
+        assert.equal(okRes.json.data.project.revision, 1);
 
         // 悬空引用：activityPlan 引用不存在 subject
         const bad = solvableProject();
@@ -128,30 +133,86 @@ test('POST /schedule/run→零硬冲突解；POST /diagnose→诊断报告', asy
     }
 });
 
-test('POST /schedule/publish 门禁：零冲突无未排可发布，有未排→reason', async () => {
+test('POST /project 使用 revision 防止旧窗口覆盖新项目', async () => {
+    const srv = await startServer();
+    try {
+        const first = await postJson(srv.baseUrl, '/project', solvableProject());
+        assert.equal(first.status, 200);
+        const stale = clone(first.json.data.project);
+
+        const fresh = { ...clone(first.json.data.project), name: 'fresh-name' };
+        const second = await postJson(srv.baseUrl, '/project', fresh);
+        assert.equal(second.status, 200);
+        assert.equal(second.json.data.project.revision, 2);
+
+        const staleRes = await postJson(srv.baseUrl, '/project', { ...stale, name: 'stale-name' });
+        assert.equal(staleRes.status, 409);
+        assert.equal(staleRes.json.data.reason, 'version_conflict');
+
+        const stored = await srv.store.loadProject();
+        assert.equal(stored.name, 'fresh-name');
+        assert.equal(stored.revision, 2);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('POST /schedule/publish 服务端重算：客户端声明不作为发布门禁', async () => {
     const srv = await startServer();
     try {
         const project = solvableProject();
         const result = solve(project, { diagnostics: false });
         const solution = {
             placements: result.placements,
-            unplaced: result.unplaced,
-            hardConflicts: result.hardConflicts,
+            unplaced: [{ activityId: 'fake-unplaced', reason: {} }],
+            hardConflicts: [{ type: 'fake_conflict' }],
             softScore: result.softScore,
         };
         const okRes = await postJson(srv.baseUrl, '/schedule/publish', { project, solution });
         assert.equal(okRes.status, 200);
         assert.equal(okRes.json.data.published, true);
+        assert.equal(okRes.json.data.solution.hardConflicts.length, 0);
+        assert.equal(okRes.json.data.solution.unplaced.length, 0);
+        assert.ok(okRes.json.data.publishedSnapshot.solutionHash);
+        assert.equal(okRes.json.data.project.revision, 1);
+        assert.ok(okRes.json.data.project.publishedSnapshot);
+    } finally {
+        await srv.close();
+    }
+});
 
-        const badSolution = { ...solution, unplaced: [{ activityId: 'x', reason: {} }] };
-        const failRes = await postJson(srv.baseUrl, '/schedule/publish', { project, solution: badSolution });
-        assert.equal(failRes.status, 422);
-        assert.equal(failRes.json.data.reason, 'unplaced_lessons');
+test('POST /schedule/publish 服务端重算：实际未排或硬冲突会拦截', async () => {
+    const srv = await startServer();
+    try {
+        const project = solvableProject();
+        const result = solve(project, { diagnostics: false });
+        const missingSolution = {
+            placements: result.placements.slice(1),
+            unplaced: [],
+            hardConflicts: [],
+            softScore: result.softScore,
+        };
+        const missing = await postJson(srv.baseUrl, '/schedule/publish', { project, solution: missingSolution });
+        assert.equal(missing.status, 422);
+        assert.equal(missing.json.data.reason, 'unplaced_lessons');
 
-        const conflictSolution = { ...solution, hardConflicts: [{ type: 'teacher_clash' }] };
-        const failHard = await postJson(srv.baseUrl, '/schedule/publish', { project, solution: conflictSolution });
-        assert.equal(failHard.status, 422);
-        assert.equal(failHard.json.data.reason, 'hard_conflicts_exist');
+        const conflictPlacements = result.placements.map(p => ({ ...p }));
+        const firstMath = conflictPlacements.find(p => p.activityId.startsWith('lp1#'));
+        const secondMath = conflictPlacements.find(p => p.activityId.startsWith('lp3#'));
+        assert.ok(firstMath && secondMath);
+        secondMath.day = firstMath.day;
+        secondMath.period = firstMath.period;
+        secondMath.roomId = firstMath.roomId;
+
+        const conflictSolution = {
+            placements: conflictPlacements,
+            unplaced: [],
+            hardConflicts: [],
+            softScore: result.softScore,
+        };
+        const conflict = await postJson(srv.baseUrl, '/schedule/publish', { project, solution: conflictSolution });
+        assert.equal(conflict.status, 422);
+        assert.equal(conflict.json.data.reason, 'hard_conflicts_exist');
     } finally {
         await srv.close();
     }

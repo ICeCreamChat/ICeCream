@@ -14,6 +14,7 @@
  */
 
 const STYLE_ID = 'ttv2-view-data-prep-style';
+let fieldIdSeq = 0;
 
 const STYLE_TEXT = `
 .ttv2-view { display: flex; flex-direction: column; gap: 16px;
@@ -58,6 +59,14 @@ function ensureStyle() {
     document.head.appendChild(style);
 }
 
+function bindLabel(label, control, prefix = 'ttv2-data-prep-field') {
+    if (!control.id) {
+        fieldIdSeq += 1;
+        control.id = `${prefix}-${fieldIdSeq}`;
+    }
+    label.htmlFor = control.id;
+}
+
 /**
  * 创建数据准备页。
  * @param {object} deps
@@ -91,6 +100,7 @@ export function createDataPrepView({ store, api }) {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
     fileInput.accept = '.xlsx,.xls,.csv';
+    bindLabel(fileLabel, fileInput);
     fileField.append(fileLabel, fileInput);
 
     const textField = document.createElement('div');
@@ -100,6 +110,7 @@ export function createDataPrepView({ store, api }) {
     const textarea = document.createElement('textarea');
     textarea.className = 'ttv2-view__textarea';
     textarea.placeholder = '例如：一班 语文 张老师 每周5节；一班 数学 李老师 每周4节连堂…';
+    bindLabel(textLabel, textarea);
     textField.append(textLabel, textarea);
 
     const actionRow = document.createElement('div');
@@ -227,7 +238,7 @@ export function createDataPrepView({ store, api }) {
                 rawText: text || undefined,
                 fileName: file ? file.name : undefined,
             };
-            const project = await api.commitRules(rawDraft);
+            const project = await api.commitRules({ project: store.getState().project, rules: rawDraft });
             store.dispatch('setProject', project);
             setMsg('原始输入已提交，项目摘要已更新。', 'ok');
         } catch (err) {

@@ -140,10 +140,14 @@ export function createPublishExportView({ store, api }) {
         publishBtn.disabled = true;
         setMsg('正在请求后端发布校验…', null);
         try {
-            const result = await api.publish({});
+            const state = store.getState();
+            const result = await api.publish({ project: state.project, solution: state.solution });
             // 后端返回发布结果（含校验通过后的 solution）；用其替换 store 引用。
             if (result && result.solution) {
                 store.dispatch('setSolution', result.solution);
+            }
+            if (result && result.project) {
+                store.dispatch('setProject', result.project);
             }
             published = true;
             history = [{ time: new Date().toLocaleString(), label: '课表已发布' }, ...history];

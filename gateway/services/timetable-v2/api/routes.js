@@ -25,6 +25,7 @@ import {
     timetableV2Store,
     parseNaturalLanguageConstraints,
 } from '../index.js';
+import { buildTrustedPublishResult } from './publish.js';
 
 /** 响应壳：成功。 */
 function ok(res, data) {
@@ -108,7 +109,7 @@ export function createTimetableV2Router(options = {}) {
             const saved = await store.saveProject(req.body);
             ok(res, { project: saved });
         } catch (error) {
-            fail(res, error, 400, { errors: error.validationErrors });
+            fail(res, error, error.statusCode || 400, error.data || { errors: error.validationErrors });
         }
     });
 
@@ -135,7 +136,7 @@ export function createTimetableV2Router(options = {}) {
     // POST /rules：把规则原始输入并入 project.constraints，经 createProject 校验。
     // 接受两种输入：已结构化的 DSL（rules:[...] / rules.constraints）与自然语言原文
     // （rules.nl / naturalLanguage），后者先经 nl-parser 解析为 DSL，unsupported 项随响应返回。
-    router.post('/rules', (req, res) => {
+    router.post('/rules', async (req, res) => {
         try {
             const project = req.body?.project;
             if (!project || typeof project !== 'object') {
@@ -168,9 +169,12 @@ export function createTimetableV2Router(options = {}) {
                 ],
             };
             const validated = createProject(merged); // 校验失败抛错 → catch
-            ok(res, { project: validated, parsed, unsupported });
+            const saved = await store.saveProject({ ...validated, revision: project.revision }, {
+                expectedRevision: project.revision,
+            });
+            ok(res, { project: saved, parsed, unsupported });
         } catch (error) {
-            fail(res, error, 400, { errors: error.validationErrors });
+            fail(res, error, error.statusCode || 400, error.data || { errors: error.validationErrors });
         }
     });
 
@@ -212,20 +216,11 @@ export function createTimetableV2Router(options = {}) {
     });
 
     // POST /schedule/publish：发布门禁（零硬冲突 + 无未排才可发布），否则 fail 带 reason。
-    router.post('/schedule/publish', (req, res) => {
+    router.post('/schedule/publish', async (req, res) => {
         try {
-            const project = req.body?.project;
-            const solution = req.body?.solution;
-            if (!project || typeof project !== 'object') {
-                fail(res, new Error('缺少 project'));
-                return;
-            }
-            if (!solution || typeof solution !== 'object') {
-                fail(res, new Error('缺少 solution'));
-                return;
-            }
-            const hardConflicts = Array.isArray(solution.hardConflicts) ? solution.hardConflicts : [];
-            const unplaced = Array.isArray(solution.unplaced) ? solution.unplaced : [];
+            const { project, solution, publishedSnapshot } = buildTrustedPublishResult(req.body?.project, req.body?.solution);
+            const hardConflicts = solution.hardConflicts;
+            const unplaced = solution.unplaced;
             if (hardConflicts.length > 0) {
                 fail(res, new Error('存在硬冲突，无法发布'), 422, { reason: 'hard_conflicts_exist', hardConflicts });
                 return;
@@ -234,14 +229,20 @@ export function createTimetableV2Router(options = {}) {
                 fail(res, new Error('存在未排课程，无法发布'), 422, { reason: 'unplaced_lessons', unplaced });
                 return;
             }
+            const saved = await store.saveProject(withPublishSnapshot(project, publishedSnapshot), {
+                expectedRevision: project.revision,
+            });
             ok(res, {
                 published: true,
-                publishedAt: new Date().toISOString(),
-                placements: Array.isArray(solution.placements) ? solution.placements : [],
-                softScore: solution.softScore ?? null,
+                publishedAt: publishedSnapshot.publishedAt,
+                project: saved,
+                solution,
+                publishedSnapshot,
+                placements: solution.placements,
+                softScore: solution.softScore,
             });
         } catch (error) {
-            fail(res, error, 500);
+            fail(res, error, error.statusCode || 500, error.data);
         }
     });
 
@@ -295,6 +296,25 @@ export function createTimetableV2Router(options = {}) {
     });
 
     return router;
+}
+
+function withPublishSnapshot(project, snapshot) {
+    const previousHistory = Array.isArray(project?.publishedHistory?.history)
+        ? project.publishedHistory.history
+        : [];
+    return {
+        ...project,
+        publishedSnapshot: snapshot,
+        publishedHistory: {
+            ...(project.publishedHistory && typeof project.publishedHistory === 'object' ? project.publishedHistory : {}),
+            status: 'published',
+            publishedAt: snapshot.publishedAt,
+            history: [
+                { publishedAt: snapshot.publishedAt, snapshot },
+                ...previousHistory,
+            ],
+        },
+    };
 }
 
 const router = createTimetableV2Router();

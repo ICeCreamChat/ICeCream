@@ -36133,6 +36133,7 @@ function createInsightPanel(props = {}) {
 
 // public/js/tools/timetable-v2/views/data-prep.js
 var STYLE_ID4 = "ttv2-view-data-prep-style";
+var fieldIdSeq = 0;
 var STYLE_TEXT4 = `
 .ttv2-view { display: flex; flex-direction: column; gap: 16px;
     font-size: 14px; color: var(--ttv2-text, #1f2937); }
@@ -36174,6 +36175,13 @@ function ensureStyle4() {
   style.textContent = STYLE_TEXT4;
   document.head.appendChild(style);
 }
+function bindLabel(label, control, prefix = "ttv2-data-prep-field") {
+  if (!control.id) {
+    fieldIdSeq += 1;
+    control.id = `${prefix}-${fieldIdSeq}`;
+  }
+  label.htmlFor = control.id;
+}
 function createDataPrepView({ store, api }) {
   ensureStyle4();
   const el = document.createElement("section");
@@ -36196,6 +36204,7 @@ function createDataPrepView({ store, api }) {
   const fileInput = document.createElement("input");
   fileInput.type = "file";
   fileInput.accept = ".xlsx,.xls,.csv";
+  bindLabel(fileLabel, fileInput);
   fileField.append(fileLabel, fileInput);
   const textField = document.createElement("div");
   textField.className = "ttv2-view__field";
@@ -36204,6 +36213,7 @@ function createDataPrepView({ store, api }) {
   const textarea = document.createElement("textarea");
   textarea.className = "ttv2-view__textarea";
   textarea.placeholder = "\u4F8B\u5982\uFF1A\u4E00\u73ED \u8BED\u6587 \u5F20\u8001\u5E08 \u6BCF\u54685\u8282\uFF1B\u4E00\u73ED \u6570\u5B66 \u674E\u8001\u5E08 \u6BCF\u54684\u8282\u8FDE\u5802\u2026";
+  bindLabel(textLabel, textarea);
   textField.append(textLabel, textarea);
   const actionRow = document.createElement("div");
   actionRow.className = "ttv2-view__row";
@@ -36316,7 +36326,7 @@ function createDataPrepView({ store, api }) {
         rawText: text || void 0,
         fileName: file ? file.name : void 0
       };
-      const project = await api.commitRules(rawDraft);
+      const project = await api.commitRules({ project: store.getState().project, rules: rawDraft });
       store.dispatch("setProject", project);
       setMsg("\u539F\u59CB\u8F93\u5165\u5DF2\u63D0\u4EA4\uFF0C\u9879\u76EE\u6458\u8981\u5DF2\u66F4\u65B0\u3002", "ok");
     } catch (err) {
@@ -36355,6 +36365,7 @@ function createDataPrepView({ store, api }) {
 
 // public/js/tools/timetable-v2/views/rule-input.js
 var STYLE_ID5 = "ttv2-view-rule-input-style";
+var fieldIdSeq2 = 0;
 var STYLE_TEXT5 = `
 .ttv2-rinput__tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--ttv2-border, #e5e7eb); }
 .ttv2-rinput__tab { border: 0; background: transparent; font: inherit; cursor: pointer;
@@ -36543,6 +36554,11 @@ function labeledField(labelText, control) {
   field.className = "ttv2-view__field";
   const label = document.createElement("label");
   label.textContent = labelText;
+  if (!control.id) {
+    fieldIdSeq2 += 1;
+    control.id = `ttv2-rule-input-field-${fieldIdSeq2}`;
+  }
+  label.htmlFor = control.id;
   field.append(label, control);
   return field;
 }
@@ -36896,7 +36912,7 @@ function createRuleReviewView({ store, api }) {
     commitBtn.disabled = true;
     setMsg("\u6B63\u5728\u5199\u5165\u89C4\u5219\u2026", null);
     try {
-      const project = await api.commitRules({ kind: "rules-batch", drafts });
+      const project = await api.commitRules({ project: store.getState().project, rules: { kind: "rules-batch", constraints: drafts } });
       store.dispatch("setProject", project);
       store.dispatch("clearPendingRules");
       setMsg("\u89C4\u5219\u5DF2\u5199\u5165\u9879\u76EE\u3002", "ok");
@@ -49891,8 +49907,8 @@ function createManualAdjustView({ store, api }) {
         to: { day: target.day, period: target.period },
         activityId: source.placement ? source.placement.activityId : null
       };
-      const solution = await api.commitAdjustment(payload);
-      store.dispatch("setSolution", solution);
+      const result = await api.commitAdjustment({ project: store.getState().project, adjustment: payload });
+      store.dispatch("setSolution", result.solution || result);
       source = null;
       target = null;
       renderSel();
@@ -50104,9 +50120,13 @@ function createPublishExportView({ store, api }) {
     publishBtn.disabled = true;
     setMsg("\u6B63\u5728\u8BF7\u6C42\u540E\u7AEF\u53D1\u5E03\u6821\u9A8C\u2026", null);
     try {
-      const result = await api.publish({});
+      const state = store.getState();
+      const result = await api.publish({ project: state.project, solution: state.solution });
       if (result && result.solution) {
         store.dispatch("setSolution", result.solution);
+      }
+      if (result && result.project) {
+        store.dispatch("setProject", result.project);
       }
       published = true;
       history = [{ time: (/* @__PURE__ */ new Date()).toLocaleString(), label: "\u8BFE\u8868\u5DF2\u53D1\u5E03" }, ...history];

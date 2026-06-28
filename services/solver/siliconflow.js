@@ -3,10 +3,13 @@
  * Copyright (c) 2026 ICeCreamChat
  * Licensed under the MIT License.
  */
-import fetch from 'node-fetch';
 import sharp from 'sharp';
 import fs from 'fs';
 import { CONFIG, MOCK_DATA } from './config.js';
+import {
+    fetchJsonWithTimeout,
+    readProviderTimeoutMs,
+} from '../provider-fetch.js';
 
 const GROUNDING_PROMPT = `这是中文试卷或教辅资料的截图。请精确检测其中的插图、示意图或几何图形区域。
 
@@ -52,6 +55,10 @@ const CONTENT_HINTS = {
     '抛物线': '抛物线图形由系统单独处理'
 };
 
+const SILICONFLOW_PROVIDER_TIMEOUT_MS = readProviderTimeoutMs(
+    process.env.SILICONFLOW_PROVIDER_TIMEOUT_MS || process.env.PROVIDER_FETCH_TIMEOUT_MS,
+    60_000
+);
 
 export async function detectWithQwenGrounding(imagePath) {
     console.log('[Layer 1] Qwen Grounding 检测...');
@@ -67,7 +74,7 @@ export async function detectWithQwenGrounding(imagePath) {
             .toBuffer();
         const resizedBase64 = resizedBuffer.toString('base64');
 
-        const response = await fetch(CONFIG.siliconflow.url, {
+        const data = await fetchJsonWithTimeout(CONFIG.siliconflow.url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -84,12 +91,11 @@ export async function detectWithQwenGrounding(imagePath) {
                 }],
                 max_tokens: 150,
                 temperature: 0.05
-            })
+            }),
+            provider: 'siliconflow',
+            timeoutMs: SILICONFLOW_PROVIDER_TIMEOUT_MS,
         });
 
-        if (!response.ok) return null;
-
-        const data = await response.json();
         const content = data.choices?.[0]?.message?.content || '';
 
         const match = content.match(/\{[\s\S]*"bbox_2d"[\s\S]*\}/);
@@ -124,7 +130,7 @@ export async function detectWithQwenGrounding(imagePath) {
 export async function detectWithFallbackAPI(imagePath, base64Image, mimeType) {
     console.log('[Layer 4] 兜底 API 检测...');
     try {
-        const response = await fetch(CONFIG.siliconflow.url, {
+        const data = await fetchJsonWithTimeout(CONFIG.siliconflow.url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -141,11 +147,11 @@ export async function detectWithFallbackAPI(imagePath, base64Image, mimeType) {
                 }],
                 max_tokens: 100,
                 temperature: 0.1
-            })
+            }),
+            provider: 'siliconflow',
+            timeoutMs: SILICONFLOW_PROVIDER_TIMEOUT_MS,
         });
 
-        if (!response.ok) return null;
-        const data = await response.json();
         const content = data.choices?.[0]?.message?.content || '';
         const match = content.match(/\{[\s\S]*"box"[\s\S]*\}/);
         if (!match) return null;
@@ -179,7 +185,7 @@ export async function describeImageWithVision(imagePath) {
         const base64Image = imageBuffer.toString('base64');
         const mimeType = imagePath.endsWith('.png') ? 'image/png' : 'image/jpeg';
 
-        const response = await fetch(CONFIG.siliconflow.url, {
+        const data = await fetchJsonWithTimeout(CONFIG.siliconflow.url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -196,11 +202,11 @@ export async function describeImageWithVision(imagePath) {
                 }],
                 max_tokens: 500,
                 temperature: 0.3
-            })
+            }),
+            provider: 'siliconflow',
+            timeoutMs: SILICONFLOW_PROVIDER_TIMEOUT_MS,
         });
 
-        if (!response.ok) return MOCK_DATA.siliconflow;
-        const data = await response.json();
         return { description: data.choices?.[0]?.message?.content || '' };
     } catch (error) {
         return MOCK_DATA.siliconflow;
@@ -239,7 +245,7 @@ export async function extractTextWithVisionOCR(imagePath, visionDescription = ''
         const base64Image = imageBuffer.toString('base64');
         const mimeType = imagePath.endsWith('.png') ? 'image/png' : 'image/jpeg';
 
-        const response = await fetch(CONFIG.siliconflow.url, {
+        const data = await fetchJsonWithTimeout(CONFIG.siliconflow.url, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -256,11 +262,11 @@ export async function extractTextWithVisionOCR(imagePath, visionDescription = ''
                 }],
                 max_tokens: 1500,
                 temperature: 0.1
-            })
+            }),
+            provider: 'siliconflow',
+            timeoutMs: SILICONFLOW_PROVIDER_TIMEOUT_MS,
         });
 
-        if (!response.ok) return MOCK_DATA.mineru;
-        const data = await response.json();
         return {
             success: true,
             text: data.choices?.[0]?.message?.content || '',

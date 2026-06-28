@@ -1,7 +1,7 @@
 import {
     applyAiLayoutMatrix,
     CELL,
-} from '../../public/js/tools/classroom-layout.js';
+} from '../../shared/seating/classroom-layout.js';
 import {
     solveWithTimefold,
     TimefoldUnavailableError,
@@ -10,7 +10,7 @@ import {
     evaluateSeatingConstraints,
     evaluateSeatingQuality,
     normalizeLocalAisles,
-} from '../../public/js/tools/seating-core.js';
+} from '../../shared/seating/seating-core.js';
 
 const MAX_ROWS = 300;
 const MAX_COLS = 80;

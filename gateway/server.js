@@ -22,12 +22,15 @@ export function startGateway(options = {}) {
     };
 
     validateGatewayEnv(process.env, config.logger || console);
+    if (config.allowRemote && !config.localApiToken) {
+        throw new Error('ALLOW_REMOTE=true requires ICECREAM_LOCAL_TOKEN or ICECREAM_ADMIN_TOKEN');
+    }
     prepareUploadsDirectory(config.uploadsDir || gatewayPaths.uploadsDir, {
         logger: config.logger || console,
     });
 
     const app = createGatewayApp(config);
-    const server = app.listen(config.port, () => {
+    const server = app.listen(config.port, config.host, () => {
         logStartupBanner(config, config.logger || console);
     });
 

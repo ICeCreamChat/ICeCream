@@ -15,7 +15,7 @@ const students = [
   { id: 's02', name: '李四', gender: 'F' },
   { id: 's03', name: '王五', gender: 'M' },
 ];
-const toolsRoutePath = new URL('../gateway/routes/tools.js', import.meta.url);
+const seatingChatRoutePath = new URL('../gateway/routes/tools/seating/chat.js', import.meta.url);
 
 test('detectSeatingMutationIntent recognizes commands that should change seats', () => {
   assert.equal(detectSeatingMutationIntent('把张三和李四换一下'), true);
@@ -177,7 +177,7 @@ test('buildSeatingChatSnapshot includes id, name, and coordinates for each occup
 });
 
 test('seating chat prompt limits the assistant to minor adjustments inside the existing layout', async () => {
-  const source = await readFile(toolsRoutePath, 'utf8');
+  const source = await readFile(seatingChatRoutePath, 'utf8');
 
   assert.match(source, /只能在现有布局内微调/);
   assert.match(source, /不能改变教室结构、过道、座位容量/);

@@ -1,9 +1,12 @@
 export function logStartupBanner(config, logger = console) {
+    const host = config.host || '127.0.0.1';
+    const localHost = host === '0.0.0.0' ? 'localhost' : host;
     logger.log(`
 ============================================================
   ICeCream Gateway Server
 
-  Local:   http://localhost:${config.port}
+  Local:   http://${localHost}:${config.port}
+  Bind:    ${host}:${config.port}
   Status:  Ready
 ============================================================
 `);

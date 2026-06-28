@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { createGatewayApp } from '../gateway/app.js';
-import { submitSeatingFeedback } from '../gateway/services/seating-feedback.js';
+import { cleanupSeatingFeedback, submitSeatingFeedback } from '../gateway/services/seating-feedback.js';
 
 function listen(server) {
   return new Promise(resolve => {
@@ -322,4 +322,45 @@ test('submitSeatingFeedback ignores invalid screenshots while saving feedback', 
   const content = await readFile(path.join(logDir, 'seating-feedback.jsonl'), 'utf8');
   assert.match(content, /feedback body is still valid/);
   assert.doesNotMatch(content, /data:text/);
+});
+
+test('cleanupSeatingFeedback removes expired records and screenshots only', async () => {
+  const logDir = await mkdtemp(path.join(tmpdir(), 'icecream-feedback-cleanup-'));
+  const assetDir = path.join(logDir, 'seating-feedback-assets');
+  await mkdir(assetDir, { recursive: true });
+
+  const oldRecord = {
+    id: 'FB-OLD',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    raw: { screenshot: { fileName: 'seating-feedback-assets/FB-OLD.jpg' } },
+  };
+  const recentRecord = {
+    id: 'FB-RECENT',
+    createdAt: '2026-06-27T00:00:00.000Z',
+    raw: { screenshot: { fileName: 'seating-feedback-assets/FB-RECENT.jpg' } },
+  };
+  await writeFile(path.join(logDir, 'seating-feedback.jsonl'), [
+    JSON.stringify(oldRecord),
+    JSON.stringify(recentRecord),
+    'not-json-but-should-be-kept',
+    '',
+  ].join('\n'), 'utf8');
+  await writeFile(path.join(assetDir, 'FB-OLD.jpg'), 'old', 'utf8');
+  await writeFile(path.join(assetDir, 'FB-RECENT.jpg'), 'recent', 'utf8');
+
+  const result = await cleanupSeatingFeedback({
+    env: { FEEDBACK_LOG_DIR: logDir },
+    now: new Date('2026-06-28T00:00:00.000Z'),
+    retentionDays: 30,
+  });
+
+  assert.equal(result.removedRecords, 1);
+  assert.equal(result.removedAssets, 1);
+
+  const content = await readFile(path.join(logDir, 'seating-feedback.jsonl'), 'utf8');
+  assert.doesNotMatch(content, /FB-OLD/);
+  assert.match(content, /FB-RECENT/);
+  assert.match(content, /not-json-but-should-be-kept/);
+  await assert.rejects(readFile(path.join(assetDir, 'FB-OLD.jpg')), /ENOENT/);
+  assert.equal(await readFile(path.join(assetDir, 'FB-RECENT.jpg'), 'utf8'), 'recent');
 });
