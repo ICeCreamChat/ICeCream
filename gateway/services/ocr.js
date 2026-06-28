@@ -1,5 +1,4 @@
 
-import fetch from 'node-fetch';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
@@ -8,6 +7,12 @@ import {
     fetchMineruZipWithRetry,
     getMineruDownloadAvailability,
 } from '../../services/solver/mineru-download.js';
+import {
+    fetchJsonWithTimeout,
+    fetchTextWithTimeout,
+    fetchWithBudget,
+    readProviderTimeoutMs,
+} from '../../services/provider-fetch.js';
 
 dotenv.config();
 
@@ -23,6 +28,18 @@ const MINERU_ENABLED = process.env.MINERU_ENABLED === 'true';
 const DEEPSEEK_BASE = process.env.DEEPSEEK_API_BASE || 'https://api.deepseek.com';
 const DEEPSEEK_KEY = process.env.DEEPSEEK_API_KEY;
 const DEEPSEEK_MODEL = 'deepseek-chat';
+const OCR_PROVIDER_TIMEOUT_MS = readProviderTimeoutMs(
+    process.env.OCR_PROVIDER_TIMEOUT_MS || process.env.PROVIDER_FETCH_TIMEOUT_MS,
+    120000
+);
+const MINERU_API_TIMEOUT_MS = readProviderTimeoutMs(
+    process.env.MINERU_API_TIMEOUT_MS || process.env.PROVIDER_FETCH_TIMEOUT_MS,
+    60000
+);
+const DEEPSEEK_PROVIDER_TIMEOUT_MS = readProviderTimeoutMs(
+    process.env.DEEPSEEK_PROVIDER_TIMEOUT_MS || process.env.PROVIDER_FETCH_TIMEOUT_MS,
+    60000
+);
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -73,22 +90,17 @@ export async function extractStudentsDirectVLM(imageBuffer, mimeType = 'image/jp
         temperature: 0.05
     };
 
-    const response = await fetch(`${SILICONFLOW_BASE}/chat/completions`, {
+    const data = await fetchJsonWithTimeout(`${SILICONFLOW_BASE}/chat/completions`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${SILICONFLOW_KEY}`
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(120000) // 120s timeout
+        provider: 'siliconflow',
+        timeoutMs: OCR_PROVIDER_TIMEOUT_MS,
     });
 
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`SiliconFlow VLM Error: ${response.status} ${errText}`);
-    }
-
-    const data = await response.json();
     let content = data.choices[0]?.message?.content || '[]';
     // Clean up markdown code blocks if present
     content = content.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -134,22 +146,17 @@ export async function recognizeWithPaddle(imageBuffer, mimeType = 'image/jpeg') 
         temperature: 0.1
     };
 
-    const response = await fetch(`${SILICONFLOW_BASE}/chat/completions`, {
+    const data = await fetchJsonWithTimeout(`${SILICONFLOW_BASE}/chat/completions`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${SILICONFLOW_KEY}`
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(120000) // 120s timeout
+        provider: 'siliconflow',
+        timeoutMs: OCR_PROVIDER_TIMEOUT_MS,
     });
 
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`SiliconFlow API Error: ${response.status} ${errText}`);
-    }
-
-    const data = await response.json();
     return data.choices[0]?.message?.content || '';
 }
 
@@ -176,22 +183,18 @@ export async function recognizeWithMinerU(imageBuffer, filename = 'image.png') {
 
     // Step 1: Get Upload Link
     console.log('[MinerU OCR] Step 1: Getting upload URL...');
-    const batchRes = await fetch(`${baseUrl}/api/v4/file-urls/batch`, {
+    const batchData = await fetchJsonWithTimeout(`${baseUrl}/api/v4/file-urls/batch`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
             files: [{ name: filename }],
             enable_formula: false,
             enable_table: true
-        })
+        }),
+        provider: 'mineru',
+        timeoutMs: MINERU_API_TIMEOUT_MS,
     });
 
-    if (!batchRes.ok) {
-        const errText = await batchRes.text();
-        throw new Error(`MinerU batch API Error: ${batchRes.status} ${errText}`);
-    }
-
-    const batchData = await batchRes.json();
     if (batchData.code !== 0) {
         throw new Error(`MinerU batch error: ${JSON.stringify(batchData)}`);
     }
@@ -208,9 +211,11 @@ export async function recognizeWithMinerU(imageBuffer, filename = 'image.png') {
 
     while (uploadAttempts < maxUploadAttempts) {
         try {
-            uploadRes = await fetch(uploadUrl, {
+            uploadRes = await fetchWithBudget(uploadUrl, {
                 method: 'PUT',
-                body: imageBuffer
+                body: imageBuffer,
+                provider: 'mineru-upload',
+                timeoutMs: MINERU_API_TIMEOUT_MS,
             });
 
             if (uploadRes.ok) break;
@@ -240,14 +245,17 @@ export async function recognizeWithMinerU(imageBuffer, filename = 'image.png') {
         await delay(pollInterval);
         waited += pollInterval;
 
-        const resultRes = await fetch(`${baseUrl}/api/v4/extract-results/batch/${batchId}`, {
-            method: 'GET',
-            headers
-        });
-
-        if (!resultRes.ok) continue;
-
-        const resultData = await resultRes.json();
+        let resultData;
+        try {
+            resultData = await fetchJsonWithTimeout(`${baseUrl}/api/v4/extract-results/batch/${batchId}`, {
+                method: 'GET',
+                headers,
+                provider: 'mineru',
+                timeoutMs: MINERU_API_TIMEOUT_MS,
+            });
+        } catch {
+            continue;
+        }
         if (resultData.code !== 0) continue;
 
         const extractResult = resultData.data?.extract_result?.[0];
@@ -266,8 +274,10 @@ export async function recognizeWithMinerU(imageBuffer, filename = 'image.png') {
                         console.log('[MinerU OCR] adm-zip not available, trying markdown URL');
                         // Fallback: try markdown_url if available
                         if (extractResult.markdown_url) {
-                            const mdRes = await fetch(extractResult.markdown_url);
-                            return await mdRes.text();
+                            return await fetchTextWithTimeout(extractResult.markdown_url, {
+                                provider: 'mineru-markdown',
+                                timeoutMs: MINERU_API_TIMEOUT_MS,
+                            });
                         }
                         return '[MinerU extraction done but cannot parse zip]';
                     }
@@ -320,7 +330,7 @@ ${text.substring(0, 5000)}
 {"students": [{"name": "张三", "gender": "M", "height": 170, "grade": 85}, ...]}
     `;
 
-    const response = await fetch(`${DEEPSEEK_BASE}/chat/completions`, {
+    const data = await fetchJsonWithTimeout(`${DEEPSEEK_BASE}/chat/completions`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -331,14 +341,11 @@ ${text.substring(0, 5000)}
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.1,
             response_format: { type: 'json_object' }
-        })
+        }),
+        provider: 'deepseek',
+        timeoutMs: DEEPSEEK_PROVIDER_TIMEOUT_MS,
     });
 
-    if (!response.ok) {
-        throw new Error(`DeepSeek API Error: ${response.status}`);
-    }
-
-    const data = await response.json();
     let content = data.choices[0]?.message?.content || '[]';
     // Clean up markdown code blocks if present
     content = content.replace(/```json/g, '').replace(/```/g, '').trim();

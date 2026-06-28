@@ -206,7 +206,7 @@ export function createRuleReviewView({ store, api }) {
         setMsg('正在写入规则…', null);
         try {
             // 一次提交全部草稿原始输入，由后端拼装 + 校验，返回新 project 引用。
-            const project = await api.commitRules({ kind: 'rules-batch', drafts });
+            const project = await api.commitRules({ project: store.getState().project, rules: { kind: 'rules-batch', constraints: drafts } });
             store.dispatch('setProject', project);   // 用后端结果替换引用
             store.dispatch('clearPendingRules');      // 清理已确认草稿
             setMsg('规则已写入项目。', 'ok');

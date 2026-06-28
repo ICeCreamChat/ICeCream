@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "vendors": [
+    {
+      "name": "GeoGebra HTML5 offline runtime",
+      "path": "public/vendor/geogebra",
+      "source": "https://www.geogebra.org/download",
+      "license": "GeoGebra non-commercial terms; see public/vendor/geogebra/LICENSE-GEOGEBRA.txt",
+      "usedBy": [
+        "public/js/core/geogebra-*",
+        "GeoGebra Studio offline courseware export"
+      ]
+    }
+  ],
+  "generatedBundles": [
+    {
+      "name": "Timetable V2 workbench bundle",
+      "path": "public/js/tools/timetable-v2/dist/workbench.bundle.js",
+      "source": "public/js/tools/timetable-v2/entry.js",
+      "command": "npm run build:timetable-v2",
+      "maxSizeBytes": 2500000
+    }
+  ]
+}

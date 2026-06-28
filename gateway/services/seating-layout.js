@@ -3,7 +3,7 @@ import {
     createClassroomLayout,
     layoutMatrix,
     parseClassroomLayoutPrompt,
-} from '../../public/js/tools/classroom-layout.js';
+} from '../../shared/seating/classroom-layout.js';
 
 function intInRange(value, fallback, min, max) {
     const parsed = Number.parseInt(value, 10);

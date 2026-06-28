@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { createGatewayApp, setDevelopmentStaticHeaders } from '../gateway/app.js';
+import { getGatewayConfig } from '../gateway/config/environment.js';
+import { mapGatewayError } from '../gateway/middleware/error-handler.js';
 import { getConfidenceThreshold } from '../gateway/middleware/intent-router.js';
 import {
     createStaticVideoProxy,
     isAllowedManimStaticFilename,
     normalizeManimServiceUrl,
 } from '../gateway/routes/static-video.js';
+import { requireLocalApiToken } from '../gateway/security.js';
 import { cleanupUploadsDirectory, ensureDirectory } from '../gateway/startup/uploads.js';
 
 test('gateway app can be constructed without starting the HTTP listener', () => {
@@ -18,6 +21,46 @@ test('gateway app can be constructed without starting the HTTP listener', () => 
 
     assert.equal(typeof app, 'function');
     assert.equal(app.get('trust proxy'), 1);
+});
+
+test('gateway host defaults to loopback unless remote access is explicitly allowed', () => {
+    assert.equal(getGatewayConfig({}).host, '127.0.0.1');
+    assert.equal(getGatewayConfig({ HOST: '0.0.0.0' }).host, '127.0.0.1');
+    assert.equal(getGatewayConfig({ HOST: '0.0.0.0', ALLOW_REMOTE: 'true', ICECREAM_LOCAL_TOKEN: 'secret' }).host, '0.0.0.0');
+    assert.equal(getGatewayConfig({ ALLOW_REMOTE: 'true', ICECREAM_LOCAL_TOKEN: 'secret' }).host, '0.0.0.0');
+    assert.equal(getGatewayConfig({ ICECREAM_LOCAL_TOKEN: 'secret' }).localApiToken, 'secret');
+});
+
+test('local API token guard rejects remote admin requests without a token', () => {
+    const guard = requireLocalApiToken({ token: 'secret', allowLoopback: false });
+    const denied = runGuard(guard, { remoteAddress: '203.0.113.10' });
+    assert.equal(denied.statusCode, 401);
+    assert.equal(denied.body.success, false);
+    assert.equal(denied.body.data.reason, 'admin_token_required');
+
+    const allowed = runGuard(guard, {
+        remoteAddress: '203.0.113.10',
+        headers: { authorization: 'Bearer secret' },
+    });
+    assert.equal(allowed.nextCalled, true);
+
+    const loopbackGuard = requireLocalApiToken({ token: 'secret', allowLoopback: true });
+    const loopback = runGuard(loopbackGuard, { remoteAddress: '127.0.0.1' });
+    assert.equal(loopback.nextCalled, true);
+});
+
+test('production gateway errors hide internal details and include requestId', () => {
+    const error = new Error('provider failed at https://internal.example.test/token with stack trace');
+    const mapped = mapGatewayError(error, {
+        requestId: 'req-test-123',
+        isDev: false,
+    });
+
+    assert.equal(mapped.status, 500);
+    assert.equal(mapped.payload.success, false);
+    assert.equal(mapped.payload.requestId, 'req-test-123');
+    assert.match(mapped.payload.error, /服务暂时不可用/);
+    assert.doesNotMatch(JSON.stringify(mapped.payload), /internal\.example|token|stack trace/);
 });
 
 test('gateway mounts timetable V2 APIs and legacy routes are removed', async () => {
@@ -50,10 +93,76 @@ test('gateway mounts timetable V2 APIs and legacy routes are removed', async () 
             body: JSON.stringify({}),
         });
         assert.equal(legacyResponse.status, 404);
+
+        const sharedResponse = await fetch(`http://127.0.0.1:${port}/shared/seating/classroom-layout.js`);
+        const sharedSource = await sharedResponse.text();
+        assert.equal(sharedResponse.status, 200);
+        assert.match(sharedSource, /export const CELL/);
     } finally {
         await new Promise(resolve => server.close(resolve));
     }
 });
+
+test('backend modules do not import browser public modules', async () => {
+    const roots = [
+        path.resolve('gateway'),
+        path.resolve('services'),
+    ];
+    const files = [];
+    for (const root of roots) {
+        files.push(...await collectJsFiles(root));
+    }
+
+    const offenders = [];
+    const publicImportPattern = /(?:from\s+['"][^'"]*public[\\/]|import\(\s*['"][^'"]*public[\\/]|require\(\s*['"][^'"]*public[\\/])/;
+    for (const file of files) {
+        const source = await readFile(file, 'utf8');
+        if (publicImportPattern.test(source)) {
+            offenders.push(path.relative(process.cwd(), file).replace(/\\/g, '/'));
+        }
+    }
+
+    assert.deepEqual(offenders, []);
+});
+
+function runGuard(guard, options = {}) {
+    const headers = new Map(Object.entries(options.headers || {}).map(([key, value]) => [key.toLowerCase(), value]));
+    const result = { statusCode: 200, body: null, nextCalled: false };
+    const req = {
+        socket: { remoteAddress: options.remoteAddress || '127.0.0.1' },
+        get(name) {
+            return headers.get(String(name).toLowerCase());
+        },
+    };
+    const res = {
+        status(code) {
+            result.statusCode = code;
+            return this;
+        },
+        json(body) {
+            result.body = body;
+            return this;
+        },
+    };
+    guard(req, res, () => {
+        result.nextCalled = true;
+    });
+    return result;
+}
+
+async function collectJsFiles(root) {
+    const entries = await readdir(root, { withFileTypes: true });
+    const files = [];
+    for (const entry of entries) {
+        const fullPath = path.join(root, entry.name);
+        if (entry.isDirectory()) {
+            files.push(...await collectJsFiles(fullPath));
+        } else if (entry.isFile() && fullPath.endsWith('.js')) {
+            files.push(fullPath);
+        }
+    }
+    return files;
+}
 
 test('development static headers prevent stale GeoGebra runtime caching', () => {
     const headers = {};

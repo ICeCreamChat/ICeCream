@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { timingSafeEqual } from 'node:crypto';
 
 const IMAGE_MIME_TYPES = new Set([
     'image/jpeg',
@@ -100,6 +101,59 @@ export function createRateLimiter({ windowMs, max, message = '请求过于频繁
             for (const [hitKey, value] of hits) {
                 if (value.resetAt <= now) hits.delete(hitKey);
             }
+        }
+
+        next();
+    };
+}
+
+export function isLoopbackAddress(address = '') {
+    const normalized = String(address || '')
+        .trim()
+        .toLowerCase()
+        .replace(/^\[(.*)\]$/, '$1');
+    return normalized === '127.0.0.1'
+        || normalized === '::1'
+        || normalized === 'localhost'
+        || normalized.startsWith('::ffff:127.');
+}
+
+function extractRequestToken(req) {
+    const direct = req.get?.('x-icecream-token') || req.get?.('x-icecream-admin-token');
+    if (direct) return String(direct).trim();
+    const authorization = String(req.get?.('authorization') || '').trim();
+    const bearer = authorization.match(/^Bearer\s+(.+)$/i);
+    return bearer ? bearer[1].trim() : '';
+}
+
+function constantTimeEquals(a, b) {
+    const left = Buffer.from(String(a || ''), 'utf8');
+    const right = Buffer.from(String(b || ''), 'utf8');
+    return left.length === right.length && timingSafeEqual(left, right);
+}
+
+export function requireLocalApiToken(options = {}) {
+    const {
+        token = '',
+        allowLoopback = true,
+        message = '需要本地管理 token',
+    } = options;
+
+    return function localApiTokenGuard(req, res, next) {
+        const socketAddress = req.socket?.remoteAddress || '';
+        if (allowLoopback && isLoopbackAddress(socketAddress)) {
+            next();
+            return;
+        }
+
+        const expected = typeof token === 'function' ? token(req) : token;
+        if (!expected || !constantTimeEquals(extractRequestToken(req), expected)) {
+            res.status(401).json({
+                success: false,
+                error: message,
+                data: { reason: 'admin_token_required' },
+            });
+            return;
         }
 
         next();

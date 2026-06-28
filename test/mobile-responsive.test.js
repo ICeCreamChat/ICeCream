@@ -7,6 +7,7 @@ const indexPath = new URL('../public/index.html', import.meta.url);
 const mobileStylePath = new URL('../public/css/mobile.css', import.meta.url);
 const toolsStylePath = new URL('../public/css/tools.css', import.meta.url);
 const seatingSourcePath = new URL('../public/js/tools/seating-planner.js', import.meta.url);
+const seatingAssistantPath = new URL('../public/js/tools/seating-planner/assistant-panel.js', import.meta.url);
 const seatingStylePath = new URL('../public/css/seating-planner.css', import.meta.url);
 
 test('global mobile shell keeps viewport, mobile nav behavior, and resilient theme persistence', async () => {
@@ -38,6 +39,7 @@ test('global mobile shell keeps viewport, mobile nav behavior, and resilient the
 
 test('seating planner keeps touch interactions and draggable floating assistant affordances', async () => {
   const seatingSource = await readFile(seatingSourcePath, 'utf8');
+  const assistantSource = await readFile(seatingAssistantPath, 'utf8');
   const seatingStyles = await readFile(seatingStylePath, 'utf8');
 
   assert.match(seatingSource, /id="sp-chat-toggle"/);
@@ -45,8 +47,8 @@ test('seating planner keeps touch interactions and draggable floating assistant 
   assert.match(seatingSource, /id="sp-chat-header"/);
   assert.match(seatingSource, /id="sp-chat-input"/);
   assert.match(seatingSource, /CHAT_DRAG_THRESHOLD/);
-  assert.match(seatingSource, /window\.addEventListener\('pointermove', this\._chatPointerMoveHandler\)/);
-  assert.match(seatingSource, /window\.addEventListener\('pointermove', this\._chatIconPointerMoveHandler\)/);
+  assert.match(assistantSource, /window\.addEventListener\('pointermove', this\._chatPointerMoveHandler\)/);
+  assert.match(assistantSource, /window\.addEventListener\('pointermove', this\._chatIconPointerMoveHandler\)/);
   assert.match(seatingSource, /blackboard\.addEventListener\('touchstart', onPointerDown, \{ passive: false \}\)/);
   assert.match(seatingSource, /sp-feedback-panel/);
 

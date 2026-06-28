@@ -14,6 +14,7 @@
  */
 
 const STYLE_ID = 'ttv2-view-rule-input-style';
+let fieldIdSeq = 0;
 
 const STYLE_TEXT = `
 .ttv2-rinput__tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--ttv2-border, #e5e7eb); }
@@ -225,6 +226,11 @@ function labeledField(labelText, control) {
     field.className = 'ttv2-view__field';
     const label = document.createElement('label');
     label.textContent = labelText;
+    if (!control.id) {
+        fieldIdSeq += 1;
+        control.id = `ttv2-rule-input-field-${fieldIdSeq}`;
+    }
+    label.htmlFor = control.id;
     field.append(label, control);
     return field;
 }

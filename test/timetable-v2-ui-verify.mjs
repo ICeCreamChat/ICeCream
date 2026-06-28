@@ -111,6 +111,29 @@ const server = http.createServer((req, res) => {
 function fail(msg) { console.error('❌ ' + msg); process.exitCode = 1; }
 function ok(msg) { console.log('✅ ' + msg); }
 
+async function assertBoundLabels(page, step, label) {
+    await page.evaluate((targetStep) => {
+        window.__wb?.store?.dispatch('goStep', targetStep);
+    }, step);
+    await page.waitForTimeout(100);
+    const audit = await page.evaluate(() => {
+        const labels = Array.from(document.querySelectorAll('label'));
+        const issues = labels
+            .map((labelEl) => ({
+                text: labelEl.textContent.trim(),
+                htmlFor: labelEl.htmlFor,
+                hasControl: Boolean(labelEl.htmlFor && document.getElementById(labelEl.htmlFor)),
+            }))
+            .filter((item) => !item.htmlFor || !item.hasControl);
+        return { count: labels.length, issues };
+    });
+    if (audit.count > 0 && audit.issues.length === 0) {
+        ok(`${label} 表单 label 已显式绑定（${audit.count} 个）`);
+    } else {
+        fail(`${label} 表单 label 绑定异常: ${JSON.stringify(audit.issues).slice(0, 300)}`);
+    }
+}
+
 await new Promise(r => server.listen(0, r));
 const port = server.address().port;
 const base = `http://127.0.0.1:${port}`;
@@ -136,6 +159,9 @@ try {
     const steps = ['数据准备', '规则', '求解', '结果', '发布'];
     const hit = steps.filter(s => navText.includes(s));
     if (hit.length >= 4) ok(`步骤导航可见（命中 ${hit.join('/')}）`); else fail(`步骤导航缺失，仅命中 ${hit.join('/')}`);
+
+    await assertBoundLabels(page, 'data-prep', '数据准备页');
+    await assertBoundLabels(page, 'rule-input', '规则输入页');
 
     // 走到结果诊断步（触发 React-Konva 网格渲染）
     await page.evaluate(() => window.__wb && window.__wb.store && window.__wb.store.dispatch('goStep', 'result-diagnostics'));

@@ -1,8 +1,8 @@
-import { CELL } from '../../public/js/tools/classroom-layout.js';
+import { CELL } from '../../shared/seating/classroom-layout.js';
 import {
     hasLocalAisle,
     normalizeLocalAisles,
-} from '../../public/js/tools/seating-core.js';
+} from '../../shared/seating/seating-core.js';
 
 const DEFAULT_TIMEOUT_MS = 8000;
 const POLL_INTERVAL_MS = 500;

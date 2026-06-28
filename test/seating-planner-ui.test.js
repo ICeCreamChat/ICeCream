@@ -5,19 +5,31 @@ import test from 'node:test';
 import seatingPlanner from '../public/js/tools/seating-planner.js';
 
 const sourcePath = new URL('../public/js/tools/seating-planner.js', import.meta.url);
+const apiClientPath = new URL('../public/js/tools/seating-planner/api-client.js', import.meta.url);
+const assistantPanelPath = new URL('../public/js/tools/seating-planner/assistant-panel.js', import.meta.url);
+const exportPanelPath = new URL('../public/js/tools/seating-planner/export-panel.js', import.meta.url);
+const feedbackPanelPath = new URL('../public/js/tools/seating-planner/feedback-panel.js', import.meta.url);
+const gridPanelPath = new URL('../public/js/tools/seating-planner/grid-panel.js', import.meta.url);
+const layoutPreviewPanelPath = new URL('../public/js/tools/seating-planner/layout-preview-panel.js', import.meta.url);
+const rosterPanelPath = new URL('../public/js/tools/seating-planner/roster-panel.js', import.meta.url);
+const seatDetailPanelPath = new URL('../public/js/tools/seating-planner/seat-detail-panel.js', import.meta.url);
 const stylePath = new URL('../public/css/seating-planner.css', import.meta.url);
 const launcherPath = new URL('../public/js/tools/app-launcher.js', import.meta.url);
 
 test('seating planner exposes AI requirement entry instead of fixed layout controls', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const apiSource = await readFile(apiClientPath, 'utf8');
+  const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
 
   assert.match(source, /sp-arrange-prompt/);
-  assert.match(source, /\/api\/tools\/seating\/arrange/);
-  assert.match(source, /\/api\/tools\/seating\/layout-preview/);
+  assert.match(source, /seatingApi\.fetchArrangement/);
+  assert.match(source, /seatingApi\.fetchLayoutPreview/);
+  assert.match(apiSource, /\/api\/tools\/seating\/arrange/);
+  assert.match(apiSource, /\/api\/tools\/seating\/layout-preview/);
   assert.match(source, /排座要求/);
   assert.match(source, /例如：两人一组，中间留过道，讲台旁安排左右护法，护法位置要一个成绩较差一个成绩较好的/);
   assert.match(source, />\s*生成座位表\s*</);
-  assert.match(source, /btn\.innerHTML = '<i data-lucide="sparkles"><\/i> 生成座位表'/);
+  assert.match(layoutPreviewSource, /btn\.innerHTML = '<i data-lucide="sparkles"><\/i> 生成座位表'/);
   assert.doesNotMatch(source, /AI 排座需求/);
   assert.doesNotMatch(source, />\s*AI 生成座位表\s*</);
   assert.doesNotMatch(source, /data-layout-template=/);
@@ -28,38 +40,40 @@ test('seating planner exposes AI requirement entry instead of fixed layout contr
 
 test('seating planner previews AI layout before confirming student assignment', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
 
   assert.match(source, /pendingLayoutPreview/);
   assert.match(source, /requestLayoutPreview/);
-  assert.match(source, /showLayoutPreviewConfirmation/);
-  assert.match(source, /confirmLayoutPreview/);
-  assert.match(source, /cancelLayoutPreview/);
-  assert.match(source, /const confirmedLayout = this\.getConfirmedPreviewLayout\(\)/);
-  assert.match(source, /confirmedLayout,/);
+  assert.match(layoutPreviewSource, /showLayoutPreviewConfirmation/);
+  assert.match(layoutPreviewSource, /confirmLayoutPreview/);
+  assert.match(layoutPreviewSource, /cancelLayoutPreview/);
+  assert.match(layoutPreviewSource, /const confirmedLayout = this\.getConfirmedPreviewLayout\(\)/);
+  assert.match(layoutPreviewSource, /confirmedLayout,/);
   assert.match(source, /sp-layout-preview-confirm/);
   assert.match(source, /sp-layout-preview-cancel/);
   assert.match(source, /sp-layout-preview-regenerate/);
-  assert.match(source, /this\.requestLayoutPreview\(prompt\)/);
+  assert.match(layoutPreviewSource, /this\.requestLayoutPreview\(prompt\)/);
   assert.doesNotMatch(source, /const data = await this\.requestAiArrangement\(prompt\);\s*const arrangement = this\.applyArrangementResult\(data\);/s);
 });
 
 test('seating planner renders an editable visual-only layout preview', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
   assert.doesNotMatch(source, /sp-layout-preview-summary/);
   assert.doesNotMatch(source, /layoutPreviewSummary/);
-  assert.match(source, /renderEditableLayoutPreviewGrid/);
-  assert.match(source, /handleLayoutPreviewEditClick/);
-  assert.match(source, /insertPreviewAisleRowAt/);
-  assert.match(source, /insertPreviewAisleColumnAt/);
-  assert.match(source, /deletePreviewAisleRowAt/);
-  assert.match(source, /deletePreviewAisleColumnAt/);
-  assert.match(source, /togglePreviewLocalAisle/);
-  assert.match(source, /insertLocalAisle/);
-  assert.match(source, /deleteLocalAisle/);
-  assert.match(source, /pendingLayoutPreview\.classroomLayout = layout/);
-  assert.match(source, /localAisles: normalizeLocalAisles\(source\.localAisles, rows, cols\)/);
+  assert.match(layoutPreviewSource, /renderEditableLayoutPreviewGrid/);
+  assert.match(layoutPreviewSource, /handleLayoutPreviewEditClick/);
+  assert.match(layoutPreviewSource, /insertPreviewAisleRowAt/);
+  assert.match(layoutPreviewSource, /insertPreviewAisleColumnAt/);
+  assert.match(layoutPreviewSource, /deletePreviewAisleRowAt/);
+  assert.match(layoutPreviewSource, /deletePreviewAisleColumnAt/);
+  assert.match(layoutPreviewSource, /togglePreviewLocalAisle/);
+  assert.match(layoutPreviewSource, /insertLocalAisle/);
+  assert.match(layoutPreviewSource, /deleteLocalAisle/);
+  assert.match(layoutPreviewSource, /pendingLayoutPreview\.classroomLayout = layout/);
+  assert.match(layoutPreviewSource, /localAisles: normalizeLocalAisles\(source\.localAisles, rows, cols\)/);
   assert.match(styles, /\.sp-layout-preview-mini\s*{[^}]*overflow-x: auto/s);
   assert.match(styles, /\.sp-layout-preview-mini\s*{[^}]*scrollbar-width: thin/s);
   assert.match(styles, /\.sp-layout-preview-local-gap/);
@@ -70,7 +84,7 @@ test('seating planner renders an editable visual-only layout preview', async () 
 });
 
 test('seating planner preview colors adapt to day and night themes with group classes', async () => {
-  const source = await readFile(sourcePath, 'utf8');
+  const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
   assert.match(styles, /--sp-preview-bg:\s*rgba\(15,\s*23,\s*42,\s*0\.34\)/);
@@ -85,47 +99,48 @@ test('seating planner preview colors adapt to day and night themes with group cl
   assert.match(styles, /\.sp-layout-preview-cell--aisle\s*{[^}]*border:\s*1px dashed var\(--sp-preview-aisle-border\)/s);
   assert.match(styles, /\.sp-layout-preview-local-gap\.is-active\s*{[^}]*var\(--sp-preview-gap-active-bg\)[^}]*var\(--sp-preview-gap-active-shadow\)/s);
 
-  assert.match(source, /const groupId = layout\.groups\?\.\[r\]\?\.\[c\]/);
-  assert.match(source, /cell\.dataset\.group = String\(groupId\)/);
-  assert.match(source, /Number\(groupId\) % 2 === 0/);
-  assert.match(source, /sp-layout-preview-cell--group-even/);
-  assert.match(source, /sp-layout-preview-cell--group-odd/);
+  assert.match(layoutPreviewSource, /const groupId = layout\.groups\?\.\[r\]\?\.\[c\]/);
+  assert.match(layoutPreviewSource, /cell\.dataset\.group = String\(groupId\)/);
+  assert.match(layoutPreviewSource, /Number\(groupId\) % 2 === 0/);
+  assert.match(layoutPreviewSource, /sp-layout-preview-cell--group-even/);
+  assert.match(layoutPreviewSource, /sp-layout-preview-cell--group-odd/);
 });
 
 test('seating planner renders a complete figurative layout preview without clipped controls', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
-  assert.match(source, /measureLayoutPreview/);
-  assert.match(source, /clientWidth|getBoundingClientRect/);
-  assert.match(source, /--sp-preview-canvas-width/);
-  assert.doesNotMatch(source, /236\s*\/\s*Math\.max\(layout\.cols/);
+  assert.match(layoutPreviewSource, /measureLayoutPreview/);
+  assert.match(layoutPreviewSource, /clientWidth|getBoundingClientRect/);
+  assert.match(layoutPreviewSource, /--sp-preview-canvas-width/);
+  assert.doesNotMatch(layoutPreviewSource, /236\s*\/\s*Math\.max\(layout\.cols/);
   assert.match(source, /sp-layout-preview-title/);
   assert.match(source, /座位预览/);
   assert.match(source, /sp-layout-preview-subtitle/);
   assert.match(source, /已生成布局，请确认后排学生/);
   assert.doesNotMatch(source, /AI 已生成布局，请确认后排学生/);
-  assert.match(source, /const previewCellTarget/);
-  assert.match(source, /const maxCell = 28/);
-  assert.match(source, /canvasWidth = cols \* cellSize \+ gapCount \* gapSize/);
-  assert.doesNotMatch(source, /while \(canvasWidth > availableWidth/);
-  assert.match(source, /renderLayoutPreviewStudent/);
-  assert.match(source, /sp-layout-preview-student/);
-  assert.match(source, /sp-layout-preview-student-head/);
-  assert.match(source, /sp-layout-preview-student-body/);
-  assert.match(source, /sp-layout-preview-student-desk/);
-  assert.match(source, /sp-layout-preview-student-badge/);
-  assert.match(source, /renderLayoutPreviewGuardianSeat/);
-  assert.match(source, /renderLayoutPreviewGuardianSeat\(side\)\s*{[^}]*this\.renderLayoutPreviewStudent\(\)/s);
-  assert.match(source, /sp-layout-preview-guardian-seat/);
-  assert.match(source, /sp-layout-preview-guardian-seat--left/);
-  assert.match(source, /sp-layout-preview-guardian-seat--right/);
-  assert.doesNotMatch(source, /sp-layout-preview-guardian-slot/);
-  assert.match(source, /sp-layout-preview-local-gap--group-link/);
-  assert.match(source, /dataset\.groupLink = String\(groupId\)/);
-  assert.doesNotMatch(source, /sp-layout-preview-cell--same-right/);
-  assert.doesNotMatch(source, /sp-layout-preview-cell--same-down/);
-  assert.match(source, /sp-layout-preview-podium-band/);
+  assert.match(layoutPreviewSource, /const previewCellTarget/);
+  assert.match(layoutPreviewSource, /const maxCell = 28/);
+  assert.match(layoutPreviewSource, /canvasWidth = cols \* cellSize \+ gapCount \* gapSize/);
+  assert.doesNotMatch(layoutPreviewSource, /while \(canvasWidth > availableWidth/);
+  assert.match(layoutPreviewSource, /renderLayoutPreviewStudent/);
+  assert.match(layoutPreviewSource, /sp-layout-preview-student/);
+  assert.match(layoutPreviewSource, /sp-layout-preview-student-head/);
+  assert.match(layoutPreviewSource, /sp-layout-preview-student-body/);
+  assert.match(layoutPreviewSource, /sp-layout-preview-student-desk/);
+  assert.match(layoutPreviewSource, /sp-layout-preview-student-badge/);
+  assert.match(layoutPreviewSource, /renderLayoutPreviewGuardianSeat/);
+  assert.match(layoutPreviewSource, /renderLayoutPreviewGuardianSeat\(side\)\s*{[^}]*this\.renderLayoutPreviewStudent\(\)/s);
+  assert.match(layoutPreviewSource, /sp-layout-preview-guardian-seat/);
+  assert.match(layoutPreviewSource, /sp-layout-preview-guardian-seat--left/);
+  assert.match(layoutPreviewSource, /sp-layout-preview-guardian-seat--right/);
+  assert.doesNotMatch(layoutPreviewSource, /sp-layout-preview-guardian-slot/);
+  assert.match(layoutPreviewSource, /sp-layout-preview-local-gap--group-link/);
+  assert.match(layoutPreviewSource, /dataset\.groupLink = String\(groupId\)/);
+  assert.doesNotMatch(layoutPreviewSource, /sp-layout-preview-cell--same-right/);
+  assert.doesNotMatch(layoutPreviewSource, /sp-layout-preview-cell--same-down/);
+  assert.match(layoutPreviewSource, /sp-layout-preview-podium-band/);
 
   assert.match(styles, /--sp-preview-student-head:/);
   assert.match(styles, /--sp-preview-student-body-top:/);
@@ -154,33 +169,34 @@ test('seating planner renders a complete figurative layout preview without clipp
 
 test('seating planner localizes preview editing hints and keeps confirmed preview readonly', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
-  assert.doesNotMatch(source, /Add local aisle|Remove local aisle|Insert full|Remove full/);
-  assert.match(source, /添加局部过道/);
-  assert.match(source, /删除局部过道/);
-  assert.match(source, /删除整行过道/);
-  assert.match(source, /删除整列过道/);
-  assert.match(source, /插入整行过道/);
+  assert.doesNotMatch(layoutPreviewSource, /Add local aisle|Remove local aisle|Insert full|Remove full/);
+  assert.match(layoutPreviewSource, /添加局部过道/);
+  assert.match(layoutPreviewSource, /删除局部过道/);
+  assert.match(layoutPreviewSource, /删除整行过道/);
+  assert.match(layoutPreviewSource, /删除整列过道/);
+  assert.match(layoutPreviewSource, /插入整行过道/);
   assert.match(source, /applyArrangementResult\(data,\s*\{[^}]*preserveLayoutPreview = false/s);
   assert.match(source, /if \(!preserveLayoutPreview\) this\.cancelLayoutPreview\(\)/);
-  assert.match(source, /showConfirmedLayoutPreview/);
-  assert.match(source, /readOnly:\s*true/);
-  assert.match(source, /confirmed:\s*true/);
-  assert.match(source, /preserveLayoutPreview:\s*true/);
-  assert.match(source, /if \(this\.pendingLayoutPreview\.readOnly \|\| this\.pendingLayoutPreview\.confirmed\) return/);
+  assert.match(layoutPreviewSource, /showConfirmedLayoutPreview/);
+  assert.match(layoutPreviewSource, /readOnly:\s*true/);
+  assert.match(layoutPreviewSource, /confirmed:\s*true/);
+  assert.match(layoutPreviewSource, /preserveLayoutPreview:\s*true/);
+  assert.match(layoutPreviewSource, /if \(this\.pendingLayoutPreview\.readOnly \|\| this\.pendingLayoutPreview\.confirmed\) return/);
   assert.match(styles, /\.sp-layout-preview-mini--readonly/);
 });
 
 test('seating planner displays confirmed local aisles as seat gaps', async () => {
-  const source = await readFile(sourcePath, 'utf8');
+  const gridSource = await readFile(gridPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
-  assert.match(source, /appendLocalAisleMarkers/);
-  assert.match(source, /sp-local-aisle-marker--vertical/);
-  assert.match(source, /sp-local-aisle-marker--horizontal/);
-  assert.match(source, /hasLocalAisle\(localAisles, 'vertical', row, col\)/);
-  assert.match(source, /hasLocalAisle\(localAisles, 'horizontal', row, col\)/);
+  assert.match(gridSource, /appendLocalAisleMarkers/);
+  assert.match(gridSource, /sp-local-aisle-marker--vertical/);
+  assert.match(gridSource, /sp-local-aisle-marker--horizontal/);
+  assert.match(gridSource, /hasLocalAisle\(localAisles, 'vertical', row, col\)/);
+  assert.match(gridSource, /hasLocalAisle\(localAisles, 'horizontal', row, col\)/);
   assert.match(styles, /\.sp-local-aisle-marker/);
   assert.match(styles, /\.sp-local-aisle-marker--vertical/);
   assert.match(styles, /\.sp-local-aisle-marker--horizontal/);
@@ -188,33 +204,34 @@ test('seating planner displays confirmed local aisles as seat gaps', async () =>
 
 test('seating planner has a large-grid virtual rendering guard', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const gridSource = await readFile(gridPanelPath, 'utf8');
 
   assert.match(source, /VIRTUAL_GRID_CELL_THRESHOLD/);
-  assert.match(source, /renderVirtualGrid/);
-  assert.match(source, /sp-grid--virtual/);
+  assert.match(gridSource, /renderVirtualGrid/);
+  assert.match(gridSource, /sp-grid--virtual/);
 });
 
 test('seating planner auto-fits wide grids horizontally without clipping seats', async () => {
-  const source = await readFile(sourcePath, 'utf8');
+  const gridSource = await readFile(gridPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
   const gridRule = styles.match(/\.sp-grid\s*{[^}]*}/s)?.[0] || '';
 
-  assert.match(source, /fitGridToClassroomView\(\)\s*{/);
-  assert.match(source, /this\.fitGridToClassroomView\(\);\s*this\.syncPodiumSeatWidth\(\);\s*this\.renderAisleGapHandles\(\);/s);
-  assert.match(source, /this\._resizeHandler = \(\) => \{\s*this\.fitGridToClassroomView\(\);/s);
+  assert.match(gridSource, /fitGridToClassroomView\(\)\s*{/);
+  assert.match(gridSource, /this\.fitGridToClassroomView\(\);\s*this\.syncPodiumSeatWidth\(\);\s*this\.renderAisleGapHandles\(\);/s);
+  assert.match(gridSource, /this\._resizeHandler = \(\) => \{\s*this\.fitGridToClassroomView\(\);/s);
   assert.match(gridRule, /--sp-grid-fit-scale:\s*1/);
   assert.match(gridRule, /transform:\s*scale\(var\(--sp-grid-fit-scale,\s*1\)\)/);
   assert.match(gridRule, /transform-origin:\s*top left/);
 });
 
 test('seating planner positions aisle handles from scaled visible seat bounds', async () => {
-  const source = await readFile(sourcePath, 'utf8');
+  const gridSource = await readFile(gridPanelPath, 'utf8');
 
-  assert.match(source, /getVisibleGridSeatBounds\(\)/);
-  assert.match(source, /const visualGridBounds = this\.getVisibleGridSeatBounds\(\)/);
-  assert.match(source, /handle\.style\.left = `\$\{toLayerLeft\(visualGridBounds\.left\)\}px`/);
-  assert.match(source, /handle\.style\.width = `\$\{visualGridBounds\.width\}px`/);
-  assert.doesNotMatch(source, /handle\.style\.width = `\$\{gridRect\.width\}px`/);
+  assert.match(gridSource, /getVisibleGridSeatBounds\(\)/);
+  assert.match(gridSource, /const visualGridBounds = this\.getVisibleGridSeatBounds\(\)/);
+  assert.match(gridSource, /handle\.style\.left = `\$\{toLayerLeft\(visualGridBounds\.left\)\}px`/);
+  assert.match(gridSource, /handle\.style\.width = `\$\{visualGridBounds\.width\}px`/);
+  assert.doesNotMatch(gridSource, /handle\.style\.width = `\$\{gridRect\.width\}px`/);
 });
 
 test('seating planner shows clearer strategy labels and applied strategy status', async () => {
@@ -245,6 +262,8 @@ test('seating planner surfaces the Timefold arrangement source in status', async
 test('seating planner exposes a feedback entry before the tool theme toggle', async () => {
   const launcherSource = await readFile(launcherPath, 'utf8');
   const plannerSource = await readFile(sourcePath, 'utf8');
+  const apiSource = await readFile(apiClientPath, 'utf8');
+  const feedbackSource = await readFile(feedbackPanelPath, 'utf8');
   const plannerStyles = await readFile(stylePath, 'utf8');
 
   const feedbackIndex = launcherSource.indexOf('tool-feedback-btn');
@@ -257,36 +276,41 @@ test('seating planner exposes a feedback entry before the tool theme toggle', as
   assert.match(launcherSource, /const moduleVersion = encodeURIComponent\(window\.ICeCream\?\.assetVersion \|\| Date\.now\(\)\)/);
   assert.match(launcherSource, /`\.\/\$\{tool\.module\}\.js\?v=\$\{moduleVersion\}`/);
 
-  assert.match(plannerSource, /openFeedbackDialog/);
-  assert.match(plannerSource, /buildFeedbackSnapshot/);
-  assert.match(plannerSource, /recordDiagnosticEvent/);
-  assert.match(plannerSource, /loadBackendDiagnostics/);
-  assert.match(plannerSource, /\/api\/tools\/seating\/feedback/);
-  assert.match(plannerSource, /\/api\/tools\/seating\/diagnostics/);
+  assert.match(plannerSource, /seatingFeedbackMethods/);
+  assert.match(plannerSource, /seatingRosterMethods/);
+  assert.match(plannerSource, /Object\.assign\(\s*SeatingPlanner\.prototype,\s*seatingAssistantMethods,\s*seatingExportMethods,\s*seatingFeedbackMethods,\s*seatingGridMethods,\s*seatingLayoutPreviewMethods,\s*seatingRosterMethods,\s*seatingSeatDetailMethods\s*\)/);
+  assert.match(feedbackSource, /openFeedbackDialog/);
+  assert.match(feedbackSource, /buildFeedbackSnapshot/);
+  assert.match(feedbackSource, /recordDiagnosticEvent/);
+  assert.match(feedbackSource, /loadBackendDiagnostics/);
+  assert.match(feedbackSource, /seatingApi\.fetchFeedback/);
+  assert.match(feedbackSource, /seatingApi\.fetchDiagnostics/);
+  assert.match(apiSource, /\/api\/tools\/seating\/feedback/);
+  assert.match(apiSource, /\/api\/tools\/seating\/diagnostics/);
   assert.match(plannerSource, /sp-feedback-screenshot/);
   assert.match(plannerSource, /sp-feedback-screenshot-preview/);
   assert.match(plannerSource, /sp-feedback-screenshot-status/);
   assert.match(plannerSource, /sp-feedback-screenshot-recapture/);
   assert.match(plannerSource, /sp-feedback-screenshot-redact/);
   assert.match(plannerSource, /sp-feedback-screenshot-fallback/);
-  assert.match(plannerSource, /captureFeedbackScreenshot/);
-  assert.match(plannerSource, /getFeedbackScreenshotTarget/);
-  assert.match(plannerSource, /captureFeedbackScreenScreenshot/);
-  assert.match(plannerSource, /drawScreenCaptureFrameToCanvas/);
-  assert.match(plannerSource, /getFeedbackScreenshotCropRect/);
-  assert.match(plannerSource, /applyFeedbackScreenshotRedactionMasks/);
-  assert.match(plannerSource, /prepareFeedbackScreenshotClone/);
-  assert.match(plannerSource, /navigator\.mediaDevices\.getDisplayMedia/);
-  assert.match(plannerSource, /this\.ensureHtml2Canvas\(\)/);
-  assert.match(plannerSource, /document\.querySelector\('\.sp-main'\)/);
-  assert.match(plannerSource, /onclone:\s*clonedDocument => this\.prepareFeedbackScreenshotClone\(clonedDocument,\s*privacyMode\)/);
-  assert.match(plannerSource, /sp-feedback-capture--redacted/);
+  assert.match(feedbackSource, /captureFeedbackScreenshot/);
+  assert.match(feedbackSource, /getFeedbackScreenshotTarget/);
+  assert.match(feedbackSource, /captureFeedbackScreenScreenshot/);
+  assert.match(feedbackSource, /drawScreenCaptureFrameToCanvas/);
+  assert.match(feedbackSource, /getFeedbackScreenshotCropRect/);
+  assert.match(feedbackSource, /applyFeedbackScreenshotRedactionMasks/);
+  assert.match(feedbackSource, /prepareFeedbackScreenshotClone/);
+  assert.match(feedbackSource, /navigator\.mediaDevices\.getDisplayMedia/);
+  assert.match(feedbackSource, /this\.ensureHtml2Canvas\(\)/);
+  assert.match(feedbackSource, /document\.querySelector\('\.sp-main'\)/);
+  assert.match(feedbackSource, /onclone:\s*clonedDocument => this\.prepareFeedbackScreenshotClone\(clonedDocument,\s*privacyMode\)/);
+  assert.match(feedbackSource, /sp-feedback-capture--redacted/);
   assert.match(plannerSource, /_feedbackScreenshotState/);
   assert.match(plannerSource, /_feedbackScreenshotQueuedPrivacyMode/);
   assert.match(plannerSource, /_feedbackScreenshotRunning/);
-  assert.match(plannerSource, /screenshot:\s*this\._feedbackScreenshot/);
-  assert.match(plannerSource, /await this\._feedbackScreenshotPromise/);
-  assert.match(plannerSource, /diagnostics_request_failed/);
+  assert.match(feedbackSource, /screenshot:\s*this\._feedbackScreenshot/);
+  assert.match(feedbackSource, /await this\._feedbackScreenshotPromise/);
+  assert.match(feedbackSource, /diagnostics_request_failed/);
   assert.match(plannerSource, /反馈座位安排问题/);
   assert.match(plannerSource, /直接写您觉得哪里不对/);
   assert.match(plannerSource, /您希望它怎么做/);
@@ -301,14 +325,14 @@ test('seating planner exposes a feedback entry before the tool theme toggle', as
 });
 
 test('seating feedback screenshots use real screen capture with stable fallback', async () => {
-  const plannerSource = await readFile(sourcePath, 'utf8');
+  const feedbackSource = await readFile(feedbackPanelPath, 'utf8');
   const plannerStyles = await readFile(stylePath, 'utf8');
 
-  const openBody = plannerSource.match(/openFeedbackDialog\(\)\s*{([\s\S]*?)\n    }\n\n    closeFeedbackDialog/)?.[1] || '';
+  const openBody = feedbackSource.match(/openFeedbackDialog\(\)\s*{([\s\S]*?)\n    },\n\n    closeFeedbackDialog/)?.[1] || '';
   assert.match(openBody, /captureFeedbackScreenshot/);
   assert.match(openBody, /dialog\.classList\.remove\('sp-hidden'\)/);
 
-  const captureBody = plannerSource.match(/captureFeedbackScreenshot\(\{[\s\S]*?mode = 'screen'[\s\S]*?\n    }\n\n    async openFeedbackDialog/)?.[0] || '';
+  const captureBody = feedbackSource.match(/captureFeedbackScreenshot\(\{[\s\S]*?mode = 'screen'[\s\S]*?\n    },\n\n    async openFeedbackDialog/)?.[0] || '';
   assert.match(captureBody, /const previousScreenshot = this\._feedbackScreenshot/);
   assert.doesNotMatch(captureBody, /this\._feedbackScreenshot = null;\s*this\.setFeedbackScreenshotLoading/);
   assert.match(captureBody, /this\._feedbackScreenshot = previousScreenshot/);
@@ -318,15 +342,15 @@ test('seating feedback screenshots use real screen capture with stable fallback'
   assert.match(captureBody, /captureFeedbackScreenScreenshot/);
   assert.match(captureBody, /captureFeedbackDomFallbackScreenshot/);
 
-  assert.match(plannerSource, /navigator\.mediaDevices\.getDisplayMedia/);
-  assert.match(plannerSource, /preferCurrentTab:\s*true/);
-  assert.match(plannerSource, /getFeedbackScreenshotCropRect\(target,\s*frame/);
-  assert.match(plannerSource, /drawScreenCaptureFrameToCanvas\(video,\s*cropRect\)/);
-  assert.match(plannerSource, /applyFeedbackScreenshotRedactionMasks\(canvas,\s*cropRect/);
-  assert.match(plannerSource, /stream\.getTracks\(\)\.forEach\(track => track\.stop\(\)\)/);
-  assert.match(plannerSource, /prepareFeedbackScreenshotClone\(clonedDocument,\s*privacyMode\)/);
-  assert.match(plannerSource, /clonedDocument\.querySelectorAll\('\.sp-feedback,\s*\.sp-chat,\s*\.sp-context-menu,\s*\.sp-seat-tooltip,\s*\.sp-autocomplete'\)/);
-  assert.doesNotMatch(plannerSource, /setFeedbackCaptureMode/);
+  assert.match(feedbackSource, /navigator\.mediaDevices\.getDisplayMedia/);
+  assert.match(feedbackSource, /preferCurrentTab:\s*true/);
+  assert.match(feedbackSource, /getFeedbackScreenshotCropRect\(target,\s*frame/);
+  assert.match(feedbackSource, /drawScreenCaptureFrameToCanvas\(video,\s*cropRect\)/);
+  assert.match(feedbackSource, /applyFeedbackScreenshotRedactionMasks\(canvas,\s*cropRect/);
+  assert.match(feedbackSource, /stream\.getTracks\(\)\.forEach\(track => track\.stop\(\)\)/);
+  assert.match(feedbackSource, /prepareFeedbackScreenshotClone\(clonedDocument,\s*privacyMode\)/);
+  assert.match(feedbackSource, /clonedDocument\.querySelectorAll\('\.sp-feedback,\s*\.sp-chat,\s*\.sp-context-menu,\s*\.sp-seat-tooltip,\s*\.sp-autocomplete'\)/);
+  assert.doesNotMatch(feedbackSource, /setFeedbackCaptureMode/);
   assert.doesNotMatch(plannerStyles, /\.sp-feedback--capture-hidden/);
   assert.doesNotMatch(plannerStyles, /\.sp-feedback-capture--active\s+\.sp-blackboard/);
   assert.doesNotMatch(plannerStyles, /\.sp-feedback-capture--active\s+\.sp-blackboard-scene/);
@@ -334,7 +358,7 @@ test('seating feedback screenshots use real screen capture with stable fallback'
   assert.match(plannerStyles, /\.sp-feedback-screenshot-recapture/);
   assert.match(plannerStyles, /\.sp-feedback-screenshot-recapture:disabled/);
   assert.doesNotMatch(plannerStyles, /\.sp-feedback-screenshot-recapture\.is-loading\s+\.lucide/);
-  assert.doesNotMatch(plannerSource, /recapture\.classList\.toggle\('is-loading'/);
+  assert.doesNotMatch(feedbackSource, /recapture\.classList\.toggle\('is-loading'/);
 });
 
 test('feedback screen capture crop rect scales viewport coordinates to video pixels', () => {
@@ -435,6 +459,7 @@ test('seating feedback snapshot anonymizes names and keeps useful seating contex
 
 test('seating planner frames constraints as student seating needs in the UI', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const seatDetailSource = await readFile(seatDetailPanelPath, 'utf8');
 
   assert.match(source, /学生需求/);
   assert.match(source, /收集学生想坐哪里/);
@@ -445,7 +470,7 @@ test('seating planner frames constraints as student seating needs in the UI', as
   assert.doesNotMatch(source, /座位约束/);
   assert.doesNotMatch(source, /描述座位约束/);
   assert.match(source, /prefer_edge/);
-  assert.match(source, /靠边/);
+  assert.match(seatDetailSource, /靠边/);
 });
 
 test('seating planner lets teachers adjust extracted needs before arranging', async () => {
@@ -468,22 +493,25 @@ test('seating planner lets teachers adjust extracted needs before arranging', as
 
 test('seating planner can show and hide seat grade and height details', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const seatDetailSource = await readFile(seatDetailPanelPath, 'utf8');
 
   assert.match(source, /showSeatDetails/);
   assert.match(source, /sp-toggle-seat-details/);
-  assert.match(source, /sp-seat-meta/);
-  assert.match(source, /renderSeatMeta/);
+  assert.match(seatDetailSource, /sp-seat-meta/);
+  assert.match(seatDetailSource, /renderSeatMeta/);
 });
 
 test('seating planner disables the old hover personal-info tooltip', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const gridSource = await readFile(gridPanelPath, 'utf8');
+  const seatDetailSource = await readFile(seatDetailPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
   assert.doesNotMatch(source, /tooltip\.className = 'sp-seat-tooltip'/);
   assert.doesNotMatch(source, /const tooltip = document\.createElement\('div'\);[\s\S]{0,240}sp-seat-tooltip/);
   assert.doesNotMatch(styles, /\.sp-seat--filled:hover\s+\.sp-seat-tooltip\s*{/);
-  assert.match(source, /bindSeatDetailPopover\(cell,\s*student\.id\)/);
-  assert.match(source, /showSeatDetailPopover\(event,\s*studentId\)/);
+  assert.match(gridSource, /bindSeatDetailPopover\(cell,\s*student\.id\)/);
+  assert.match(seatDetailSource, /showSeatDetailPopover\(event,\s*studentId\)/);
 });
 
 test('seating planner stacks desk status icons in the lower right corner', async () => {
@@ -501,62 +529,66 @@ test('seating planner stacks desk status icons in the lower right corner', async
 });
 
 test('seating planner renders desk icons through one helper for normal virtual and guardian seats', async () => {
-  const source = await readFile(sourcePath, 'utf8');
+  const gridSource = await readFile(gridPanelPath, 'utf8');
+  const seatDetailSource = await readFile(seatDetailPanelPath, 'utf8');
 
-  assert.match(source, /renderDeskItems\(student\)/);
-  assert.match(source, /createVirtualSeatCell\(r,\s*c[^)]*\)[\s\S]*renderDeskItems\(student\)/);
-  assert.match(source, /renderGrid\(\)[\s\S]*renderDeskItems\(student\)/);
-  assert.match(source, /renderPodiumSeats\(\)[\s\S]*renderDeskItems\(student\)/);
-  assert.match(source, /studentHasUnmetNeed\(student\.id\)/);
-  assert.match(source, /studentHasSatisfiedNeed\(student\.id\)/);
-  assert.match(source, /近视\|戴眼镜\|视力\|看不清\|看不见\|看不到\|黑板/);
-  assert.doesNotMatch(source, /indicators\.some\(i => i\.reason\?\.includes\('视力'\)\)/);
+  assert.match(gridSource, /renderDeskItems\(student\)/);
+  assert.match(gridSource, /createVirtualSeatCell\(r,\s*c[^)]*\)[\s\S]*renderDeskItems\(student\)/);
+  assert.match(gridSource, /renderGrid\(\)[\s\S]*renderDeskItems\(student\)/);
+  assert.match(gridSource, /renderPodiumSeats\(\)[\s\S]*renderDeskItems\(student\)/);
+  assert.match(seatDetailSource, /studentHasUnmetNeed\(student\.id\)/);
+  assert.match(seatDetailSource, /studentHasSatisfiedNeed\(student\.id\)/);
+  assert.match(seatDetailSource, /近视\|戴眼镜\|视力\|看不清\|看不见\|看不到\|黑板/);
+  assert.doesNotMatch(seatDetailSource, /indicators\.some\(i => i\.reason\?\.includes\('视力'\)\)/);
 });
 
 test('seating planner opens a detailed popover when clicking assigned seats', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const gridSource = await readFile(gridPanelPath, 'utf8');
+  const seatDetailSource = await readFile(seatDetailPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
   const popoverRule = styles.match(/\.sp-seat-detail-popover\s*{[^}]*}/s)?.[0] || '';
   const lightPopoverRule = styles.match(/body\.light-mode\s+\.sp-seat-detail-popover\s*{[^}]*}/s)?.[0] || '';
 
-  assert.match(source, /buildSeatDetail\(studentId\)\s*{/);
-  assert.match(source, /showSeatDetailPopover\(event,\s*studentId\)\s*{/);
-  assert.match(source, /hideSeatDetailPopover\(\)\s*{/);
-  assert.match(source, /syncSeatDetailPopoverPosition\(\)\s*{/);
-  assert.match(source, /findSeatDetailAnchor\(studentId\)\s*{/);
-  assert.match(source, /scheduleSeatDetailPopoverSync\(\)\s*{/);
-  assert.match(source, /bindSeatDetailPopover\(cell,\s*studentId\)\s*{/);
-  assert.match(source, /unbindSeatDetailPopover\(cell\)\s*{/);
-  assert.match(source, /this\._seatDetailAnchor = null/);
-  assert.match(source, /this\._seatDetailStudentId = null/);
-  assert.match(source, /delete seat\.dataset\.studentId/);
-  assert.match(source, /createVirtualSeatCell\(r,\s*c[^)]*\)[\s\S]*bindSeatDetailPopover\(cell,\s*studentId\)/);
-  assert.match(source, /renderGrid\(\)[\s\S]*bindSeatDetailPopover\(cell,\s*student\.id\)/);
-  assert.match(source, /renderPodiumSeats\(\)[\s\S]*bindSeatDetailPopover\(seat,\s*student\.id\)/);
-  assert.match(source, /this\._justDragged = true/);
-  assert.match(source, /if \(this\._justDragged\) return/);
-  assert.match(source, /addEventListener\('pointerup', cell\._seatDetailPointerUpHandler\)/);
-  assert.match(source, /this\._seatDetailSuppressClickUntil = Date\.now\(\) \+ 220/);
-  assert.match(source, /dx > 5 \|\| dy > 5 \|\| this\._justDragged/);
-  assert.match(source, /studentHasVisionNeed\(student\.id\)/);
-  assert.match(source, /isTopGradeStudent\(student\)/);
-  assert.match(source, /studentHasSatisfiedNeed\(student\.id\)/);
-  assert.match(source, /studentHasUnmetNeed\(student\.id\)/);
-  assert.match(source, /keydown[\s\S]*Escape[\s\S]*hideSeatDetailPopover/);
-  assert.match(source, /document\.addEventListener\('click', this\._seatDetailOutsideClickHandler\)/);
-  assert.match(source, /document\.removeEventListener\('click', this\._seatDetailOutsideClickHandler\)/);
-  assert.match(source, /anchor\.classList\.add\('sp-seat--detail-open'\)/);
-  assert.match(source, /classList\.remove\('sp-seat--detail-open'\)/);
-  assert.match(source, /document\.querySelectorAll\('\.sp-seat--filled\[data-student-id\]'\)/);
-  assert.match(source, /requestAnimationFrame\(\(\) => this\.syncSeatDetailPopoverPosition\(\)\)/);
-  assert.match(source, /addEventListener\('scroll', this\._seatDetailScrollHandler/);
-  assert.match(source, /removeEventListener\('scroll', this\._seatDetailScrollHandler/);
-  assert.match(source, /window\.addEventListener\('resize', this\._seatDetailResizeHandler\)/);
-  assert.match(source, /window\.removeEventListener\('resize', this\._seatDetailResizeHandler\)/);
-  assert.match(source, /popover\.style\.left = `\$\{left\}px`/);
-  assert.match(source, /popover\.style\.top = `\$\{Math\.max\(8,\s*top\)\}px`/);
-  assert.doesNotMatch(source, /window\.scrollX/);
-  assert.doesNotMatch(source, /window\.scrollY/);
+  assert.match(seatDetailSource, /buildSeatDetail\(studentId\)\s*{/);
+  assert.match(seatDetailSource, /showSeatDetailPopover\(event,\s*studentId\)\s*{/);
+  assert.match(seatDetailSource, /hideSeatDetailPopover\(\)\s*{/);
+  assert.match(seatDetailSource, /syncSeatDetailPopoverPosition\(\)\s*{/);
+  assert.match(seatDetailSource, /findSeatDetailAnchor\(studentId\)\s*{/);
+  assert.match(seatDetailSource, /scheduleSeatDetailPopoverSync\(\)\s*{/);
+  assert.match(seatDetailSource, /bindSeatDetailPopover\(cell,\s*studentId\)\s*{/);
+  assert.match(seatDetailSource, /unbindSeatDetailPopover\(cell\)\s*{/);
+  assert.match(seatDetailSource, /this\._seatDetailAnchor = null/);
+  assert.match(seatDetailSource, /this\._seatDetailStudentId = null/);
+  assert.match(gridSource, /delete seat\.dataset\.studentId/);
+  assert.match(gridSource, /createVirtualSeatCell\(r,\s*c[^)]*\)[\s\S]*bindSeatDetailPopover\(cell,\s*studentId\)/);
+  assert.match(gridSource, /renderGrid\(\)[\s\S]*bindSeatDetailPopover\(cell,\s*student\.id\)/);
+  assert.match(gridSource, /renderPodiumSeats\(\)[\s\S]*bindSeatDetailPopover\(seat,\s*student\.id\)/);
+  assert.match(gridSource, /this\._justDragged = true/);
+  assert.match(seatDetailSource, /if \(this\._justDragged\) return/);
+  assert.match(seatDetailSource, /addEventListener\('pointerup', cell\._seatDetailPointerUpHandler\)/);
+  assert.match(seatDetailSource, /this\._seatDetailSuppressClickUntil = Date\.now\(\) \+ 220/);
+  assert.match(seatDetailSource, /dx > 5 \|\| dy > 5 \|\| this\._justDragged/);
+  assert.match(seatDetailSource, /studentHasVisionNeed\(student\.id\)/);
+  assert.match(seatDetailSource, /isTopGradeStudent\(student\)/);
+  assert.match(seatDetailSource, /studentHasSatisfiedNeed\(student\.id\)/);
+  assert.match(seatDetailSource, /studentHasUnmetNeed\(student\.id\)/);
+  assert.match(seatDetailSource, /Escape[\s\S]*hideSeatDetailPopover/);
+  assert.match(seatDetailSource, /document\.addEventListener\('keydown', this\._seatDetailKeyHandler\)/);
+  assert.match(seatDetailSource, /document\.addEventListener\('click', this\._seatDetailOutsideClickHandler\)/);
+  assert.match(seatDetailSource, /document\.removeEventListener\('click', this\._seatDetailOutsideClickHandler\)/);
+  assert.match(seatDetailSource, /anchor\.classList\.add\('sp-seat--detail-open'\)/);
+  assert.match(seatDetailSource, /classList\.remove\('sp-seat--detail-open'\)/);
+  assert.match(seatDetailSource, /document\.querySelectorAll\('\.sp-seat--filled\[data-student-id\]'\)/);
+  assert.match(seatDetailSource, /requestAnimationFrame\(\(\) => this\.syncSeatDetailPopoverPosition\(\)\)/);
+  assert.match(seatDetailSource, /addEventListener\('scroll', this\._seatDetailScrollHandler/);
+  assert.match(seatDetailSource, /removeEventListener\('scroll', this\._seatDetailScrollHandler/);
+  assert.match(seatDetailSource, /window\.addEventListener\('resize', this\._seatDetailResizeHandler\)/);
+  assert.match(seatDetailSource, /window\.removeEventListener\('resize', this\._seatDetailResizeHandler\)/);
+  assert.match(seatDetailSource, /popover\.style\.left = `\$\{left\}px`/);
+  assert.match(seatDetailSource, /popover\.style\.top = `\$\{Math\.max\(8,\s*top\)\}px`/);
+  assert.doesNotMatch(seatDetailSource, /window\.scrollX/);
+  assert.doesNotMatch(seatDetailSource, /window\.scrollY/);
 
   assert.match(styles, /\.sp-seat-detail-popover/);
   assert.match(popoverRule, /position:\s*fixed/);
@@ -600,13 +632,15 @@ test('seating planner grade priority places only top 20 percent into best scored
 
 test('seating planner does not show arrangement notes as a second success warning toast', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
 
-  assert.match(source, /showArrangementWarnings/);
-  assert.doesNotMatch(source, /if \(arrangement\.warnings\.length\) this\.showToast\(arrangement\.warnings\.join\('；'\), 'warning'\)/);
+  assert.match(layoutPreviewSource, /showArrangementWarnings/);
+  assert.doesNotMatch(layoutPreviewSource, /if \(arrangement\.warnings\.length\) this\.showToast\(arrangement\.warnings\.join\('；'\), 'warning'\)/);
 });
 
 test('AI seating assistant is styled as a draggable floating panel with mode toggle', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const assistantSource = await readFile(assistantPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
   assert.match(source, /id="sp-chat-header"/);
@@ -615,8 +649,9 @@ test('AI seating assistant is styled as a draggable floating panel with mode tog
   assert.match(source, /aria-label="打开 ICeCream 座位助手"/);
   assert.match(source, /aria-label="关闭 ICeCream 座位助手"/);
   assert.doesNotMatch(source, />AI 座位助手</);
-  assert.match(source, /startChatDrag/);
-  assert.match(source, /syncChatPosition/);
+  assert.match(source, /seatingAssistantMethods/);
+  assert.match(assistantSource, /startChatDrag/);
+  assert.match(assistantSource, /syncChatPosition/);
   assert.match(styles, /\.sp-chat--positioned/);
   assert.match(styles, /--sp-chat-left/);
   assert.match(styles, /cursor: grab/);
@@ -627,13 +662,15 @@ test('AI seating assistant is styled as a draggable floating panel with mode tog
   assert.match(source, /data-chat-mode="auto"/);
   assert.match(source, /data-chat-mode="micro"/);
   assert.match(source, /data-chat-mode="regenerate"/);
-  assert.match(source, /setChatMode/);
+  assert.match(assistantSource, /setChatMode/);
   assert.match(styles, /\.sp-chat-mode/);
   assert.match(styles, /\.sp-chat-mode-btn/);
 });
 
 test('seating planner uses arrange completion without static prompt chips or chat autocomplete', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const apiSource = await readFile(apiClientPath, 'utf8');
+  const assistantSource = await readFile(assistantPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
   assert.match(source, /id="sp-arrange-completions"/);
@@ -643,27 +680,30 @@ test('seating planner uses arrange completion without static prompt chips or cha
   assert.match(source, /completeArrangePrompt/);
   assert.match(source, /pickArrangeCompletion/);
   assert.match(source, /role="listbox"/);
-  assert.match(source, /setAttribute\('role', 'option'\)/);
+  assert.match(assistantSource, /setAttribute\('role', 'option'\)/);
   assert.match(source, /aria-controls="sp-arrange-completions"/);
   assert.match(source, /aria-expanded="false"/);
-  assert.match(source, /\/api\/tools\/seating\/suggestions/);
+  assert.match(source, /seatingApi\.fetchSuggestions/);
+  assert.match(assistantSource, /seatingApi\.fetchSuggestions/);
+  assert.match(apiSource, /\/api\/tools\/seating\/suggestions/);
   assert.match(source, /handleSuggestionKeyDown\(e, 'arrange'\)/);
-  assert.match(source, /acceptSuggestion\(kind\)/);
-  assert.match(source, /hideSuggestions\(kind\)/);
-  assert.match(source, /renderSuggestionList\(kind\)/);
+  assert.match(assistantSource, /acceptSuggestion\(kind\)/);
+  assert.match(assistantSource, /hideSuggestions\(kind\)/);
+  assert.match(assistantSource, /renderSuggestionList\(kind\)/);
+  assert.match(assistantSource, /clearSuggestionState\(kind\)/);
   assert.match(source, /clearSuggestionState\('arrange'\)/);
-  assert.match(source, /new AbortController\(\)/);
-  assert.match(source, /setTimeout\(\(\) => this\.requestSuggestions\(kind\), immediate \? 0 : 600\)/);
+  assert.match(assistantSource, /new AbortController\(\)/);
+  assert.match(assistantSource, /setTimeout\(\(\) => this\.requestSuggestions\(kind\), immediate \? 0 : 600\)/);
   assert.doesNotMatch(source, /sp-arrange-examples/);
   assert.doesNotMatch(source, /data-arrange-example/);
   assert.doesNotMatch(source, /applyArrangeExample/);
   assert.doesNotMatch(source, /id="sp-chat-completions"/);
   assert.doesNotMatch(source, /aria-controls="sp-chat-completions"/);
   assert.doesNotMatch(source, /handleSuggestionKeyDown\(e, 'chat'\)/);
-  assert.doesNotMatch(source, /scheduleSuggestionRefresh\('chat'/);
-  assert.doesNotMatch(source, /clearSuggestionState\('chat'\)/);
-  assert.doesNotMatch(source, /kind === 'chat'/);
-  assert.doesNotMatch(source, /target: 'chat'/);
+  assert.doesNotMatch(assistantSource, /scheduleSuggestionRefresh\('chat'/);
+  assert.doesNotMatch(assistantSource, /clearSuggestionState\('chat'\)/);
+  assert.doesNotMatch(assistantSource, /kind === 'chat'/);
+  assert.doesNotMatch(assistantSource, /target: 'chat'/);
   assert.doesNotMatch(source, /input\?\.addEventListener\('input', \(\) => this\.scheduleSuggestionRefresh\('chat'\)\)/);
   assert.doesNotMatch(source, /arrangePrompt\?\.addEventListener\('input', \(\) => this\.scheduleSuggestionRefresh\('arrange'/);
   assert.doesNotMatch(source, /setInterval\(/);
@@ -682,19 +722,20 @@ test('seating planner uses arrange completion without static prompt chips or cha
 });
 
 test('seating planner renders separate confirmation copy for batch tuning and regeneration', async () => {
-  const source = await readFile(sourcePath, 'utf8');
+  const assistantSource = await readFile(assistantPanelPath, 'utf8');
 
-  assert.match(source, /这会批量调整当前座位，但不改变布局，确认执行吗？/);
-  assert.match(source, /这会重新生成座位表并可能大幅改变当前安排，确认继续吗？/);
-  assert.match(source, /intent === 'batch_tune'/);
-  assert.match(source, /intent === 'regenerate'/);
-  assert.match(source, /guardians: this\.guardians/);
-  assert.match(source, /this\.guardians = result\.guardians/);
-  assert.doesNotMatch(source, /shouldUseArrangementAssistant/);
+  assert.match(assistantSource, /这会批量调整当前座位，但不改变布局，确认执行吗？/);
+  assert.match(assistantSource, /这会重新生成座位表并可能大幅改变当前安排，确认继续吗？/);
+  assert.match(assistantSource, /intent === 'batch_tune'/);
+  assert.match(assistantSource, /intent === 'regenerate'/);
+  assert.match(assistantSource, /guardians: this\.guardians/);
+  assert.match(assistantSource, /this\.guardians = result\.guardians/);
+  assert.doesNotMatch(assistantSource, /shouldUseArrangementAssistant/);
 });
 
 test('seating image import uses a review dialog before committing recognized students', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const rosterSource = await readFile(rosterPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
   assert.match(source, /id="sp-image-review"/);
@@ -703,13 +744,13 @@ test('seating image import uses a review dialog before committing recognized stu
   assert.match(source, /确认导入/);
   assert.match(source, /重新上传/);
   assert.match(source, /取消/);
-  assert.match(source, /showImageReview\(result\.data/);
+  assert.match(rosterSource, /showImageReview\(result\.data/);
   assert.match(source, /confirmImageReview\(\)/);
-  assert.match(source, /appendReviewedStudentsToInput/);
-  assert.match(source, /sp-image-review-title/);
-  assert.match(source, /识别结果确认（\$\{students\.length\}人）/);
-  assert.match(source, /indexCell\.className = 'sp-image-review-index'/);
-  assert.match(source, /indexCell\.textContent = String\(index \+ 1\)/);
+  assert.match(rosterSource, /appendReviewedStudentsToInput/);
+  assert.match(rosterSource, /sp-image-review-title/);
+  assert.match(rosterSource, /识别结果确认（\$\{students\.length\}人）/);
+  assert.match(rosterSource, /indexCell\.className = 'sp-image-review-index'/);
+  assert.match(rosterSource, /indexCell\.textContent = String\(index \+ 1\)/);
   assert.doesNotMatch(source, /data-field="index"/);
   assert.match(styles, /\.sp-image-review/);
   assert.match(styles, /\.sp-image-review-index/);
@@ -719,25 +760,27 @@ test('seating image import uses a review dialog before committing recognized stu
 
 test('student roster update opens the review-style editable table', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const rosterSource = await readFile(rosterPanelPath, 'utf8');
 
-  assert.match(source, /showStudentEditor\(text/);
-  assert.match(source, /this\.showStudentEditor\(text\)/);
-  assert.match(source, /this\.showStudentEditor\(this\.formatStudentsForEditor\(result\.data\.students\)\)/);
-  assert.match(source, /this\.showStudentEditor\(nextText\)/);
+  assert.match(rosterSource, /showStudentEditor\(text/);
+  assert.match(rosterSource, /this\.showStudentEditor\(text\)/);
+  assert.match(rosterSource, /this\.showStudentEditor\(this\.formatStudentsForEditor\(result\.data\.students\)\)/);
+  assert.match(rosterSource, /this\.showStudentEditor\(nextText\)/);
   assert.match(source, />\s*编辑名单\s*</);
   assert.match(source, /addEventListener\('click', \(\) => this\.openRosterEditor\(\)\)/);
-  assert.match(source, /openRosterEditor\(\)/);
-  assert.match(source, /showRosterReview\(students/);
-  assert.match(source, /名单编辑（\$\{students\.length\}人）/);
-  assert.match(source, /confirmRosterReview\(\)/);
-  assert.match(source, /applyRosterReviewUpdate/);
-  assert.match(source, /confirmButton\.textContent = '确认更新'/);
-  assert.match(source, /reuploadButton\?\.classList\.add\('sp-hidden'\)/);
+  assert.match(rosterSource, /openRosterEditor\(\)/);
+  assert.match(rosterSource, /showRosterReview\(students/);
+  assert.match(rosterSource, /名单编辑（\$\{students\.length\}人）/);
+  assert.match(rosterSource, /confirmRosterReview\(\)/);
+  assert.match(rosterSource, /applyRosterReviewUpdate/);
+  assert.match(rosterSource, /confirmButton\.textContent = '确认更新'/);
+  assert.match(rosterSource, /reuploadButton\?\.classList\.add\('sp-hidden'\)/);
   assert.doesNotMatch(source, /sp-parse-students'\)\?\.addEventListener\('click', \(\) => this\.parseStudents\(\)\)/);
 });
 
 test('student roster editor supports add, bulk append, and row removal controls', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const rosterSource = await readFile(rosterPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
   assert.match(source, /id="sp-roster-toolbar"/);
@@ -749,13 +792,13 @@ test('student roster editor supports add, bulk append, and row removal controls'
   assert.match(source, /id="sp-roster-bulk-append"/);
   assert.match(source, />\s*追加到表格\s*</);
   assert.match(source, /sp-roster-action-head/);
-  assert.match(source, /sp-roster-delete-row/);
-  assert.match(source, /addRosterReviewRow/);
-  assert.match(source, /appendRosterBulkText/);
-  assert.match(source, /toggleRosterBulkPanel/);
-  assert.match(source, /renumberReviewRows/);
-  assert.match(source, /setRosterEditorControlsVisible\(false\)/);
-  assert.match(source, /setRosterEditorControlsVisible\(true\)/);
+  assert.match(rosterSource, /sp-roster-delete-row/);
+  assert.match(rosterSource, /addRosterReviewRow/);
+  assert.match(rosterSource, /appendRosterBulkText/);
+  assert.match(rosterSource, /toggleRosterBulkPanel/);
+  assert.match(rosterSource, /renumberReviewRows/);
+  assert.match(rosterSource, /setRosterEditorControlsVisible\(false\)/);
+  assert.match(rosterSource, /setRosterEditorControlsVisible\(true\)/);
   assert.match(styles, /\.sp-roster-toolbar/);
   assert.match(styles, /\.sp-roster-bulk-panel/);
   assert.match(styles, /\.sp-roster-delete-row/);
@@ -833,56 +876,63 @@ test('blackboard text uses Times New Roman for Latin characters', async () => {
 });
 
 test('chat requests delegate intent classification to the backend', async () => {
-  const source = await readFile(sourcePath, 'utf8');
+  const assistantSource = await readFile(assistantPanelPath, 'utf8');
+  const apiSource = await readFile(apiClientPath, 'utf8');
 
-  assert.match(source, /\/api\/tools\/seating\/chat/);
-  assert.match(source, /const intent = data\.intent/);
-  assert.match(source, /intent === 'direct_edit'/);
-  assert.match(source, /intent === 'batch_tune'/);
-  assert.match(source, /intent === 'regenerate'/);
-  assert.doesNotMatch(source, /shouldUseArrangementAssistant/);
-  assert.doesNotMatch(source, /detectSeatingMutationIntent/);
+  assert.match(assistantSource, /seatingApi\.fetchChat/);
+  assert.match(apiSource, /\/api\/tools\/seating\/chat/);
+  assert.match(assistantSource, /const intent = data\.intent/);
+  assert.match(assistantSource, /intent === 'direct_edit'/);
+  assert.match(assistantSource, /intent === 'batch_tune'/);
+  assert.match(assistantSource, /intent === 'regenerate'/);
+  assert.doesNotMatch(assistantSource, /shouldUseArrangementAssistant/);
+  assert.doesNotMatch(assistantSource, /detectSeatingMutationIntent/);
 });
 
 test('major chat arrangement requests require confirmation before regenerating seats', async () => {
-  const source = await readFile(sourcePath, 'utf8');
+  const assistantSource = await readFile(assistantPanelPath, 'utf8');
 
-  assert.match(source, /showChatPendingConfirmation\(data\.confirmationText/);
-  assert.match(source, /confirmMajorArrangementFromChat/);
-  assert.match(source, /这会重新生成座位表并可能大幅改变当前安排，确认继续吗？/);
-  assert.match(source, /this\._chatPending\s*=\s*{\s*type: 'arrangement'/s);
-  assert.doesNotMatch(source, /showChatArrangementConfirmation/);
+  assert.match(assistantSource, /showChatPendingConfirmation\(data\.confirmationText/);
+  assert.match(assistantSource, /confirmMajorArrangementFromChat/);
+  assert.match(assistantSource, /这会重新生成座位表并可能大幅改变当前安排，确认继续吗？/);
+  assert.match(assistantSource, /this\._chatPending\s*=\s*{\s*type: 'arrangement'/s);
+  assert.doesNotMatch(assistantSource, /showChatArrangementConfirmation/);
 });
 
 test('seating planner inserts full row and column aisles from gap handles', async () => {
-  const source = await readFile(sourcePath, 'utf8');
+  const gridSource = await readFile(gridPanelPath, 'utf8');
+  const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
-  assert.match(source, /renderAisleGapHandles/);
-  assert.match(source, /localAisles/);
-  assert.match(source, /shouldShowRowAisleBoundary/);
-  assert.match(source, /shouldShowColumnAisleBoundary/);
-  assert.match(source, /this\.insertAisleRowAt\(row\)/);
-  assert.match(source, /this\.insertAisleColumnAt\(col\)/);
-  assert.match(source, /insertPreviewAisleRowAt/);
-  assert.match(source, /insertPreviewAisleColumnAt/);
+  assert.match(gridSource, /renderAisleGapHandles/);
+  assert.match(gridSource, /localAisles/);
+  assert.match(gridSource, /shouldShowRowAisleBoundary/);
+  assert.match(gridSource, /shouldShowColumnAisleBoundary/);
+  assert.match(gridSource, /this\.insertAisleRowAt\(row\)/);
+  assert.match(gridSource, /this\.insertAisleColumnAt\(col\)/);
+  assert.match(layoutPreviewSource, /insertPreviewAisleRowAt/);
+  assert.match(layoutPreviewSource, /insertPreviewAisleColumnAt/);
   assert.match(styles, /\.sp-aisle-gap/);
 });
 
 test('seating planner exports local PNG and styled xlsx', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const apiSource = await readFile(apiClientPath, 'utf8');
+  const exportSource = await readFile(exportPanelPath, 'utf8');
 
-  assert.match(source, /ensureHtml2Canvas/);
-  assert.match(source, /\/js\/libs\/html2canvas\.min\.js/);
-  assert.match(source, /html2canvas-retry/);
-  assert.match(source, /typeof window\.html2canvas !== 'function'/);
-  assert.match(source, /suppressHtml2CanvasAmdRegistration/);
-  assert.match(source, /amdDefine\.amd = undefined/);
-  assert.match(source, /amdDefine\.amd = previousAmd/);
-  assert.match(source, /sp-export-hide/);
+  assert.match(source, /seatingExportMethods/);
+  assert.match(exportSource, /ensureHtml2Canvas/);
+  assert.match(exportSource, /\/js\/libs\/html2canvas\.min\.js/);
+  assert.match(exportSource, /html2canvas-retry/);
+  assert.match(exportSource, /typeof window\.html2canvas !== 'function'/);
+  assert.match(exportSource, /suppressHtml2CanvasAmdRegistration/);
+  assert.match(exportSource, /amdDefine\.amd = undefined/);
+  assert.match(exportSource, /amdDefine\.amd = previousAmd/);
+  assert.match(exportSource, /sp-export-hide/);
   assert.match(source, /exportXLSX/);
-  assert.match(source, /\/api\/tools\/seating\/export-xlsx/);
-  assert.match(source, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
+  assert.match(exportSource, /seatingApi\.fetchExportXlsx/);
+  assert.match(apiSource, /\/api\/tools\/seating\/export-xlsx/);
+  assert.match(exportSource, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
   assert.doesNotMatch(source, /sp-export-excel'\)\?\.addEventListener\('click', \(\) => this\.exportCSV\(\)\)/);
 });
 
@@ -960,18 +1010,20 @@ test('seating planner explains parsed physical rows and mixed column layouts', a
 
 test('collapsed AI seating assistant icon can be dragged without opening the panel', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const assistantSource = await readFile(assistantPanelPath, 'utf8');
 
-  assert.match(source, /startChatIconDrag/);
+  assert.match(assistantSource, /startChatIconDrag/);
   assert.match(source, /CHAT_DRAG_THRESHOLD/);
-  assert.match(source, /suppressChatToggleClick/);
-  assert.match(source, /toggle\?\.addEventListener\('pointerdown', e => this\.startChatIconDrag\(e\)\)/);
+  assert.match(assistantSource, /suppressChatToggleClick/);
+  assert.match(assistantSource, /toggle\?\.addEventListener\('pointerdown', e => this\.startChatIconDrag\(e\)\)/);
 });
 
 test('arrange prompt completion stays manual without static examples or automatic opening', async () => {
   const source = await readFile(sourcePath, 'utf8');
+  const assistantSource = await readFile(assistantPanelPath, 'utf8');
 
   assert.match(source, /_arrangeSuggestionDismissedText/);
-  assert.match(source, /scheduleSuggestionRefresh\(kind, immediate = false, options = \{\}\)/);
+  assert.match(assistantSource, /scheduleSuggestionRefresh\(kind, immediate = false, options = \{\}\)/);
   assert.doesNotMatch(source, /sp-arrange-examples/);
   assert.doesNotMatch(source, /applyArrangeExample/);
   assert.doesNotMatch(source, /source: 'input'/);
