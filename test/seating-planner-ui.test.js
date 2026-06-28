@@ -328,11 +328,11 @@ test('seating feedback screenshots use real screen capture with stable fallback'
   const feedbackSource = await readFile(feedbackPanelPath, 'utf8');
   const plannerStyles = await readFile(stylePath, 'utf8');
 
-  const openBody = feedbackSource.match(/openFeedbackDialog\(\)\s*{([\s\S]*?)\n    },\n\n    closeFeedbackDialog/)?.[1] || '';
+  const openBody = feedbackSource.match(/openFeedbackDialog\(\)\s*{([\s\S]*?)\r?\n    },\r?\n\r?\n    closeFeedbackDialog/)?.[1] || '';
   assert.match(openBody, /captureFeedbackScreenshot/);
   assert.match(openBody, /dialog\.classList\.remove\('sp-hidden'\)/);
 
-  const captureBody = feedbackSource.match(/captureFeedbackScreenshot\(\{[\s\S]*?mode = 'screen'[\s\S]*?\n    },\n\n    async openFeedbackDialog/)?.[0] || '';
+  const captureBody = feedbackSource.match(/captureFeedbackScreenshot\(\{[\s\S]*?mode = 'screen'[\s\S]*?\r?\n    },\r?\n\r?\n    async openFeedbackDialog/)?.[0] || '';
   assert.match(captureBody, /const previousScreenshot = this\._feedbackScreenshot/);
   assert.doesNotMatch(captureBody, /this\._feedbackScreenshot = null;\s*this\.setFeedbackScreenshotLoading/);
   assert.match(captureBody, /this\._feedbackScreenshot = previousScreenshot/);
