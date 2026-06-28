@@ -24,6 +24,9 @@ const REASON_MESSAGES = {
     validation_failed: '数据未通过后端校验。',
     ai_not_configured: '智能约束解析未配置，请先配置 API Key。',
     ai_failed: '智能约束解析失败，请稍后重试。',
+    bad_response: '后端响应格式异常。',
+    missing_project: '请先完成数据准备并保存项目。',
+    missing_solution: '请先生成课表结果。',
 };
 
 export function messageForReason(reason, fallback = '请求失败') {
@@ -52,4 +55,34 @@ export async function requestV2(path, options = {}) {
         throw error;
     }
     return payload.data;
+}
+
+/**
+ * 请求 V2 文件响应。失败时仍尝试解析标准错误壳。
+ * @returns {Promise<{ blob: Blob, filename: string, response: Response }>}
+ */
+export async function requestV2File(path, options = {}) {
+    const response = await fetch(`/api/tools/timetable-v2${path}`, {
+        ...options,
+        headers: {
+            ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+            ...(options.headers || {}),
+        },
+    });
+
+    if (!response.ok) {
+        const payload = await response.json().catch(() => ({ success: false, reason: 'bad_response' }));
+        const reason = payload.reason || payload?.data?.reason;
+        const error = new Error(messageForReason(reason, payload.error || '请求失败'));
+        error.reason = reason;
+        error.status = response.status;
+        error.payload = payload;
+        throw error;
+    }
+
+    const disposition = response.headers.get('content-disposition') || '';
+    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+    const filename = decodeURIComponent((utf8Match && utf8Match[1]) || (plainMatch && plainMatch[1]) || '课表.xlsx');
+    return { blob: await response.blob(), filename, response };
 }

@@ -137,11 +137,15 @@ export function createPublishExportView({ store, api }) {
 
     // 发布：经 api.publish（唯一写入口）→ 后端发布前校验。成功后回写 solution 引用。
     async function doPublish() {
+        const state = store.getState();
+        if (!state.project || !state.solution) {
+            setMsg('请先完成数据准备并生成课表。', 'err');
+            return;
+        }
         publishBtn.disabled = true;
         setMsg('正在请求后端发布校验…', null);
         try {
-            const state = store.getState();
-            const result = await api.publish({ project: state.project, solution: state.solution });
+            const result = await api.publishSchedule({ project: state.project, solution: state.solution });
             // 后端返回发布结果（含校验通过后的 solution）；用其替换 store 引用。
             if (result && result.solution) {
                 store.dispatch('setSolution', result.solution);
@@ -149,8 +153,9 @@ export function createPublishExportView({ store, api }) {
             if (result && result.project) {
                 store.dispatch('setProject', result.project);
             }
+            store.dispatch('setPublishResult', result);
             published = true;
-            history = [{ time: new Date().toLocaleString(), label: '课表已发布' }, ...history];
+            history = [{ time: new Date().toLocaleString(), label: `课表已发布${result?.publishedAt ? ` · ${result.publishedAt}` : ''}` }, ...history];
             renderAll();
             setMsg('发布成功，课表已通过后端发布前校验。', 'ok');
         } catch (err) {
@@ -161,14 +166,24 @@ export function createPublishExportView({ store, api }) {
         }
     }
 
-    // 导出：导出入口同样以后端为准（mock 下仅提示）。前端不在本地生成最终课表数据。
-    function doExport() {
-        const solution = store.getState().solution;
-        if (!solution) {
+    // 导出：导出入口同样以后端为准。前端只触发下载，不本地生成最终课表数据。
+    async function doExport() {
+        const state = store.getState();
+        if (!state.project || !state.solution) {
             setMsg('暂无可导出的课表，请先求解并发布。', 'err');
             return;
         }
-        setMsg('导出入口已触发（实际导出由后端生成文件）。', 'ok');
+        exportBtn.disabled = true;
+        setMsg('正在请求后端生成 xlsx…', null);
+        try {
+            const file = await api.exportSchedule({ project: state.project, solution: state.solution, type: 'class' });
+            api.downloadFile(file);
+            setMsg(`导出已开始：${file.filename || '课表.xlsx'}`, 'ok');
+        } catch (error) {
+            setMsg(error.message || '导出失败', 'err');
+        } finally {
+            exportBtn.disabled = false;
+        }
     }
 
     publishBtn.addEventListener('click', doPublish);

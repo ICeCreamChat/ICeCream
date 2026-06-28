@@ -171,7 +171,7 @@ export function createRuleInputView({ store, api }) {
         if (activeMode === 'nl') {
             const text = nlTextarea.value.trim();
             if (!text) { setMsg('请输入自然语言约束。', 'err'); return; }
-            draft = { kind: 'rule', source: '自然语言', text, type: 'natural_language' };
+            draft = { kind: 'rule', source: '自然语言', text, type: 'natural_language', nl: text };
             nlTextarea.value = '';
         } else if (activeMode === 'excel') {
             const file = excelInput.files && excelInput.files[0];

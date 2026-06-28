@@ -19,34 +19,7 @@
 
 const STYLE_ID = 'ttv2-insight-panel-style';
 
-const STYLE_TEXT = `
-.ttv2-insight { display: flex; flex-direction: column; gap: 12px;
-    padding: 12px; box-sizing: border-box; font-size: 14px; color: var(--ttv2-text, #1f2937); }
-.ttv2-insight__title { font-size: 15px; font-weight: 600; margin: 0; }
-.ttv2-insight__summary { display: flex; gap: 8px; flex-wrap: wrap; }
-.ttv2-insight__chip { display: inline-flex; align-items: center; gap: 6px;
-    padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; }
-.ttv2-insight__chip--error { background: rgba(220,38,38,.12); color: #b91c1c; }
-.ttv2-insight__chip--warning { background: rgba(217,119,6,.14); color: #b45309; }
-.ttv2-insight__chip--info { background: rgba(37,99,235,.12); color: #1d4ed8; }
-.ttv2-insight__section-title { font-size: 13px; font-weight: 600; margin: 4px 0;
-    color: var(--ttv2-text-muted, #6b7280); }
-.ttv2-insight__list { list-style: none; margin: 0; padding: 0;
-    display: flex; flex-direction: column; gap: 6px; }
-.ttv2-insight__item { padding: 8px 10px; border-radius: 8px; border-left: 3px solid transparent;
-    background: var(--ttv2-surface-alt, #f9fafb); line-height: 1.4; }
-.ttv2-insight__item--error { border-left-color: #dc2626; background: rgba(220,38,38,.06); }
-.ttv2-insight__item--warning { border-left-color: #d97706; background: rgba(217,119,6,.07); }
-.ttv2-insight__item--info { border-left-color: #2563eb; background: rgba(37,99,235,.06); }
-.ttv2-insight__item-cat { font-size: 12px; color: var(--ttv2-text-muted, #6b7280); }
-.ttv2-insight__sug { padding: 8px 10px; border-radius: 8px;
-    background: repeating-linear-gradient(45deg, rgba(124,58,237,.05), rgba(124,58,237,.05) 8px, rgba(124,58,237,.10) 8px, rgba(124,58,237,.10) 16px);
-    border: 1px dashed var(--ttv2-draft-border, #a78bfa); }
-.ttv2-insight__draft-tag { display: inline-block; margin-right: 6px; padding: 1px 6px;
-    border-radius: 4px; font-size: 11px; font-weight: 600;
-    background: var(--ttv2-draft-border, #a78bfa); color: #fff; }
-.ttv2-insight__empty { color: var(--ttv2-text-muted, #9ca3af); font-size: 13px; }
-`;
+const STYLE_TEXT = '';
 
 function ensureStyle() {
     if (typeof document === 'undefined') return;
@@ -72,7 +45,7 @@ function normalizeSeverity(sev) {
  */
 export function createInsightPanel(props = {}) {
     ensureStyle();
-    let state = { diagnostics: null, ...props };
+    let state = { diagnostics: null, migrationReport: null, unsupportedRules: [], publishResult: null, ...props };
 
     const el = document.createElement('section');
     el.className = 'ttv2-insight';
@@ -97,7 +70,13 @@ export function createInsightPanel(props = {}) {
     const sugList = document.createElement('ul');
     sugList.className = 'ttv2-insight__list';
 
-    el.append(title, summary, itemsTitle, itemsList, sugTitle, sugList);
+    const reportTitle = document.createElement('div');
+    reportTitle.className = 'ttv2-insight__section-title';
+    reportTitle.textContent = '导入 / 写入反馈';
+    const reportList = document.createElement('ul');
+    reportList.className = 'ttv2-insight__list';
+
+    el.append(title, summary, itemsTitle, itemsList, sugTitle, sugList, reportTitle, reportList);
 
     function renderSummary(s) {
         summary.replaceChildren();
@@ -161,11 +140,46 @@ export function createInsightPanel(props = {}) {
         }
     }
 
+    function appendReportItem(text, kind = 'info') {
+        const li = document.createElement('li');
+        li.className = `ttv2-insight__item ttv2-insight__item--${normalizeSeverity(kind)}`;
+        li.textContent = text;
+        reportList.append(li);
+    }
+
+    function renderReport() {
+        reportList.replaceChildren();
+        const report = state.migrationReport || {};
+        const summaryData = report.summary || null;
+        const unsupported = Array.isArray(state.unsupportedRules) ? state.unsupportedRules : [];
+        const publish = state.publishResult || null;
+
+        if (summaryData) {
+            appendReportItem(`导入报告：保留 ${summaryData.kept || 0}，降级 ${summaryData.degraded || 0}，丢弃 ${summaryData.dropped || 0}，待审 ${summaryData.review || 0}`, summaryData.dropped ? 'warning' : 'info');
+        }
+
+        for (const item of unsupported.slice(0, 4)) {
+            appendReportItem(`规则未支持：${item.text || item.reason || JSON.stringify(item)}`, 'warning');
+        }
+
+        if (publish?.published) {
+            appendReportItem(`发布成功：${publish.publishedAt || '已生成发布快照'}`, 'info');
+        }
+
+        if (!summaryData && unsupported.length === 0 && !publish) {
+            const empty = document.createElement('li');
+            empty.className = 'ttv2-insight__empty';
+            empty.textContent = '暂无导入或发布反馈';
+            reportList.append(empty);
+        }
+    }
+
     function render() {
         const d = state.diagnostics || {};
         renderSummary(d.summary || {});
         renderItems(Array.isArray(d.items) ? d.items : []);
         renderSuggestions(Array.isArray(d.suggestions) ? d.suggestions : []);
+        renderReport();
     }
     render();
 

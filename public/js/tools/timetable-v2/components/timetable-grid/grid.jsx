@@ -23,7 +23,7 @@ const CELL_H = 56;   // 单元格高（单节）
 const GAP = 2;    // 格间留白
 const PAD = 8;    // 块内边距
 
-const COLOR = {
+const FALLBACK_COLOR = {
     headerBg: '#f1f5f9',
     headerText: '#475569',
     gridBg: '#ffffff',
@@ -37,6 +37,29 @@ const COLOR = {
     roomTag: '#7c3aed',
     emptyBg: '#ffffff',
 };
+
+function cssVar(name, fallback) {
+    if (typeof document === 'undefined') return fallback;
+    const host = document.querySelector('.ttv2-workbench') || document.documentElement;
+    return getComputedStyle(host).getPropertyValue(name).trim() || fallback;
+}
+
+function buildPalette() {
+    return {
+        headerBg: cssVar('--ttv2-surface-alt', FALLBACK_COLOR.headerBg),
+        headerText: cssVar('--ttv2-text-muted', FALLBACK_COLOR.headerText),
+        gridBg: cssVar('--ttv2-bg', FALLBACK_COLOR.gridBg),
+        cellBorder: cssVar('--ttv2-border', FALLBACK_COLOR.cellBorder),
+        block: cssVar('--ttv2-hover', FALLBACK_COLOR.block),
+        blockBorder: cssVar('--ttv2-border-strong', FALLBACK_COLOR.blockBorder),
+        blockText: cssVar('--ttv2-text', FALLBACK_COLOR.blockText),
+        blockSub: cssVar('--ttv2-text-muted', FALLBACK_COLOR.blockSub),
+        conflict: 'rgba(248, 113, 113, 0.18)',
+        conflictBorder: cssVar('--ttv2-error', FALLBACK_COLOR.conflictBorder),
+        roomTag: cssVar('--ttv2-draft-border', FALLBACK_COLOR.roomTag),
+        emptyBg: 'rgba(255, 255, 255, 0.025)',
+    };
+}
 
 const WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
@@ -76,7 +99,7 @@ function buildConflictSet(conflictCells) {
 }
 
 /** 单个连堂 / 单节块。纯展示，点击仅回调。 */
-function PlacementBlock({ x, y, w, h, placement, lookup, conflict, onCellClick }) {
+function PlacementBlock({ x, y, w, h, placement, lookup, conflict, onCellClick, color }) {
     const subjectName = lookup.subject.get(placement.subjectId) || placement.subjectId || '';
     const teacherName = (placement.teacherIds || [])
         .map((t) => lookup.teacher.get(t) || t)
@@ -100,8 +123,8 @@ function PlacementBlock({ x, y, w, h, placement, lookup, conflict, onCellClick }
                 width={w}
                 height={h}
                 cornerRadius={6}
-                fill={conflict ? COLOR.conflict : COLOR.block}
-                stroke={conflict ? COLOR.conflictBorder : COLOR.blockBorder}
+                fill={conflict ? color.conflict : color.block}
+                stroke={conflict ? color.conflictBorder : color.blockBorder}
                 strokeWidth={1}
             />
             <Text
@@ -111,7 +134,7 @@ function PlacementBlock({ x, y, w, h, placement, lookup, conflict, onCellClick }
                 text={subjectName}
                 fontSize={15}
                 fontStyle="bold"
-                fill={COLOR.blockText}
+                fill={color.blockText}
                 ellipsis
                 wrap="none"
             />
@@ -122,7 +145,7 @@ function PlacementBlock({ x, y, w, h, placement, lookup, conflict, onCellClick }
                     width={w - PAD * 2}
                     text={teacherName}
                     fontSize={12}
-                    fill={COLOR.blockSub}
+                    fill={color.blockSub}
                     ellipsis
                     wrap="none"
                 />
@@ -134,7 +157,7 @@ function PlacementBlock({ x, y, w, h, placement, lookup, conflict, onCellClick }
                     width={w - PAD * 2}
                     text={`@ ${roomName}`}
                     fontSize={11}
-                    fill={COLOR.roomTag}
+                    fill={color.roomTag}
                     ellipsis
                     wrap="none"
                 />
@@ -145,7 +168,7 @@ function PlacementBlock({ x, y, w, h, placement, lookup, conflict, onCellClick }
                     y={PAD}
                     text={`${placement.duration}连`}
                     fontSize={11}
-                    fill={COLOR.blockSub}
+                    fill={color.blockSub}
                 />
             ) : null}
         </Group>
@@ -153,7 +176,7 @@ function PlacementBlock({ x, y, w, h, placement, lookup, conflict, onCellClick }
 }
 
 /** 空格（可点，回调里 placement 为 null）。 */
-function EmptyCell({ x, y, w, h, day, period, conflict, onCellClick }) {
+function EmptyCell({ x, y, w, h, day, period, conflict, onCellClick, color }) {
     return (
         <Rect
             x={x}
@@ -161,8 +184,8 @@ function EmptyCell({ x, y, w, h, day, period, conflict, onCellClick }) {
             width={w}
             height={h}
             cornerRadius={6}
-            fill={conflict ? COLOR.conflict : COLOR.emptyBg}
-            stroke={conflict ? COLOR.conflictBorder : COLOR.cellBorder}
+            fill={conflict ? color.conflict : color.emptyBg}
+            stroke={conflict ? color.conflictBorder : color.cellBorder}
             strokeWidth={1}
             onClick={() => onCellClick && onCellClick({ day, period, placement: null })}
             onTap={() => onCellClick && onCellClick({ day, period, placement: null })}
@@ -190,6 +213,7 @@ export default function TimetableGrid({ project, solution, conflictCells, onCell
         [solution]
     );
     const conflictSet = useMemo(() => buildConflictSet(conflictCells), [conflictCells]);
+    const color = buildPalette();
 
     // 标记被连堂块覆盖的「跟随格」，渲染时跳过（不再画空格）。
     const covered = useMemo(() => {
@@ -219,7 +243,7 @@ export default function TimetableGrid({ project, solution, conflictCells, onCell
                     y={0}
                     width={CELL_W}
                     height={HEADER_H}
-                    fill={COLOR.headerBg}
+                    fill={color.headerBg}
                 />
                 <Text
                     x={colX(d)}
@@ -229,7 +253,7 @@ export default function TimetableGrid({ project, solution, conflictCells, onCell
                     text={WEEKDAY_LABELS[d - 1] || `第${d}天`}
                     fontSize={14}
                     fontStyle="bold"
-                    fill={COLOR.headerText}
+                    fill={color.headerText}
                     align="center"
                     verticalAlign="middle"
                 />
@@ -244,7 +268,7 @@ export default function TimetableGrid({ project, solution, conflictCells, onCell
                     y={rowY(pr)}
                     width={HEADER_W}
                     height={CELL_H}
-                    fill={COLOR.headerBg}
+                    fill={color.headerBg}
                 />
                 <Text
                     x={0}
@@ -253,7 +277,7 @@ export default function TimetableGrid({ project, solution, conflictCells, onCell
                     height={CELL_H}
                     text={`第${pr}节`}
                     fontSize={13}
-                    fill={COLOR.headerText}
+                    fill={color.headerText}
                     align="center"
                     verticalAlign="middle"
                 />
@@ -287,6 +311,7 @@ export default function TimetableGrid({ project, solution, conflictCells, onCell
                         lookup={lookup}
                         conflict={conflict}
                         onCellClick={onCellClick}
+                        color={color}
                     />
                 );
             } else {
@@ -301,6 +326,7 @@ export default function TimetableGrid({ project, solution, conflictCells, onCell
                         period={pr}
                         conflict={conflict}
                         onCellClick={onCellClick}
+                        color={color}
                     />
                 );
             }
@@ -310,7 +336,7 @@ export default function TimetableGrid({ project, solution, conflictCells, onCell
     return (
         <Stage width={stageW} height={stageH}>
             <Layer>
-                <Rect x={0} y={0} width={stageW} height={stageH} fill={COLOR.gridBg} />
+                <Rect x={0} y={0} width={stageW} height={stageH} fill={color.gridBg} />
                 {headerCells}
                 {bodyCells}
             </Layer>

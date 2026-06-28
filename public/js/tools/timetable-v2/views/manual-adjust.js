@@ -145,6 +145,7 @@ export function createManualAdjustView({ store, api }) {
             };
             const result = await api.commitAdjustment({ project: store.getState().project, adjustment: payload });
             store.dispatch('setSolution', result.solution || result);   // 后端结果回写引用
+            if (result.diagnostics) store.dispatch('setDiagnostics', result.diagnostics);
             source = null; target = null;
             renderSel();
             setMsg('调整已提交并通过后端校验。', 'ok');

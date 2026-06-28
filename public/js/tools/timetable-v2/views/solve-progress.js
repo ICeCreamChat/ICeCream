@@ -121,32 +121,31 @@ export function createSolveProgressView({ store, api }) {
         if (stats.placed != null) metrics.append(metricBox(stats.placed, '已排课节'));
         if (stats.unplaced != null) metrics.append(metricBox(stats.unplaced, '未排课节'));
         if (stats.total != null) metrics.append(metricBox(stats.total, '课节总数'));
+        metrics.append(metricBox(store.getState().capabilities?.timefold ? '可用' : '未接入', 'Timefold'));
     }
 
-    // 触发求解：调 api.solve（后端运行），完成后用后端返回结果写引用。
+    // 触发求解：调 api.runSchedule（后端运行），完成后用后端返回结果写引用。
     async function startSolve() {
+        const project = store.getState().project;
+        if (!project) {
+            setMsg('请先在「数据准备」保存项目。', 'err');
+            return;
+        }
         solveBtn.disabled = true;
         setMsg('正在请求后端求解…', null);
         store.dispatch('setSolverJob', { status: 'running', progress: 0 });
         try {
-            const result = await api.solve({});
-            // mock / 真实后端均返回任务结果；保存任务状态引用。
+            const result = await api.runSchedule({ project, opts: { diagnostics: true } });
+            const solution = result.solution;
             store.dispatch('setSolverJob', {
-                status: result.status || 'done',
-                progress: result.progress != null ? result.progress : 100,
-                softScore: result.solution ? result.solution.softScore : result.softScore,
-                stats: result.stats || (result.solution && result.solution.stats),
+                status: 'done',
+                progress: 100,
+                softScore: solution?.softScore,
+                stats: result.stats || solution?.stats,
             });
-            // 完成：拉取后端 solution / diagnostics 引用（前端不自行反解）。
-            if ((result.status || 'done') === 'done') {
-                const solution = result.solution || await api.getSolution();
-                const diagnostics = await api.getDiagnostics();
-                store.dispatch('setSolution', solution);
-                store.dispatch('setDiagnostics', diagnostics);
-                setMsg('求解完成，可查看结果诊断。', 'ok');
-            } else if ((result.status) === 'failed') {
-                setMsg('求解失败，请检查数据或规则。', 'err');
-            }
+            store.dispatch('setSolution', solution);
+            store.dispatch('setDiagnostics', result.diagnostics || solution?.diagnostics || null);
+            setMsg('求解完成，可查看结果诊断。', 'ok');
         } catch (err) {
             store.dispatch('setSolverJob', { status: 'failed', progress: 0 });
             setMsg(err.message || '求解请求失败', 'err');

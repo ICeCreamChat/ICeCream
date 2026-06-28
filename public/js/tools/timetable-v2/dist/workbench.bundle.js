@@ -35553,6 +35553,22 @@ function createStore(initial = {}) {
     setUi(patch) {
       setState({ ui: { ...state.ui, ...patch } });
     },
+    /** 设置某个异步动作的加载态（纯 UI 状态）。 */
+    setLoading(key, value) {
+      setState({ loadingByKey: { ...state.loadingByKey, [key]: Boolean(value) } });
+    },
+    /** 保存最近一次可读错误（纯 UI 状态）。 */
+    setError(error) {
+      setState({ lastError: error || null });
+    },
+    /** 保存 bootstrap 结果与能力标志。 */
+    setBootstrap(boot = {}) {
+      setState({
+        bootstrap: boot,
+        capabilities: boot.capabilities || {},
+        project: boot.project ?? state.project
+      });
+    },
     /**
      * 追加助手草稿。强制 applied:false：草稿只能待确认，
      * 不能在 store 层变成已写入项目状态（写入只经 api/ → 后端）。
@@ -35567,7 +35583,7 @@ function createStore(initial = {}) {
     },
     /** 只存后端返回的 project 引用。 */
     setProject(p2) {
-      setState({ project: p2 });
+      setState({ project: p2, importPreview: null, migrationReport: null });
     },
     /** 只存后端返回的 solution 引用。 */
     setSolution(s) {
@@ -35580,6 +35596,22 @@ function createStore(initial = {}) {
     /** 只存后端返回的 solverJob 引用。 */
     setSolverJob(j) {
       setState({ solverJob: j });
+    },
+    /** 只存后端 /import 返回的预览引用，不落库。 */
+    setImportPreview(preview) {
+      setState({
+        importPreview: preview || null,
+        migrationReport: preview?.report || null
+      });
+    },
+    clearImportPreview() {
+      setState({ importPreview: null, migrationReport: null });
+    },
+    setUnsupportedRules(items) {
+      setState({ unsupportedRules: Array.isArray(items) ? items : [] });
+    },
+    setPublishResult(result) {
+      setState({ publishResult: result || null });
     }
   };
   function dispatch(action, ...args) {
@@ -35598,6 +35630,14 @@ function createInitialState() {
     // 当前步骤
     ui: {},
     // 各页面 UI 态（选中 / 展开 / 抽屉开合）
+    loadingByKey: {},
+    // 纯 UI 加载态
+    lastError: null,
+    // 最近一次可读错误
+    bootstrap: null,
+    // 后端 bootstrap 结果
+    capabilities: {},
+    // 后端能力标志
     pendingRules: [],
     // 助手草稿，每条 applied:false
     project: null,
@@ -35606,8 +35646,16 @@ function createInitialState() {
     // 后端返回引用
     diagnostics: null,
     // 后端返回引用
-    solverJob: null
+    solverJob: null,
     // 后端返回引用
+    importPreview: null,
+    // /import 预览结果（未保存）
+    migrationReport: null,
+    // /import 或 /migrate 报告
+    unsupportedRules: [],
+    // /rules 返回 unsupported
+    publishResult: null
+    // /schedule/publish 返回结果
   };
 }
 
@@ -35616,12 +35664,19 @@ var api_exports = {};
 __export(api_exports, {
   commitAdjustment: () => commitAdjustment,
   commitRules: () => commitRules,
+  diagnoseProject: () => diagnoseProject,
+  downloadFile: () => downloadFile,
+  exportSchedule: () => exportSchedule,
   getBootstrap: () => getBootstrap,
   getDiagnostics: () => getDiagnostics,
   getProject: () => getProject,
   getSolution: () => getSolution,
   getSolverJob: () => getSolverJob,
+  importProject: () => importProject,
   publish: () => publish,
+  publishSchedule: () => publishSchedule,
+  runSchedule: () => runSchedule,
+  saveProject: () => saveProject,
   solve: () => solve
 });
 
@@ -35642,7 +35697,10 @@ var REASON_MESSAGES = {
   publication_blocked: "\u8BFE\u8868\u672A\u901A\u8FC7\u53D1\u5E03\u524D\u6821\u9A8C\uFF0C\u6682\u4E0D\u80FD\u5BFC\u51FA\u3002",
   validation_failed: "\u6570\u636E\u672A\u901A\u8FC7\u540E\u7AEF\u6821\u9A8C\u3002",
   ai_not_configured: "\u667A\u80FD\u7EA6\u675F\u89E3\u6790\u672A\u914D\u7F6E\uFF0C\u8BF7\u5148\u914D\u7F6E API Key\u3002",
-  ai_failed: "\u667A\u80FD\u7EA6\u675F\u89E3\u6790\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002"
+  ai_failed: "\u667A\u80FD\u7EA6\u675F\u89E3\u6790\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5\u3002",
+  bad_response: "\u540E\u7AEF\u54CD\u5E94\u683C\u5F0F\u5F02\u5E38\u3002",
+  missing_project: "\u8BF7\u5148\u5B8C\u6210\u6570\u636E\u51C6\u5907\u5E76\u4FDD\u5B58\u9879\u76EE\u3002",
+  missing_solution: "\u8BF7\u5148\u751F\u6210\u8BFE\u8868\u7ED3\u679C\u3002"
 };
 function messageForReason(reason, fallback = "\u8BF7\u6C42\u5931\u8D25") {
   return REASON_MESSAGES[reason] || fallback;
@@ -35665,6 +35723,29 @@ async function requestV2(path, options = {}) {
     throw error;
   }
   return payload.data;
+}
+async function requestV2File(path, options = {}) {
+  const response = await fetch(`/api/tools/timetable-v2${path}`, {
+    ...options,
+    headers: {
+      ...options.body instanceof FormData ? {} : { "Content-Type": "application/json" },
+      ...options.headers || {}
+    }
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ success: false, reason: "bad_response" }));
+    const reason = payload.reason || payload?.data?.reason;
+    const error = new Error(messageForReason(reason, payload.error || "\u8BF7\u6C42\u5931\u8D25"));
+    error.reason = reason;
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+  const disposition = response.headers.get("content-disposition") || "";
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+  const filename = decodeURIComponent(utf8Match && utf8Match[1] || plainMatch && plainMatch[1] || "\u8BFE\u8868.xlsx");
+  return { blob: await response.blob(), filename, response };
 }
 
 // public/js/tools/timetable-v2/api/mock/project.sample.js
@@ -35758,22 +35839,64 @@ var sampleDiagnostics = {
 };
 
 // public/js/tools/timetable-v2/api/index.js
-async function getProject() {
-  if (USE_MOCK) return sampleProject;
-  const boot = await requestV2("/bootstrap");
-  return boot?.project ?? null;
+var MOCK_CAPABILITIES = {
+  solver: true,
+  diagnostics: true,
+  gridView: true,
+  xlsxExport: true,
+  importSources: ["legacy", "excel", "crystal", "yqd"],
+  timefold: false
+};
+function normalizeSolution(raw = {}) {
+  const source = raw.solution && typeof raw.solution === "object" ? raw.solution : raw;
+  return {
+    placements: Array.isArray(source.placements) ? source.placements : [],
+    unplaced: Array.isArray(source.unplaced) ? source.unplaced : [],
+    hardConflicts: Array.isArray(source.hardConflicts) ? source.hardConflicts : [],
+    softScore: source.softScore ?? null,
+    stats: source.stats || raw.stats || {},
+    diagnostics: source.diagnostics || raw.diagnostics || null,
+    backgroundJobId: source.backgroundJobId ?? raw.backgroundJobId ?? null,
+    timefoldPending: Boolean(source.timefoldPending ?? raw.timefoldPending)
+  };
+}
+function mockReport(source = "mock") {
+  return {
+    source,
+    summary: { total: 1, kept: 1, degraded: 0, dropped: 0, review: 0 },
+    entries: [
+      { category: "kept", field: "sample", reason: "\u793A\u4F8B\u6570\u636E\u5DF2\u52A0\u8F7D", source: { kind: source } }
+    ]
+  };
 }
 async function getBootstrap() {
-  if (USE_MOCK) return { project: sampleProject, needsMigration: false, capabilities: {} };
+  if (USE_MOCK) return { project: sampleProject, needsMigration: false, capabilities: MOCK_CAPABILITIES };
   return requestV2("/bootstrap");
 }
+async function getProject() {
+  const boot = await getBootstrap();
+  return boot?.project ?? null;
+}
+async function importProject({ source = "excel", data, options = {} } = {}) {
+  if (USE_MOCK) return { project: sampleProject, report: mockReport(source) };
+  return requestV2("/import", {
+    method: "POST",
+    body: JSON.stringify({ source, data, options })
+  });
+}
+async function saveProject(project) {
+  if (USE_MOCK) return { ...sampleProject, ...project || {} };
+  const data = await requestV2("/project", {
+    method: "POST",
+    body: JSON.stringify(project || {})
+  });
+  return data?.project ?? data;
+}
 async function getSolution() {
-  if (USE_MOCK) return sampleSolution;
-  return null;
+  return USE_MOCK ? sampleSolution : null;
 }
 async function getDiagnostics() {
-  if (USE_MOCK) return sampleDiagnostics;
-  return null;
+  return USE_MOCK ? sampleDiagnostics : null;
 }
 async function getSolverJob(jobId) {
   if (USE_MOCK) return { status: "done", progress: 100, softScore: sampleSolution.softScore, stats: sampleSolution.stats };
@@ -35782,7 +35905,7 @@ async function getSolverJob(jobId) {
 }
 async function commitRules(rawDraft) {
   if (USE_MOCK) {
-    return sampleProject;
+    return { project: sampleProject, parsed: [], unsupported: [] };
   }
   return requestV2("/rules", {
     method: "POST",
@@ -35790,55 +35913,66 @@ async function commitRules(rawDraft) {
   });
 }
 async function commitAdjustment(payload) {
-  if (USE_MOCK) return sampleSolution;
-  return requestV2("/schedule/run", {
+  if (USE_MOCK) return { solution: sampleSolution, diagnostics: sampleDiagnostics, stats: sampleSolution.stats };
+  return runSchedule(payload || {});
+}
+async function runSchedule(payload = {}) {
+  if (USE_MOCK) {
+    return { solution: sampleSolution, diagnostics: sampleDiagnostics, stats: sampleSolution.stats, raw: sampleSolution };
+  }
+  const raw = await requestV2("/schedule/run", {
     method: "POST",
-    body: JSON.stringify(payload || {})
+    body: JSON.stringify(payload)
+  });
+  const solution = normalizeSolution(raw);
+  return {
+    solution,
+    diagnostics: raw.diagnostics || solution.diagnostics || null,
+    stats: raw.stats || solution.stats || {},
+    raw
+  };
+}
+async function diagnoseProject(payload = {}) {
+  if (USE_MOCK) return { diagnostics: sampleDiagnostics, hardConflicts: [], unplaced: [] };
+  return requestV2("/diagnose", {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }
-async function publish(payload) {
+async function publishSchedule(payload) {
   if (USE_MOCK) return { published: true, solution: sampleSolution };
   return requestV2("/schedule/publish", {
     method: "POST",
     body: JSON.stringify(payload || {})
   });
 }
-async function solve(opts) {
+async function exportSchedule(payload = {}) {
   if (USE_MOCK) {
-    return { status: "done", progress: 100, solution: sampleSolution, stats: sampleSolution.stats };
+    const blob = new Blob(["mock timetable export"], { type: "text/plain;charset=utf-8" });
+    return { blob, filename: "\u8BFE\u8868_\u793A\u4F8B.txt" };
   }
-  return requestV2("/schedule/run", {
+  return requestV2File("/export", {
     method: "POST",
-    body: JSON.stringify(opts || {})
+    body: JSON.stringify(payload || {})
   });
 }
+function downloadFile({ blob, filename }) {
+  if (!blob || typeof document === "undefined") return;
+  const url = URL.createObjectURL(blob);
+  const a2 = document.createElement("a");
+  a2.href = url;
+  a2.download = filename || "\u8BFE\u8868.xlsx";
+  document.body.append(a2);
+  a2.click();
+  a2.remove();
+  URL.revokeObjectURL(url);
+}
+var solve = runSchedule;
+var publish = publishSchedule;
 
 // public/js/tools/timetable-v2/components/three-pane-layout.js
 var STYLE_ID = "ttv2-three-pane-style";
-var STYLE_TEXT = `
-.ttv2-shell { display: grid; gap: 12px; width: 100%; box-sizing: border-box;
-    grid-template-columns: 220px minmax(0, 1fr) 320px;
-    grid-template-areas: "nav main aside"; }
-.ttv2-shell__nav { grid-area: nav; min-width: 0; }
-.ttv2-shell__main { grid-area: main; min-width: 0; }
-.ttv2-shell__aside { grid-area: aside; min-width: 0; }
-.ttv2-shell__actions { display: none; }
-
-/* \u7A84\u5C4F\u964D\u7EA7\uFF1A\u5355\u5217\uFF1Bnav \u9876\u90E8\u6A2A\u6761\uFF1Baside \u5E95\u90E8\u62BD\u5C49\uFF1B\u5173\u952E\u64CD\u4F5C\u56FA\u5B9A\u680F */
-.ttv2-shell--narrow { grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "nav" "main"; padding-bottom: 64px; }
-.ttv2-shell--narrow .ttv2-shell__nav { overflow-x: auto; white-space: nowrap; }
-.ttv2-shell--narrow .ttv2-shell__aside {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-    max-height: 70vh; overflow-y: auto; transform: translateY(100%);
-    transition: transform .2s ease; background: var(--ttv2-surface, #fff);
-    box-shadow: 0 -8px 24px rgba(0,0,0,.18); border-radius: 12px 12px 0 0; }
-.ttv2-shell--narrow.ttv2-shell--aside-open .ttv2-shell__aside { transform: translateY(0); }
-.ttv2-shell--narrow .ttv2-shell__actions {
-    display: flex; gap: 8px; position: fixed; left: 0; right: 0; bottom: 0;
-    z-index: 40; padding: 8px 12px; background: var(--ttv2-surface, #fff);
-    box-shadow: 0 -2px 8px rgba(0,0,0,.12); }
-`;
+var STYLE_TEXT = "";
 function ensureStyle() {
   if (typeof document === "undefined") return;
   if (document.getElementById(STYLE_ID)) return;
@@ -35917,21 +36051,7 @@ var STEPS = [
   { step: "publish-export", label: "\u53D1\u5E03\u5BFC\u51FA" }
 ];
 var STYLE_ID2 = "ttv2-step-nav-style";
-var STYLE_TEXT2 = `
-.ttv2-stepnav { display: flex; flex-direction: column; gap: 4px; list-style: none; margin: 0; padding: 0; }
-.ttv2-shell--narrow .ttv2-stepnav { flex-direction: row; }
-.ttv2-stepnav__item { display: flex; align-items: center; gap: 8px;
-    padding: 8px 10px; border: 0; border-radius: 8px; background: transparent;
-    color: var(--ttv2-text, #1f2937); font: inherit; text-align: left;
-    cursor: pointer; white-space: nowrap; width: 100%; }
-.ttv2-shell--narrow .ttv2-stepnav__item { width: auto; }
-.ttv2-stepnav__item:hover { background: var(--ttv2-hover, rgba(0,0,0,.05)); }
-.ttv2-stepnav__item--active { background: var(--ttv2-accent, #2563eb); color: #fff; font-weight: 600; }
-.ttv2-stepnav__index { display: inline-flex; align-items: center; justify-content: center;
-    width: 20px; height: 20px; border-radius: 50%; font-size: 12px;
-    background: rgba(0,0,0,.08); color: inherit; flex: 0 0 auto; }
-.ttv2-stepnav__item--active .ttv2-stepnav__index { background: rgba(255,255,255,.25); }
-`;
+var STYLE_TEXT2 = "";
 function ensureStyle2() {
   if (typeof document === "undefined") return;
   if (document.getElementById(STYLE_ID2)) return;
@@ -35993,34 +36113,7 @@ function createStepNav(props = {}) {
 
 // public/js/tools/timetable-v2/components/insight-panel.js
 var STYLE_ID3 = "ttv2-insight-panel-style";
-var STYLE_TEXT3 = `
-.ttv2-insight { display: flex; flex-direction: column; gap: 12px;
-    padding: 12px; box-sizing: border-box; font-size: 14px; color: var(--ttv2-text, #1f2937); }
-.ttv2-insight__title { font-size: 15px; font-weight: 600; margin: 0; }
-.ttv2-insight__summary { display: flex; gap: 8px; flex-wrap: wrap; }
-.ttv2-insight__chip { display: inline-flex; align-items: center; gap: 6px;
-    padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; }
-.ttv2-insight__chip--error { background: rgba(220,38,38,.12); color: #b91c1c; }
-.ttv2-insight__chip--warning { background: rgba(217,119,6,.14); color: #b45309; }
-.ttv2-insight__chip--info { background: rgba(37,99,235,.12); color: #1d4ed8; }
-.ttv2-insight__section-title { font-size: 13px; font-weight: 600; margin: 4px 0;
-    color: var(--ttv2-text-muted, #6b7280); }
-.ttv2-insight__list { list-style: none; margin: 0; padding: 0;
-    display: flex; flex-direction: column; gap: 6px; }
-.ttv2-insight__item { padding: 8px 10px; border-radius: 8px; border-left: 3px solid transparent;
-    background: var(--ttv2-surface-alt, #f9fafb); line-height: 1.4; }
-.ttv2-insight__item--error { border-left-color: #dc2626; background: rgba(220,38,38,.06); }
-.ttv2-insight__item--warning { border-left-color: #d97706; background: rgba(217,119,6,.07); }
-.ttv2-insight__item--info { border-left-color: #2563eb; background: rgba(37,99,235,.06); }
-.ttv2-insight__item-cat { font-size: 12px; color: var(--ttv2-text-muted, #6b7280); }
-.ttv2-insight__sug { padding: 8px 10px; border-radius: 8px;
-    background: repeating-linear-gradient(45deg, rgba(124,58,237,.05), rgba(124,58,237,.05) 8px, rgba(124,58,237,.10) 8px, rgba(124,58,237,.10) 16px);
-    border: 1px dashed var(--ttv2-draft-border, #a78bfa); }
-.ttv2-insight__draft-tag { display: inline-block; margin-right: 6px; padding: 1px 6px;
-    border-radius: 4px; font-size: 11px; font-weight: 600;
-    background: var(--ttv2-draft-border, #a78bfa); color: #fff; }
-.ttv2-insight__empty { color: var(--ttv2-text-muted, #9ca3af); font-size: 13px; }
-`;
+var STYLE_TEXT3 = "";
 function ensureStyle3() {
   if (typeof document === "undefined") return;
   if (document.getElementById(STYLE_ID3)) return;
@@ -36035,7 +36128,7 @@ function normalizeSeverity(sev) {
 }
 function createInsightPanel(props = {}) {
   ensureStyle3();
-  let state = { diagnostics: null, ...props };
+  let state = { diagnostics: null, migrationReport: null, unsupportedRules: [], publishResult: null, ...props };
   const el = document.createElement("section");
   el.className = "ttv2-insight";
   el.setAttribute("aria-label", "\u6D1E\u5BDF\u52A9\u624B");
@@ -36054,7 +36147,12 @@ function createInsightPanel(props = {}) {
   sugTitle.textContent = "\u4FEE\u590D\u5EFA\u8BAE";
   const sugList = document.createElement("ul");
   sugList.className = "ttv2-insight__list";
-  el.append(title, summary, itemsTitle, itemsList, sugTitle, sugList);
+  const reportTitle = document.createElement("div");
+  reportTitle.className = "ttv2-insight__section-title";
+  reportTitle.textContent = "\u5BFC\u5165 / \u5199\u5165\u53CD\u9988";
+  const reportList = document.createElement("ul");
+  reportList.className = "ttv2-insight__list";
+  el.append(title, summary, itemsTitle, itemsList, sugTitle, sugList, reportTitle, reportList);
   function renderSummary(s) {
     summary.replaceChildren();
     const counts = [
@@ -36112,11 +36210,40 @@ function createInsightPanel(props = {}) {
       sugList.append(li);
     }
   }
+  function appendReportItem(text, kind = "info") {
+    const li = document.createElement("li");
+    li.className = `ttv2-insight__item ttv2-insight__item--${normalizeSeverity(kind)}`;
+    li.textContent = text;
+    reportList.append(li);
+  }
+  function renderReport() {
+    reportList.replaceChildren();
+    const report = state.migrationReport || {};
+    const summaryData = report.summary || null;
+    const unsupported = Array.isArray(state.unsupportedRules) ? state.unsupportedRules : [];
+    const publish2 = state.publishResult || null;
+    if (summaryData) {
+      appendReportItem(`\u5BFC\u5165\u62A5\u544A\uFF1A\u4FDD\u7559 ${summaryData.kept || 0}\uFF0C\u964D\u7EA7 ${summaryData.degraded || 0}\uFF0C\u4E22\u5F03 ${summaryData.dropped || 0}\uFF0C\u5F85\u5BA1 ${summaryData.review || 0}`, summaryData.dropped ? "warning" : "info");
+    }
+    for (const item of unsupported.slice(0, 4)) {
+      appendReportItem(`\u89C4\u5219\u672A\u652F\u6301\uFF1A${item.text || item.reason || JSON.stringify(item)}`, "warning");
+    }
+    if (publish2?.published) {
+      appendReportItem(`\u53D1\u5E03\u6210\u529F\uFF1A${publish2.publishedAt || "\u5DF2\u751F\u6210\u53D1\u5E03\u5FEB\u7167"}`, "info");
+    }
+    if (!summaryData && unsupported.length === 0 && !publish2) {
+      const empty = document.createElement("li");
+      empty.className = "ttv2-insight__empty";
+      empty.textContent = "\u6682\u65E0\u5BFC\u5165\u6216\u53D1\u5E03\u53CD\u9988";
+      reportList.append(empty);
+    }
+  }
   function render() {
     const d = state.diagnostics || {};
     renderSummary(d.summary || {});
     renderItems(Array.isArray(d.items) ? d.items : []);
     renderSuggestions(Array.isArray(d.suggestions) ? d.suggestions : []);
+    renderReport();
   }
   render();
   return {
@@ -36134,39 +36261,7 @@ function createInsightPanel(props = {}) {
 // public/js/tools/timetable-v2/views/data-prep.js
 var STYLE_ID4 = "ttv2-view-data-prep-style";
 var fieldIdSeq = 0;
-var STYLE_TEXT4 = `
-.ttv2-view { display: flex; flex-direction: column; gap: 16px;
-    font-size: 14px; color: var(--ttv2-text, #1f2937); }
-.ttv2-view__title { font-size: 18px; font-weight: 600; margin: 0; }
-.ttv2-view__hint { color: var(--ttv2-text-muted, #6b7280); font-size: 13px; margin: 0; }
-.ttv2-view__card { border: 1px solid var(--ttv2-border, #e5e7eb); border-radius: 10px;
-    padding: 12px 14px; background: var(--ttv2-surface, #fff);
-    display: flex; flex-direction: column; gap: 10px; }
-.ttv2-view__card-title { font-size: 14px; font-weight: 600; margin: 0; }
-.ttv2-view__field { display: flex; flex-direction: column; gap: 4px; }
-.ttv2-view__field > label { font-size: 13px; color: var(--ttv2-text-muted, #6b7280); }
-.ttv2-view__textarea { width: 100%; box-sizing: border-box; min-height: 96px;
-    border: 1px solid var(--ttv2-border, #e5e7eb); border-radius: 8px; padding: 8px;
-    font: inherit; resize: vertical; }
-.ttv2-view__row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.ttv2-view__btn { border: 0; border-radius: 6px; padding: 8px 14px; font: inherit;
-    background: var(--ttv2-accent, #2563eb); color: #fff; cursor: pointer; }
-.ttv2-view__btn:disabled { opacity: .5; cursor: not-allowed; }
-.ttv2-view__btn--ghost { background: transparent; color: var(--ttv2-accent, #2563eb);
-    border: 1px solid var(--ttv2-border, #e5e7eb); }
-.ttv2-view__msg { font-size: 13px; min-height: 18px; }
-.ttv2-view__msg--ok { color: #047857; }
-.ttv2-view__msg--err { color: #b91c1c; }
-.ttv2-view__summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
-.ttv2-view__stat { border: 1px solid var(--ttv2-border, #e5e7eb); border-radius: 8px;
-    padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
-.ttv2-view__stat-num { font-size: 18px; font-weight: 700; }
-.ttv2-view__stat-label { font-size: 12px; color: var(--ttv2-text-muted, #6b7280); }
-.ttv2-view__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.ttv2-view__audit { padding: 8px 10px; border-radius: 8px; line-height: 1.4;
-    background: rgba(37,99,235,.06); border-left: 3px solid #2563eb; }
-.ttv2-view__empty { color: var(--ttv2-text-muted, #9ca3af); font-size: 13px; }
-`;
+var STYLE_TEXT4 = "";
 function ensureStyle4() {
   if (typeof document === "undefined") return;
   if (document.getElementById(STYLE_ID4)) return;
@@ -36182,176 +36277,245 @@ function bindLabel(label, control, prefix = "ttv2-data-prep-field") {
   }
   label.htmlFor = control.id;
 }
+function field(labelText, control) {
+  const wrap = document.createElement("div");
+  wrap.className = "ttv2-view__field";
+  const label = document.createElement("label");
+  label.textContent = labelText;
+  bindLabel(label, control);
+  wrap.append(label, control);
+  return wrap;
+}
+function stat(num, label) {
+  const box = document.createElement("div");
+  box.className = "ttv2-view__stat";
+  const n = document.createElement("span");
+  n.className = "ttv2-view__stat-num";
+  n.textContent = String(num ?? 0);
+  const l2 = document.createElement("span");
+  l2.className = "ttv2-view__stat-label";
+  l2.textContent = label;
+  box.append(n, l2);
+  return box;
+}
+function reportEntries(report) {
+  if (!report) return [];
+  if (Array.isArray(report.entries)) return report.entries;
+  if (Array.isArray(report.items)) return report.items;
+  const buckets = ["kept", "degraded", "dropped", "review"];
+  return buckets.flatMap((key) => Array.isArray(report[key]) ? report[key].map((item) => ({ ...item, category: key })) : []);
+}
+function parseImportText(source, text) {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  if (source === "excel") return trimmed;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("\u8BFB\u53D6\u6587\u4EF6\u5931\u8D25"));
+    reader.readAsText(file, "utf-8");
+  });
+}
 function createDataPrepView({ store, api }) {
   ensureStyle4();
   const el = document.createElement("section");
   el.className = "ttv2-view ttv2-view--data-prep";
+  const hero = document.createElement("div");
+  hero.className = "ttv2-view__hero";
+  const copy = document.createElement("div");
   const title = document.createElement("h1");
   title.className = "ttv2-view__title";
   title.textContent = "\u6570\u636E\u51C6\u5907";
   const hint = document.createElement("p");
   hint.className = "ttv2-view__hint";
-  hint.textContent = "\u4E0A\u4F20\u6216\u7C98\u8D34\u4EFB\u8BFE\u539F\u59CB\u8F93\u5165\u3002\u524D\u7AEF\u53EA\u91C7\u96C6\u539F\u6587\uFF0C\u7531\u540E\u7AEF normalize \u62FC\u88C5\u9879\u76EE\u4E0E\u6D3B\u52A8\u3002";
-  const inputCard = document.createElement("div");
-  inputCard.className = "ttv2-view__card";
-  const inputTitle = document.createElement("h2");
-  inputTitle.className = "ttv2-view__card-title";
-  inputTitle.textContent = "\u4EFB\u8BFE\u539F\u59CB\u8F93\u5165";
-  const fileField = document.createElement("div");
-  fileField.className = "ttv2-view__field";
-  const fileLabel = document.createElement("label");
-  fileLabel.textContent = "\u4E0A\u4F20\u4EFB\u8BFE\u8868\uFF08Excel / CSV\uFF0C\u539F\u59CB\u6587\u4EF6\u4EA4\u540E\u7AEF\u89E3\u6790\uFF09";
+  hint.textContent = "\u5148\u5BFC\u5165\u4EFB\u8BFE\u6570\u636E\u9884\u89C8\uFF0C\u786E\u8BA4\u8FC1\u79FB\u62A5\u544A\u65E0\u660E\u663E\u95EE\u9898\u540E\u4FDD\u5B58\u4E3A V2 \u9879\u76EE\u3002";
+  copy.append(title, hint);
+  hero.append(copy);
+  const grid = document.createElement("div");
+  grid.className = "ttv2-view__grid";
+  const importCard = document.createElement("div");
+  importCard.className = "ttv2-view__card";
+  const importTitle = document.createElement("h2");
+  importTitle.className = "ttv2-view__card-title";
+  importTitle.textContent = "\u5BFC\u5165\u6765\u6E90";
+  const sourceSelect = document.createElement("select");
+  sourceSelect.className = "ttv2-select";
+  for (const [value, label] of [
+    ["excel", "CSV / TSV \u4EFB\u8BFE\u8868"],
+    ["legacy", "\u65E7 ICeCream JSON"],
+    ["crystal", "\u6C34\u6676 cloneSeed JSON"],
+    ["yqd", "YQD \u4E1A\u52A1\u8868 JSON"]
+  ]) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    sourceSelect.append(opt);
+  }
   const fileInput = document.createElement("input");
   fileInput.type = "file";
-  fileInput.accept = ".xlsx,.xls,.csv";
-  bindLabel(fileLabel, fileInput);
-  fileField.append(fileLabel, fileInput);
-  const textField = document.createElement("div");
-  textField.className = "ttv2-view__field";
-  const textLabel = document.createElement("label");
-  textLabel.textContent = "\u6216\u7C98\u8D34\u539F\u59CB\u4EFB\u8BFE\u6587\u672C";
+  fileInput.className = "ttv2-input";
+  fileInput.accept = ".csv,.tsv,.txt,.json";
   const textarea = document.createElement("textarea");
-  textarea.className = "ttv2-view__textarea";
-  textarea.placeholder = "\u4F8B\u5982\uFF1A\u4E00\u73ED \u8BED\u6587 \u5F20\u8001\u5E08 \u6BCF\u54685\u8282\uFF1B\u4E00\u73ED \u6570\u5B66 \u674E\u8001\u5E08 \u6BCF\u54684\u8282\u8FDE\u5802\u2026";
-  bindLabel(textLabel, textarea);
-  textField.append(textLabel, textarea);
+  textarea.className = "ttv2-textarea";
+  textarea.placeholder = "CSV/TSV \u793A\u4F8B\uFF1A\u5E74\u7EA7,\u73ED\u7EA7,\u8BFE\u7A0B,\u6559\u5E08,\u5468\u8BFE\u65F6,\u8FDE\u5802,\u6559\u5BA4\n\u4E03\u5E74\u7EA7,\u4E00\u73ED,\u8BED\u6587,\u5F20\u8001\u5E08,5,single,";
   const actionRow = document.createElement("div");
-  actionRow.className = "ttv2-view__row";
-  const submitBtn = document.createElement("button");
-  submitBtn.type = "button";
-  submitBtn.className = "ttv2-view__btn";
-  submitBtn.textContent = "\u63D0\u4EA4\u539F\u59CB\u8F93\u5165";
-  const refreshBtn = document.createElement("button");
-  refreshBtn.type = "button";
-  refreshBtn.className = "ttv2-view__btn ttv2-view__btn--ghost";
-  refreshBtn.textContent = "\u5237\u65B0\u9879\u76EE\u6458\u8981";
-  actionRow.append(submitBtn, refreshBtn);
+  actionRow.className = "ttv2-action-row";
+  const previewBtn = document.createElement("button");
+  previewBtn.type = "button";
+  previewBtn.className = "ttv2-btn";
+  previewBtn.textContent = "\u751F\u6210\u5BFC\u5165\u9884\u89C8";
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "ttv2-btn ttv2-btn--ghost";
+  saveBtn.textContent = "\u4FDD\u5B58\u4E3A\u9879\u76EE";
+  actionRow.append(previewBtn, saveBtn);
   const msg = document.createElement("div");
-  msg.className = "ttv2-view__msg";
-  inputCard.append(inputTitle, fileField, textField, actionRow, msg);
+  msg.className = "ttv2-message";
+  importCard.append(
+    importTitle,
+    field("\u6765\u6E90\u7C7B\u578B", sourceSelect),
+    field("\u4E0A\u4F20\u6587\u672C\u6587\u4EF6", fileInput),
+    field("\u6216\u7C98\u8D34\u539F\u59CB\u5185\u5BB9", textarea),
+    actionRow,
+    msg
+  );
   const summaryCard = document.createElement("div");
   summaryCard.className = "ttv2-view__card";
   const summaryTitle = document.createElement("h2");
   summaryTitle.className = "ttv2-view__card-title";
-  summaryTitle.textContent = "\u5F53\u524D\u9879\u76EE\u6458\u8981";
+  summaryTitle.textContent = "\u9879\u76EE\u6458\u8981";
   const summaryName = document.createElement("p");
   summaryName.className = "ttv2-view__hint";
   const summaryGrid = document.createElement("div");
   summaryGrid.className = "ttv2-view__summary";
   summaryCard.append(summaryTitle, summaryName, summaryGrid);
-  const auditCard = document.createElement("div");
-  auditCard.className = "ttv2-view__card";
-  const auditTitle = document.createElement("h2");
-  auditTitle.className = "ttv2-view__card-title";
-  auditTitle.textContent = "\u6570\u636E\u5BA1\u8BA1";
-  const auditList = document.createElement("ul");
-  auditList.className = "ttv2-view__list";
-  auditCard.append(auditTitle, auditList);
-  el.append(title, hint, inputCard, summaryCard, auditCard);
+  const reportCard = document.createElement("div");
+  reportCard.className = "ttv2-view__card ttv2-view__card--wide";
+  const reportTitle = document.createElement("h2");
+  reportTitle.className = "ttv2-view__card-title";
+  reportTitle.textContent = "\u5BFC\u5165\u62A5\u544A";
+  const reportList = document.createElement("ul");
+  reportList.className = "ttv2-list";
+  reportCard.append(reportTitle, reportList);
+  grid.append(importCard, summaryCard, reportCard);
+  el.append(hero, grid);
   function setMsg(text, kind) {
     msg.textContent = text || "";
-    msg.classList.toggle("ttv2-view__msg--ok", kind === "ok");
-    msg.classList.toggle("ttv2-view__msg--err", kind === "err");
+    msg.classList.toggle("ttv2-message--ok", kind === "ok");
+    msg.classList.toggle("ttv2-message--err", kind === "err");
   }
-  function stat(num, label) {
-    const box = document.createElement("div");
-    box.className = "ttv2-view__stat";
-    const n = document.createElement("span");
-    n.className = "ttv2-view__stat-num";
-    n.textContent = String(num);
-    const l2 = document.createElement("span");
-    l2.className = "ttv2-view__stat-label";
-    l2.textContent = label;
-    box.append(n, l2);
-    return box;
+  function currentProject() {
+    return store.getState().importPreview?.project || store.getState().project;
   }
   function renderSummary() {
-    const p2 = store.getState().project;
+    const project = currentProject();
+    const preview = store.getState().importPreview;
     summaryGrid.replaceChildren();
-    if (!p2) {
-      summaryName.textContent = "\u5C1A\u672A\u52A0\u8F7D\u9879\u76EE\u3002\u63D0\u4EA4\u539F\u59CB\u8F93\u5165\u6216\u70B9\u51FB\u300C\u5237\u65B0\u9879\u76EE\u6458\u8981\u300D\u3002";
+    if (!project) {
+      summaryName.textContent = "\u6682\u65E0\u9879\u76EE\u3002\u8BF7\u5BFC\u5165\u6570\u636E\u751F\u6210\u9884\u89C8\u3002";
       return;
     }
-    summaryName.textContent = p2.name ? `\u9879\u76EE\uFF1A${p2.name}` : "\u9879\u76EE\uFF08\u672A\u547D\u540D\uFF09";
+    summaryName.textContent = `${preview ? "\u9884\u89C8\uFF1A" : "\u5F53\u524D\uFF1A"}${project.name || "\u672A\u547D\u540D\u9879\u76EE"}`;
     summaryGrid.append(
-      stat((p2.classes || []).length, "\u73ED\u7EA7"),
-      stat((p2.teachers || []).length, "\u6559\u5E08"),
-      stat((p2.subjects || []).length, "\u8BFE\u7A0B"),
-      stat((p2.rooms || []).length, "\u6559\u5BA4"),
-      stat((p2.activityPlans || []).length, "\u4EFB\u8BFE\u8BA1\u5212"),
-      stat((p2.constraints || []).length, "\u5DF2\u5199\u5165\u89C4\u5219")
+      stat(project.classes?.length, "\u73ED\u7EA7"),
+      stat(project.teachers?.length, "\u6559\u5E08"),
+      stat(project.subjects?.length, "\u8BFE\u7A0B"),
+      stat(project.rooms?.length, "\u6559\u5BA4"),
+      stat(project.activityPlans?.length, "\u4EFB\u8BFE\u8BA1\u5212"),
+      stat(project.constraints?.length, "\u89C4\u5219")
     );
   }
-  function renderAudit() {
-    const d = store.getState().diagnostics || {};
-    const items = (Array.isArray(d.items) ? d.items : []).filter((it) => it.category === "audit");
-    auditList.replaceChildren();
-    if (!items.length) {
+  function renderReport() {
+    const report = store.getState().migrationReport;
+    const entries = reportEntries(report).slice(0, 10);
+    reportList.replaceChildren();
+    if (!report) {
       const empty = document.createElement("li");
-      empty.className = "ttv2-view__empty";
-      empty.textContent = "\u6682\u65E0\u6570\u636E\u5BA1\u8BA1\u9879";
-      auditList.append(empty);
+      empty.className = "ttv2-empty";
+      empty.textContent = "\u5BFC\u5165\u540E\u4F1A\u5728\u8FD9\u91CC\u663E\u793A\u4FDD\u7559\u3001\u964D\u7EA7\u3001\u4E22\u5F03\u548C\u5F85\u5BA1\u5B57\u6BB5\u3002";
+      reportList.append(empty);
       return;
     }
-    for (const it of items) {
+    const summary = report.summary || {};
+    const head = document.createElement("li");
+    head.className = "ttv2-report-item";
+    head.textContent = `\u6C47\u603B\uFF1A\u4FDD\u7559 ${summary.kept || 0}\uFF0C\u964D\u7EA7 ${summary.degraded || 0}\uFF0C\u4E22\u5F03 ${summary.dropped || 0}\uFF0C\u5F85\u5BA1 ${summary.review || 0}`;
+    reportList.append(head);
+    if (!entries.length) return;
+    for (const entry of entries) {
       const li = document.createElement("li");
-      li.className = "ttv2-view__audit";
-      li.textContent = it.message || "";
-      auditList.append(li);
+      li.className = "ttv2-report-item";
+      li.textContent = `${entry.category || entry.kind || "report"} \xB7 ${entry.field || ""} \xB7 ${entry.reason || entry.message || ""}`;
+      reportList.append(li);
     }
   }
-  async function loadProject() {
-    setMsg("\u6B63\u5728\u52A0\u8F7D\u9879\u76EE\u6458\u8981\u2026", null);
+  async function importPreview() {
+    previewBtn.disabled = true;
+    saveBtn.disabled = true;
+    setMsg("\u6B63\u5728\u5BFC\u5165\u5E76\u751F\u6210\u9884\u89C8...", null);
     try {
-      const project = await api.getProject();
-      store.dispatch("setProject", project);
-      setMsg("", null);
-    } catch (err) {
-      setMsg(err.message || "\u52A0\u8F7D\u9879\u76EE\u5931\u8D25", "err");
+      const file = fileInput.files && fileInput.files[0];
+      const text = file ? await readFileAsText(file) : textarea.value;
+      const source = sourceSelect.value;
+      const data = parseImportText(source, text);
+      if (!data) {
+        setMsg("\u8BF7\u5148\u4E0A\u4F20\u6587\u4EF6\u6216\u7C98\u8D34\u5185\u5BB9\u3002", "err");
+        return;
+      }
+      const result = await api.importProject({ source, data, options: { name: "\u667A\u80FD\u6392\u8BFE\u5BFC\u5165\u9879\u76EE" } });
+      store.dispatch("setImportPreview", result);
+      setMsg("\u5BFC\u5165\u9884\u89C8\u5DF2\u751F\u6210\uFF0C\u8BF7\u68C0\u67E5\u6458\u8981\u548C\u62A5\u544A\u540E\u4FDD\u5B58\u3002", "ok");
+    } catch (error) {
+      setMsg(error.message || "\u5BFC\u5165\u5931\u8D25", "err");
+    } finally {
+      previewBtn.disabled = false;
+      saveBtn.disabled = !store.getState().importPreview?.project;
     }
   }
-  async function submitRaw() {
-    const file = fileInput.files && fileInput.files[0];
-    const text = textarea.value.trim();
-    if (!file && !text) {
-      setMsg("\u8BF7\u5148\u4E0A\u4F20\u6587\u4EF6\u6216\u7C98\u8D34\u4EFB\u8BFE\u6587\u672C\u3002", "err");
+  async function savePreview() {
+    const preview = store.getState().importPreview;
+    if (!preview?.project) {
+      setMsg("\u8BF7\u5148\u751F\u6210\u5BFC\u5165\u9884\u89C8\u3002", "err");
       return;
     }
-    submitBtn.disabled = true;
-    setMsg("\u6B63\u5728\u63D0\u4EA4\u539F\u59CB\u8F93\u5165\u2026", null);
+    saveBtn.disabled = true;
+    setMsg("\u6B63\u5728\u4FDD\u5B58\u9879\u76EE...", null);
     try {
-      const rawDraft = {
-        kind: "data-prep",
-        source: file ? `file:${file.name}` : "text",
-        rawText: text || void 0,
-        fileName: file ? file.name : void 0
-      };
-      const project = await api.commitRules({ project: store.getState().project, rules: rawDraft });
+      const project = await api.saveProject(preview.project);
       store.dispatch("setProject", project);
-      setMsg("\u539F\u59CB\u8F93\u5165\u5DF2\u63D0\u4EA4\uFF0C\u9879\u76EE\u6458\u8981\u5DF2\u66F4\u65B0\u3002", "ok");
-    } catch (err) {
-      setMsg(err.message || "\u63D0\u4EA4\u5931\u8D25", "err");
+      store.dispatch("clearImportPreview");
+      setMsg("\u9879\u76EE\u5DF2\u4FDD\u5B58\uFF0C\u53EF\u4EE5\u8FDB\u5165\u89C4\u5219\u8F93\u5165\u3002", "ok");
+    } catch (error) {
+      setMsg(error.message || "\u4FDD\u5B58\u5931\u8D25", "err");
     } finally {
-      submitBtn.disabled = false;
+      saveBtn.disabled = false;
     }
   }
-  submitBtn.addEventListener("click", submitRaw);
-  refreshBtn.addEventListener("click", loadProject);
+  previewBtn.addEventListener("click", importPreview);
+  saveBtn.addEventListener("click", savePreview);
   let unsub = null;
   return {
     el,
     mount() {
       unsub = store.subscribe(() => {
         renderSummary();
-        renderAudit();
+        renderReport();
+        saveBtn.disabled = !store.getState().importPreview?.project;
       });
       renderSummary();
-      renderAudit();
-      if (!store.getState().project) loadProject();
+      renderReport();
+      saveBtn.disabled = !store.getState().importPreview?.project;
     },
     update() {
       renderSummary();
-      renderAudit();
+      renderReport();
     },
     destroy() {
       if (unsub) {
@@ -36495,7 +36659,7 @@ function createRuleInputView({ store, api }) {
         setMsg("\u8BF7\u8F93\u5165\u81EA\u7136\u8BED\u8A00\u7EA6\u675F\u3002", "err");
         return;
       }
-      draft = { kind: "rule", source: "\u81EA\u7136\u8BED\u8A00", text, type: "natural_language" };
+      draft = { kind: "rule", source: "\u81EA\u7136\u8BED\u8A00", text, type: "natural_language", nl: text };
       nlTextarea.value = "";
     } else if (activeMode === "excel") {
       const file = excelInput.files && excelInput.files[0];
@@ -36550,8 +36714,8 @@ function textInput(placeholder) {
   return input;
 }
 function labeledField(labelText, control) {
-  const field = document.createElement("div");
-  field.className = "ttv2-view__field";
+  const field2 = document.createElement("div");
+  field2.className = "ttv2-view__field";
   const label = document.createElement("label");
   label.textContent = labelText;
   if (!control.id) {
@@ -36559,8 +36723,8 @@ function labeledField(labelText, control) {
     control.id = `ttv2-rule-input-field-${fieldIdSeq2}`;
   }
   label.htmlFor = control.id;
-  field.append(label, control);
-  return field;
+  field2.append(label, control);
+  return field2;
 }
 
 // public/js/tools/timetable-v2/components/rule-card.js
@@ -36909,11 +37073,21 @@ function createRuleReviewView({ store, api }) {
   async function commitAll() {
     const drafts = store.getState().pendingRules || [];
     if (!drafts.length) return;
+    if (!store.getState().project) {
+      setMsg("\u8BF7\u5148\u5728\u300C\u6570\u636E\u51C6\u5907\u300D\u4FDD\u5B58\u9879\u76EE\u3002", "err");
+      return;
+    }
     commitBtn.disabled = true;
     setMsg("\u6B63\u5728\u5199\u5165\u89C4\u5219\u2026", null);
     try {
-      const project = await api.commitRules({ project: store.getState().project, rules: { kind: "rules-batch", constraints: drafts } });
-      store.dispatch("setProject", project);
+      const nl = drafts.filter((d) => d.type === "natural_language" || d.nl).map((d) => d.nl || d.text).filter(Boolean).join("\uFF1B");
+      const structured = drafts.filter((d) => d.type !== "natural_language" && !d.nl);
+      const result = await api.commitRules({
+        project: store.getState().project,
+        rules: { kind: "rules-batch", constraints: structured, nl }
+      });
+      store.dispatch("setProject", result.project || result);
+      store.dispatch("setUnsupportedRules", result.unsupported || []);
       store.dispatch("clearPendingRules");
       setMsg("\u89C4\u5219\u5DF2\u5199\u5165\u9879\u76EE\u3002", "ok");
     } catch (err) {
@@ -37035,28 +37209,29 @@ function createSolveProgressView({ store, api }) {
     if (stats.placed != null) metrics.append(metricBox(stats.placed, "\u5DF2\u6392\u8BFE\u8282"));
     if (stats.unplaced != null) metrics.append(metricBox(stats.unplaced, "\u672A\u6392\u8BFE\u8282"));
     if (stats.total != null) metrics.append(metricBox(stats.total, "\u8BFE\u8282\u603B\u6570"));
+    metrics.append(metricBox(store.getState().capabilities?.timefold ? "\u53EF\u7528" : "\u672A\u63A5\u5165", "Timefold"));
   }
   async function startSolve() {
+    const project = store.getState().project;
+    if (!project) {
+      setMsg("\u8BF7\u5148\u5728\u300C\u6570\u636E\u51C6\u5907\u300D\u4FDD\u5B58\u9879\u76EE\u3002", "err");
+      return;
+    }
     solveBtn.disabled = true;
     setMsg("\u6B63\u5728\u8BF7\u6C42\u540E\u7AEF\u6C42\u89E3\u2026", null);
     store.dispatch("setSolverJob", { status: "running", progress: 0 });
     try {
-      const result = await api.solve({});
+      const result = await api.runSchedule({ project, opts: { diagnostics: true } });
+      const solution = result.solution;
       store.dispatch("setSolverJob", {
-        status: result.status || "done",
-        progress: result.progress != null ? result.progress : 100,
-        softScore: result.solution ? result.solution.softScore : result.softScore,
-        stats: result.stats || result.solution && result.solution.stats
+        status: "done",
+        progress: 100,
+        softScore: solution?.softScore,
+        stats: result.stats || solution?.stats
       });
-      if ((result.status || "done") === "done") {
-        const solution = result.solution || await api.getSolution();
-        const diagnostics = await api.getDiagnostics();
-        store.dispatch("setSolution", solution);
-        store.dispatch("setDiagnostics", diagnostics);
-        setMsg("\u6C42\u89E3\u5B8C\u6210\uFF0C\u53EF\u67E5\u770B\u7ED3\u679C\u8BCA\u65AD\u3002", "ok");
-      } else if (result.status === "failed") {
-        setMsg("\u6C42\u89E3\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5\u6570\u636E\u6216\u89C4\u5219\u3002", "err");
-      }
+      store.dispatch("setSolution", solution);
+      store.dispatch("setDiagnostics", result.diagnostics || solution?.diagnostics || null);
+      setMsg("\u6C42\u89E3\u5B8C\u6210\uFF0C\u53EF\u67E5\u770B\u7ED3\u679C\u8BCA\u65AD\u3002", "ok");
     } catch (err) {
       store.dispatch("setSolverJob", { status: "failed", progress: 0 });
       setMsg(err.message || "\u6C42\u89E3\u8BF7\u6C42\u5931\u8D25", "err");
@@ -49302,7 +49477,7 @@ var CELL_W = 120;
 var CELL_H = 56;
 var GAP = 2;
 var PAD = 8;
-var COLOR = {
+var FALLBACK_COLOR = {
   headerBg: "#f1f5f9",
   headerText: "#475569",
   gridBg: "#ffffff",
@@ -49316,6 +49491,27 @@ var COLOR = {
   roomTag: "#7c3aed",
   emptyBg: "#ffffff"
 };
+function cssVar(name, fallback) {
+  if (typeof document === "undefined") return fallback;
+  const host = document.querySelector(".ttv2-workbench") || document.documentElement;
+  return getComputedStyle(host).getPropertyValue(name).trim() || fallback;
+}
+function buildPalette() {
+  return {
+    headerBg: cssVar("--ttv2-surface-alt", FALLBACK_COLOR.headerBg),
+    headerText: cssVar("--ttv2-text-muted", FALLBACK_COLOR.headerText),
+    gridBg: cssVar("--ttv2-bg", FALLBACK_COLOR.gridBg),
+    cellBorder: cssVar("--ttv2-border", FALLBACK_COLOR.cellBorder),
+    block: cssVar("--ttv2-hover", FALLBACK_COLOR.block),
+    blockBorder: cssVar("--ttv2-border-strong", FALLBACK_COLOR.blockBorder),
+    blockText: cssVar("--ttv2-text", FALLBACK_COLOR.blockText),
+    blockSub: cssVar("--ttv2-text-muted", FALLBACK_COLOR.blockSub),
+    conflict: "rgba(248, 113, 113, 0.18)",
+    conflictBorder: cssVar("--ttv2-error", FALLBACK_COLOR.conflictBorder),
+    roomTag: cssVar("--ttv2-draft-border", FALLBACK_COLOR.roomTag),
+    emptyBg: "rgba(255, 255, 255, 0.025)"
+  };
+}
 var WEEKDAY_LABELS = ["\u5468\u4E00", "\u5468\u4E8C", "\u5468\u4E09", "\u5468\u56DB", "\u5468\u4E94", "\u5468\u516D", "\u5468\u65E5"];
 function buildLookup(project) {
   const idx = (list) => {
@@ -49344,7 +49540,7 @@ function buildConflictSet(conflictCells) {
   }
   return s;
 }
-function PlacementBlock({ x: x2, y, w, h: h2, placement, lookup, conflict, onCellClick }) {
+function PlacementBlock({ x: x2, y, w, h: h2, placement, lookup, conflict, onCellClick, color }) {
   const subjectName = lookup.subject.get(placement.subjectId) || placement.subjectId || "";
   const teacherName = (placement.teacherIds || []).map((t) => lookup.teacher.get(t) || t).join("\u3001");
   const roomName = placement.roomId ? lookup.room.get(placement.roomId) || placement.roomId : "";
@@ -49367,8 +49563,8 @@ function PlacementBlock({ x: x2, y, w, h: h2, placement, lookup, conflict, onCel
             width: w,
             height: h2,
             cornerRadius: 6,
-            fill: conflict ? COLOR.conflict : COLOR.block,
-            stroke: conflict ? COLOR.conflictBorder : COLOR.blockBorder,
+            fill: conflict ? color.conflict : color.block,
+            stroke: conflict ? color.conflictBorder : color.blockBorder,
             strokeWidth: 1
           }
         ),
@@ -49381,7 +49577,7 @@ function PlacementBlock({ x: x2, y, w, h: h2, placement, lookup, conflict, onCel
             text: subjectName,
             fontSize: 15,
             fontStyle: "bold",
-            fill: COLOR.blockText,
+            fill: color.blockText,
             ellipsis: true,
             wrap: "none"
           }
@@ -49394,7 +49590,7 @@ function PlacementBlock({ x: x2, y, w, h: h2, placement, lookup, conflict, onCel
             width: w - PAD * 2,
             text: teacherName,
             fontSize: 12,
-            fill: COLOR.blockSub,
+            fill: color.blockSub,
             ellipsis: true,
             wrap: "none"
           }
@@ -49407,7 +49603,7 @@ function PlacementBlock({ x: x2, y, w, h: h2, placement, lookup, conflict, onCel
             width: w - PAD * 2,
             text: `@ ${roomName}`,
             fontSize: 11,
-            fill: COLOR.roomTag,
+            fill: color.roomTag,
             ellipsis: true,
             wrap: "none"
           }
@@ -49419,14 +49615,14 @@ function PlacementBlock({ x: x2, y, w, h: h2, placement, lookup, conflict, onCel
             y: PAD,
             text: `${placement.duration}\u8FDE`,
             fontSize: 11,
-            fill: COLOR.blockSub
+            fill: color.blockSub
           }
         ) : null
       ]
     }
   );
 }
-function EmptyCell({ x: x2, y, w, h: h2, day, period, conflict, onCellClick }) {
+function EmptyCell({ x: x2, y, w, h: h2, day, period, conflict, onCellClick, color }) {
   return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
     Rect2,
     {
@@ -49435,8 +49631,8 @@ function EmptyCell({ x: x2, y, w, h: h2, day, period, conflict, onCellClick }) {
       width: w,
       height: h2,
       cornerRadius: 6,
-      fill: conflict ? COLOR.conflict : COLOR.emptyBg,
-      stroke: conflict ? COLOR.conflictBorder : COLOR.cellBorder,
+      fill: conflict ? color.conflict : color.emptyBg,
+      stroke: conflict ? color.conflictBorder : color.cellBorder,
       strokeWidth: 1,
       onClick: () => onCellClick && onCellClick({ day, period, placement: null }),
       onTap: () => onCellClick && onCellClick({ day, period, placement: null })
@@ -49453,6 +49649,7 @@ function TimetableGrid({ project, solution, conflictCells, onCellClick }) {
     [solution]
   );
   const conflictSet = (0, import_react3.useMemo)(() => buildConflictSet(conflictCells), [conflictCells]);
+  const color = buildPalette();
   const covered = (0, import_react3.useMemo)(() => {
     const s = /* @__PURE__ */ new Set();
     for (const p2 of solution && solution.placements || []) {
@@ -49478,7 +49675,7 @@ function TimetableGrid({ project, solution, conflictCells, onCellClick }) {
             y: 0,
             width: CELL_W,
             height: HEADER_H,
-            fill: COLOR.headerBg
+            fill: color.headerBg
           }
         ),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -49491,7 +49688,7 @@ function TimetableGrid({ project, solution, conflictCells, onCellClick }) {
             text: WEEKDAY_LABELS[d - 1] || `\u7B2C${d}\u5929`,
             fontSize: 14,
             fontStyle: "bold",
-            fill: COLOR.headerText,
+            fill: color.headerText,
             align: "center",
             verticalAlign: "middle"
           }
@@ -49509,7 +49706,7 @@ function TimetableGrid({ project, solution, conflictCells, onCellClick }) {
             y: rowY(pr),
             width: HEADER_W,
             height: CELL_H,
-            fill: COLOR.headerBg
+            fill: color.headerBg
           }
         ),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -49521,7 +49718,7 @@ function TimetableGrid({ project, solution, conflictCells, onCellClick }) {
             height: CELL_H,
             text: `\u7B2C${pr}\u8282`,
             fontSize: 13,
-            fill: COLOR.headerText,
+            fill: color.headerText,
             align: "center",
             verticalAlign: "middle"
           }
@@ -49552,7 +49749,8 @@ function TimetableGrid({ project, solution, conflictCells, onCellClick }) {
               placement,
               lookup,
               conflict,
-              onCellClick
+              onCellClick,
+              color
             },
             `b-${key}`
           )
@@ -49569,7 +49767,8 @@ function TimetableGrid({ project, solution, conflictCells, onCellClick }) {
               day: d,
               period: pr,
               conflict,
-              onCellClick
+              onCellClick,
+              color
             },
             `e-${key}`
           )
@@ -49578,7 +49777,7 @@ function TimetableGrid({ project, solution, conflictCells, onCellClick }) {
     }
   }
   return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Stage2, { width: stageW, height: stageH, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Layer2, { children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Rect2, { x: 0, y: 0, width: stageW, height: stageH, fill: COLOR.gridBg }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Rect2, { x: 0, y: 0, width: stageW, height: stageH, fill: color.gridBg }),
     headerCells,
     bodyCells
   ] }) });
@@ -49909,6 +50108,7 @@ function createManualAdjustView({ store, api }) {
       };
       const result = await api.commitAdjustment({ project: store.getState().project, adjustment: payload });
       store.dispatch("setSolution", result.solution || result);
+      if (result.diagnostics) store.dispatch("setDiagnostics", result.diagnostics);
       source = null;
       target = null;
       renderSel();
@@ -50117,19 +50317,24 @@ function createPublishExportView({ store, api }) {
     renderHistory();
   }
   async function doPublish() {
+    const state = store.getState();
+    if (!state.project || !state.solution) {
+      setMsg("\u8BF7\u5148\u5B8C\u6210\u6570\u636E\u51C6\u5907\u5E76\u751F\u6210\u8BFE\u8868\u3002", "err");
+      return;
+    }
     publishBtn.disabled = true;
     setMsg("\u6B63\u5728\u8BF7\u6C42\u540E\u7AEF\u53D1\u5E03\u6821\u9A8C\u2026", null);
     try {
-      const state = store.getState();
-      const result = await api.publish({ project: state.project, solution: state.solution });
+      const result = await api.publishSchedule({ project: state.project, solution: state.solution });
       if (result && result.solution) {
         store.dispatch("setSolution", result.solution);
       }
       if (result && result.project) {
         store.dispatch("setProject", result.project);
       }
+      store.dispatch("setPublishResult", result);
       published = true;
-      history = [{ time: (/* @__PURE__ */ new Date()).toLocaleString(), label: "\u8BFE\u8868\u5DF2\u53D1\u5E03" }, ...history];
+      history = [{ time: (/* @__PURE__ */ new Date()).toLocaleString(), label: `\u8BFE\u8868\u5DF2\u53D1\u5E03${result?.publishedAt ? ` \xB7 ${result.publishedAt}` : ""}` }, ...history];
       renderAll();
       setMsg("\u53D1\u5E03\u6210\u529F\uFF0C\u8BFE\u8868\u5DF2\u901A\u8FC7\u540E\u7AEF\u53D1\u5E03\u524D\u6821\u9A8C\u3002", "ok");
     } catch (err) {
@@ -50138,13 +50343,23 @@ function createPublishExportView({ store, api }) {
       publishBtn.disabled = false;
     }
   }
-  function doExport() {
-    const solution = store.getState().solution;
-    if (!solution) {
+  async function doExport() {
+    const state = store.getState();
+    if (!state.project || !state.solution) {
       setMsg("\u6682\u65E0\u53EF\u5BFC\u51FA\u7684\u8BFE\u8868\uFF0C\u8BF7\u5148\u6C42\u89E3\u5E76\u53D1\u5E03\u3002", "err");
       return;
     }
-    setMsg("\u5BFC\u51FA\u5165\u53E3\u5DF2\u89E6\u53D1\uFF08\u5B9E\u9645\u5BFC\u51FA\u7531\u540E\u7AEF\u751F\u6210\u6587\u4EF6\uFF09\u3002", "ok");
+    exportBtn.disabled = true;
+    setMsg("\u6B63\u5728\u8BF7\u6C42\u540E\u7AEF\u751F\u6210 xlsx\u2026", null);
+    try {
+      const file = await api.exportSchedule({ project: state.project, solution: state.solution, type: "class" });
+      api.downloadFile(file);
+      setMsg(`\u5BFC\u51FA\u5DF2\u5F00\u59CB\uFF1A${file.filename || "\u8BFE\u8868.xlsx"}`, "ok");
+    } catch (error) {
+      setMsg(error.message || "\u5BFC\u51FA\u5931\u8D25", "err");
+    } finally {
+      exportBtn.disabled = false;
+    }
   }
   publishBtn.addEventListener("click", doPublish);
   exportBtn.addEventListener("click", doExport);
@@ -50182,15 +50397,64 @@ var VIEW_FACTORIES = {
 var DEFAULT_STEP = STEPS[0] && STEPS[0].step || "data-prep";
 function createTimetableV2Workbench(rootEl) {
   const store = createStore({ step: DEFAULT_STEP });
+  const el = document.createElement("section");
+  el.className = "ttv2-workbench";
+  el.setAttribute("aria-label", "\u667A\u80FD\u6392\u8BFE\u5DE5\u4F5C\u53F0");
+  const frame = document.createElement("div");
+  frame.className = "ttv2-frame";
+  const topbar = document.createElement("header");
+  topbar.className = "ttv2-topbar";
+  const identity = document.createElement("div");
+  identity.className = "ttv2-identity";
+  identity.innerHTML = `
+        <span class="ttv2-identity__icon" aria-hidden="true"><i data-lucide="calendar-check"></i></span>
+        <span class="ttv2-identity__copy">
+            <p class="ttv2-eyebrow">\u8BFE\u5802\u5DE5\u5177\u7BB1 / Timetable V2</p>
+            <h1 class="ttv2-title" id="ttv2-project-title">\u667A\u80FD\u6392\u8BFE</h1>
+            <p class="ttv2-subtitle" id="ttv2-project-subtitle">\u6B63\u5728\u8BFB\u53D6\u6392\u8BFE\u9879\u76EE...</p>
+        </span>
+    `;
+  const titleEl = identity.querySelector("#ttv2-project-title");
+  const subtitleEl = identity.querySelector("#ttv2-project-subtitle");
+  const statusStrip = document.createElement("div");
+  statusStrip.className = "ttv2-status-strip";
+  function makeKpi(label) {
+    const item = document.createElement("div");
+    item.className = "ttv2-kpi";
+    const labelEl = document.createElement("span");
+    labelEl.className = "ttv2-kpi__label";
+    labelEl.textContent = label;
+    const valueEl = document.createElement("span");
+    valueEl.className = "ttv2-kpi__value";
+    valueEl.textContent = "\u2014";
+    item.append(labelEl, valueEl);
+    statusStrip.append(item);
+    return valueEl;
+  }
+  const kpis = {
+    data: makeKpi("\u6570\u636E"),
+    rules: makeKpi("\u89C4\u5219"),
+    solve: makeKpi("\u6C42\u89E3"),
+    quality: makeKpi("\u8D28\u91CF"),
+    publish: makeKpi("\u53D1\u5E03")
+  };
+  topbar.append(identity, statusStrip);
   const layout = createThreePaneLayout({ narrowBreakpoint: 900 });
   const stepNav = createStepNav({
     current: store.getState().step,
     onGoStep: (step) => store.dispatch("goStep", step)
   });
   layout.setNav(stepNav.el);
-  const insight = createInsightPanel({ diagnostics: store.getState().diagnostics });
+  const insight = createInsightPanel({
+    diagnostics: store.getState().diagnostics,
+    migrationReport: store.getState().migrationReport,
+    unsupportedRules: store.getState().unsupportedRules
+  });
   layout.setAside(insight.el);
-  if (rootEl) rootEl.append(layout.el);
+  frame.append(topbar, layout.el);
+  el.append(frame);
+  if (rootEl) rootEl.append(el);
+  if (window.lucide) window.lucide.createIcons({ attrs: { "stroke-width": 2 } });
   let currentStep = null;
   let currentView = null;
   function mountStep(step) {
@@ -50211,13 +50475,21 @@ function createTimetableV2Workbench(rootEl) {
       stepNav.update({ current: targetStep });
       mountStep(targetStep);
     }
-    insight.update({ diagnostics: state.diagnostics });
+    updateChrome(state);
+    insight.update({
+      diagnostics: state.diagnostics,
+      migrationReport: state.migrationReport,
+      unsupportedRules: state.unsupportedRules,
+      publishResult: state.publishResult
+    });
     layout.update({ asideOpen: !!(state.ui && state.ui.asideOpen) });
   });
   mountStep(store.getState().step);
+  updateChrome(store.getState());
+  bootstrap();
   let destroyed = false;
   return {
-    el: layout.el,
+    el,
     store,
     destroy() {
       if (destroyed) return;
@@ -50230,8 +50502,37 @@ function createTimetableV2Workbench(rootEl) {
       stepNav.destroy();
       insight.destroy();
       layout.destroy();
+      el.remove();
     }
   };
+  function updateChrome(state) {
+    const project = state.project;
+    const solution = state.solution || {};
+    const stats = solution.stats || state.solverJob?.stats || {};
+    const hard = Array.isArray(solution.hardConflicts) ? solution.hardConflicts.length : 0;
+    const unplaced = Array.isArray(solution.unplaced) ? solution.unplaced.length : 0;
+    const caps = state.capabilities || {};
+    const importSources = Array.isArray(caps.importSources) ? caps.importSources.length : 0;
+    titleEl.textContent = project?.name || "\u667A\u80FD\u6392\u8BFE";
+    subtitleEl.textContent = project ? `\u4FEE\u8BA2 ${project.revision || 0} \xB7 ${project.classes?.length || 0} \u73ED \xB7 ${project.teachers?.length || 0} \u4F4D\u6559\u5E08` : state.bootstrap?.needsMigration ? "\u5C1A\u672A\u521B\u5EFA V2 \u9879\u76EE\uFF0C\u53EF\u4ECE\u6570\u636E\u51C6\u5907\u5BFC\u5165" : "\u5C1A\u672A\u52A0\u8F7D\u9879\u76EE";
+    kpis.data.textContent = project ? `${project.activityPlans?.length || 0} \u8BA1\u5212` : `${importSources || 0} \u5BFC\u5165\u6E90`;
+    kpis.rules.textContent = `${project?.constraints?.length || 0} \u6761`;
+    kpis.solve.textContent = state.solverJob?.status === "running" ? "\u6C42\u89E3\u4E2D" : solution.placements ? `${solution.placements.length} \u5DF2\u6392` : "\u672A\u6C42\u89E3";
+    kpis.quality.textContent = solution.placements ? `${hard} \u51B2\u7A81 / ${unplaced} \u672A\u6392` : "\u5F85\u751F\u6210";
+    kpis.publish.textContent = state.publishResult?.published ? "\u5DF2\u53D1\u5E03" : "\u672A\u53D1\u5E03";
+  }
+  async function bootstrap() {
+    store.dispatch("setLoading", "bootstrap", true);
+    try {
+      const boot = await getBootstrap();
+      store.dispatch("setBootstrap", boot);
+      store.dispatch("setError", null);
+    } catch (error) {
+      store.dispatch("setError", error.message || "\u8BFB\u53D6\u9879\u76EE\u5931\u8D25");
+    } finally {
+      store.dispatch("setLoading", "bootstrap", false);
+    }
+  }
 }
 function mountTimetableV2(rootEl) {
   return createTimetableV2Workbench(rootEl);
@@ -50241,6 +50542,8 @@ function mountTimetableV2(rootEl) {
 var instance = null;
 function init(domEl) {
   if (!domEl) return;
+  destroy();
+  domEl.replaceChildren();
   instance = mountTimetableV2(domEl);
   return instance;
 }

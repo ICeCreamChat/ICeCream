@@ -27,21 +27,7 @@ export const STEPS = [
 
 const STYLE_ID = 'ttv2-step-nav-style';
 
-const STYLE_TEXT = `
-.ttv2-stepnav { display: flex; flex-direction: column; gap: 4px; list-style: none; margin: 0; padding: 0; }
-.ttv2-shell--narrow .ttv2-stepnav { flex-direction: row; }
-.ttv2-stepnav__item { display: flex; align-items: center; gap: 8px;
-    padding: 8px 10px; border: 0; border-radius: 8px; background: transparent;
-    color: var(--ttv2-text, #1f2937); font: inherit; text-align: left;
-    cursor: pointer; white-space: nowrap; width: 100%; }
-.ttv2-shell--narrow .ttv2-stepnav__item { width: auto; }
-.ttv2-stepnav__item:hover { background: var(--ttv2-hover, rgba(0,0,0,.05)); }
-.ttv2-stepnav__item--active { background: var(--ttv2-accent, #2563eb); color: #fff; font-weight: 600; }
-.ttv2-stepnav__index { display: inline-flex; align-items: center; justify-content: center;
-    width: 20px; height: 20px; border-radius: 50%; font-size: 12px;
-    background: rgba(0,0,0,.08); color: inherit; flex: 0 0 auto; }
-.ttv2-stepnav__item--active .ttv2-stepnav__index { background: rgba(255,255,255,.25); }
-`;
+const STYLE_TEXT = '';
 
 function ensureStyle() {
     if (typeof document === 'undefined') return;

@@ -24,30 +24,7 @@
 
 const STYLE_ID = 'ttv2-three-pane-style';
 
-const STYLE_TEXT = `
-.ttv2-shell { display: grid; gap: 12px; width: 100%; box-sizing: border-box;
-    grid-template-columns: 220px minmax(0, 1fr) 320px;
-    grid-template-areas: "nav main aside"; }
-.ttv2-shell__nav { grid-area: nav; min-width: 0; }
-.ttv2-shell__main { grid-area: main; min-width: 0; }
-.ttv2-shell__aside { grid-area: aside; min-width: 0; }
-.ttv2-shell__actions { display: none; }
-
-/* 窄屏降级：单列；nav 顶部横条；aside 底部抽屉；关键操作固定栏 */
-.ttv2-shell--narrow { grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "nav" "main"; padding-bottom: 64px; }
-.ttv2-shell--narrow .ttv2-shell__nav { overflow-x: auto; white-space: nowrap; }
-.ttv2-shell--narrow .ttv2-shell__aside {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-    max-height: 70vh; overflow-y: auto; transform: translateY(100%);
-    transition: transform .2s ease; background: var(--ttv2-surface, #fff);
-    box-shadow: 0 -8px 24px rgba(0,0,0,.18); border-radius: 12px 12px 0 0; }
-.ttv2-shell--narrow.ttv2-shell--aside-open .ttv2-shell__aside { transform: translateY(0); }
-.ttv2-shell--narrow .ttv2-shell__actions {
-    display: flex; gap: 8px; position: fixed; left: 0; right: 0; bottom: 0;
-    z-index: 40; padding: 8px 12px; background: var(--ttv2-surface, #fff);
-    box-shadow: 0 -2px 8px rgba(0,0,0,.12); }
-`;
+const STYLE_TEXT = '';
 
 /** 按需注入一次样式（仅在浏览器、首次创建组件时触碰 document）。 */
 function ensureStyle() {

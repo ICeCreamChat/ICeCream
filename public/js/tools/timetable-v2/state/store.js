@@ -59,6 +59,22 @@ export function createStore(initial = {}) {
         setUi(patch) {
             setState({ ui: { ...state.ui, ...patch } });
         },
+        /** 设置某个异步动作的加载态（纯 UI 状态）。 */
+        setLoading(key, value) {
+            setState({ loadingByKey: { ...state.loadingByKey, [key]: Boolean(value) } });
+        },
+        /** 保存最近一次可读错误（纯 UI 状态）。 */
+        setError(error) {
+            setState({ lastError: error || null });
+        },
+        /** 保存 bootstrap 结果与能力标志。 */
+        setBootstrap(boot = {}) {
+            setState({
+                bootstrap: boot,
+                capabilities: boot.capabilities || {},
+                project: boot.project ?? state.project,
+            });
+        },
         /**
          * 追加助手草稿。强制 applied:false：草稿只能待确认，
          * 不能在 store 层变成已写入项目状态（写入只经 api/ → 后端）。
@@ -73,7 +89,7 @@ export function createStore(initial = {}) {
         },
         /** 只存后端返回的 project 引用。 */
         setProject(p) {
-            setState({ project: p });
+            setState({ project: p, importPreview: null, migrationReport: null });
         },
         /** 只存后端返回的 solution 引用。 */
         setSolution(s) {
@@ -86,6 +102,22 @@ export function createStore(initial = {}) {
         /** 只存后端返回的 solverJob 引用。 */
         setSolverJob(j) {
             setState({ solverJob: j });
+        },
+        /** 只存后端 /import 返回的预览引用，不落库。 */
+        setImportPreview(preview) {
+            setState({
+                importPreview: preview || null,
+                migrationReport: preview?.report || null,
+            });
+        },
+        clearImportPreview() {
+            setState({ importPreview: null, migrationReport: null });
+        },
+        setUnsupportedRules(items) {
+            setState({ unsupportedRules: Array.isArray(items) ? items : [] });
+        },
+        setPublishResult(result) {
+            setState({ publishResult: result || null });
         },
     };
 
@@ -112,10 +144,18 @@ function createInitialState() {
     return {
         step: 'data-prep',           // 当前步骤
         ui: {},                      // 各页面 UI 态（选中 / 展开 / 抽屉开合）
+        loadingByKey: {},             // 纯 UI 加载态
+        lastError: null,              // 最近一次可读错误
+        bootstrap: null,              // 后端 bootstrap 结果
+        capabilities: {},             // 后端能力标志
         pendingRules: [],            // 助手草稿，每条 applied:false
         project: null,               // 后端返回引用
         solution: null,              // 后端返回引用
         diagnostics: null,           // 后端返回引用
         solverJob: null,             // 后端返回引用
+        importPreview: null,          // /import 预览结果（未保存）
+        migrationReport: null,        // /import 或 /migrate 报告
+        unsupportedRules: [],         // /rules 返回 unsupported
+        publishResult: null,          // /schedule/publish 返回结果
     };
 }

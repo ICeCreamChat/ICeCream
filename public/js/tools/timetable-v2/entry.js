@@ -12,6 +12,8 @@ let instance = null;
 
 export function init(domEl) {
     if (!domEl) return;
+    destroy();
+    domEl.replaceChildren();
     instance = mountTimetableV2(domEl);
     return instance;
 }
