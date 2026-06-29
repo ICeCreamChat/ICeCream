@@ -2105,15 +2105,15 @@ button.tt-section-title {
 }
 
 .tt-roster-import-dialog,
-/* 已删除 .tt-rule-review-dialog 样式（旧弹窗已废弃，使用 smart-workbench 替代） */
-
-.tt-publish-dialog {
+.tt-period-time-dialog,
+.tt-publish-dialog,
+.tt-publication-history-dialog {
     display: grid;
     gap: var(--tt-space-md);
     box-sizing: border-box;
-    width: min(560px, calc(100vw - 48px));
+    width: min(var(--tt-dialog-width, 720px), calc(100vw - 48px));
     max-width: calc(100vw - 48px);
-    max-height: min(720px, calc(100vh - 48px));
+    max-height: min(var(--tt-dialog-max-height, 860px), calc(100vh - 48px));
     overflow: auto;
     padding: var(--tt-space-md);
     background: var(--tt-bg-panel);
@@ -2123,23 +2123,18 @@ button.tt-section-title {
     box-shadow: 0 24px 60px rgba(2, 6, 23, 0.38);
 }
 
-/* 已删除 .tt-rule-review-dialog 宽度覆盖（旧弹窗已废弃） */
+.tt-roster-import-dialog {
+    --tt-dialog-width: 1120px;
+}
 
 .tt-period-time-dialog {
-    display: grid;
-    gap: var(--tt-space-md);
-    box-sizing: border-box;
-    width: min(840px, calc(100vw - 48px));
-    min-width: min(620px, calc(100vw - 48px));
-    max-width: min(840px, calc(100vw - 48px));
-    max-height: min(720px, calc(100vh - 48px));
-    overflow: auto;
-    padding: var(--tt-space-md);
-    background: var(--tt-bg-panel);
-    border: 1px solid var(--tt-border-strong);
-    border-radius: var(--tt-radius-lg);
-    color: var(--tt-text);
-    box-shadow: 0 24px 60px rgba(2, 6, 23, 0.38);
+    --tt-dialog-width: 960px;
+    --tt-dialog-max-height: 820px;
+}
+
+.tt-publish-dialog {
+    --tt-dialog-width: 640px;
+    --tt-dialog-max-height: 760px;
 }
 
 .tt-publish-summary {
@@ -2316,6 +2311,8 @@ button.tt-section-title {
 
 .tt-roster-review-wrap {
     overflow: auto;
+    max-width: 100%;
+    min-height: 0;
     border: 1px solid var(--tt-border);
     border-radius: var(--tt-radius-md);
     background: var(--tt-bg-input);
@@ -2613,9 +2610,11 @@ button.tt-section-title {
 
 .tt-period-time-review {
     overflow: auto;
+    max-width: 100%;
+    min-height: 0;
     border: 1px solid var(--tt-border);
     border-radius: var(--tt-radius-md);
-    background: rgba(15, 23, 42, 0.12);
+    background: var(--tt-bg-input);
 }
 
 .tt-period-time-error-summary {
@@ -3478,9 +3477,8 @@ button.tt-section-title {
 }
 
 .tt-publication-history-dialog {
-    width: max-content;
-    min-width: min(720px, calc(100vw - 48px));
-    max-width: calc(100vw - 48px);
+    --tt-dialog-width: 920px;
+    --tt-dialog-max-height: 820px;
 }
 
 .tt-publication-history-detail {

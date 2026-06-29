@@ -511,7 +511,7 @@ function renderPeriodTimeDialog(state) {
                 </div>
                 <div class="tt-dialog-actions">
                     <button class="tt-btn tt-btn--ghost" id="tt-clear-period-times" type="button" ${saving ? 'disabled' : ''}><i data-lucide="eraser"></i><span>清空时间</span></button>
-                    <button class="tt-btn tt-btn--ghost" id="tt-cancel-period-times-secondary" type="button" ${saving ? 'disabled' : ''}>取消</button>
+                    <button class="tt-btn tt-btn--ghost" id="tt-cancel-period-times-secondary" type="button" ${saving ? 'disabled' : ''}><i data-lucide="x"></i><span>取消</span></button>
                     <button class="tt-btn tt-btn--primary" id="tt-save-period-times" type="button" ${saving ? 'disabled' : ''}><i data-lucide="${saving ? 'loader-2' : 'save'}" class="${saving ? 'tt-spin' : ''}"></i><span>${saving ? '保存中' : '保存时间'}</span></button>
                 </div>
             </section>

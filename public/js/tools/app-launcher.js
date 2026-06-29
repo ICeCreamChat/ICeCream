@@ -116,6 +116,13 @@ class AppLauncher {
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 if (this.toolContainer.classList.contains('active')) {
+                    if (
+                        this.currentToolInstance
+                        && typeof this.currentToolInstance.handleEscape === 'function'
+                        && this.currentToolInstance.handleEscape(e)
+                    ) {
+                        return;
+                    }
                     this._closeTool();
                 } else if (this.overlay.classList.contains('active')) {
                     this.close();

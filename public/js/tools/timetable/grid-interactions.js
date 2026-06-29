@@ -4,6 +4,64 @@ function resizeConstraintChatInput(textarea) {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
 }
 
+export function handleTimetableEscape(event, container, controller, state) {
+    if (event?.key !== 'Escape') return false;
+
+    event.preventDefault?.();
+    event.stopPropagation?.();
+
+    if (!controller || !state) return true;
+
+    if (state.restoreDialog?.open) {
+        controller.closeRestoreDialog?.();
+        return true;
+    }
+    if (state.publicationHistoryDialog?.open) {
+        controller.closePublicationHistoryDialog?.();
+        return true;
+    }
+    if (state.publishDialog?.open) {
+        controller.closePublishDialog?.();
+        return true;
+    }
+    if (state.periodTimeDialog?.open) {
+        controller.closePeriodTimeDialog?.();
+        return true;
+    }
+    if (state.rosterImport?.open) {
+        controller.closeRosterImport?.();
+        return true;
+    }
+    if (state.constraintChat?.open) {
+        controller.closeConstraintChat?.();
+        return true;
+    }
+    if (state.problemDetailDialog?.open) {
+        controller.closeProblemDetails?.();
+        return true;
+    }
+
+    const openDetails = Array.from(container?.querySelectorAll?.('details.tt-multi-select[open], details.tt-smart-details[open]') || []);
+    if (openDetails.length) {
+        openDetails.forEach(details => details.removeAttribute('open'));
+        return true;
+    }
+
+    if (state.smartWorkbench?.open) {
+        controller.closeSmartWorkbench?.();
+        return true;
+    }
+
+    if (state.selectedSlotId || state.inspectorOpen) {
+        state.selectedSlotId = '';
+        state.inspectorOpen = false;
+        controller.render?.();
+        return true;
+    }
+
+    return true;
+}
+
 function bindDelegatedInteractions(container) {
     if (container.__ttDelegatedInteractionsBound) return;
     container.__ttDelegatedInteractionsBound = true;
@@ -188,9 +246,7 @@ function bindDelegatedInteractions(container) {
             controller.sendConstraintChatMessage(event.target.value);
             return;
         }
-        if (event.key === 'Escape') {
-            container.querySelectorAll('details.tt-multi-select[open]').forEach(details => details.removeAttribute('open'));
-        }
+        handleTimetableEscape(event, container, controller, container.__ttState);
     });
 
     container.addEventListener('dragstart', event => {

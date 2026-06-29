@@ -21,10 +21,12 @@ import {
   renderInspector,
   renderSchedulePanel,
 } from '../public/js/tools/timetable/view.js';
+import { handleTimetableEscape } from '../public/js/tools/timetable/grid-interactions.js';
 import { createSmartWorkbenchState } from '../public/js/tools/timetable/smart-workbench/workbench-state.js';
 
 const sourcePath = new URL('../public/js/tools/timetable-planner.js', import.meta.url);
 const stylePath = new URL('../public/css/timetable-planner.css', import.meta.url);
+const appLauncherPath = new URL('../public/js/tools/app-launcher.js', import.meta.url);
 const smartWorkbenchStylePath = new URL('../public/css/timetable-smart-workbench.css', import.meta.url);
 const moduleRoot = new URL('../public/js/tools/timetable/', import.meta.url);
 
@@ -4262,7 +4264,7 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-roster-review-row--error/);
   // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 smart-workbench 替代）
   assert.match(styles, /\.tt-roster-import-dialog/);
-  assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*width:\s*min\(840px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*min\(840px,\s*calc\(100vw - 48px\)\);/);
+  assert.match(styles, /\.tt-period-time-dialog/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
 });
 
@@ -4270,11 +4272,15 @@ test('timetable dialogs expand to review content on desktop and stay constrained
   const styles = await readFile(stylePath, 'utf8');
 
   // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 smart-workbench 替代）
-  assert.match(styles, /\.tt-roster-import-dialog/);
-  assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*width:\s*min\(840px,\s*calc\(100vw - 48px\)\);[\s\S]*min-width:\s*min\(620px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*min\(840px,\s*calc\(100vw - 48px\)\);/);
-  assert.match(styles, /\.tt-publication-history-dialog\s*{[\s\S]*width:\s*max-content;[\s\S]*min-width:\s*min\(720px,\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);/);
+  assert.match(styles, /\.tt-roster-import-dialog,\s*[\s\S]*\.tt-period-time-dialog,\s*[\s\S]*\.tt-publish-dialog,\s*[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*min\(var\(--tt-dialog-width,\s*720px\),\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);[\s\S]*max-height:\s*min\(var\(--tt-dialog-max-height,\s*860px\),\s*calc\(100vh - 48px\)\);[\s\S]*overflow:\s*auto;[\s\S]*box-shadow:\s*0 24px 60px rgba\(2,\s*6,\s*23,\s*0\.38\);/);
+  assert.match(styles, /\.tt-roster-import-dialog\s*{[\s\S]*--tt-dialog-width:\s*1120px;/);
+  assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*--tt-dialog-width:\s*960px;[\s\S]*--tt-dialog-max-height:\s*820px;/);
+  assert.match(styles, /\.tt-publish-dialog\s*{[\s\S]*--tt-dialog-width:\s*640px;[\s\S]*--tt-dialog-max-height:\s*760px;/);
+  assert.match(styles, /\.tt-publication-history-dialog\s*{[\s\S]*--tt-dialog-width:\s*920px;[\s\S]*--tt-dialog-max-height:\s*820px;/);
+  assert.match(styles, /\.tt-roster-review-wrap\s*{[\s\S]*overflow:\s*auto;[\s\S]*max-width:\s*100%;/);
+  assert.match(styles, /\.tt-period-time-review\s*{[\s\S]*overflow:\s*auto;[\s\S]*max-width:\s*100%;[\s\S]*min-height:\s*0;/);
   // 已删除响应式 CSS 中对 .tt-rule-review-dialog 的断言
-  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-period-time-dialog,[\s\S]*\.tt-publish-dialog,[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog,[\s\S]*\.tt-period-time-dialog,[\s\S]*\.tt-publish-dialog,[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
 });
 
 test('timetable roster import preserves input and review drafts when the modal is reopened', () => {
@@ -5955,6 +5961,126 @@ test('timetable modal overlays do not close when the blank overlay is clicked', 
   assert.doesNotMatch(interactionSource, /\[data-roster-import-close\][\s\S]{0,220}closeRosterImport\(/);
 });
 
+test('timetable Escape steps back inside the workbench instead of bubbling to the tool shell', () => {
+  let stopped = false;
+  let prevented = false;
+  const closed = [];
+  const event = {
+    key: 'Escape',
+    preventDefault() {
+      prevented = true;
+    },
+    stopPropagation() {
+      stopped = true;
+    },
+  };
+  const controller = {
+    closeRestoreDialog() {
+      closed.push('restore');
+    },
+    closePublicationHistoryDialog() {
+      closed.push('history');
+    },
+    closePublishDialog() {
+      closed.push('publish');
+    },
+    closePeriodTimeDialog() {
+      closed.push('period');
+    },
+    closeRosterImport() {
+      closed.push('roster');
+    },
+    closeConstraintChat() {
+      closed.push('chat');
+    },
+    closeProblemDetails() {
+      closed.push('problem');
+    },
+    closeSmartWorkbench() {
+      closed.push('smart');
+      state.smartWorkbench.open = false;
+    },
+    render() {
+      closed.push('render');
+    },
+  };
+  let removedDetails = 0;
+  let openDetails = [{ removeAttribute() { removedDetails += 1; } }];
+  const state = {
+    restoreDialog: { open: true },
+    publicationHistoryDialog: { open: true },
+    publishDialog: { open: true },
+    periodTimeDialog: { open: true },
+    rosterImport: { open: true },
+    constraintChat: { open: true },
+    problemDetailDialog: { open: true, problem: { id: 'p1' } },
+    smartWorkbench: { open: true },
+    selectedSlotId: 'slot-1',
+    inspectorOpen: true,
+  };
+  const container = {
+    querySelectorAll() {
+      return openDetails;
+    },
+  };
+
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.equal(prevented, true);
+  assert.equal(stopped, true);
+  assert.deepEqual(closed, ['restore']);
+
+  state.restoreDialog.open = false;
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.deepEqual(closed, ['restore', 'history']);
+
+  state.publicationHistoryDialog.open = false;
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.deepEqual(closed, ['restore', 'history', 'publish']);
+
+  state.publishDialog.open = false;
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period']);
+
+  state.periodTimeDialog.open = false;
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'roster']);
+
+  state.rosterImport.open = false;
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'roster', 'chat']);
+
+  state.constraintChat.open = false;
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'roster', 'chat', 'problem']);
+
+  state.problemDetailDialog.open = false;
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'roster', 'chat', 'problem']);
+  assert.equal(removedDetails, 1);
+  assert.equal(state.selectedSlotId, 'slot-1');
+
+  openDetails = [];
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'roster', 'chat', 'problem', 'smart']);
+  assert.equal(state.selectedSlotId, 'slot-1');
+
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'roster', 'chat', 'problem', 'smart', 'render']);
+  assert.equal(state.selectedSlotId, '');
+  assert.equal(state.inspectorOpen, false);
+
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.equal(stopped, true);
+});
+
+test('timetable tool handles Escape before the app launcher can close the tool', async () => {
+  const launcherSource = await readFile(appLauncherPath, 'utf8');
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+
+  assert.match(launcherSource, /currentToolInstance[\s\S]*handleEscape[\s\S]*return;/);
+  assert.match(controllerSource, /handleEscape\(event\)\s*{[\s\S]*handleTimetableEscape\(event,\s*this\.state\.container,\s*this,\s*this\.state\)/);
+});
+
 test('timetable left sidebar range workflow applies only from the range popover done button', async () => {
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
   const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
@@ -6030,6 +6156,7 @@ test('timetable period time setup uses a compact entry and modal editor', async 
   assert.match(open, /data-label="本节后间隔"/);
   assert.match(open, /id="tt-reset-period-time-settings"/);
   assert.match(open, /id="tt-clear-period-times"/);
+  assert.match(open, /id="tt-cancel-period-times-secondary"[^>]*>[\s\S]*data-lucide="x"[\s\S]*<span>取消<\/span>/);
   assert.match(open, /id="tt-save-period-times"/);
   assert.match(open, /id="tt-cancel-period-times"/);
   assert.match(styles, /\.tt-period-time-entry\s*{/);
