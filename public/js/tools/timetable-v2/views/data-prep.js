@@ -309,7 +309,9 @@ export function createDataPrepView({ store, api }) {
         saveBtn.disabled = true;
         setMsg('正在保存项目...', null);
         try {
-            const project = await api.saveProject(preview.project);
+            const project = await api.saveProject(preview.project, {
+                expectedRevision: store.getState().project?.revision ?? preview.project?.revision,
+            });
             store.dispatch('setProject', project);
             store.dispatch('clearImportPreview');
             setMsg('项目已保存，可以进入规则输入。', 'ok');

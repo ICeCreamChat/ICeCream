@@ -103,7 +103,7 @@ function attachPageAudit(page, label) {
 }
 
 function isRelevantEvent(event) {
-    const text = `${event.text || ''} ${event.url || ''} ${event.failure || ''}`;
+    const text = `${event.text || ''} ${event.url || ''} ${event.failure || ''} ${event.location?.url || ''}`;
     return !/fonts\.googleapis|fonts\.gstatic|cdn\.jsdelivr|unpkg|cdnjs|katex|cropper|favicon|Manim 服务未启动/i.test(text);
 }
 
@@ -353,10 +353,15 @@ async function runMobile(browser) {
     await page.locator('.ttv2-shell--narrow').waitFor({ state: 'visible', timeout: 15000 });
     await noHorizontalOverflow(page, 'mobile initial');
     await page.locator('.ttv2-view--data-prep').waitFor({ state: 'visible', timeout: 10000 });
+    const wasLight = await page.evaluate(() => document.body.classList.contains('light-mode'));
     await page.locator('#tool-theme-toggle').click();
-    await page.waitForFunction(() => document.body.classList.contains('light-mode'), null, { timeout: 5000 });
+    await page.waitForFunction(
+        (initialLight) => document.body.classList.contains('light-mode') !== initialLight,
+        wasLight,
+        { timeout: 5000 },
+    );
     await page.locator('.ttv2-workbench').waitFor({ state: 'visible' });
-    await noHorizontalOverflow(page, 'mobile light');
+    await noHorizontalOverflow(page, 'mobile toggled theme');
     await context.close();
 }
 

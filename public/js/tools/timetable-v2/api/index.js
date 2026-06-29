@@ -87,11 +87,15 @@ export async function importProject({ source = 'excel', data, file, options = {}
 }
 
 /** 保存经过后端校验的项目草稿。 */
-export async function saveProject(project) {
+export async function saveProject(project, options = {}) {
     if (USE_MOCK) return { ...sampleProject, ...(project || {}) };
+    const body = { ...(project || {}) };
+    if (options.expectedRevision !== undefined) {
+        body.expectedRevision = options.expectedRevision;
+    }
     const data = await requestV2('/project', {
         method: 'POST',
-        body: JSON.stringify(project || {}),
+        body: JSON.stringify(body),
     });
     return data?.project ?? data;
 }

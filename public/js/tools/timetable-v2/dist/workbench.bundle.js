@@ -35894,11 +35894,15 @@ async function importProject({ source = "excel", data, file, options = {} } = {}
     body: JSON.stringify({ source, data, options })
   });
 }
-async function saveProject(project) {
+async function saveProject(project, options = {}) {
   if (USE_MOCK) return { ...sampleProject, ...project || {} };
+  const body = { ...project || {} };
+  if (options.expectedRevision !== void 0) {
+    body.expectedRevision = options.expectedRevision;
+  }
   const data = await requestV2("/project", {
     method: "POST",
-    body: JSON.stringify(project || {})
+    body: JSON.stringify(body)
   });
   return data?.project ?? data;
 }
@@ -36539,7 +36543,9 @@ function createDataPrepView({ store, api }) {
     saveBtn.disabled = true;
     setMsg("\u6B63\u5728\u4FDD\u5B58\u9879\u76EE...", null);
     try {
-      const project = await api.saveProject(preview.project);
+      const project = await api.saveProject(preview.project, {
+        expectedRevision: store.getState().project?.revision ?? preview.project?.revision
+      });
       store.dispatch("setProject", project);
       store.dispatch("clearImportPreview");
       setMsg("\u9879\u76EE\u5DF2\u4FDD\u5B58\uFF0C\u53EF\u4EE5\u8FDB\u5165\u89C4\u5219\u8F93\u5165\u3002", "ok");

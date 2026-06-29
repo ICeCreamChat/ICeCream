@@ -74,6 +74,30 @@ try {
         ok('真实路由求解：5 节全排、零硬冲突、含诊断');
     } else fail(`真实路由求解异常: ${JSON.stringify(solveData).slice(0, 200)}`);
 
+    // 真实浏览器回归：已有项目 revision 不得在“导入预览→保存”为空，保存请求必须携带当前 revision。
+    const bootstrapRevision = await page.evaluate(() => window.__wb?.store?.getState?.().project?.revision ?? null);
+    if (bootstrapRevision == null) fail('工作台未加载 bootstrap revision');
+    await page.locator('.ttv2-view--data-prep select').selectOption('excel');
+    await page.locator('.ttv2-view--data-prep textarea').fill('年级,班级,课程,教师,周课时\n七年级,一班,语文,张老师,5');
+    await page.getByRole('button', { name: '生成导入预览' }).click();
+    await page.waitForFunction(() => window.__wb?.store?.getState?.().importPreview?.project);
+    const saveRequestPromise = page.waitForRequest((req) => req.url().includes('/api/tools/timetable-v2/project') && req.method() === 'POST');
+    const saveResponsePromise = page.waitForResponse((res) => res.url().includes('/api/tools/timetable-v2/project') && res.request().method() === 'POST');
+    await page.getByRole('button', { name: '保存为项目' }).click();
+    const saveRequest = await saveRequestPromise;
+    const saveResponse = await saveResponsePromise;
+    const saveBody = JSON.parse(saveRequest.postData() || '{}');
+    if (saveBody.expectedRevision === bootstrapRevision) ok('保存请求携带当前 revision');
+    else fail(`保存请求 revision 异常: ${JSON.stringify(saveBody).slice(0, 200)}`);
+    if (saveResponse.status() === 200) ok('保存请求获得 200 响应');
+    else fail(`保存请求响应异常: ${saveResponse.status()}`);
+    const saveMsg = await page.locator('.ttv2-view--data-prep .ttv2-message').innerText();
+    if (/项目已保存/.test(saveMsg) && !/其他窗口修改/.test(saveMsg)) ok('真实浏览器保存未触发版本冲突');
+    else fail(`真实浏览器保存消息异常: ${saveMsg}`);
+    const savedRevision = await page.evaluate(() => window.__wb?.store?.getState?.().project?.revision ?? null);
+    if (savedRevision === bootstrapRevision + 1) ok(`保存后 revision 前进到 ${savedRevision}`);
+    else fail(`保存后 revision 异常: ${savedRevision}`);
+
     if (consoleErrors.length === 0) ok('控制台无 error'); else fail(`控制台 error: ${consoleErrors.slice(0, 3).join(' | ')}`);
 
     await browser.close();
