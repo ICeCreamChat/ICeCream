@@ -12,13 +12,5 @@
       ]
     }
   ],
-  "generatedBundles": [
-    {
-      "name": "Timetable V2 workbench bundle",
-      "path": "public/js/tools/timetable-v2/dist/workbench.bundle.js",
-      "source": "public/js/tools/timetable-v2/entry.js",
-      "command": "npm run build:timetable-v2",
-      "maxSizeBytes": 2500000
-    }
-  ]
+  "generatedBundles": []
 }

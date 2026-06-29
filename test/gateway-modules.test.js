@@ -63,15 +63,14 @@ test('production gateway errors hide internal details and include requestId', ()
     assert.doesNotMatch(JSON.stringify(mapped.payload), /internal\.example|token|stack trace/);
 });
 
-test('gateway mounts timetable V2 APIs and legacy routes are removed', async () => {
+test('gateway mounts legacy timetable APIs', async () => {
     const app = createGatewayApp({ isDev: false });
     const server = app.listen(0);
     await new Promise(resolve => server.once('listening', resolve));
     const { port } = server.address();
 
     try {
-        // V2 bootstrap endpoint should be mounted and return proper structure
-        const response = await fetch(`http://127.0.0.1:${port}/api/tools/timetable-v2/bootstrap`, {
+        const response = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/bootstrap`, {
             method: 'GET',
             headers: { 'Accept': 'application/json' },
         });
@@ -83,16 +82,17 @@ test('gateway mounts timetable V2 APIs and legacy routes are removed', async () 
         assert.equal(payload.success, true);
         assert.ok(payload.data);
         assert.ok('project' in payload.data);
-        assert.ok('needsMigration' in payload.data);
-        assert.ok('capabilities' in payload.data);
 
-        // Legacy constraint chat route should return 404 (removed in Phase 7)
-        const legacyResponse = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/constraints/chat/init`, {
+        const chatResponse = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/constraints/chat/init`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({}),
+            body: JSON.stringify({ constraints: [], project: {}, reviewContext: {} }),
         });
-        assert.equal(legacyResponse.status, 404);
+        assert.equal(chatResponse.status, 200);
+
+        const chatPayload = await chatResponse.json();
+        assert.equal(chatPayload.success, true);
+        assert.ok(chatPayload.data.conversationId);
 
         const sharedResponse = await fetch(`http://127.0.0.1:${port}/shared/seating/classroom-layout.js`);
         const sharedSource = await sharedResponse.text();

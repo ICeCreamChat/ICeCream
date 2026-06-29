@@ -16,7 +16,7 @@ const TOOLS_CONFIG = [
         lucide: 'calendar-check',
         title: '智能排课',
         desc: '导入任课 · 一键生成',
-        module: 'timetable-v2/dist/workbench.bundle'
+        module: 'timetable-planner'
     },
     {
         id: 'picker',
@@ -229,10 +229,6 @@ class AppLauncher {
     }
 
     async _resolveToolModulePath(tool, moduleVersion) {
-        // 智能排课已全量切换到 V2 工作台（Phase 7 删除旧版，不再回退）。
-        if (tool.id === 'timetable') {
-            return `./timetable-v2/dist/workbench.bundle.js?v=${moduleVersion}`;
-        }
         return `./${tool.module}.js?v=${moduleVersion}`;
     }
 
