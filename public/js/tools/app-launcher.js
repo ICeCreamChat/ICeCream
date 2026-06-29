@@ -123,7 +123,9 @@ class AppLauncher {
                     ) {
                         return;
                     }
-                    this._closeTool();
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
                 } else if (this.overlay.classList.contains('active')) {
                     this.close();
                 }

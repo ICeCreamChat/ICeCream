@@ -16,6 +16,42 @@ const seatDetailPanelPath = new URL('../public/js/tools/seating-planner/seat-det
 const stylePath = new URL('../public/css/seating-planner.css', import.meta.url);
 const launcherPath = new URL('../public/js/tools/app-launcher.js', import.meta.url);
 
+function createMockClassList(initial = []) {
+  const classes = new Set(initial);
+  return {
+    add: (...names) => names.forEach(name => classes.add(name)),
+    remove: (...names) => names.forEach(name => classes.delete(name)),
+    contains: name => classes.has(name),
+    toggle: (name, force) => {
+      if (force === undefined) {
+        if (classes.has(name)) classes.delete(name);
+        else classes.add(name);
+        return classes.has(name);
+      }
+      if (force) classes.add(name);
+      else classes.delete(name);
+      return Boolean(force);
+    },
+  };
+}
+
+function createMockElement({ hidden = true, display = '' } = {}) {
+  return {
+    classList: createMockClassList(hidden ? ['sp-hidden'] : []),
+    style: { display },
+  };
+}
+
+function createEscapeEvent() {
+  return {
+    key: 'Escape',
+    prevented: false,
+    stopped: false,
+    preventDefault() { this.prevented = true; },
+    stopPropagation() { this.stopped = true; },
+  };
+}
+
 test('seating planner exposes AI requirement entry instead of fixed layout controls', async () => {
   const source = await readFile(sourcePath, 'utf8');
   const apiSource = await readFile(apiClientPath, 'utf8');
@@ -609,6 +645,148 @@ test('seating planner opens a detailed popover when clicking assigned seats', as
   assert.match(styles, /@keyframes spSeatDetailIn/);
 });
 
+test('seating planner handles Escape by stepping back through classroom tool layers', () => {
+  const previousDocument = globalThis.document;
+  const elements = new Map();
+  const calls = [];
+  const originals = {
+    closeFeedbackDialog: seatingPlanner.closeFeedbackDialog,
+    closeImageReview: seatingPlanner.closeImageReview,
+    closeRosterBulkPanel: seatingPlanner.closeRosterBulkPanel,
+    cancelLayoutPreview: seatingPlanner.cancelLayoutPreview,
+    hideContextMenu: seatingPlanner.hideContextMenu,
+    hideSeatDetailPopover: seatingPlanner.hideSeatDetailPopover,
+    cancelChatPending: seatingPlanner.cancelChatPending,
+    toggleChat: seatingPlanner.toggleChat,
+    updateStatus: seatingPlanner.updateStatus,
+  };
+
+  globalThis.document = {
+    getElementById: id => elements.get(id) || null,
+    querySelector: selector => (selector === '.sp-seat-detail-popover'
+      ? elements.get('seat-detail-popover') || null
+      : null),
+  };
+
+  seatingPlanner.closeFeedbackDialog = () => {
+    calls.push('feedback');
+    elements.get('sp-feedback-dialog')?.classList.add('sp-hidden');
+  };
+  seatingPlanner.closeImageReview = () => {
+    calls.push('image');
+    elements.get('sp-image-review')?.classList.add('sp-hidden');
+  };
+  seatingPlanner.closeRosterBulkPanel = () => {
+    calls.push('roster-bulk');
+    elements.get('sp-roster-bulk-panel')?.classList.add('sp-hidden');
+  };
+  seatingPlanner.cancelLayoutPreview = () => {
+    calls.push('layout-preview');
+    seatingPlanner.pendingLayoutPreview = null;
+    elements.get('sp-layout-preview-confirm')?.classList.add('sp-hidden');
+  };
+  seatingPlanner.hideContextMenu = () => {
+    calls.push('context');
+    elements.get('sp-context-menu')?.classList.remove('sp-context-menu--visible');
+  };
+  seatingPlanner.hideSeatDetailPopover = () => {
+    calls.push('seat-detail');
+    elements.delete('seat-detail-popover');
+    seatingPlanner._seatDetailPopover = null;
+  };
+  seatingPlanner.cancelChatPending = () => {
+    calls.push('chat-pending');
+    seatingPlanner._chatPending = null;
+  };
+  seatingPlanner.toggleChat = open => {
+    calls.push(`chat-${open ? 'open' : 'close'}`);
+    seatingPlanner._chatExpanded = open;
+  };
+  seatingPlanner.updateStatus = () => calls.push('status');
+
+  try {
+    elements.set('sp-feedback-dialog', createMockElement({ hidden: false }));
+    let event = createEscapeEvent();
+    assert.equal(seatingPlanner.handleEscape(event), true);
+    assert.deepEqual(calls.splice(0), ['feedback']);
+    assert.equal(event.prevented, true);
+    assert.equal(event.stopped, true);
+
+    elements.set('sp-image-review', createMockElement({ hidden: false }));
+    elements.set('sp-roster-bulk-panel', createMockElement({ hidden: false }));
+    event = createEscapeEvent();
+    assert.equal(seatingPlanner.handleEscape(event), true);
+    assert.deepEqual(calls.splice(0), ['roster-bulk']);
+    assert.equal(elements.get('sp-image-review').classList.contains('sp-hidden'), false);
+
+    event = createEscapeEvent();
+    assert.equal(seatingPlanner.handleEscape(event), true);
+    assert.deepEqual(calls.splice(0), ['image']);
+
+    seatingPlanner.pendingLayoutPreview = { prompt: '考试模式' };
+    elements.set('sp-layout-preview-confirm', createMockElement({ hidden: false }));
+    event = createEscapeEvent();
+    assert.equal(seatingPlanner.handleEscape(event), true);
+    assert.deepEqual(calls.splice(0), ['layout-preview']);
+
+    elements.set('sp-context-menu', createMockElement({ hidden: true }));
+    elements.get('sp-context-menu').classList.add('sp-context-menu--visible');
+    event = createEscapeEvent();
+    assert.equal(seatingPlanner.handleEscape(event), true);
+    assert.deepEqual(calls.splice(0), ['context']);
+
+    elements.set('seat-detail-popover', createMockElement({ hidden: false }));
+    seatingPlanner._seatDetailPopover = elements.get('seat-detail-popover');
+    event = createEscapeEvent();
+    assert.equal(seatingPlanner.handleEscape(event), true);
+    assert.deepEqual(calls.splice(0), ['seat-detail']);
+
+    seatingPlanner._chatPending = { type: 'operations' };
+    event = createEscapeEvent();
+    assert.equal(seatingPlanner.handleEscape(event), true);
+    assert.deepEqual(calls.splice(0), ['chat-pending']);
+
+    seatingPlanner._chatExpanded = true;
+    event = createEscapeEvent();
+    assert.equal(seatingPlanner.handleEscape(event), true);
+    assert.deepEqual(calls.splice(0), ['chat-close']);
+
+    seatingPlanner.showScoreAnalysis = true;
+    seatingPlanner.showArrangementExplain = true;
+    event = createEscapeEvent();
+    assert.equal(seatingPlanner.handleEscape(event), true);
+    assert.deepEqual(calls.splice(0), ['status']);
+    assert.equal(seatingPlanner.showScoreAnalysis, false);
+    assert.equal(seatingPlanner.showArrangementExplain, false);
+
+    event = createEscapeEvent();
+    assert.equal(seatingPlanner.handleEscape(event), true);
+    assert.deepEqual(calls.splice(0), []);
+  } finally {
+    Object.assign(seatingPlanner, originals);
+    seatingPlanner.pendingLayoutPreview = null;
+    seatingPlanner._chatPending = null;
+    seatingPlanner._chatExpanded = false;
+    seatingPlanner._seatDetailPopover = null;
+    seatingPlanner.showScoreAnalysis = false;
+    seatingPlanner.showArrangementExplain = false;
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
+});
+
+test('classroom tool shell keeps active tools open when Escape reaches the launcher', async () => {
+  const launcherSource = await readFile(launcherPath, 'utf8');
+  const activeToolEscapeBlock = launcherSource.slice(
+    launcherSource.indexOf("if (this.toolContainer.classList.contains('active'))"),
+    launcherSource.indexOf("} else if (this.overlay.classList.contains('active'))")
+  );
+
+  assert.match(activeToolEscapeBlock, /currentToolInstance[\s\S]*handleEscape\(e\)/);
+  assert.match(activeToolEscapeBlock, /e\.preventDefault\(\);[\s\S]*e\.stopPropagation\(\);[\s\S]*return;/);
+  assert.doesNotMatch(activeToolEscapeBlock, /this\._closeTool\(\)/);
+});
+
 test('seating planner marks books by top 20 percent grades instead of fixed score', async () => {
   const source = await readFile(sourcePath, 'utf8');
 
@@ -689,6 +867,7 @@ test('seating planner uses arrange completion without static prompt chips or cha
   assert.match(source, /handleSuggestionKeyDown\(e, 'arrange'\)/);
   assert.match(assistantSource, /acceptSuggestion\(kind\)/);
   assert.match(assistantSource, /hideSuggestions\(kind\)/);
+  assert.match(assistantSource, /if \(event\.key === 'Escape' && open\) \{[\s\S]*event\.preventDefault\(\);\s*event\.stopPropagation\?\.\(\);[\s\S]*this\.hideSuggestions\(kind\);/);
   assert.match(assistantSource, /renderSuggestionList\(kind\)/);
   assert.match(assistantSource, /clearSuggestionState\(kind\)/);
   assert.match(source, /clearSuggestionState\('arrange'\)/);

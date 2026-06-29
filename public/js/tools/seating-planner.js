@@ -253,6 +253,102 @@ class SeatingPlanner {
         console.log('[SeatingPlanner] Destroyed and cleaned up listeners');
     }
 
+    getEscapeDocument() {
+        if (this.container?.ownerDocument) return this.container.ownerDocument;
+        return typeof document !== 'undefined' ? document : null;
+    }
+
+    isEscapeLayerVisible(element) {
+        if (!element) return false;
+        if (element.classList?.contains('sp-hidden')) return false;
+        if (element.style?.display === 'none') return false;
+        return true;
+    }
+
+    closeRosterBulkPanel() {
+        this.getEscapeDocument()?.getElementById?.('sp-roster-bulk-panel')?.classList.add('sp-hidden');
+    }
+
+    handleEscape(event) {
+        if (event?.key !== 'Escape') return false;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+
+        const doc = this.getEscapeDocument();
+        const byId = id => doc?.getElementById?.(id);
+        const feedbackDialog = byId('sp-feedback-dialog');
+        const imageReview = byId('sp-image-review');
+        const rosterBulkPanel = byId('sp-roster-bulk-panel');
+        const layoutPreview = byId('sp-layout-preview-confirm');
+        const contextMenu = byId('sp-context-menu');
+        const chat = byId('sp-chat');
+        const chatConfirm = byId('sp-chat-confirm');
+
+        if (this.isEscapeLayerVisible(feedbackDialog)) {
+            this.closeFeedbackDialog();
+            return true;
+        }
+
+        if (this.isEscapeLayerVisible(imageReview) && this.isEscapeLayerVisible(rosterBulkPanel)) {
+            this.closeRosterBulkPanel();
+            return true;
+        }
+
+        if (this.isEscapeLayerVisible(imageReview)) {
+            this.closeImageReview();
+            return true;
+        }
+
+        if (this.isSuggestionOpen?.('arrange')) {
+            this.hideSuggestions('arrange');
+            return true;
+        }
+
+        if (this.pendingLayoutPreview || this.isEscapeLayerVisible(layoutPreview)) {
+            this.cancelLayoutPreview();
+            return true;
+        }
+
+        if (contextMenu?.classList?.contains('sp-context-menu--visible')) {
+            this.hideContextMenu();
+            return true;
+        }
+
+        if (this._seatDetailPopover || doc?.querySelector?.('.sp-seat-detail-popover')) {
+            this.hideSeatDetailPopover();
+            return true;
+        }
+
+        if (this._chatDragState) {
+            this.stopChatDrag();
+            return true;
+        }
+
+        if (this._chatIconDragState) {
+            this.stopChatIconDrag();
+            return true;
+        }
+
+        if (this._chatPending || this.isEscapeLayerVisible(chatConfirm)) {
+            this.cancelChatPending();
+            return true;
+        }
+
+        if (this._chatExpanded || chat?.classList?.contains('sp-chat--open')) {
+            this.toggleChat(false);
+            return true;
+        }
+
+        if (this.showScoreAnalysis || this.showArrangementExplain) {
+            this.showScoreAnalysis = false;
+            this.showArrangementExplain = false;
+            this.updateStatus();
+            return true;
+        }
+
+        return true;
+    }
+
     // Helper to get seat value (student ID or null)
     getSeat(r, c) {
         if (r === -1) {

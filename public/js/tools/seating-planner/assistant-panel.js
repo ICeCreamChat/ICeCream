@@ -518,6 +518,7 @@ export const seatingAssistantMethods = {
 
         if (event.key === 'Escape' && open) {
             event.preventDefault();
+            event.stopPropagation?.();
             this.hideSuggestions(kind);
             return true;
         }
