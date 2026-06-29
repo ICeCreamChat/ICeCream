@@ -129,7 +129,7 @@ const server = http.createServer(async (req, res) => {
                     diagnostics: true,
                     gridView: true,
                     xlsxExport: true,
-                    importSources: ['legacy', 'excel', 'crystal', 'yqd'],
+                    importSources: ['xlsx', 'legacy', 'excel', 'crystal', 'yqd'],
                     timefold: false,
                 },
             },
@@ -283,6 +283,21 @@ try {
     // 新 UI 关键路径：导入预览 → 保存项目 → 求解 → 发布 → 导出
     await page.evaluate(() => window.__wb?.store?.dispatch('goStep', 'data-prep'));
     await page.waitForTimeout(100);
+    const sourceOptions = await page.$$eval('.ttv2-view--data-prep select option', options => options.map(option => ({
+        value: option.value,
+        label: option.textContent.trim(),
+    })));
+    if (sourceOptions.some(option => option.value === 'xlsx' && /Excel|xlsx/i.test(option.label))) ok('数据准备页提供 xlsx 导入选项');
+    else fail(`数据准备页缺少 xlsx 导入选项: ${JSON.stringify(sourceOptions)}`);
+    await page.selectOption('.ttv2-view--data-prep select', 'xlsx');
+    const xlsxState = await page.evaluate(() => {
+        const file = document.querySelector('.ttv2-view--data-prep input[type="file"]');
+        const textarea = document.querySelector('.ttv2-view--data-prep textarea');
+        return { accept: file?.accept || '', disabled: textarea?.disabled || false };
+    });
+    if (/\.xlsx/.test(xlsxState.accept) && xlsxState.disabled) ok('xlsx 模式使用文件上传并禁用文本粘贴');
+    else fail(`xlsx 模式控件异常: ${JSON.stringify(xlsxState)}`);
+    await page.selectOption('.ttv2-view--data-prep select', 'excel');
     await page.fill('.ttv2-view--data-prep textarea', '年级,班级,课程,教师,周课时\\n七年级,一班,语文,张老师,5');
     await page.getByRole('button', { name: '生成导入预览' }).click();
     await page.waitForFunction(() => window.__wb?.store?.getState?.().importPreview?.project);

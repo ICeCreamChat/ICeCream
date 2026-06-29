@@ -35844,7 +35844,7 @@ var MOCK_CAPABILITIES = {
   diagnostics: true,
   gridView: true,
   xlsxExport: true,
-  importSources: ["legacy", "excel", "crystal", "yqd"],
+  importSources: ["xlsx", "legacy", "excel", "crystal", "yqd"],
   timefold: false
 };
 function normalizeSolution(raw = {}) {
@@ -35877,8 +35877,18 @@ async function getProject() {
   const boot = await getBootstrap();
   return boot?.project ?? null;
 }
-async function importProject({ source = "excel", data, options = {} } = {}) {
+async function importProject({ source = "excel", data, file, options = {} } = {}) {
   if (USE_MOCK) return { project: sampleProject, report: mockReport(source) };
+  if (file) {
+    const formData = new FormData();
+    formData.append("source", source);
+    formData.append("options", JSON.stringify(options || {}));
+    formData.append("file", file);
+    return requestV2("/import", {
+      method: "POST",
+      body: formData
+    });
+  }
   return requestV2("/import", {
     method: "POST",
     body: JSON.stringify({ source, data, options })
@@ -36323,6 +36333,31 @@ function readFileAsText(file) {
     reader.readAsText(file, "utf-8");
   });
 }
+var SOURCE_OPTIONS = [
+  ["xlsx", "Excel \u5DE5\u4F5C\u7C3F\uFF08.xlsx\uFF09"],
+  ["excel", "CSV / TSV \u4EFB\u8BFE\u8868"],
+  ["legacy", "\u65E7 ICeCream JSON"],
+  ["crystal", "\u6C34\u6676 cloneSeed JSON"],
+  ["yqd", "YQD \u4E1A\u52A1\u8868 JSON"]
+];
+var SOURCE_ACCEPT = {
+  xlsx: ".xlsx,.xls",
+  excel: ".csv,.tsv,.txt",
+  legacy: ".json,.txt",
+  crystal: ".json,.txt",
+  yqd: ".json,.txt"
+};
+var SOURCE_PLACEHOLDER = {
+  xlsx: "\u8BF7\u9009\u62E9 .xlsx \u6587\u4EF6\uFF0C\u7CFB\u7EDF\u4F1A\u8BFB\u53D6\u7B2C\u4E00\u4E2A\u5DE5\u4F5C\u8868\u3002",
+  excel: "CSV/TSV \u793A\u4F8B\uFF1A\u5E74\u7EA7,\u73ED\u7EA7,\u8BFE\u7A0B,\u6559\u5E08,\u5468\u8BFE\u65F6,\u8FDE\u5802,\u6559\u5BA4\n\u4E03\u5E74\u7EA7,\u4E00\u73ED,\u8BED\u6587,\u5F20\u8001\u5E08,5,single,",
+  legacy: "\u7C98\u8D34\u65E7 ICeCream JSON \u9879\u76EE\u6570\u636E\u3002",
+  crystal: "\u7C98\u8D34\u6C34\u6676\u6392\u8BFE cloneSeed JSON\u3002",
+  yqd: "\u7C98\u8D34 YQD \u4E1A\u52A1\u8868 JSON\u3002"
+};
+function projectNameFromFile(file) {
+  const name = String(file?.name || "").replace(/\.[^.]+$/, "").trim();
+  return name || "\u667A\u80FD\u6392\u8BFE\u5BFC\u5165\u9879\u76EE";
+}
 function createDataPrepView({ store, api }) {
   ensureStyle4();
   const el = document.createElement("section");
@@ -36347,12 +36382,7 @@ function createDataPrepView({ store, api }) {
   importTitle.textContent = "\u5BFC\u5165\u6765\u6E90";
   const sourceSelect = document.createElement("select");
   sourceSelect.className = "ttv2-select";
-  for (const [value, label] of [
-    ["excel", "CSV / TSV \u4EFB\u8BFE\u8868"],
-    ["legacy", "\u65E7 ICeCream JSON"],
-    ["crystal", "\u6C34\u6676 cloneSeed JSON"],
-    ["yqd", "YQD \u4E1A\u52A1\u8868 JSON"]
-  ]) {
+  for (const [value, label] of SOURCE_OPTIONS) {
     const opt = document.createElement("option");
     opt.value = value;
     opt.textContent = label;
@@ -36361,10 +36391,10 @@ function createDataPrepView({ store, api }) {
   const fileInput = document.createElement("input");
   fileInput.type = "file";
   fileInput.className = "ttv2-input";
-  fileInput.accept = ".csv,.tsv,.txt,.json";
+  fileInput.accept = SOURCE_ACCEPT[sourceSelect.value] || "";
   const textarea = document.createElement("textarea");
   textarea.className = "ttv2-textarea";
-  textarea.placeholder = "CSV/TSV \u793A\u4F8B\uFF1A\u5E74\u7EA7,\u73ED\u7EA7,\u8BFE\u7A0B,\u6559\u5E08,\u5468\u8BFE\u65F6,\u8FDE\u5802,\u6559\u5BA4\n\u4E03\u5E74\u7EA7,\u4E00\u73ED,\u8BED\u6587,\u5F20\u8001\u5E08,5,single,";
+  textarea.placeholder = SOURCE_PLACEHOLDER[sourceSelect.value] || "";
   const actionRow = document.createElement("div");
   actionRow.className = "ttv2-action-row";
   const previewBtn = document.createElement("button");
@@ -36381,7 +36411,7 @@ function createDataPrepView({ store, api }) {
   importCard.append(
     importTitle,
     field("\u6765\u6E90\u7C7B\u578B", sourceSelect),
-    field("\u4E0A\u4F20\u6587\u672C\u6587\u4EF6", fileInput),
+    field("\u4E0A\u4F20\u6587\u4EF6", fileInput),
     field("\u6216\u7C98\u8D34\u539F\u59CB\u5185\u5BB9", textarea),
     actionRow,
     msg
@@ -36413,6 +36443,16 @@ function createDataPrepView({ store, api }) {
   }
   function currentProject() {
     return store.getState().importPreview?.project || store.getState().project;
+  }
+  function updateSourceControls() {
+    const source = sourceSelect.value;
+    fileInput.accept = SOURCE_ACCEPT[source] || "";
+    textarea.placeholder = SOURCE_PLACEHOLDER[source] || "";
+    textarea.disabled = source === "xlsx";
+    textarea.setAttribute("aria-disabled", source === "xlsx" ? "true" : "false");
+    if (source === "xlsx") textarea.value = "";
+    fileInput.value = "";
+    setMsg("", null);
   }
   function renderSummary() {
     const project = currentProject();
@@ -36462,14 +36502,25 @@ function createDataPrepView({ store, api }) {
     setMsg("\u6B63\u5728\u5BFC\u5165\u5E76\u751F\u6210\u9884\u89C8...", null);
     try {
       const file = fileInput.files && fileInput.files[0];
-      const text = file ? await readFileAsText(file) : textarea.value;
       const source = sourceSelect.value;
+      const options = { name: projectNameFromFile(file) };
+      if (source === "xlsx") {
+        if (!file) {
+          setMsg("\u8BF7\u9009\u62E9\u8981\u5BFC\u5165\u7684 Excel \u5DE5\u4F5C\u7C3F\u3002", "err");
+          return;
+        }
+        const result2 = await api.importProject({ source, file, options });
+        store.dispatch("setImportPreview", result2);
+        setMsg("Excel \u5BFC\u5165\u9884\u89C8\u5DF2\u751F\u6210\uFF0C\u8BF7\u68C0\u67E5\u6458\u8981\u548C\u62A5\u544A\u540E\u4FDD\u5B58\u3002", "ok");
+        return;
+      }
+      const text = file ? await readFileAsText(file) : textarea.value;
       const data = parseImportText(source, text);
       if (!data) {
         setMsg("\u8BF7\u5148\u4E0A\u4F20\u6587\u4EF6\u6216\u7C98\u8D34\u5185\u5BB9\u3002", "err");
         return;
       }
-      const result = await api.importProject({ source, data, options: { name: "\u667A\u80FD\u6392\u8BFE\u5BFC\u5165\u9879\u76EE" } });
+      const result = await api.importProject({ source, data, options });
       store.dispatch("setImportPreview", result);
       setMsg("\u5BFC\u5165\u9884\u89C8\u5DF2\u751F\u6210\uFF0C\u8BF7\u68C0\u67E5\u6458\u8981\u548C\u62A5\u544A\u540E\u4FDD\u5B58\u3002", "ok");
     } catch (error) {
@@ -36500,6 +36551,7 @@ function createDataPrepView({ store, api }) {
   }
   previewBtn.addEventListener("click", importPreview);
   saveBtn.addEventListener("click", savePreview);
+  sourceSelect.addEventListener("change", updateSourceControls);
   let unsub = null;
   return {
     el,
@@ -36511,6 +36563,7 @@ function createDataPrepView({ store, api }) {
       });
       renderSummary();
       renderReport();
+      updateSourceControls();
       saveBtn.disabled = !store.getState().importPreview?.project;
     },
     update() {
@@ -36522,6 +36575,7 @@ function createDataPrepView({ store, api }) {
         unsub();
         unsub = null;
       }
+      sourceSelect.removeEventListener("change", updateSourceControls);
       el.remove();
     }
   };

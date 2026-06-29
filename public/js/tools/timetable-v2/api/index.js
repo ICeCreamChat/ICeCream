@@ -27,7 +27,7 @@ const MOCK_CAPABILITIES = {
     diagnostics: true,
     gridView: true,
     xlsxExport: true,
-    importSources: ['legacy', 'excel', 'crystal', 'yqd'],
+    importSources: ['xlsx', 'legacy', 'excel', 'crystal', 'yqd'],
     timefold: false,
 };
 
@@ -68,8 +68,18 @@ export async function getProject() {
 }
 
 /** 导入预览：/import 只产出 project/report，不落库。 */
-export async function importProject({ source = 'excel', data, options = {} } = {}) {
+export async function importProject({ source = 'excel', data, file, options = {} } = {}) {
     if (USE_MOCK) return { project: sampleProject, report: mockReport(source) };
+    if (file) {
+        const formData = new FormData();
+        formData.append('source', source);
+        formData.append('options', JSON.stringify(options || {}));
+        formData.append('file', file);
+        return requestV2('/import', {
+            method: 'POST',
+            body: formData,
+        });
+    }
     return requestV2('/import', {
         method: 'POST',
         body: JSON.stringify({ source, data, options }),

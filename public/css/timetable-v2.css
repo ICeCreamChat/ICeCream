@@ -383,6 +383,14 @@ body.light-mode .ttv2-shell__aside {
     border-color: var(--ttv2-border-strong);
 }
 
+.ttv2-input:disabled,
+.ttv2-select:disabled,
+.ttv2-textarea:disabled {
+    opacity: .58;
+    cursor: not-allowed;
+    background: color-mix(in srgb, var(--ttv2-bg) 78%, transparent);
+}
+
 .ttv2-view__btn,
 .ttv2-btn {
     display: inline-flex;

@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import AdmZip from 'adm-zip';
 import express from 'express';
 
 import '../gateway/services/timetable-v2/index.js'; // 触发硬约束自注册
@@ -57,6 +58,62 @@ function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
+function escapeXml(value = '') {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+
+function columnName(index) {
+    let n = index + 1;
+    let name = '';
+    while (n > 0) {
+        const mod = (n - 1) % 26;
+        name = String.fromCharCode(65 + mod) + name;
+        n = Math.floor((n - mod) / 26);
+    }
+    return name;
+}
+
+function buildXlsxBuffer(rows) {
+    const zip = new AdmZip();
+    zip.addFile('[Content_Types].xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`));
+    zip.addFile('_rels/.rels', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`));
+    zip.addFile('xl/workbook.xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="任课表" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`));
+    zip.addFile('xl/_rels/workbook.xml.rels', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`));
+    const sheetRows = rows.map((row, rowIndex) => {
+        const cells = row.map((value, colIndex) => {
+            const ref = `${columnName(colIndex)}${rowIndex + 1}`;
+            return `<c r="${ref}" t="inlineStr"><is><t>${escapeXml(value)}</t></is></c>`;
+        }).join('');
+        return `<row r="${rowIndex + 1}">${cells}</row>`;
+    }).join('');
+    zip.addFile('xl/worksheets/sheet1.xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>${sheetRows}</sheetData>
+</worksheet>`));
+    return zip.toBuffer();
+}
+
 test('POST /project 合法→200{success:true}，缺字段→4xx+可读 error', async () => {
     const srv = await startServer();
     try {
@@ -87,6 +144,7 @@ test('GET /bootstrap 无草稿→needsMigration:true；落库后→项目+能力
         assert.equal(before.data.project, null);
         assert.equal(before.data.needsMigration, true);
         assert.equal(before.data.capabilities.solver, true);
+        assert.ok(before.data.capabilities.importSources.includes('xlsx'));
 
         await postJson(srv.baseUrl, '/project', solvableProject());
         const after = await fetch(`${srv.baseUrl}/bootstrap`).then(r => r.json());
@@ -111,6 +169,34 @@ test('POST /import legacy 样本→{project,report}', async () => {
         const bad = await postJson(srv.baseUrl, '/import', { source: 'nope', data: {} });
         assert.ok(bad.status >= 400 && bad.status < 500);
         assert.equal(bad.json.success, false);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('POST /import xlsx 文件→{project,report}', async () => {
+    const srv = await startServer();
+    try {
+        const workbook = buildXlsxBuffer([
+            ['年级', '班级', '课程', '教师', '周课时', '连堂', '教室'],
+            ['高一', '1班', '语文', '张老师', '2', '单节', '101'],
+            ['高一', '1班', '数学', '李老师', '4', '连堂', '101'],
+        ]);
+        const form = new FormData();
+        form.append('source', 'xlsx');
+        form.append('options', JSON.stringify({ name: '测试排课工作簿' }));
+        form.append('file', new Blob([workbook], {
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }), 'plans.xlsx');
+
+        const response = await fetch(`${srv.baseUrl}/import`, { method: 'POST', body: form });
+        const json = await response.json();
+        assert.equal(response.status, 200);
+        assert.equal(json.success, true);
+        assert.equal(json.data.project.name, '测试排课工作簿');
+        assert.ok(json.data.project.subjects.some(subject => subject.name === '语文'));
+        assert.ok(json.data.project.activityPlans.length >= 2);
+        assert.ok(json.data.report.summary.total > 0);
     } finally {
         await srv.close();
     }

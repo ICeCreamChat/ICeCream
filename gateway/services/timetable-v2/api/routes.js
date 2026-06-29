@@ -9,7 +9,9 @@
  */
 
 import express from 'express';
+import multer from 'multer';
 
+import { sanitizeUploadFilename } from '../../../security.js';
 import {
     createProject,
     validateProject,
@@ -25,6 +27,7 @@ import {
     timetableV2Store,
     parseNaturalLanguageConstraints,
 } from '../index.js';
+import { prepareTimetableImportPayload } from '../importers/file-input.js';
 import { buildTrustedPublishResult } from './publish.js';
 
 /** 响应壳：成功。 */
@@ -41,6 +44,21 @@ function fail(res, error, status = 400, data = undefined) {
     });
 }
 
+const importUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 8 * 1024 * 1024 },
+});
+
+function uploadImportFile(req, res, next) {
+    importUpload.single('file')(req, res, (error) => {
+        if (!error) {
+            next();
+            return;
+        }
+        fail(res, error, error.code === 'LIMIT_FILE_SIZE' ? 413 : 400);
+    });
+}
+
 /** Timefold 是否配置（决策 5：配置时本地先返回 + 后台优化任务）。 */
 function hasTimefoldSolverConfigured(env = process.env) {
     return Boolean(String(env.TIMEFOLD_SOLVER_URL || '').trim());
@@ -53,6 +71,8 @@ const IMPORTERS = {
     crystal: importCrystalCloneSeed,
     yqd: importYqdTables,
 };
+
+const IMPORT_SOURCES = ['xlsx', ...Object.keys(IMPORTERS)];
 
 /** 把导入器返回的 report（migration-report 实例或纯对象）序列化为纯数据。 */
 function reportToJSON(report) {
@@ -85,7 +105,7 @@ export function createTimetableV2Router(options = {}) {
                 diagnostics: true,
                 gridView: true,
                 xlsxExport: true,
-                importSources: Object.keys(IMPORTERS),
+                importSources: IMPORT_SOURCES,
                 timefold: hasTimefoldSolverConfigured(),
             };
             if (!project) {
@@ -113,20 +133,30 @@ export function createTimetableV2Router(options = {}) {
         }
     });
 
-    // POST /import：source + data → 对应导入器 → {project, report}（不落库）。
-    router.post('/import', (req, res) => {
+    // POST /import：source + data/file → 对应导入器 → {project, report}（不落库）。
+    router.post('/import', uploadImportFile, (req, res) => {
         try {
-            const source = String(req.body?.source || '').trim();
+            const prepared = prepareTimetableImportPayload({
+                source: req.body?.source,
+                data: req.body?.data,
+                options: req.body?.options,
+                file: req.file ? {
+                    buffer: req.file.buffer,
+                    originalname: sanitizeUploadFilename(req.file.originalname),
+                    mimetype: req.file.mimetype,
+                } : null,
+            });
+            const source = String(prepared.source || '').trim();
             const importer = IMPORTERS[source];
             if (!importer) {
-                fail(res, new Error(`未知导入来源 "${source}"，须为 ${Object.keys(IMPORTERS).join(' / ')}`));
+                fail(res, new Error(`未知导入来源 "${source}"，须为 ${IMPORT_SOURCES.join(' / ')}`));
                 return;
             }
-            if (req.body?.data === undefined) {
+            if (prepared.data === undefined) {
                 fail(res, new Error('缺少待导入数据 data'));
                 return;
             }
-            const result = importer(req.body.data, req.body.options || {});
+            const result = importer(prepared.data, prepared.options || {});
             ok(res, { project: result.project, report: reportToJSON(result.report) });
         } catch (error) {
             fail(res, error);

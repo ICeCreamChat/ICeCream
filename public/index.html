@@ -561,6 +561,12 @@
     <script type="module" src="js/tools/app-launcher.js"></script>
     <!-- Manim Studio embedded React/Konva canvas -->
     <script src="js/studio/manim-studio-canvas.js"></script>
+    <script>
+        if (window.Konva && !window.ICeCreamStudioKonva) {
+            window.ICeCreamStudioKonva = window.Konva;
+            try { delete window.Konva; } catch { window.Konva = undefined; }
+        }
+    </script>
     <!-- Main App -->
     <script type="module" src="js/app.js"></script>
 </body>
