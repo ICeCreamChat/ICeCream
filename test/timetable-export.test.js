@@ -179,6 +179,38 @@ test('published timetable export carries publication metadata and validation sum
     assert.doesNotMatch(workbook.combined, /restored_published_draft/);
 });
 
+test('published timetable export prefers publication issueEntries over legacy warnings', () => {
+    const project = scheduledProject();
+    const publishedProject = {
+        ...project,
+        schedule: {
+            ...project.schedule,
+            publication: {
+                ok: true,
+                reason: 'ready',
+                summary: {
+                    totalLessons: project.schedule.score.totalLessons,
+                    placedLessons: project.schedule.score.placedLessons,
+                    unplacedLessons: 0,
+                    hardConflicts: 0,
+                },
+                blockingIssues: [],
+                warnings: [
+                    { type: 'manual_adjusted', message: '旧 warnings 文案不该优先出现。' },
+                ],
+                issueEntries: [
+                    { type: 'manual_adjusted', severity: 'warning', targetName: '课表', message: '请以 issueEntries 导出提醒。' },
+                ],
+                reviewItems: [],
+            },
+        },
+    };
+    const workbook = readWorkbook(buildTimetableExportXlsx(publishedProject, { type: 'class', published: true }));
+
+    assert.match(workbook.combined, /请以 issueEntries 导出提醒。/);
+    assert.doesNotMatch(workbook.combined, /旧 warnings 文案不该优先出现。/);
+});
+
 test('lesson plan export lists roster columns and plan rows', () => {
     const project = scheduledProject();
     const workbook = readWorkbook(buildTimetableExportXlsx(project, { type: 'plans' }));

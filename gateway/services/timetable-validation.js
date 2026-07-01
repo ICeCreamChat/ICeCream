@@ -114,7 +114,23 @@ function reviewItem(type, message, extra = {}) {
     };
 }
 
-function buildPublicationReviewItems({ project, maps, blockingIssues, warnings, detectedConflicts, unplaced, audit, qualityIssues }) {
+function normalizePublicationIssueEntries(items = []) {
+    const seen = new Set();
+    return items.filter(item => {
+        if (!item || item.type === 'quality_review') return false;
+        const key = [item.severity, item.type, item.targetKind, item.targetId, item.message, item.slot || ''].join('|');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    }).sort((left, right) => {
+        const severityOrder = { error: 0, warning: 1, info: 2 };
+        return (severityOrder[left.severity] ?? 3) - (severityOrder[right.severity] ?? 3)
+            || left.type.localeCompare(right.type)
+            || left.targetName.localeCompare(right.targetName, 'zh-Hans-CN');
+    });
+}
+
+function buildPublicationIssueEntries({ project, maps, blockingIssues, warnings, detectedConflicts, unplaced, audit, qualityIssues }) {
     const items = [];
     for (const issue of blockingIssues) {
         if (issue.type === 'incomplete_schedule') {
@@ -209,18 +225,11 @@ function buildPublicationReviewItems({ project, maps, blockingIssues, warnings, 
         }));
     }
 
-    const seen = new Set();
-    return items.filter(item => {
-        const key = [item.severity, item.type, item.targetKind, item.targetId, item.message, item.slot || ''].join('|');
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    }).sort((left, right) => {
-        const severityOrder = { error: 0, warning: 1, info: 2 };
-        return (severityOrder[left.severity] ?? 3) - (severityOrder[right.severity] ?? 3)
-            || left.type.localeCompare(right.type)
-            || left.targetName.localeCompare(right.targetName, 'zh-Hans-CN');
-    });
+    return normalizePublicationIssueEntries(items);
+}
+
+function buildPublicationReviewItems(context = {}) {
+    return buildPublicationIssueEntries(context);
 }
 
 export function validateTimetablePublication(input = {}) {
@@ -334,7 +343,7 @@ export function validateTimetablePublication(input = {}) {
         completeness: totalLessons ? Math.round((Math.min(placedLessons, totalLessons) / totalLessons) * 100) : 0,
     };
     const ok = blockingIssues.length === 0;
-    const reviewItems = buildPublicationReviewItems({
+    const issueEntries = buildPublicationIssueEntries({
         project,
         maps,
         blockingIssues,
@@ -344,6 +353,7 @@ export function validateTimetablePublication(input = {}) {
         audit,
         qualityIssues,
     });
+    const reviewItems = issueEntries;
 
     return {
         ok,
@@ -351,6 +361,7 @@ export function validateTimetablePublication(input = {}) {
         message: ok ? '课表已通过发布前校验。' : '课表未通过发布前校验，暂不能发布。',
         blockingIssues,
         warnings,
+        issueEntries,
         reviewItems,
         summary,
     };

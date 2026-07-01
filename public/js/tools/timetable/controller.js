@@ -548,8 +548,16 @@ export class TimetablePlannerController {
         if (hardConflicts > 0) issues.push(`还有 ${hardConflicts} 个硬冲突`);
         if (unplacedLessons > 0) issues.push(`还有 ${unplacedLessons} 节课未排`);
         if (publication?.ok === false) issues.push('发布前校验没有通过');
+        const publicationIssues = (Array.isArray(publication?.issueEntries) && publication.issueEntries.length)
+            ? publication.issueEntries
+            : (Array.isArray(publication?.reviewItems) && publication.reviewItems.length)
+                ? publication.reviewItems
+                : [
+                    ...(publication?.blockingIssues || []).map(item => ({ ...item, severity: item?.severity || 'error' })),
+                    ...(publication?.warnings || []).map(item => ({ ...item, severity: item?.severity || 'warning' })),
+                ];
         const rawSuggestions = [
-            ...(publication?.issues || []),
+            ...publicationIssues,
             ...(schedule.audit?.blockingIssues || []),
             ...(schedule.audit?.warnings || []),
             ...(schedule.qualityIssues || []).filter(item => item.severity === 'high').slice(0, 3),

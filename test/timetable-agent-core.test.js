@@ -322,6 +322,49 @@ test('timetable publication skill returns export artifacts after approved save',
     assert.ok(saved.exportLinks.every(item => item.url === '/api/tools/timetable/export'));
     assert.ok(saved.artifacts.some(item => item.type === 'export_result'));
     assert.ok(saved.report.summary.slotCount > 0);
+    assert.ok(Array.isArray(saved.report.issueEntries));
+});
+
+test('timetable publication skill reports structured blocking issues when save is refused', async () => {
+    const blockedProject = completeProject({
+        schedule: {
+            id: 'blocked_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [{
+                id: 'slot-1',
+                day: 1,
+                period: 1,
+                classId: 'c1',
+                subjectId: 'math',
+                teacherId: 't_wang',
+                teacherIds: ['t_wang'],
+                lessonPlanId: 'lp1',
+            }],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [{
+                lessonPlanId: 'lp1',
+                classId: 'c1',
+                subjectId: 'math',
+                teacherId: 't_wang',
+                reason: 'missing slots',
+            }],
+            score: { hardConflicts: 0, unplacedLessons: 1, placedLessons: 1, totalLessons: 2, completeness: 50 },
+        },
+    });
+
+    const blocked = await runPublicationSkill({
+        project: blockedProject,
+        solution: { project: blockedProject, schedule: blockedProject.schedule },
+        approval: { approved: true },
+    });
+
+    assert.equal(blocked.saved, false);
+    assert.equal(blocked.nextAction, 'failed');
+    assert.ok(Array.isArray(blocked.warnings));
+    assert.ok(blocked.warnings.some(item => item.type === 'incomplete_schedule'));
+    assert.ok(blocked.warnings.every(item => item.severity === 'error'));
 });
 
 test('timetable diagnosis offers a confirmed retry action when no blocking issue remains', () => {

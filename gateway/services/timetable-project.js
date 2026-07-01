@@ -446,6 +446,65 @@ function normalizePublishedHistory(values = [], fallback = {}) {
         .sort((left, right) => Number(left.version || 0) - Number(right.version || 0));
 }
 
+function normalizePublicationState(raw = null) {
+    if (!raw || typeof raw !== 'object') return null;
+    const blockingIssues = Array.isArray(raw.blockingIssues) ? raw.blockingIssues : [];
+    const warnings = Array.isArray(raw.warnings) ? raw.warnings : [];
+    const legacyPublicationIssues = [...blockingIssues, ...warnings]
+        .filter(item => item && typeof item === 'object')
+        .map(item => ({
+            ...item,
+            severity: item.severity || (blockingIssues.includes(item) ? 'error' : 'warning'),
+        }));
+    const issueEntries = Array.isArray(raw.issueEntries)
+        ? raw.issueEntries
+        : Array.isArray(raw.reviewItems)
+            ? raw.reviewItems
+            : legacyPublicationIssues;
+    const reviewItems = Array.isArray(raw.reviewItems)
+        ? raw.reviewItems
+        : issueEntries;
+    return {
+        ...raw,
+        blockingIssues,
+        warnings,
+        issueEntries,
+        reviewItems,
+        summary: raw.summary && typeof raw.summary === 'object' ? raw.summary : {},
+    };
+}
+
+export function publicationIssueEntries(publication = null) {
+    if (!publication || typeof publication !== 'object') return [];
+    const normalized = normalizePublicationState(publication);
+    const preferredEntries = Array.isArray(publication.issueEntries) && publication.issueEntries.length
+        ? normalized.issueEntries
+        : Array.isArray(publication.reviewItems) && publication.reviewItems.length
+            ? normalized.reviewItems
+            : [
+                ...(normalized.blockingIssues || []).map(item => ({ ...item, severity: item?.severity || 'error' })),
+                ...(normalized.warnings || []).map(item => ({ ...item, severity: item?.severity || 'warning' })),
+            ];
+    const combined = [...preferredEntries];
+    const seen = new Set();
+    return combined.filter(item => {
+        if (!item || typeof item !== 'object') return false;
+        const slot = item.slot?.day && item.slot?.period ? `${item.slot.day}-${item.slot.period}` : (item.slot || '');
+        const key = [
+            item.type || '',
+            item.severity || '',
+            item.targetKind || '',
+            item.targetId || '',
+            item.targetName || '',
+            slot,
+            item.message || '',
+        ].join('|');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
 export function normalizeSchedule(raw) {
     if (!raw || !Array.isArray(raw.slots)) return null;
     const snapshot = normalizePublishedSnapshot(raw.published?.snapshot, {
@@ -501,7 +560,7 @@ export function normalizeSchedule(raw) {
         unplaced: Array.isArray(raw.unplaced) ? raw.unplaced : [],
         audit: raw.audit || null,
         qualityIssues: Array.isArray(raw.qualityIssues) ? raw.qualityIssues : [],
-        publication: raw.publication || null,
+        publication: normalizePublicationState(raw.publication),
         diagnostics: raw.diagnostics && typeof raw.diagnostics === 'object' ? raw.diagnostics : null,
         published,
         score: raw.score || {},

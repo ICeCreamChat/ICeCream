@@ -960,7 +960,9 @@ test('publication validation blocks incomplete schedules and hard conflicts', ()
     assert.equal(ready.reason, 'ready');
     assert.equal(ready.summary.totalLessons, 11);
     assert.equal(ready.summary.unplacedLessons, 0);
+    assert.ok(Array.isArray(ready.issueEntries));
     assert.ok(Array.isArray(ready.reviewItems));
+    assert.deepEqual(ready.issueEntries, ready.reviewItems);
 
     const restoredDraft = validateTimetablePublication({
         ...cleanProject,
@@ -972,6 +974,7 @@ test('publication validation blocks incomplete schedules and hard conflicts', ()
 
     assert.equal(restoredDraft.ok, true);
     assert.ok(restoredDraft.warnings.some(issue => issue.type === 'restored_published_draft'));
+    assert.ok(restoredDraft.issueEntries.some(item => item.type === 'restored_published_draft'));
     assert.ok(restoredDraft.reviewItems.some(item => item.type === 'restored_published_draft'
         && item.message.includes('恢复发布版')));
 
@@ -999,6 +1002,7 @@ test('publication validation blocks incomplete schedules and hard conflicts', ()
     const highLoadReady = validateTimetablePublication(runTimetableScheduler(highLoadProject).project);
 
     assert.equal(highLoadReady.ok, true);
+    assert.ok(highLoadReady.issueEntries.some(item => item.type === 'teacher_load' && item.targetKind === 'teacher'));
     assert.ok(highLoadReady.reviewItems.some(item => item.type === 'teacher_load' && item.targetKind === 'teacher'));
 
     const incomplete = validateTimetablePublication(sampleProject({
@@ -1014,6 +1018,7 @@ test('publication validation blocks incomplete schedules and hard conflicts', ()
     assert.equal(incomplete.ok, false);
     assert.equal(incomplete.reason, 'publication_blocked');
     assert.ok(incomplete.blockingIssues.some(issue => issue.type === 'incomplete_schedule'));
+    assert.ok(incomplete.issueEntries.some(item => item.type === 'incomplete_schedule' && item.targetKind === 'class'));
     assert.ok(incomplete.reviewItems.some(item => item.type === 'incomplete_schedule' && item.targetKind === 'class'));
 
     const [left, right] = cleanProject.schedule.slots.filter(slot => slot.teacherId === 't_math');
@@ -1066,6 +1071,9 @@ test('publication validation warns when the saved published snapshot fingerprint
     assert.equal(validation.reason, 'ready');
     assert.ok(validation.warnings.some(issue => issue.type === 'publication_fingerprint_mismatch'
         && issue.message.includes('发布快照校验失败')));
+    assert.ok(validation.issueEntries.some(item => item.type === 'publication_fingerprint_mismatch'
+        && item.severity === 'warning'
+        && item.targetName === '发布快照'));
     assert.ok(validation.reviewItems.some(item => item.type === 'publication_fingerprint_mismatch'
         && item.severity === 'warning'
         && item.targetName === '发布快照'));
@@ -1117,6 +1125,9 @@ test('publication validation warns when a published history snapshot fingerprint
     assert.ok(validation.warnings.some(issue => issue.type === 'publication_fingerprint_mismatch'
         && issue.targetName === '发布历史 V1'
         && issue.message.includes('发布快照校验失败')));
+    assert.ok(validation.issueEntries.some(item => item.type === 'publication_fingerprint_mismatch'
+        && item.severity === 'warning'
+        && item.targetName === '发布历史 V1'));
     assert.ok(validation.reviewItems.some(item => item.type === 'publication_fingerprint_mismatch'
         && item.severity === 'warning'
         && item.targetName === '发布历史 V1'));
@@ -1143,6 +1154,9 @@ test('publication validation warns when the current published schedule is missin
     assert.ok(validation.warnings.some(issue => issue.type === 'published_snapshot_backfill_needed'
         && issue.targetName === '\u53d1\u5e03\u5feb\u7167'
         && issue.message.includes('\u7f3a\u5c11\u53d1\u5e03\u5feb\u7167')));
+    assert.ok(validation.issueEntries.some(item => item.type === 'published_snapshot_backfill_needed'
+        && item.severity === 'warning'
+        && item.targetName === '\u53d1\u5e03\u5feb\u7167'));
     assert.ok(validation.reviewItems.some(item => item.type === 'published_snapshot_backfill_needed'
         && item.severity === 'warning'
         && item.targetName === '\u53d1\u5e03\u5feb\u7167'));
@@ -2647,6 +2661,7 @@ test('timetable API supports the full school workflow from roster review to publ
         assert.equal(publish.payload.data.schedule.published.version, 1);
         assert.equal(publish.payload.data.schedule.published.snapshot.slotCount, 20);
         assert.equal(publish.payload.data.schedule.publication.ok, true);
+        assert.ok(Array.isArray(publish.payload.data.schedule.publication.issueEntries));
 
         const officialExport = await fetch(`${baseUrl}/api/tools/timetable/export`, {
             method: 'POST',
@@ -5049,6 +5064,9 @@ test('timetable API publishes a validated schedule and invalidates publication a
         assert.equal(blockedPayload.data.reason, 'UNPLACED_LESSONS'); // 更新：使用新的ValidationErrorCodes
         // 验证publication中有错误信息
         assert.ok(blockedPayload.data.errors || blockedPayload.data.publication);
+        assert.ok(Array.isArray(blockedPayload.data.publication?.issueEntries));
+        assert.ok(blockedPayload.data.publication.issueEntries.some(item => item.message.includes('未排入课表')));
+        assert.deepEqual(blockedPayload.data.publication.issueEntries, blockedPayload.data.publication.reviewItems);
     } finally {
         await new Promise(resolve => server.close(resolve));
         if (previousDataDir === undefined) {

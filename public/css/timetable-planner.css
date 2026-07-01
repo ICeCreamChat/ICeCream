@@ -1969,6 +1969,75 @@ button.tt-section-title {
     padding: 7px 8px;
 }
 
+.tt-diagnostics-groups {
+    display: grid;
+    gap: var(--tt-space-sm);
+}
+
+.tt-diagnostics-group {
+    display: grid;
+    gap: 8px;
+}
+
+.tt-diagnostics-group-item {
+    border-color: rgba(148, 163, 184, 0.22);
+}
+
+.tt-diagnostics-group-item.is-warning {
+    border-color: rgba(245, 158, 11, 0.28);
+    background: rgba(245, 158, 11, 0.08);
+}
+
+.tt-diagnostics-group-item.is-error {
+    border-color: rgba(239, 68, 68, 0.26);
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.tt-diagnostics-group-item em {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.45;
+}
+
+.tt-inspector-issues,
+.tt-inspector-issue-groups,
+.tt-publication-issues,
+.tt-publication-issue-groups {
+    display: grid;
+    gap: var(--tt-space-sm);
+    margin-top: var(--tt-space-sm);
+}
+
+.tt-inspector-issue-item,
+.tt-publication-issue-item,
+.tt-schedule-diagnostic-item {
+    border-color: rgba(148, 163, 184, 0.22);
+}
+
+.tt-inspector-issue-item.is-warning,
+.tt-publication-issue-item.is-warning,
+.tt-schedule-diagnostic-item.is-warning {
+    border-color: rgba(245, 158, 11, 0.28);
+    background: rgba(245, 158, 11, 0.08);
+}
+
+.tt-inspector-issue-item.is-error,
+.tt-publication-issue-item.is-error,
+.tt-schedule-diagnostic-item.is-error {
+    border-color: rgba(239, 68, 68, 0.26);
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.tt-inspector-issue-item em,
+.tt-publication-issue-item em,
+.tt-schedule-diagnostic-item em {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+    line-height: 1.45;
+}
+
 .tt-rule-file-entry {
     display: flex;
     align-items: center;

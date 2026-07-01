@@ -55,11 +55,40 @@ test('timetable diagnostics can include publication review items without mutatin
     const diagnostics = buildTimetableDiagnostics(scheduled, { publication });
 
     assert.equal(publication.ok, false);
+    assert.ok(Array.isArray(publication.issueEntries));
+    assert.deepEqual(publication.issueEntries, publication.reviewItems);
     assert.ok(diagnostics.items.some(item => item.category === 'publication' && item.type === 'incomplete_schedule'));
     assert.ok(diagnostics.items.some(item => item.category === 'publication' && item.severity === 'error'));
     assert.ok(diagnostics.suggestions.length >= 1);
     assert.ok(diagnostics.suggestions.every(item => item.applied === false));
     assert.equal(scheduled.schedule.publication?.diagnostics, undefined);
+});
+
+test('timetable diagnostics prefers publication issueEntries over legacy reviewItems when both exist', () => {
+    const scheduled = runTimetableScheduler(impossibleProject()).project;
+    const publication = {
+        ...validateTimetablePublication(scheduled),
+        issueEntries: [{
+            type: 'manual_adjusted',
+            severity: 'warning',
+            targetKind: 'schedule',
+            targetId: '',
+            targetName: '课表',
+            message: '请以 issueEntries 为准。',
+        }],
+        reviewItems: [{
+            type: 'manual_adjusted',
+            severity: 'warning',
+            targetKind: 'schedule',
+            targetId: '',
+            targetName: '课表',
+            message: '这是旧 reviewItems。',
+        }],
+    };
+    const diagnostics = buildTimetableDiagnostics(scheduled, { publication });
+
+    assert.ok(diagnostics.items.some(item => item.category === 'publication' && item.message === '请以 issueEntries 为准。'));
+    assert.ok(!diagnostics.items.some(item => item.category === 'publication' && item.message === '这是旧 reviewItems。'));
 });
 
 test('timetable schedule run API persists diagnostics with the legacy response fields', async () => {

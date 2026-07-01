@@ -321,6 +321,7 @@ function projectWithPublishedSnapshot(project = {}, version = null) {
                 summary: snapshot.publicationSummary || {},
                 blockingIssues: [],
                 warnings: [],
+                issueEntries: [],
                 reviewItems: [],
             },
             published: projectedPublished,
@@ -651,6 +652,11 @@ router.post('/schedule/publish', async (req, res) => {
                         reason: validation.reason,
                         message: validation.message,
                         errors: validation.errors,
+                        blockingIssues: validation.blockingIssues || [],
+                        warnings: validation.warnings || [],
+                        issueEntries: validation.issueEntries || [],
+                        reviewItems: validation.reviewItems || validation.issueEntries || [],
+                        summary: validation.summary || current.schedule?.publication?.summary || current.schedule?.score || {},
                     }
                 } : current.schedule,
             });

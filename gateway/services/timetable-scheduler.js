@@ -7,6 +7,7 @@ export {
     isActiveTimetableSlot,
     makeTimetableId,
     normalizeIdList,
+    publicationIssueEntries,
     normalizeSchedule,
     normalizeSubjectCategory,
     normalizeSubjectTags,

@@ -50,6 +50,38 @@ export const ValidationErrorCodes = {
     UNPLACED_LESSONS: 'UNPLACED_LESSONS',
 };
 
+function publicationIssueTypeForValidationCode(code = '') {
+    return ({
+        [ValidationErrorCodes.MISSING_LESSON_PLANS]: 'missing_schedule',
+        [ValidationErrorCodes.HARD_CONFLICTS_EXIST]: 'hard_conflicts',
+        [ValidationErrorCodes.UNPLACED_LESSONS]: 'incomplete_schedule',
+        [ValidationErrorCodes.INVALID_REFERENCE]: 'invalid_schedule_refs',
+    })[code] || String(code || 'publish_validation').toLowerCase();
+}
+
+function publicationIssueFromValidationError(error = {}, index = 0) {
+    const type = publicationIssueTypeForValidationCode(error.code);
+    const severity = error.severity === 'warning' || error.severity === 'info' ? error.severity : 'error';
+    return {
+        type,
+        severity,
+        targetKind: 'schedule',
+        targetId: '',
+        targetName: '课表',
+        message: error.message || '发布前校验未通过。',
+        count: Array.isArray(error.details?.unplaced)
+            ? error.details.unplaced.length
+            : Array.isArray(error.details?.conflicts)
+                ? error.details.conflicts.length
+                : 0,
+        source: `validation_service_${index + 1}`,
+    };
+}
+
+function issueEntriesFromValidationErrors(errors = []) {
+    return errors.map((error, index) => publicationIssueFromValidationError(error, index));
+}
+
 /**
  * 统一验证服务类
  */
@@ -198,11 +230,23 @@ export class TimetableValidationService {
                 '没有可发布的课表',
                 'error'
             ));
+            const structuredIssues = issueEntriesFromValidationErrors(errors);
             return {
                 ok: false,
                 errors,
+                warnings: [],
+                blockingIssues: structuredIssues.filter(item => item.severity === 'error'),
+                issueEntries: structuredIssues,
+                reviewItems: structuredIssues,
                 reason: ValidationErrorCodes.MISSING_LESSON_PLANS,
-                message: '没有可发布的课表'
+                message: '没有可发布的课表',
+                summary: {
+                    totalLessons: Number(schedule?.score?.totalLessons ?? 0),
+                    placedLessons: Number(schedule?.score?.placedLessons ?? 0),
+                    unplacedLessons: Number(schedule?.score?.unplacedLessons ?? 0),
+                    hardConflicts: Number(schedule?.score?.hardConflicts ?? 0),
+                    completeness: Number(schedule?.score?.completeness ?? 0),
+                },
             };
         }
 
@@ -253,12 +297,26 @@ export class TimetableValidationService {
         }
 
         const blockingErrors = errors.filter(e => e.severity === 'error');
+        const issueEntries = issueEntriesFromValidationErrors(errors);
+        const warnings = issueEntries.filter(item => item.severity === 'warning');
+        const blockingIssues = issueEntries.filter(item => item.severity === 'error');
 
         return {
             ok: blockingErrors.length === 0,
             errors,
+            warnings,
+            blockingIssues,
+            issueEntries,
+            reviewItems: issueEntries,
             reason: blockingErrors[0]?.code || null,
             message: blockingErrors[0]?.message || '课表可以发布',
+            summary: {
+                totalLessons: Number(schedule?.score?.totalLessons ?? 0),
+                placedLessons: Number(schedule?.score?.placedLessons ?? schedule.slots?.length ?? 0),
+                unplacedLessons: Number(schedule?.score?.unplacedLessons ?? unplaced.length ?? 0),
+                hardConflicts: Number(schedule?.score?.hardConflicts ?? hardConflicts.length),
+                completeness: Number(schedule?.score?.completeness ?? 0),
+            },
             details: {
                 totalSlots: schedule.slots.length,
                 hardConflicts: hardConflicts.length,

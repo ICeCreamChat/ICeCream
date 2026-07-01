@@ -3,6 +3,7 @@ import AdmZip from 'adm-zip';
 import {
     getActivePeriods,
     getActiveWeekdays,
+    publicationIssueEntries,
 } from './timetable-project.js';
 
 export const TIMETABLE_XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -170,8 +171,8 @@ function publicationMetadataRows(project = {}, options = {}) {
         ['硬冲突', String(summary.hardConflicts ?? schedule.score?.hardConflicts ?? 0)],
         ['未排课时', String(summary.unplacedLessons ?? schedule.score?.unplacedLessons ?? 0)],
     ];
-    const warnings = Array.isArray(publication.warnings) ? publication.warnings : [];
-    if (warnings.length) rows.push(['发布提醒', warnings.map(publicationIssueText).filter(Boolean).join('；')]);
+    const reminderItems = publicationIssueEntries(publication);
+    if (reminderItems.length) rows.push(['发布提醒', reminderItems.map(publicationIssueText).filter(Boolean).join('；')]);
     rows.push([]);
     return rows;
 }

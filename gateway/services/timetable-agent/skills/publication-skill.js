@@ -1,4 +1,4 @@
-import { normalizeTimetableProject, validateTimetablePublication } from '../../timetable-scheduler.js';
+import { normalizeTimetableProject, publicationIssueEntries, validateTimetablePublication } from '../../timetable-scheduler.js';
 import { makeTimetableAgentArtifactId } from '../timetable-agent-state.js';
 
 function scheduleSummary(schedule = null) {
@@ -54,6 +54,7 @@ function buildPublicationReport(project = {}, publication = {}) {
         },
         warnings: publication.warnings || [],
         blockingIssues: publication.blockingIssues || [],
+        issueEntries: publicationIssueEntries(publication),
     };
 }
 
@@ -120,7 +121,7 @@ export async function runPublicationSkill({ project, solution = {}, approval = {
             project,
             exportLinks: [],
             report: { publication },
-            warnings: publication.blockingIssues || [],
+            warnings: publicationIssueEntries(publication).filter(item => item.severity === 'error'),
             artifacts: [{
                 id: makeTimetableAgentArtifactId('save_preview'),
                 type: 'save_preview',

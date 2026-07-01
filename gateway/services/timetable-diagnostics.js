@@ -1,6 +1,7 @@
 import {
     getTimetableEntityMaps,
     normalizeTimetableProject,
+    publicationIssueEntries,
     slotKey,
     slotTeacherIds,
 } from './timetable-project.js';
@@ -286,13 +287,14 @@ function collectQualityItems(project, maps, add) {
 function collectPublicationItems(project, maps, add, publication) {
     const sourcePublication = publication || project.schedule?.publication || null;
     if (!sourcePublication) return;
-    const reviewItems = Array.isArray(sourcePublication.reviewItems)
-        ? sourcePublication.reviewItems
-        : [];
-    for (const item of reviewItems) {
+    const issueEntries = publicationIssueEntries(sourcePublication);
+    const sourcePath = Array.isArray(sourcePublication.issueEntries)
+        ? 'schedule.publication.issueEntries'
+        : 'schedule.publication.reviewItems';
+    for (const item of issueEntries) {
         add(makeItem({
             category: 'publication',
-            source: 'schedule.publication.reviewItems',
+            source: sourcePath,
             type: item.type,
             severity: normalizeIssueSeverity(item, 'warning'),
             message: item.message,
