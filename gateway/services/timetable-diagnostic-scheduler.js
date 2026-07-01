@@ -10,6 +10,7 @@ import {
     getActiveWeekdays,
     getTimetableEntityMaps,
     isActiveTimetableSlot,
+    isMorningPeriod,
     normalizeTimetableProject,
     slotTeacherIds,
 } from './timetable-project.js';
@@ -75,9 +76,7 @@ function bumpCount(map, key, amount = 1) {
 }
 
 function isMorning(project, period) {
-    const periods = getActivePeriods(project);
-    const morningPeriods = new Set(periods.slice(0, Math.max(1, Math.ceil(periods.length / 2))));
-    return morningPeriods.has(Number(period));
+    return isMorningPeriod(project, period);
 }
 
 function subjectProfile(subject = {}, subjectId = '') {

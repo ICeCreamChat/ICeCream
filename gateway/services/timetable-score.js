@@ -1,13 +1,9 @@
 import {
     getActivePeriods,
     getActiveWeekdays,
+    isMorningPeriod,
     slotTeacherIds,
 } from './timetable-project.js';
-
-function isMorningPeriod(activePeriods, period) {
-    const morning = new Set(activePeriods.slice(0, Math.max(1, Math.ceil(activePeriods.length / 2))));
-    return morning.has(Number(period));
-}
 
 function variance(values = []) {
     if (values.length <= 1) return 0;
@@ -79,7 +75,7 @@ export function evaluateSoftScore(project, slots = []) {
             || /语文|数学|英语|外语/.test(subject?.name || '');
         if (!isMorningSubject) continue;
         morningTotal += 1;
-        if (isMorningPeriod(activePeriods, slot.period)) morningHit += 1;
+        if (isMorningPeriod(project, slot.period)) morningHit += 1;
     }
     if (morningTotal > 0) addDimension('morningSubjects', 3, ratio(morningHit, morningTotal));
 

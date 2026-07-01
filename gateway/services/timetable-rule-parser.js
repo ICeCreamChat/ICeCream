@@ -5,6 +5,7 @@ import AdmZip from 'adm-zip';
 import {
     cleanText,
     getActivePeriods,
+    getDayPartPeriods,
     getActiveWeekdays,
     normalizeTimetableProject,
     slotKey,
@@ -370,8 +371,9 @@ function parsePeriods(value, project, fallback = []) {
     if (!text) return [...fallback];
     const active = getActivePeriods(project);
     if (/全部|全日|all/i.test(text)) return active;
-    if (/上午|早上|morning/i.test(text)) return active.filter(period => period <= Math.ceil(active.length / 2));
-    if (/下午|后半天|afternoon/i.test(text)) return active.filter(period => period > Math.ceil(active.length / 2));
+    if (/上午|早上|morning/i.test(text)) return getDayPartPeriods(project, 'morning');
+    if (/下午|后半天|afternoon/i.test(text)) return getDayPartPeriods(project, 'afternoon');
+    if (/晚间|晚上|晚自习|夜自习|evening|night/i.test(text)) return getDayPartPeriods(project, 'evening');
     const values = [];
     for (const range of text.matchAll(/第?\s*(\d{1,2})\s*[-~到至]\s*(\d{1,2})\s*节?/g)) {
         values.push(...expandRange(range[1], range[2], Math.max(...active, 12)));
@@ -2020,8 +2022,10 @@ function localRosterConstraints(project, context) {
     });
 
     const later = [];
-    const active = getActivePeriods(project);
-    const laterPeriods = active.filter(period => period > Math.ceil(active.length / 2));
+    const laterPeriods = [...new Set([
+        ...getDayPartPeriods(project, 'afternoon'),
+        ...getDayPartPeriods(project, 'evening'),
+    ])];
     for (const day of getActiveWeekdays(project)) {
         laterPeriods.forEach(period => later.push(slotKey(day, period)));
     }

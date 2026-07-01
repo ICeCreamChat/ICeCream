@@ -97,6 +97,32 @@ function samePeriodTimes(left = [], right = []) {
         });
 }
 
+function canonicalDayPartBoundaries(value = {}) {
+    const afternoonRaw = value?.afternoonStartPeriod;
+    const eveningRaw = value?.eveningStartPeriod;
+    const afternoonStartPeriod = afternoonRaw === undefined || afternoonRaw === null || String(afternoonRaw).trim() === ''
+        ? null
+        : Number.isInteger(Number(afternoonRaw))
+            ? Number(afternoonRaw)
+            : null;
+    const eveningStartPeriod = eveningRaw === undefined || eveningRaw === null || String(eveningRaw).trim() === ''
+        ? null
+        : Number.isInteger(Number(eveningRaw))
+            ? Number(eveningRaw)
+            : null;
+    return {
+        afternoonStartPeriod,
+        eveningStartPeriod,
+    };
+}
+
+function sameDayPartBoundaries(left = {}, right = {}) {
+    const leftBoundaries = canonicalDayPartBoundaries(left);
+    const rightBoundaries = canonicalDayPartBoundaries(right);
+    return leftBoundaries.afternoonStartPeriod === rightBoundaries.afternoonStartPeriod
+        && leftBoundaries.eveningStartPeriod === rightBoundaries.eveningStartPeriod;
+}
+
 function preservePublishedArchive(nextSchedule, currentSchedule) {
     const published = currentSchedule?.published || null;
     if (!published) return nextSchedule;
@@ -241,6 +267,9 @@ function scheduleDiffersFromPublishedSnapshot(schedule = {}, project = {}) {
     if (published.snapshot?.projectContext?.periodTimes && !samePeriodTimes(published.snapshot.projectContext.periodTimes, project.periodTimes || [])) {
         return true;
     }
+    if (!sameDayPartBoundaries(published.snapshot?.projectContext?.dayPartBoundaries, project.dayPartBoundaries)) {
+        return true;
+    }
     if (snapshotSlots.length !== currentSlots.length) return true;
     const snapshotKeys = snapshotSlots.map(canonicalPublishedSlot).sort();
     const currentKeys = currentSlots.map(canonicalPublishedSlot).sort();
@@ -299,6 +328,7 @@ function projectWithPublishedSnapshot(project = {}, version = null) {
         ...(context.term ? { term: context.term } : {}),
         ...(context.activeWeekdays?.length ? { activeWeekdays: context.activeWeekdays } : {}),
         ...(context.activePeriods?.length ? { activePeriods: context.activePeriods } : {}),
+        ...(Object.prototype.hasOwnProperty.call(context, 'dayPartBoundaries') ? { dayPartBoundaries: context.dayPartBoundaries } : {}),
         ...(Array.isArray(context.periodTimes) ? { periodTimes: context.periodTimes } : {}),
         ...(Array.isArray(context.teachers) ? { teachers: context.teachers } : {}),
         ...(Array.isArray(context.classes) ? { classes: context.classes } : {}),
@@ -381,8 +411,12 @@ router.post('/project', async (req, res) => {
                 schedule: preservePublishedArchive(null, current.schedule),
             });
         } else if (
-            Object.prototype.hasOwnProperty.call(req.body || {}, 'periodTimes')
-            && !samePeriodTimes(current.periodTimes, project.periodTimes)
+            (
+                (Object.prototype.hasOwnProperty.call(req.body || {}, 'periodTimes')
+                    && !samePeriodTimes(current.periodTimes, project.periodTimes))
+                || (Object.prototype.hasOwnProperty.call(req.body || {}, 'dayPartBoundaries')
+                    && !sameDayPartBoundaries(current.dayPartBoundaries, project.dayPartBoundaries))
+            )
             && project.schedule?.published?.status === 'published'
         ) {
             project = normalizeTimetableProject({
@@ -823,6 +857,7 @@ router.post('/schedule/published/restore', async (req, res) => {
             ...(context.term ? { term: context.term } : {}),
             ...(context.activeWeekdays?.length ? { activeWeekdays: context.activeWeekdays } : {}),
             ...(context.activePeriods?.length ? { activePeriods: context.activePeriods } : {}),
+            ...(Object.prototype.hasOwnProperty.call(context, 'dayPartBoundaries') ? { dayPartBoundaries: context.dayPartBoundaries } : {}),
             ...(Array.isArray(context.periodTimes) ? { periodTimes: context.periodTimes } : {}),
             ...(Array.isArray(context.teachers) ? { teachers: context.teachers } : {}),
             ...(Array.isArray(context.classes) ? { classes: context.classes } : {}),
@@ -854,7 +889,7 @@ router.post('/schedule/published/restore', async (req, res) => {
 router.post('/export', async (req, res) => {
     try {
         const timetableStore = store();
-        const current = await timetableStore.loadProject();
+        let current = await timetableStore.loadProject();
         const requested = splitExportType(req.body?.type || req.query?.type || 'class');
         const publishedVersion = req.body?.publishedVersion || req.query?.publishedVersion || null;
         const type = requested.type;
@@ -925,14 +960,48 @@ router.post('/export', async (req, res) => {
                 return;
             }
         } else if (type !== 'plans') {
+            if (current.schedule?.published?.status === 'draft_changed') {
+                fail(res, new Error('当前课表已改动，请重新发布后再导出正式课表。'), 422, {
+                    project: current,
+                    schedule: current.schedule,
+                    reason: 'publication_draft_changed',
+                    publication: current.schedule.publication || null,
+                });
+                return;
+            }
+            const currentPublishedEntry = current.schedule?.published?.status === 'published'
+                ? resolvePublishedRestoreEntry(current.schedule.published)
+                : null;
+            if (currentPublishedEntry?.snapshot) {
+                const fingerprint = verifyPublishedSnapshotFingerprint(currentPublishedEntry);
+                if (!fingerprint.ok) {
+                    failPublicationFingerprintMismatch(res, current, fingerprint);
+                    return;
+                }
+                const verifiedEntry = publicationEntryWithVerifiedFingerprint(currentPublishedEntry);
+                if (
+                    verifiedEntry?.fingerprint
+                    && (
+                        current.schedule.published.fingerprint !== verifiedEntry.fingerprint
+                        || current.schedule.published.snapshot?.fingerprint !== verifiedEntry.fingerprint
+                    )
+                ) {
+                    exportProject = normalizeTimetableProject({
+                        ...current,
+                        schedule: {
+                            ...current.schedule,
+                            published: publishedEntryBackfilledForExport(current.schedule.published, verifiedEntry),
+                        },
+                    });
+                    exportProject = await timetableStore.saveProject(exportProject);
+                    current = exportProject;
+                }
+            }
             if (
-                current.schedule?.published?.status === 'draft_changed'
-                || scheduleDiffersFromPublishedSnapshot(current.schedule, current)
+                current.schedule?.published?.status === 'published'
+                && scheduleDiffersFromPublishedSnapshot(current.schedule, current)
             ) {
-                const project = current.schedule?.published?.status === 'draft_changed'
-                    ? current
-                    : projectMarkedDraftChanged(current);
-                if (project !== current) await timetableStore.saveProject(project);
+                const project = await timetableStore.saveProject(projectMarkedDraftChanged(current));
                 fail(res, new Error('当前课表已改动，请重新发布后再导出正式课表。'), 422, {
                     project,
                     schedule: project.schedule,
@@ -965,9 +1034,6 @@ router.post('/export', async (req, res) => {
                 });
                 return;
             }
-            const currentPublishedEntry = current.schedule?.published?.status === 'published'
-                ? resolvePublishedRestoreEntry(current.schedule.published)
-                : null;
             if (!currentPublishedEntry?.snapshot) {
                 const snapshot = buildPublishedSnapshot(current.schedule, publication, current);
                 exportProject = normalizeTimetableProject({
@@ -983,28 +1049,7 @@ router.post('/export', async (req, res) => {
                     },
                 });
                 exportProject = await timetableStore.saveProject(exportProject);
-            } else {
-                const fingerprint = verifyPublishedSnapshotFingerprint(currentPublishedEntry);
-                if (!fingerprint.ok) {
-                    failPublicationFingerprintMismatch(res, current, fingerprint);
-                    return;
-                }
-                const verifiedEntry = publicationEntryWithVerifiedFingerprint(currentPublishedEntry);
-                if (
-                    verifiedEntry?.fingerprint
-                    && (
-                        current.schedule.published.fingerprint !== verifiedEntry.fingerprint
-                        || current.schedule.published.snapshot?.fingerprint !== verifiedEntry.fingerprint
-                    )
-                ) {
-                    exportProject = normalizeTimetableProject({
-                        ...current,
-                        schedule: {
-                            ...current.schedule,
-                            published: publishedEntryBackfilledForExport(current.schedule.published, verifiedEntry),
-                        },
-                    });
-                }
+                current = exportProject;
             }
         }
         const buffer = buildTimetableExportXlsx(exportProject, { type });

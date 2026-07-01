@@ -1,3 +1,7 @@
+import {
+    getDayPartPeriods,
+} from './timetable-project.js';
+
 /**
  * 智能约束自动扫描器
  * 打开弹窗时自动检测问题并生成修复建议
@@ -307,11 +311,8 @@ function activePeriods(project = {}) {
     return values.map(Number).filter(Number.isFinite);
 }
 
-function periodsByHalf(project = {}, half = 'morning') {
-    const periods = activePeriods(project);
-    if (!periods.length) return [];
-    const splitIndex = Math.ceil(periods.length / 2);
-    return half === 'afternoon' ? periods.slice(splitIndex) : periods.slice(0, splitIndex);
+function periodsByDayPart(project = {}, part = 'morning') {
+    return getDayPartPeriods(project, part);
 }
 
 function inferDays(text = '', project = {}) {
@@ -335,8 +336,9 @@ function inferPeriods(text = '', project = {}) {
         .map(match => Number(match[1]))
         .filter(Number.isFinite);
     if (explicit.length) return explicit.filter(period => activePeriods(project).includes(period));
-    if (/上午|早上|前半天/.test(source)) return periodsByHalf(project, 'morning');
-    if (/下午|后半天/.test(source)) return periodsByHalf(project, 'afternoon');
+    if (/上午|早上|前半天/.test(source)) return periodsByDayPart(project, 'morning');
+    if (/下午|后半天/.test(source)) return periodsByDayPart(project, 'afternoon');
+    if (/晚间|晚上|晚自习|夜自习/.test(source)) return periodsByDayPart(project, 'evening');
     return [];
 }
 

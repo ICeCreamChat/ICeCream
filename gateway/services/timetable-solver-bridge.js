@@ -5,6 +5,7 @@ import {
     createDefaultTimetableProject,
     detectScheduleConflicts,
     getActivePeriods,
+    getDayPartPeriods,
     getActiveWeekdays,
     isActiveTimetableSlot,
     normalizeTimetableProject,
@@ -144,7 +145,7 @@ function collectRooms(project) {
 function buildTimeSlots(project) {
     const result = [];
     const activePeriods = getActivePeriods(project);
-    const morningPeriods = new Set(activePeriods.slice(0, Math.max(1, Math.ceil(activePeriods.length / 2))));
+    const morningPeriods = new Set(getDayPartPeriods(project, 'morning'));
     for (const day of getActiveWeekdays(project)) {
         for (const period of activePeriods) {
             result.push({

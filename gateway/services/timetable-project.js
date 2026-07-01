@@ -17,6 +17,10 @@ const DEFAULT_PROJECT = {
     periodsPerDay: 7,
     activeWeekdays: [1, 2, 3, 4, 5],
     activePeriods: [1, 2, 3, 4, 5, 6, 7],
+    dayPartBoundaries: {
+        afternoonStartPeriod: null,
+        eveningStartPeriod: null,
+    },
     periodTimes: [],
     teachers: [],
     classes: [],
@@ -171,6 +175,84 @@ export function getActivePeriods(project = {}) {
 
 export function isActiveTimetableSlot(project = {}, day, period) {
     return getActiveWeekdays(project).includes(Number(day)) && getActivePeriods(project).includes(Number(period));
+}
+
+function fallbackAfternoonStartPeriod(activePeriods = []) {
+    const splitIndex = Math.ceil(activePeriods.length / 2);
+    return splitIndex < activePeriods.length ? activePeriods[splitIndex] : null;
+}
+
+export function normalizeDayPartBoundaries(raw, activePeriods = []) {
+    const periods = [...new Set((Array.isArray(activePeriods) ? activePeriods : [])
+        .map(value => Number.parseInt(value, 10))
+        .filter(Number.isInteger))]
+        .sort((left, right) => left - right);
+    const periodIndex = new Map(periods.map((period, index) => [period, index]));
+    const normalizeBoundary = value => {
+        const period = Number.parseInt(value, 10);
+        if (!Number.isInteger(period) || !periodIndex.has(period)) return null;
+        return period;
+    };
+
+    let afternoonStartPeriod = normalizeBoundary(raw?.afternoonStartPeriod);
+    if (afternoonStartPeriod !== null && periodIndex.get(afternoonStartPeriod) <= 0) {
+        afternoonStartPeriod = null;
+    }
+
+    let eveningStartPeriod = normalizeBoundary(raw?.eveningStartPeriod);
+    if (eveningStartPeriod !== null) {
+        const eveningIndex = periodIndex.get(eveningStartPeriod);
+        const afternoonIndex = afternoonStartPeriod === null ? -1 : periodIndex.get(afternoonStartPeriod);
+        if (eveningIndex <= Math.max(afternoonIndex, 0)) {
+            eveningStartPeriod = null;
+        }
+    }
+
+    return {
+        afternoonStartPeriod,
+        eveningStartPeriod,
+    };
+}
+
+export function getDayPartBoundaries(project = {}, periods = null) {
+    return normalizeDayPartBoundaries(
+        project?.dayPartBoundaries,
+        periods || getActivePeriods(project),
+    );
+}
+
+export function getDayPartPeriods(project = {}, part = 'morning') {
+    const activePeriods = getActivePeriods(project);
+    if (!activePeriods.length) return [];
+    const boundaries = getDayPartBoundaries(project, activePeriods);
+    const afternoonStartPeriod = boundaries.afternoonStartPeriod ?? fallbackAfternoonStartPeriod(activePeriods);
+    const eveningStartPeriod = boundaries.eveningStartPeriod;
+
+    if (part === 'evening') {
+        if (eveningStartPeriod === null) return [];
+        return activePeriods.filter(period => period >= eveningStartPeriod);
+    }
+    if (part === 'afternoon') {
+        if (afternoonStartPeriod === null) return [];
+        return activePeriods.filter(period => period >= afternoonStartPeriod && (eveningStartPeriod === null || period < eveningStartPeriod));
+    }
+    if (boundaries.afternoonStartPeriod !== null) {
+        return activePeriods.filter(period => period < boundaries.afternoonStartPeriod);
+    }
+    const splitIndex = Math.ceil(activePeriods.length / 2);
+    return activePeriods.slice(0, splitIndex);
+}
+
+export function isMorningPeriod(project = {}, period) {
+    return getDayPartPeriods(project, 'morning').includes(Number(period));
+}
+
+export function isAfternoonPeriod(project = {}, period) {
+    return getDayPartPeriods(project, 'afternoon').includes(Number(period));
+}
+
+export function isEveningPeriod(project = {}, period) {
+    return getDayPartPeriods(project, 'evening').includes(Number(period));
 }
 
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -379,6 +461,14 @@ function normalizePublishedSnapshot(rawSnapshot, fallback = {}) {
                 periodsPerDay: intInRange(rawSnapshot.projectContext.periodsPerDay, DEFAULT_PROJECT.periodsPerDay, 1, 12),
                 activeWeekdays: normalizeNumberList(rawSnapshot.projectContext.activeWeekdays, [], 1, 7),
                 activePeriods: normalizeNumberList(rawSnapshot.projectContext.activePeriods, [], 1, 12),
+                ...(Object.prototype.hasOwnProperty.call(rawSnapshot.projectContext, 'dayPartBoundaries')
+                    ? {
+                        dayPartBoundaries: normalizeDayPartBoundaries(
+                            rawSnapshot.projectContext.dayPartBoundaries,
+                            normalizeNumberList(rawSnapshot.projectContext.activePeriods, [], 1, 12),
+                        ),
+                    }
+                    : {}),
                 ...(Object.prototype.hasOwnProperty.call(rawSnapshot.projectContext, 'periodTimes')
                     ? {
                         periodTimes: normalizePeriodTimes(
@@ -589,6 +679,7 @@ export function normalizeTimetableProject(raw = {}) {
         periodsPerDay: Math.max(...activePeriods),
         activeWeekdays,
         activePeriods,
+        dayPartBoundaries: normalizeDayPartBoundaries(base.dayPartBoundaries, activePeriods),
         periodTimes: normalizePeriodTimes(base.periodTimes, activePeriods),
         teachers,
         classes,

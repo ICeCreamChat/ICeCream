@@ -1,6 +1,7 @@
 import {
     getActivePeriods,
     getActiveWeekdays,
+    isMorningPeriod,
     getTimetableEntityMaps,
     normalizeTimetableProject,
     slotKey,
@@ -233,8 +234,6 @@ export function buildTimetableQualityIssues(input = {}, slots = []) {
     const preferred = soft.subjectPreferredPeriods || {};
     const spreadSubjects = new Set(soft.spreadSubjects || []);
     const morningSubjects = new Set(soft.morningSubjects || []);
-    const activePeriods = getActivePeriods(project);
-    const morningSet = new Set(activePeriods.slice(0, Math.max(1, Math.ceil(activePeriods.length / 2))));
 
     for (const slot of slots) {
         const subject = maps.subjects.get(slot.subjectId) || {};
@@ -249,7 +248,7 @@ export function buildTimetableQualityIssues(input = {}, slots = []) {
                 slot,
             }));
         }
-        if ((morningSubjects.has(slot.subjectId) || isMainSubject(subject, slot.subjectId)) && !morningSet.has(slot.period)) {
+        if ((morningSubjects.has(slot.subjectId) || isMainSubject(subject, slot.subjectId)) && !isMorningPeriod(project, slot.period)) {
             issues.push(issue('morning_subject_late', `${subjectName} 未排在上午优先时段。`, {
                 severity: 'info',
                 classId: slot.classId,
