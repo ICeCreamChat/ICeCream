@@ -193,7 +193,7 @@ function bindDelegatedInteractions(container) {
         } else if (action === 'timetable-agent-quick') {
             controller.sendTimetableAgentMessage(event.target.closest('[data-agent-prompt]')?.dataset.agentPrompt || '');
         } else if (action === 'generate-period-times') {
-            controller.generatePeriodTimesFromSettings();
+            controller.updateSegmentConfigFromForm();
         } else if (action === 'auto-fill-period-times' || action === 'reset-period-time-settings') {
             controller.autoFillPeriodTimes();
         } else {
@@ -203,12 +203,26 @@ function bindDelegatedInteractions(container) {
                 controller.render();
             }
         }
+
+        if (event.target.closest('[data-segment-template]')) {
+            const templateName = event.target.closest('[data-segment-template]').dataset.segmentTemplate;
+            controller.applySegmentTemplate(templateName);
+        }
+        if (event.target.closest('[data-add-segment]')) {
+            controller.addPeriodTimeSegment();
+        }
+        if (event.target.closest('[data-remove-segment]')) {
+            const segmentId = event.target.closest('[data-remove-segment]').dataset.removeSegment;
+            controller.removePeriodTimeSegment(segmentId);
+        }
     });
 
     container.addEventListener('change', event => {
         const controller = container.__ttController;
         if (!controller) return;
-        if (event.target.matches('[data-period-time-setting]')) {
+        if (event.target.matches('[data-segment-field], [data-global-default-field]')) {
+            controller.updateSegmentConfigFromForm();
+        } else if (event.target.matches('[data-period-time-setting]')) {
             controller.updatePeriodTimeSettingsFromForm();
         } else if (event.target.matches('[data-period-time-gap-after]')) {
             controller.updatePeriodTimeGapFromDom(event.target);
@@ -221,7 +235,9 @@ function bindDelegatedInteractions(container) {
     container.addEventListener('input', event => {
         const controller = container.__ttController;
         if (!controller) return;
-        if (event.target.matches('[data-period-time-setting]')) {
+        if (event.target.matches('[data-segment-field], [data-global-default-field]')) {
+            controller.updateSegmentConfigFromForm();
+        } else if (event.target.matches('[data-period-time-setting]')) {
             controller.updatePeriodTimeSettingsFromForm();
         } else if (event.target.matches('[data-period-time-gap-after]')) {
             controller.updatePeriodTimeGapFromDom(event.target);

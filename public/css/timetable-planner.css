@@ -1904,13 +1904,8 @@ button.tt-section-title {
 }
 
 @media (max-width: 900px) {
-    .tt-period-time-settings {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-
-    .tt-period-time-setting-actions {
-        grid-column: 1 / -1;
-        justify-content: flex-end;
+    .tt-segment-fields {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
@@ -1930,6 +1925,10 @@ button.tt-section-title {
 
     .tt-rule-overview-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tt-segment-fields {
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .tt-rule-beginner-head,
@@ -2604,8 +2603,8 @@ button.tt-section-title {
 
 .tt-period-time-settings {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: var(--tt-space-xs);
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--tt-space-sm);
     padding: var(--tt-space-sm);
     border: 1px solid var(--tt-border);
     border-radius: var(--tt-radius-md);
@@ -2617,7 +2616,6 @@ button.tt-section-title {
     align-items: center;
     justify-content: space-between;
     gap: var(--tt-space-sm);
-    grid-column: 1 / -1;
     color: var(--tt-muted);
     font-size: 0.74rem;
 }
@@ -2629,6 +2627,102 @@ button.tt-section-title {
 
 .tt-period-time-settings-head span {
     text-align: right;
+}
+
+.tt-global-defaults {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--tt-space-xs);
+    padding: var(--tt-space-xs);
+    background: rgba(148, 163, 184, 0.04);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+}
+
+.tt-template-selector {
+    display: flex;
+    align-items: center;
+    gap: var(--tt-space-xs);
+    flex-wrap: wrap;
+}
+
+.tt-template-label {
+    color: var(--tt-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.tt-segment-list {
+    display: grid;
+    gap: var(--tt-space-xs);
+}
+
+.tt-segment-card {
+    display: grid;
+    gap: var(--tt-space-xs);
+    padding: var(--tt-space-sm);
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+}
+
+.tt-segment-card-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: var(--tt-space-xs);
+    align-items: center;
+}
+
+.tt-segment-label-input {
+    height: 32px;
+    font-weight: 600;
+}
+
+.tt-segment-index {
+    color: var(--tt-muted);
+    font-size: 0.7rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.tt-segment-remove-btn {
+    width: 28px;
+    height: 28px;
+    color: var(--tt-danger);
+}
+
+.tt-segment-remove-btn:hover {
+    background: rgba(220, 38, 38, 0.1);
+}
+
+.tt-segment-fields {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--tt-space-xs);
+}
+
+.tt-segment-field {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.tt-segment-field span {
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    font-weight: 800;
+}
+
+.tt-segment-field .tt-roster-review-field {
+    height: 32px;
+    min-height: 32px;
+    font-size: 0.8rem;
+}
+
+.tt-segment-actions {
+    display: flex;
+    justify-content: flex-start;
+    gap: var(--tt-space-xs);
 }
 
 .tt-period-time-setting-field {
@@ -3925,7 +4019,7 @@ button.tt-section-title {
     }
 
     .tt-period-time-settings {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .tt-period-time-settings-head {
@@ -3935,6 +4029,14 @@ button.tt-section-title {
 
     .tt-period-time-settings-head span {
         text-align: left;
+    }
+
+    .tt-global-defaults {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .tt-segment-fields {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .tt-period-time-setting-actions {

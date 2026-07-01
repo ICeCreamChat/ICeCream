@@ -413,24 +413,96 @@ function renderPeriodTimesConfig(state) {
     `;
 }
 
+function renderSegmentCard(segment, index, totalSegments, activePeriods, saving) {
+    const canDelete = totalSegments > 1;
+    const usedCount = segment.periodCount || 0;
+    const maxCount = activePeriods.length;
+    const escapeAttr = value => String(value ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const escapeHtml = value => String(value ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    return `
+        <div class="tt-segment-card" data-segment-id="${escapeAttr(segment.id)}">
+            <div class="tt-segment-card-header">
+                <input type="text"
+                    class="tt-roster-review-field tt-segment-label-input"
+                    data-segment-field="${escapeAttr(segment.id)}-label"
+                    value="${escapeAttr(segment.label)}"
+                    placeholder="时段名称"
+                    maxlength="40"
+                    ${saving ? 'disabled' : ''}>
+                <span class="tt-segment-index">时段 ${index + 1}</span>
+                ${canDelete ? `
+                    <button type="button"
+                        class="tt-icon-btn tt-segment-remove-btn"
+                        data-remove-segment="${escapeAttr(segment.id)}"
+                        title="删除此时段"
+                        ${saving ? 'disabled' : ''}>
+                        <i data-lucide="x"></i>
+                    </button>
+                ` : ''}
+            </div>
+            <div class="tt-segment-fields">
+                <label class="tt-segment-field">
+                    <span>首节开始</span>
+                    <input type="time"
+                        class="tt-roster-review-field"
+                        data-segment-field="${escapeAttr(segment.id)}-startTime"
+                        value="${escapeAttr(segment.startTime)}"
+                        ${saving ? 'disabled' : ''}>
+                </label>
+                <label class="tt-segment-field">
+                    <span>节次数量</span>
+                    <input type="number"
+                        class="tt-roster-review-field"
+                        data-segment-field="${escapeAttr(segment.id)}-periodCount"
+                        value="${escapeAttr(segment.periodCount)}"
+                        min="1"
+                        max="${maxCount}"
+                        step="1"
+                        ${saving ? 'disabled' : ''}>
+                </label>
+                <label class="tt-segment-field">
+                    <span>课时（分钟）</span>
+                    <select class="tt-roster-review-field"
+                        data-segment-field="${escapeAttr(segment.id)}-classMinutes"
+                        ${saving ? 'disabled' : ''}>
+                        <option value="">继承全局</option>
+                        <option value="30" ${segment.classMinutes === 30 ? 'selected' : ''}>30</option>
+                        <option value="40" ${segment.classMinutes === 40 ? 'selected' : ''}>40</option>
+                        <option value="45" ${segment.classMinutes === 45 ? 'selected' : ''}>45</option>
+                        <option value="50" ${segment.classMinutes === 50 ? 'selected' : ''}>50</option>
+                        <option value="60" ${segment.classMinutes === 60 ? 'selected' : ''}>60</option>
+                    </select>
+                </label>
+                <label class="tt-segment-field">
+                    <span>课间（分钟）</span>
+                    <select class="tt-roster-review-field"
+                        data-segment-field="${escapeAttr(segment.id)}-breakMinutes"
+                        ${saving ? 'disabled' : ''}>
+                        <option value="">继承全局</option>
+                        <option value="5" ${segment.breakMinutes === 5 ? 'selected' : ''}>5</option>
+                        <option value="10" ${segment.breakMinutes === 10 ? 'selected' : ''}>10</option>
+                        <option value="15" ${segment.breakMinutes === 15 ? 'selected' : ''}>15</option>
+                        <option value="20" ${segment.breakMinutes === 20 ? 'selected' : ''}>20</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+    `;
+}
+
 function renderPeriodTimeDialog(state) {
     const dialog = state.periodTimeDialog || {};
     if (!dialog.open) return '';
     const activePeriods = [...getActivePeriods(state.project)].sort((left, right) => left - right);
     const saving = Boolean(dialog.saving);
-    const settings = {
-        startTime: dialog.settings?.startTime || '08:00',
-        classMinutes: dialog.settings?.classMinutes ?? 40,
-        breakMinutes: dialog.settings?.breakMinutes ?? 10,
-        afternoonStartPeriod: dialog.settings?.afternoonStartPeriod ?? (activePeriods[Math.ceil(activePeriods.length / 2)] ?? null),
-        afternoonStartTime: dialog.settings?.afternoonStartTime || '14:00',
-        eveningStartPeriod: dialog.settings?.eveningStartPeriod ?? null,
-        eveningStartTime: dialog.settings?.eveningStartTime || '19:00',
+    const segmentConfig = dialog.segmentConfig || {
+        globalDefaults: { classMinutes: 45, breakMinutes: 10 },
+        segments: [
+            { id: 'seg-1', label: '上午时段', startTime: '08:00', periodCount: Math.floor(activePeriods.length / 2), classMinutes: null, breakMinutes: null },
+            { id: 'seg-2', label: '下午时段', startTime: '14:00', periodCount: activePeriods.length - Math.floor(activePeriods.length / 2), classMinutes: null, breakMinutes: null },
+        ],
     };
-    const dayPartPeriodOptions = activePeriods.slice(1);
-    const eveningPeriodOptions = dayPartPeriodOptions
-        .filter(period => settings.afternoonStartPeriod === null || period > Number(settings.afternoonStartPeriod));
-    const renderPeriodOption = (period, selectedValue) => `<option value="${period}" ${Number(selectedValue) === Number(period) ? 'selected' : ''}>第${period}节</option>`;
     const draftTimes = Array.isArray(dialog.draftTimes) ? dialog.draftTimes : state.rangeDraft?.periodTimes || state.project?.periodTimes || [];
     const timeMap = new Map(draftTimes.map(item => [Number(item.period), item]));
     const errorMap = new Map((dialog.errors || []).map(item => [Number(item.period), item.message || '时间配置有误']));
@@ -451,6 +523,8 @@ function renderPeriodTimeDialog(state) {
     const errorSummary = [...errorMap.entries()]
         .map(([period, message]) => `第${period}节：${message}`)
         .join('；');
+    const escapeAttr = value => String(value ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    const escapeHtml = value => String(value ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     return `
         <div class="tt-dialog-overlay" data-period-time-dialog-overlay>
             <section class="tt-period-time-dialog" id="tt-period-time-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-period-time-title">
@@ -465,46 +539,32 @@ function renderPeriodTimeDialog(state) {
                 <div class="tt-period-time-settings" aria-label="快速生成节次时间">
                     <div class="tt-period-time-settings-head">
                         <strong>快速生成</strong>
-                        <span>按上午、下午、晚间首节锚点推算时间轴；手工改表格后，以时间轴实际值为准。</span>
+                        <span>按真实作息时段配置，系统自动计算节次时间轴；手工改表格后，以时间轴实际值为准。</span>
                     </div>
-                    <label class="tt-period-time-setting-field">
-                        <span>上午首节开始</span>
-                        <input type="time" class="tt-roster-review-field" id="tt-period-start-time" data-period-time-setting="startTime" value="${escapeAttr(settings.startTime)}" ${saving ? 'disabled' : ''}>
-                    </label>
-                    <label class="tt-period-time-setting-field">
-                        <span>每节课时</span>
-                        <input type="number" class="tt-roster-review-field" id="tt-period-class-minutes" data-period-time-setting="classMinutes" min="1" max="180" step="1" value="${escapeAttr(settings.classMinutes)}" ${saving ? 'disabled' : ''}>
-                    </label>
-                    <label class="tt-period-time-setting-field">
-                        <span>默认间隔</span>
-                        <input type="number" class="tt-roster-review-field" id="tt-period-break-minutes" data-period-time-setting="breakMinutes" min="0" max="120" step="1" value="${escapeAttr(settings.breakMinutes)}" ${saving ? 'disabled' : ''}>
-                    </label>
-                    <label class="tt-period-time-setting-field">
-                        <span>下午从第几节开始</span>
-                        <select class="tt-roster-review-field" id="tt-period-afternoon-start-period" data-period-time-setting="afternoonStartPeriod" ${saving || !dayPartPeriodOptions.length ? 'disabled' : ''}>
-                            ${dayPartPeriodOptions.length
-                                ? `<option value="">不单独拆分下午</option>${dayPartPeriodOptions.map(period => renderPeriodOption(period, settings.afternoonStartPeriod)).join('')}`
-                                : '<option value="">无下午段</option>'}
-                        </select>
-                    </label>
-                    <label class="tt-period-time-setting-field">
-                        <span>下午首节开始</span>
-                        <input type="time" class="tt-roster-review-field" id="tt-period-afternoon-start-time" data-period-time-setting="afternoonStartTime" value="${escapeAttr(settings.afternoonStartTime)}" ${saving || !dayPartPeriodOptions.length || !settings.afternoonStartPeriod ? 'disabled' : ''}>
-                    </label>
-                    <label class="tt-period-time-setting-field">
-                        <span>晚间从第几节开始</span>
-                        <select class="tt-roster-review-field" id="tt-period-evening-start-period" data-period-time-setting="eveningStartPeriod" ${saving ? 'disabled' : ''}>
-                            <option value="">不启用晚间</option>
-                            ${eveningPeriodOptions.map(period => renderPeriodOption(period, settings.eveningStartPeriod)).join('')}
-                        </select>
-                    </label>
-                    <label class="tt-period-time-setting-field">
-                        <span>晚间首节开始</span>
-                        <input type="time" class="tt-roster-review-field" id="tt-period-evening-start-time" data-period-time-setting="eveningStartTime" value="${escapeAttr(settings.eveningStartTime)}" ${saving || !settings.eveningStartPeriod ? 'disabled' : ''}>
-                    </label>
-                    <div class="tt-period-time-setting-actions">
-                        <button class="tt-btn tt-btn--primary" id="tt-generate-period-times" type="button" data-action="generate-period-times" ${saving ? 'disabled' : ''}><i data-lucide="sparkles"></i><span>生成初稿</span></button>
-                        <button class="tt-btn" id="tt-reset-period-time-settings" type="button" data-action="reset-period-time-settings" ${saving ? 'disabled' : ''}><i data-lucide="wand-2"></i><span>按默认模板重置</span></button>
+                    <div class="tt-global-defaults">
+                        <label class="tt-segment-field">
+                            <span>默认课时（分钟）</span>
+                            <input type="number" class="tt-roster-review-field" id="tt-segment-global-class-minutes" data-global-default-field="classMinutes" min="1" max="180" step="1" value="${escapeAttr(segmentConfig.globalDefaults.classMinutes)}" ${saving ? 'disabled' : ''}>
+                        </label>
+                        <label class="tt-segment-field">
+                            <span>默认课间（分钟）</span>
+                            <input type="number" class="tt-roster-review-field" id="tt-segment-global-break-minutes" data-global-default-field="breakMinutes" min="0" max="120" step="1" value="${escapeAttr(segmentConfig.globalDefaults.breakMinutes)}" ${saving ? 'disabled' : ''}>
+                        </label>
+                    </div>
+                    <div class="tt-template-selector">
+                        <span class="tt-template-label">预设模板：</span>
+                        <button type="button" class="tt-btn tt-btn--sm" data-segment-template="standard" ${saving ? 'disabled' : ''}>标准作息</button>
+                        <button type="button" class="tt-btn tt-btn--sm" data-segment-template="early-evening" ${saving ? 'disabled' : ''}>含早晚自习</button>
+                        <button type="button" class="tt-btn tt-btn--sm" data-segment-template="junior" ${saving ? 'disabled' : ''}>初中作息</button>
+                    </div>
+                    <div class="tt-segment-list">
+                        ${segmentConfig.segments.map((segment, index) => renderSegmentCard(segment, index, segmentConfig.segments.length, activePeriods, saving)).join('')}
+                    </div>
+                    <div class="tt-segment-actions">
+                        <button type="button" class="tt-btn" id="tt-add-segment" data-add-segment ${saving ? 'disabled' : ''}>
+                            <i data-lucide="plus"></i>
+                            <span>添加时段</span>
+                        </button>
                     </div>
                 </div>
                 <div class="tt-period-time-preview-head">

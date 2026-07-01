@@ -270,6 +270,40 @@ export function normalizePeriodTimes(raw, activePeriods = []) {
         .sort((a, b) => a.period - b.period);
 }
 
+export function normalizePeriodTimeSegment(raw = {}, index = 0) {
+    const id = cleanText(raw.id, 40) || `seg-${index + 1}`;
+    const label = cleanText(raw.label, 40) || `时段${index + 1}`;
+    const startTime = TIME_RE.test(String(raw.startTime || '')) ? String(raw.startTime) : '08:00';
+    const periodCount = Math.max(1, Math.min(12, Number.parseInt(raw.periodCount, 10) || 1));
+    const classMinutes = raw.classMinutes === null || raw.classMinutes === undefined
+        ? null
+        : Math.max(1, Math.min(180, Number.parseInt(raw.classMinutes, 10) || 45));
+    const breakMinutes = raw.breakMinutes === null || raw.breakMinutes === undefined
+        ? null
+        : Math.max(0, Math.min(120, Number.parseInt(raw.breakMinutes, 10) || 10));
+    return {
+        id,
+        label,
+        startTime,
+        periodCount,
+        classMinutes,
+        breakMinutes,
+    };
+}
+
+export function normalizePeriodTimeSegments(raw = null) {
+    if (!raw || typeof raw !== 'object') return null;
+    const globalDefaults = {
+        classMinutes: Math.max(1, Math.min(180, Number.parseInt(raw.globalDefaults?.classMinutes, 10) || 45)),
+        breakMinutes: Math.max(0, Math.min(120, Number.parseInt(raw.globalDefaults?.breakMinutes, 10) || 10)),
+    };
+    const segments = Array.isArray(raw.segments)
+        ? raw.segments.map((seg, index) => normalizePeriodTimeSegment(seg, index)).slice(0, 10)
+        : [];
+    if (!segments.length) return null;
+    return { globalDefaults, segments };
+}
+
 export function generateDefaultPeriodTimes(activePeriods = [], options = {}) {
     const {
         startHour = 8,
@@ -671,7 +705,7 @@ export function normalizeTimetableProject(raw = {}) {
     const subjects = (Array.isArray(base.subjects) ? base.subjects : []).map(normalizeSubject);
     const lessonPlans = (Array.isArray(base.lessonPlans) ? base.lessonPlans : []).map(normalizeLessonPlan)
         .filter(plan => plan.classId && plan.subjectId && plan.teacherId && plan.weeklyHours > 0);
-    return {
+    const normalized = {
         id: cleanText(base.id, 80) || 'default',
         schoolName: cleanText(base.schoolName, 80) || DEFAULT_PROJECT.schoolName,
         term: cleanText(base.term, 80) || DEFAULT_PROJECT.term,
@@ -687,9 +721,14 @@ export function normalizeTimetableProject(raw = {}) {
         lessonPlans,
         rules: normalizeRules(base.rules),
         schedule: normalizeSchedule(base.schedule),
-        version: base.version || Date.now(), // 版本号用于并发冲突检测
+        version: base.version || Date.now(),
         updatedAt: base.updatedAt || new Date().toISOString(),
     };
+    const periodTimeSegments = normalizePeriodTimeSegments(base.periodTimeSegments);
+    if (periodTimeSegments) {
+        normalized.periodTimeSegments = periodTimeSegments;
+    }
+    return normalized;
 }
 
 export function createDefaultTimetableProject(overrides = {}) {
