@@ -129,10 +129,25 @@ function extractMethodSource(source, methodName) {
 }
 
 function createPeriodTimeDom(rows, settings = {}) {
+  const createSelect = (value = '', options = []) => ({
+    value: String(value ?? ''),
+    disabled: false,
+    options: options.map(option => ({ ...option })),
+  });
   const settingInputs = new Map([
     ['#tt-period-start-time', { value: settings.startTime || '08:00' }],
     ['#tt-period-class-minutes', { value: String(settings.classMinutes ?? 40) }],
     ['#tt-period-break-minutes', { value: String(settings.breakMinutes ?? 10) }],
+    ['#tt-period-afternoon-start-period', createSelect(
+      settings.afternoonStartPeriod === undefined ? '' : String(settings.afternoonStartPeriod ?? ''),
+      [{ value: '', label: '不单独拆分下午' }],
+    )],
+    ['#tt-period-afternoon-start-time', { value: settings.afternoonStartTime || '14:00' }],
+    ['#tt-period-evening-start-period', createSelect(
+      settings.eveningStartPeriod === undefined ? '' : String(settings.eveningStartPeriod ?? ''),
+      [{ value: '', label: '不启用晚间' }],
+    )],
+    ['#tt-period-evening-start-time', { value: settings.eveningStartTime || '19:00', disabled: !settings.eveningStartPeriod }],
   ]);
   const rowNodes = rows.map(row => {
     const startInput = { value: row.start || '' };
@@ -6280,6 +6295,10 @@ test('timetable period time setup uses a compact entry and modal editor', async 
   assert.match(open, /id="tt-period-start-time"/);
   assert.match(open, /id="tt-period-class-minutes"/);
   assert.match(open, /id="tt-period-break-minutes"/);
+  assert.match(open, /id="tt-period-afternoon-start-period"/);
+  assert.match(open, /id="tt-period-afternoon-start-time"/);
+  assert.match(open, /id="tt-period-evening-start-period"/);
+  assert.match(open, /id="tt-period-evening-start-time"/);
   assert.match(open, /id="tt-generate-period-times"/);
   assert.doesNotMatch(open, /id="tt-period-lunch-after"/);
   assert.doesNotMatch(open, /id="tt-period-lunch-minutes"/);
@@ -6374,6 +6393,10 @@ test('timetable period time dialog drafts fill, clear and save through project p
       startTime: '08:00',
       classMinutes: 40,
       breakMinutes: 10,
+      afternoonStartPeriod: null,
+      afternoonStartTime: '14:00',
+      eveningStartPeriod: null,
+      eveningStartTime: '19:00',
     });
     assert.equal(controller.state.periodTimeDialog.draftTimes.length, 3);
     assert.deepEqual(controller.state.periodTimeDialog.draftTimes[0], { period: 1, start: '08:00', end: '08:40' });
@@ -6395,6 +6418,10 @@ test('timetable period time dialog drafts fill, clear and save through project p
       { period: 2, start: '09:00', end: '09:40' },
       { period: 3, start: '09:50', end: '10:30' },
     ]);
+    assert.deepEqual(projectSave.body.dayPartBoundaries, {
+      afternoonStartPeriod: null,
+      eveningStartPeriod: null,
+    });
     assert.equal(projectSave.body.activePeriods, undefined);
     assert.equal(projectSave.body.activeWeekdays, undefined);
     assert.equal(controller.state.periodTimeDialog.open, false);
@@ -6432,6 +6459,10 @@ test('timetable period time settings generate preview drafts from quick settings
     startTime: '08:10',
     classMinutes: 35,
     breakMinutes: 5,
+    afternoonStartPeriod: null,
+    afternoonStartTime: '14:00',
+    eveningStartPeriod: null,
+    eveningStartTime: '19:00',
   });
   assert.deepEqual(controller.state.periodTimeDialog.draftTimes, [
     { period: 1, start: '08:10', end: '08:45' },
@@ -6441,6 +6472,146 @@ test('timetable period time settings generate preview drafts from quick settings
   assert.equal(dom.rows[0].startInput.value, '08:10');
   assert.equal(dom.rows[1].startInput.value, '08:50');
   assert.equal(dom.rows[2].endInput.value, '10:05');
+});
+
+test('timetable period time settings generate afternoon-anchored drafts without rerendering the modal', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {
+    throw new Error('segmented quick setting edits should update the draft without rerendering the modal');
+  };
+  controller.applyProject(createDefaultTimetableProject({ activePeriods: [1, 2, 3, 4, 5, 6, 7] }));
+  const dom = createPeriodTimeDom([
+    { period: 1, start: '08:00', end: '08:40', gapAfter: 10 },
+    { period: 2, start: '08:50', end: '09:30', gapAfter: 10 },
+    { period: 3, start: '09:40', end: '10:20', gapAfter: 10 },
+    { period: 4, start: '10:30', end: '11:10', gapAfter: 10 },
+    { period: 5, start: '14:00', end: '14:40', gapAfter: 10 },
+    { period: 6, start: '14:50', end: '15:30', gapAfter: 10 },
+    { period: 7, start: '15:40', end: '16:20' },
+  ], {
+    startTime: '08:00',
+    classMinutes: 40,
+    breakMinutes: 10,
+    afternoonStartPeriod: 5,
+    afternoonStartTime: '14:00',
+  });
+  controller.state.container = dom;
+
+  controller.updatePeriodTimeSettingsFromForm();
+
+  assert.deepEqual(controller.state.periodTimeDialog.settings, {
+    startTime: '08:00',
+    classMinutes: 40,
+    breakMinutes: 10,
+    afternoonStartPeriod: 5,
+    afternoonStartTime: '14:00',
+    eveningStartPeriod: null,
+    eveningStartTime: '19:00',
+  });
+  assert.deepEqual(controller.state.periodTimeDialog.draftTimes[3], { period: 4, start: '10:30', end: '11:10' });
+  assert.deepEqual(controller.state.periodTimeDialog.draftTimes[4], { period: 5, start: '14:00', end: '14:40' });
+  assert.equal(dom.rows[4].startInput.value, '14:00');
+});
+
+test('timetable period time settings generate evening-anchored drafts without rerendering the modal', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {
+    throw new Error('evening quick setting edits should update the draft without rerendering the modal');
+  };
+  controller.applyProject(createDefaultTimetableProject({ activePeriods: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }));
+  const dom = createPeriodTimeDom([
+    { period: 1, start: '08:00', end: '08:45', gapAfter: 10 },
+    { period: 2, start: '08:55', end: '09:40', gapAfter: 10 },
+    { period: 3, start: '09:50', end: '10:35', gapAfter: 10 },
+    { period: 4, start: '10:45', end: '11:30', gapAfter: 10 },
+    { period: 5, start: '14:00', end: '14:45', gapAfter: 10 },
+    { period: 6, start: '14:55', end: '15:40', gapAfter: 10 },
+    { period: 7, start: '15:50', end: '16:35', gapAfter: 10 },
+    { period: 8, start: '19:00', end: '19:45', gapAfter: 10 },
+    { period: 9, start: '19:55', end: '20:40', gapAfter: 10 },
+    { period: 10, start: '20:50', end: '21:35' },
+  ], {
+    startTime: '08:00',
+    classMinutes: 45,
+    breakMinutes: 10,
+    afternoonStartPeriod: 5,
+    afternoonStartTime: '14:00',
+    eveningStartPeriod: 8,
+    eveningStartTime: '19:00',
+  });
+  controller.state.container = dom;
+
+  controller.updatePeriodTimeSettingsFromForm();
+
+  assert.deepEqual(controller.state.periodTimeDialog.draftTimes[4], { period: 5, start: '14:00', end: '14:45' });
+  assert.deepEqual(controller.state.periodTimeDialog.draftTimes[7], { period: 8, start: '19:00', end: '19:45' });
+  assert.equal(dom.settings.get('#tt-period-evening-start-time').disabled, false);
+});
+
+test('timetable period time settings let afternoon boundary be cleared without snapping back to midpoint', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {
+    throw new Error('clearing the afternoon boundary should update the draft without rerendering the modal');
+  };
+  controller.applyProject(createDefaultTimetableProject({ activePeriods: [1, 2, 3, 4, 5, 6, 7] }));
+  const dom = createPeriodTimeDom([
+    { period: 1, start: '08:00', end: '08:40', gapAfter: 10 },
+    { period: 2, start: '08:50', end: '09:30', gapAfter: 10 },
+    { period: 3, start: '09:40', end: '10:20', gapAfter: 10 },
+    { period: 4, start: '10:30', end: '11:10', gapAfter: 10 },
+    { period: 5, start: '11:20', end: '12:00', gapAfter: 10 },
+    { period: 6, start: '19:00', end: '19:40', gapAfter: 10 },
+    { period: 7, start: '19:50', end: '20:30' },
+  ], {
+    startTime: '08:00',
+    classMinutes: 40,
+    breakMinutes: 10,
+    afternoonStartPeriod: '',
+    afternoonStartTime: '14:00',
+    eveningStartPeriod: 6,
+    eveningStartTime: '19:00',
+  });
+  controller.state.container = dom;
+
+  controller.updatePeriodTimeSettingsFromForm();
+
+  assert.equal(controller.state.periodTimeDialog.settings.afternoonStartPeriod, null);
+  assert.deepEqual(controller.state.periodTimeDialog.draftTimes[4], { period: 5, start: '11:20', end: '12:00' });
+  assert.deepEqual(controller.state.periodTimeDialog.draftTimes[5], { period: 6, start: '19:00', end: '19:40' });
+});
+
+test('timetable period time settings narrow evening options after afternoon boundary changes', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {
+    throw new Error('boundary option updates should not rerender the modal');
+  };
+  controller.applyProject(createDefaultTimetableProject({ activePeriods: [1, 2, 3, 4, 5, 6, 7] }));
+  const dom = createPeriodTimeDom([
+    { period: 1, start: '08:00', end: '08:40', gapAfter: 10 },
+    { period: 2, start: '08:50', end: '09:30', gapAfter: 10 },
+    { period: 3, start: '09:40', end: '10:20', gapAfter: 10 },
+    { period: 4, start: '10:30', end: '11:10', gapAfter: 10 },
+    { period: 5, start: '11:20', end: '12:00', gapAfter: 10 },
+    { period: 6, start: '14:00', end: '14:40', gapAfter: 10 },
+    { period: 7, start: '19:00', end: '19:40' },
+  ], {
+    startTime: '08:00',
+    classMinutes: 40,
+    breakMinutes: 10,
+    afternoonStartPeriod: 6,
+    afternoonStartTime: '14:00',
+    eveningStartPeriod: '',
+    eveningStartTime: '19:00',
+  });
+  controller.state.container = dom;
+
+  controller.updatePeriodTimeSettingsFromForm();
+
+  assert.deepEqual(
+    dom.settings.get('#tt-period-evening-start-period').options.map(option => option.value),
+    ['', '7'],
+  );
+  assert.equal(dom.settings.get('#tt-period-evening-start-period').value, '');
 });
 
 test('timetable period time gap edits shift following periods without rerendering the modal', () => {
@@ -6563,6 +6734,58 @@ test('timetable period time save reads live inputs and rejects invalid rows', as
     assert.equal(calls.length, 0);
     assert.equal(controller.state.periodTimeDialog.open, true);
     assert.equal(controller.state.periodTimeDialog.errors[0].period, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('timetable period time save posts explicit afternoon and evening boundaries', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const project = createDefaultTimetableProject({ activePeriods: [1, 2, 3, 4, 5, 6, 7, 8] });
+
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), body });
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { success: true, data: { project: createDefaultTimetableProject({ ...project, ...body }) } };
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.applyProject(project);
+    controller.state.periodTimeDialog = { ...controller.state.periodTimeDialog, open: true };
+    controller.state.container = createPeriodTimeDom([
+      { period: 1, start: '08:00', end: '08:40', gapAfter: 10 },
+      { period: 2, start: '08:50', end: '09:30', gapAfter: 10 },
+      { period: 3, start: '09:40', end: '10:20', gapAfter: 10 },
+      { period: 4, start: '10:30', end: '11:10', gapAfter: 10 },
+      { period: 5, start: '14:00', end: '14:40', gapAfter: 10 },
+      { period: 6, start: '14:50', end: '15:30', gapAfter: 10 },
+      { period: 7, start: '19:00', end: '19:40', gapAfter: 10 },
+      { period: 8, start: '19:50', end: '20:30' },
+    ], {
+      startTime: '08:00',
+      classMinutes: 40,
+      breakMinutes: 10,
+      afternoonStartPeriod: 5,
+      afternoonStartTime: '14:00',
+      eveningStartPeriod: 7,
+      eveningStartTime: '19:00',
+    });
+
+    await controller.savePeriodTimes();
+
+    assert.deepEqual(calls[0].body.dayPartBoundaries, {
+      afternoonStartPeriod: 5,
+      eveningStartPeriod: 7,
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -6718,6 +6941,7 @@ test('timetable project route only clears schedule when active range changes', a
   assert.match(routeSource, /sameNumberList\(current\.activeWeekdays,\s*project\.activeWeekdays\)/);
   assert.match(routeSource, /sameNumberList\(current\.activePeriods,\s*project\.activePeriods\)/);
   assert.doesNotMatch(routeSource, /periodTimes[\s\S]{0,160}preservePublishedArchive\(null,\s*current\.schedule\)/);
+  assert.doesNotMatch(routeSource, /dayPartBoundaries[\s\S]{0,200}preservePublishedArchive\(null,\s*current\.schedule\)/);
 });
 
 test('timetable inspector surfaces data and 智能 rule audit summaries', () => {

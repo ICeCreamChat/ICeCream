@@ -2378,10 +2378,12 @@ test('timetable project API saves period times without clearing schedule and mar
     };
     const baseProject = sampleProject({
         activePeriods: [1, 2],
+        dayPartBoundaries: { afternoonStartPeriod: null, eveningStartPeriod: null },
         periodTimes: [{ period: 1, start: '08:00', end: '08:40' }],
         schedule,
     });
     const snapshot = buildPublishedSnapshot(schedule, { summary: {} }, baseProject);
+    assert.deepEqual(snapshot.projectContext.dayPartBoundaries, { afternoonStartPeriod: null, eveningStartPeriod: null });
     assert.deepEqual(snapshot.projectContext.periodTimes, [{ period: 1, start: '08:00', end: '08:40' }]);
     await timetableStore.saveProject(normalizeTimetableProject({
         ...baseProject,
@@ -2412,6 +2414,10 @@ test('timetable project API saves period times without clearing schedule and mar
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                dayPartBoundaries: {
+                    afternoonStartPeriod: 2,
+                    eveningStartPeriod: null,
+                },
                 periodTimes: [
                     { period: 1, start: '08:10', end: '08:50' },
                     { period: 2, start: '09:05', end: '09:45' },
@@ -2424,8 +2430,16 @@ test('timetable project API saves period times without clearing schedule and mar
             { period: 1, start: '08:10', end: '08:50' },
             { period: 2, start: '09:05', end: '09:45' },
         ]);
+        assert.deepEqual(response.data.project.dayPartBoundaries, {
+            afternoonStartPeriod: 2,
+            eveningStartPeriod: null,
+        });
         assert.equal(response.data.project.schedule.slots[0].id, 'slot_keep');
         assert.equal(response.data.project.schedule.published.status, 'draft_changed');
+        assert.deepEqual(response.data.project.schedule.published.snapshot.projectContext.dayPartBoundaries, {
+            afternoonStartPeriod: null,
+            eveningStartPeriod: null,
+        });
         assert.deepEqual(response.data.project.schedule.published.snapshot.projectContext.periodTimes, [
             { period: 1, start: '08:00', end: '08:40' },
         ]);
