@@ -665,6 +665,7 @@ function renderRosterReview(dialog) {
     const blocking = Boolean(dialog.hasBlockingIssues || issues.some(issue => issue.severity === 'error'));
     return `
         ${dialog.stats ? renderRosterStats(dialog.stats) : ''}
+        ${renderRosterImportReport(dialog.importReport)}
         ${issues.length ? `
             <div class="tt-roster-review-issues">
                 ${issues.slice(0, 4).map(issue => `
@@ -708,6 +709,45 @@ function renderRosterReview(dialog) {
             <button class="tt-btn" id="tt-cancel-roster-import-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
             <button class="tt-btn tt-btn--primary" id="tt-confirm-roster-import" type="button" ${blocking ? 'disabled' : ''}><i data-lucide="check"></i><span>确认导入</span></button>
         </div>
+    `;
+}
+
+function renderRosterImportReport(report) {
+    if (!report || !report.summary) return '';
+    const summary = report.summary || {};
+    const entries = Array.isArray(report.entries) ? report.entries : [];
+    const focusEntries = entries.filter(item => item.category !== 'kept').slice(0, 4);
+    const visibleEntries = focusEntries.length ? focusEntries : entries.slice(0, 3);
+    const categoryIcon = category => (
+        category === 'dropped' ? 'alert-triangle'
+            : category === 'review' ? 'circle-help'
+                : category === 'degraded' ? 'git-compare-arrows'
+                    : 'check-circle-2'
+    );
+    const categoryClass = category => (category === 'dropped' ? 'tt-rule-warning--error' : '');
+    return `
+        <section class="tt-roster-review-issues tt-roster-import-report" aria-label="导入报告">
+            <div class="tt-section-title">
+                <h3><i data-lucide="clipboard-check"></i><span>导入报告</span></h3>
+                <span class="tt-chip ${report.hasIssues ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(summary.total || entries.length || 0)}</span>
+            </div>
+            <div class="tt-audit-grid tt-audit-grid--quality">
+                <span><b>保留</b>${escapeHtml(summary.kept || 0)}</span>
+                <span><b>降级</b>${escapeHtml(summary.degraded || 0)}</span>
+                <span><b>丢弃</b>${escapeHtml(summary.dropped || 0)}</span>
+                <span><b>待审</b>${escapeHtml(summary.review || 0)}</span>
+            </div>
+            ${visibleEntries.length ? `
+                <div class="tt-rule-warning-list">
+                    ${visibleEntries.map(item => `
+                        <div class="tt-rule-warning ${categoryClass(item.category)}">
+                            <i data-lucide="${categoryIcon(item.category)}"></i>
+                            <span>${escapeHtml(item.reason || item.field || item.category)}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            ` : ''}
+        </section>
     `;
 }
 
@@ -2040,6 +2080,7 @@ export function renderInspector(state) {
             ${selectedDetail ? renderSlotInspector(state) : renderPlanningInspector(state)}
             ${selectedDetail ? '' : renderUnscheduledPlanQueue(state)}
             ${renderAuditPanel(state)}
+            ${renderUnifiedDiagnosticsPanel(state)}
             ${renderScheduleDiagnosticsPanel(state)}
             ${renderPublicationPanel(state)}
             ${renderQualityPanel(state)}
@@ -2064,6 +2105,50 @@ export function renderInspector(state) {
                 </div>
             </section>
         </div>
+    `;
+}
+
+function renderUnifiedDiagnosticsPanel(state) {
+    const diagnostics = state.project?.schedule?.diagnostics || state.lastFailure?.diagnostics || null;
+    if (!diagnostics || !Array.isArray(diagnostics.items)) return '';
+    const summary = diagnostics.summary || {};
+    const items = diagnostics.items || [];
+    const suggestions = diagnostics.suggestions || [];
+    if (!items.length && !suggestions.length) return '';
+    const chipTone = summary.error ? 'tt-chip--warn' : summary.warning ? 'tt-chip--warn' : 'tt-chip--ok';
+    const severityIcon = severity => (severity === 'error' ? 'alert-circle' : severity === 'warning' ? 'triangle-alert' : 'info');
+    return `
+        <section class="tt-inspector-section">
+            <div class="tt-section-title">
+                <h3><i data-lucide="stethoscope"></i><span>诊断报告</span></h3>
+                <span class="tt-chip ${chipTone}">${escapeHtml(summary.total ?? items.length)}</span>
+            </div>
+            <div class="tt-audit-grid tt-audit-grid--quality">
+                <span><b>错误</b>${escapeHtml(summary.error || 0)}</span>
+                <span><b>警告</b>${escapeHtml(summary.warning || 0)}</span>
+                <span><b>提示</b>${escapeHtml(summary.info || 0)}</span>
+                <span><b>建议</b>${escapeHtml(summary.suggestions ?? suggestions.length)}</span>
+            </div>
+            <div class="tt-conflict-list">
+                ${items.slice(0, 5).map(item => `
+                    <div class="tt-conflict ${item.severity === 'error' || item.severity === 'warning' ? 'is-warning' : ''}">
+                        <i data-lucide="${severityIcon(item.severity)}"></i>
+                        <span><b>${escapeHtml(item.targetName || timetableReviewLabel(item.type))}</b>${escapeHtml(item.message || timetableReviewLabel(item.type))}</span>
+                    </div>
+                `).join('')}
+                ${items.length > 5 ? `<span class="tt-muted">还有 ${escapeHtml(items.length - 5)} 项诊断未展开。</span>` : ''}
+            </div>
+            ${suggestions.length ? `
+                <div class="tt-rule-warning-list">
+                    ${suggestions.slice(0, 3).map(item => `
+                        <div class="tt-rule-warning">
+                            <i data-lucide="lightbulb"></i>
+                            <span>${escapeHtml(item.message || '建议草稿')}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            ` : ''}
+        </section>
     `;
 }
 

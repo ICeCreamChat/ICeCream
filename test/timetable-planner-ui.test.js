@@ -4196,6 +4196,64 @@ test('timetable roster import is opened from a data card instead of permanent si
   assert.match(review, /id="tt-confirm-roster-import"/);
 });
 
+test('timetable roster import review renders the import report summary and entries', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    rosterImport: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      fileName: '',
+      text: '',
+      draftRows: [{
+        id: 'draft_1',
+        grade: 'G8',
+        className: '1班',
+        subjectName: '数学',
+        subjectCategory: 'main',
+        subjectTags: [],
+        teacherName: '张老师',
+        weeklyHours: 4,
+        blockPreference: 'double',
+        roomName: '',
+        issues: [],
+      }],
+      stats: { classCount: 1, teacherCount: 1, subjectCount: 1, planCount: 1, totalLessons: 4, blockLessons: 4, fixedRoomCount: 0, issueCount: 1 },
+      issues: [],
+      warnings: ['存在重复任课，请确认是否需要合并。'],
+      importReport: {
+        sourceKind: 'roster',
+        summary: { total: 3, kept: 1, degraded: 1, dropped: 0, review: 1 },
+        entries: [{
+          category: 'kept',
+          source: { row: 2, rowId: 'draft_1' },
+          field: 'row',
+          reason: '任课行已保留。',
+        }, {
+          category: 'degraded',
+          source: { row: 4, rowId: 'draft_3' },
+          field: 'blockPreference',
+          reason: '无法识别“三连堂”，已按单节处理。',
+          originalValue: '三连堂',
+        }, {
+          category: 'review',
+          source: { row: 3, rowId: 'draft_2' },
+          field: 'subjectName',
+          reason: '存在重复任课，请确认是否需要合并。',
+        }],
+        hasIssues: true,
+      },
+    },
+  }));
+
+  assert.match(html, /导入报告/);
+  assert.match(html, /保留<\/b>1/);
+  assert.match(html, /降级<\/b>1/);
+  assert.match(html, /丢弃<\/b>0/);
+  assert.match(html, /待审<\/b>1/);
+  assert.match(html, /无法识别“三连堂”，已按单节处理。/);
+  assert.match(html, /存在重复任课，请确认是否需要合并。/);
+});
+
 test('timetable roster import shows a loading state while parsing before review', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     rosterImport: {
@@ -5586,6 +5644,75 @@ test('timetable rule review renders empty candidate questions as no-candidate ta
   assert.doesNotMatch(html, /<select[^>]*data-rule-question-answer="q_empty"/);
 });
 
+test('timetable smart rule review renders the rule report summary and entries', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    smartWorkbench: createSmartWorkbenchState({
+      open: true,
+      stage: 'reviewing_constraints',
+      selectedSection: 'ready',
+    }),
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputType: 'text',
+      draftRows: [{
+        id: 'rule_kept',
+        rawText: '数学尽量上午',
+        type: 'subject_morning',
+        targetType: 'subject',
+        targetId: 'math',
+        targetName: 'Math',
+        priority: 'soft',
+        status: 'effective',
+        confidence: 0.93,
+        warnings: [],
+      }],
+      autoAcceptable: [{
+        id: 'rule_kept',
+        rawText: '数学尽量上午',
+        type: 'subject_morning',
+        targetId: 'math',
+        targetName: 'Math',
+        status: 'effective',
+      }],
+      needReview: [],
+      unsupportedItems: [],
+      warnings: [],
+      conflicts: [],
+      ruleReport: {
+        sourceKind: 'rules',
+        summary: { total: 3, kept: 1, degraded: 1, dropped: 0, review: 1 },
+        entries: [{
+          category: 'kept',
+          source: { rowId: 'rule_kept', inputType: 'text' },
+          field: 'subject_morning',
+          reason: '高置信度规则，可确认后写入。',
+        }, {
+          category: 'degraded',
+          source: { rowId: 'rule_suggestion', inputType: 'text' },
+          field: 'teacher_load_balance',
+          reason: '当前只能作为建议展示，不会直接写入规则。',
+        }, {
+          category: 'review',
+          source: { rowId: 'rule_review', inputType: 'text' },
+          field: 'teacher_unavailable',
+          reason: '王老师需要复核后才能生效。',
+        }],
+        hasIssues: true,
+      },
+    },
+  }));
+
+  assert.match(html, /规则报告/);
+  assert.match(html, /保留<\/b>1/);
+  assert.match(html, /降级<\/b>1/);
+  assert.match(html, /丢弃<\/b>0/);
+  assert.match(html, /待审<\/b>1/);
+  assert.match(html, /当前只能作为建议展示，不会直接写入规则。/);
+  assert.match(html, /王老师需要复核后才能生效。/);
+});
+
 test('timetable rule review disables auto apply when blocking conflicts exist', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     smartWorkbench: createSmartWorkbenchState({
@@ -6616,4 +6743,68 @@ test('timetable inspector surfaces data and 智能 rule audit summaries', () => 
   assert.match(inspector, /Unknown class ignored/);
   assert.match(inspector, /All teachers/);
   assert.match(inspector, /teacher_load_balance/);
+});
+
+test('timetable inspector renders unified diagnostics summary and items', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 }],
+      schedule: {
+        id: 'schedule_diag',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'fast_constructed',
+        slots: [],
+        conflicts: [],
+        unplaced: [],
+        audit: null,
+        qualityIssues: [],
+        score: { totalLessons: 2, placedLessons: 0, unplacedLessons: 2 },
+        diagnostics: {
+          diagnosticsVersion: 1,
+          summary: { error: 1, warning: 1, info: 0, total: 2, suggestions: 1 },
+          items: [{
+            id: 'diag_1',
+            category: 'unplaced',
+            type: 'unplaced',
+            severity: 'error',
+            targetKind: 'class',
+            targetId: 'c1',
+            targetName: 'G71',
+            message: 'Math 还有 2 节未排。',
+          }, {
+            id: 'diag_2',
+            category: 'quality',
+            type: 'subject_spread',
+            severity: 'warning',
+            targetKind: 'subject',
+            targetId: 'math',
+            targetName: 'Math',
+            message: '同科过于集中。',
+          }],
+          byObject: { teachers: {}, classes: { c1: ['diag_1'] }, subjects: { math: ['diag_2'] }, rooms: {}, plans: {} },
+          suggestions: [{
+            id: 'sug_1',
+            kind: 'unplaced',
+            targetDiagnostics: ['diag_1'],
+            targetName: 'G71',
+            message: '检查班级容量后重新生成。',
+            applied: false,
+          }],
+        },
+      },
+    }),
+  });
+
+  const inspector = renderInspector(state);
+
+  assert.match(inspector, /诊断报告/);
+  assert.match(inspector, /错误<\/b>1/);
+  assert.match(inspector, /警告<\/b>1/);
+  assert.match(inspector, /建议<\/b>1/);
+  assert.match(inspector, /Math 还有 2 节未排。/);
+  assert.match(inspector, /同科过于集中。/);
+  assert.match(inspector, /检查班级容量后重新生成。/);
 });

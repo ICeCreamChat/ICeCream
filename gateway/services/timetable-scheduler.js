@@ -42,6 +42,11 @@ export {
 } from './timetable-adjustment.js';
 
 export {
+    attachTimetableDiagnostics,
+    buildTimetableDiagnostics,
+} from './timetable-diagnostics.js';
+
+export {
     runTimetableScheduler,
 } from './timetable-diagnostic-scheduler.js';
 

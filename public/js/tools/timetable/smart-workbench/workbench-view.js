@@ -459,6 +459,50 @@ function renderBlockingConflictSummary(review = {}) {
     `;
 }
 
+function renderRuleReport(report) {
+    if (!report || !report.summary) return '';
+    const summary = report.summary || {};
+    const entries = Array.isArray(report.entries) ? report.entries : [];
+    const focusEntries = entries.filter(item => item.category !== 'kept').slice(0, 4);
+    const visibleEntries = focusEntries.length ? focusEntries : entries.slice(0, 3);
+    const categoryIcon = category => (
+        category === 'dropped' ? 'alert-triangle'
+            : category === 'review' ? 'circle-help'
+                : category === 'degraded' ? 'git-compare-arrows'
+                    : 'check-circle-2'
+    );
+    const categoryClass = category => {
+        if (category === 'dropped') return 'tt-rule-warning--error';
+        if (category === 'review') return 'tt-rule-warning--review';
+        if (category === 'degraded') return 'tt-rule-warning--suggestion';
+        return 'tt-rule-warning--info';
+    };
+    return `
+        <section class="tt-rule-review-report tt-smart-rule-report" aria-label="规则报告">
+            <div class="tt-section-title">
+                <h3><i data-lucide="clipboard-check"></i><span>规则报告</span></h3>
+                <span class="tt-chip ${report.hasIssues ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(summary.total || entries.length || 0)}</span>
+            </div>
+            <div class="tt-audit-grid tt-audit-grid--quality">
+                <span><b>保留</b>${escapeHtml(summary.kept || 0)}</span>
+                <span><b>降级</b>${escapeHtml(summary.degraded || 0)}</span>
+                <span><b>丢弃</b>${escapeHtml(summary.dropped || 0)}</span>
+                <span><b>待审</b>${escapeHtml(summary.review || 0)}</span>
+            </div>
+            ${visibleEntries.length ? `
+                <div class="tt-rule-warning-list">
+                    ${visibleEntries.map(item => `
+                        <div class="tt-rule-warning ${categoryClass(item.category)}">
+                            <i data-lucide="${categoryIcon(item.category)}"></i>
+                            <span>${escapeHtml(item.reason || item.field || item.category)}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            ` : ''}
+        </section>
+    `;
+}
+
 function renderPaginator(currentPage, totalPages, totalItems) {
     if (totalPages <= 1) return '';
     const pages = [];
@@ -547,6 +591,7 @@ function renderReviewStage(state) {
                 </div>
             ` : ''}
             ${renderReviewTaskChecklist(review, groups, savedItems, selected)}
+            ${renderRuleReport(review.ruleReport)}
             ${renderBlockingConflictSummary(review)}
             <nav class="tt-smart-review-tabs" aria-label="约束分区">
                 ${sections.map(([key, label, , items]) => `

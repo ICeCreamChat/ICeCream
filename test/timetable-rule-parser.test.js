@@ -462,6 +462,56 @@ test('normalize handles completely unknown type as unsupported', () => {
     assert.equal(result.draftRows[0].status, 'unsupported');
 });
 
+test('normalize returns a four-category rule report without dropping legacy fields', () => {
+    const project = makeProject();
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: [{
+            id: 'rule_kept',
+            type: 'teacher_unavailable',
+            targetId: 't1',
+            slots: ['1-1'],
+            confidence: 0.95,
+        }, {
+            id: 'rule_review',
+            type: 'teacher_unavailable',
+            targetName: '未知老师',
+            slots: ['1-2'],
+            confidence: 0.72,
+        }, {
+            id: 'rule_degraded',
+            type: 'teacher_load_balance',
+            targetId: 't1',
+            confidence: 0.9,
+        }, {
+            id: 'rule_dropped',
+            type: 'teacher_unavailable',
+            targetId: 't1',
+            slots: [],
+            status: 'invalid',
+            confidence: 0.4,
+        }],
+        source: 'test',
+        inputType: 'text',
+        initialWarnings: ['原始规则里有一条需要人工确认。'],
+    });
+
+    assert.ok(result.ruleReport);
+    assert.equal(result.ruleReport.summary.kept, 1);
+    assert.equal(result.ruleReport.summary.review >= 1, true);
+    assert.equal(result.ruleReport.summary.degraded, 1);
+    assert.equal(result.ruleReport.summary.dropped, 1);
+    assert.equal(result.ruleReport.hasIssues, true);
+    assert.ok(result.ruleReport.entries.some(item => item.category === 'kept' && item.source.rowId === 'rule_kept'));
+    assert.ok(result.ruleReport.entries.some(item => item.category === 'review' && /需要复核|人工确认/.test(item.reason)));
+    assert.ok(result.ruleReport.entries.some(item => item.category === 'degraded' && item.source.rowId === 'rule_degraded'));
+    assert.ok(result.ruleReport.entries.some(item => item.category === 'dropped' && item.source.rowId === 'rule_dropped'));
+    assert.ok(Array.isArray(result.draftRows));
+    assert.ok(Array.isArray(result.autoAcceptable));
+    assert.ok(Array.isArray(result.needReview));
+    assert.ok(Array.isArray(result.unsupportedItems));
+});
+
 // ============================================================
 // 11. Period Times (data model)
 // ============================================================
@@ -510,13 +560,60 @@ test('normalizeTimetableProject preserves periodTimes', () => {
 // 12. AI Roster Parsing (local fallback)
 // ============================================================
 
-import { parseRosterAiOrLocal } from '../gateway/services/timetable-import.js';
+import {
+    buildTimetableRosterFromRows,
+    parseRosterAiOrLocal,
+    previewTimetableRosterText,
+} from '../gateway/services/timetable-import.js';
 
 test('parseRosterAiOrLocal falls back to local when no API key', async () => {
     const text = 'grade,class,subject,teacher,hours\nG8,1班,数学,张老师,4';
     const result = await parseRosterAiOrLocal({ text, project: {}, env: {} });
     assert.equal(result.source, 'local');
     assert.ok(result.draftRows.length >= 1);
+});
+
+test('timetable roster preview includes a four-category import report', () => {
+    const text = [
+        'grade,class,subject,teacher,hours,block',
+        'G8,1班,数学,张老师,4,double',
+        'G8,1班,数学,张老师,4,double',
+        'G8,2班,语文,,3,single',
+        'G8,3班,英语,李老师,3,三连堂',
+    ].join('\n');
+    const result = previewTimetableRosterText(text, { project: makeProject() });
+
+    assert.ok(result.importReport);
+    assert.equal(result.importReport.summary.kept, 2);
+    assert.equal(result.importReport.summary.dropped, 1);
+    assert.equal(result.importReport.summary.review, 1);
+    assert.equal(result.importReport.summary.degraded, 1);
+    assert.equal(result.importReport.hasIssues, true);
+    assert.ok(result.importReport.entries.some(item => item.category === 'dropped' && item.field === 'teacherName'));
+    assert.ok(result.importReport.entries.some(item => item.category === 'review' && /重复任课/.test(item.reason)));
+    assert.ok(result.importReport.entries.some(item => item.category === 'degraded' && item.field === 'blockPreference'));
+    assert.ok(result.draftRows.length >= 4);
+    assert.ok(Array.isArray(result.issues));
+});
+
+test('timetable roster import preserves legacy fields and returns import report', () => {
+    const rows = [{
+        id: 'draft_valid',
+        grade: 'G8',
+        className: '1班',
+        subjectName: '数学',
+        teacherName: '张老师',
+        weeklyHours: 4,
+        blockPreference: 'double',
+    }];
+    const result = buildTimetableRosterFromRows(rows, { project: makeProject() });
+
+    assert.equal(result.count, 1);
+    assert.equal(result.lessonPlans.length, 1);
+    assert.ok(result.importReport);
+    assert.equal(result.importReport.summary.kept, 1);
+    assert.equal(result.importReport.summary.total, 1);
+    assert.equal(result.importReport.hasIssues, false);
 });
 
 test('parseRosterAiOrLocal throws on empty input', async () => {

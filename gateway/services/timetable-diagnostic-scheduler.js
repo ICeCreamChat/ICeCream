@@ -24,9 +24,13 @@ import {
 import {
     validateTimetablePublication,
 } from './timetable-validation.js';
+import {
+    attachTimetableDiagnostics,
+} from './timetable-diagnostics.js';
 
 function attachPublication(project, schedule) {
     schedule.publication = validateTimetablePublication({ ...project, schedule });
+    attachTimetableDiagnostics(project, schedule, { publication: schedule.publication });
     if (project.schedule?.published?.status === 'published') {
         schedule.published = {
             ...project.schedule.published,
@@ -34,6 +38,40 @@ function attachPublication(project, schedule) {
         };
     }
     return schedule;
+}
+
+function normalizeSolveSeed(seed) {
+    if (seed === undefined || seed === null || seed === '') return null;
+    if (typeof seed === 'number' && Number.isFinite(seed)) return String(seed);
+    const text = String(seed).trim();
+    return text ? text.slice(0, 120) : null;
+}
+
+function seededHash(seed, value) {
+    let hash = 2166136261;
+    const text = `${seed}:${value}`;
+    for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+}
+
+function seededCompare(seed, leftKey, rightKey) {
+    if (!seed) return 0;
+    return seededHash(seed, leftKey) - seededHash(seed, rightKey);
+}
+
+function candidateTieKey(candidate = {}) {
+    return `${candidate.day}-${candidate.period}:${candidate.roomId || ''}`;
+}
+
+function scheduleSeedPatch(seed) {
+    return seed ? { seed } : {};
+}
+
+function bumpCount(map, key, amount = 1) {
+    map.set(key, (map.get(key) || 0) + amount);
 }
 
 function isMorning(project, period) {
@@ -199,6 +237,58 @@ function candidateScoreV2(project, usage, slots, task, candidate) {
     return score;
 }
 
+function buildCandidatePressureContext(project, usage, tasks = []) {
+    const taskCandidateCounts = new Map();
+    const slotPressure = new Map();
+    const timePressure = new Map();
+    const classDemand = new Map();
+    const teacherDemand = new Map();
+    const roomDemand = new Map();
+
+    for (const task of tasks) {
+        const candidates = getCandidateBlocks(project, usage, task);
+        taskCandidateCounts.set(task.id, candidates.length);
+
+        const subject = project.subjects.find(item => item.id === task.subjectId);
+        const priority = Number(subject?.priority ?? 50);
+        const teacherCount = Math.max(1, slotTeacherIds(task).length);
+        const weight = 1 + (Math.max(1, task.blockSize || 1) - 1) * 0.55 + priority / 180 + (teacherCount - 1) * 0.35;
+        const contribution = weight / Math.max(1, candidates.length);
+
+        bumpCount(classDemand, task.classId, Math.max(1, task.blockSize || 1));
+        for (const teacherId of slotTeacherIds(task)) bumpCount(teacherDemand, teacherId, Math.max(1, task.blockSize || 1));
+        for (const roomId of roomCandidatesForTask(task)) {
+            if (roomId) bumpCount(roomDemand, roomId, Math.max(1, task.blockSize || 1));
+        }
+
+        for (const candidate of candidates) {
+            bumpCount(slotPressure, candidateTieKey(candidate), contribution);
+            bumpCount(timePressure, `${candidate.day}-${candidate.period}`, contribution);
+        }
+    }
+
+    return {
+        taskCandidateCounts,
+        slotPressure,
+        timePressure,
+        classDemand,
+        teacherDemand,
+        roomDemand,
+    };
+}
+
+function candidatePressureScore(pressureContext, candidate = {}) {
+    if (!pressureContext) return 0;
+    const slot = pressureContext.slotPressure.get(candidateTieKey(candidate)) || 0;
+    const time = pressureContext.timePressure.get(`${candidate.day}-${candidate.period}`) || 0;
+    return slot * 5 + time * 1.5;
+}
+
+function strategyCandidateScore(project, usage, slots, task, candidate, pressureContext) {
+    return candidateScoreV2(project, usage, slots, task, candidate)
+        + candidatePressureScore(pressureContext, candidate);
+}
+
 function expandLessonPlanTasks(project, placedCountByPlan) {
     const tasks = [];
     for (const plan of project.lessonPlans) {
@@ -239,10 +329,23 @@ function expandLessonPlanTasks(project, placedCountByPlan) {
     return tasks;
 }
 
-function taskDifficulty(project, usage, task) {
-    const candidates = getCandidateBlocks(project, usage, task).length;
+function taskDifficulty(project, usage, task, pressureContext = null) {
+    const candidates = pressureContext?.taskCandidateCounts?.get(task.id) ?? getCandidateBlocks(project, usage, task).length;
     const subject = project.subjects.find(item => item.id === task.subjectId);
-    return candidates * 100 - task.blockSize * 10 - (subject?.priority || 50);
+    const priority = Number(subject?.priority ?? 50);
+    const teacherCount = Math.max(1, slotTeacherIds(task).length);
+    const roomConstrained = task.roomId || (Array.isArray(task.allowedRoomIds) && task.allowedRoomIds.length) ? 1 : 0;
+    const classDemand = pressureContext?.classDemand?.get(task.classId) || 0;
+    const teacherDemand = slotTeacherIds(task).reduce((sum, teacherId) => sum + (pressureContext?.teacherDemand?.get(teacherId) || 0), 0);
+    const roomDemand = roomCandidatesForTask(task)
+        .filter(Boolean)
+        .reduce((sum, roomId) => sum + (pressureContext?.roomDemand?.get(roomId) || 0), 0);
+    return candidates * 100
+        - Math.max(1, task.blockSize || 1) * 18
+        - priority
+        - (teacherCount - 1) * 16
+        - roomConstrained * 14
+        - Math.min(40, classDemand + teacherDemand * 0.5 + roomDemand * 0.5);
 }
 
 function makeSlot(task, day, period, index = 0, locked = false, roomId = undefined) {
@@ -305,7 +408,7 @@ function taskSlotAffinity(project, task, day, period) {
 // Greedily assign each colour group to a distinct time slot to maximise total
 // soft affinity. periodCount is small (≤ 84) so an O(n²) greedy is plenty fast
 // and deterministic.
-function assignColorsToSlots(project, colorGroups, timetableSlots) {
+function assignColorsToSlots(project, colorGroups, timetableSlots, seed = null) {
     const colorCount = colorGroups.length;
     const groupScore = (group, slot) => group.reduce(
         (sum, entry) => sum + taskSlotAffinity(project, entry.task, slot.day, slot.period),
@@ -318,6 +421,7 @@ function assignColorsToSlots(project, colorGroups, timetableSlots) {
         }
     }
     pairs.sort((left, right) => right.score - left.score
+        || seededCompare(seed, `${left.color}:${left.slotIndex}`, `${right.color}:${right.slotIndex}`)
         || left.color - right.color
         || left.slotIndex - right.slotIndex);
 
@@ -531,8 +635,10 @@ function expandSingleTeacherEdgeTasks(project) {
     return tasks;
 }
 
-function buildFastEdgeColoredSchedule(project) {
+function buildFastEdgeColoredSchedule(project, options = {}) {
     if (!hasSimpleEdgeColoringShape(project)) return null;
+    const startedAt = Date.now();
+    const seed = normalizeSolveSeed(options.seed);
     const audit = auditTimetableProject(project);
 
     const timetableSlots = getActiveSlotPairs(project);
@@ -598,7 +704,7 @@ function buildFastEdgeColoredSchedule(project) {
 
     // Map each colour (a conflict-free group of lessons) onto the time slot that
     // best satisfies the soft rules, instead of the arbitrary natural order.
-    const colorToSlotIndex = assignColorsToSlots(project, colorGroups, timetableSlots);
+    const colorToSlotIndex = assignColorsToSlots(project, colorGroups, timetableSlots, seed);
     const slots = [];
     colorGroups.forEach((group, color) => {
         const slotIndex = colorToSlotIndex[color];
@@ -643,12 +749,19 @@ function buildFastEdgeColoredSchedule(project) {
             phase: 'fast_construct',
             status: conflicts.some(conflict => conflict.severity === 'hard') || unplaced.length ? 'failed' : 'accepted',
             strategy: 'bipartite_edge_coloring',
+            ...scheduleSeedPatch(seed),
             lessonCount: tasks.length,
+            placedLessons: slots.length,
+            unplacedLessons: unplaced.length,
+            hardConflicts: conflicts.filter(conflict => conflict.severity === 'hard').length,
+            softScore: null,
             localImproveMs: 0,
+            solveMs: Date.now() - startedAt,
             accepted: true,
             reason: null,
         },
     };
+    schedule.solverStats.softScore = schedule.score.softScore;
     attachPublication(project, schedule);
 
     return {
@@ -658,84 +771,259 @@ function buildFastEdgeColoredSchedule(project) {
     };
 }
 
-// Single-step local repair: for each unplaced task, look for an already-placed
-// (non-locked, single) slot that, if moved elsewhere, frees a slot the unplaced
-// task can occupy. Bounded by a step budget so large rosters stay fast and the
-// procedure stays fully deterministic.
-function repairUnplaced(project, usage, slots, unplaced) {
-    const STEP_BUDGET = 400;
+function cloneUsage(usage) {
+    return {
+        teacher: new Set(usage.teacher),
+        class: new Set(usage.class),
+        room: new Set(usage.room),
+        classSubjectDay: new Map(usage.classSubjectDay),
+        teacherDay: new Map(usage.teacherDay),
+    };
+}
+
+function restoreUsage(target, snapshot) {
+    target.teacher = new Set(snapshot.teacher);
+    target.class = new Set(snapshot.class);
+    target.room = new Set(snapshot.room);
+    target.classSubjectDay = new Map(snapshot.classSubjectDay);
+    target.teacherDay = new Map(snapshot.teacherDay);
+}
+
+function findBlockingSlots(slots, task, day, period) {
+    const taskTeachers = slotTeacherIds(task);
+    return slots
+        .filter(slot => !slot.locked
+            && !slot.manuallyAdjusted
+            && slot.blockSize <= 1
+            && slot.day === day
+            && slot.period === period
+            && (slot.classId === task.classId
+                || slotTeacherIds(slot).some(id => taskTeachers.includes(id))
+                || (slot.roomId && task.roomId && slot.roomId === task.roomId)))
+        .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function repairFailureReason(code, detail = '') {
+    const labels = {
+        no_task: '缺少可修复任务',
+        block_size: '暂不支持连堂换位修复',
+        no_candidate: '没有可尝试的目标节次',
+        too_many_blockers: '目标节次阻塞课程过多',
+        task_still_blocked: '移开阻塞课程后目标仍不可用',
+        blocker_unmovable: '阻塞课程无法在预算内挪开',
+        budget_exhausted: '换位修复预算已用完',
+    };
+    const text = labels[code] || code;
+    return detail ? `${text}：${detail}` : text;
+}
+
+function candidateListForRepair(project, usage, task, slots, pressureContext) {
+    const candidates = [];
+    for (const day of getActiveWeekdays(project)) {
+        for (const period of getActivePeriods(project)) {
+            if (!hasConsecutiveActivePeriods(project, period, task.blockSize)) continue;
+            for (const roomId of roomCandidatesForTask(task)) {
+                const target = { ...task, roomId, day, period };
+                const check = canUseSlot(project, usage, target);
+                const blockers = check.ok ? [] : findBlockingSlots(slots, target, day, period);
+                const score = strategyCandidateScore(project, usage, slots, task, { day, period, roomId }, pressureContext)
+                    + blockers.length * 40;
+                candidates.push({ day, period, roomId, check, blockers, score });
+            }
+        }
+    }
+    return candidates.sort((left, right) => left.score - right.score
+        || left.blockers.length - right.blockers.length
+        || left.day - right.day
+        || left.period - right.period
+        || String(left.roomId || '').localeCompare(String(right.roomId || '')));
+}
+
+function relocateBlocker(project, usage, slots, blocker, forbiddenKeys, pressureContext) {
+    const candidates = [];
+    for (const day of getActiveWeekdays(project)) {
+        for (const period of getActivePeriods(project)) {
+            if (forbiddenKeys.has(`${day}-${period}`)) continue;
+            const relocated = { ...blocker, day, period };
+            const check = canUseSlot(project, usage, relocated);
+            if (!check.ok) continue;
+            candidates.push({
+                slot: relocated,
+                score: strategyCandidateScore(project, usage, slots, blocker, {
+                    day,
+                    period,
+                    roomId: blocker.roomId || null,
+                }, pressureContext),
+            });
+        }
+    }
+    candidates.sort((left, right) => left.score - right.score
+        || left.slot.day - right.slot.day
+        || left.slot.period - right.slot.period
+        || left.slot.id.localeCompare(right.slot.id));
+    return candidates[0]?.slot || null;
+}
+
+// Bounded local repair: for each unplaced single lesson, try to free a target
+// slot by moving a small number of blockers. Failed branches restore both slots
+// and usage before trying the next candidate.
+function repairUnplaced(project, usage, slots, unplaced, pressureContext = null) {
+    const STEP_BUDGET = 900;
+    const MAX_BLOCKERS = 2;
     let steps = 0;
+    const stats = {
+        strategy: 'bounded_blocking_repair',
+        attempts: 0,
+        repaired: 0,
+        relocatedBlockers: 0,
+        rollbacks: 0,
+        steps: 0,
+        budget: STEP_BUDGET,
+        maxBlockers: MAX_BLOCKERS,
+        failures: {},
+    };
+
+    const recordFailure = (entry, code, detail = '') => {
+        stats.failures[code] = (stats.failures[code] || 0) + 1;
+        entry.repairStatus = 'failed';
+        entry.repairReasonCode = code;
+        entry.repairReason = repairFailureReason(code, detail);
+        entry.blocking = {
+            reasonCode: code,
+            reason: entry.repairReason,
+            blockerCount: entry.blocking?.blockerCount ?? 0,
+            blockers: entry.blocking?.blockers || [],
+        };
+    };
 
     for (let u = 0; u < unplaced.length && steps < STEP_BUDGET; u++) {
         const entry = unplaced[u];
         const task = entry.task;
-        if (!task || task.blockSize > 1) continue; // only repair single-period lessons
+        if (!task) {
+            recordFailure(entry, 'no_task');
+            continue;
+        }
+        if (task.blockSize > 1) {
+            recordFailure(entry, 'block_size');
+            continue;
+        }
 
         let repaired = false;
-        const activeWeekdays = getActiveWeekdays(project);
-        const activePeriods = getActivePeriods(project);
+        const candidates = candidateListForRepair(project, usage, task, slots, pressureContext);
+        if (!candidates.length) {
+            recordFailure(entry, 'no_candidate');
+            continue;
+        }
 
-        for (const day of activeWeekdays) {
-            if (repaired) break;
-            for (const period of activePeriods) {
-                steps += 1;
-                if (steps >= STEP_BUDGET) break;
-                const target = { ...task, day, period };
-                const check = canUseSlot(project, usage, target);
-                if (check.ok) {
-                    // a slot opened up on its own (shouldn't usually happen) — just take it
-                    const slot = makeSlot(task, day, period, 0, false);
-                    slots.push(slot);
-                    addUsage(usage, slot);
-                    repaired = true;
-                    break;
-                }
-                // find the blocking slot(s) occupying (day, period) for this class/teacher
-                const blockers = slots.filter(slot => !slot.locked
-                    && slot.blockSize <= 1
-                    && slot.day === day && slot.period === period
-                    && (slot.classId === task.classId
-                        || slotTeacherIds(slot).some(id => slotTeacherIds(task).includes(id))));
-                if (blockers.length !== 1) continue; // multi-blocker swaps are out of scope
-
-                const blocker = blockers[0];
-                // tentatively remove the blocker, see if BOTH can be placed
-                removeUsage(usage, blocker);
-                const taskFits = canUseSlot(project, usage, target).ok;
-                let moved = null;
-                if (taskFits) {
-                    for (const d2 of activeWeekdays) {
-                        for (const p2 of activePeriods) {
-                            if (d2 === day && p2 === period) continue;
-                            const relocated = { ...blocker, day: d2, period: p2 };
-                            if (canUseSlot(project, usage, relocated).ok) {
-                                moved = relocated;
-                                break;
-                            }
-                        }
-                        if (moved) break;
-                    }
-                }
-                if (taskFits && moved) {
-                    // commit: relocate blocker, place the previously-unplaced task
-                    const blockerIndex = slots.indexOf(blocker);
-                    slots[blockerIndex] = { ...moved, id: blocker.id };
-                    addUsage(usage, slots[blockerIndex]);
-                    const slot = makeSlot(task, day, period, 0, false);
-                    slots.push(slot);
-                    addUsage(usage, slot);
-                    repaired = true;
-                    break;
-                }
-                // revert
-                addUsage(usage, blocker);
+        for (const candidate of candidates) {
+            steps += 1;
+            stats.attempts += 1;
+            if (steps >= STEP_BUDGET) {
+                recordFailure(entry, 'budget_exhausted');
+                break;
             }
+            const target = { ...task, roomId: candidate.roomId, day: candidate.day, period: candidate.period };
+            if (candidate.check.ok) {
+                const slot = makeSlot(task, candidate.day, candidate.period, 0, false, candidate.roomId);
+                slots.push(slot);
+                addUsage(usage, slot);
+                repaired = true;
+                break;
+            }
+
+            const blockers = candidate.blockers;
+            entry.blocking = {
+                reasonCode: blockers.length > MAX_BLOCKERS ? 'too_many_blockers' : 'blocked_by_lessons',
+                reason: blockers.length
+                    ? `${blockers.length} 节已排课程占用了候选位置`
+                    : candidate.check.reason,
+                blockerCount: blockers.length,
+                blockers: blockers.map(slot => ({
+                    slotId: slot.id,
+                    lessonPlanId: slot.lessonPlanId,
+                    classId: slot.classId,
+                    subjectId: slot.subjectId,
+                    teacherId: slot.teacherId,
+                    day: slot.day,
+                    period: slot.period,
+                })),
+            };
+            if (!blockers.length) {
+                recordFailure(entry, 'task_still_blocked', candidate.check.reason);
+                continue;
+            }
+            if (blockers.length > MAX_BLOCKERS) {
+                recordFailure(entry, 'too_many_blockers', `${blockers.length} 个 blocker`);
+                continue;
+            }
+
+            const slotSnapshot = slots.slice();
+            const usageSnapshot = cloneUsage(usage);
+            const moved = new Map();
+            let failed = false;
+            const forbiddenKeys = new Set([`${candidate.day}-${candidate.period}`]);
+
+            for (const blocker of blockers) {
+                removeUsage(usage, blocker);
+            }
+            if (!canUseSlot(project, usage, target).ok) {
+                failed = true;
+                recordFailure(entry, 'task_still_blocked');
+            }
+
+            if (!failed) {
+                for (const blocker of blockers) {
+                    steps += 1;
+                    if (steps >= STEP_BUDGET) {
+                        failed = true;
+                        recordFailure(entry, 'budget_exhausted');
+                        break;
+                    }
+                    const relocated = relocateBlocker(project, usage, slots, blocker, forbiddenKeys, pressureContext);
+                    if (!relocated) {
+                        failed = true;
+                        recordFailure(entry, 'blocker_unmovable', blocker.lessonPlanId || blocker.id);
+                        break;
+                    }
+                    const next = { ...relocated, id: blocker.id };
+                    addUsage(usage, next);
+                    moved.set(blocker.id, next);
+                    forbiddenKeys.add(`${next.day}-${next.period}`);
+                }
+            }
+
+            if (!failed) {
+                for (const [index, slot] of slots.entries()) {
+                    if (moved.has(slot.id)) slots[index] = moved.get(slot.id);
+                }
+                const slot = makeSlot(task, candidate.day, candidate.period, 0, false, candidate.roomId);
+                slots.push(slot);
+                addUsage(usage, slot);
+                stats.repaired += 1;
+                stats.relocatedBlockers += moved.size;
+                entry.repairStatus = 'repaired';
+                entry.repairReasonCode = null;
+                entry.repairReason = null;
+                entry.blocking = {
+                    ...entry.blocking,
+                    resolvedBy: 'bounded_blocking_repair',
+                    relocatedBlockers: moved.size,
+                };
+                repaired = true;
+                break;
+            }
+
+            stats.rollbacks += 1;
+            slots.splice(0, slots.length, ...slotSnapshot);
+            restoreUsage(usage, usageSnapshot);
         }
         if (repaired) {
             unplaced.splice(u, 1);
             u -= 1;
         }
     }
+    stats.steps = steps;
+    return stats;
 }
 
 function localImproveBudgetMs(env = process.env) {
@@ -854,20 +1142,42 @@ function tryImproveBySwap(project, slots, unplaced, groups) {
 function improveScheduleLocally(project, slots, unplaced, audit) {
     const startedAt = Date.now();
     const budget = localImproveBudgetMs();
-    if (budget <= 0 || unplaced.length) return { slots, stats: { localImproveMs: 0, improved: false } };
+    if (budget <= 0 || unplaced.length) {
+        return {
+            slots,
+            stats: {
+                strategy: 'soft_score_local_improvement',
+                localImproveMs: 0,
+                improved: false,
+                rounds: 0,
+                movesAccepted: 0,
+                candidatesAccepted: 0,
+                rejectedHardConflicts: 0,
+                budgetMs: budget,
+            },
+        };
+    }
     let currentSlots = slots;
     let currentIssues = buildTimetableQualityIssues(project, currentSlots);
     const originalValue = scheduleScoreValue(project, currentSlots, unplaced);
     let currentValue = originalValue;
     let movesAccepted = 0;
+    let rounds = 0;
+    let rejectedHardConflicts = 0;
 
     while (Date.now() - startedAt < budget && movesAccepted < 20 && currentIssues.length) {
+        rounds += 1;
         const affectedIds = new Set(currentIssues.map(item => item.slot?.id).filter(Boolean));
         const groups = unlockedGroups(currentSlots, affectedIds);
         if (!groups.length) break;
         const moved = tryImproveByMove(project, currentSlots, unplaced, groups);
         const next = moved.improved ? moved : tryImproveBySwap(project, currentSlots, unplaced, groups);
         if (!next.improved || next.value <= currentValue) break;
+        const conflicts = detectScheduleConflicts(project, next.slots);
+        if (conflicts.some(conflict => conflict.severity === 'hard')) {
+            rejectedHardConflicts += 1;
+            break;
+        }
         currentSlots = next.slots;
         currentValue = next.value;
         movesAccepted += 1;
@@ -877,9 +1187,18 @@ function improveScheduleLocally(project, slots, unplaced, audit) {
     return {
         slots: currentSlots,
         stats: {
+            strategy: 'soft_score_local_improvement',
             localImproveMs: Date.now() - startedAt,
             improved: currentValue > originalValue,
+            rounds,
             movesAccepted,
+            candidatesAccepted: movesAccepted,
+            rejectedHardConflicts,
+            originalValue,
+            finalValue: currentValue,
+            delta: currentValue - originalValue,
+            remainingQualityIssues: currentIssues.length,
+            budgetMs: budget,
             auditWarnings: audit?.warnings?.length || 0,
         },
     };
@@ -1018,14 +1337,16 @@ function seedProtectedCurrentSlots(project, usage, maps, seededState) {
     return { slots, conflicts, placedCountByPlan };
 }
 
-export function runTimetableScheduler(input = {}) {
+export function runTimetableScheduler(input = {}, options = {}) {
+    const startedAt = Date.now();
     const project = normalizeTimetableProject(input);
+    const seed = normalizeSolveSeed(options.seed);
     const audit = auditTimetableProject(project);
 
     // Edge-coloring (when the project shape is simple) yields a globally feasible,
     // soft-rule-aware assignment far more reliably than greedy, so try it first and
     // fall back to the greedy constructor + local repair otherwise.
-    const edgeColored = buildFastEdgeColoredSchedule(project);
+    const edgeColored = buildFastEdgeColoredSchedule(project, { seed });
     if (edgeColored?.success) return edgeColored;
 
     const maps = getTimetableEntityMaps(project);
@@ -1056,16 +1377,44 @@ export function runTimetableScheduler(input = {}) {
         { ...project, lessonPlans: project.lessonPlans.filter(plan => validPlanIds.has(plan.id)) },
         seeded.placedCountByPlan,
     );
-    // Most-constrained-first: tasks with the fewest candidate slots (and larger
-    // blocks / higher priority) are placed earliest so they don't get crowded out.
-    tasks.sort((left, right) => taskDifficulty(project, usage, left) - taskDifficulty(project, usage, right) || left.id.localeCompare(right.id));
+    const pressureContext = buildCandidatePressureContext(project, usage, tasks);
+    const strategyStats = {
+        phase: 'legacy_strategy_enhancement',
+        ordering: 'difficulty_pressure',
+        candidateScoring: 'soft_rules_plus_pressure',
+        repair: 'bounded_blocking_repair',
+        localImprovement: 'soft_score_local_improvement',
+        taskCount: tasks.length,
+        initialPlacedCount: slots.length,
+        initialUnplacedCount: unplaced.length,
+        constructorAttempts: 0,
+        constructorPlaced: 0,
+        constructorUnplaced: 0,
+        candidateChecks: 0,
+        pressure: {
+            maxSlotPressure: Math.max(0, ...pressureContext.slotPressure.values()),
+            maxTimePressure: Math.max(0, ...pressureContext.timePressure.values()),
+        },
+    };
+    // Most-constrained-first: tasks with fewer candidates, stronger shared
+    // resource pressure and larger blocks are placed earliest.
+    tasks.sort((left, right) => taskDifficulty(project, usage, left, pressureContext) - taskDifficulty(project, usage, right, pressureContext)
+        || seededCompare(seed, left.id, right.id)
+        || left.id.localeCompare(right.id));
 
     for (const task of tasks) {
+        strategyStats.constructorAttempts += 1;
         const scored = getCandidateBlocks(project, usage, task)
-            .map(candidate => ({ ...candidate, score: candidateScoreV2(project, usage, slots, task, candidate) }))
-            .sort((left, right) => left.score - right.score || left.day - right.day || left.period - right.period);
+            .map(candidate => ({ ...candidate, score: strategyCandidateScore(project, usage, slots, task, candidate, pressureContext) }))
+            .sort((left, right) => left.score - right.score
+                || seededCompare(seed, candidateTieKey(left), candidateTieKey(right))
+                || left.day - right.day
+                || left.period - right.period
+                || String(left.roomId || '').localeCompare(String(right.roomId || '')));
+        strategyStats.candidateChecks += scored.length;
 
         if (!scored.length) {
+            strategyStats.constructorUnplaced += 1;
             unplaced.push({
                 taskId: task.id,
                 lessonPlanId: task.lessonPlanId,
@@ -1073,6 +1422,7 @@ export function runTimetableScheduler(input = {}) {
                 subjectId: task.subjectId,
                 teacherId: task.teacherId,
                 reason: '没有可用节次：教师或班级被占用/不可排',
+                reasonCode: 'no_candidate_after_constructor',
                 task,
             });
             continue;
@@ -1084,10 +1434,14 @@ export function runTimetableScheduler(input = {}) {
             slots.push(slot);
             addUsage(usage, slot);
         }
+        strategyStats.constructorPlaced += task.blockSize;
     }
 
-    // Local repair: try to rescue unplaced tasks by relocating one blocking slot.
-    repairUnplaced(project, usage, slots, unplaced);
+    strategyStats.afterConstructorUnplacedCount = unplaced.length;
+    // Local repair: try to rescue unplaced tasks by relocating bounded blockers.
+    const repairStats = repairUnplaced(project, usage, slots, unplaced, pressureContext);
+    strategyStats.repairStats = repairStats;
+    strategyStats.afterRepairUnplacedCount = unplaced.length;
     const localImprovement = improveScheduleLocally(project, slots, unplaced, audit);
     const finalSlots = localImprovement.slots;
 
@@ -1097,6 +1451,15 @@ export function runTimetableScheduler(input = {}) {
     conflicts.push(...detectScheduleConflicts(project, finalSlots));
     const qualityIssues = buildTimetableQualityIssues(project, finalSlots);
     const hasPreflightBlocking = audit.blockingIssues.length > 0;
+
+    const scheduleScore = buildTimetableScore(project, finalSlots, cleanUnplaced, conflicts);
+    strategyStats.finalPlacedCount = finalSlots.length;
+    strategyStats.finalUnplacedCount = cleanUnplaced.length;
+    strategyStats.finalHardConflicts = conflicts.filter(conflict => conflict.severity === 'hard').length;
+    strategyStats.finalSoftScore = scheduleScore.softScore;
+    strategyStats.finalSoftSatisfaction = scheduleScore.softSatisfaction;
+    strategyStats.localImprovementStats = localImprovement.stats;
+    strategyStats.solveMs = Date.now() - startedAt;
 
     const schedule = {
         id: `schedule_${Date.now()}`,
@@ -1108,19 +1471,29 @@ export function runTimetableScheduler(input = {}) {
         unplaced: cleanUnplaced,
         audit,
         qualityIssues,
-        score: buildTimetableScore(project, finalSlots, cleanUnplaced, conflicts),
+        score: scheduleScore,
         solverStats: {
             solverUsed: false,
             phase: 'fast_construct',
             status: conflicts.some(conflict => conflict.severity === 'hard') || cleanUnplaced.length ? 'failed' : 'accepted',
             strategy: 'greedy_constraints',
+            strategyVersion: 'legacy_enhanced_v1',
+            ...scheduleSeedPatch(seed),
             lessonCount: project.lessonPlans.reduce((sum, plan) => sum + plan.weeklyHours, 0),
+            placedLessons: finalSlots.length,
+            unplacedLessons: cleanUnplaced.length,
+            hardConflicts: conflicts.filter(conflict => conflict.severity === 'hard').length,
+            softScore: null,
             localImproveMs: localImprovement.stats.localImproveMs,
+            solveMs: strategyStats.solveMs,
             accepted: !(conflicts.some(conflict => conflict.severity === 'hard') || cleanUnplaced.length),
             reason: hasPreflightBlocking ? 'preflight_blocking_issues' : null,
+            strategyStats,
+            repairStats,
             localImprovement: localImprovement.stats,
         },
     };
+    schedule.solverStats.softScore = schedule.score.softScore;
     attachPublication(project, schedule);
 
     return {

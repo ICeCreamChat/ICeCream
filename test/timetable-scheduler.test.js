@@ -155,6 +155,62 @@ function assertNoTeacherOrClassConflicts(slots) {
     }
 }
 
+function scheduleSignature(schedule = {}) {
+    return (schedule.slots || [])
+        .map(slot => ({
+            lessonPlanId: slot.lessonPlanId,
+            classId: slot.classId,
+            subjectId: slot.subjectId,
+            teacherId: slot.teacherId,
+            teacherIds: [...(slot.teacherIds || [])].sort(),
+            day: slot.day,
+            period: slot.period,
+            roomId: slot.roomId || null,
+            locked: Boolean(slot.locked),
+            blockIndex: slot.blockIndex || 0,
+            blockSize: slot.blockSize || 1,
+        }))
+        .sort((left, right) => (
+            left.day - right.day
+            || left.period - right.period
+            || left.classId.localeCompare(right.classId)
+            || left.lessonPlanId.localeCompare(right.lessonPlanId)
+            || String(left.roomId || '').localeCompare(String(right.roomId || ''))
+        ));
+}
+
+function solveBenchmark(project, options = {}) {
+    const startedAt = Date.now();
+    const result = runTimetableScheduler(project, options);
+    const durationMs = Date.now() - startedAt;
+    const schedule = result.schedule || {};
+    const score = schedule.score || {};
+    const stats = schedule.solverStats || {};
+    return {
+        result,
+        metrics: {
+            success: Boolean(result.success),
+            strategy: stats.strategy || null,
+            status: stats.status || null,
+            accepted: Boolean(stats.accepted),
+            lessonCount: stats.lessonCount ?? null,
+            slotCount: (schedule.slots || []).length,
+            unplacedCount: (schedule.unplaced || []).length,
+            hardConflicts: score.hardConflicts ?? 0,
+            softScore: score.softScore ?? score.softSatisfaction ?? 0,
+            completeness: score.completeness ?? 0,
+            localImproveMs: stats.localImproveMs ?? 0,
+            strategyVersion: stats.strategyVersion || null,
+            strategyStats: stats.strategyStats || null,
+            repairStats: stats.repairStats || null,
+            localImprovementImproved: Boolean(stats.localImprovement?.improved),
+            localImprovementRounds: stats.localImprovement?.rounds ?? 0,
+            localImprovementMovesAccepted: stats.localImprovement?.movesAccepted ?? 0,
+            durationMs,
+        },
+    };
+}
+
 test('timetable project normalizes active weekdays and active periods from legacy shape', () => {
     const legacy = normalizeTimetableProject({ weekdays: 3, periodsPerDay: 4 });
     assert.deepEqual(legacy.activeWeekdays, [1, 2, 3]);
@@ -311,6 +367,153 @@ test('timetable scheduler creates a reproducible conflict-free schedule', () => 
     );
     assert.equal(result.schedule.slots.some(slot => slot.teacherId === 't_math' && slot.day === 1 && slot.period === 1), false);
     assert.equal(result.schedule.slots.some(slot => slot.classId === 'c2' && slot.day === 1 && slot.period === 1), false);
+});
+
+test('timetable scheduler records an optional seed and reproduces placements for that seed', () => {
+    const first = runTimetableScheduler(sampleProject(), { seed: 'legacy-seed-2026' });
+    const second = runTimetableScheduler(sampleProject(), { seed: 'legacy-seed-2026' });
+
+    assert.equal(first.success, true);
+    assert.equal(second.success, true);
+    assert.equal(first.schedule.solverStats.seed, 'legacy-seed-2026');
+    assert.equal(second.schedule.solverStats.seed, 'legacy-seed-2026');
+    assert.deepEqual(scheduleSignature(first.schedule), scheduleSignature(second.schedule));
+});
+
+test('timetable scheduler keeps seed metadata absent on the default path', () => {
+    const result = runTimetableScheduler(sampleProject());
+
+    assert.equal(result.success, true);
+    assert.equal(Object.hasOwn(result.schedule.solverStats, 'seed'), false);
+});
+
+test('legacy scheduler baseline metrics cover core solve strategy scenarios', () => {
+    const solvable = solveBenchmark(sampleProject(), { seed: 'baseline-solvable' });
+    assert.equal(solvable.metrics.success, true);
+    assert.equal(solvable.metrics.strategy, 'greedy_constraints');
+    assert.equal(solvable.metrics.strategyVersion, 'legacy_enhanced_v1');
+    assert.equal(solvable.metrics.strategyStats.ordering, 'difficulty_pressure');
+    assert.equal(solvable.metrics.strategyStats.candidateScoring, 'soft_rules_plus_pressure');
+    assert.equal(solvable.metrics.repairStats.strategy, 'bounded_blocking_repair');
+    assert.equal(solvable.metrics.unplacedCount, 0);
+    assert.equal(solvable.metrics.hardConflicts, 0);
+    assert.equal(solvable.metrics.lessonCount, 11);
+    assert.equal(typeof solvable.metrics.softScore, 'number');
+    assert.equal(Number.isFinite(solvable.metrics.durationMs), true);
+
+    const impossible = solveBenchmark(sampleProject({
+        weekdays: 1,
+        periodsPerDay: 1,
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [
+            { id: 'c1', grade: 'G7', name: '1' },
+            { id: 'c2', grade: 'G7', name: '2' },
+        ],
+        subjects: [{ id: 'math', name: 'Math', priority: 100, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp1', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+            { id: 'lp2', classId: 'c2', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+    }), { seed: 'baseline-impossible' });
+    assert.equal(impossible.metrics.success, false);
+    assert.equal(impossible.metrics.unplacedCount, 1);
+    assert.ok(impossible.result.schedule.unplaced[0].reason);
+
+    const lockedDouble = solveBenchmark(createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 5,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5],
+        teachers: [{ id: 't_sci', name: 'Science', subjects: ['sci'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'sci', name: 'Science', priority: 70, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp_sci', classId: 'c1', subjectId: 'sci', teacherId: 't_sci', weeklyHours: 2, blockPreference: 'double' },
+        ],
+        rules: {
+            hardRules: {
+                lockedSlots: [{ day: 2, period: 5, classId: 'c1', subjectId: 'sci', teacherId: 't_sci', lessonPlanId: 'lp_sci' }],
+                teacherUnavailable: {},
+                classUnavailable: {},
+            },
+            softRules: {},
+        },
+    }), { seed: 'baseline-locked-double' });
+    assert.equal(lockedDouble.metrics.success, true);
+    assert.equal(lockedDouble.metrics.hardConflicts, 0);
+    assert.deepEqual(
+        lockedDouble.result.schedule.slots
+            .filter(slot => slot.lessonPlanId === 'lp_sci')
+            .map(slot => [slot.day, slot.period, slot.locked, slot.blockSize])
+            .sort((left, right) => left[1] - right[1]),
+        [[2, 4, true, 2], [2, 5, true, 2]],
+    );
+
+    const roomLimited = solveBenchmark(createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 1,
+        activeWeekdays: [1],
+        activePeriods: [1],
+        teachers: [
+            { id: 't_sci_1', name: 'Science 1', subjects: ['science'], unavailableSlots: [] },
+            { id: 't_sci_2', name: 'Science 2', subjects: ['science'], unavailableSlots: [] },
+        ],
+        classes: [
+            { id: 'c1', grade: 'G7', name: '1' },
+            { id: 'c2', grade: 'G7', name: '2' },
+        ],
+        subjects: [{ id: 'science', name: 'Science', priority: 60, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp_lab_1', classId: 'c1', subjectId: 'science', teacherId: 't_sci_1', weeklyHours: 1, allowedRoomIds: ['Lab A', 'Lab B'] },
+            { id: 'lp_lab_2', classId: 'c2', subjectId: 'science', teacherId: 't_sci_2', weeklyHours: 1, allowedRoomIds: ['Lab A', 'Lab B'] },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+    }), { seed: 'baseline-rooms' });
+    assert.equal(roomLimited.metrics.success, true);
+    assert.deepEqual(roomLimited.result.schedule.slots.map(slot => slot.roomId).sort(), ['Lab A', 'Lab B']);
+
+    const manualProtected = solveBenchmark(createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 4,
+        teachers: [
+            { id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_cn', name: 'Chinese Teacher', subjects: ['chinese'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [
+            { id: 'math', name: 'Math', priority: 90, color: '#2563eb' },
+            { id: 'chinese', name: 'Chinese', priority: 88, color: '#16a34a' },
+        ],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 },
+            { id: 'lp_cn', classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', weeklyHours: 2 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+        schedule: {
+            id: 'manual_baseline',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'manual_adjusted',
+            slots: [
+                { id: 'manual_math', day: 3, period: 2, classId: 'c1', subjectId: 'math', teacherId: 't_math', teacherIds: ['t_math'], lessonPlanId: 'lp_math', locked: true, manuallyAdjusted: true },
+                { id: 'manual_cn', day: 4, period: 3, classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', teacherIds: ['t_cn'], lessonPlanId: 'lp_cn', locked: false, manuallyAdjusted: true },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 2, totalLessons: 4, completeness: 50 },
+        },
+    }), { seed: 'baseline-manual-protected' });
+    assert.equal(manualProtected.metrics.success, true);
+    assert.ok(manualProtected.result.schedule.slots.some(slot => slot.lessonPlanId === 'lp_math' && slot.day === 3 && slot.period === 2 && slot.locked));
+    assert.ok(manualProtected.result.schedule.slots.some(slot => slot.lessonPlanId === 'lp_cn' && slot.day === 4 && slot.period === 3 && slot.manuallyAdjusted));
+
+    const large = solveBenchmark(largeTimetableProject(), { seed: 'baseline-large' });
+    assert.equal(large.metrics.success, true);
+    assert.equal(large.metrics.slotCount, 690);
+    assert.equal(large.metrics.unplacedCount, 0);
+    assert.equal(large.metrics.hardConflicts, 0);
+    assert.ok(large.metrics.durationMs < 15000, 'large baseline should stay inside the current 15s budget');
 });
 
 test('fast timetable scheduler handles the 690 lesson project without Timefold', () => {
@@ -612,6 +815,93 @@ test('local repair rescues an otherwise unplaced lesson by relocating a blocker'
 
     assert.equal(result.success, true);
     assert.equal(result.schedule.slots.length, 4);
+    assert.equal(result.schedule.score.unplacedLessons, 0);
+    assertNoTeacherOrClassConflicts(result.schedule.slots);
+});
+
+test('bounded repair can relocate two blockers without leaving hard conflicts', () => {
+    const allSlots = ['1-1', '1-2', '2-1', '2-2', '3-1', '3-2'];
+    const except = allowed => allSlots.filter(slot => !allowed.includes(slot));
+    const project = createDefaultTimetableProject({
+        weekdays: 3,
+        periodsPerDay: 2,
+        activeWeekdays: [1, 2, 3],
+        activePeriods: [1, 2],
+        teachers: [
+            { id: 't_target', name: 'Target Teacher', subjects: ['target', 'block_b'], unavailableSlots: [] },
+            { id: 't_block_a', name: 'Block A', subjects: ['block_a'], unavailableSlots: except(['1-1', '3-1']) },
+            { id: 't_block_c', name: 'Block C', subjects: ['block_c'], unavailableSlots: except(['1-2']) },
+            { id: 't_block_d', name: 'Block D', subjects: ['block_d'], unavailableSlots: except(['2-1']) },
+            { id: 't_block_e', name: 'Block E', subjects: ['block_e'], unavailableSlots: except(['2-2']) },
+            { id: 't_lab_1', name: 'Lab 1', subjects: ['lab_hold'], unavailableSlots: [] },
+            { id: 't_lab_2', name: 'Lab 2', subjects: ['lab_hold'], unavailableSlots: [] },
+        ],
+        classes: [
+            { id: 'c_target', grade: 'G', name: 'Target' },
+            { id: 'c_peer', grade: 'G', name: 'Peer' },
+            { id: 'c_lab_1', grade: 'G', name: 'Lab 1' },
+            { id: 'c_lab_2', grade: 'G', name: 'Lab 2' },
+        ],
+        subjects: [
+            { id: 'target', name: 'Target', priority: 1, color: '#2563eb' },
+            { id: 'block_a', name: 'Block A', priority: 100, color: '#16a34a' },
+            { id: 'block_b', name: 'Block B', priority: 100, color: '#f59e0b' },
+            { id: 'block_c', name: 'Block C', priority: 100, color: '#f97316' },
+            { id: 'block_d', name: 'Block D', priority: 100, color: '#06b6d4' },
+            { id: 'block_e', name: 'Block E', priority: 100, color: '#8b5cf6' },
+            { id: 'lab_hold', name: 'Lab Hold', priority: 50, color: '#64748b' },
+        ],
+        lessonPlans: [
+            { id: 'lp_target', classId: 'c_target', subjectId: 'target', teacherId: 't_target', weeklyHours: 1, roomId: 'lab' },
+            { id: 'lp_block_a', classId: 'c_target', subjectId: 'block_a', teacherId: 't_block_a', weeklyHours: 1 },
+            { id: 'lp_block_b', classId: 'c_peer', subjectId: 'block_b', teacherId: 't_target', weeklyHours: 1 },
+            { id: 'lp_block_c', classId: 'c_target', subjectId: 'block_c', teacherId: 't_block_c', weeklyHours: 1 },
+            { id: 'lp_block_d', classId: 'c_target', subjectId: 'block_d', teacherId: 't_block_d', weeklyHours: 1 },
+            { id: 'lp_block_e', classId: 'c_target', subjectId: 'block_e', teacherId: 't_block_e', weeklyHours: 1 },
+            { id: 'lp_lab_1', classId: 'c_lab_1', subjectId: 'lab_hold', teacherId: 't_lab_1', weeklyHours: 1, roomId: 'lab' },
+            { id: 'lp_lab_2', classId: 'c_lab_2', subjectId: 'lab_hold', teacherId: 't_lab_2', weeklyHours: 1, roomId: 'lab' },
+        ],
+        rules: {
+            hardRules: {
+                lockedSlots: [],
+                teacherUnavailable: {},
+                classUnavailable: {
+                    c_peer: ['1-2', '2-1', '2-2', '3-1'],
+                },
+            },
+            softRules: {
+                subjectPreferredPeriods: {
+                    block_a: { prefer: ['1-1'], weight: 100 },
+                    block_b: { prefer: ['1-1'], weight: 100 },
+                    block_c: { prefer: ['1-2'], weight: 100 },
+                    block_d: { prefer: ['2-1'], weight: 100 },
+                    block_e: { prefer: ['2-2'], weight: 100 },
+                },
+            },
+        },
+        schedule: {
+            id: 'lab_locks',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'manual_adjusted',
+            slots: [
+                { id: 'lab_lock_1', day: 3, period: 1, classId: 'c_lab_1', subjectId: 'lab_hold', teacherId: 't_lab_1', teacherIds: ['t_lab_1'], lessonPlanId: 'lp_lab_1', roomId: 'lab', locked: true, manuallyAdjusted: true },
+                { id: 'lab_lock_2', day: 3, period: 2, classId: 'c_lab_2', subjectId: 'lab_hold', teacherId: 't_lab_2', teacherIds: ['t_lab_2'], lessonPlanId: 'lp_lab_2', roomId: 'lab', locked: true, manuallyAdjusted: true },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 2, totalLessons: 8, completeness: 25 },
+        },
+    });
+
+    const result = runTimetableScheduler(project, { seed: 'two-blocker-repair' });
+    const target = result.schedule.slots.find(slot => slot.lessonPlanId === 'lp_target');
+
+    assert.equal(result.success, true);
+    assert.deepEqual([target.day, target.period], [1, 1]);
+    assert.equal(result.schedule.solverStats.repairStats.relocatedBlockers >= 2, true);
+    assert.equal(result.schedule.solverStats.repairStats.rollbacks >= 1, true);
+    assert.equal(result.schedule.score.hardConflicts, 0);
     assert.equal(result.schedule.score.unplacedLessons, 0);
     assertNoTeacherOrClassConflicts(result.schedule.slots);
 });
@@ -5218,6 +5508,47 @@ test('timetable API marks a published schedule as changed after regeneration', a
 
         const stored = await store.loadProject();
         assert.equal(stored.schedule.published.status, 'draft_changed');
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
+test('timetable API records seed metadata from schedule run requests', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-seed-'));
+    resetTimetableOptimizationJobs();
+
+    const store = createTimetableStore();
+    await store.saveProject(sampleProject());
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const runResponse = await fetch(`${baseUrl}/api/tools/timetable/schedule/run`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ seed: 'api-seed-2026' }),
+        });
+        const runPayload = await runResponse.json();
+
+        assert.equal(runResponse.status, 200);
+        assert.equal(runPayload.success, true);
+        assert.equal(runPayload.data.schedule.solverStats.seed, 'api-seed-2026');
+
+        const stored = await store.loadProject();
+        assert.equal(stored.schedule.solverStats.seed, 'api-seed-2026');
     } finally {
         await new Promise(resolve => server.close(resolve));
         if (previousDataDir === undefined) {

@@ -686,6 +686,7 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
         periods: parsePeriods(row.periods || row.lessonIndexes || '', project, []),
         priority: normalizePriority(row.priority || row.strength, type),
         status: status === 'ready' ? 'effective' : status,
+        sourceStatus: STATUS_LABELS.has(row.status) ? row.status : '',
         confidence: row.confidence !== null && row.confidence !== undefined && Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : null,
         description: asText(row.description || row.reason || row.note || '', 500),
         warnings: Array.isArray(row.warnings) ? row.warnings.map(item => asText(item, 200)).filter(Boolean) : [],
@@ -1247,6 +1248,139 @@ function detectRuleConflicts(project = {}, draftRows = []) {
     });
 }
 
+function createRuleReport(sourceKind = 'rules') {
+    const entries = [];
+    const seen = new Set();
+    const add = (category, { source = null, field = '', reason = '', originalValue } = {}) => {
+        const key = JSON.stringify([category, source, field, reason]);
+        if (seen.has(key)) return null;
+        seen.add(key);
+        const entry = { category, source, field, reason };
+        if (originalValue !== undefined) entry.originalValue = originalValue;
+        entries.push(entry);
+        return entry;
+    };
+    return {
+        kept: info => add('kept', info),
+        degraded: info => add('degraded', info),
+        dropped: info => add('dropped', info),
+        review: info => add('review', info),
+        toJSON() {
+            const summary = { total: entries.length, kept: 0, degraded: 0, dropped: 0, review: 0 };
+            entries.forEach(entry => {
+                if (summary[entry.category] !== undefined) summary[entry.category] += 1;
+            });
+            return {
+                sourceKind,
+                summary,
+                entries: entries.slice(),
+                hasIssues: entries.some(entry => entry.category !== 'kept'),
+            };
+        },
+    };
+}
+
+function ruleReportSource(row = {}, inputType = '') {
+    return {
+        rowId: row.id || null,
+        inputType: inputType || null,
+    };
+}
+
+function ruleReportLabel(row = {}) {
+    return row.targetName || row.targetId || row.teacherName || row.className || row.subjectName || row.rawText || row.type || '规则';
+}
+
+function buildTimetableRuleReport({
+    rows = [],
+    autoAcceptable = [],
+    needReview = [],
+    unsupportedItems = [],
+    clarifyingQuestions = [],
+    missingInfo = [],
+    conflicts = [],
+    warnings = [],
+    inputType = '',
+} = {}) {
+    const report = createRuleReport('rules');
+    const autoIds = new Set(autoAcceptable.map(row => row.id).filter(Boolean));
+    const needReviewIds = new Set(needReview.map(row => row.id).filter(Boolean));
+    const unsupportedIds = new Set(unsupportedItems.map(row => row.id).filter(Boolean));
+
+    autoAcceptable.forEach(row => report.kept({
+        source: ruleReportSource(row, inputType),
+        field: row.type || 'rule',
+        reason: `${ruleReportLabel(row)} 高置信度规则，可确认后写入。`,
+    }));
+
+    needReview.forEach(row => {
+        const category = row.status === 'invalid' || row.sourceStatus === 'invalid' ? 'dropped' : 'review';
+        report[category]({
+            source: ruleReportSource(row, inputType),
+            field: row.type || 'rule',
+            reason: (row.warnings || [])[0] || `${ruleReportLabel(row)} 需要复核后才能生效。`,
+        });
+    });
+
+    unsupportedItems.forEach(row => report.degraded({
+        source: ruleReportSource(row, inputType),
+        field: row.type || 'rule',
+        reason: row.description || row.message || `${ruleReportLabel(row)} 当前只能作为建议展示，不会直接写入规则。`,
+    }));
+
+    rows.forEach(row => {
+        if (!row.id || autoIds.has(row.id) || needReviewIds.has(row.id) || unsupportedIds.has(row.id)) return;
+        if (row.status === 'invalid') {
+            report.dropped({
+                source: ruleReportSource(row, inputType),
+                field: row.type || 'rule',
+                reason: (row.warnings || [])[0] || `${ruleReportLabel(row)} 无法应用，请删除或重写。`,
+            });
+        } else if (row.status === 'suggestion' || row.status === 'unsupported') {
+            report.degraded({
+                source: ruleReportSource(row, inputType),
+                field: row.type || 'rule',
+                reason: (row.warnings || [])[0] || `${ruleReportLabel(row)} 当前只能作为建议展示，不会直接写入规则。`,
+            });
+        } else if (row.status === 'needs_review') {
+            report.review({
+                source: ruleReportSource(row, inputType),
+                field: row.type || 'rule',
+                reason: (row.warnings || [])[0] || `${ruleReportLabel(row)} 需要复核后才能生效。`,
+            });
+        }
+    });
+
+    clarifyingQuestions.forEach(question => report.review({
+        source: { rowId: (question.relatedRuleIds || [])[0] || null, inputType: inputType || null },
+        field: question.targetType || 'clarifying_question',
+        reason: question.reason || question.question || '需要补充信息后才能继续。',
+    }));
+
+    missingInfo.forEach(item => report.review({
+        source: { rowId: (item.relatedRuleIds || [])[0] || null, inputType: inputType || null },
+        field: item.targetType || 'missing_info',
+        reason: item.message || '缺少必要信息，需要复核。',
+    }));
+
+    conflicts.forEach(item => {
+        const category = item.level === 'blocking' || item.severity === 'blocking' ? 'dropped' : 'review';
+        report[category]({
+            source: { rowId: (item.relatedRuleIds || [])[0] || null, inputType: inputType || null },
+            field: 'conflict',
+            reason: item.message || item.suggestion || '规则之间存在冲突。',
+        });
+    });
+
+    warnings.forEach(item => report.review({
+        source: { rowId: null, inputType: inputType || null },
+        field: 'warning',
+        reason: item,
+    }));
+
+    return report.toJSON();
+}
+
 function buildRuleReviewResult({ project, rows, warnings = [], unsupportedItems = [], source, inputType, contextStats, draftRules, previewItems }) {
     const conflicts = detectRuleConflicts(project, rows);
     const clarifyingQuestions = buildClarifyingQuestions(project, rows);
@@ -1280,6 +1414,17 @@ function buildRuleReviewResult({ project, rows, warnings = [], unsupportedItems 
             : conflicts.some(item => item.level === 'blocking') || needReview.length || unsupportedItems.length || autoAcceptable.length < rows.filter(row => row.status === 'effective').length
                 ? 'review'
                 : 'ready_to_apply';
+    const ruleReport = buildTimetableRuleReport({
+        rows,
+        autoAcceptable,
+        needReview,
+        unsupportedItems,
+        clarifyingQuestions,
+        missingInfo,
+        conflicts,
+        warnings,
+        inputType,
+    });
 
     return {
         draftRules,
@@ -1292,6 +1437,7 @@ function buildRuleReviewResult({ project, rows, warnings = [], unsupportedItems 
         conflicts,
         warnings,
         unsupportedItems,
+        ruleReport,
         confidenceSummary: confidenceSummary(rows),
         nextAction,
         source,

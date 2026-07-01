@@ -167,7 +167,7 @@ export async function runSolveSkill({ project, solvePlan = {}, env = process.env
     const validation = validateTimetableProjectForSolve(project);
     if (!validation.ok) return failedResult(validation);
 
-    const localResult = runTimetableScheduler(project);
+    const localResult = runTimetableScheduler(project, { seed: solvePlan?.seed });
     const localSolution = solutionFromResult(localResult, {
         solverUsed: 'local_scheduler',
         fallbackUsed: true,

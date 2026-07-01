@@ -502,6 +502,7 @@ export function normalizeSchedule(raw) {
         audit: raw.audit || null,
         qualityIssues: Array.isArray(raw.qualityIssues) ? raw.qualityIssues : [],
         publication: raw.publication || null,
+        diagnostics: raw.diagnostics && typeof raw.diagnostics === 'object' ? raw.diagnostics : null,
         published,
         score: raw.score || {},
         solverStats: raw.solverStats || null,

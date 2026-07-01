@@ -257,6 +257,21 @@ test('timetable agent solve skill compares Timefold and local scheduler candidat
     assert.ok(saveApprovals.every(action => action.payload.diff));
 });
 
+test('timetable agent solve skill passes seed to the local scheduler', async () => {
+    const project = completeProject();
+    const result = await runSolveSkill({
+        project,
+        solvePlan: { solverPreference: 'local_only', seed: 'agent-seed-2026' },
+        env: {},
+    });
+    const local = result.solutions.find(solution => solution.solverUsed === 'local_scheduler');
+
+    assert.equal(result.status, 'solved');
+    assert.ok(local);
+    assert.equal(local.schedule.solverStats.seed, 'agent-seed-2026');
+    assert.equal(result.bestSolution.schedule.solverStats.seed, 'agent-seed-2026');
+});
+
 test('timetable publication skill creates a save diff before overwriting the official schedule', async () => {
     const base = completeProject();
     const oldSchedule = {

@@ -46,12 +46,116 @@ function normalizeHeader(value) {
     return null;
 }
 
-function parseBlockPreference(value) {
-    const text = cleanCell(value).toLowerCase();
-    if (!text) return 'single';
-    if (['double', 'block', '2'].includes(text) || /双|连堂|double|block/.test(text)) return 'double';
-    if (['mixed', 'mix'].includes(text) || /混|单双|mixed|mix/.test(text)) return 'mixed';
-    return 'single';
+function parseBlockPreferenceInfo(value) {
+    const raw = cleanCell(value);
+    const text = raw.toLowerCase();
+    if (!text) return { value: 'single', raw, degraded: false };
+    if (['single', '1'].includes(text) || /单节|普通|常规/.test(text)) return { value: 'single', raw, degraded: false };
+    if (/三|3|three|triple/.test(text)) return { value: 'single', raw, degraded: true };
+    if (['double', 'block', '2'].includes(text) || /双|两|连堂|double|block/.test(text)) return { value: 'double', raw, degraded: false };
+    if (['mixed', 'mix'].includes(text) || /混|单双|mixed|mix/.test(text)) return { value: 'mixed', raw, degraded: false };
+    return { value: 'single', raw, degraded: true };
+}
+
+function blockPreferenceReportReason(row = {}) {
+    return `无法识别“${row.rawBlockPreference || '未填写'}”，已按单节处理。`;
+}
+
+function createRosterImportReport(sourceKind = 'roster') {
+    const entries = [];
+    const add = (category, { source = null, field = '', reason = '', originalValue } = {}) => {
+        const entry = { category, source, field, reason };
+        if (originalValue !== undefined) entry.originalValue = originalValue;
+        entries.push(entry);
+        return entry;
+    };
+    return {
+        add,
+        kept: info => add('kept', info),
+        degraded: info => add('degraded', info),
+        dropped: info => add('dropped', info),
+        review: info => add('review', info),
+        toJSON() {
+            const summary = { total: entries.length, kept: 0, degraded: 0, dropped: 0, review: 0 };
+            entries.forEach(entry => {
+                if (summary[entry.category] !== undefined) summary[entry.category] += 1;
+            });
+            return {
+                sourceKind,
+                summary,
+                entries: entries.slice(),
+                hasIssues: entries.some(entry => entry.category !== 'kept'),
+            };
+        },
+    };
+}
+
+export function buildRosterImportReport(preview = {}) {
+    const report = createRosterImportReport('roster');
+    const rows = Array.isArray(preview.draftRows) ? preview.draftRows : [];
+    const issues = Array.isArray(preview.issues) ? preview.issues : [];
+    const issuesByRow = new Map();
+    issues.forEach(issue => {
+        if (!issue.rowId) return;
+        if (!issuesByRow.has(issue.rowId)) issuesByRow.set(issue.rowId, []);
+        issuesByRow.get(issue.rowId).push(issue);
+    });
+
+    rows.forEach(row => {
+        const rowSource = { row: row.sourceRow || null, rowId: row.id || null };
+        const rowIssues = issuesByRow.get(row.id) || row.issues || [];
+        const errors = rowIssues.filter(issue => issue.severity === 'error');
+        const warnings = rowIssues.filter(issue => issue.severity !== 'error');
+        if (errors.length) {
+            errors.forEach(issue => report.dropped({
+                source: rowSource,
+                field: issue.field || 'row',
+                reason: issue.message || '该行无法导入。',
+                originalValue: {
+                    grade: row.grade,
+                    className: row.className,
+                    subjectName: row.subjectName,
+                    teacherName: row.teacherName,
+                    weeklyHours: row.weeklyHours,
+                },
+            }));
+            return;
+        }
+        if (warnings.length) {
+            warnings.forEach(issue => report.review({
+                source: rowSource,
+                field: issue.field || 'row',
+                reason: issue.message || '该行需要人工复核。',
+            }));
+        } else {
+            report.kept({
+                source: rowSource,
+                field: 'row',
+                reason: '任课行已保留。',
+            });
+        }
+        if (row.blockPreferenceDegraded && row.rawBlockPreference) {
+            report.degraded({
+                source: rowSource,
+                field: 'blockPreference',
+                reason: blockPreferenceReportReason(row),
+                originalValue: row.rawBlockPreference,
+            });
+        }
+    });
+
+    issues
+        .filter(issue => !issue.rowId)
+        .forEach(issue => {
+            const category = issue.severity === 'error' ? 'dropped' : 'review';
+            report[category]({
+                source: { row: issue.sourceRow || null, rowId: null },
+                field: issue.field || 'row',
+                reason: issue.message || '导入数据需要复核。',
+            });
+        });
+
+    return report.toJSON();
 }
 
 function blockLabel(value) {
@@ -113,6 +217,7 @@ function normalizeDraftRow(row = {}, index = 0) {
     const roomName = splitEntityNames(row.roomName || row.roomId || row.allowedRoomIds).join('、');
     const subjectCategory = normalizeSubjectCategory(row.subjectCategory || row.category || row.subjectType, row.subjectName);
     const subjectTags = normalizeSubjectTags(row.subjectTags || row.tags);
+    const blockPreference = parseBlockPreferenceInfo(row.blockPreference);
     return {
         id: cleanCell(row.id, 80) || `draft_${index + 1}`,
         sourceRow: Number.parseInt(row.sourceRow, 10) || index + 1,
@@ -123,7 +228,9 @@ function normalizeDraftRow(row = {}, index = 0) {
         subjectTags,
         teacherName,
         weeklyHours: parseWeeklyHours(row.weeklyHours),
-        blockPreference: parseBlockPreference(row.blockPreference),
+        blockPreference: blockPreference.value,
+        rawBlockPreference: blockPreference.raw,
+        blockPreferenceDegraded: blockPreference.degraded,
         roomName,
     };
 }
@@ -232,13 +339,15 @@ function analyzeDraftRows(rows = [], project = {}) {
         issues: rowIssues.get(row.id) || [],
     }));
 
-    return {
+    const result = {
         draftRows: rowsWithIssues,
         stats: rosterStats(draftRows, issues),
         warnings: [...new Set(warnings)],
         issues,
         hasBlockingIssues: issues.some(issue => issue.severity === 'error'),
     };
+    result.importReport = buildRosterImportReport(result);
+    return result;
 }
 
 export function previewTimetableRosterRows(rows = [], { project = {} } = {}) {
@@ -325,6 +434,7 @@ export function buildTimetableRosterFromRows(rows = [], { project = {} } = {}) {
         issues: preview.issues,
         stats: preview.stats,
         draftRows: preview.draftRows,
+        importReport: preview.importReport,
         count: lessonPlans.length,
     };
 }
@@ -547,6 +657,7 @@ export async function parseRosterAiOrLocal({ text = '', file = null, project = {
                 ));
             }
         });
+        analysis.importReport = buildRosterImportReport(analysis);
         return { ...analysis, source: 'ai' };
     } catch (error) {
         if (error instanceof RosterAiError && ['ai_not_configured', 'missing_fetch'].includes(error.reason)) {

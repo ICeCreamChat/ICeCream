@@ -20,6 +20,9 @@ import {
 import {
     validateTimetablePublication,
 } from './timetable-validation.js';
+import {
+    attachTimetableDiagnostics,
+} from './timetable-diagnostics.js';
 
 function blockSlotIndexes(schedule, slot) {
     if (!slot?.blockId || slot.blockSize <= 1) {
@@ -52,6 +55,7 @@ function refreshSchedule(project, schedule) {
     schedule.qualityIssues = buildTimetableQualityIssues(project, schedule.slots);
     schedule.score = buildTimetableScore(project, schedule.slots, unplaced, conflicts);
     schedule.publication = validateTimetablePublication({ ...project, schedule });
+    attachTimetableDiagnostics(project, schedule, { publication: schedule.publication });
     if (schedule.published?.status === 'published') {
         schedule.published = {
             ...schedule.published,

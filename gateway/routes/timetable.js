@@ -582,7 +582,7 @@ router.post('/schedule/run', async (req, res) => {
             });
             return;
         }
-        const fastResult = runTimetableScheduler(current);
+        const fastResult = runTimetableScheduler(current, { seed: req.body?.seed });
         if (!fastResult.success) {
             fail(res, new Error('快速排课未能生成完整课表，旧课表已保留。'), 422, {
                 project: current,
