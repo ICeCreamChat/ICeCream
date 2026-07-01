@@ -90,7 +90,8 @@ _reverse_tmp/
 # Claude Code config
 .claude/
 
-# Data files (not code)
+# Data files (not code, including root-level spreadsheets)
+/*.xlsx
 *.xlsx
 
 # Deprecated config
