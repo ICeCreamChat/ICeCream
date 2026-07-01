@@ -422,7 +422,15 @@ function renderPeriodTimeDialog(state) {
         startTime: dialog.settings?.startTime || '08:00',
         classMinutes: dialog.settings?.classMinutes ?? 40,
         breakMinutes: dialog.settings?.breakMinutes ?? 10,
+        afternoonStartPeriod: dialog.settings?.afternoonStartPeriod ?? (activePeriods[Math.ceil(activePeriods.length / 2)] ?? null),
+        afternoonStartTime: dialog.settings?.afternoonStartTime || '14:00',
+        eveningStartPeriod: dialog.settings?.eveningStartPeriod ?? null,
+        eveningStartTime: dialog.settings?.eveningStartTime || '19:00',
     };
+    const dayPartPeriodOptions = activePeriods.slice(1);
+    const eveningPeriodOptions = dayPartPeriodOptions
+        .filter(period => settings.afternoonStartPeriod === null || period > Number(settings.afternoonStartPeriod));
+    const renderPeriodOption = (period, selectedValue) => `<option value="${period}" ${Number(selectedValue) === Number(period) ? 'selected' : ''}>第${period}节</option>`;
     const draftTimes = Array.isArray(dialog.draftTimes) ? dialog.draftTimes : state.rangeDraft?.periodTimes || state.project?.periodTimes || [];
     const timeMap = new Map(draftTimes.map(item => [Number(item.period), item]));
     const errorMap = new Map((dialog.errors || []).map(item => [Number(item.period), item.message || '时间配置有误']));
@@ -457,10 +465,10 @@ function renderPeriodTimeDialog(state) {
                 <div class="tt-period-time-settings" aria-label="快速生成节次时间">
                     <div class="tt-period-time-settings-head">
                         <strong>快速生成</strong>
-                        <span>参数变更会自动推算初稿；默认模板含中段长休，最终以时间轴为准。</span>
+                        <span>按上午、下午、晚间首节锚点推算时间轴；手工改表格后，以时间轴实际值为准。</span>
                     </div>
                     <label class="tt-period-time-setting-field">
-                        <span>首节开始</span>
+                        <span>上午首节开始</span>
                         <input type="time" class="tt-roster-review-field" id="tt-period-start-time" data-period-time-setting="startTime" value="${escapeAttr(settings.startTime)}" ${saving ? 'disabled' : ''}>
                     </label>
                     <label class="tt-period-time-setting-field">
@@ -470,6 +478,29 @@ function renderPeriodTimeDialog(state) {
                     <label class="tt-period-time-setting-field">
                         <span>默认间隔</span>
                         <input type="number" class="tt-roster-review-field" id="tt-period-break-minutes" data-period-time-setting="breakMinutes" min="0" max="120" step="1" value="${escapeAttr(settings.breakMinutes)}" ${saving ? 'disabled' : ''}>
+                    </label>
+                    <label class="tt-period-time-setting-field">
+                        <span>下午从第几节开始</span>
+                        <select class="tt-roster-review-field" id="tt-period-afternoon-start-period" data-period-time-setting="afternoonStartPeriod" ${saving || !dayPartPeriodOptions.length ? 'disabled' : ''}>
+                            ${dayPartPeriodOptions.length
+                                ? `<option value="">不单独拆分下午</option>${dayPartPeriodOptions.map(period => renderPeriodOption(period, settings.afternoonStartPeriod)).join('')}`
+                                : '<option value="">无下午段</option>'}
+                        </select>
+                    </label>
+                    <label class="tt-period-time-setting-field">
+                        <span>下午首节开始</span>
+                        <input type="time" class="tt-roster-review-field" id="tt-period-afternoon-start-time" data-period-time-setting="afternoonStartTime" value="${escapeAttr(settings.afternoonStartTime)}" ${saving || !dayPartPeriodOptions.length || !settings.afternoonStartPeriod ? 'disabled' : ''}>
+                    </label>
+                    <label class="tt-period-time-setting-field">
+                        <span>晚间从第几节开始</span>
+                        <select class="tt-roster-review-field" id="tt-period-evening-start-period" data-period-time-setting="eveningStartPeriod" ${saving ? 'disabled' : ''}>
+                            <option value="">不启用晚间</option>
+                            ${eveningPeriodOptions.map(period => renderPeriodOption(period, settings.eveningStartPeriod)).join('')}
+                        </select>
+                    </label>
+                    <label class="tt-period-time-setting-field">
+                        <span>晚间首节开始</span>
+                        <input type="time" class="tt-roster-review-field" id="tt-period-evening-start-time" data-period-time-setting="eveningStartTime" value="${escapeAttr(settings.eveningStartTime)}" ${saving || !settings.eveningStartPeriod ? 'disabled' : ''}>
                     </label>
                     <div class="tt-period-time-setting-actions">
                         <button class="tt-btn tt-btn--primary" id="tt-generate-period-times" type="button" data-action="generate-period-times" ${saving ? 'disabled' : ''}><i data-lucide="sparkles"></i><span>生成初稿</span></button>

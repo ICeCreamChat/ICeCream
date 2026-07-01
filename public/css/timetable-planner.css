@@ -2604,7 +2604,7 @@ button.tt-section-title {
 
 .tt-period-time-settings {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: var(--tt-space-xs);
     padding: var(--tt-space-sm);
     border: 1px solid var(--tt-border);
@@ -2652,6 +2652,8 @@ button.tt-section-title {
     display: flex;
     align-items: end;
     gap: var(--tt-space-xs);
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
 }
 
 .tt-period-time-setting-actions .tt-btn {

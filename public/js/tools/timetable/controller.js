@@ -716,26 +716,59 @@ export class TimetablePlannerController {
 
     getDefaultPeriodTimeSettings(periods = null) {
         const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        const splitIndex = Math.ceil(activePeriods.length / 2);
         return {
             startTime: '08:00',
             classMinutes: 40,
             breakMinutes: 10,
+            afternoonStartPeriod: activePeriods.length >= 5 && splitIndex < activePeriods.length ? activePeriods[splitIndex] : null,
+            afternoonStartTime: '14:00',
+            eveningStartPeriod: null,
+            eveningStartTime: '19:00',
         };
     }
 
     normalizePeriodTimeSettings(settings = {}, periods = null) {
         const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
         const defaults = this.getDefaultPeriodTimeSettings(activePeriods);
+        const periodIndex = new Map(activePeriods.map((period, index) => [period, index]));
         const toInteger = (value, fallback, min, max) => {
             const number = Number(value);
             if (!Number.isFinite(number)) return fallback;
             return Math.max(min, Math.min(max, Math.round(number)));
         };
-        const startMinutes = this.timeToMinutes(settings.startTime);
+        const normalizeTime = (value, fallback) => {
+            const minutes = this.timeToMinutes(value);
+            return minutes === null ? fallback : this.minutesToTime(minutes);
+        };
+        const normalizeBoundary = (value, fallback = null) => {
+            const number = Number.parseInt(value, 10);
+            if (!Number.isInteger(number) || !periodIndex.has(number)) return fallback;
+            return number;
+        };
+        let afternoonStartPeriod = normalizeBoundary(settings.afternoonStartPeriod, defaults.afternoonStartPeriod);
+        if (afternoonStartPeriod !== null && periodIndex.get(afternoonStartPeriod) <= 0) {
+            afternoonStartPeriod = defaults.afternoonStartPeriod;
+        }
+        let eveningStartPeriod = null;
+        if (String(settings.eveningStartPeriod ?? '').trim() !== '') {
+            eveningStartPeriod = normalizeBoundary(settings.eveningStartPeriod, defaults.eveningStartPeriod);
+        }
+        if (
+            eveningStartPeriod !== null
+            && (periodIndex.get(eveningStartPeriod) <= 0
+                || (afternoonStartPeriod !== null && periodIndex.get(eveningStartPeriod) <= periodIndex.get(afternoonStartPeriod)))
+        ) {
+            eveningStartPeriod = null;
+        }
         return {
-            startTime: startMinutes === null ? defaults.startTime : this.minutesToTime(startMinutes),
+            startTime: normalizeTime(settings.startTime, defaults.startTime),
             classMinutes: toInteger(settings.classMinutes, defaults.classMinutes, 1, 180),
             breakMinutes: toInteger(settings.breakMinutes, defaults.breakMinutes, 0, 120),
+            afternoonStartPeriod,
+            afternoonStartTime: normalizeTime(settings.afternoonStartTime, defaults.afternoonStartTime),
+            eveningStartPeriod,
+            eveningStartTime: normalizeTime(settings.eveningStartTime, defaults.eveningStartTime),
         };
     }
 
@@ -756,16 +789,49 @@ export class TimetablePlannerController {
     }
 
     buildPeriodTimesFromSettings(settings = {}, periods = null) {
-        return this.buildPeriodTimesFromGapMap(settings, periods);
+        const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        const safeSettings = this.normalizePeriodTimeSettings(settings, activePeriods);
+        const startMinutesByPeriod = new Map();
+        if (activePeriods.length) {
+            startMinutesByPeriod.set(activePeriods[0], this.timeToMinutes(safeSettings.startTime) ?? this.timeToMinutes('08:00'));
+        }
+        if (safeSettings.afternoonStartPeriod !== null) {
+            startMinutesByPeriod.set(
+                safeSettings.afternoonStartPeriod,
+                this.timeToMinutes(safeSettings.afternoonStartTime) ?? this.timeToMinutes('14:00'),
+            );
+        }
+        if (safeSettings.eveningStartPeriod !== null) {
+            startMinutesByPeriod.set(
+                safeSettings.eveningStartPeriod,
+                this.timeToMinutes(safeSettings.eveningStartTime) ?? this.timeToMinutes('19:00'),
+            );
+        }
+
+        let currentMinutes = startMinutesByPeriod.get(activePeriods[0]) ?? this.timeToMinutes('08:00');
+        return activePeriods.map((period, index) => {
+            if (startMinutesByPeriod.has(period)) {
+                currentMinutes = startMinutesByPeriod.get(period);
+            }
+            const start = this.minutesToTime(currentMinutes);
+            currentMinutes += safeSettings.classMinutes;
+            const end = this.minutesToTime(currentMinutes);
+            const nextPeriod = activePeriods[index + 1];
+            if (nextPeriod !== undefined) {
+                if (startMinutesByPeriod.has(nextPeriod)) {
+                    currentMinutes = startMinutesByPeriod.get(nextPeriod);
+                } else {
+                    currentMinutes += safeSettings.breakMinutes;
+                }
+            }
+            return { period, start, end };
+        });
     }
 
     buildDefaultPeriodTimes(periods = null) {
         const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
         const settings = this.getDefaultPeriodTimeSettings(activePeriods);
-        const gapByPeriod = new Map();
-        const lunchPeriod = activePeriods[Math.max(0, Math.ceil(activePeriods.length / 2) - 1)];
-        if (activePeriods.length >= 5 && lunchPeriod) gapByPeriod.set(lunchPeriod, 60);
-        return this.buildPeriodTimesFromGapMap(settings, activePeriods, gapByPeriod);
+        return this.buildPeriodTimesFromSettings(settings, activePeriods);
     }
 
     mostCommonNumber(values = [], fallback = 0) {
@@ -798,7 +864,14 @@ export class TimetablePlannerController {
             }))
             .filter(item => activeSet.has(item.period) && item.startMinutes !== null && item.endMinutes !== null && item.endMinutes > item.startMinutes)
             .sort((left, right) => left.period - right.period);
-        if (!entries.length) return defaults;
+        const storedBoundaries = this.state.project?.dayPartBoundaries || {};
+        if (!entries.length) {
+            return this.normalizePeriodTimeSettings({
+                ...defaults,
+                afternoonStartPeriod: storedBoundaries.afternoonStartPeriod ?? defaults.afternoonStartPeriod,
+                eveningStartPeriod: storedBoundaries.eveningStartPeriod ?? defaults.eveningStartPeriod,
+            }, activePeriods);
+        }
 
         const durations = entries.map(item => item.endMinutes - item.startMinutes).filter(value => value > 0);
         const gaps = [];
@@ -806,7 +879,7 @@ export class TimetablePlannerController {
             const next = entries[index + 1];
             if (!next) return;
             const minutes = next.startMinutes - entry.endMinutes;
-            if (minutes >= 0) gaps.push({ period: entry.period, minutes });
+            if (minutes >= 0) gaps.push({ period: entry.period, nextPeriod: next.period, minutes });
         });
 
         let breakMinutes = defaults.breakMinutes;
@@ -817,11 +890,32 @@ export class TimetablePlannerController {
             breakMinutes = this.mostCommonNumber(regularGaps, likelyLunch ? defaults.breakMinutes : gaps[0].minutes);
         }
 
+        const inferredBoundaries = (() => {
+            if (!gaps.length) return { afternoonStartPeriod: null, eveningStartPeriod: null };
+            const threshold = Math.max(30, breakMinutes + 20, breakMinutes * 2);
+            const candidates = gaps
+                .filter(item => item.minutes >= threshold)
+                .map(item => item.nextPeriod)
+                .filter(period => Number.isInteger(period))
+                .sort((left, right) => left - right);
+            return {
+                afternoonStartPeriod: candidates[0] ?? null,
+                eveningStartPeriod: candidates.find(period => period > (candidates[0] ?? Number.POSITIVE_INFINITY)) ?? null,
+            };
+        })();
+        const entryMap = new Map(entries.map(item => [item.period, item]));
+        const afternoonStartPeriod = storedBoundaries.afternoonStartPeriod ?? inferredBoundaries.afternoonStartPeriod ?? defaults.afternoonStartPeriod;
+        const eveningStartPeriod = storedBoundaries.eveningStartPeriod ?? inferredBoundaries.eveningStartPeriod ?? defaults.eveningStartPeriod;
+
         return this.normalizePeriodTimeSettings({
             ...defaults,
             startTime: entries[0].start,
             classMinutes: this.mostCommonNumber(durations, defaults.classMinutes),
             breakMinutes,
+            afternoonStartPeriod,
+            afternoonStartTime: entryMap.get(afternoonStartPeriod)?.start || defaults.afternoonStartTime,
+            eveningStartPeriod,
+            eveningStartTime: entryMap.get(eveningStartPeriod)?.start || defaults.eveningStartTime,
         }, activePeriods);
     }
 
@@ -844,7 +938,7 @@ export class TimetablePlannerController {
     completePeriodTimeDraft(times = [], periods = null, settings = null) {
         const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
         const normalized = this.normalizePeriodTimeDraft(times, activePeriods);
-        if (!normalized.length) return this.buildDefaultPeriodTimes(activePeriods);
+        if (!normalized.length) return this.buildPeriodTimesFromSettings(settings || this.getDefaultPeriodTimeSettings(activePeriods), activePeriods);
         if (normalized.length >= activePeriods.length) return normalized;
         const existing = new Map(normalized.map(item => [Number(item.period), item]));
         const generated = new Map(this.buildPeriodTimesFromSettings(settings || this.inferPeriodTimeSettings(normalized, activePeriods), activePeriods)
@@ -917,7 +1011,32 @@ export class TimetablePlannerController {
             startTime: startInput.value,
             classMinutes: this.state.container.querySelector('#tt-period-class-minutes')?.value,
             breakMinutes: this.state.container.querySelector('#tt-period-break-minutes')?.value,
+            afternoonStartPeriod: this.state.container.querySelector('#tt-period-afternoon-start-period')?.value,
+            afternoonStartTime: this.state.container.querySelector('#tt-period-afternoon-start-time')?.value,
+            eveningStartPeriod: this.state.container.querySelector('#tt-period-evening-start-period')?.value,
+            eveningStartTime: this.state.container.querySelector('#tt-period-evening-start-time')?.value,
         });
+    }
+
+    syncPeriodTimeSettingsToDom(settings = {}) {
+        if (!this.state.container) return;
+        const fields = [
+            ['#tt-period-start-time', settings.startTime],
+            ['#tt-period-class-minutes', String(settings.classMinutes ?? '')],
+            ['#tt-period-break-minutes', String(settings.breakMinutes ?? '')],
+            ['#tt-period-afternoon-start-period', settings.afternoonStartPeriod === null ? '' : String(settings.afternoonStartPeriod)],
+            ['#tt-period-afternoon-start-time', settings.afternoonStartTime || ''],
+            ['#tt-period-evening-start-period', settings.eveningStartPeriod === null ? '' : String(settings.eveningStartPeriod)],
+            ['#tt-period-evening-start-time', settings.eveningStartTime || ''],
+        ];
+        fields.forEach(([selector, value]) => {
+            const input = this.state.container.querySelector(selector);
+            if (input) input.value = value;
+        });
+        const afternoonTimeInput = this.state.container.querySelector('#tt-period-afternoon-start-time');
+        if (afternoonTimeInput) afternoonTimeInput.disabled = !settings.afternoonStartPeriod;
+        const eveningTimeInput = this.state.container.querySelector('#tt-period-evening-start-time');
+        if (eveningTimeInput) eveningTimeInput.disabled = !settings.eveningStartPeriod;
     }
 
     updatePeriodTimeSettingsFromForm() {
@@ -925,7 +1044,9 @@ export class TimetablePlannerController {
         if (!settings) return;
         const activePeriods = getActivePeriods(this.state.project);
         const draftTimes = this.buildPeriodTimesFromSettings(settings, activePeriods);
+        this.syncPeriodTimeSettingsToDom(settings);
         this.writePeriodTimesToDom(draftTimes);
+        this.refreshPeriodTimeGapInputsFromDom();
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: true,
@@ -1095,11 +1216,13 @@ export class TimetablePlannerController {
 
     async savePeriodTimes() {
         const rawTimes = this.collectPeriodTimesFromDom() || this.state.periodTimeDialog?.draftTimes || [];
+        const settings = this.readPeriodTimeSettingsFromDom() || this.state.periodTimeDialog?.settings || this.getDefaultPeriodTimeSettings(getActivePeriods(this.state.project));
         const errors = this.validatePeriodTimes(rawTimes);
         if (errors.length) {
             this.state.periodTimeDialog = {
                 ...(this.state.periodTimeDialog || {}),
                 open: true,
+                settings,
                 errors,
                 draftTimes: this.normalizePeriodTimeDraft(rawTimes),
             };
@@ -1112,6 +1235,7 @@ export class TimetablePlannerController {
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: true,
+            settings,
             saving: true,
             errors: [],
             cleared: draftTimes.length === 0,
@@ -1121,7 +1245,13 @@ export class TimetablePlannerController {
         try {
             const result = await requestTimetable('/project', {
                 method: 'POST',
-                body: JSON.stringify({ periodTimes: draftTimes }),
+                body: JSON.stringify({
+                    periodTimes: draftTimes,
+                    dayPartBoundaries: {
+                        afternoonStartPeriod: settings.afternoonStartPeriod,
+                        eveningStartPeriod: settings.eveningStartPeriod,
+                    },
+                }),
             });
             this.applyProject(result.project);
             this.state.lastFailure = null;
@@ -1138,6 +1268,7 @@ export class TimetablePlannerController {
             this.state.periodTimeDialog = {
                 ...(this.state.periodTimeDialog || {}),
                 open: true,
+                settings,
                 saving: false,
                 cleared: draftTimes.length === 0,
                 draftTimes,
