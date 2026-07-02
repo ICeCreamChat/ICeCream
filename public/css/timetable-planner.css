@@ -758,6 +758,226 @@ button.tt-section-title {
     font-style: normal;
 }
 
+.tt-range-setup-card,
+.tt-import-setup-card,
+.tt-rules-setup-card {
+    position: relative;
+    gap: 12px;
+    padding: 12px;
+    background: rgba(8, 145, 178, 0.06);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-lg);
+}
+
+body.light-mode .tt-range-setup-card,
+body.light-mode .tt-import-setup-card,
+body.light-mode .tt-rules-setup-card {
+    background: rgba(240, 249, 255, 0.86);
+}
+
+.tt-range-setup-card .tt-subsection-title h4,
+.tt-import-setup-card .tt-subsection-title h4 {
+    color: var(--tt-text);
+    font-size: 0.84rem;
+}
+
+.tt-range-setup-card .tt-subsection-title .lucide,
+.tt-import-setup-card .tt-subsection-title .lucide {
+    color: var(--tt-primary);
+}
+
+.tt-range-setup-card > .tt-subsection-title > .tt-chip {
+    background: rgba(8, 145, 178, 0.12);
+    color: var(--tt-primary);
+}
+
+.tt-import-setup-card > .tt-subsection-title > .tt-chip {
+    background: rgba(8, 145, 178, 0.12);
+    color: var(--tt-primary);
+}
+
+.tt-range-setup-card .tt-range-summary-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+}
+
+.tt-range-setup-card .tt-multi-select-trigger,
+.tt-range-setup-card .tt-range-summary-trigger {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-content: center;
+    gap: 3px 8px;
+    min-height: 58px;
+    padding: 11px 12px;
+    background: var(--tt-bg-input);
+    border-color: rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-md);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+body.light-mode .tt-range-setup-card .tt-multi-select-trigger,
+body.light-mode .tt-range-setup-card .tt-range-summary-trigger {
+    background: rgba(255, 255, 255, 0.82);
+}
+
+.tt-range-setup-card .tt-multi-select-trigger:hover,
+.tt-range-setup-card .tt-multi-select-trigger:focus-visible {
+    border-color: rgba(8, 145, 178, 0.42);
+    box-shadow: 0 10px 24px rgba(8, 145, 178, 0.12);
+}
+
+.tt-range-setup-card .tt-multi-select-trigger::before,
+.tt-range-setup-card .tt-range-summary-trigger::before {
+    content: "可用周几";
+    grid-column: 1;
+    min-width: 0;
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.tt-range-setup-card .tt-range-summary-grid .tt-multi-select:nth-child(2) .tt-multi-select-trigger::before {
+    content: "可用节次";
+}
+
+.tt-range-setup-card .tt-range-summary-trigger::before {
+    content: attr(data-range-label);
+}
+
+.tt-range-setup-card .tt-multi-select-trigger strong,
+.tt-range-setup-card .tt-range-summary-trigger strong,
+.tt-range-setup-card .tt-range-summary-trigger small {
+    grid-column: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-range-setup-card .tt-multi-select-trigger strong,
+.tt-range-setup-card .tt-range-summary-trigger strong {
+    color: var(--tt-text);
+    font-size: 0.88rem;
+    font-weight: 800;
+    line-height: 1.25;
+}
+
+.tt-range-setup-card .tt-range-summary-trigger small {
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.tt-range-setup-card .tt-multi-select-trigger .lucide {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    align-self: center;
+    color: var(--tt-primary);
+}
+
+.tt-range-setup-card .tt-multi-select[open] .tt-multi-select-trigger {
+    border-color: var(--tt-primary);
+    box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.12);
+}
+
+.tt-range-setup-card .tt-range-summary-icon {
+    display: inline-grid;
+    grid-column: 2;
+    grid-row: 1 / 4;
+    place-items: center;
+    align-self: center;
+    width: 30px;
+    height: 30px;
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.24);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-success);
+}
+
+.tt-range-setup-card .tt-range-summary-icon .lucide {
+    width: 16px;
+    height: 16px;
+}
+
+.tt-range-setup-card .tt-period-time-entry {
+    min-height: 60px;
+    margin-top: 0;
+    background: var(--tt-bg-input);
+    border-color: rgba(148, 163, 184, 0.2);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+body.light-mode .tt-range-setup-card .tt-period-time-entry {
+    background: rgba(255, 255, 255, 0.82);
+}
+
+.tt-range-setup-card .tt-period-time-entry .tt-chip {
+    background: rgba(8, 145, 178, 0.12);
+    border: 1px solid rgba(8, 145, 178, 0.22);
+    color: var(--tt-primary);
+}
+
+.tt-import-setup-card .tt-empty-card {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr);
+    align-items: center;
+    justify-items: start;
+    gap: 2px 10px;
+    padding: 12px;
+    min-height: 68px;
+    background: var(--tt-bg-input);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-md);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    text-align: left;
+}
+
+body.light-mode .tt-import-setup-card .tt-empty-card {
+    background: rgba(255, 255, 255, 0.82);
+}
+
+.tt-import-setup-card .tt-empty-card .lucide {
+    box-sizing: border-box;
+    grid-row: 1 / span 2;
+    width: 38px;
+    height: 38px;
+    padding: 8px;
+    background: rgba(8, 145, 178, 0.12);
+    border: 1px solid rgba(8, 145, 178, 0.24);
+    border-radius: var(--tt-radius-md);
+}
+
+.tt-import-setup-card .tt-empty-card strong {
+    align-self: end;
+    color: var(--tt-text);
+    font-size: 0.86rem;
+}
+
+.tt-import-setup-card .tt-empty-card span {
+    min-width: 0;
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    line-height: 1.35;
+}
+
+.tt-import-setup-card .tt-roster-stats {
+    gap: 10px;
+}
+
+.tt-import-setup-card .tt-stat-card {
+    background: var(--tt-bg-input);
+    border-color: rgba(8, 145, 178, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+body.light-mode .tt-import-setup-card .tt-stat-card {
+    background: rgba(255, 255, 255, 0.82);
+}
+
 .tt-empty-panel {
     display: grid;
     justify-items: center;
@@ -2066,13 +2286,67 @@ button.tt-section-title {
     display: none;
 }
 
-.tt-rule-entry {
-    min-height: 132px;
+.tt-rules-setup-body {
+    display: grid;
+    gap: var(--tt-space-sm);
+    min-width: 0;
+}
+
+.tt-rules-setup-card .tt-rule-entry {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr);
+    align-items: center;
+    justify-items: start;
+    gap: 2px 10px;
+    min-height: 74px;
+    padding: 12px;
+    background: var(--tt-bg-input);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-md);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    text-align: left;
+}
+
+body.light-mode .tt-rules-setup-card .tt-rule-entry {
+    background: rgba(255, 255, 255, 0.82);
+}
+
+.tt-rules-setup-card .tt-rule-entry .lucide {
+    box-sizing: border-box;
+    grid-row: 1 / span 2;
+    width: 38px;
+    height: 38px;
+    padding: 8px;
+    background: rgba(8, 145, 178, 0.12);
+    border: 1px solid rgba(8, 145, 178, 0.24);
+    border-radius: var(--tt-radius-md);
+    color: var(--tt-primary);
+}
+
+.tt-rules-setup-card .tt-rule-entry strong {
+    align-self: end;
+    min-width: 0;
+    color: var(--tt-text);
+    font-size: 0.86rem;
+    line-height: 1.25;
 }
 
 .tt-rule-entry span {
     max-width: 100%;
     line-height: 1.45;
+}
+
+.tt-rules-setup-card .tt-rule-entry span {
+    min-width: 0;
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    line-height: 1.35;
+}
+
+.tt-rules-setup-card .tt-rule-entry:hover,
+.tt-rules-setup-card .tt-rule-entry:focus-visible {
+    border-color: rgba(8, 145, 178, 0.42);
+    box-shadow: 0 10px 24px rgba(8, 145, 178, 0.12);
 }
 
 .tt-rule-summary {
@@ -2086,14 +2360,36 @@ button.tt-section-title {
     font-size: 0.74rem;
 }
 
+.tt-rules-setup-card .tt-rule-summary {
+    grid-template-columns: 1fr;
+    padding: 10px 12px;
+    background: var(--tt-bg-input);
+    border-color: rgba(8, 145, 178, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+body.light-mode .tt-rules-setup-card .tt-rule-summary {
+    background: rgba(255, 255, 255, 0.82);
+}
+
 .tt-rule-summary span {
     display: flex;
     justify-content: space-between;
     gap: var(--tt-space-sm);
 }
 
+.tt-rules-setup-card .tt-rule-summary span {
+    align-items: center;
+    min-width: 0;
+}
+
 .tt-rule-summary b {
     color: var(--tt-muted);
+}
+
+.tt-rules-setup-card .tt-rule-summary b {
+    font-size: 0.7rem;
+    font-weight: 800;
 }
 
 .tt-rule-summary em {
@@ -2102,8 +2398,26 @@ button.tt-section-title {
     font-weight: 800;
 }
 
+.tt-rules-setup-card .tt-rule-summary em {
+    justify-self: stretch;
+    min-height: 26px;
+    padding: 4px 8px;
+    background: rgba(8, 145, 178, 0.12);
+    border-radius: var(--tt-radius-sm);
+    text-align: center;
+}
+
 .tt-rule-summary .is-warning {
     color: var(--tt-warning);
+}
+
+.tt-rules-setup-card .tt-action-row--compact {
+    gap: 8px;
+}
+
+.tt-rules-setup-card .tt-action-row--compact .tt-btn {
+    flex: 1 1 104px;
+    min-width: 0;
 }
 
 .tt-saved-rule-list {
@@ -2970,6 +3284,85 @@ button.tt-section-title {
     display: grid;
     gap: var(--tt-space-sm);
     margin-bottom: var(--tt-space-md);
+}
+
+.tt-solve-setup-card,
+.tt-export-setup-card {
+    gap: 12px;
+    padding: 12px;
+    background: rgba(8, 145, 178, 0.06);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-lg);
+}
+
+body.light-mode .tt-solve-setup-card,
+body.light-mode .tt-export-setup-card {
+    background: rgba(240, 249, 255, 0.86);
+}
+
+.tt-solve-setup-card > .tt-section-title,
+.tt-export-setup-card > .tt-section-title {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: 0;
+}
+
+.tt-solve-setup-body,
+.tt-export-setup-body {
+    display: grid;
+    gap: var(--tt-space-sm);
+}
+
+.tt-solve-setup-body .tt-compact-copy,
+.tt-export-setup-body .tt-compact-copy {
+    margin: 0;
+    line-height: 1.45;
+}
+
+.tt-solve-setup-card .tt-process-strip {
+    margin-top: 2px;
+}
+
+.tt-solve-setup-card .tt-btn--primary,
+.tt-export-setup-card .tt-btn--primary {
+    width: 100%;
+}
+
+.tt-export-setup-card .tt-publication-actions {
+    margin-bottom: 0;
+    padding: 12px;
+    background: var(--tt-bg-input);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-md);
+}
+
+body.light-mode .tt-export-setup-card .tt-publication-actions {
+    background: rgba(255, 255, 255, 0.82);
+}
+
+.tt-export-setup-card .tt-publication-actions--published {
+    margin-top: 0;
+}
+
+.tt-export-setup-card .tt-publication-actions .tt-compact-copy {
+    color: var(--tt-text-secondary);
+}
+
+.tt-export-setup-card .tt-export-grid {
+    gap: 10px;
+}
+
+.tt-export-setup-card .tt-publication-actions--published {
+    display: grid;
+    gap: var(--tt-space-sm);
+    padding: 12px;
+    background: var(--tt-bg-input);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-md);
+}
+
+body.light-mode .tt-export-setup-card .tt-publication-actions--published {
+    background: rgba(255, 255, 255, 0.82);
 }
 
 .tt-btn,
@@ -4135,6 +4528,23 @@ button.tt-section-title {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
+    .tt-rules-setup-card,
+    .tt-solve-setup-card,
+    .tt-export-setup-card,
+    .tt-export-setup-card .tt-publication-actions,
+    .tt-export-setup-card .tt-publication-actions--published {
+        padding: 10px;
+    }
+
+    .tt-rules-setup-card .tt-action-row--compact .tt-btn {
+        flex-basis: 100%;
+    }
+
+    .tt-solve-setup-card .tt-btn--primary,
+    .tt-export-setup-card .tt-btn--primary {
+        width: 100%;
+    }
+
     .tt-schedule-toolbar {
         align-items: stretch;
         flex-direction: column;
@@ -4157,4 +4567,61 @@ button.tt-section-title {
     .tt-action-row .tt-btn {
         flex: 1 1 112px;
     }
+
+    .tt-segment-card {
+        grid-template-columns: 1fr;
+        gap: var(--tt-space-sm);
+    }
+
+    .tt-segment-times {
+        grid-template-columns: 1fr;
+    }
+
+    .tt-segment-overrides {
+        grid-template-columns: 1fr;
+    }
+
+    .tt-period-time-table {
+        min-width: 100%;
+        font-size: 0.85rem;
+    }
+}
+
+/* 时段分组标题 */
+.tt-period-time-segment-header {
+    background-color: rgba(148, 163, 184, 0.1);
+    border-top: 2px solid var(--tt-border-strong, rgba(148, 163, 184, 0.3));
+}
+
+.tt-period-time-segment-header td {
+    padding: 8px 12px;
+    font-size: 0.85rem;
+    color: var(--tt-text-secondary, #cbd5e1);
+}
+
+.tt-period-time-segment-header strong {
+    color: var(--tt-text, #f1f5f9);
+}
+
+/* 手动覆盖标记 */
+.tt-period-time-table tr.is-manual-override {
+    background-color: rgba(60, 90, 120, 0.05);
+}
+
+.tt-period-time-table tr.is-manual-override .tt-period-time-label {
+    font-weight: 500;
+    color: var(--primary-dark, #2E4760);
+}
+
+/* 只读节次显示 */
+.tt-range-summary-card--readonly {
+    opacity: 1;
+}
+
+.tt-range-summary-card--readonly .tt-range-summary-trigger {
+    cursor: default;
+}
+
+.tt-range-summary-card--readonly .tt-range-summary-trigger::after {
+    display: none;
 }

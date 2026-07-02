@@ -162,6 +162,62 @@ function createPeriodTimeDom(rows, settings = {}, segments = {}) {
       return null;
     },
   }));
+  const createElement = tagName => ({
+    tagName: String(tagName).toUpperCase(),
+    className: '',
+    colSpan: undefined,
+    textContent: '',
+    parentNode: null,
+    children: [],
+    appendChild(child) {
+      child.parentNode = this;
+      this.children.push(child);
+      return child;
+    },
+    querySelector(selector) {
+      if (selector === 'strong') {
+        return this.children.find(child => child.tagName === 'STRONG')
+          || this.children.flatMap(child => child.children || []).find(child => child.tagName === 'STRONG')
+          || null;
+      }
+      return null;
+    },
+    remove() {
+      if (!this.parentNode?.children) return;
+      const index = this.parentNode.children.indexOf(this);
+      if (index >= 0) this.parentNode.children.splice(index, 1);
+      this.parentNode = null;
+    },
+  });
+  const fakeDocument = { createElement };
+  const tableBody = {
+    ownerDocument: fakeDocument,
+    children: [],
+    querySelectorAll(selector) {
+      if (selector === '.tt-period-time-segment-header') {
+        return this.children.filter(child => child.className === 'tt-period-time-segment-header');
+      }
+      return [];
+    },
+    insertBefore(node, referenceNode) {
+      node.parentNode = this;
+      const index = this.children.indexOf(referenceNode);
+      if (index >= 0) this.children.splice(index, 0, node);
+      else this.children.push(node);
+      return node;
+    },
+  };
+  const createSegmentHeader = label => {
+    const header = createElement('tr');
+    header.className = 'tt-period-time-segment-header';
+    const cell = createElement('td');
+    cell.colSpan = 4;
+    const strong = createElement('strong');
+    strong.textContent = label;
+    cell.appendChild(strong);
+    header.appendChild(cell);
+    return header;
+  };
   const rowNodes = rows.map(row => {
     const startInput = { value: row.start || '' };
     const endInput = { value: row.end || '' };
@@ -181,10 +237,17 @@ function createPeriodTimeDom(rows, settings = {}, segments = {}) {
       },
     };
   });
+  rowNodes.forEach(row => {
+    row.parentNode = tableBody;
+    tableBody.children.push(row);
+  });
   return {
     rows: rowNodes,
     settings: settingInputs,
+    tableBody,
+    createSegmentHeader,
     querySelector(selector) {
+      if (selector === '.tt-period-time-table tbody') return tableBody;
       return settingInputs.get(selector) || null;
     },
     querySelectorAll(selector) {
@@ -4095,6 +4158,9 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.match(html, /class="[^"]*tt-workflow-body[^"]*"/);
   assert.match(html, /data-workflow-step="rules"[\s\S]*?class="[^"]*tt-workflow-body[^"]*"[^>]*>/);
   assert.match(html, /data-workflow-step="rules"[\s\S]*?id="tt-open-rule-review"/);
+  assert.match(html, /class="[^"]*tt-rule-stack[^"]*tt-rules-setup-card[^"]*"/);
+  assert.match(html, /class="[^"]*tt-rules-setup-body[^"]*"/);
+  assert.match(html, /class="[^"]*tt-rule-summary[^"]*"/);
   assert.match(html, /id="tt-range-weekdays-trigger"/);
   assert.match(html, /id="tt-range-periods-trigger"/);
   const weekdayTrigger = html.match(/<summary class="[^"]*" id="tt-range-weekdays-trigger">[\s\S]*?<\/summary>/)?.[0] || '';
@@ -4513,6 +4579,8 @@ test('timetable 智能 rules support Excel file upload and rich preview metadata
   assert.doesNotMatch(interactionSource, /#tt-open-bulk-rule-review/);
   assert.match(styles, /\.tt-empty-card/);
   assert.match(styles, /\.tt-rule-entry/);
+  assert.match(styles, /\.tt-rules-setup-card/);
+  assert.match(styles, /\.tt-rules-setup-body/);
   assert.doesNotMatch(styles, /\.tt-rule-entry-card/);
   // 已删除 .tt-rule-review-dialog 样式断言（旧弹窗已废弃）
 });
@@ -4686,11 +4754,14 @@ test('timetable smart rules sidebar opens the standalone assistant workbench', a
   assert.doesNotMatch(sidebar, /id="tt-open-bulk-rule-review"/);
   assert.doesNotMatch(sidebar, /id="tt-add-lock"/);
   assert.doesNotMatch(sidebar, /tt-lock-list/);
+  assert.match(sidebar, /class="[^"]*tt-rule-stack[^"]*tt-rules-setup-card[^"]*"/);
+  assert.match(sidebar, /class="[^"]*tt-rules-setup-body[^"]*"/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
   assert.match(sidebar, /打开智能排课助手/);
   assert.match(sidebar, /已应用|已生效/);
   assert.match(sidebar, /待处理/);
   assert.match(sidebar, /需注意/);
+  assert.match(sidebar, /class="[^"]*tt-rule-summary[^"]*"/);
   assert.doesNotMatch(sidebar, /tt-rule-entry-card/);
   // No dialog rendered when no pending rules and no open state
   assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
@@ -6044,7 +6115,9 @@ test('timetable saved smart rules remain visible in the standalone workbench', a
 
   // New card-based saved rules section
   assert.match(sidebar, /id="tt-open-rule-review"/);
+  assert.match(sidebar, /class="[^"]*tt-rule-stack[^"]*tt-rules-setup-card[^"]*"/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
+  assert.match(sidebar, /class="[^"]*tt-rule-summary[^"]*"/);
   assert.match(sidebar, /查看已应用约束|查看已生效约束/);
   assert.match(sidebar, /9/);
   assert.match(sidebar, /id="tt-clear-rules"/);
@@ -6354,6 +6427,83 @@ test('timetable period time setup uses a compact entry and modal editor', async 
   assert.match(interactionSource, /\[data-remove-segment\]/);
   assert.match(interactionSource, /\[data-period-time-gap-after\]/);
   assert.match(interactionSource, /#tt-save-period-times/);
+});
+
+test('timetable period time segment labels drive timeline group headers', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      activePeriods: [1, 2, 3, 4],
+      periodTimes: [
+        { period: 1, start: '08:00', end: '08:40' },
+        { period: 2, start: '08:50', end: '09:30' },
+        { period: 3, start: '14:00', end: '14:40' },
+        { period: 4, start: '14:50', end: '15:30' },
+      ],
+    }),
+    periodTimeDialog: {
+      open: true,
+      draftTimes: [
+        { period: 1, start: '08:00', end: '08:40' },
+        { period: 2, start: '08:50', end: '09:30' },
+        { period: 3, start: '14:00', end: '14:40' },
+        { period: 4, start: '14:50', end: '15:30' },
+      ],
+      segmentConfig: {
+        globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+        segments: [
+          { id: 'seg-1', label: '自定义上午', startTime: '08:00', periodCount: 2, classMinutes: null, breakMinutes: null },
+          { id: 'seg-2', label: '自定义下午', startTime: '14:00', periodCount: 2, classMinutes: null, breakMinutes: null },
+        ],
+      },
+    },
+  });
+
+  const html = renderWorkbench(state);
+
+  assert.match(html, /tt-period-time-segment-header[\s\S]*自定义上午/);
+  assert.match(html, /tt-period-time-segment-header[\s\S]*自定义下午/);
+});
+
+test('timetable period time segment label edits update timeline headers without rerendering the modal', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {
+    throw new Error('segment label edits should update timeline headers without rerendering the modal');
+  };
+  controller.applyProject(createDefaultTimetableProject({ activePeriods: [1, 2, 3, 4] }));
+  const previousConfig = {
+    globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+    segments: [
+      { id: 'seg-1', label: '上午时段', startTime: '08:00', periodCount: 2, classMinutes: null, breakMinutes: null },
+      { id: 'seg-2', label: '下午时段', startTime: '14:00', periodCount: 2, classMinutes: null, breakMinutes: null },
+    ],
+  };
+  const dom = createPeriodTimeDom([
+    { period: 1, start: '08:00', end: '08:40', gapAfter: 10 },
+    { period: 2, start: '08:50', end: '09:30', gapAfter: 270 },
+    { period: 3, start: '14:00', end: '14:40', gapAfter: 10 },
+    { period: 4, start: '14:50', end: '15:30' },
+  ], {}, {
+    'seg-1': { label: '自定义上午', startTime: '08:00', periodCount: 2, classMinutes: null, breakMinutes: null },
+    'seg-2': { label: '自定义下午', startTime: '14:00', periodCount: 2, classMinutes: null, breakMinutes: null },
+  });
+  dom.tableBody.insertBefore(dom.createSegmentHeader('上午时段'), dom.rows[0]);
+  dom.tableBody.insertBefore(dom.createSegmentHeader('下午时段'), dom.rows[2]);
+  controller.state.container = dom;
+  controller.state.periodTimeDialog = {
+    ...controller.state.periodTimeDialog,
+    open: true,
+    segmentConfig: previousConfig,
+    draftTimes: controller.buildPeriodTimesFromSegments(previousConfig, [1, 2, 3, 4]),
+  };
+
+  controller.updateSegmentConfigFromForm();
+
+  const headerTexts = dom.tableBody
+    .querySelectorAll('.tt-period-time-segment-header')
+    .map(header => header.querySelector('strong')?.textContent);
+  assert.deepEqual(headerTexts, ['自定义上午', '自定义下午']);
+  assert.equal(controller.state.periodTimeDialog.draftTimes[0].segmentLabel, '自定义上午');
+  assert.equal(controller.state.periodTimeDialog.draftTimes[2].segmentLabel, '自定义下午');
 });
 
 test('timetable period time dialog drafts fill, clear and save through project payload', async () => {

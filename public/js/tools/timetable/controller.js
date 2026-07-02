@@ -802,8 +802,8 @@ export class TimetablePlannerController {
             const breakMinutes = segment.breakMinutes ?? safeConfig.globalDefaults.breakMinutes;
             let currentMinutes = this.timeToMinutes(segment.startTime) ?? this.timeToMinutes('08:00');
 
-            for (let i = 0; i < segment.periodCount && periodIndex < activePeriods.length; i++) {
-                const period = activePeriods[periodIndex++];
+            for (let i = 0; i < segment.periodCount; i++) {
+                const period = periodIndex + 1;  // 直接基于索引计算节次号
 
                 // 检查是否有手动覆盖
                 if (manualOverrides.has(period)) {
@@ -812,7 +812,8 @@ export class TimetablePlannerController {
                         period,
                         start: override.start,
                         end: override.end,
-                        manualOverride: true
+                        manualOverride: true,
+                        segmentLabel: segment.label,
                     });
                     // 更新 currentMinutes 以基于手动调整的结束时间
                     currentMinutes = this.timeToMinutes(override.end) + breakMinutes;
@@ -820,16 +821,35 @@ export class TimetablePlannerController {
                     const start = this.minutesToTime(currentMinutes);
                     currentMinutes += classMinutes;
                     const end = this.minutesToTime(currentMinutes);
-                    times.push({ period, start, end, manualOverride: false });
+                    times.push({ period, start, end, manualOverride: false, segmentLabel: segment.label });
 
                     if (i < segment.periodCount - 1) {
                         currentMinutes += breakMinutes;
                     }
                 }
+
+                periodIndex++;
             }
         }
 
         return times;
+    }
+
+    buildSegmentLabelMap(config = null, periods = null) {
+        if (!config || !Array.isArray(config.segments)) return new Map();
+        const activePeriods = periods && periods.length > 0
+            ? [...periods].sort((left, right) => left - right)
+            : getActivePeriods(this.state.project);
+        const safeConfig = this.normalizeSegmentConfig(config, activePeriods);
+        const labels = new Map();
+        let periodIndex = 0;
+        for (const segment of safeConfig.segments) {
+            for (let index = 0; index < segment.periodCount && periodIndex < activePeriods.length; index += 1) {
+                labels.set(activePeriods[periodIndex], segment.label);
+                periodIndex += 1;
+            }
+        }
+        return labels;
     }
 
     getDefaultPeriodTimeSettings(periods = null) {
@@ -1282,19 +1302,18 @@ export class TimetablePlannerController {
         const existingTimes = this.state.periodTimeDialog?.draftTimes || [];
         const draftTimes = this.buildPeriodTimesFromSegments(normalized, null, existingTimes);
 
-        // Check if segment structure changed (different segment count or period counts)
+        // Check if total period count changed (requires full render to update table rows)
         const previousConfig = this.state.periodTimeDialog?.segmentConfig;
-        const segmentStructureChanged = !previousConfig
-            || previousConfig.segments.length !== normalized.segments.length
-            || previousConfig.segments.some((seg, i) =>
-                seg.periodCount !== normalized.segments[i]?.periodCount
-            );
+        const previousTotal = previousConfig?.segments?.reduce((sum, seg) => sum + seg.periodCount, 0) || 0;
+        const newTotal = normalized.segments.reduce((sum, seg) => sum + seg.periodCount, 0);
+        const totalPeriodCountChanged = previousTotal !== newTotal;
 
         console.log('updateSegmentConfigFromForm:', {
             previousSegments: previousConfig?.segments.length || 0,
             newSegments: normalized.segments.length,
-            totalConfiguredPeriods: normalized.segments.reduce((sum, seg) => sum + seg.periodCount, 0),
-            segmentStructureChanged,
+            previousTotal,
+            newTotal,
+            totalPeriodCountChanged,
         });
 
         this.state.periodTimeDialog = {
@@ -1306,11 +1325,11 @@ export class TimetablePlannerController {
             draftTimes,
         };
 
-        if (segmentStructureChanged) {
-            console.log('Full render (segment structure changed)...');
+        if (totalPeriodCountChanged) {
+            console.log('Full render (total period count changed)...');
             this.render();
         } else {
-            console.log('Targeted update (only values changed)...');
+            console.log('Targeted update (only time values changed)...');
             this.writePeriodTimesToDom(draftTimes);
             this.refreshPeriodTimeGapInputsFromDom();
         }
@@ -1507,7 +1526,45 @@ export class TimetablePlannerController {
                 endInput.value = entry.end || '';
             }
         });
+        this.syncPeriodTimeSegmentHeadersToDom(times);
         this.refreshPeriodTimeGapInputsFromDom();
+    }
+
+    syncPeriodTimeSegmentHeadersToDom(times = []) {
+        if (!this.state.container || typeof this.state.container.querySelector !== 'function') return;
+        const tbody = this.state.container.querySelector('.tt-period-time-table tbody');
+        const rows = [...(this.state.container.querySelectorAll?.('[data-period-time-row]') || [])];
+        if (!tbody || !rows.length || typeof tbody.insertBefore !== 'function') return;
+        const ownerDocument = tbody.ownerDocument || this.state.container.ownerDocument || globalThis.document;
+        if (!ownerDocument || typeof ownerDocument.createElement !== 'function') return;
+
+        const timeMap = new Map((Array.isArray(times) ? times : [])
+            .map(item => [Number(item.period), item]));
+        const rowPeriods = rows.map(row => Number(row.dataset.periodTimeRow)).filter(Number.isFinite);
+        const labelMap = this.buildSegmentLabelMap(this.state.periodTimeDialog?.segmentConfig, rowPeriods);
+
+        tbody.querySelectorAll?.('.tt-period-time-segment-header')
+            ?.forEach(header => header.remove?.());
+
+        rows.forEach((row, index) => {
+            const period = Number(row.dataset.periodTimeRow);
+            const previousPeriod = Number(rows[index - 1]?.dataset.periodTimeRow);
+            const label = timeMap.get(period)?.segmentLabel || labelMap.get(period) || '';
+            const previousLabel = index > 0
+                ? (timeMap.get(previousPeriod)?.segmentLabel || labelMap.get(previousPeriod) || '')
+                : '';
+            if (!label || (index > 0 && label === previousLabel)) return;
+
+            const header = ownerDocument.createElement('tr');
+            header.className = 'tt-period-time-segment-header';
+            const cell = ownerDocument.createElement('td');
+            cell.colSpan = 4;
+            const title = ownerDocument.createElement('strong');
+            title.textContent = label;
+            cell.appendChild(title);
+            header.appendChild(cell);
+            tbody.insertBefore(header, row);
+        });
     }
 
     calculatePeriodGap(current = {}, next = {}) {

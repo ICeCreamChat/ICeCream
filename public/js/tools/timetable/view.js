@@ -18,6 +18,7 @@ import {
     isPublishedDraftChanged,
     ownerLabel,
     totalPlannedLessons,
+    getTotalPeriods,
 } from './selectors.js';
 import { buildRuleReviewTasks, getActiveRuleReviewTask } from './rule-review-tasks.js';
 import { renderConstraintChatDock } from './view-chat.js';
@@ -416,7 +417,7 @@ function renderPeriodTimesConfig(state) {
 function renderSegmentCard(segment, index, totalSegments, activePeriods, saving) {
     const canDelete = totalSegments > 1;
     const usedCount = segment.periodCount || 0;
-    const maxCount = activePeriods.length;
+    const maxCount = 12;
     const escapeAttr = value => String(value ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     const escapeHtml = value => String(value ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -430,7 +431,7 @@ function renderSegmentCard(segment, index, totalSegments, activePeriods, saving)
                     placeholder="时段名称"
                     maxlength="40"
                     ${saving ? 'disabled' : ''}>
-                <span class="tt-segment-index">时段 ${index + 1}</span>
+                <span class="tt-segment-index">时段 ${index + 1} · 将生成 ${usedCount} 节</span>
                 ${canDelete ? `
                     <button type="button"
                         class="tt-icon-btn tt-segment-remove-btn"
@@ -494,15 +495,31 @@ function renderSegmentCard(segment, index, totalSegments, activePeriods, saving)
 function renderPeriodTimeDialog(state) {
     const dialog = state.periodTimeDialog || {};
     if (!dialog.open) return '';
-    const activePeriods = [...getActivePeriods(state.project)].sort((left, right) => left - right);
-    const saving = Boolean(dialog.saving);
+
+    // 优先从 dialog.segmentConfig 计算实际节次数，否则回退到 project
     const segmentConfig = dialog.segmentConfig || {
         globalDefaults: { classMinutes: 45, breakMinutes: 10 },
         segments: [
-            { id: 'seg-1', label: '上午时段', startTime: '08:00', periodCount: Math.floor(activePeriods.length / 2), classMinutes: null, breakMinutes: null },
-            { id: 'seg-2', label: '下午时段', startTime: '14:00', periodCount: activePeriods.length - Math.floor(activePeriods.length / 2), classMinutes: null, breakMinutes: null },
+            { id: 'seg-1', label: '上午时段', startTime: '08:00', periodCount: Math.floor(getActivePeriods(state.project).length / 2), classMinutes: null, breakMinutes: null },
+            { id: 'seg-2', label: '下午时段', startTime: '14:00', periodCount: getActivePeriods(state.project).length - Math.floor(getActivePeriods(state.project).length / 2), classMinutes: null, breakMinutes: null },
         ],
     };
+
+    // 基于 segmentConfig 计算当前配置的总节次数
+    const totalConfiguredPeriods = segmentConfig.segments.reduce((sum, seg) => sum + seg.periodCount, 0);
+    const activePeriods = totalConfiguredPeriods > 0
+        ? Array.from({ length: totalConfiguredPeriods }, (_, i) => i + 1)
+        : [...getActivePeriods(state.project)].sort((left, right) => left - right);
+    const segmentLabelMap = new Map();
+    let segmentPeriodIndex = 0;
+    segmentConfig.segments.forEach(segment => {
+        for (let index = 0; index < segment.periodCount && segmentPeriodIndex < activePeriods.length; index += 1) {
+            segmentLabelMap.set(activePeriods[segmentPeriodIndex], segment.label);
+            segmentPeriodIndex += 1;
+        }
+    });
+
+    const saving = Boolean(dialog.saving);
     const draftTimes = Array.isArray(dialog.draftTimes) ? dialog.draftTimes : state.rangeDraft?.periodTimes || state.project?.periodTimes || [];
     const timeMap = new Map(draftTimes.map(item => [Number(item.period), item]));
     const errorMap = new Map((dialog.errors || []).map(item => [Number(item.period), item.message || '时间配置有误']));
@@ -554,8 +571,10 @@ function renderPeriodTimeDialog(state) {
                     <div class="tt-template-selector">
                         <span class="tt-template-label">预设模板：</span>
                         <button type="button" class="tt-btn tt-btn--sm" data-segment-template="standard" ${saving ? 'disabled' : ''}>标准作息</button>
-                        <button type="button" class="tt-btn tt-btn--sm" data-segment-template="early-evening" ${saving ? 'disabled' : ''}>含早晚自习</button>
-                        <button type="button" class="tt-btn tt-btn--sm" data-segment-template="junior" ${saving ? 'disabled' : ''}>初中作息</button>
+                        <button type="button" class="tt-btn tt-btn--sm" data-segment-template="elementary" ${saving ? 'disabled' : ''}>小学作息</button>
+                        <button type="button" class="tt-btn tt-btn--sm" data-segment-template="juniorHigh" ${saving ? 'disabled' : ''}>初中作息</button>
+                        <button type="button" class="tt-btn tt-btn--sm" data-segment-template="seniorHigh" ${saving ? 'disabled' : ''}>高中作息</button>
+                        <button type="button" class="tt-btn tt-btn--sm" data-segment-template="withMorningEvening" ${saving ? 'disabled' : ''}>含早晚自习</button>
                     </div>
                     <div class="tt-segment-list">
                         ${segmentConfig.segments.map((segment, index) => renderSegmentCard(segment, index, segmentConfig.segments.length, activePeriods, saving)).join('')}
@@ -569,7 +588,7 @@ function renderPeriodTimeDialog(state) {
                 </div>
                 <div class="tt-period-time-preview-head">
                     <strong>节次时间轴</strong>
-                    <span>可单独调整每节后的休息时间，保存后用于展示与导出。</span>
+                    <span>下方时间表由时段配置自动生成,可单独微调。标记🔒的为手动锁定时间。</span>
                 </div>
                 ${errorSummary ? `<div class="tt-period-time-error-summary" role="alert">${escapeHtml(errorSummary)}</div>` : ''}
                 <div class="tt-period-time-review">
@@ -586,8 +605,12 @@ function renderPeriodTimeDialog(state) {
                                 const entry = timeMap.get(period) || {};
                                 const next = timeMap.get(activePeriods[index + 1]) || {};
                                 const error = errorMap.get(period) || '';
-                                return `<tr data-period-time-row="${period}" class="${error ? 'is-error' : ''}">
-                                    <td class="tt-period-time-label" data-label="节次">第${period}节</td>
+                                const isManual = entry.manualOverride;
+                                const segmentLabel = entry.segmentLabel || segmentLabelMap.get(period) || '';
+                                const previousSegmentLabel = timeMap.get(activePeriods[index - 1])?.segmentLabel || segmentLabelMap.get(activePeriods[index - 1]) || '';
+                                const showSegmentLabel = index === 0 || segmentLabel !== previousSegmentLabel;
+                                return `${showSegmentLabel && segmentLabel ? `<tr class="tt-period-time-segment-header"><td colspan="4"><strong>${escapeHtml(segmentLabel)}</strong></td></tr>` : ''}<tr data-period-time-row="${period}" class="${error ? 'is-error' : ''} ${isManual ? 'is-manual-override' : ''}">
+                                    <td class="tt-period-time-label" data-label="节次">第${period}节${isManual ? ' 🔒' : ''}</td>
                                     <td data-label="开始时间"><input type="time" class="tt-roster-review-field tt-period-time-input" data-period-time-draft-start="${period}" value="${escapeAttr(entry.start || '')}" ${error ? 'aria-invalid="true"' : ''} ${saving ? 'disabled' : ''}></td>
                                     <td data-label="结束时间"><input type="time" class="tt-roster-review-field tt-period-time-input" data-period-time-draft-end="${period}" value="${escapeAttr(entry.end || '')}" ${error ? 'aria-invalid="true"' : ''} ${saving ? 'disabled' : ''}></td>
                                     <td data-label="本节后间隔">
@@ -613,8 +636,11 @@ function renderPeriodTimeDialog(state) {
 function renderProjectSection(state) {
     const { project } = state;
     const { activeWeekdays, activePeriods } = getRangeDraft(state);
+    const totalPeriods = getTotalPeriods(project);
+    const periodsFromSegments = totalPeriods > 0;
+
     return `
-        <div class="tt-setup-card" data-workflow-step="data">
+        <div class="tt-setup-card tt-range-setup-card" data-workflow-step="data">
             <div class="tt-subsection-title">
                 <h4><i data-lucide="calendar-days"></i><span>排课范围</span></h4>
                 <span class="tt-chip">${activeWeekdays.length} 天 · ${activePeriods.length} 节</span>
@@ -636,7 +662,15 @@ function renderProjectSection(state) {
                         doneAttr: 'data-range-apply',
                         summaryOnly: true,
                     })}
-                    ${renderMultiSelect({
+                    ${periodsFromSegments ? `
+                        <div class="tt-range-summary-card tt-range-summary-card--readonly">
+                            <div class="tt-range-summary-trigger" data-range-label="可用节次">
+                                <strong>${summarizePeriods(activePeriods)}</strong>
+                                <small>由时段配置自动生成，共 ${totalPeriods} 节</small>
+                                <span class="tt-range-summary-icon"><i data-lucide="lock-keyhole"></i></span>
+                            </div>
+                        </div>
+                    ` : renderMultiSelect({
                         id: 'range-periods',
                         triggerId: 'tt-range-periods-trigger',
                         title: '可用节次',
@@ -663,7 +697,7 @@ function renderImportSection(state) {
     const stats = getRosterStats(project);
     const hasRoster = stats.planCount > 0;
     return `
-        <div class="tt-setup-card" data-workflow-step="data">
+        <div class="tt-setup-card tt-import-setup-card" data-workflow-step="data">
             <div class="tt-subsection-title">
                 <h4><i data-lucide="file-input"></i><span>任课数据</span></h4>
                 <span class="tt-chip">${stats.planCount} 条</span>
@@ -924,19 +958,21 @@ function renderRulesSection(state) {
             : '告诉我排课要求，我会检查数据、整理规则并生成课表。';
 
     return `
-        <div class="tt-rule-stack" data-workflow-step="rules">
-            <button class="tt-empty-card tt-roster-entry tt-rule-entry" id="tt-open-rule-review" type="button">
-                <i data-lucide="brain-circuit"></i>
-                <strong>${escapeHtml(cardTitle)}</strong>
-                <span>${escapeHtml(cardDescription)}</span>
-            </button>
-            ${renderRuleReviewStatus({ savedCount, draftCount, warningCount })}
-            ${(savedCount || draftCount || warningCount) ? `
-                <div class="tt-action-row tt-action-row--compact">
-                    <button class="tt-btn" id="tt-reparse-rule-review" type="button"><i data-lucide="upload"></i><span>重新解析</span></button>
-                    <button class="tt-btn tt-btn--danger" id="tt-clear-rules" type="button"><i data-lucide="trash-2"></i><span>清空规则</span></button>
-                </div>
-            ` : ''}
+        <div class="tt-rule-stack tt-rules-setup-card" data-workflow-step="rules">
+            <div class="tt-rules-setup-body">
+                <button class="tt-empty-card tt-roster-entry tt-rule-entry" id="tt-open-rule-review" type="button">
+                    <i data-lucide="brain-circuit"></i>
+                    <strong>${escapeHtml(cardTitle)}</strong>
+                    <span>${escapeHtml(cardDescription)}</span>
+                </button>
+                ${renderRuleReviewStatus({ savedCount, draftCount, warningCount })}
+                ${(savedCount || draftCount || warningCount) ? `
+                    <div class="tt-action-row tt-action-row--compact">
+                        <button class="tt-btn" id="tt-reparse-rule-review" type="button"><i data-lucide="upload"></i><span>重新解析</span></button>
+                        <button class="tt-btn tt-btn--danger" id="tt-clear-rules" type="button"><i data-lucide="trash-2"></i><span>清空规则</span></button>
+                    </div>
+                ` : ''}
+            </div>
         </div>
     `;
 }
@@ -1579,14 +1615,16 @@ function renderSolveSection(state) {
     const scaleMessage = solveScaleMessage(project);
     const runLabel = state.loading ? (state.solvePhaseText || '快速生成中') : '';
     return `
-        <section class="tt-section tt-section--solve" data-workflow-step="solve">
+        <section class="tt-section tt-section--solve tt-solve-setup-card" data-workflow-step="solve">
             <div class="tt-section-title">
                 <h3><i data-lucide="sparkles"></i><span>求解</span></h3>
                 <span class="tt-chip ${readiness.ready || isArchiveOnlyReadyState(project) ? 'tt-chip--ok' : 'tt-chip--warn'}">${readinessChipLabel(project, readiness)}</span>
             </div>
-            <p class="tt-compact-copy">${placed}/${total} 已排 · ${score.hardConflicts ?? 0} 硬冲突</p>
-            <p class="tt-compact-copy">${escapeHtml(readinessMessage)}</p>
-            ${scaleMessage ? `<p class="tt-compact-copy tt-compact-copy--warn">${escapeHtml(scaleMessage)}</p>` : ''}
+            <div class="tt-solve-setup-body">
+                <p class="tt-compact-copy">${placed}/${total} 已排 · ${score.hardConflicts ?? 0} 硬冲突</p>
+                <p class="tt-compact-copy">${escapeHtml(readinessMessage)}</p>
+                ${scaleMessage ? `<p class="tt-compact-copy tt-compact-copy--warn">${escapeHtml(scaleMessage)}</p>` : ''}
+            </div>
             ${runLabel ? `
                 <div class="tt-process-strip tt-solve-process" aria-live="polite">
                     <span class="tt-process-chip">
@@ -2131,38 +2169,40 @@ function renderExportSection(state) {
             ? '当前草稿已变化，请重新发布后导出正式课表。'
             : publication?.ok && officialExportRequiresPublish
                 ? '请先发布课表后导出正式课表。'
-                : publication?.ok
+            : publication?.ok
                 ? '发布前校验已通过，可确认发布后导出。'
                 : '发布前校验通过后才能发布正式课表。';
     return `
-        <section class="tt-section" data-workflow-step="review">
+        <section class="tt-section tt-export-setup-card" data-workflow-step="review">
             <div class="tt-section-title">
                 <h3><i data-lucide="download"></i><span>发布导出</span></h3>
                 <span class="tt-chip ${publishStatusTone(schedule)}">${escapeHtml(publishStatusLabel(schedule))}</span>
             </div>
-            <div class="tt-publication-actions">
-                <p class="tt-compact-copy">${escapeHtml(officialExportCopy)}</p>
-                <button class="tt-btn tt-btn--primary" id="tt-publish-schedule" data-publish-schedule type="button" title="${escapeAttr(publishTitle)}" ${canPublish ? '' : 'disabled'}>
-                    <i data-lucide="send"></i><span>发布课表</span>
-                </button>
-            </div>
-            <div class="tt-export-grid">
-                <button class="tt-export-btn" data-export-type="class" type="button" title="${escapeAttr(officialExportBlocked ? officialExportTitle : '导出班级课表')}" ${officialExportBlocked ? 'disabled' : ''}><i data-lucide="table"></i><span>班级</span></button>
-                <button class="tt-export-btn" data-export-type="teacher" type="button" title="${escapeAttr(officialExportBlocked ? officialExportTitle : '导出教师课表')}" ${officialExportBlocked ? 'disabled' : ''}><i data-lucide="users"></i><span>教师</span></button>
-                <button class="tt-export-btn" data-export-type="master" type="button" title="${escapeAttr(officialExportBlocked ? officialExportTitle : '导出总课表')}" ${officialExportBlocked ? 'disabled' : ''}><i data-lucide="layout-grid"></i><span>总表</span></button>
-                <button class="tt-export-btn" data-export-type="plans" type="button" title="导出任课信息"><i data-lucide="file-spreadsheet"></i><span>任课</span></button>
-            </div>
-            ${officialExportDisabled && hasPublishedSnapshot ? `
-                <div class="tt-publication-actions tt-publication-actions--published">
-                    <p class="tt-compact-copy">${publishedSnapshotMismatch ? escapeHtml(PUBLICATION_FINGERPRINT_MISMATCH_MESSAGE) : '导出发布版'}</p>
-                    <button class="tt-btn tt-btn--ghost" type="button" data-restore-published-snapshot="latest" data-restore-published-version="${escapeAttr(published?.version || '')}" ${publishedExportAttrs}><i data-lucide="history"></i><span>恢复发布版</span></button>
-                    <div class="tt-export-grid">
-                        <button class="tt-export-btn" data-export-type="published_class" type="button" title="${escapeAttr(publishedExportTitle)}" ${publishedExportAttrs}><i data-lucide="archive"></i><span>班级</span></button>
-                        <button class="tt-export-btn" data-export-type="published_teacher" type="button" title="${escapeAttr(publishedExportTitle)}" ${publishedExportAttrs}><i data-lucide="archive"></i><span>教师</span></button>
-                        <button class="tt-export-btn" data-export-type="published_master" type="button" title="${escapeAttr(publishedExportTitle)}" ${publishedExportAttrs}><i data-lucide="archive"></i><span>总表</span></button>
-                    </div>
+            <div class="tt-export-setup-body">
+                <div class="tt-publication-actions">
+                    <p class="tt-compact-copy">${escapeHtml(officialExportCopy)}</p>
+                    <button class="tt-btn tt-btn--primary" id="tt-publish-schedule" data-publish-schedule type="button" title="${escapeAttr(publishTitle)}" ${canPublish ? '' : 'disabled'}>
+                        <i data-lucide="send"></i><span>发布课表</span>
+                    </button>
                 </div>
-            ` : ''}
+                <div class="tt-export-grid">
+                    <button class="tt-export-btn" data-export-type="class" type="button" title="${escapeAttr(officialExportBlocked ? officialExportTitle : '导出班级课表')}" ${officialExportBlocked ? 'disabled' : ''}><i data-lucide="table"></i><span>班级</span></button>
+                    <button class="tt-export-btn" data-export-type="teacher" type="button" title="${escapeAttr(officialExportBlocked ? officialExportTitle : '导出教师课表')}" ${officialExportBlocked ? 'disabled' : ''}><i data-lucide="users"></i><span>教师</span></button>
+                    <button class="tt-export-btn" data-export-type="master" type="button" title="${escapeAttr(officialExportBlocked ? officialExportTitle : '导出总课表')}" ${officialExportBlocked ? 'disabled' : ''}><i data-lucide="layout-grid"></i><span>总表</span></button>
+                    <button class="tt-export-btn" data-export-type="plans" type="button" title="导出任课信息"><i data-lucide="file-spreadsheet"></i><span>任课</span></button>
+                </div>
+                ${officialExportDisabled && hasPublishedSnapshot ? `
+                    <div class="tt-publication-actions tt-publication-actions--published">
+                        <p class="tt-compact-copy">${publishedSnapshotMismatch ? escapeHtml(PUBLICATION_FINGERPRINT_MISMATCH_MESSAGE) : '导出发布版'}</p>
+                        <button class="tt-btn tt-btn--ghost" type="button" data-restore-published-snapshot="latest" data-restore-published-version="${escapeAttr(published?.version || '')}" ${publishedExportAttrs}><i data-lucide="history"></i><span>恢复发布版</span></button>
+                        <div class="tt-export-grid">
+                            <button class="tt-export-btn" data-export-type="published_class" type="button" title="${escapeAttr(publishedExportTitle)}" ${publishedExportAttrs}><i data-lucide="archive"></i><span>班级</span></button>
+                            <button class="tt-export-btn" data-export-type="published_teacher" type="button" title="${escapeAttr(publishedExportTitle)}" ${publishedExportAttrs}><i data-lucide="archive"></i><span>教师</span></button>
+                            <button class="tt-export-btn" data-export-type="published_master" type="button" title="${escapeAttr(publishedExportTitle)}" ${publishedExportAttrs}><i data-lucide="archive"></i><span>总表</span></button>
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
         </section>
     `;
 }
