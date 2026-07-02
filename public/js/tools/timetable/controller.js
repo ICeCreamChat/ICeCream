@@ -1253,14 +1253,18 @@ export class TimetablePlannerController {
         const normalized = this.normalizeSegmentConfig(config, activePeriods);
         const draftTimes = this.buildPeriodTimesFromSegments(normalized, activePeriods);
 
-        // Only do full render if draft times length changed (table rows need to be added/removed)
-        const previousLength = this.state.periodTimeDialog?.draftTimes?.length || 0;
-        const needsFullRender = draftTimes.length !== previousLength;
+        // Check if segment structure changed (different segment count or period counts)
+        const previousConfig = this.state.periodTimeDialog?.segmentConfig;
+        const segmentStructureChanged = !previousConfig
+            || previousConfig.segments.length !== normalized.segments.length
+            || previousConfig.segments.some((seg, i) =>
+                seg.periodCount !== normalized.segments[i]?.periodCount
+            );
 
         console.log('updateSegmentConfigFromForm:', {
-            previousLength,
-            newLength: draftTimes.length,
-            needsFullRender,
+            previousSegments: previousConfig?.segments.length || 0,
+            newSegments: normalized.segments.length,
+            segmentStructureChanged,
         });
 
         this.state.periodTimeDialog = {
@@ -1272,8 +1276,8 @@ export class TimetablePlannerController {
             draftTimes,
         };
 
-        if (needsFullRender) {
-            console.log('Full render (row count changed)...');
+        if (segmentStructureChanged) {
+            console.log('Full render (segment structure changed)...');
             this.render();
         } else {
             console.log('Targeted update (only values changed)...');
