@@ -7,6 +7,16 @@ function resizeConstraintChatInput(textarea) {
 export function handleTimetableEscape(event, container, controller, state) {
     if (event?.key !== 'Escape') return false;
 
+    // Check if we're in an input field that's being edited
+    const target = event.target;
+    if (target && (target.matches('input[type="text"], input[type="time"], input[type="number"], textarea, select') || target.isContentEditable)) {
+        // Allow Escape to blur the input without closing dialogs
+        target.blur();
+        event.preventDefault();
+        event.stopPropagation();
+        return true;
+    }
+
     event.preventDefault?.();
     event.stopPropagation?.();
 
@@ -254,6 +264,8 @@ function bindDelegatedInteractions(container) {
 
     container.addEventListener('keydown', event => {
         const controller = container.__ttController;
+
+        // Handle Enter in constraint chat
         if (
             controller
             && event.target.matches('[data-constraint-chat-input]')
@@ -264,7 +276,11 @@ function bindDelegatedInteractions(container) {
             controller.sendConstraintChatMessage(event.target.value);
             return;
         }
-        handleTimetableEscape(event, container, controller, container.__ttState);
+
+        // Only handle Escape key for closing dialogs
+        if (event.key === 'Escape') {
+            handleTimetableEscape(event, container, controller, container.__ttState);
+        }
     });
 
     container.addEventListener('dragstart', event => {
