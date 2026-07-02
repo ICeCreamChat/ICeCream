@@ -1252,14 +1252,15 @@ export class TimetablePlannerController {
         const activePeriods = getActivePeriods(this.state.project);
         const normalized = this.normalizeSegmentConfig(config, activePeriods);
         const draftTimes = this.buildPeriodTimesFromSegments(normalized, activePeriods);
-        const totalPeriods = normalized.segments.reduce((sum, seg) => sum + (seg.periodCount || 0), 0);
-        const needsFullRender = totalPeriods !== activePeriods.length;
+
+        // Only do full render if draft times length changed (table rows need to be added/removed)
+        const previousLength = this.state.periodTimeDialog?.draftTimes?.length || 0;
+        const needsFullRender = draftTimes.length !== previousLength;
 
         console.log('updateSegmentConfigFromForm:', {
-            totalPeriods,
-            activePeriods: activePeriods.length,
+            previousLength,
+            newLength: draftTimes.length,
             needsFullRender,
-            draftTimesLength: draftTimes.length,
         });
 
         this.state.periodTimeDialog = {
@@ -1272,10 +1273,10 @@ export class TimetablePlannerController {
         };
 
         if (needsFullRender) {
-            console.log('Full render...');
+            console.log('Full render (row count changed)...');
             this.render();
         } else {
-            console.log('Targeted update...');
+            console.log('Targeted update (only values changed)...');
             this.writePeriodTimesToDom(draftTimes);
             this.refreshPeriodTimeGapInputsFromDom();
         }
