@@ -53,6 +53,7 @@
         "zustand": "^5.0.13"
     },
     "devDependencies": {
+        "@playwright/test": "^1.61.1",
         "@vitejs/plugin-react": "^6.0.2",
         "concurrently": "^9.2.1",
         "esbuild": "^0.28.0",

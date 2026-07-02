@@ -1483,13 +1483,20 @@ export class TimetablePlannerController {
             console.warn('writePeriodTimesToDom: No rows found');
             return;
         }
+        console.log('writePeriodTimesToDom: Updating', rows.length, 'rows with', times.length, 'times');
         rows.forEach(row => {
             const period = Number(row.dataset.periodTimeRow);
             const entry = timeMap.get(period) || {};
-            const startInput = row.querySelector('[data-period-time-draft-start], [data-period-time-start]');
-            const endInput = row.querySelector('[data-period-time-draft-end], [data-period-time-end]');
-            if (startInput) startInput.value = entry.start || '';
-            if (endInput) endInput.value = entry.end || '';
+            const startInput = row.querySelector(`[data-period-time-draft-start="${period}"], [data-period-time-start="${period}"]`);
+            const endInput = row.querySelector(`[data-period-time-draft-end="${period}"], [data-period-time-end="${period}"]`);
+            if (startInput) {
+                console.log(`  Period ${period} start: "${startInput.value}" -> "${entry.start || ''}"`);
+                startInput.value = entry.start || '';
+            }
+            if (endInput) {
+                console.log(`  Period ${period} end: "${endInput.value}" -> "${entry.end || ''}"`);
+                endInput.value = entry.end || '';
+            }
         });
         this.refreshPeriodTimeGapInputsFromDom();
     }
