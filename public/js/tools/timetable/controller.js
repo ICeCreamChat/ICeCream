@@ -1198,7 +1198,7 @@ export class TimetablePlannerController {
             segmentConfig,
             errors: [],
             cleared: false,
-            draftTimes: this.buildDefaultPeriodTimes(activePeriods),
+            draftTimes: this.buildPeriodTimesFromSegments(segmentConfig, activePeriods),
         };
         this.render();
         this.setMessage('已恢复默认节次时间，保存后生效。');
@@ -1642,7 +1642,7 @@ export class TimetablePlannerController {
             this.state.periodTimeDialog = {
                 ...(this.state.periodTimeDialog || {}),
                 open: true,
-                settings,
+                segmentConfig,
                 saving: false,
                 cleared: draftTimes.length === 0,
                 draftTimes,

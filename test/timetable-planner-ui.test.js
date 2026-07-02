@@ -128,7 +128,7 @@ function extractMethodSource(source, methodName) {
   assert.fail(`unable to extract method ${methodName}`);
 }
 
-function createPeriodTimeDom(rows, settings = {}) {
+function createPeriodTimeDom(rows, settings = {}, segments = {}) {
   const createSelect = (value = '', options = []) => ({
     value: String(value ?? ''),
     disabled: false,
@@ -148,7 +148,20 @@ function createPeriodTimeDom(rows, settings = {}) {
       [{ value: '', label: '不启用晚间' }],
     )],
     ['#tt-period-evening-start-time', { value: settings.eveningStartTime || '19:00', disabled: !settings.eveningStartPeriod }],
+    ['#tt-segment-global-class-minutes', { value: String(settings.classMinutes ?? 45) }],
+    ['#tt-segment-global-break-minutes', { value: String(settings.breakMinutes ?? 10) }],
   ]);
+  const segmentCards = Object.entries(segments).map(([id, seg]) => ({
+    dataset: { segmentId: id },
+    querySelector(selector) {
+      if (selector.includes(`${id}-label`)) return { value: seg.label || '时段' };
+      if (selector.includes(`${id}-startTime`)) return { value: seg.startTime || '08:00' };
+      if (selector.includes(`${id}-periodCount`)) return { value: String(seg.periodCount || 1) };
+      if (selector.includes(`${id}-classMinutes`)) return { value: seg.classMinutes === null ? '' : String(seg.classMinutes || '') };
+      if (selector.includes(`${id}-breakMinutes`)) return { value: seg.breakMinutes === null ? '' : String(seg.breakMinutes || '') };
+      return null;
+    },
+  }));
   const rowNodes = rows.map(row => {
     const startInput = { value: row.start || '' };
     const endInput = { value: row.end || '' };
@@ -175,7 +188,9 @@ function createPeriodTimeDom(rows, settings = {}) {
       return settingInputs.get(selector) || null;
     },
     querySelectorAll(selector) {
-      return selector === '[data-period-time-row]' ? rowNodes : [];
+      if (selector === '[data-period-time-row]') return rowNodes;
+      if (selector === '[data-segment-id]') return segmentCards;
+      return [];
     },
   };
 }
@@ -6288,20 +6303,26 @@ test('timetable period time setup uses a compact entry and modal editor', async 
     periodTimeDialog: {
       open: true,
       draftTimes: state.project.periodTimes,
+      segmentConfig: {
+        globalDefaults: { classMinutes: 45, breakMinutes: 10 },
+        segments: [
+          { id: 'seg-1', label: '上午时段', startTime: '08:00', periodCount: 3, classMinutes: null, breakMinutes: null },
+        ],
+      },
     },
   });
 
   assert.match(open, /id="tt-period-time-dialog"/);
-  assert.match(open, /id="tt-period-start-time"/);
-  assert.match(open, /id="tt-period-class-minutes"/);
-  assert.match(open, /id="tt-period-break-minutes"/);
-  assert.match(open, /id="tt-period-afternoon-start-period"/);
-  assert.match(open, /id="tt-period-afternoon-start-time"/);
-  assert.match(open, /id="tt-period-evening-start-period"/);
-  assert.match(open, /id="tt-period-evening-start-time"/);
-  assert.match(open, /id="tt-generate-period-times"/);
-  assert.doesNotMatch(open, /id="tt-period-lunch-after"/);
-  assert.doesNotMatch(open, /id="tt-period-lunch-minutes"/);
+  assert.match(open, /id="tt-segment-global-class-minutes"/);
+  assert.match(open, /id="tt-segment-global-break-minutes"/);
+  assert.match(open, /id="tt-add-segment"/);
+  assert.match(open, /data-segment-template="standard"/);
+  assert.match(open, /data-segment-template="early-evening"/);
+  assert.match(open, /data-segment-template="junior"/);
+  assert.match(open, /data-segment-id="seg-1"/);
+  assert.match(open, /data-segment-field="seg-1-label"/);
+  assert.match(open, /data-segment-field="seg-1-startTime"/);
+  assert.match(open, /data-segment-field="seg-1-periodCount"/);
   assert.match(open, /data-period-time-row="1"/);
   assert.match(open, /data-period-time-draft-start="1"/);
   assert.match(open, /data-period-time-draft-end="1"/);
@@ -6310,7 +6331,6 @@ test('timetable period time setup uses a compact entry and modal editor', async 
   assert.doesNotMatch(open, /data-period-time-gap-after="3"/);
   assert.match(open, /data-label="开始时间"/);
   assert.match(open, /data-label="本节后间隔"/);
-  assert.match(open, /id="tt-reset-period-time-settings"/);
   assert.match(open, /id="tt-clear-period-times"/);
   assert.match(open, /id="tt-cancel-period-times-secondary"[^>]*>[\s\S]*data-lucide="x"[\s\S]*<span>取消<\/span>/);
   assert.match(open, /id="tt-save-period-times"/);
@@ -6319,15 +6339,19 @@ test('timetable period time setup uses a compact entry and modal editor', async 
   assert.match(styles, /\.tt-period-time-settings\s*{/);
   assert.match(styles, /\.tt-period-time-dialog\s*{/);
   assert.match(styles, /\.tt-period-time-table\s*{/);
+  assert.match(styles, /\.tt-segment-card\s*{/);
+  assert.match(styles, /\.tt-segment-list\s*{/);
+  assert.match(styles, /\.tt-global-defaults\s*{/);
   assert.match(styles, /\.tt-roster-review-field\s*{[\s\S]*box-sizing:\s*border-box;/);
-  assert.match(styles, /@media \(max-width:\s*900px\)[\s\S]*\.tt-period-time-setting-actions\s*{[\s\S]*grid-column:\s*1 \/ -1;/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-period-time-dialog/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-period-time-table,[\s\S]*\.tt-period-time-table thead,[\s\S]*\.tt-period-time-table tbody,[\s\S]*\.tt-period-time-table tr,[\s\S]*\.tt-period-time-table th,[\s\S]*\.tt-period-time-table td\s*{[\s\S]*display:\s*block;/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-period-time-table td\s*{[\s\S]*grid-template-columns:\s*88px minmax\(0,\s*1fr\);/);
   assert.match(interactionSource, /#tt-open-period-time-dialog/);
-  assert.match(interactionSource, /generate-period-times/);
-  assert.match(interactionSource, /reset-period-time-settings/);
-  assert.match(interactionSource, /\[data-period-time-setting\]/);
+  assert.match(interactionSource, /\[data-segment-field\]/);
+  assert.match(interactionSource, /\[data-global-default-field\]/);
+  assert.match(interactionSource, /\[data-segment-template\]/);
+  assert.match(interactionSource, /\[data-add-segment\]/);
+  assert.match(interactionSource, /\[data-remove-segment\]/);
   assert.match(interactionSource, /\[data-period-time-gap-after\]/);
   assert.match(interactionSource, /#tt-save-period-times/);
 });
@@ -6379,8 +6403,8 @@ test('timetable period time dialog drafts fill, clear and save through project p
 
     controller.openPeriodTimeDialog();
     assert.equal(controller.state.periodTimeDialog.open, true);
-    assert.equal(controller.state.periodTimeDialog.settings.startTime, '07:55');
-    assert.equal(controller.state.periodTimeDialog.settings.classMinutes, 40);
+    assert.ok(controller.state.periodTimeDialog.segmentConfig);
+    assert.equal(controller.state.periodTimeDialog.segmentConfig.globalDefaults.classMinutes, 40);
     assert.deepEqual(controller.state.periodTimeDialog.draftTimes, [
       { period: 1, start: '07:55', end: '08:35' },
       { period: 2, start: '08:45', end: '09:25' },
@@ -6389,17 +6413,10 @@ test('timetable period time dialog drafts fill, clear and save through project p
 
     controller.autoFillPeriodTimes();
     assert.equal(calls.length, 0);
-    assert.deepEqual(controller.state.periodTimeDialog.settings, {
-      startTime: '08:00',
-      classMinutes: 40,
-      breakMinutes: 10,
-      afternoonStartPeriod: null,
-      afternoonStartTime: '14:00',
-      eveningStartPeriod: null,
-      eveningStartTime: '19:00',
-    });
+    assert.ok(controller.state.periodTimeDialog.segmentConfig);
+    assert.equal(controller.state.periodTimeDialog.segmentConfig.globalDefaults.classMinutes, 45);
     assert.equal(controller.state.periodTimeDialog.draftTimes.length, 3);
-    assert.deepEqual(controller.state.periodTimeDialog.draftTimes[0], { period: 1, start: '08:00', end: '08:40' });
+    assert.deepEqual(controller.state.periodTimeDialog.draftTimes[0], { period: 1, start: '08:00', end: '08:45' });
 
     controller.clearPeriodTimes();
     assert.deepEqual(controller.state.periodTimeDialog.draftTimes, []);
@@ -6418,10 +6435,8 @@ test('timetable period time dialog drafts fill, clear and save through project p
       { period: 2, start: '09:00', end: '09:40' },
       { period: 3, start: '09:50', end: '10:30' },
     ]);
-    assert.deepEqual(projectSave.body.dayPartBoundaries, {
-      afternoonStartPeriod: null,
-      eveningStartPeriod: null,
-    });
+    assert.ok(projectSave.body.periodTimeSegments);
+    assert.ok(projectSave.body.dayPartBoundaries);
     assert.equal(projectSave.body.activePeriods, undefined);
     assert.equal(projectSave.body.activeWeekdays, undefined);
     assert.equal(controller.state.periodTimeDialog.open, false);
@@ -6760,7 +6775,18 @@ test('timetable period time save posts explicit afternoon and evening boundaries
     const controller = new TimetablePlannerController();
     controller.render = () => {};
     controller.applyProject(project);
-    controller.state.periodTimeDialog = { ...controller.state.periodTimeDialog, open: true };
+    controller.state.periodTimeDialog = {
+      ...controller.state.periodTimeDialog,
+      open: true,
+      segmentConfig: {
+        globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+        segments: [
+          { id: 'seg-1', label: '上午', startTime: '08:00', periodCount: 4, classMinutes: null, breakMinutes: null },
+          { id: 'seg-2', label: '下午', startTime: '14:00', periodCount: 2, classMinutes: null, breakMinutes: null },
+          { id: 'seg-3', label: '晚间', startTime: '19:00', periodCount: 2, classMinutes: null, breakMinutes: null },
+        ],
+      },
+    };
     controller.state.container = createPeriodTimeDom([
       { period: 1, start: '08:00', end: '08:40', gapAfter: 10 },
       { period: 2, start: '08:50', end: '09:30', gapAfter: 10 },
@@ -6770,22 +6796,14 @@ test('timetable period time save posts explicit afternoon and evening boundaries
       { period: 6, start: '14:50', end: '15:30', gapAfter: 10 },
       { period: 7, start: '19:00', end: '19:40', gapAfter: 10 },
       { period: 8, start: '19:50', end: '20:30' },
-    ], {
-      startTime: '08:00',
-      classMinutes: 40,
-      breakMinutes: 10,
-      afternoonStartPeriod: 5,
-      afternoonStartTime: '14:00',
-      eveningStartPeriod: 7,
-      eveningStartTime: '19:00',
-    });
+    ], {}, { 'seg-1': { label: '上午', startTime: '08:00', periodCount: 4 }, 'seg-2': { label: '下午', startTime: '14:00', periodCount: 2 }, 'seg-3': { label: '晚间', startTime: '19:00', periodCount: 2 } });
 
     await controller.savePeriodTimes();
 
-    assert.deepEqual(calls[0].body.dayPartBoundaries, {
-      afternoonStartPeriod: 5,
-      eveningStartPeriod: 7,
-    });
+    assert.ok(calls[0].body.dayPartBoundaries);
+    assert.equal(calls[0].body.dayPartBoundaries.afternoonStartPeriod, 5);
+    assert.equal(calls[0].body.dayPartBoundaries.eveningStartPeriod, 7);
+    assert.ok(calls[0].body.periodTimeSegments);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -6850,12 +6868,19 @@ test('timetable period time save failure keeps the dialog draft editable', async
     const controller = new TimetablePlannerController();
     controller.render = () => {};
     controller.applyProject(project);
-    controller.state.periodTimeDialog = { ...controller.state.periodTimeDialog, open: true };
+    controller.state.periodTimeDialog = {
+      ...controller.state.periodTimeDialog,
+      open: true,
+      segmentConfig: {
+        globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+        segments: [{ id: 'seg-1', label: '全天', startTime: '08:00', periodCount: 3, classMinutes: null, breakMinutes: null }],
+      },
+    };
     controller.state.container = createPeriodTimeDom([
       { period: 1, start: '08:05', end: '08:45', gapAfter: 15 },
       { period: 2, start: '09:00', end: '09:40', gapAfter: 10 },
       { period: 3, start: '09:50', end: '10:30' },
-    ]);
+    ], {}, { 'seg-1': { label: '全天', startTime: '08:00', periodCount: 3 } });
 
     await controller.savePeriodTimes();
 
