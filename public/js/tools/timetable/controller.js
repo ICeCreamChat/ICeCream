@@ -1223,13 +1223,15 @@ export class TimetablePlannerController {
         const segmentCards = [...this.state.container.querySelectorAll('[data-segment-id]')];
         const segments = segmentCards.map(card => {
             const id = card.dataset.segmentId;
+            const classMinutesValue = card.querySelector(`[data-segment-field="${id}-classMinutes"]`)?.value;
+            const breakMinutesValue = card.querySelector(`[data-segment-field="${id}-breakMinutes"]`)?.value;
             return {
                 id,
                 label: card.querySelector(`[data-segment-field="${id}-label"]`)?.value || '时段',
                 startTime: card.querySelector(`[data-segment-field="${id}-startTime"]`)?.value || '08:00',
                 periodCount: card.querySelector(`[data-segment-field="${id}-periodCount"]`)?.value || '1',
-                classMinutes: card.querySelector(`[data-segment-field="${id}-classMinutes"]`)?.value || null,
-                breakMinutes: card.querySelector(`[data-segment-field="${id}-breakMinutes"]`)?.value || null,
+                classMinutes: classMinutesValue === '' ? null : classMinutesValue,
+                breakMinutes: breakMinutesValue === '' ? null : breakMinutesValue,
             };
         });
         return {
