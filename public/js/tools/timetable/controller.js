@@ -1249,6 +1249,9 @@ export class TimetablePlannerController {
         const activePeriods = getActivePeriods(this.state.project);
         const normalized = this.normalizeSegmentConfig(config, activePeriods);
         const draftTimes = this.buildPeriodTimesFromSegments(normalized, activePeriods);
+        const totalPeriods = normalized.segments.reduce((sum, seg) => sum + (seg.periodCount || 0), 0);
+        const needsFullRender = totalPeriods !== activePeriods.length;
+
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: true,
@@ -1257,8 +1260,13 @@ export class TimetablePlannerController {
             cleared: false,
             draftTimes,
         };
-        this.writePeriodTimesToDom(draftTimes);
-        this.refreshPeriodTimeGapInputsFromDom();
+
+        if (needsFullRender) {
+            this.render();
+        } else {
+            this.writePeriodTimesToDom(draftTimes);
+            this.refreshPeriodTimeGapInputsFromDom();
+        }
     }
 
     addPeriodTimeSegment() {
