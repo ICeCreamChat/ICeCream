@@ -17,8 +17,24 @@ export function getActiveWeekdays(project = {}) {
     return numberList(project.activeWeekdays, project.weekdays || 5, 1, 7);
 }
 
+export function getTotalPeriods(segmentConfig) {
+    return (segmentConfig?.segments || []).reduce((sum, seg) => sum + (seg.periodCount || 0), 0);
+}
+
 export function getActivePeriods(project = {}) {
-    return numberList(project.activePeriods, project.periodsPerDay || 7, 1, 12);
+    // 新逻辑：从 segmentConfig 派生总节次数，排除禁用的节次
+    const segmentConfig = project.segmentConfig;
+
+    // 兼容旧数据：如果没有 segmentConfig，fallback 到 activePeriods
+    if (!segmentConfig || !segmentConfig.segments || segmentConfig.segments.length === 0) {
+        return numberList(project.activePeriods, project.periodsPerDay || 7, 1, 12);
+    }
+
+    // 新逻辑：从时段配置计算总节次
+    const total = getTotalPeriods(segmentConfig);
+    const allPeriods = Array.from({ length: total }, (_, i) => i + 1);
+    const disabledSet = new Set(project.disabledPeriods || []);
+    return allPeriods.filter(p => !disabledSet.has(p));
 }
 
 export function entityMaps(project = {}) {

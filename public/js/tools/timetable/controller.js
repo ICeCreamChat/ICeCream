@@ -23,6 +23,7 @@ import {
     getSavedRuleItems,
     getVisibleSlots,
     removeSavedRuleById,
+    getTotalPeriods,
 } from './selectors.js';
 import {
     cloneValue,
@@ -43,6 +44,7 @@ import { buildRuleChangePreview } from './smart-workbench/constraint-adapter.js'
 import { createRenderScheduler } from './smart-workbench/render-scheduler.js';
 import { renderSmartWorkbench } from './smart-workbench/workbench-view.js';
 import { createMobileDrawerController } from './smart-workbench/mobile-drawer.js';
+import { PRESET_TEMPLATES } from './preset-templates.js';
 
 export class TimetablePlannerController {
     constructor() {
@@ -715,7 +717,7 @@ export class TimetablePlannerController {
     }
 
     getDefaultSegmentConfig(periods = null) {
-        const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        const activePeriods = periods ? [...periods].sort((left, right) => left - right) : getActivePeriods(this.state.project);
         const halfPoint = Math.floor(activePeriods.length / 2);
         return {
             globalDefaults: {
@@ -727,7 +729,7 @@ export class TimetablePlannerController {
                     id: 'seg-1',
                     label: '上午时段',
                     startTime: '08:00',
-                    periodCount: halfPoint || activePeriods.length,
+                    periodCount: halfPoint || activePeriods.length || 4,
                     classMinutes: null,
                     breakMinutes: null,
                 },
@@ -744,7 +746,9 @@ export class TimetablePlannerController {
     }
 
     normalizeSegmentConfig(config = {}, periods = null) {
-        const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+        const activePeriods = periods && periods.length > 0
+            ? [...periods].sort((left, right) => left - right)
+            : getActivePeriods(this.state.project);
         const defaults = this.getDefaultSegmentConfig(activePeriods);
         const toInteger = (value, fallback, min, max) => {
             const number = Number(value);
@@ -777,9 +781,19 @@ export class TimetablePlannerController {
         return { globalDefaults, segments: segments.length ? segments : defaults.segments };
     }
 
-    buildPeriodTimesFromSegments(config = {}, periods = null) {
-        const activePeriods = [...(periods || getActivePeriods(this.state.project))].sort((left, right) => left - right);
+    buildPeriodTimesFromSegments(config = {}, periods = null, existingTimes = []) {
+        const activePeriods = periods && periods.length > 0
+            ? [...periods].sort((left, right) => left - right)
+            : getActivePeriods(this.state.project);
         const safeConfig = this.normalizeSegmentConfig(config, activePeriods);
+
+        // 构建手动覆盖映射
+        const manualOverrides = new Map(
+            (existingTimes || [])
+                .filter(t => t.manualOverride)
+                .map(t => [t.period, { start: t.start, end: t.end }])
+        );
+
         const times = [];
         let periodIndex = 0;
 
@@ -790,14 +804,27 @@ export class TimetablePlannerController {
 
             for (let i = 0; i < segment.periodCount && periodIndex < activePeriods.length; i++) {
                 const period = activePeriods[periodIndex++];
-                const start = this.minutesToTime(currentMinutes);
-                currentMinutes += classMinutes;
-                const end = this.minutesToTime(currentMinutes);
 
-                times.push({ period, start, end });
+                // 检查是否有手动覆盖
+                if (manualOverrides.has(period)) {
+                    const override = manualOverrides.get(period);
+                    times.push({
+                        period,
+                        start: override.start,
+                        end: override.end,
+                        manualOverride: true
+                    });
+                    // 更新 currentMinutes 以基于手动调整的结束时间
+                    currentMinutes = this.timeToMinutes(override.end) + breakMinutes;
+                } else {
+                    const start = this.minutesToTime(currentMinutes);
+                    currentMinutes += classMinutes;
+                    const end = this.minutesToTime(currentMinutes);
+                    times.push({ period, start, end, manualOverride: false });
 
-                if (i < segment.periodCount - 1) {
-                    currentMinutes += breakMinutes;
+                    if (i < segment.periodCount - 1) {
+                        currentMinutes += breakMinutes;
+                    }
                 }
             }
         }
@@ -1249,25 +1276,11 @@ export class TimetablePlannerController {
             console.warn('updateSegmentConfigFromForm: No config read from DOM');
             return;
         }
-        const activePeriods = getActivePeriods(this.state.project);
-        const normalized = this.normalizeSegmentConfig(config, activePeriods);
 
-        // Calculate total periods from segments
-        const totalConfiguredPeriods = normalized.segments.reduce((sum, seg) => sum + seg.periodCount, 0);
-
-        // Auto-adjust if mismatch: scale the last segment to fit
-        if (totalConfiguredPeriods !== activePeriods.length && normalized.segments.length > 0) {
-            const lastSegment = normalized.segments[normalized.segments.length - 1];
-            const otherSegmentsTotal = normalized.segments.slice(0, -1).reduce((sum, seg) => sum + seg.periodCount, 0);
-            const remaining = activePeriods.length - otherSegmentsTotal;
-
-            if (remaining > 0 && remaining <= 12) {
-                lastSegment.periodCount = remaining;
-                console.log(`Auto-adjusted last segment to ${remaining} periods to match activePeriods (${activePeriods.length})`);
-            }
-        }
-
-        const draftTimes = this.buildPeriodTimesFromSegments(normalized, activePeriods);
+        // 新逻辑：不再受外层 activePeriods 限制
+        const normalized = this.normalizeSegmentConfig(config, []);
+        const existingTimes = this.state.periodTimeDialog?.draftTimes || [];
+        const draftTimes = this.buildPeriodTimesFromSegments(normalized, null, existingTimes);
 
         // Check if segment structure changed (different segment count or period counts)
         const previousConfig = this.state.periodTimeDialog?.segmentConfig;
@@ -1281,7 +1294,6 @@ export class TimetablePlannerController {
             previousSegments: previousConfig?.segments.length || 0,
             newSegments: normalized.segments.length,
             totalConfiguredPeriods: normalized.segments.reduce((sum, seg) => sum + seg.periodCount, 0),
-            activePeriods: activePeriods.length,
             segmentStructureChanged,
         });
 
@@ -1307,14 +1319,11 @@ export class TimetablePlannerController {
     addPeriodTimeSegment() {
         const current = this.state.periodTimeDialog?.segmentConfig || this.getDefaultSegmentConfig();
         const newId = `seg-${current.segments.length + 1}`;
-        const activePeriods = getActivePeriods(this.state.project);
-        const usedCount = current.segments.reduce((sum, seg) => sum + (seg.periodCount || 0), 0);
-        const remaining = Math.max(1, activePeriods.length - usedCount);
         const newSegment = {
             id: newId,
             label: `时段${current.segments.length + 1}`,
             startTime: current.segments.length === 0 ? '08:00' : current.segments.length === 1 ? '14:00' : '19:00',
-            periodCount: Math.min(remaining, 4),
+            periodCount: 2,
             classMinutes: null,
             breakMinutes: null,
         };
@@ -1322,12 +1331,15 @@ export class TimetablePlannerController {
             ...current,
             segments: [...current.segments, newSegment],
         };
-        const draftTimes = this.buildPeriodTimesFromSegments(updated, activePeriods);
+        const existingTimes = this.state.periodTimeDialog?.draftTimes || [];
+        const draftTimes = this.buildPeriodTimesFromSegments(updated, null, existingTimes);
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: true,
             segmentConfig: updated,
             draftTimes,
+            errors: [],
+            cleared: false,
         };
         this.render();
     }
@@ -1342,8 +1354,8 @@ export class TimetablePlannerController {
             this.setMessage('至少保留一个时段');
             return;
         }
-        const activePeriods = getActivePeriods(this.state.project);
-        const draftTimes = this.buildPeriodTimesFromSegments(updated, activePeriods);
+        const existingTimes = this.state.periodTimeDialog?.draftTimes || [];
+        const draftTimes = this.buildPeriodTimesFromSegments(updated, null, existingTimes);
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: true,
@@ -1354,41 +1366,16 @@ export class TimetablePlannerController {
     }
 
     applySegmentTemplate(templateName) {
-        const activePeriods = getActivePeriods(this.state.project);
-        let template;
-        if (templateName === 'standard') {
-            const half = Math.floor(activePeriods.length / 2);
-            template = {
-                globalDefaults: { classMinutes: 45, breakMinutes: 10 },
-                segments: [
-                    { id: 'seg-1', label: '上午时段', startTime: '08:00', periodCount: half, classMinutes: null, breakMinutes: null },
-                    { id: 'seg-2', label: '下午时段', startTime: '14:00', periodCount: activePeriods.length - half, classMinutes: null, breakMinutes: null },
-                ],
-            };
-        } else if (templateName === 'early-evening') {
-            template = {
-                globalDefaults: { classMinutes: 45, breakMinutes: 10 },
-                segments: [
-                    { id: 'seg-1', label: '早读', startTime: '07:30', periodCount: 1, classMinutes: 30, breakMinutes: null },
-                    { id: 'seg-2', label: '上午时段', startTime: '08:30', periodCount: Math.min(4, activePeriods.length - 1), classMinutes: null, breakMinutes: null },
-                    { id: 'seg-3', label: '下午时段', startTime: '14:00', periodCount: Math.min(3, Math.max(1, activePeriods.length - 5)), classMinutes: null, breakMinutes: null },
-                    ...(activePeriods.length >= 10 ? [{ id: 'seg-4', label: '晚自习', startTime: '19:00', periodCount: Math.max(1, activePeriods.length - 8), classMinutes: null, breakMinutes: null }] : []),
-                ],
-            };
-        } else if (templateName === 'junior') {
-            const half = Math.floor(activePeriods.length / 2);
-            template = {
-                globalDefaults: { classMinutes: 40, breakMinutes: 10 },
-                segments: [
-                    { id: 'seg-1', label: '上午时段', startTime: '08:00', periodCount: half, classMinutes: null, breakMinutes: null },
-                    { id: 'seg-2', label: '下午时段', startTime: '14:30', periodCount: activePeriods.length - half, classMinutes: null, breakMinutes: null },
-                ],
-            };
-        } else {
+        const template = PRESET_TEMPLATES[templateName];
+        if (!template) {
+            console.warn(`Unknown template: ${templateName}`);
             return;
         }
-        const normalized = this.normalizeSegmentConfig(template, activePeriods);
-        const draftTimes = this.buildPeriodTimesFromSegments(normalized, activePeriods);
+
+        const normalized = this.normalizeSegmentConfig(template, []);
+        const existingTimes = this.state.periodTimeDialog?.draftTimes || [];
+        const draftTimes = this.buildPeriodTimesFromSegments(normalized, null, existingTimes);
+
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: true,
@@ -1398,7 +1385,7 @@ export class TimetablePlannerController {
             draftTimes,
         };
         this.render();
-        this.setMessage(`已应用"${templateName === 'standard' ? '标准作息' : templateName === 'early-evening' ? '含早晚自习' : '初中作息'}"模板`);
+        this.setMessage(`已应用"${template.name}"模板`);
     }
 
     readPeriodTimeSettingsFromDom() {
@@ -4278,6 +4265,39 @@ export class TimetablePlannerController {
         } else {
             this.render();
         }
+    }
+
+    setManualPeriodTime(period, start, end) {
+        const draftTimes = this.state.periodTimeDialog?.draftTimes || [];
+        const updated = draftTimes.map(t =>
+            t.period === period
+                ? { ...t, start, end, manualOverride: true }
+                : t
+        );
+
+        this.state.periodTimeDialog.draftTimes = updated;
+        this.render();
+    }
+
+    clearManualOverride(period) {
+        const config = this.state.periodTimeDialog?.segmentConfig;
+        const draftTimes = this.buildPeriodTimesFromSegments(config, null, []);
+
+        this.state.periodTimeDialog.draftTimes = draftTimes;
+        this.render();
+    }
+
+    togglePeriodEnabled(period) {
+        const disabledSet = new Set(this.state.project.disabledPeriods || []);
+
+        if (disabledSet.has(period)) {
+            disabledSet.delete(period);
+        } else {
+            disabledSet.add(period);
+        }
+
+        this.state.project.disabledPeriods = Array.from(disabledSet).sort((a, b) => a - b);
+        this.render();
     }
 }
 

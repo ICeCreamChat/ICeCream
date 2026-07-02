@@ -1,0 +1,195 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - complementary [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - img [ref=e126]
+          - generic [ref=e20]: ICeCream
+        - button "新建对话" [ref=e21] [cursor=pointer]:
+          - img [ref=e139]
+          - text: 新建对话
+      - generic [ref=e25]: ICeCream v1.0
+    - main [ref=e26]:
+      - generic [ref=e27]:
+        - generic "ICeCream Online（缓存）" [ref=e29]:
+          - generic [ref=e31]: ICeCream Online
+        - generic [ref=e32]:
+          - button "问答" [ref=e33] [cursor=pointer]:
+            - img [ref=e140]
+            - generic [ref=e37]: 问答
+          - button "动画" [ref=e38] [cursor=pointer]:
+            - img [ref=e143]
+            - generic [ref=e44]: 动画
+          - button "解题" [ref=e45] [cursor=pointer]:
+            - img [ref=e148]
+            - generic [ref=e48]: 解题
+        - generic [ref=e49]:
+          - button "课堂工具箱" [ref=e50] [cursor=pointer]:
+            - img [ref=e150]
+          - button "切换主题" [ref=e56] [cursor=pointer]:
+            - img [ref=e155]
+            - img [ref=e161]
+      - generic [ref=e66]:
+        - img [ref=e163]
+        - heading "欢迎使用 ICeCream" [level=1] [ref=e81]
+        - paragraph [ref=e82]: 统一智能平台 - 问答 · 动画 · 解题
+        - generic [ref=e83]:
+          - generic [ref=e84] [cursor=pointer]:
+            - img [ref=e176]
+            - heading "智能问答" [level=3] [ref=e87]
+            - paragraph [ref=e88]: 自由提问，自动识别聊天、动画或解题任务
+          - generic [ref=e89] [cursor=pointer]:
+            - img [ref=e178]
+            - heading "数学动画" [level=3] [ref=e95]
+            - paragraph [ref=e96]: 自然语言描述，生成 Manim 动画或 GeoGebra 动态几何
+          - generic [ref=e97] [cursor=pointer]:
+            - img [ref=e183]
+            - heading "智能解题" [level=3] [ref=e100]
+            - paragraph [ref=e101]: 上传题目图片，AI 自动解答
+      - generic [ref=e102]:
+        - generic [ref=e103]:
+          - button "上传图片" [ref=e104] [cursor=pointer]:
+            - img [ref=e185]
+          - textbox "输入框" [ref=e108]:
+            - /placeholder: 输入消息，或上传图片...
+          - button "发送消息" [ref=e109] [cursor=pointer]:
+            - img [ref=e187]
+        - button "更多选项" [ref=e114] [cursor=pointer]:
+          - img [ref=e190]
+  - generic:
+    - generic:
+      - generic:
+        - img
+        - generic: 题目看板
+      - generic:
+        - button "锁定/解锁看板内容":
+          - img
+        - button "收起/展开":
+          - img
+    - generic:
+      - generic:
+        - img "题目图片"
+  - generic [ref=e119] [cursor=pointer]:
+    - img [ref=e193]
+    - heading "智能排课" [level=3] [ref=e124]
+    - paragraph [ref=e125]: 导入任课 · 一键生成
+  - generic [ref=e196]:
+    - generic [ref=e197]:
+      - generic [ref=e198]:
+        - img [ref=e200]
+        - generic [ref=e203]: 智能排课
+        - generic "ICeCream Online" [ref=e204]:
+          - generic [ref=e206]: ICeCream Online
+      - generic [ref=e207]:
+        - button "切换到夜间模式" [ref=e208] [cursor=pointer]:
+          - img [ref=e209]
+          - img [ref=e215]
+        - button "返回" [ref=e217] [cursor=pointer]:
+          - img [ref=e218]
+          - generic [ref=e220]: 返回
+    - generic [ref=e222]:
+      - banner [ref=e223]:
+        - generic [ref=e224]:
+          - generic [ref=e225]: 智能排课
+          - heading "排课工作台" [level=2] [ref=e226]
+          - paragraph [ref=e227]: 5 天 · 7 节 · 待导入任课
+        - generic "排课状态" [ref=e228]:
+          - generic [ref=e229]:
+            - generic [ref=e230]: 来源
+            - strong [ref=e231]: 未生成
+          - generic [ref=e232]:
+            - generic [ref=e233]: 已排
+            - strong [ref=e234]: 0/0
+          - generic [ref=e235]:
+            - generic [ref=e236]: 硬冲突
+            - strong [ref=e237]: "0"
+          - generic [ref=e238]:
+            - generic [ref=e239]: 未排
+            - strong [ref=e240]: "0"
+        - generic [ref=e241]:
+          - img [ref=e242]
+          - generic [ref=e244]: 请先导入任课数据。
+      - complementary [ref=e245]:
+        - generic [ref=e246]:
+          - generic [ref=e247]:
+            - button "数据准备 0 条" [expanded] [ref=e248] [cursor=pointer]:
+              - heading "数据准备" [level=3] [ref=e249]:
+                - img [ref=e250]
+                - generic [ref=e254]: 数据准备
+              - generic [ref=e255]:
+                - generic [ref=e256]: 0 条
+                - img [ref=e257]
+            - generic [ref=e259]:
+              - generic [ref=e260]:
+                - generic [ref=e261]:
+                  - heading "排课范围" [level=4] [ref=e262]:
+                    - img [ref=e263]
+                    - generic [ref=e265]: 排课范围
+                  - generic [ref=e266]: 5 天 · 7 节
+                - generic [ref=e267]:
+                  - generic [ref=e268]:
+                    - group [ref=e269]:
+                      - generic "周一-周五" [ref=e270] [cursor=pointer]:
+                        - strong [ref=e271]: 周一-周五
+                        - img [ref=e272]
+                    - group [ref=e274]:
+                      - generic "第1-7节" [ref=e275] [cursor=pointer]:
+                        - strong [ref=e276]: 第1-7节
+                        - img [ref=e277]
+                  - button "节次时间 08:00-16:35 · 已配置 7 节 配置时间" [ref=e279] [cursor=pointer]:
+                    - img [ref=e281]
+                    - generic [ref=e284]:
+                      - strong [ref=e285]: 节次时间
+                      - emphasis [ref=e286]: 08:00-16:35 · 已配置 7 节
+                    - generic [ref=e287]: 配置时间
+              - generic [ref=e288]:
+                - generic [ref=e289]:
+                  - heading "任课数据" [level=4] [ref=e290]:
+                    - img [ref=e291]
+                    - generic [ref=e295]: 任课数据
+                  - generic [ref=e296]: 0 条
+                - button "导入任课数据 导入年级、班级、课程、教师和周课时后再生成统计。" [ref=e297] [cursor=pointer]:
+                  - img [ref=e298]
+                  - strong [ref=e302]: 导入任课数据
+                  - generic [ref=e303]: 导入年级、班级、课程、教师和周课时后再生成统计。
+          - button "智能约束 0 条" [ref=e305] [cursor=pointer]:
+            - heading "智能约束" [level=3] [ref=e306]:
+              - img [ref=e307]
+              - generic [ref=e319]: 智能约束
+            - generic [ref=e320]:
+              - generic [ref=e321]: 0 条
+              - img [ref=e322]
+          - button "生成导出 待准备" [ref=e325] [cursor=pointer]:
+            - heading "生成导出" [level=3] [ref=e326]:
+              - img [ref=e327]
+              - generic [ref=e330]: 生成导出
+            - generic [ref=e331]:
+              - generic [ref=e332]: 待准备
+              - img [ref=e333]
+      - generic [ref=e335]:
+        - generic [ref=e336]:
+          - generic [ref=e337]:
+            - group "课表视图" [ref=e338]:
+              - button "班级" [ref=e339] [cursor=pointer]
+              - button "教师" [ref=e340] [cursor=pointer]
+              - button "总表" [ref=e341] [cursor=pointer]
+            - combobox [ref=e342]
+          - generic [ref=e343]:
+            - generic [ref=e344]: 待准备
+            - button "快速生成" [disabled] [ref=e345]:
+              - img [ref=e346]
+              - generic [ref=e348]: 快速生成
+        - generic [ref=e350]:
+          - img [ref=e351]
+          - strong [ref=e353]: 等待任课数据
+          - generic [ref=e354]: 先在左侧导入课程、教师、班级和周课时。
+      - complementary:
+        - group [ref=e355]:
+          - generic "排课审查 诊断 / 质量 / 发布" [ref=e356] [cursor=pointer]:
+            - generic [ref=e357]:
+              - img [ref=e358]
+              - strong [ref=e361]: 排课审查
+            - emphasis [ref=e362]: 诊断 / 质量 / 发布
+  - generic [ref=e118]:
+    - alert
+    - alert

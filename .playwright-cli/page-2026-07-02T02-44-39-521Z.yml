@@ -1,0 +1,360 @@
+- generic [active] [ref=f1e1]:
+  - generic [ref=f1e3]:
+    - complementary [ref=f1e4]:
+      - generic [ref=f1e5]:
+        - generic [ref=f1e6]:
+          - img [ref=f1e363]
+          - generic [ref=f1e20]: ICeCream
+        - button "新建对话" [ref=f1e21] [cursor=pointer]:
+          - img [ref=f1e376]
+          - text: 新建对话
+      - generic [ref=f1e25]: ICeCream v1.0
+    - main [ref=f1e26]:
+      - generic [ref=f1e27]:
+        - generic "ICeCream Online（缓存）" [ref=f1e29]:
+          - generic [ref=f1e31]: ICeCream Online
+        - generic [ref=f1e32]:
+          - button "问答" [ref=f1e33] [cursor=pointer]:
+            - img [ref=f1e377]
+            - generic [ref=f1e37]: 问答
+          - button "动画" [ref=f1e38] [cursor=pointer]:
+            - img [ref=f1e380]
+            - generic [ref=f1e44]: 动画
+          - button "解题" [ref=f1e45] [cursor=pointer]:
+            - img [ref=f1e385]
+            - generic [ref=f1e48]: 解题
+        - generic [ref=f1e49]:
+          - button "课堂工具箱" [ref=f1e50] [cursor=pointer]:
+            - img [ref=f1e387]
+          - button "切换主题" [ref=f1e56] [cursor=pointer]:
+            - img [ref=f1e392]
+            - img [ref=f1e398]
+      - generic [ref=f1e66]:
+        - img [ref=f1e400]
+        - heading "欢迎使用 ICeCream" [level=1] [ref=f1e81]
+        - paragraph [ref=f1e82]: 统一智能平台 - 问答 · 动画 · 解题
+        - generic [ref=f1e83]:
+          - generic [ref=f1e84] [cursor=pointer]:
+            - img [ref=f1e413]
+            - heading "智能问答" [level=3] [ref=f1e87]
+            - paragraph [ref=f1e88]: 自由提问，自动识别聊天、动画或解题任务
+          - generic [ref=f1e89] [cursor=pointer]:
+            - img [ref=f1e415]
+            - heading "数学动画" [level=3] [ref=f1e95]
+            - paragraph [ref=f1e96]: 自然语言描述，生成 Manim 动画或 GeoGebra 动态几何
+          - generic [ref=f1e97] [cursor=pointer]:
+            - img [ref=f1e420]
+            - heading "智能解题" [level=3] [ref=f1e100]
+            - paragraph [ref=f1e101]: 上传题目图片，AI 自动解答
+      - generic [ref=f1e102]:
+        - generic [ref=f1e103]:
+          - button "上传图片" [ref=f1e104] [cursor=pointer]:
+            - img [ref=f1e422]
+          - textbox "输入框" [ref=f1e108]:
+            - /placeholder: 输入消息，或上传图片...
+          - button "发送消息" [ref=f1e109] [cursor=pointer]:
+            - img [ref=f1e424]
+        - button "更多选项" [ref=f1e114] [cursor=pointer]:
+          - img [ref=f1e427]
+  - generic:
+    - generic:
+      - generic:
+        - img
+        - generic: 题目看板
+      - generic:
+        - button "锁定/解锁看板内容":
+          - img
+        - button "收起/展开":
+          - img
+    - generic:
+      - generic:
+        - img "题目图片"
+  - generic [ref=f1e119] [cursor=pointer]:
+    - img [ref=f1e430]
+    - heading "智能排课" [level=3] [ref=f1e124]
+    - paragraph [ref=f1e125]: 导入任课 · 一键生成
+  - generic [ref=f1e196]:
+    - generic [ref=f1e197]:
+      - generic [ref=f1e198]:
+        - img [ref=f1e433]
+        - generic [ref=f1e203]: 智能排课
+        - generic "ICeCream Online" [ref=f1e204]:
+          - generic [ref=f1e206]: ICeCream Online
+      - generic [ref=f1e207]:
+        - button "切换到夜间模式" [ref=f1e208] [cursor=pointer]:
+          - img [ref=f1e436]
+          - img [ref=f1e442]
+        - button "返回" [ref=f1e217] [cursor=pointer]:
+          - img [ref=f1e444]
+          - generic [ref=f1e220]: 返回
+    - generic [ref=f1e446]:
+      - banner [ref=f1e447]:
+        - generic [ref=f1e448]:
+          - generic [ref=f1e449]: 智能排课
+          - heading "排课工作台" [level=2] [ref=f1e450]
+          - paragraph [ref=f1e451]: 5 天 · 7 节 · 待导入任课
+        - generic "排课状态" [ref=f1e452]:
+          - generic [ref=f1e453]:
+            - generic [ref=f1e454]: 来源
+            - strong [ref=f1e455]: 未生成
+          - generic [ref=f1e456]:
+            - generic [ref=f1e457]: 已排
+            - strong [ref=f1e458]: 0/0
+          - generic [ref=f1e459]:
+            - generic [ref=f1e460]: 硬冲突
+            - strong [ref=f1e461]: "0"
+          - generic [ref=f1e462]:
+            - generic [ref=f1e463]: 未排
+            - strong [ref=f1e464]: "0"
+        - generic [ref=f1e465]:
+          - img [ref=f1e466]
+          - generic [ref=f1e468]: 请先导入任课数据。
+      - complementary [ref=f1e469]:
+        - generic [ref=f1e470]:
+          - generic [ref=f1e471]:
+            - button "数据准备 0 条" [expanded] [ref=f1e472] [cursor=pointer]:
+              - heading "数据准备" [level=3] [ref=f1e473]:
+                - img [ref=f1e474]
+                - generic [ref=f1e478]: 数据准备
+              - generic [ref=f1e479]:
+                - generic [ref=f1e480]: 0 条
+                - img [ref=f1e481]
+            - generic [ref=f1e483]:
+              - generic [ref=f1e484]:
+                - generic [ref=f1e485]:
+                  - heading "排课范围" [level=4] [ref=f1e486]:
+                    - img [ref=f1e487]
+                    - generic [ref=f1e489]: 排课范围
+                  - generic [ref=f1e490]: 5 天 · 7 节
+                - generic [ref=f1e491]:
+                  - generic [ref=f1e492]:
+                    - group [ref=f1e493]:
+                      - generic "周一-周五" [ref=f1e494] [cursor=pointer]:
+                        - strong [ref=f1e495]: 周一-周五
+                        - img [ref=f1e496]
+                    - group [ref=f1e498]:
+                      - generic "第1-7节" [ref=f1e499] [cursor=pointer]:
+                        - strong [ref=f1e500]: 第1-7节
+                        - img [ref=f1e501]
+                  - button "节次时间 08:00-16:35 · 已配置 7 节 配置时间" [ref=f1e503] [cursor=pointer]:
+                    - img [ref=f1e505]
+                    - generic [ref=f1e508]:
+                      - strong [ref=f1e509]: 节次时间
+                      - emphasis [ref=f1e510]: 08:00-16:35 · 已配置 7 节
+                    - generic [ref=f1e511]: 配置时间
+              - generic [ref=f1e512]:
+                - generic [ref=f1e513]:
+                  - heading "任课数据" [level=4] [ref=f1e514]:
+                    - img [ref=f1e515]
+                    - generic [ref=f1e519]: 任课数据
+                  - generic [ref=f1e520]: 0 条
+                - button "导入任课数据 导入年级、班级、课程、教师和周课时后再生成统计。" [ref=f1e521] [cursor=pointer]:
+                  - img [ref=f1e522]
+                  - strong [ref=f1e526]: 导入任课数据
+                  - generic [ref=f1e527]: 导入年级、班级、课程、教师和周课时后再生成统计。
+          - button "智能约束 0 条" [ref=f1e529] [cursor=pointer]:
+            - heading "智能约束" [level=3] [ref=f1e530]:
+              - img [ref=f1e531]
+              - generic [ref=f1e543]: 智能约束
+            - generic [ref=f1e544]:
+              - generic [ref=f1e545]: 0 条
+              - img [ref=f1e546]
+          - button "生成导出 待准备" [ref=f1e549] [cursor=pointer]:
+            - heading "生成导出" [level=3] [ref=f1e550]:
+              - img [ref=f1e551]
+              - generic [ref=f1e554]: 生成导出
+            - generic [ref=f1e555]:
+              - generic [ref=f1e556]: 待准备
+              - img [ref=f1e557]
+      - generic [ref=f1e559]:
+        - generic [ref=f1e560]:
+          - generic [ref=f1e561]:
+            - group "课表视图" [ref=f1e562]:
+              - button "班级" [ref=f1e563] [cursor=pointer]
+              - button "教师" [ref=f1e564] [cursor=pointer]
+              - button "总表" [ref=f1e565] [cursor=pointer]
+            - combobox [ref=f1e566]
+          - generic [ref=f1e567]:
+            - generic [ref=f1e568]: 待准备
+            - button "快速生成" [disabled] [ref=f1e569]:
+              - img [ref=f1e570]
+              - generic [ref=f1e572]: 快速生成
+        - generic [ref=f1e574]:
+          - img [ref=f1e575]
+          - strong [ref=f1e577]: 等待任课数据
+          - generic [ref=f1e578]: 先在左侧导入课程、教师、班级和周课时。
+      - complementary:
+        - group [ref=f1e579]:
+          - generic "排课审查 诊断 / 质量 / 发布" [ref=f1e580] [cursor=pointer]:
+            - generic [ref=f1e581]:
+              - img [ref=f1e582]
+              - strong [ref=f1e585]: 排课审查
+            - emphasis [ref=f1e586]: 诊断 / 质量 / 发布
+      - dialog "节次时间配置" [ref=f1e588]:
+        - generic [ref=f1e589]:
+          - generic [ref=f1e590]:
+            - generic [ref=f1e591]: 排课范围
+            - heading "节次时间配置" [level=3] [ref=f1e592]
+            - paragraph [ref=f1e593]: 配置每节课的开始和结束时间，用于课表展示与导出，不会单独改变已生成课表。
+          - button "关闭节次时间配置" [ref=f1e594] [cursor=pointer]:
+            - img [ref=f1e595]
+        - generic "快速生成节次时间" [ref=f1e598]:
+          - generic [ref=f1e599]:
+            - strong [ref=f1e600]: 快速生成
+            - generic [ref=f1e601]: 按真实作息时段配置，系统自动计算节次时间轴；手工改表格后，以时间轴实际值为准。
+          - generic [ref=f1e602]:
+            - generic [ref=f1e603]:
+              - generic [ref=f1e604]: 默认课时（分钟）
+              - spinbutton "默认课时（分钟）" [ref=f1e605]: "45"
+            - generic [ref=f1e606]:
+              - generic [ref=f1e607]: 默认课间（分钟）
+              - spinbutton "默认课间（分钟）" [ref=f1e608]: "10"
+          - generic [ref=f1e609]:
+            - generic [ref=f1e610]: 预设模板：
+            - button "标准作息" [ref=f1e611] [cursor=pointer]
+            - button "含早晚自习" [ref=f1e612] [cursor=pointer]
+            - button "初中作息" [ref=f1e613] [cursor=pointer]
+          - generic [ref=f1e614]:
+            - generic [ref=f1e615]:
+              - generic [ref=f1e616]:
+                - textbox "时段名称" [ref=f1e617]: 上午时段
+                - generic [ref=f1e618]: 时段 1
+                - button "删除此时段" [ref=f1e619] [cursor=pointer]:
+                  - img [ref=f1e620]
+              - generic [ref=f1e623]:
+                - generic [ref=f1e624]:
+                  - generic [ref=f1e625]: 首节开始
+                  - textbox "首节开始" [ref=f1e626]: 08:00
+                - generic [ref=f1e627]:
+                  - generic [ref=f1e628]: 节次数量
+                  - spinbutton "节次数量" [ref=f1e629]: "4"
+                - generic [ref=f1e630]:
+                  - generic [ref=f1e631]: 课时（分钟）
+                  - combobox "课时（分钟）" [ref=f1e632]:
+                    - option "继承全局" [selected]
+                    - option "30"
+                    - option "40"
+                    - option "45"
+                    - option "50"
+                    - option "60"
+                - generic [ref=f1e633]:
+                  - generic [ref=f1e634]: 课间（分钟）
+                  - combobox "课间（分钟）" [ref=f1e635]:
+                    - option "继承全局" [selected]
+                    - option "5"
+                    - option "10"
+                    - option "15"
+                    - option "20"
+            - generic [ref=f1e636]:
+              - generic [ref=f1e637]:
+                - textbox "时段名称" [ref=f1e638]: 下午时段
+                - generic [ref=f1e639]: 时段 2
+                - button "删除此时段" [ref=f1e640] [cursor=pointer]:
+                  - img [ref=f1e641]
+              - generic [ref=f1e644]:
+                - generic [ref=f1e645]:
+                  - generic [ref=f1e646]: 首节开始
+                  - textbox "首节开始" [ref=f1e647]: 14:00
+                - generic [ref=f1e648]:
+                  - generic [ref=f1e649]: 节次数量
+                  - spinbutton "节次数量" [ref=f1e650]: "3"
+                - generic [ref=f1e651]:
+                  - generic [ref=f1e652]: 课时（分钟）
+                  - combobox "课时（分钟）" [ref=f1e653]:
+                    - option "继承全局" [selected]
+                    - option "30"
+                    - option "40"
+                    - option "45"
+                    - option "50"
+                    - option "60"
+                - generic [ref=f1e654]:
+                  - generic [ref=f1e655]: 课间（分钟）
+                  - combobox "课间（分钟）" [ref=f1e656]:
+                    - option "继承全局" [selected]
+                    - option "5"
+                    - option "10"
+                    - option "15"
+                    - option "20"
+          - button "添加时段" [ref=f1e658] [cursor=pointer]:
+            - img [ref=f1e659]
+            - generic [ref=f1e660]: 添加时段
+        - generic [ref=f1e661]:
+          - strong [ref=f1e662]: 节次时间轴
+          - generic [ref=f1e663]: 可单独调整每节后的休息时间，保存后用于展示与导出。
+        - table [ref=f1e665]:
+          - rowgroup [ref=f1e671]:
+            - row "节次 开始时间 结束时间 本节后间隔" [ref=f1e672]:
+              - columnheader "节次" [ref=f1e673]
+              - columnheader "开始时间" [ref=f1e674]
+              - columnheader "结束时间" [ref=f1e675]
+              - columnheader "本节后间隔" [ref=f1e676]
+          - rowgroup [ref=f1e677]:
+            - row "第1节 08:00 08:45 10" [ref=f1e678]:
+              - cell "第1节" [ref=f1e679]
+              - cell "08:00" [ref=f1e680]:
+                - textbox [ref=f1e681]: 08:00
+              - cell "08:45" [ref=f1e682]:
+                - textbox [ref=f1e683]: 08:45
+              - cell "10" [ref=f1e684]:
+                - spinbutton [ref=f1e685]: "10"
+            - row "第2节 08:55 09:40 10" [ref=f1e686]:
+              - cell "第2节" [ref=f1e687]
+              - cell "08:55" [ref=f1e688]:
+                - textbox [ref=f1e689]: 08:55
+              - cell "09:40" [ref=f1e690]:
+                - textbox [ref=f1e691]: 09:40
+              - cell "10" [ref=f1e692]:
+                - spinbutton [ref=f1e693]: "10"
+            - row "第3节 09:50 10:35 20" [ref=f1e694]:
+              - cell "第3节" [ref=f1e695]
+              - cell "09:50" [ref=f1e696]:
+                - textbox [ref=f1e697]: 09:50
+              - cell "10:35" [ref=f1e698]:
+                - textbox [ref=f1e699]: 10:35
+              - cell "20" [ref=f1e700]:
+                - spinbutton [ref=f1e701]: "20"
+            - row "第4节 10:55 11:40 140" [ref=f1e702]:
+              - cell "第4节" [ref=f1e703]
+              - cell "10:55" [ref=f1e704]:
+                - textbox [ref=f1e705]: 10:55
+              - cell "11:40" [ref=f1e706]:
+                - textbox [ref=f1e707]: 11:40
+              - cell "140" [ref=f1e708]:
+                - spinbutton [ref=f1e709]: "140"
+            - row "第5节 14:00 14:45 10" [ref=f1e710]:
+              - cell "第5节" [ref=f1e711]
+              - cell "14:00" [ref=f1e712]:
+                - textbox [ref=f1e713]: 14:00
+              - cell "14:45" [ref=f1e714]:
+                - textbox [ref=f1e715]: 14:45
+              - cell "10" [ref=f1e716]:
+                - spinbutton [ref=f1e717]: "10"
+            - row "第6节 14:55 15:40 10" [ref=f1e718]:
+              - cell "第6节" [ref=f1e719]
+              - cell "14:55" [ref=f1e720]:
+                - textbox [ref=f1e721]: 14:55
+              - cell "15:40" [ref=f1e722]:
+                - textbox [ref=f1e723]: 15:40
+              - cell "10" [ref=f1e724]:
+                - spinbutton [ref=f1e725]: "10"
+            - row "第7节 15:50 16:35 无课后间隔" [ref=f1e726]:
+              - cell "第7节" [ref=f1e727]
+              - cell "15:50" [ref=f1e728]:
+                - textbox [ref=f1e729]: 15:50
+              - cell "16:35" [ref=f1e730]:
+                - textbox [ref=f1e731]: 16:35
+              - cell "无课后间隔" [ref=f1e732]:
+                - generic [ref=f1e733]: 无课后间隔
+        - generic [ref=f1e734]:
+          - button "清空时间" [ref=f1e735] [cursor=pointer]:
+            - img [ref=f1e736]
+            - generic [ref=f1e739]: 清空时间
+          - button "取消" [ref=f1e740] [cursor=pointer]:
+            - img [ref=f1e741]
+            - generic [ref=f1e744]: 取消
+          - button "保存时间" [ref=f1e745] [cursor=pointer]:
+            - img [ref=f1e746]
+            - generic [ref=f1e750]: 保存时间
+  - generic [ref=f1e118]:
+    - alert
+    - alert
