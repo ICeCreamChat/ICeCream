@@ -1251,6 +1251,22 @@ export class TimetablePlannerController {
         }
         const activePeriods = getActivePeriods(this.state.project);
         const normalized = this.normalizeSegmentConfig(config, activePeriods);
+
+        // Calculate total periods from segments
+        const totalConfiguredPeriods = normalized.segments.reduce((sum, seg) => sum + seg.periodCount, 0);
+
+        // Auto-adjust if mismatch: scale the last segment to fit
+        if (totalConfiguredPeriods !== activePeriods.length && normalized.segments.length > 0) {
+            const lastSegment = normalized.segments[normalized.segments.length - 1];
+            const otherSegmentsTotal = normalized.segments.slice(0, -1).reduce((sum, seg) => sum + seg.periodCount, 0);
+            const remaining = activePeriods.length - otherSegmentsTotal;
+
+            if (remaining > 0 && remaining <= 12) {
+                lastSegment.periodCount = remaining;
+                console.log(`Auto-adjusted last segment to ${remaining} periods to match activePeriods (${activePeriods.length})`);
+            }
+        }
+
         const draftTimes = this.buildPeriodTimesFromSegments(normalized, activePeriods);
 
         // Check if segment structure changed (different segment count or period counts)
@@ -1264,6 +1280,8 @@ export class TimetablePlannerController {
         console.log('updateSegmentConfigFromForm:', {
             previousSegments: previousConfig?.segments.length || 0,
             newSegments: normalized.segments.length,
+            totalConfiguredPeriods: normalized.segments.reduce((sum, seg) => sum + seg.periodCount, 0),
+            activePeriods: activePeriods.length,
             segmentStructureChanged,
         });
 
