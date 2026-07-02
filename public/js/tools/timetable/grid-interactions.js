@@ -221,6 +221,7 @@ function bindDelegatedInteractions(container) {
         const controller = container.__ttController;
         if (!controller) return;
         if (event.target.matches('[data-segment-field], [data-global-default-field]')) {
+            console.log('change event fired:', event.target.getAttribute('data-segment-field') || event.target.getAttribute('data-global-default-field'));
             controller.updateSegmentConfigFromForm();
         } else if (event.target.matches('[data-period-time-setting]')) {
             controller.updatePeriodTimeSettingsFromForm();
@@ -236,6 +237,7 @@ function bindDelegatedInteractions(container) {
         const controller = container.__ttController;
         if (!controller) return;
         if (event.target.matches('[data-segment-field], [data-global-default-field]')) {
+            console.log('input event fired:', event.target.getAttribute('data-segment-field') || event.target.getAttribute('data-global-default-field'));
             controller.updateSegmentConfigFromForm();
         } else if (event.target.matches('[data-period-time-setting]')) {
             controller.updatePeriodTimeSettingsFromForm();

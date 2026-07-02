@@ -1245,12 +1245,22 @@ export class TimetablePlannerController {
 
     updateSegmentConfigFromForm() {
         const config = this.readSegmentConfigFromDom();
-        if (!config) return;
+        if (!config) {
+            console.warn('updateSegmentConfigFromForm: No config read from DOM');
+            return;
+        }
         const activePeriods = getActivePeriods(this.state.project);
         const normalized = this.normalizeSegmentConfig(config, activePeriods);
         const draftTimes = this.buildPeriodTimesFromSegments(normalized, activePeriods);
         const totalPeriods = normalized.segments.reduce((sum, seg) => sum + (seg.periodCount || 0), 0);
         const needsFullRender = totalPeriods !== activePeriods.length;
+
+        console.log('updateSegmentConfigFromForm:', {
+            totalPeriods,
+            activePeriods: activePeriods.length,
+            needsFullRender,
+            draftTimesLength: draftTimes.length,
+        });
 
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
@@ -1262,8 +1272,10 @@ export class TimetablePlannerController {
         };
 
         if (needsFullRender) {
+            console.log('Full render...');
             this.render();
         } else {
+            console.log('Targeted update...');
             this.writePeriodTimesToDom(draftTimes);
             this.refreshPeriodTimeGapInputsFromDom();
         }
@@ -1465,7 +1477,12 @@ export class TimetablePlannerController {
         if (!this.state.container || typeof this.state.container.querySelectorAll !== 'function') return;
         const timeMap = new Map((Array.isArray(times) ? times : [])
             .map(item => [Number(item.period), item]));
-        this.state.container.querySelectorAll('[data-period-time-row]').forEach(row => {
+        const rows = this.state.container.querySelectorAll('[data-period-time-row]');
+        if (rows.length === 0) {
+            console.warn('writePeriodTimesToDom: No rows found');
+            return;
+        }
+        rows.forEach(row => {
             const period = Number(row.dataset.periodTimeRow);
             const entry = timeMap.get(period) || {};
             const startInput = row.querySelector('[data-period-time-draft-start], [data-period-time-start]');
