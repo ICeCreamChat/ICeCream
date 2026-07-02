@@ -1257,7 +1257,8 @@ export class TimetablePlannerController {
             cleared: false,
             draftTimes,
         };
-        this.render();
+        this.writePeriodTimesToDom(draftTimes);
+        this.refreshPeriodTimeGapInputsFromDom();
     }
 
     addPeriodTimeSegment() {
@@ -1285,7 +1286,8 @@ export class TimetablePlannerController {
             segmentConfig: updated,
             draftTimes,
         };
-        this.render();
+        this.writePeriodTimesToDom(draftTimes);
+        this.refreshPeriodTimeGapInputsFromDom();
     }
 
     removePeriodTimeSegment(id) {
@@ -1306,7 +1308,8 @@ export class TimetablePlannerController {
             segmentConfig: updated,
             draftTimes,
         };
-        this.render();
+        this.writePeriodTimesToDom(draftTimes);
+        this.refreshPeriodTimeGapInputsFromDom();
     }
 
     applySegmentTemplate(templateName) {
@@ -1353,7 +1356,8 @@ export class TimetablePlannerController {
             cleared: false,
             draftTimes,
         };
-        this.render();
+        this.writePeriodTimesToDom(draftTimes);
+        this.refreshPeriodTimeGapInputsFromDom();
         this.setMessage(`已应用"${templateName === 'standard' ? '标准作息' : templateName === 'early-evening' ? '含早晚自习' : '初中作息'}"模板`);
     }
 
