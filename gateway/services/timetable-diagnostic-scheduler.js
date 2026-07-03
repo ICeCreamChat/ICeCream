@@ -63,6 +63,10 @@ function seededCompare(seed, leftKey, rightKey) {
     return seededHash(seed, leftKey) - seededHash(seed, rightKey);
 }
 
+function seededUnit(seed, key) {
+    return seededHash(seed || 'legacy-default-seed', key) / 0x100000000;
+}
+
 function candidateTieKey(candidate = {}) {
     return `${candidate.day}-${candidate.period}:${candidate.roomId || ''}`;
 }
@@ -73,6 +77,24 @@ function scheduleSeedPatch(seed) {
 
 function bumpCount(map, key, amount = 1) {
     map.set(key, (map.get(key) || 0) + amount);
+}
+
+function intEnv(name, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+    const value = Number.parseInt(process.env[name], 10);
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(min, Math.min(max, value));
+}
+
+function repairConfig(taskCount = 0) {
+    const maxDepth = intEnv('TIMETABLE_REPAIR_MAX_DEPTH', 14, { min: 1, max: 50 });
+    const multiplier = intEnv('TIMETABLE_REPAIR_MAX_CALLS_MULTIPLIER', 2, { min: 1, max: 20 });
+    return {
+        maxDepth,
+        shallowLimit: Math.min(maxDepth, 5),
+        maxCalls: intEnv('TIMETABLE_REPAIR_MAX_CALLS', Math.max(1, multiplier * Math.max(1, taskCount)), { min: 1 }),
+        stepBudget: intEnv('TIMETABLE_REPAIR_STEP_BUDGET', 900, { min: 1 }),
+        maxBlockers: intEnv('TIMETABLE_REPAIR_MAX_BLOCKERS', 3, { min: 1, max: 12 }),
+    };
 }
 
 function isMorning(project, period) {
@@ -243,16 +265,23 @@ function buildCandidatePressureContext(project, usage, tasks = []) {
     const classDemand = new Map();
     const teacherDemand = new Map();
     const roomDemand = new Map();
+    const taskWork = new Map();
+    let minCandidateCount = Infinity;
 
     for (const task of tasks) {
         const candidates = getCandidateBlocks(project, usage, task);
         taskCandidateCounts.set(task.id, candidates.length);
+        minCandidateCount = Math.min(minCandidateCount, candidates.length);
 
         const subject = project.subjects.find(item => item.id === task.subjectId);
         const priority = Number(subject?.priority ?? 50);
         const teacherCount = Math.max(1, slotTeacherIds(task).length);
-        const weight = 1 + (Math.max(1, task.blockSize || 1) - 1) * 0.55 + priority / 180 + (teacherCount - 1) * 0.35;
-        const contribution = weight / Math.max(1, candidates.length);
+        const workMetric = Math.max(1, task.blockSize || 1)
+            + priority / 100
+            + (teacherCount - 1) * 0.5
+            + (task.roomId || (task.allowedRoomIds || []).length ? 0.35 : 0);
+        taskWork.set(task.id, workMetric);
+        const contribution = workMetric / Math.max(1, candidates.length);
 
         bumpCount(classDemand, task.classId, Math.max(1, task.blockSize || 1));
         for (const teacherId of slotTeacherIds(task)) bumpCount(teacherDemand, teacherId, Math.max(1, task.blockSize || 1));
@@ -266,6 +295,10 @@ function buildCandidatePressureContext(project, usage, tasks = []) {
         }
     }
 
+    const maxSlotPressure = Math.max(0, ...slotPressure.values());
+    const maxTimePressure = Math.max(0, ...timePressure.values());
+    const maxResourceDemand = Math.max(0, ...classDemand.values(), ...teacherDemand.values(), ...roomDemand.values());
+
     return {
         taskCandidateCounts,
         slotPressure,
@@ -273,19 +306,148 @@ function buildCandidatePressureContext(project, usage, tasks = []) {
         classDemand,
         teacherDemand,
         roomDemand,
+        taskWork,
+        stats: {
+            taskCount: tasks.length,
+            minCandidateCount: Number.isFinite(minCandidateCount) ? minCandidateCount : 0,
+            maxSlotPressure,
+            maxTimePressure,
+            maxNormalizedSlotPressure: maxSlotPressure ? 1 : 0,
+            maxResourceDemand,
+        },
     };
 }
 
-function candidatePressureScore(pressureContext, candidate = {}) {
+function candidatePressureScore(pressureContext, task = {}, candidate = {}) {
     if (!pressureContext) return 0;
     const slot = pressureContext.slotPressure.get(candidateTieKey(candidate)) || 0;
     const time = pressureContext.timePressure.get(`${candidate.day}-${candidate.period}`) || 0;
-    return slot * 5 + time * 1.5;
+    const slotNorm = pressureContext.stats?.maxSlotPressure ? slot / pressureContext.stats.maxSlotPressure : 0;
+    const timeNorm = pressureContext.stats?.maxTimePressure ? time / pressureContext.stats.maxTimePressure : 0;
+    const classDemand = pressureContext.classDemand.get(task.classId) || 0;
+    const teacherDemand = slotTeacherIds(task).reduce((sum, teacherId) => sum + (pressureContext.teacherDemand.get(teacherId) || 0), 0);
+    const roomDemand = candidate.roomId ? (pressureContext.roomDemand.get(candidate.roomId) || 0) : 0;
+    const resourceDemand = classDemand + teacherDemand * 0.65 + roomDemand * 0.8;
+    const resourceNorm = pressureContext.stats?.maxResourceDemand ? resourceDemand / pressureContext.stats.maxResourceDemand : 0;
+    const scarcity = 1 / Math.max(1, pressureContext.taskCandidateCounts.get(task.id) || 1);
+    const workMetric = pressureContext.taskWork.get(task.id) || 1;
+    return slotNorm * 16
+        + timeNorm * 6
+        + resourceNorm * 10
+        + scarcity * workMetric * 4;
 }
 
-function strategyCandidateScore(project, usage, slots, task, candidate, pressureContext) {
+function strategyCandidateScore(project, usage, slots, task, candidate, pressureContext, extraPenalty = 0) {
     return candidateScoreV2(project, usage, slots, task, candidate)
-        + candidatePressureScore(pressureContext, candidate);
+        + candidatePressureScore(pressureContext, task, candidate)
+        + extraPenalty;
+}
+
+function candidateBlockKeys(task, candidate) {
+    return Array.from({ length: Math.max(1, task.blockSize || 1) }, (_, offset) => `${candidate.day}-${candidate.period + offset}`);
+}
+
+function softRuleChecks(project, usage, task, candidate) {
+    const softRules = project.rules?.softRules || {};
+    const subject = project.subjects.find(item => item.id === task.subjectId);
+    const morningSubjects = new Set(softRules.morningSubjects || []);
+    const preferredPeriods = softRules.subjectPreferredPeriods?.[task.subjectId] || null;
+    const candidateKeys = candidateBlockKeys(task, candidate);
+    const checks = [];
+
+    if (isMainSubject(subject, task.subjectId, morningSubjects)) {
+        checks.push({
+            code: 'morning_subject',
+            weight: 80,
+            violated: candidateKeys.some(key => !isMorning(project, Number(key.split('-')[1]))),
+        });
+    }
+
+    if ((softRules.spreadSubjects || []).includes(task.subjectId)) {
+        checks.push({
+            code: 'subject_spread',
+            weight: 70,
+            violated: (usage.classSubjectDay.get(`${task.classId}:${task.subjectId}:${candidate.day}`) || 0) > 0,
+        });
+    }
+
+    for (const teacherId of slotTeacherIds(task)) {
+        const limit = softRules.teacherLimits?.[teacherId]?.daily;
+        if (Number.isInteger(Number(limit))) {
+            checks.push({
+                code: `teacher_daily:${teacherId}`,
+                weight: 90,
+                violated: (usage.teacherDay.get(`${teacherId}:${candidate.day}`) || 0) >= Number(limit),
+            });
+        }
+    }
+
+    if (preferredPeriods) {
+        const weight = Math.max(-1, Math.min(100, Number.parseInt(preferredPeriods.weight, 10) || 20));
+        if ((preferredPeriods.prefer || []).length) {
+            checks.push({
+                code: 'preferred_period',
+                weight,
+                violated: !candidateKeys.some(key => preferredPeriods.prefer.includes(key)),
+            });
+        }
+        if ((preferredPeriods.avoid || []).length) {
+            checks.push({
+                code: 'avoid_period',
+                weight,
+                violated: candidateKeys.some(key => preferredPeriods.avoid.includes(key)),
+            });
+        }
+    }
+
+    return checks.filter(check => check.violated);
+}
+
+function shouldEnforceSoft({ seed, mode, task, candidate, check }) {
+    if (check.weight < 0) return false;
+    if (check.weight >= 100) return true;
+    if (mode === 'relaxed_soft' || mode === 'hard_only') return false;
+    const rollKey = `${task.id}:${candidateTieKey(candidate)}:${check.code}`;
+    return seededUnit(seed, rollKey) * 100 < check.weight;
+}
+
+function evaluateSoftEnforcement(project, usage, task, candidate, { mode, seed, stats }) {
+    if (mode === 'hard_only') return { ok: true, penalty: 0, rejected: 0 };
+    const checks = softRuleChecks(project, usage, task, candidate);
+    let penalty = 0;
+    let rejected = 0;
+    for (const check of checks) {
+        stats.evaluations += 1;
+        if (check.weight >= 100) stats.mandatory += 1;
+        const enforced = shouldEnforceSoft({ seed, mode, task, candidate, check });
+        if (enforced) {
+            stats.enforced += 1;
+            rejected += 1;
+        } else {
+            stats.skipped += 1;
+            penalty += Math.max(1, check.weight) / 5;
+        }
+    }
+    if (rejected) stats.rejected += 1;
+    return { ok: rejected === 0, penalty, rejected };
+}
+
+function chooseWeightedCandidate(candidates, seed, taskId, passName) {
+    if (!candidates.length) return null;
+    if (candidates.length === 1) return candidates[0];
+    const limited = candidates.slice(0, Math.min(8, candidates.length));
+    const minScore = Math.min(...limited.map(candidate => candidate.score));
+    const weighted = limited.map(candidate => ({
+        candidate,
+        weight: 1 / (1 + Math.max(0, candidate.score - minScore)),
+    }));
+    const total = weighted.reduce((sum, item) => sum + item.weight, 0);
+    let cursor = seededUnit(seed, `${taskId}:${passName}:weighted-choice`) * total;
+    for (const item of weighted) {
+        cursor -= item.weight;
+        if (cursor <= 0) return item.candidate;
+    }
+    return weighted[weighted.length - 1].candidate;
 }
 
 function expandLessonPlanTasks(project, placedCountByPlan) {

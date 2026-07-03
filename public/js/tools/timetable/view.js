@@ -22,8 +22,9 @@ import {
 } from './selectors.js';
 import { buildRuleReviewTasks, getActiveRuleReviewTask } from './rule-review-tasks.js';
 import { renderConstraintChatDock } from './view-chat.js';
-import { renderFixPreview } from './view-smart-helper.js';
+import { renderFixPreview, renderSmartHelperDialog } from './view-smart-helper.js';
 import { renderSmartWorkbench } from './smart-workbench/workbench-view.js';
+import { renderConstraintDialog } from './view-constraint-dialog.js';
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -321,6 +322,9 @@ export function renderWorkbench(state) {
             ${renderPublishDialog(state)}
             ${renderRestoreDialog(state)}
             ${renderPublicationHistoryDialog(state)}
+            ${renderSmartHelperDialog(state)}
+            ${renderConstraintDialog(state)}
+            ${renderConstraintChatDock(state)}
         </div>
     `;
 }
@@ -960,7 +964,7 @@ function renderRulesSection(state) {
     return `
         <div class="tt-rule-stack tt-rules-setup-card" data-workflow-step="rules">
             <div class="tt-rules-setup-body">
-                <button class="tt-empty-card tt-roster-entry tt-rule-entry" id="tt-open-rule-review" type="button">
+                <button class="tt-empty-card tt-roster-entry tt-rule-entry" id="tt-open-rule-review" type="button" data-action="open-constraint-dialog">
                     <i data-lucide="brain-circuit"></i>
                     <strong>${escapeHtml(cardTitle)}</strong>
                     <span>${escapeHtml(cardDescription)}</span>

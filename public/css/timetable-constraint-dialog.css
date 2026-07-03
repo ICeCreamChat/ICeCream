@@ -1,0 +1,412 @@
+/* ========================================
+   智能约束助手弹窗样式
+   ======================================== */
+
+/* 弹窗遮罩层 */
+.tt-dialog-overlay[data-constraint-dialog-overlay] {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: grid;
+    place-items: center;
+    padding: var(--tt-space-lg);
+    background: rgba(2, 6, 23, 0.58);
+    backdrop-filter: blur(8px);
+}
+
+/* 弹窗主体 */
+.tt-constraint-dialog {
+    display: grid;
+    gap: var(--tt-space-md);
+    width: min(840px, calc(100vw - 48px));
+    max-height: min(720px, calc(100vh - 48px));
+    overflow: auto;
+    padding: var(--tt-space-lg);
+    background: var(--tt-bg-panel);
+    border: 1px solid var(--tt-border-strong);
+    border-radius: var(--tt-radius-lg);
+    box-shadow: 0 24px 60px rgba(2, 6, 23, 0.38);
+}
+
+/* 标题栏 */
+.tt-constraint-dialog .tt-dialog-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--tt-space-md);
+}
+
+.tt-constraint-dialog .tt-dialog-title {
+    display: flex;
+    flex-direction: column;
+    gap: var(--tt-space-xs);
+}
+
+.tt-constraint-dialog .tt-dialog-title > div:first-child,
+.tt-constraint-dialog .tt-dialog-title h3 {
+    display: flex;
+    align-items: center;
+    gap: var(--tt-space-sm);
+    margin: 0;
+    font-size: var(--tt-font-lg);
+    font-weight: 600;
+    color: var(--tt-text);
+}
+
+.tt-constraint-dialog .tt-dialog-title i {
+    color: var(--tt-accent);
+}
+
+.tt-constraint-dialog .tt-dialog-title p {
+    margin: 0;
+    font-size: var(--tt-font-sm);
+    color: var(--tt-text-muted);
+}
+
+/* 输入方式标签 */
+.tt-constraint-input-tabs {
+    display: flex;
+    gap: var(--tt-space-xs);
+    padding: var(--tt-space-xs);
+    background: var(--tt-bg-subtle);
+    border-radius: var(--tt-radius-md);
+}
+
+.tt-tab-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--tt-space-xs);
+    padding: var(--tt-space-sm) var(--tt-space-md);
+    border: none;
+    background: transparent;
+    border-radius: var(--tt-radius-sm);
+    font-size: var(--tt-font-sm);
+    font-weight: 500;
+    color: var(--tt-text-muted);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.tt-tab-btn:hover:not(:disabled) {
+    background: var(--tt-bg-hover);
+    color: var(--tt-text);
+}
+
+.tt-tab-btn.is-active {
+    background: var(--tt-bg-panel);
+    color: var(--tt-accent);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.tt-tab-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 输入区域 */
+.tt-constraint-input-area {
+    padding: var(--tt-space-md);
+    background: var(--tt-bg-subtle);
+    border-radius: var(--tt-radius-md);
+}
+
+/* 文本输入模式 */
+.tt-text-input {
+    display: grid;
+    gap: var(--tt-space-md);
+}
+
+.tt-text-input label {
+    display: grid;
+    gap: var(--tt-space-xs);
+}
+
+.tt-text-input label > span {
+    font-size: var(--tt-font-sm);
+    font-weight: 500;
+    color: var(--tt-text-muted);
+}
+
+.tt-text-input textarea {
+    width: 100%;
+    padding: var(--tt-space-sm);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-panel);
+    font-family: inherit;
+    font-size: var(--tt-font-base);
+    color: var(--tt-text);
+    resize: vertical;
+}
+
+.tt-text-input textarea:focus {
+    outline: none;
+    border-color: var(--tt-accent);
+}
+
+.tt-quick-examples {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--tt-space-xs);
+}
+
+.tt-example-chip {
+    padding: var(--tt-space-xs) var(--tt-space-sm);
+    border: 1px solid var(--tt-border);
+    border-radius: 999px;
+    background: var(--tt-bg-panel);
+    font-size: var(--tt-font-sm);
+    color: var(--tt-text-muted);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.tt-example-chip:hover {
+    border-color: var(--tt-accent);
+    color: var(--tt-accent);
+}
+
+.tt-parsing-status {
+    display: flex;
+    align-items: center;
+    gap: var(--tt-space-sm);
+    padding: var(--tt-space-md);
+    background: var(--tt-bg-panel);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-text-muted);
+}
+
+/* 文件上传模式 */
+.tt-file-input {
+    display: grid;
+    gap: var(--tt-space-md);
+}
+
+.tt-file-upload-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--tt-space-sm);
+    padding: var(--tt-space-xl);
+    border: 2px dashed var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    background: var(--tt-bg-panel);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.tt-file-upload-area:hover {
+    border-color: var(--tt-accent);
+    background: var(--tt-bg-hover);
+}
+
+.tt-file-upload-area i {
+    font-size: 2rem;
+    color: var(--tt-accent);
+}
+
+.tt-file-upload-area strong {
+    font-size: var(--tt-font-base);
+    color: var(--tt-text);
+}
+
+.tt-file-upload-area span {
+    font-size: var(--tt-font-sm);
+    color: var(--tt-text-muted);
+}
+
+/* 手动输入模式 */
+.tt-manual-input {
+    display: grid;
+    gap: var(--tt-space-md);
+}
+
+.tt-form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--tt-space-md);
+}
+
+.tt-form-grid label {
+    display: grid;
+    gap: var(--tt-space-xs);
+}
+
+.tt-form-grid label > span {
+    font-size: var(--tt-font-sm);
+    font-weight: 500;
+    color: var(--tt-text-muted);
+}
+
+.tt-form-grid input,
+.tt-form-grid select {
+    padding: var(--tt-space-sm);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-panel);
+    font-size: var(--tt-font-base);
+    color: var(--tt-text);
+}
+
+.tt-form-grid input:focus,
+.tt-form-grid select:focus {
+    outline: none;
+    border-color: var(--tt-accent);
+}
+
+/* 约束预览区域 */
+.tt-constraint-preview {
+    display: grid;
+    gap: var(--tt-space-sm);
+}
+
+.tt-preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: var(--tt-space-xs);
+    border-bottom: 1px solid var(--tt-border);
+}
+
+.tt-preview-header strong {
+    font-size: var(--tt-font-sm);
+    color: var(--tt-text-muted);
+}
+
+.tt-btn-link {
+    padding: 0;
+    border: none;
+    background: none;
+    font-size: var(--tt-font-sm);
+    color: var(--tt-accent);
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.tt-btn-link:hover {
+    color: var(--tt-accent-hover);
+}
+
+.tt-constraint-list {
+    display: grid;
+    gap: var(--tt-space-sm);
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+/* 约束卡片 */
+.tt-constraint-card {
+    position: relative;
+    padding: var(--tt-space-md);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    background: var(--tt-bg-panel);
+}
+
+.tt-constraint-card-header {
+    display: flex;
+    align-items: center;
+    gap: var(--tt-space-sm);
+    margin-bottom: var(--tt-space-xs);
+}
+
+.tt-constraint-type {
+    padding: 2px var(--tt-space-xs);
+    border-radius: var(--tt-radius-xs);
+    background: var(--tt-bg-subtle);
+    font-size: var(--tt-font-xs);
+    font-weight: 600;
+    color: var(--tt-text-muted);
+    text-transform: uppercase;
+}
+
+.tt-constraint-confidence {
+    padding: 2px var(--tt-space-xs);
+    border-radius: var(--tt-radius-xs);
+    font-size: var(--tt-font-xs);
+    font-weight: 500;
+}
+
+.tt-confidence--high {
+    background: rgba(34, 197, 94, 0.1);
+    color: rgb(34, 197, 94);
+}
+
+.tt-confidence--medium {
+    background: rgba(234, 179, 8, 0.1);
+    color: rgb(234, 179, 8);
+}
+
+.tt-confidence--low {
+    background: rgba(239, 68, 68, 0.1);
+    color: rgb(239, 68, 68);
+}
+
+.tt-constraint-content {
+    margin-bottom: var(--tt-space-sm);
+}
+
+.tt-constraint-content strong {
+    display: block;
+    margin-bottom: var(--tt-space-xs);
+    font-size: var(--tt-font-base);
+    color: var(--tt-text);
+}
+
+.tt-constraint-source {
+    margin: 0;
+    font-size: var(--tt-font-sm);
+    color: var(--tt-text-muted);
+}
+
+.tt-constraint-meta {
+    display: flex;
+    gap: var(--tt-space-md);
+    margin-bottom: var(--tt-space-sm);
+    font-size: var(--tt-font-sm);
+    color: var(--tt-text-muted);
+}
+
+.tt-constraint-meta b {
+    font-weight: 600;
+}
+
+.tt-constraint-warning {
+    display: flex;
+    align-items: center;
+    gap: var(--tt-space-xs);
+    padding: var(--tt-space-xs) var(--tt-space-sm);
+    background: rgba(234, 179, 8, 0.1);
+    border-radius: var(--tt-radius-xs);
+    font-size: var(--tt-font-sm);
+    color: rgb(234, 179, 8);
+}
+
+.tt-constraint-actions {
+    display: flex;
+    gap: var(--tt-space-xs);
+    padding-top: var(--tt-space-xs);
+    border-top: 1px solid var(--tt-border);
+}
+
+.tt-btn-icon {
+    padding: var(--tt-space-xs);
+    border: none;
+    background: transparent;
+    border-radius: var(--tt-radius-xs);
+    color: var(--tt-text-muted);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.tt-btn-icon:hover {
+    background: var(--tt-bg-hover);
+    color: var(--tt-text);
+}
+
+/* 按钮块级样式 */
+.tt-btn--block {
+    width: 100%;
+}

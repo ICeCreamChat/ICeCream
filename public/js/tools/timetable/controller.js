@@ -32,6 +32,8 @@ import {
 import { buildConstraintReviewContext, constraintChatControllerMethods } from './controller-chat-extension.js';
 import { buildRuleReviewTasks } from './rule-review-tasks.js';
 import smartHelperMethods from './controller-smart-helper.js';
+import * as constraintDialogMethods from './controller-constraint-dialog.js';
+import * as constraintDialogAdvancedMethods from './controller-constraint-dialog-advanced.js';
 import { renderWorkbench } from './view.js';
 import {
     createSmartWorkbenchState,
@@ -2061,7 +2063,8 @@ export class TimetablePlannerController {
     }
 
     openRuleReview(mode = 'file') {
-        this.openSmartWorkbench(mode === 'file' ? 'file' : mode);
+        // 改为打开新的弹窗，而不是全屏工作台
+        this.openConstraintDialog();
     }
 
     startRuleReviewInput(mode = 'file') {
@@ -4348,3 +4351,5 @@ export class TimetablePlannerController {
 TimetablePlannerController.reviewContextBuilder = buildConstraintReviewContext;
 Object.assign(TimetablePlannerController.prototype, constraintChatControllerMethods);
 Object.assign(TimetablePlannerController.prototype, smartHelperMethods);
+Object.assign(TimetablePlannerController.prototype, constraintDialogMethods);
+Object.assign(TimetablePlannerController.prototype, constraintDialogAdvancedMethods);

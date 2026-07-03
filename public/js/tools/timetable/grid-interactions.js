@@ -80,12 +80,22 @@ function bindDelegatedInteractions(container) {
         const controller = container.__ttController;
         const state = container.__ttState;
         if (!controller || !state) return;
+
+        // 点击背景遮罩关闭弹窗
+        if (event.target.matches('[data-smart-helper-overlay]')) {
+            controller.closeSmartHelper();
+            return;
+        }
         if (event.target.matches('[data-smart-detail-backdrop]')) {
             controller.closeProblemDetails();
             return;
         }
         if (event.target.matches('[data-constraint-chat-overlay]')) {
             controller.closeConstraintChat();
+            return;
+        }
+        if (event.target.matches('[data-constraint-dialog-overlay]')) {
+            controller.closeConstraintDialog();
             return;
         }
         const action = event.target.closest('[data-action]')?.dataset.action || '';
@@ -182,6 +192,50 @@ function bindDelegatedInteractions(container) {
             controller.sendConstraintChatMessage(event.target.closest('[data-constraint-chat-suggest]')?.dataset.constraintChatSuggest || '');
         } else if (action === 'constraint-chat-close') {
             controller.closeConstraintChat();
+        }
+        // 智能约束弹窗actions
+        else if (action === 'open-constraint-dialog') {
+            controller.openConstraintDialog();
+        } else if (action === 'close-constraint-dialog') {
+            controller.closeConstraintDialog();
+        } else if (action === 'switch-constraint-mode') {
+            const mode = event.target.closest('[data-mode]')?.dataset.mode;
+            controller.switchConstraintMode(mode);
+        } else if (action === 'use-example') {
+            const text = event.target.closest('[data-text]')?.dataset.text;
+            controller.useConstraintExample(text);
+        } else if (action === 'parse-constraints') {
+            controller.parseConstraintsFromDialog();
+        } else if (action === 'add-manual-constraint') {
+            controller.addManualConstraint();
+        } else if (action === 'delete-constraint') {
+            const constraintId = event.target.closest('[data-constraint-id]')?.dataset.constraintId;
+            controller.deleteConstraint(constraintId);
+        } else if (action === 'clear-all-constraints') {
+            controller.clearAllConstraints();
+        } else if (action === 'apply-constraints') {
+            controller.applyConstraintsFromDialog();
+        }
+        // 约束编辑actions
+        else if (action === 'edit-constraint') {
+            const constraintId = event.target.closest('[data-constraint-id]')?.dataset.constraintId;
+            controller.editConstraint(constraintId);
+        } else if (action === 'save-edit-constraint') {
+            controller.saveEditedConstraint();
+        } else if (action === 'cancel-edit-constraint') {
+            controller.cancelEditConstraint();
+        }
+        // AI 对话actions
+        else if (action === 'start-ai-chat') {
+            controller.startConstraintAIChat();
+        } else if (action === 'send-ai-message') {
+            const input = container.querySelector('#tt-ai-chat-input');
+            controller.sendConstraintAIMessage(input?.value || '');
+        } else if (action === 'close-ai-chat') {
+            controller.closeConstraintAIChat();
+        } else if (action === 'use-ai-prompt') {
+            const prompt = event.target.closest('[data-prompt]')?.dataset.prompt;
+            controller.useAISuggestedPrompt(prompt);
         } else if (action === 'constraint-chat-apply-preview') {
             controller.applyConstraintChatPreview();
         } else if (action === 'constraint-chat-dismiss-preview') {
@@ -240,6 +294,8 @@ function bindDelegatedInteractions(container) {
         } else if (event.target.matches('[data-period-time-draft-start], [data-period-time-draft-end], [data-period-time-start], [data-period-time-end]')) {
             controller.readPeriodTimesFromDom();
             controller.refreshPeriodTimeGapInputsFromDom();
+        } else if (event.target.matches('#tt-constraint-file-input')) {
+            controller.handleConstraintFileSelect(event);
         }
     });
 
@@ -433,7 +489,7 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-clear-roster')?.addEventListener('click', () => controller.clearRoster());
     container.querySelector('#tt-save-rules')?.addEventListener('click', () => controller.saveRules());
 
-    container.querySelector('#tt-open-rule-review')?.addEventListener('click', () => controller.openRuleReview('file'));
+    // #tt-open-rule-review 已改用 data-action="open-constraint-dialog" 方式，不再需要单独绑定
     container.querySelector('#tt-reparse-rule-review')?.addEventListener('click', () => controller.startRuleReviewInput('file'));
     container.querySelector('#tt-clear-rules')?.addEventListener('click', () => controller.clearRules());
     bindRuleReviewInteractions(container, controller);

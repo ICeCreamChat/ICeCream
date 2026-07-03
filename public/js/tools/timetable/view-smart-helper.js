@@ -4,7 +4,49 @@
  */
 
 /**
- * 渲染自动扫描界面（全新设计）
+ * 渲染智能助手弹窗（新）
+ * 作为独立的模态框显示，不再占据整个工作区
+ */
+export function renderSmartHelperDialog(state) {
+    if (!state.constraintScan?.open) return '';
+
+    const scan = state.constraintScan || {};
+    const scanning = scan.scanning;
+    const problems = scan.problems || [];
+    const stats = scan.stats || {};
+    const expandedGroups = scan.expandedGroups instanceof Set ? scan.expandedGroups : new Set(scan.expandedGroups || []);
+
+    return `
+        <div class="tt-dialog-overlay" data-smart-helper-overlay>
+            <section class="tt-smart-helper-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-smart-helper-title">
+                <div class="tt-dialog-header">
+                    <div>
+                        <span class="tt-eyebrow">智能助手</span>
+                        <h3 id="tt-smart-helper-title">约束检查</h3>
+                        <p>自动检测并修正约束问题</p>
+                    </div>
+                    <button class="tt-icon-btn" data-action="close-smart-helper" type="button" title="关闭智能助手" aria-label="关闭智能助手">
+                        <i data-lucide="x"></i>
+                    </button>
+                </div>
+
+                <div class="tt-smart-helper-body">
+                    ${scanning ? renderScanningProgress(scan) : ''}
+                    ${!scanning && scan.error ? renderScanError(scan) : ''}
+                    ${!scanning && !scan.error && problems.length > 0 ? renderProblemCards(problems, stats, expandedGroups, scan) : ''}
+                    ${!scanning && problems.length === 0 && scan.completed ? renderAllClear() : ''}
+                </div>
+            </section>
+
+            ${state.fixPreview?.open ? renderFixPreview(state.fixPreview.fix, state.fixPreview.problem, state.fixPreview) : ''}
+            ${state.problemDetailDialog?.open ? renderProblemDetail(state.problemDetailDialog.problem) : ''}
+        </div>
+    `;
+}
+
+/**
+ * 渲染自动扫描界面（旧版，保留用于向后兼容）
+ * @deprecated 使用 renderSmartHelperDialog 替代
  */
 export function renderSmartConstraintHelper(state) {
     const scan = state.constraintScan || {};

@@ -516,6 +516,99 @@ test('legacy scheduler baseline metrics cover core solve strategy scenarios', ()
     assert.ok(large.metrics.durationMs < 15000, 'large baseline should stay inside the current 15s budget');
 });
 
+test('legacy enhanced v2 exposes construction passes, pressure stats, repair budgets and best snapshot', () => {
+    const result = runTimetableScheduler(sampleProject(), { seed: 'enhanced-v2-contract' });
+    const stats = result.schedule.solverStats;
+
+    assert.equal(result.success, true);
+    assert.equal(stats.strategyVersion, 'legacy_enhanced_v2');
+    assert.ok(Array.isArray(stats.constructionPasses));
+    assert.deepEqual(stats.constructionPasses.map(pass => pass.name), ['strict_soft', 'relaxed_soft', 'hard_only']);
+    assert.ok(stats.pressureStats.maxNormalizedSlotPressure >= 0);
+    assert.ok(stats.pressureStats.maxResourceDemand >= 0);
+    assert.equal(stats.repairStats.strategy, 'recursive_bounded_repair');
+    assert.equal(stats.repairStats.maxDepth, 14);
+    assert.equal(stats.repairStats.maxBlockers, 3);
+    assert.ok(Number.isInteger(stats.repairStats.maxCalls));
+    assert.ok(stats.bestSnapshotStats);
+    assert.equal(stats.bestSnapshotStats.stage, 'local_improvement');
+});
+
+test('legacy enhanced v2 records strict soft rejections before relaxed construction places the lessons', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 2,
+        activeWeekdays: [1],
+        activePeriods: [1, 2],
+        teachers: [{ id: 't_math', name: 'Math', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 },
+        ],
+        rules: {
+            hardRules: {},
+            softRules: {
+                subjectPreferredPeriods: {
+                    math: { prefer: ['1-1'], weight: 80 },
+                },
+            },
+        },
+    });
+
+    const result = runTimetableScheduler(project, { seed: 'relaxed-soft-pass' });
+    const passes = result.schedule.solverStats.constructionPasses;
+
+    assert.equal(result.success, true);
+    assert.equal(result.schedule.score.unplacedLessons, 0);
+    assert.ok(passes[0].softRejected > 0);
+    assert.ok(passes[1].placed > 0 || passes[2].placed > 0);
+    assert.ok(result.schedule.solverStats.softEnforcement.evaluations > 0);
+    assert.ok(result.schedule.solverStats.softEnforcement.enforced > 0);
+});
+
+test('legacy enhanced v2 reports best snapshot for impossible partial schedules', () => {
+    const project = sampleProject({
+        weekdays: 1,
+        periodsPerDay: 1,
+        activeWeekdays: [1],
+        activePeriods: [1],
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [
+            { id: 'c1', grade: 'G7', name: '1' },
+            { id: 'c2', grade: 'G7', name: '2' },
+        ],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp1', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+            { id: 'lp2', classId: 'c2', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = runTimetableScheduler(project, { seed: 'best-snapshot-impossible' });
+    const snapshot = result.schedule.solverStats.bestSnapshotStats;
+
+    assert.equal(result.success, false);
+    assert.equal(result.schedule.solverStats.strategyVersion, 'legacy_enhanced_v2');
+    assert.ok(snapshot);
+    assert.ok(snapshot.placedLessons >= 1);
+    assert.ok(snapshot.unplacedLessons >= 1);
+    assert.ok(['constructor', 'repair', 'local_improvement'].includes(snapshot.stage));
+});
+
+test('legacy enhanced v2 keeps edge-coloring fast path within the enhanced stats contract', () => {
+    const result = runTimetableScheduler(largeTimetableProject(), { seed: 'large-enhanced-contract' });
+    const stats = result.schedule.solverStats;
+
+    assert.equal(result.success, true);
+    assert.equal(stats.strategyVersion, 'legacy_enhanced_v2');
+    assert.ok(stats.pressureStats);
+    assert.ok(stats.bestSnapshotStats);
+    assert.equal(result.schedule.score.unplacedLessons, 0);
+    assert.equal(result.schedule.score.hardConflicts, 0);
+});
+
 test('fast timetable scheduler handles the 690 lesson project without Timefold', () => {
     const project = largeTimetableProject();
     const startedAt = Date.now();

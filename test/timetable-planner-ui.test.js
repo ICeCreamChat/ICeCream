@@ -4977,6 +4977,13 @@ test('timetable constraint chat is docked inside the rule review workbench', asy
   assert.match(smartStyles, /\.tt-smart-assistant-slot\s*{/);
 });
 
+test('timetable hides the constraint chat dock until a conversation is open', () => {
+  const html = renderWorkbench(sampleWorkbenchState());
+
+  assert.doesNotMatch(html, /tt-constraint-chat-dock/);
+  assert.doesNotMatch(html, /当前办理事项/);
+});
+
 test('timetable rule review parse renders the opened input state before progress updates', async () => {
   const controllerSource = await readFile(new URL('../public/js/tools/timetable/controller.js', import.meta.url), 'utf8');
   const parseRulesSource = extractMethodSource(controllerSource, 'parseRules');

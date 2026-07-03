@@ -370,6 +370,8 @@ function renderActionPreview(preview = null, { disabled = false } = {}) {
 
 export function renderConstraintChatDock(state = {}, { task = null } = {}) {
     const chat = state.constraintChat || {};
+    if (!chat.open) return '';
+
     const messages = chat.messages || [];
     const loading = Boolean(chat.loading);
     const inputText = chat.inputText || '';

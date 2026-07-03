@@ -10,29 +10,18 @@
 import { requestTimetable } from './api.js';
 import { ruleTaskIdForScanProblem } from './rule-review-tasks.js';
 
-function renderSmartSurface(controller) {
-    if (
-        typeof controller.renderRuleReviewSurface === 'function'
-        && (controller.state?.ruleReview?.open || controller.state?.smartWorkbench?.open)
-    ) {
-        controller.renderRuleReviewSurface();
-        return;
-    }
-    controller.render();
-}
-
 /**
  * 打开智能约束助手（自动扫描）
  */
 export async function openSmartConstraintHelper() {
-    // 初始化状态
+    // 初始化状态为弹窗模式
     this.state.constraintScan = {
         open: true,
         scanning: true,
         progress: 0,
         phase: '准备检查约束草稿...',
     };
-    renderSmartSurface(this);
+    this.render();
 
     try {
         // 获取当前约束
@@ -65,7 +54,7 @@ export async function openSmartConstraintHelper() {
             };
         }
 
-        renderSmartSurface(this);
+        this.render();
 
         // 如果有可自动修复的问题，显示提示
         if (scanResult.stats.autoFixable > 0) {
@@ -81,7 +70,7 @@ export async function openSmartConstraintHelper() {
             scanning: false,
             error: error.message || '检查失败，请重试',
         };
-        renderSmartSurface(this);
+        this.render();
         this.handleError(error);
     }
 }
@@ -101,7 +90,7 @@ async function simulateScanProgress() {
     for (const { progress, phase } of phases) {
         this.state.constraintScan.progress = progress;
         this.state.constraintScan.phase = phase;
-        renderSmartSurface(this);
+        this.render();
         await new Promise(resolve => setTimeout(resolve, 300));
     }
 }
@@ -118,7 +107,7 @@ export function viewProblemDetails(problemId) {
         open: true,
         problem,
     };
-    renderSmartSurface(this);
+    this.render();
 }
 
 /**
@@ -126,7 +115,7 @@ export function viewProblemDetails(problemId) {
  */
 export function closeProblemDetails() {
     this.state.problemDetailDialog = null;
-    renderSmartSurface(this);
+    this.render();
 }
 
 /**
@@ -149,7 +138,7 @@ export async function applySingleFix(problemId) {
             problem,
             fix,
         };
-        renderSmartSurface(this);
+        this.render();
     } catch (error) {
         this.handleError(error);
     }
@@ -164,7 +153,7 @@ export async function confirmApplyFix(problemId) {
 
     try {
         this.state.fixPreview = { ...this.state.fixPreview, applying: true };
-        renderSmartSurface(this);
+        this.render();
 
         // 应用修复到约束
         const updatedConstraints = this.applyFixToConstraints(
@@ -187,7 +176,7 @@ export async function confirmApplyFix(problemId) {
         this.setMessage(`已应用修正：${problem.title}`);
     } catch (error) {
         this.state.fixPreview = { ...this.state.fixPreview, applying: false };
-        renderSmartSurface(this);
+        this.render();
         this.handleError(error);
     }
 }
@@ -209,7 +198,7 @@ export async function applyAllFixes() {
 
     try {
         this.state.constraintScan = { ...this.state.constraintScan, applyingAll: true };
-        renderSmartSurface(this);
+        this.render();
 
         let updatedConstraints = this.state.ruleReview?.draftRows || [];
 
@@ -236,7 +225,7 @@ export async function applyAllFixes() {
         this.setMessage(`已应用 ${problems.length} 个修正。`);
     } catch (error) {
         this.state.constraintScan = { ...this.state.constraintScan, applyingAll: false };
-        renderSmartSurface(this);
+        this.render();
         this.handleError(error);
     }
 }
@@ -321,7 +310,7 @@ export async function openAIChatFromHelper(problemId = '') {
             activeTaskId: problem.id,
             docked: true,
         };
-        renderSmartSurface(this);
+        this.render();
     }
 }
 
@@ -329,8 +318,8 @@ export async function openAIChatFromHelper(problemId = '') {
  * 关闭智能助手
  */
 export function closeSmartHelper() {
-    this.state.constraintScan = null;
-    renderSmartSurface(this);
+    this.state.constraintScan = { ...this.state.constraintScan, open: false };
+    this.render();
 }
 
 /**
@@ -357,7 +346,7 @@ export function toggleProblemGroup(groupId) {
         ...scan,
         expandedGroups: expanded,
     };
-    renderSmartSurface(this);
+    this.render();
 }
 
 /**
@@ -399,7 +388,7 @@ export function enableRealtimeValidation() {
 
         // 触发实时验证（带防抖）
         this.validateConstraintDebounced(index);
-        renderSmartSurface(this);
+        this.render();
     };
 
     // 监听新增约束
@@ -416,7 +405,7 @@ export function enableRealtimeValidation() {
             this.validateConstraintDebounced(newIndex);
         }
 
-        renderSmartSurface(this);
+        this.render();
         return result;
     };
 
@@ -426,7 +415,7 @@ export function enableRealtimeValidation() {
         this.validateConstraint(index);
     });
 
-    renderSmartSurface(this);
+    this.render();
 }
 
 /**
@@ -448,7 +437,7 @@ export function disableRealtimeValidation() {
         debounceTimers: new Map(),
     };
 
-    renderSmartSurface(this);
+    this.render();
 }
 
 /**
@@ -475,7 +464,7 @@ export async function validateConstraint(index) {
         this.state.realtimeValidation.validationResults.set(index, {
             validating: true,
         });
-        renderSmartSurface(this);
+        this.render();
 
         // 执行验证逻辑
         const validationResult = await this.performConstraintValidation(constraint, index, constraints);
@@ -489,7 +478,7 @@ export async function validateConstraint(index) {
             timestamp: Date.now(),
         });
 
-        renderSmartSurface(this);
+        this.render();
 
         // 如果有错误，显示反馈
         if (!validationResult.valid && validationResult.errors?.length > 0) {
@@ -505,7 +494,7 @@ export async function validateConstraint(index) {
             warnings: [],
             timestamp: Date.now(),
         });
-        renderSmartSurface(this);
+        this.render();
     }
 }
 

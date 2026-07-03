@@ -307,7 +307,7 @@
 .tt-fix-preview-modal {
     position: fixed;
     inset: 0;
-    z-index: 1200;
+    z-index: 90;
     display: grid;
     place-items: center;
     padding: 20px;

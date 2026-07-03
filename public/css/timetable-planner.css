@@ -2519,6 +2519,20 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     --tt-dialog-max-height: 760px;
 }
 
+.tt-smart-helper-dialog {
+    --tt-dialog-width: 880px;
+    --tt-dialog-max-height: 760px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.tt-smart-helper-body {
+    flex: 1;
+    overflow: auto;
+    padding: var(--tt-space-md) 0;
+}
+
 .tt-publish-summary {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

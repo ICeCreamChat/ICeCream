@@ -42,6 +42,11 @@ manim-service/static/studio_*_frame_*.png
 manim-service/__pycache__/
 *.pyc
 
+# Test screenshots
+*.png
+!public/**/*.png
+!docs/**/*.png
+
 # Python virtual environment
 manim-service/venv/
 manim-service/.venv/
