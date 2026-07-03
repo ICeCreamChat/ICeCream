@@ -211,6 +211,30 @@ function solveBenchmark(project, options = {}) {
     };
 }
 
+function findValidManualMoveTarget(projectInput, slotId) {
+    const project = normalizeTimetableProject(projectInput);
+    const slot = project.schedule?.slots?.find(item => item.id === slotId);
+    assert.ok(slot, 'expected a slot to move');
+
+    for (const day of project.activeWeekdays) {
+        for (const period of project.activePeriods) {
+            if (day === slot.day && period === slot.period) continue;
+            try {
+                const preview = applyScheduleAdjustment(project, {
+                    type: 'move',
+                    slotId,
+                    day,
+                    period,
+                });
+                if (preview.success) return { day, period };
+            } catch {
+                // Keep scanning; the target may be occupied or unavailable.
+            }
+        }
+    }
+    assert.fail('expected a valid manual adjustment target');
+}
+
 test('timetable project normalizes active weekdays and active periods from legacy shape', () => {
     const legacy = normalizeTimetableProject({ weekdays: 3, periodsPerDay: 4 });
     assert.deepEqual(legacy.activeWeekdays, [1, 2, 3]);
@@ -391,10 +415,10 @@ test('legacy scheduler baseline metrics cover core solve strategy scenarios', ()
     const solvable = solveBenchmark(sampleProject(), { seed: 'baseline-solvable' });
     assert.equal(solvable.metrics.success, true);
     assert.equal(solvable.metrics.strategy, 'greedy_constraints');
-    assert.equal(solvable.metrics.strategyVersion, 'legacy_enhanced_v1');
+    assert.equal(solvable.metrics.strategyVersion, 'legacy_enhanced_v2');
     assert.equal(solvable.metrics.strategyStats.ordering, 'difficulty_pressure');
-    assert.equal(solvable.metrics.strategyStats.candidateScoring, 'soft_rules_plus_pressure');
-    assert.equal(solvable.metrics.repairStats.strategy, 'bounded_blocking_repair');
+    assert.equal(solvable.metrics.strategyStats.candidateScoring, 'soft_rules_pressure_weighted');
+    assert.equal(solvable.metrics.repairStats.strategy, 'recursive_bounded_repair');
     assert.equal(solvable.metrics.unplacedCount, 0);
     assert.equal(solvable.metrics.hardConflicts, 0);
     assert.equal(solvable.metrics.lessonCount, 11);
@@ -547,7 +571,7 @@ test('legacy enhanced v2 records strict soft rejections before relaxed construct
             { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 },
         ],
         rules: {
-            hardRules: {},
+            hardRules: { teacherUnavailable: { t_math: [] } },
             softRules: {
                 subjectPreferredPeriods: {
                     math: { prefer: ['1-1'], weight: 80 },
@@ -999,6 +1023,106 @@ test('bounded repair can relocate two blockers without leaving hard conflicts', 
     assertNoTeacherOrClassConflicts(result.schedule.slots);
 });
 
+test('recursive repair moves a blocker chain before placing the stranded lesson', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 3,
+        activeWeekdays: [1],
+        activePeriods: [1, 2, 3],
+        teachers: [
+            { id: 't_a', name: 'Blocker A', subjects: ['block_a'], unavailableSlots: ['1-3'] },
+            { id: 't_b', name: 'Blocker B', subjects: ['block_b'], unavailableSlots: ['1-1'] },
+            { id: 't_target', name: 'Target', subjects: ['target'], unavailableSlots: ['1-2', '1-3'] },
+        ],
+        classes: [
+            { id: 'c_a', grade: 'G', name: 'A' },
+            { id: 'c_b', grade: 'G', name: 'B' },
+            { id: 'c_target', grade: 'G', name: 'Target' },
+        ],
+        subjects: [
+            { id: 'block_a', name: 'Block A', priority: 100, color: '#2563eb' },
+            { id: 'block_b', name: 'Block B', priority: 100, color: '#16a34a' },
+            { id: 'target', name: 'Target', priority: 1, color: '#f97316' },
+        ],
+        rooms: [{ id: 'lab', name: 'Lab' }],
+        lessonPlans: [
+            { id: 'lp_a', classId: 'c_a', subjectId: 'block_a', teacherId: 't_a', weeklyHours: 1, roomId: 'lab' },
+            { id: 'lp_b', classId: 'c_b', subjectId: 'block_b', teacherId: 't_b', weeklyHours: 1, roomId: 'lab' },
+            { id: 'lp_target', classId: 'c_target', subjectId: 'target', teacherId: 't_target', weeklyHours: 1, roomId: 'lab' },
+        ],
+        rules: {
+            hardRules: {},
+            softRules: {
+                subjectPreferredPeriods: {
+                    block_a: { prefer: ['1-1'], weight: 100 },
+                    block_b: { prefer: ['1-2'], weight: 100 },
+                },
+            },
+        },
+    });
+
+    const result = runTimetableScheduler(project, { seed: 'recursive-chain-repair' });
+    const byPlan = Object.fromEntries(result.schedule.slots.map(slot => [slot.lessonPlanId, slot]));
+
+    assert.equal(result.success, true);
+    assert.deepEqual([byPlan.lp_target.day, byPlan.lp_target.period], [1, 1]);
+    assert.deepEqual([byPlan.lp_a.day, byPlan.lp_a.period], [1, 2]);
+    assert.deepEqual([byPlan.lp_b.day, byPlan.lp_b.period], [1, 3]);
+    assert.equal(result.schedule.solverStats.repairStats.relocatedBlockers >= 2, true);
+    assert.equal(result.schedule.score.hardConflicts, 0);
+    assert.equal(result.schedule.score.unplacedLessons, 0);
+});
+
+test('recursive repair moves an entire double-block blocker as a protected group', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 3,
+        activeWeekdays: [1],
+        activePeriods: [1, 2, 3],
+        teachers: [
+            { id: 't_double', name: 'Double Blocker', subjects: ['double'], unavailableSlots: [] },
+            { id: 't_target', name: 'Target', subjects: ['target'], unavailableSlots: ['1-2', '1-3'] },
+        ],
+        classes: [
+            { id: 'c_double', grade: 'G', name: 'Double' },
+            { id: 'c_target', grade: 'G', name: 'Target' },
+        ],
+        subjects: [
+            { id: 'double', name: 'Double', priority: 100, color: '#2563eb' },
+            { id: 'target', name: 'Target', priority: 1, color: '#f97316' },
+        ],
+        rooms: [{ id: 'lab', name: 'Lab' }],
+        lessonPlans: [
+            { id: 'lp_double', classId: 'c_double', subjectId: 'double', teacherId: 't_double', weeklyHours: 2, blockPreference: 'double', roomId: 'lab' },
+            { id: 'lp_target', classId: 'c_target', subjectId: 'target', teacherId: 't_target', weeklyHours: 1, roomId: 'lab' },
+        ],
+        rules: {
+            hardRules: {},
+            softRules: {
+                subjectPreferredPeriods: {
+                    double: { prefer: ['1-1'], weight: 100 },
+                },
+            },
+        },
+    });
+
+    const result = runTimetableScheduler(project, { seed: 'double-blocker-repair' });
+    const doubleSlots = result.schedule.slots
+        .filter(slot => slot.lessonPlanId === 'lp_double')
+        .sort((left, right) => left.period - right.period);
+    const target = result.schedule.slots.find(slot => slot.lessonPlanId === 'lp_target');
+
+    assert.equal(result.success, true);
+    assert.deepEqual([target.day, target.period], [1, 1]);
+    assert.deepEqual(doubleSlots.map(slot => [slot.day, slot.period, slot.blockId]), [
+        [1, 2, doubleSlots[0].blockId],
+        [1, 3, doubleSlots[0].blockId],
+    ]);
+    assert.equal(result.schedule.solverStats.repairStats.relocatedBlockers >= 1, true);
+    assert.equal(result.schedule.score.hardConflicts, 0);
+    assert.equal(result.schedule.score.unplacedLessons, 0);
+});
+
 test('structured subject category drives scheduler timing without relying on course name', () => {
     const project = createDefaultTimetableProject({
         weekdays: 1,
@@ -1358,16 +1482,18 @@ test('manual adjustment moves, locks and clears timetable slots with validation'
         timeoutSeconds: 210,
     };
     const first = result.schedule.slots.find(slot => !slot.locked && slot.teacherId === 't_math');
-    const moved = applyScheduleAdjustment(sampleProject({ schedule: result.schedule }), {
+    const projectWithSchedule = sampleProject({ schedule: result.schedule });
+    const target = findValidManualMoveTarget(projectWithSchedule, first.id);
+    const moved = applyScheduleAdjustment(projectWithSchedule, {
         type: 'move',
         slotId: first.id,
-        day: 5,
-        period: 4,
+        day: target.day,
+        period: target.period,
     });
 
     const adjusted = moved.schedule.slots.find(slot => slot.id === first.id);
-    assert.equal(adjusted.day, 5);
-    assert.equal(adjusted.period, 4);
+    assert.equal(adjusted.day, target.day);
+    assert.equal(adjusted.period, target.period);
     assert.equal(adjusted.manuallyAdjusted, true);
     assert.equal(moved.schedule.source, 'manual_adjusted');
     assert.equal(moved.schedule.solverStats.phase, 'manual_adjustment');
@@ -1423,11 +1549,13 @@ test('manual adjustment preserves restored-published review semantics on restore
         },
     };
 
-    const moved = applyScheduleAdjustment(sampleProject({ schedule: restoredSchedule }), {
+    const projectWithSchedule = sampleProject({ schedule: restoredSchedule });
+    const target = findValidManualMoveTarget(projectWithSchedule, first.id);
+    const moved = applyScheduleAdjustment(projectWithSchedule, {
         type: 'move',
         slotId: first.id,
-        day: 5,
-        period: 4,
+        day: target.day,
+        period: target.period,
     });
 
     assert.equal(moved.schedule.source, 'manual_adjusted');
@@ -2955,7 +3083,7 @@ test('timetable API saves a fast schedule when Timefold is unavailable', async (
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-api-fail-'));
-    delete process.env.TIMEFOLD_SOLVER_URL;
+    process.env.TIMEFOLD_SOLVER_URL = '';
 
     const store = createTimetableStore();
     const existing = sampleProject({
@@ -3019,7 +3147,7 @@ test('timetable API keeps saved schedule when fast preflight audit blocks genera
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-audit-block-'));
-    delete process.env.TIMEFOLD_SOLVER_URL;
+    process.env.TIMEFOLD_SOLVER_URL = '';
 
     const store = createTimetableStore();
     const existing = createDefaultTimetableProject({
