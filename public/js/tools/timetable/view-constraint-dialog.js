@@ -41,6 +41,8 @@ export function renderConstraintDialog(state) {
     const parsing = review.parsing || false;
     const editingConstraint = dialog.editingConstraint;
     const aiChat = dialog.aiChat;
+    const hasBlockingConflict = constraints.some(c => c.hasConflict)
+        || (review.conflicts || []).some(item => item.level === 'blocking');
 
     return `
         <div class="tt-dialog-overlay" data-constraint-dialog-overlay>
@@ -102,7 +104,7 @@ export function renderConstraintDialog(state) {
                     <div class="tt-dialog-actions">
                         <button class="tt-btn" data-action="close-constraint-dialog" type="button">取消</button>
                         ${constraints.length > 0 ? `
-                            <button class="tt-btn tt-btn--primary" data-action="apply-constraints" type="button">
+                            <button class="tt-btn tt-btn--primary" data-action="apply-constraints" type="button" ${parsing || hasBlockingConflict ? 'disabled' : ''}>
                                 <i data-lucide="check"></i>
                                 <span>应用约束 (${constraints.length})</span>
                             </button>

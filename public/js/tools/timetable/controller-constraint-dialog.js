@@ -8,20 +8,27 @@ import { requestTimetable } from './api.js';
 /**
  * 打开智能约束助手弹窗
  */
-export function openConstraintDialog() {
+export function openConstraintDialog(mode = null) {
+    const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : null;
+    const currentReview = this.state.ruleReview || {};
     this.state.constraintDialog = {
+        ...(this.state.constraintDialog || {}),
         open: true,
+    };
+    this.state.smartWorkbench = {
+        ...(this.state.smartWorkbench || {}),
+        open: false,
     };
 
     // 确保 ruleReview 状态存在
-    if (!this.state.ruleReview) {
-        this.state.ruleReview = {
-            inputMode: 'text',
-            text: '',
-            draftRows: [],
-            parsing: false,
-        };
-    }
+    this.state.ruleReview = {
+        ...currentReview,
+        inputMode: nextMode || currentReview.inputMode || 'text',
+        mode: nextMode || currentReview.inputMode || 'text',
+        text: currentReview.text || '',
+        draftRows: currentReview.draftRows || [],
+        parsing: Boolean(currentReview.parsing),
+    };
 
     this.render();
 }
@@ -243,6 +250,12 @@ export async function applyConstraintsFromDialog() {
     const constraints = this.state.ruleReview?.draftRows || [];
     if (constraints.length === 0) {
         alert('没有可应用的约束');
+        return;
+    }
+    const hasBlockingConflict = constraints.some(c => c.hasConflict)
+        || (this.state.ruleReview?.conflicts || []).some(item => item.level === 'blocking');
+    if (hasBlockingConflict) {
+        alert('存在阻断冲突，请先处理后再应用约束');
         return;
     }
 

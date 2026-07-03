@@ -46,6 +46,10 @@ export function handleTimetableEscape(event, container, controller, state) {
         controller.closeConstraintChat?.();
         return true;
     }
+    if (state.constraintDialog?.open) {
+        controller.closeConstraintDialog?.();
+        return true;
+    }
     if (state.problemDetailDialog?.open) {
         controller.closeProblemDetails?.();
         return true;
@@ -100,36 +104,8 @@ function bindDelegatedInteractions(container) {
         }
         const action = event.target.closest('[data-action]')?.dataset.action || '';
 
-        // 智能排课工作台
-        if (action === 'close-smart-workbench') {
-            controller.closeSmartWorkbench();
-        } else if (action === 'smart-workbench-recheck') {
-            controller.recheckSmartWorkbenchData();
-        } else if (action === 'smart-workbench-continue-input') {
-            controller.continueSmartWorkbenchToInput();
-        } else if (action === 'smart-workbench-mode') {
-            controller.setSmartWorkbenchMode(event.target.closest('[data-rule-review-mode]')?.dataset.ruleReviewMode || 'text');
-        } else if (action === 'smart-workbench-section') {
-            controller.setSmartWorkbenchSection(event.target.closest('[data-smart-section]')?.dataset.smartSection || 'ready');
-        } else if (action === 'smart-workbench-page') {
-            controller.setSmartWorkbenchPage(event.target.closest('[data-page]')?.dataset.page || 1);
-        } else if (action === 'smart-workbench-preview-rules') {
-            controller.previewSmartRuleChanges();
-        } else if (action === 'smart-workbench-back-review') {
-            controller.backToSmartRuleReview();
-        } else if (action === 'smart-workbench-run-schedule') {
-            controller.runSmartSchedule();
-        } else if (action === 'smart-workbench-open-publish') {
-            controller.openSmartPublish();
-        } else if (action === 'smart-workbench-step') {
-            controller.navigateSmartWorkbenchStep(event.target.closest('[data-smart-stage-key]')?.dataset.smartStageKey || '');
-        } else if (action === 'smart-workbench-relax-preview') {
-            controller.previewSmartRelaxation(event.target.closest('[data-relax-index]')?.dataset.relaxIndex || 0);
-        } else if (action === 'smart-workbench-new-constraint') {
-            controller.startRuleReviewInput('text');
-        }
         // 移动端抽屉actions
-        else if (action === 'open-mobile-drawer') {
+        if (action === 'open-mobile-drawer') {
             controller.mobileDrawer?.openDrawer('half');
         } else if (action === 'close-mobile-drawer') {
             controller.mobileDrawer?.closeDrawer();

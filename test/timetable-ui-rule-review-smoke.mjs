@@ -7,6 +7,7 @@ async function main() {
         const clickByScript = async selector => {
             await page.locator(selector).evaluate(element => element.click());
         };
+        page.on('dialog', dialog => dialog.accept());
 
         await page.click('#tt-open-roster-import');
         await page.waitForSelector('#tt-roster-import-dialog', { timeout: 10000 });
@@ -30,75 +31,21 @@ async function main() {
         }, { timeout: 10000 });
 
         await page.click('#tt-open-rule-review');
-        await page.waitForSelector('[data-smart-workbench-root]', { timeout: 10000 });
-        await page.waitForFunction(() => {
-            const root = document.querySelector('[data-smart-workbench-root]');
-            const stage = root?.getAttribute('data-smart-stage') || '';
-            return ['checking_data', 'ready_for_constraints'].includes(stage);
-        }, { timeout: 20000 });
-        await page.waitForFunction(() => {
-            const root = document.querySelector('[data-smart-workbench-root]');
-            const stage = root?.getAttribute('data-smart-stage') || '';
-            return stage !== 'checking_data';
-        }, { timeout: 20000 });
+        await page.waitForSelector('[data-constraint-dialog-overlay]', { timeout: 10000 });
+        assert.equal(await page.locator('[data-smart-workbench-root]').count(), 0);
 
-        const continueToInput = page.locator('[data-action="smart-workbench-continue-input"]');
-        if (await continueToInput.count()) {
-            await clickByScript('[data-action="smart-workbench-continue-input"]');
-        }
+        await page.fill('#tt-constraint-text-input', '语文尽量安排到上午');
+        await clickByScript('[data-action="parse-constraints"]');
 
-        await page.waitForFunction(() => {
-            const root = document.querySelector('[data-smart-workbench-root]');
-            return root && root.getAttribute('data-smart-stage') === 'ready_for_constraints';
-        }, { timeout: 20000 });
+        await page.waitForFunction(() => document.querySelectorAll('.tt-constraint-card').length > 0, { timeout: 30000 });
 
-        await clickByScript('[data-rule-review-mode="text"]');
-        await page.waitForSelector('#tt-rule-review-text', { timeout: 10000 });
-
-        await page.fill('#tt-rule-review-text', '语文尽量安排到上午');
-        await clickByScript('#tt-rule-review-parse');
-
-        await page.waitForFunction(() => {
-            const root = document.querySelector('[data-smart-workbench-root]');
-            const stage = root?.getAttribute('data-smart-stage') || '';
-            return ['reviewing_constraints', 'waiting_user_confirmation'].includes(stage);
-        }, { timeout: 30000 });
-        await page.waitForFunction(() => document.querySelectorAll('.tt-smart-rule-list [data-rule-id]').length > 0, { timeout: 30000 });
-
-        const reviewText = await page.textContent('[data-smart-workbench-root]');
-        assert.match(reviewText || '', /规则报告/);
+        const reviewText = await page.textContent('[data-constraint-dialog-overlay]');
+        assert.match(reviewText || '', /已识别约束/);
         assert.match(reviewText || '', /语文/);
         assert.match(reviewText || '', /上午/);
 
-        await clickByScript('[data-action="smart-workbench-preview-rules"]');
-        await page.waitForFunction(() => {
-            const root = document.querySelector('[data-smart-workbench-root]');
-            return root && root.getAttribute('data-smart-stage') === 'waiting_user_confirmation';
-        }, { timeout: 30000 });
-        await page.waitForSelector('#tt-confirm-rule-review', { timeout: 10000 });
-
-        const previewText = await page.textContent('[data-smart-workbench-root]');
-        assert.match(previewText || '', /确认规则变化/);
-        assert.match(previewText || '', /语文/);
-
-        await clickByScript('#tt-confirm-rule-review');
-        await page.waitForFunction(() => {
-            const root = document.querySelector('[data-smart-workbench-root]');
-            const stage = root?.getAttribute('data-smart-stage') || '';
-            return ['building_solve_plan', 'waiting_solve_approval'].includes(stage);
-        }, { timeout: 30000 });
-        await page.waitForFunction(() => {
-            const root = document.querySelector('[data-smart-workbench-root]');
-            const text = root?.textContent || '';
-            return /1\s*已生效|已生效\s*1/.test(text);
-        }, { timeout: 30000 });
-
-        const stage = await page.locator('[data-smart-workbench-root]').getAttribute('data-smart-stage');
-        assert.match(stage || '', /building_solve_plan|waiting_solve_approval/);
-
-        const postConfirmText = await page.textContent('[data-smart-workbench-root]');
-        assert.match(postConfirmText || '', /求解计划|准备排课计划/);
-        assert.match(postConfirmText || '', /1\s*已生效|已生效\s*1/);
+        await clickByScript('[data-action="apply-constraints"]');
+        await page.waitForFunction(() => !document.querySelector('[data-constraint-dialog-overlay]'), { timeout: 10000 });
 
         console.log('timetable rule review smoke passed');
     });

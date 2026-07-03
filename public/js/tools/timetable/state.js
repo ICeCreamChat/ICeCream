@@ -1,5 +1,3 @@
-import { createSmartWorkbenchState } from './smart-workbench/workbench-state.js';
-
 export function createTimetablePlannerState(overrides = {}) {
     return {
         container: null,
@@ -80,7 +78,8 @@ export function createTimetablePlannerState(overrides = {}) {
             phaseTone: '',
         },
         constraintChat: null,
-        smartWorkbench: createSmartWorkbenchState(),
+        smartWorkbench: { open: false },
+        constraintDialog: { open: false },
         workflowOpenSections: null,
         rangeDraft: null,
         periodTimeDialog: {

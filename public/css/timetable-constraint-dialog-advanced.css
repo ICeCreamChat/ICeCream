@@ -1,6 +1,7 @@
 /* ========================================
    智能约束助手弹窗 - 高级功能样式
    编辑表单、AI 对话、冲突标记、进度条
+   对齐现有设计系统
    ======================================== */
 
 /* 对话框带 AI 面板时宽度增加 */
@@ -9,24 +10,17 @@
     max-width: 1100px;
 }
 
-/* 标题栏操作按钮 */
-.tt-dialog-header-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--tt-space-sm);
-}
-
 /* 冲突徽章 */
 .tt-conflict-badge {
     display: inline-flex;
     align-items: center;
-    gap: var(--tt-space-xs);
-    padding: 2px var(--tt-space-xs);
+    gap: 4px;
+    padding: 2px 8px;
     background: rgba(239, 68, 68, 0.1);
-    border-radius: var(--tt-radius-xs);
-    font-size: var(--tt-font-xs);
-    font-weight: 600;
-    color: rgb(239, 68, 68);
+    border-radius: 6px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #ef4444;
 }
 
 /* 约束卡片 - 冲突状态 */
@@ -38,54 +32,38 @@
 .tt-constraint-conflict-badge {
     display: inline-flex;
     align-items: center;
-    padding: 2px var(--tt-space-xs);
+    padding: 2px 8px;
     background: rgba(239, 68, 68, 0.1);
-    border-radius: var(--tt-radius-xs);
-    color: rgb(239, 68, 68);
+    border-radius: 6px;
+    color: #ef4444;
 }
 
 .tt-constraint-conflicts {
-    padding: var(--tt-space-sm);
+    padding: 8px 12px;
     background: rgba(239, 68, 68, 0.05);
-    border-left: 3px solid rgb(239, 68, 68);
-    border-radius: var(--tt-radius-xs);
-    font-size: var(--tt-font-sm);
+    border-left: 3px solid #ef4444;
+    border-radius: 6px;
+    font-size: 0.74rem;
 }
 
 .tt-constraint-conflicts strong {
     display: block;
-    margin-bottom: var(--tt-space-xs);
-    font-weight: 600;
-    color: rgb(239, 68, 68);
+    margin-bottom: 4px;
+    font-weight: 700;
+    color: #ef4444;
 }
 
 .tt-constraint-conflicts p {
-    margin: var(--tt-space-xs) 0;
+    margin: 4px 0;
     color: var(--tt-text);
 }
 
 .tt-more-conflicts {
     font-style: italic;
-    color: var(--tt-text-muted);
+    color: var(--tt-muted);
 }
 
-/* 解析进度 */
-.tt-parsing-status {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--tt-space-sm);
-    padding: var(--tt-space-md);
-    background: var(--tt-bg-panel);
-    border-radius: var(--tt-radius-sm);
-}
-
-.tt-parsing-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: var(--tt-space-xs);
-}
-
+/* 进度条 */
 .tt-progress-bar {
     height: 4px;
     background: var(--tt-border);
@@ -95,88 +73,91 @@
 
 .tt-progress-fill {
     height: 100%;
-    background: var(--tt-accent);
+    background: var(--tt-primary);
     border-radius: 2px;
     transition: width 0.3s ease;
 }
 
 /* 约束编辑表单 */
 .tt-constraint-edit-form {
-    padding: var(--tt-space-md);
-    background: var(--tt-bg-subtle);
-    border: 2px solid var(--tt-accent);
-    border-radius: var(--tt-radius-md);
+    padding: 16px;
+    background: rgba(8, 145, 178, 0.06);
+    border: 2px solid rgba(8, 145, 178, 0.3);
+    border-radius: 10px;
 }
 
 .tt-edit-form-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: var(--tt-space-md);
-    padding-bottom: var(--tt-space-sm);
+    margin-bottom: 16px;
+    padding-bottom: 8px;
     border-bottom: 1px solid var(--tt-border);
 }
 
 .tt-edit-form-header strong {
-    font-size: var(--tt-font-base);
+    font-size: 0.88rem;
+    font-weight: 700;
     color: var(--tt-text);
 }
 
 .tt-edit-form-actions {
     display: flex;
     justify-content: flex-end;
-    gap: var(--tt-space-sm);
-    margin-top: var(--tt-space-md);
+    gap: 8px;
+    margin-top: 16px;
 }
 
 /* AI 对话面板 */
 .tt-ai-chat-panel {
     display: grid;
     grid-template-rows: auto 1fr auto auto;
-    gap: var(--tt-space-md);
+    gap: 16px;
     height: 600px;
-    padding: var(--tt-space-md);
-    background: var(--tt-bg-subtle);
-    border-radius: var(--tt-radius-md);
+    padding: 16px;
+    background: rgba(8, 145, 178, 0.03);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: 10px;
 }
 
 .tt-ai-chat-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-bottom: var(--tt-space-sm);
+    padding-bottom: 8px;
     border-bottom: 1px solid var(--tt-border);
 }
 
 .tt-ai-chat-header > div {
     display: flex;
     align-items: center;
-    gap: var(--tt-space-sm);
+    gap: 8px;
 }
 
 .tt-ai-chat-header strong {
-    font-size: var(--tt-font-base);
+    font-size: 0.88rem;
+    font-weight: 700;
     color: var(--tt-text);
 }
 
 .tt-ai-chat-header i {
-    color: var(--tt-accent);
+    color: var(--tt-primary);
 }
 
 /* AI 消息列表 */
 .tt-ai-chat-messages {
     display: flex;
     flex-direction: column;
-    gap: var(--tt-space-md);
+    gap: 12px;
     overflow-y: auto;
-    padding: var(--tt-space-md);
-    background: var(--tt-bg-panel);
-    border-radius: var(--tt-radius-sm);
+    padding: 12px;
+    background: var(--tt-bg-input);
+    border-radius: 10px;
 }
 
 .tt-ai-message {
     display: flex;
-    gap: var(--tt-space-sm);
+    gap: 8px;
     align-items: flex-start;
 }
 
@@ -186,22 +167,22 @@
     height: 32px;
     display: grid;
     place-items: center;
-    background: var(--tt-bg-subtle);
+    background: var(--tt-bg-soft);
     border-radius: 50%;
-    color: var(--tt-text-muted);
+    color: var(--tt-muted);
 }
 
 .tt-ai-message--assistant > i {
-    background: rgba(var(--tt-accent-rgb), 0.1);
-    color: var(--tt-accent);
+    background: rgba(8, 145, 178, 0.1);
+    color: var(--tt-primary);
 }
 
 .tt-message-content {
     flex: 1;
-    padding: var(--tt-space-sm) var(--tt-space-md);
-    background: var(--tt-bg-subtle);
-    border-radius: var(--tt-radius-sm);
-    font-size: var(--tt-font-sm);
+    padding: 8px 12px;
+    background: var(--tt-bg-soft);
+    border-radius: 10px;
+    font-size: 0.82rem;
     line-height: 1.5;
     color: var(--tt-text);
 }
@@ -214,55 +195,65 @@
 .tt-ai-message--loading .tt-message-content {
     display: flex;
     align-items: center;
-    gap: var(--tt-space-sm);
-    color: var(--tt-text-muted);
+    gap: 8px;
+    color: var(--tt-muted);
 }
 
 /* AI 建议提示 */
 .tt-ai-suggested-prompts {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--tt-space-xs);
-    padding: var(--tt-space-sm);
-    background: var(--tt-bg-panel);
-    border-radius: var(--tt-radius-sm);
+    gap: 8px;
+    padding: 8px;
+    background: var(--tt-bg-input);
+    border-radius: 10px;
 }
 
 .tt-suggested-prompt-chip {
-    padding: var(--tt-space-xs) var(--tt-space-sm);
+    padding: 4px 12px;
     border: 1px solid var(--tt-border);
     border-radius: 999px;
-    background: var(--tt-bg-panel);
-    font-size: var(--tt-font-sm);
-    color: var(--tt-accent);
+    background: var(--tt-bg-soft);
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--tt-primary);
     cursor: pointer;
     transition: all 0.15s ease;
 }
 
 .tt-suggested-prompt-chip:hover {
-    border-color: var(--tt-accent);
-    background: rgba(var(--tt-accent-rgb), 0.05);
+    border-color: rgba(8, 145, 178, 0.5);
+    background: rgba(8, 145, 178, 0.06);
+    box-shadow: 0 0 20px rgba(8, 145, 178, 0.35);
 }
 
 /* AI 输入框 */
 .tt-ai-chat-input {
     display: flex;
-    gap: var(--tt-space-sm);
+    gap: 8px;
 }
 
 .tt-ai-chat-input input {
     flex: 1;
-    padding: var(--tt-space-sm) var(--tt-space-md);
+    box-sizing: border-box;
+    min-height: 36px;
+    padding: 0 12px;
     border: 1px solid var(--tt-border);
-    border-radius: var(--tt-radius-sm);
-    background: var(--tt-bg-panel);
-    font-size: var(--tt-font-base);
+    border-radius: 10px;
+    background: var(--tt-bg-input);
+    font-size: 0.82rem;
     color: var(--tt-text);
+    transition: border-color 0.15s ease;
 }
 
 .tt-ai-chat-input input:focus {
     outline: none;
-    border-color: var(--tt-accent);
+    border-color: rgba(8, 145, 178, 0.5);
+    box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.1);
+}
+
+.tt-ai-chat-input input::placeholder {
+    color: var(--tt-muted);
 }
 
 .tt-ai-chat-input button {
@@ -271,8 +262,9 @@
 
 /* 按钮变体 */
 .tt-btn--sm {
-    padding: var(--tt-space-xs) var(--tt-space-sm);
-    font-size: var(--tt-font-sm);
+    min-height: 32px;
+    padding: 0 10px;
+    font-size: 0.78rem;
 }
 
 .tt-btn--ghost {
@@ -281,10 +273,11 @@
     color: var(--tt-text);
 }
 
-.tt-btn--ghost:hover {
-    background: var(--tt-bg-hover);
-    border-color: var(--tt-accent);
-    color: var(--tt-accent);
+.tt-btn--ghost:hover:not(:disabled) {
+    border-color: var(--tt-primary);
+    background: rgba(8, 145, 178, 0.06);
+    color: var(--tt-primary);
+    box-shadow: 0 0 20px rgba(8, 145, 178, 0.35);
 }
 
 /* 旋转动画 */

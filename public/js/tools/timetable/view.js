@@ -23,7 +23,6 @@ import {
 import { buildRuleReviewTasks, getActiveRuleReviewTask } from './rule-review-tasks.js';
 import { renderConstraintChatDock } from './view-chat.js';
 import { renderFixPreview, renderSmartHelperDialog } from './view-smart-helper.js';
-import { renderSmartWorkbench } from './smart-workbench/workbench-view.js';
 import { renderConstraintDialog } from './view-constraint-dialog.js';
 
 function escapeHtml(value) {
@@ -293,30 +292,27 @@ export function renderWorkbench(state) {
 
     state.selectedOwnerId = ensureOwnerSelection(state);
     const inspectorOpen = Boolean(state.inspectorOpen || state.selectedSlotId || state.lastFailure || state.solverJob);
-    // @deprecated state.ruleReview.open 保留用于向后兼容，实际已切换到 state.smartWorkbench.open
-    const smartOpen = Boolean(state.smartWorkbench?.open || state.ruleReview?.open);
+    const constraintOpen = Boolean(state.constraintDialog?.open);
     return `
-        <div class="tt-workbench ${smartOpen ? 'is-smart-workbench-open' : ''}">
+        <div class="tt-workbench ${constraintOpen ? 'is-constraint-dialog-open' : ''}">
             ${renderTopbar(state)}
-            ${smartOpen ? renderSmartWorkbench(state) : `
-                <aside class="tt-sidebar">
-                    ${renderWorkflow(state)}
-                </aside>
-                <section class="tt-schedule-panel">
-                    ${renderSchedulePanel(state)}
-                </section>
-                <aside class="tt-inspector">
-                    <details class="tt-inspector-drawer" id="tt-inspector-drawer" ${inspectorOpen ? 'open' : ''}>
-                        <summary class="tt-inspector-summary">
-                            <span><i data-lucide="panel-right-open"></i><strong>排课审查</strong></span>
-                            <em>诊断 / 质量 / 发布</em>
-                        </summary>
-                        <div class="tt-inspector-body">
-                            ${renderInspector(state)}
-                        </div>
-                    </details>
-                </aside>
-            `}
+            <aside class="tt-sidebar">
+                ${renderWorkflow(state)}
+            </aside>
+            <section class="tt-schedule-panel">
+                ${renderSchedulePanel(state)}
+            </section>
+            <aside class="tt-inspector">
+                <details class="tt-inspector-drawer" id="tt-inspector-drawer" ${inspectorOpen ? 'open' : ''}>
+                    <summary class="tt-inspector-summary">
+                        <span><i data-lucide="panel-right-open"></i><strong>排课审查</strong></span>
+                        <em>诊断 / 质量 / 发布</em>
+                    </summary>
+                    <div class="tt-inspector-body">
+                        ${renderInspector(state)}
+                    </div>
+                </details>
+            </aside>
             ${renderRosterImportDialog(state)}
             ${renderPeriodTimeDialog(state)}
             ${renderPublishDialog(state)}
@@ -1009,8 +1005,7 @@ function renderRuleReviewStatus({ savedCount = 0, draftCount = 0, warningCount =
 // 这些函数仅用于旧弹窗，已不再需要
 
 // 旧弹窗函数 renderRuleReviewDialog 及其13个子函数（约450行）已完全删除
-// 主入口已切换到 smart-workbench/workbench-view.js 的 renderSmartWorkbench()
-// 以下保留的共享函数（renderRuleCardList、renderRuleReviewCard 等）已被 smart-workbench 使用
+// 主入口已切换到 constraint dialog；以下共享函数保留给规则复核和诊断视图使用。
 
 function renderPublishDialog(state) {
     const dialog = state.publishDialog || {};
@@ -1257,7 +1252,7 @@ function renderPublicationHistoryDialog(state) {
 // 已删除：renderRuleReviewOverview、renderClarifyingQuestions、renderRuleDiagnosis
 // 这些死代码函数已不再被调用
 
-// 以下共享函数保留，供 smart-workbench 使用：
+// 以下共享函数保留，供规则复核辅助视图使用：
 // - renderRuleCardList
 // - renderRuleReviewCard
 // - renderAutoAcceptableRules
@@ -1265,7 +1260,7 @@ function renderPublicationHistoryDialog(state) {
 // - renderRuleConflictSection
 // - renderUnsupportedRuleItems
 
-// 保留共享函数供 smart-workbench 使用
+// 保留共享函数供规则复核辅助视图使用
 
 function ruleDisplayTarget(row = {}) {
     return row.targetName || row.className || row.teacherName || row.subjectName || row.targetId || '还没确定对象';

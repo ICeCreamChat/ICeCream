@@ -22,15 +22,28 @@ import {
   renderSchedulePanel,
 } from '../public/js/tools/timetable/view.js';
 import { handleTimetableEscape } from '../public/js/tools/timetable/grid-interactions.js';
-import { createSmartWorkbenchState } from '../public/js/tools/timetable/smart-workbench/workbench-state.js';
 
 const sourcePath = new URL('../public/js/tools/timetable-planner.js', import.meta.url);
 const stylePath = new URL('../public/css/timetable-planner.css', import.meta.url);
 const appLauncherPath = new URL('../public/js/tools/app-launcher.js', import.meta.url);
-const smartWorkbenchStylePath = new URL('../public/css/timetable-smart-workbench.css', import.meta.url);
+const constraintDialogStylePath = new URL('../public/css/timetable-constraint-dialog.css', import.meta.url);
 const moduleRoot = new URL('../public/js/tools/timetable/', import.meta.url);
 
+function createConstraintDialogState(overrides = {}) {
+  return { open: true, ...overrides };
+}
+
 function sampleWorkbenchState(overrides = {}) {
+  const smartWorkbench = overrides.smartWorkbench || {};
+  const ruleReviewOverride = overrides.ruleReview || {};
+  const mappedConstraintDialog = overrides.constraintDialog || {
+    open: Boolean(smartWorkbench.open || ruleReviewOverride.open),
+  };
+  const normalizedRuleReview = {
+    ...ruleReviewOverride,
+    inputMode: ruleReviewOverride.inputMode || ruleReviewOverride.mode || smartWorkbench.sourceMode || 'text',
+    parsing: Boolean(ruleReviewOverride.parsing ?? ruleReviewOverride.loading),
+  };
   return {
     project: createDefaultTimetableProject({
       schoolName: 'UI School',
@@ -50,13 +63,19 @@ function sampleWorkbenchState(overrides = {}) {
     loading: false,
     message: '',
     lastFailure: null,
+    ruleReview: normalizedRuleReview,
+    smartWorkbench: { open: false },
+    constraintDialog: mappedConstraintDialog,
     ...overrides,
+    ruleReview: normalizedRuleReview,
+    smartWorkbench: { open: false },
+    constraintDialog: mappedConstraintDialog,
   };
 }
 
-test('timetable opens smart constraints as a standalone workbench instead of the legacy modal', () => {
+test('timetable opens smart constraints in the constraint dialog instead of the removed workbench', () => {
   const html = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'ready_for_constraints',
     }),
@@ -72,29 +91,32 @@ test('timetable opens smart constraints as a standalone workbench instead of the
     },
   }));
 
-  assert.match(html, /data-smart-workbench-root/);
-  assert.match(html, /智能排课助手/);
-  assert.match(html, /数据检查/);
-  assert.match(html, /描述要求/);
-  assert.match(html, /求解计划/);
+  assert.match(html, /data-constraint-dialog-overlay/);
+  assert.match(html, /tt-constraint-dialog/);
+  assert.match(html, /智能约束助手/);
+  assert.match(html, /描述您的排课要求/);
+  assert.match(html, /data-action="parse-constraints"/);
+  assert.doesNotMatch(html, /data-smart-workbench-root/);
+  assert.doesNotMatch(html, /tt-smart-workbench/);
   assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
   assert.doesNotMatch(html, /id="tt-agent-floating"/);
-  assert.doesNotMatch(html, /class="tt-schedule-grid"/);
 });
 
-test('timetable smart workbench controller exposes scoped rendering and beginner workflow actions', async () => {
+test('timetable constraint dialog controller exposes the current dialog actions', async () => {
   const controllerSource = await readFile(new URL('../public/js/tools/timetable/controller.js', import.meta.url), 'utf8');
+  const dialogControllerSource = await readFile(new URL('../public/js/tools/timetable/controller-constraint-dialog.js', import.meta.url), 'utf8');
   const interactionSource = await readFile(new URL('../public/js/tools/timetable/grid-interactions.js', import.meta.url), 'utf8');
 
-  assert.match(controllerSource, /renderSmartWorkbenchSurface\(\)/);
-  assert.match(controllerSource, /openSmartWorkbench\(/);
-  assert.match(controllerSource, /scrollSmartWorkbenchToTop\(\)/);
-  assert.match(controllerSource, /scrollIntoView\?\.\(\{ block: 'start'/);
-  assert.match(controllerSource, /previewSmartRuleChanges\(/);
-  assert.match(controllerSource, /buildSmartSolvePlan\(/);
-  assert.match(interactionSource, /close-smart-workbench/);
-  assert.match(interactionSource, /smart-workbench-preview-rules/);
-  assert.match(interactionSource, /smart-workbench-run-schedule/);
+  assert.match(controllerSource, /openConstraintDialog\(/);
+  assert.match(dialogControllerSource, /closeConstraintDialog\(/);
+  assert.match(dialogControllerSource, /parseConstraintsFromDialog\(/);
+  assert.match(dialogControllerSource, /applyConstraintsFromDialog\(/);
+  assert.match(interactionSource, /open-constraint-dialog/);
+  assert.match(interactionSource, /close-constraint-dialog/);
+  assert.match(interactionSource, /switch-constraint-mode/);
+  assert.match(interactionSource, /parse-constraints/);
+  assert.match(interactionSource, /apply-constraints/);
+  assert.match(interactionSource, /start-ai-chat/);
 });
 
 function buttonTag(html, marker) {
@@ -493,7 +515,7 @@ test('timetable smart agent frontend calls additive agent APIs without touching 
   const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
   const apiSource = await readFile(new URL('api.js', moduleRoot), 'utf8');
   const styles = await readFile(stylePath, 'utf8');
-  const smartWorkbenchStyles = await readFile(new URL('../public/css/timetable-smart-workbench.css', import.meta.url), 'utf8');
+  const constraintDialogStyles = await readFile(constraintDialogStylePath, 'utf8');
 
   assert.match(apiSource, /requestTimetableAgent/);
   assert.match(controllerSource, /startTimetableAgentSession/);
@@ -512,10 +534,10 @@ test('timetable smart agent frontend calls additive agent APIs without touching 
   assert.doesNotMatch(styles, /\.tt-agent-floating\s*{/);
   assert.doesNotMatch(styles, /\.tt-agent-toggle\s*{/);
   assert.doesNotMatch(styles, /\.tt-agent-floating-panel\s*{/);
-  assert.match(smartWorkbenchStyles, /\.tt-smart-insight-rail\s*{/);
-  assert.match(smartWorkbenchStyles, /\.tt-smart-plan-list\s*,\s*\n\.tt-smart-candidate-list\s*{/);
-  assert.match(smartWorkbenchStyles, /\.tt-smart-candidate-list\s*{/);
-  assert.doesNotMatch(smartWorkbenchStyles, /\.tt-agent-floating\s*{/);
+  assert.match(constraintDialogStyles, /\.tt-constraint-dialog\s*{/);
+  assert.match(constraintDialogStyles, /\.tt-constraint-preview\s*{/);
+  assert.match(constraintDialogStyles, /\.tt-constraint-list\s*{/);
+  assert.doesNotMatch(constraintDialogStyles, /\.tt-agent-floating\s*{/);
   assert.doesNotMatch(controllerSource, /seating/i);
 });
 
@@ -1786,7 +1808,7 @@ test('timetable smart workbench keeps not-ready schedules in diagnosis instead o
       score: { hardConflicts: 0, unplacedLessons: 1, placedLessons: 1, totalLessons: 2, completeness: 50 },
     },
   });
-  controller.state.smartWorkbench = createSmartWorkbenchState({ open: true, stage: 'solution_review' });
+  controller.state.smartWorkbench = createConstraintDialogState({ open: true, stage: 'solution_review' });
 
   controller.openSmartPublish();
 
@@ -1807,7 +1829,7 @@ test('timetable smart workbench sends incomplete generated schedules to diagnosi
     subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
     lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 }],
   });
-  controller.state.smartWorkbench = createSmartWorkbenchState({ open: true, stage: 'waiting_solve_approval' });
+  controller.state.smartWorkbench = createConstraintDialogState({ open: true, stage: 'waiting_solve_approval' });
   controller.runSchedule = async () => {
     controller.applyProject(createDefaultTimetableProject({
       teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
@@ -4426,7 +4448,7 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-import-dropzone/);
   assert.match(styles, /\.tt-roster-review-table/);
   assert.match(styles, /\.tt-roster-review-row--error/);
-  // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 smart-workbench 替代）
+  // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 constraint dialog 替代）
   assert.match(styles, /\.tt-roster-import-dialog/);
   assert.match(styles, /\.tt-period-time-dialog/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
@@ -4435,7 +4457,7 @@ test('timetable roster import controller exposes modal workflow methods and bind
 test('timetable dialogs expand to review content on desktop and stay constrained on mobile', async () => {
   const styles = await readFile(stylePath, 'utf8');
 
-  // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 smart-workbench 替代）
+  // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 constraint dialog 替代）
   assert.match(styles, /\.tt-roster-import-dialog,\s*[\s\S]*\.tt-period-time-dialog,\s*[\s\S]*\.tt-publish-dialog,\s*[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*min\(var\(--tt-dialog-width,\s*720px\),\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);[\s\S]*max-height:\s*min\(var\(--tt-dialog-max-height,\s*860px\),\s*calc\(100vh - 48px\)\);[\s\S]*overflow:\s*auto;[\s\S]*box-shadow:\s*0 24px 60px rgba\(2,\s*6,\s*23,\s*0\.38\);/);
   assert.match(styles, /\.tt-roster-import-dialog\s*{[\s\S]*--tt-dialog-width:\s*1120px;/);
   assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*--tt-dialog-width:\s*960px;[\s\S]*--tt-dialog-max-height:\s*820px;/);
@@ -4585,7 +4607,7 @@ test('timetable 智能 rules support Excel file upload and rich preview metadata
   // 已删除 .tt-rule-review-dialog 样式断言（旧弹窗已废弃）
 });
 
-test('timetable smart workbench keeps parsed drafts in the standalone review flow', async () => {
+test('timetable constraint dialog keeps parsed drafts in the current review flow', async () => {
   const pendingRules = [{
     id: 'draft-1',
     rawText: 'All teachers should be balanced',
@@ -4629,51 +4651,31 @@ test('timetable smart workbench keeps parsed drafts in the standalone review flo
     },
   });
 
-  const workbenchState = {
+  const dialogState = {
     ...state,
-    ruleReview: { ...state.ruleReview, open: false },
-    smartWorkbench: {
-      open: true,
-      stage: 'reviewing_constraints',
-      selectedSection: 'ready',
-      sourceMode: 'file',
-    },
+    constraintDialog: { open: true },
+    smartWorkbench: { open: false },
   };
-  const html = renderWorkbench(workbenchState);
+  const html = renderWorkbench(dialogState);
   const sidebar = html.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
 
-  assert.equal(sidebar, '');
-  assert.match(html, /data-smart-workbench-root/);
-  assert.match(html, /data-smart-stage="reviewing_constraints"/);
-  assert.match(html, /可直接应用/);
-  assert.match(html, /暂不支持/);
+  assert.match(sidebar, /id="tt-open-rule-review"/);
+  assert.match(html, /data-constraint-dialog-overlay/);
+  assert.match(html, /tt-constraint-dialog/);
+  assert.match(html, /已识别约束 \(2\)/);
+  assert.match(html, /All teachers should be balanced/);
+  assert.match(html, /Math should prefer Monday period 2/);
+  assert.match(html, /data-action="apply-constraints"/);
+  assert.doesNotMatch(html, /data-smart-workbench-root/);
   assert.doesNotMatch(sidebar, /id="tt-pending-rules"/);
   assert.doesNotMatch(sidebar, /data-rule-card="draft-1"/);
   assert.doesNotMatch(sidebar, /data-rule-card="draft-2"/);
   assert.doesNotMatch(sidebar, /待确认 \(2\)/);
-  // Suggestion card is rendered with reject (ignore) only
-  assert.doesNotMatch(sidebar, /data-rule-reject="draft-1"/);
-  // Effective card shows accept and reject
-  assert.doesNotMatch(sidebar, /data-rule-accept="draft-2"/);
-  assert.doesNotMatch(sidebar, /data-rule-reject="draft-2"/);
   assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
   assert.doesNotMatch(html, /data-rule-review-row="draft-1"/);
   assert.doesNotMatch(html, /data-rule-review-row="draft-2"/);
-  assert.match(html, /Unknown object ignored/);
-  assert.match(html, /data-action="rule-review-toggle-advanced"/);
 
-  // Advanced rows are rendered only after the user explicitly opens them.
-  const expandedHtml = renderWorkbench({
-    ...workbenchState,
-    ruleReview: { ...workbenchState.ruleReview, advancedOpen: true },
-  });
-  assert.match(expandedHtml, /data-rule-review-row="draft-1"/);
-  assert.match(expandedHtml, /data-rule-review-row="draft-2"/);
-  assert.doesNotMatch(expandedHtml, /tt-rule-card--expanded/);
-  assert.doesNotMatch(expandedHtml, /data-pending-field="slots"/);
-  assert.doesNotMatch(expandedHtml, /data-pending-field="priority"/);
-
-  // Controller sends existing drafts to the standalone workbench.
+  // Controller sends existing drafts to the constraint dialog.
   const controller = new TimetablePlannerController();
   controller.render = () => {};
   controller.state.ruleReview = {
@@ -4684,15 +4686,15 @@ test('timetable smart workbench keeps parsed drafts in the standalone review flo
     warnings: [],
   };
   controller.openRuleReview('file');
-  assert.equal(controller.state.ruleReview.open, false);
-  assert.equal(controller.state.smartWorkbench.open, true);
-  assert.equal(controller.state.smartWorkbench.stage, 'reviewing_constraints');
+  assert.equal(controller.state.constraintDialog.open, true);
+  assert.equal(controller.state.smartWorkbench.open, false);
+  assert.equal(controller.state.ruleReview.inputMode, 'file');
   assert.equal(controller.state.ruleReview.draftRows.length, 2);
 });
 
 test('timetable rule review shows all-teacher limit targets instead of an unmatched teacher dropdown', () => {
   const html = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'ready',
@@ -4722,17 +4724,16 @@ test('timetable rule review shows all-teacher limit targets instead of an unmatc
     },
   }));
 
-  const row = html.match(/<tr class="tt-rule-review-row[^"]*" data-rule-review-row="all-teachers-limit">([\s\S]*?)<\/tr>/)?.[1] || '';
-
-  assert.match(row, /value="全部教师"/);
-  assert.match(row, /data-rule-review-field="targetType" value="all_teachers"/);
-  assert.match(row, /data-rule-review-field="targetId" value="__all_teachers"/);
-  assert.doesNotMatch(row, /data-rule-target-select/);
-  assert.doesNotMatch(row, /<option value="">未选择<\/option>/);
+  assert.match(html, /data-constraint-id="all-teachers-limit"/);
+  assert.match(html, /全部教师/);
+  assert.match(html, /每位教师每天授课量尽量均衡/);
+  assert.doesNotMatch(html, /data-rule-target-select/);
+  assert.doesNotMatch(html, /<option value="">未选择<\/option>/);
 });
 
-test('timetable smart rules sidebar opens the standalone assistant workbench', async () => {
-  const componentSource = await readFile(new URL('smart-workbench/workbench-components.js', moduleRoot), 'utf8');
+test('timetable smart rules sidebar opens the constraint dialog', async () => {
+  const dialogSource = await readFile(new URL('view-constraint-dialog.js', moduleRoot), 'utf8');
+  const componentSource = await readFile(new URL('view-constraint-dialog-components.js', moduleRoot), 'utf8');
   const state = sampleWorkbenchState({
     pendingRules: [],
     expandedRuleId: null,
@@ -4765,20 +4766,22 @@ test('timetable smart rules sidebar opens the standalone assistant workbench', a
   assert.doesNotMatch(sidebar, /tt-rule-entry-card/);
   // No dialog rendered when no pending rules and no open state
   assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
-  // The standalone manual builder keeps all supported rule types.
-  assert.match(componentSource, /'locked_slot'/);
-  assert.match(componentSource, /'teacher_daily_limit'/);
-  assert.match(componentSource, /'teacher_consecutive_limit'/);
-  assert.match(componentSource, /id="tt-manual-rule-limit"/);
+  // The current dialog owns text, file, manual, preview, edit, and AI actions.
+  assert.match(dialogSource, /data-action="switch-constraint-mode"/);
+  assert.match(dialogSource, /id="tt-manual-type"/);
+  assert.match(dialogSource, /data-action="add-manual-constraint"/);
+  assert.match(dialogSource, /data-action="parse-constraints"/);
+  assert.match(dialogSource, /data-action="apply-constraints"/);
+  assert.match(componentSource, /data-action="edit-constraint"/);
+  assert.match(componentSource, /data-action="delete-constraint"/);
 
-  // Opening directly to manual mode uses the standalone workbench.
+  // Opening directly to manual mode uses the constraint dialog.
   const controller = new TimetablePlannerController();
   controller.render = () => {};
   controller.openRuleReview('manual');
-  assert.equal(controller.state.ruleReview.open, false);
-  assert.equal(controller.state.smartWorkbench.open, true);
-  assert.equal(controller.state.smartWorkbench.sourceMode, 'manual');
-  assert.equal(controller.state.ruleReview.mode, 'manual');
+  assert.equal(controller.state.constraintDialog.open, true);
+  assert.equal(controller.state.smartWorkbench.open, false);
+  assert.equal(controller.state.ruleReview.inputMode, 'manual');
 });
 
 test('timetable smart rules no longer keep the old inline sidebar renderer', async () => {
@@ -4794,8 +4797,9 @@ test('timetable smart rules no longer keep the old inline sidebar renderer', asy
   assert.doesNotMatch(styles, /(?:^|\n)\.tt-saved-rules\s*\{/);
 });
 
-test('timetable rule review modal shows seating-style parse progress feedback', async () => {
+test('timetable constraint dialog shows parse progress feedback', async () => {
   const styles = await readFile(stylePath, 'utf8');
+  const dialogStyles = await readFile(constraintDialogStylePath, 'utf8');
   const fileHtml = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
       open: true,
@@ -4811,93 +4815,63 @@ test('timetable rule review modal shows seating-style parse progress feedback', 
     },
   }));
 
-  assert.match(fileHtml, /class="[^"]*tt-process-strip[^"]*"/);
-  assert.match(fileHtml, /智能解析约束中\.\.\./);
+  assert.match(fileHtml, /data-constraint-dialog-overlay/);
   assert.match(fileHtml, /智能-rules\.xlsx/);
-  assert.match(fileHtml, /id="tt-rule-review-parse"[^>]*disabled/);
+  assert.match(fileHtml, /data-action="parse-constraints"[^>]*disabled/);
   assert.match(fileHtml, /data-lucide="loader-2"[^>]*class="tt-spin"/);
-  assert.match(fileHtml, /正在理解要求/);
-  assert.match(fileHtml, /data-rule-review-mode="file"[^>]*disabled/);
-  assert.match(fileHtml, /id="tt-rule-review-file"[^>]*disabled/);
-  assert.match(fileHtml, /data-smart-workbench-root/);
+  assert.match(fileHtml, /正在解析/);
+  assert.match(fileHtml, /data-action="switch-constraint-mode"[\s\S]*?disabled/);
+  assert.match(fileHtml, /id="tt-constraint-file-input"[^>]*disabled/);
+  assert.doesNotMatch(fileHtml, /data-smart-workbench-root/);
   assert.doesNotMatch(fileHtml, /id="tt-rule-review-dialog"/);
 
-  const manualHtml = renderWorkbench(sampleWorkbenchState({
+  const textHtml = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
       open: true,
-      step: 'manual',
-      mode: 'manual',
+      step: 'input',
+      mode: 'text',
+      text: '数学尽量上午',
       draftRows: [],
       warnings: [],
       loading: true,
-      phase: 'manual_rows',
       phaseText: '生成复核行中...',
     },
   }));
 
-  assert.match(manualHtml, /生成复核行中\.\.\./);
-  assert.match(manualHtml, /id="tt-add-manual-rule-rows"[^>]*disabled/);
-  assert.match(manualHtml, /data-lucide="loader-2"[^>]*class="tt-spin"/);
-  assert.match(manualHtml, /正在整理/);
+  assert.match(textHtml, /tt-parsing-status/);
+  assert.match(textHtml, /生成复核行中\.\.\./);
+  assert.match(textHtml, /data-lucide="loader-2"[^>]*class="tt-spin"/);
 
   assert.match(styles, /\.tt-spin\s*{/);
   assert.match(styles, /@keyframes\s+tt-spin/);
-  assert.match(styles, /\.tt-process-strip\s*{/);
-  assert.match(styles, /\.tt-process-chip\s*{/);
-  assert.match(styles, /\.tt-process-chip--warning\s*{/);
+  assert.match(dialogStyles, /\.tt-parsing-status\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-input-tabs\s*{/);
 });
 
-test('timetable constraint chat is docked inside the rule review workbench', async () => {
+test('timetable constraint AI chat is embedded inside the constraint dialog', async () => {
   const controllerSource = await readFile(new URL('../public/js/tools/timetable/controller.js', import.meta.url), 'utf8');
-  const chatControllerSource = await readFile(new URL('../public/js/tools/timetable/controller-chat-extension.js', import.meta.url), 'utf8');
-  const viewSource = await readFile(new URL('../public/js/tools/timetable/view.js', import.meta.url), 'utf8');
+  const dialogControllerSource = await readFile(new URL('../public/js/tools/timetable/controller-constraint-dialog-advanced.js', import.meta.url), 'utf8');
   const interactionSource = await readFile(new URL('../public/js/tools/timetable/grid-interactions.js', import.meta.url), 'utf8');
   const indexHtml = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  const chatStyles = await readFile(new URL('../public/css/timetable-chat.css', import.meta.url), 'utf8');
-  const smartStyles = await readFile(smartWorkbenchStylePath, 'utf8');
+  const dialogStyles = await readFile(constraintDialogStylePath, 'utf8');
 
   const state = sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    constraintDialog: createConstraintDialogState({
       open: true,
-      stage: 'reviewing_constraints',
-      selectedSection: 'ready',
-    }),
-    constraintChat: {
-      open: true,
-      loading: false,
-      conversationId: 'conv_test',
-      inputText: '请解释这些约束',
-      messages: [{
-        role: 'assistant',
-        content: '问题是什么：缺少节次会导致规则不能执行。\n建议怎么处理：补充可用节次。\n准备改成什么：先生成预览。',
-        timestamp: new Date('2026-06-13T08:00:00+08:00').getTime(),
-      }],
-      docked: true,
-      activeTaskId: 'fix_slot_range',
-      actionPreview: {
-        title: '过滤超出范围节次',
-        before: '包含第 8 节',
-        after: '只保留当前排课范围内节次',
-        affectedRuleIds: ['draft-1'],
-        changes: [{ ruleId: 'draft-1', updates: { slots: ['1-7'] } }],
-        requiresConfirmation: true,
-      },
-      reviewContext: {
-        counts: {
-          needsInput: 34,
-          needReview: 101,
-          unsupported: 1,
-          warnings: 76,
-        },
-        groups: [{
-          type: 'missing_info',
-          label: '需要补充信息',
-          count: 34,
-          examples: ['缺少明确节次，请补充后再生效。'],
+      aiChat: {
+        active: true,
+        loading: false,
+        conversationId: 'conv_test',
+        messages: [{
+          role: 'assistant',
+          content: '缺少节次会导致规则不能执行，请补充可用节次。',
+        }, {
+          role: 'user',
+          content: '请解释这些约束',
         }],
-        suggestedPrompts: ['先处理缺少明确节次的问题'],
+        suggestedPrompts: ['检查这些约束是否有冲突'],
       },
-    },
+    }),
     ruleReview: {
       open: true,
       step: 'review',
@@ -4925,7 +4899,6 @@ test('timetable constraint chat is docked inside the rule review workbench', asy
       needReview: [],
       unsupportedItems: [],
       warnings: ['H-004 和 H-005 涉及连堂保护，无法直接映射。'],
-      warnings: [],
       loading: false,
     },
   });
@@ -4937,44 +4910,33 @@ test('timetable constraint chat is docked inside the rule review workbench', asy
   assert.equal(typeof TimetablePlannerController.prototype.closeConstraintChat, 'function');
   assert.equal(typeof TimetablePlannerController.prototype.updateConstraintChatInput, 'function');
   assert.equal(typeof TimetablePlannerController.prototype.applyConstraintChatPreview, 'function');
-  assert.match(controllerSource, /constraintChatControllerMethods/);
-  assert.match(controllerSource, /buildConstraintReviewContext/);
-  assert.match(chatControllerSource, /taskContext/);
-  assert.match(controllerSource, /reviewContext/);
-  assert.doesNotMatch(viewSource, /renderConstraintChatDialog\(state\)/);
-  assert.match(html, /tt-smart-workbench/);
-  assert.match(html, /tt-smart-insight-rail/);
-  assert.match(html, /tt-smart-assistant-slot/);
-  assert.match(html, /tt-constraint-chat-dock/);
-  assert.doesNotMatch(html, /tt-constraint-chat-overlay/);
-  assert.match(html, /当前情况/);
-  assert.match(html, /问题是什么/);
-  assert.match(html, /建议怎么处理/);
-  assert.match(html, /准备改成什么/);
-  assert.match(html, /data-action="constraint-chat-apply-preview"/);
-  assert.match(html, /过滤超出范围节次/);
-  assert.doesNotMatch(html, /AI 帮我处理/);
-  assert.match(html, /智能助手/);
-  assert.match(html, /只围绕当前事项解释或生成修改预览/);
-  assert.match(html, /data-action="constraint-chat-close"/);
-  assert.match(html, /data-action="constraint-chat-suggest"/);
+  assert.equal(typeof TimetablePlannerController.prototype.startConstraintAIChat, 'function');
+  assert.equal(typeof TimetablePlannerController.prototype.sendConstraintAIMessage, 'function');
+  assert.equal(typeof TimetablePlannerController.prototype.closeConstraintAIChat, 'function');
+  assert.match(controllerSource, /constraintDialogAdvancedMethods/);
+  assert.match(dialogControllerSource, /startConstraintAIChat/);
+  assert.match(dialogControllerSource, /sendConstraintAIMessage/);
+  assert.match(html, /tt-constraint-dialog--with-ai/);
+  assert.match(html, /tt-ai-chat-panel/);
+  assert.match(html, /AI 约束优化助手/);
   assert.match(html, /缺少节次会导致规则不能执行/);
   assert.match(html, /请解释这些约束/);
-  assert.match(interactionSource, /rule-task-explain/);
-  assert.match(interactionSource, /rule-task-preview-fix/);
-  assert.match(interactionSource, /constraint-chat-apply-preview/);
-  assert.match(interactionSource, /constraint-chat-start/);
-  assert.match(interactionSource, /constraint-chat-send/);
-  assert.match(interactionSource, /constraint-chat-input/);
-  assert.match(interactionSource, /constraint-chat-suggest/);
+  assert.match(html, /data-action="use-ai-prompt"/);
+  assert.match(html, /data-action="send-ai-message"/);
+  assert.match(html, /data-action="close-ai-chat"/);
+  assert.doesNotMatch(html, /tt-smart-workbench/);
+  assert.doesNotMatch(html, /tt-constraint-chat-dock/);
+  assert.doesNotMatch(html, /tt-constraint-chat-overlay/);
+  assert.doesNotMatch(html, /当前办理事项/);
+  assert.doesNotMatch(html, /AI 帮我处理/);
+  assert.match(interactionSource, /start-ai-chat/);
+  assert.match(interactionSource, /send-ai-message/);
+  assert.match(interactionSource, /close-ai-chat/);
+  assert.match(interactionSource, /use-ai-prompt/);
   assert.match(indexHtml, /css\/timetable-chat\.css/);
-  assert.match(chatStyles, /\.tt-constraint-chat-dock\s*{/);
-  assert.match(chatStyles, /\.tt-chat-preview-card\s*{/);
-  assert.match(chatStyles, /@media \(max-width:\s*780px\)/);
-  assert.match(indexHtml, /css\/timetable-smart-workbench\.css/);
-  assert.match(smartStyles, /\.tt-smart-workbench\s*{/);
-  assert.match(smartStyles, /\.tt-smart-insight-rail\s*{/);
-  assert.match(smartStyles, /\.tt-smart-assistant-slot\s*{/);
+  assert.match(indexHtml, /css\/timetable-constraint-dialog\.css/);
+  assert.doesNotMatch(indexHtml, /css\/timetable-smart-workbench\.css/);
+  assert.match(dialogStyles, /\.tt-constraint-dialog\s*{/);
 });
 
 test('timetable hides the constraint chat dock until a conversation is open', () => {
@@ -4994,10 +4956,8 @@ test('timetable rule review parse renders the opened input state before progress
   );
 });
 
-test('timetable rule review updates only the modal and lazily renders advanced rows', async () => {
+test('timetable rule review updates the constraint dialog without old modal renderers', async () => {
   const controllerSource = await readFile(new URL('../public/js/tools/timetable/controller.js', import.meta.url), 'utf8');
-  const chatControllerSource = await readFile(new URL('../public/js/tools/timetable/controller-chat-extension.js', import.meta.url), 'utf8');
-  const helperControllerSource = await readFile(new URL('../public/js/tools/timetable/controller-smart-helper.js', import.meta.url), 'utf8');
   const closedHtml = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
       open: true,
@@ -5020,21 +4980,20 @@ test('timetable rule review updates only the modal and lazily renders advanced r
   }));
 
   assert.match(controllerSource, /renderRuleReviewSurface\(\)\s*{/);
-  assert.match(controllerSource, /renderSmartWorkbenchSurface\(\)/);
-  assert.match(controllerSource, /current\.replaceWith\(next\)/);
-  assert.match(controllerSource, /bindRuleReviewInteractions\(next,\s*this\)/);
-  assert.match(controllerSource, /textValue !== undefined/);
+  assert.match(controllerSource, /this\.state\.constraintDialog\s*=\s*{/);
+  assert.match(controllerSource, /open:\s*true/);
+  assert.match(controllerSource, /this\.state\.smartWorkbench\s*=\s*{[\s\S]*open:\s*false/);
   assert.doesNotMatch(controllerSource, /renderRuleReviewDialog\(this\.state\)/);
-  assert.match(chatControllerSource, /renderConstraintSurface\(this\)/);
-  assert.match(helperControllerSource, /renderSmartSurface\(this\)/);
-  assert.match(closedHtml, /data-action="rule-review-toggle-advanced"/);
+  assert.match(closedHtml, /data-constraint-dialog-overlay/);
+  assert.match(closedHtml, /data-constraint-id="lazy-row"/);
+  assert.match(closedHtml, /Math should be in the morning/);
   assert.doesNotMatch(closedHtml, /id="tt-rule-review-table"/);
   assert.doesNotMatch(closedHtml, /data-rule-review-row="lazy-row"/);
 });
 
-test('timetable rule review modal locks review table while rules are being written', () => {
+test('timetable constraint dialog locks inputs while rules are being written', () => {
   const html = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'review',
@@ -5063,27 +5022,27 @@ test('timetable rule review modal locks review table while rules are being writt
       warnings: [],
       advancedOpen: true,
       loading: true,
+      parsing: true,
       phase: 'saving',
       phaseText: '写入项目中...',
     },
   }));
 
-  assert.match(html, /写入项目中\.\.\./);
-  assert.match(html, /data-action="smart-workbench-preview-rules"[^>]*disabled/);
+  assert.match(html, /正在解析/);
+  assert.match(html, /data-action="parse-constraints"[^>]*disabled/);
+  assert.match(html, /data-action="apply-constraints"[^>]*disabled/);
   assert.match(html, /data-lucide="loader-2"[^>]*class="tt-spin"/);
-  assert.match(html, /处理中/);
-  assert.match(html, /data-action="smart-workbench-section"[^>]*disabled/);
-  assert.match(html, /data-rule-review-field="rawText"[^>]*disabled/);
-  assert.match(html, /data-rule-review-field="type"[^>]*disabled/);
-  assert.match(html, /data-rule-review-delete-row="draft-1"[^>]*disabled/);
-  assert.match(html, /data-action="rule-review-toggle-advanced"/);
+  assert.match(html, /data-action="switch-constraint-mode"[\s\S]*?disabled/);
+  assert.match(html, /data-constraint-id="draft-1"/);
+  assert.doesNotMatch(html, /data-action="smart-workbench-preview-rules"/);
+  assert.doesNotMatch(html, /data-rule-review-field="rawText"/);
 });
 
-test('timetable rule review explains warning groups and draft row sources separately', async () => {
+test('timetable constraint dialog explains card warnings and source text separately', async () => {
   const styles = await readFile(stylePath, 'utf8');
-  const smartStyles = await readFile(smartWorkbenchStylePath, 'utf8');
+  const dialogStyles = await readFile(constraintDialogStylePath, 'utf8');
   const html = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'ready',
@@ -5135,56 +5094,27 @@ test('timetable rule review explains warning groups and draft row sources separa
       loading: false,
     },
   }));
-  const unsupportedHtml = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
-      open: true,
-      stage: 'reviewing_constraints',
-      selectedSection: 'unsupported',
-    }),
-    ruleReview: {
-      open: true,
-      step: 'review',
-      mode: 'file',
-      fileName: '智能-rules.xlsx',
-      inputType: 'xlsx_constraints',
-      draftRows: [{
-        id: 'draft-source-2',
-        source: '智能约束建议',
-        sourceRow: 4,
-        rawText: '混合课程连堂块不可拆。',
-        type: 'block_protection',
-        targetType: 'subject',
-        targetName: '化学',
-        slots: [],
-        priority: 'soft',
-        status: 'suggestion',
-        confidence: 0.75,
-        description: '建议项，仅供复核',
-        warnings: ['当前版本只能预览这类建议'],
-      }],
-      warnings: [],
-      advancedOpen: false,
-    },
-  }));
 
-  assert.match(html, /tt-smart-details/);
-  assert.match(html, /解析详情与高级编辑/);
-  assert.match(html, /已自动处理/);
+  assert.match(html, /data-constraint-dialog-overlay/);
+  assert.match(html, /tt-constraint-preview/);
+  assert.match(html, /已识别约束 \(2\)/);
   assert.match(html, /混合课程连堂块不可拆/);
-  assert.match(html, /来源：第 1 行 · 智能约束建议/);
-  assert.match(unsupportedHtml, /来源：第 4 行 · 智能约束建议/);
-  assert.match(unsupportedHtml, /当前版本只能预览这类建议/);
-  assert.match(html, /data-rule-review-row="draft-source-1"/);
-  assert.match(html, /data-rule-review-row="draft-source-2"/);
+  assert.match(html, /原文：同一位教师同一时间只能给一个班上课。/);
+  assert.match(html, /原文：混合课程连堂块不可拆。/);
+  assert.match(html, /当前版本只能预览这类建议/);
+  assert.match(html, /data-constraint-id="draft-source-1"/);
+  assert.match(html, /data-constraint-id="draft-source-2"/);
+  assert.doesNotMatch(html, /data-rule-review-row="draft-source-1"/);
+  assert.doesNotMatch(html, /data-rule-review-row="draft-source-2"/);
 
-  assert.match(smartStyles, /\.tt-smart-details\s*{/);
-  assert.match(smartStyles, /\.tt-smart-rule-source\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-source\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-warning\s*{/);
   assert.match(styles, /\.tt-rule-review-table\s*{/);
 });
 
 test('timetable smart scan renders problem details inline with beginner actions', () => {
   const html = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'review',
@@ -5206,6 +5136,7 @@ test('timetable smart scan renders problem details inline with beginner actions'
       warnings: [],
     },
     constraintScan: {
+      open: true,
       completed: true,
       scanning: false,
       stats: { total: 1, autoFixable: 1, completeness: 95, scanDuration: 12, checksPerformed: 5, complianceScore: 95 },
@@ -5237,16 +5168,17 @@ test('timetable smart scan renders problem details inline with beginner actions'
     },
   }));
 
-  assert.match(html, /tt-smart-scan-detail/);
-  assert.match(html, /问题是什么/);
-  assert.match(html, /建议怎么处理/);
+  assert.match(html, /data-smart-helper-overlay/);
+  assert.match(html, /tt-smart-detail/);
+  assert.match(html, /问题详情/);
+  assert.match(html, /修正建议/);
   assert.match(html, /data-action="close-problem-detail"/);
   assert.match(html, /data-action="apply-fix"/);
   assert.match(html, /data-action="discuss-with-ai"/);
-  assert.match(html, /问智能助手/);
+  assert.match(html, /问智能/);
   assert.doesNotMatch(html, /问AI/);
   assert.match(html, /可自动补齐 1 条已能识别的时段/);
-  assert.doesNotMatch(html, /data-smart-detail-backdrop/);
+  assert.match(html, /data-smart-detail-backdrop/);
 });
 
 test('timetable smart helper applies generated fixes to review draft rows', () => {
@@ -5473,13 +5405,14 @@ test('timetable smart scan status stays compact and completed problems join the 
   });
 
   const errorHtml = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'review',
     }),
     ruleReview: baseReview,
     constraintScan: {
+      open: true,
       scanning: false,
       error: '扫描服务暂不可用',
       problems: [],
@@ -5490,13 +5423,14 @@ test('timetable smart scan status stays compact and completed problems join the 
   assert.match(errorHtml, /data-action="rescan-smart-helper"/);
 
   const loadingHtml = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'review',
     }),
     ruleReview: baseReview,
     constraintScan: {
+      open: true,
       scanning: true,
       progress: 60,
       phase: '检查可能冲突的规则...',
@@ -5505,42 +5439,44 @@ test('timetable smart scan status stays compact and completed problems join the 
     },
   }));
   assert.match(loadingHtml, /检查可能冲突的规则/);
-  assert.match(loadingHtml, /不会修改草稿，也不会重绘课表网格/);
+  assert.match(loadingHtml, /智能助手正在检查约束/);
 
   const scanHtml = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'review',
     }),
     ruleReview: baseReview,
     constraintScan: {
+      open: true,
       scanning: false,
       applyingAll: true,
-      expandedGroups: new Set(),
+      expandedGroups: new Set(['urgent']),
       stats: { total: 4, autoFixable: 4, completeness: 80, scanDuration: 3, checksPerformed: 5, complianceScore: 80 },
       problems: [problem(1), problem(2), problem(3), problem(4)],
     },
   }));
-  assert.match(scanHtml, /检查发现 4 个事项/);
-  assert.match(scanHtml, /待办理事项/);
+  assert.match(scanHtml, /智能检查完成/);
+  assert.match(scanHtml, /发现 4 个问题/);
   assert.match(scanHtml, /紧急问题 1/);
   assert.match(scanHtml, /紧急问题 4/);
-  assert.match(scanHtml, /data-scan-problem-id="urgent-1"/);
+  assert.match(scanHtml, /data-problem-id="urgent-1"/);
   assert.match(scanHtml, /data-action="apply-fix"/);
   assert.doesNotMatch(scanHtml, /class="tt-smart-helper"/);
-  assert.doesNotMatch(scanHtml, /data-action="apply-all-fixes"/);
+  assert.match(scanHtml, /data-action="apply-all-fixes"[^>]*disabled/);
 
   const previewHtml = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'review',
     }),
     ruleReview: baseReview,
     constraintScan: {
+      open: true,
       scanning: false,
-      expandedGroups: new Set(),
+      expandedGroups: new Set(['urgent']),
       stats: { total: 4, autoFixable: 4, completeness: 80, scanDuration: 3, checksPerformed: 5, complianceScore: 80 },
       problems: [problem(1), problem(2), problem(3), problem(4)],
     },
@@ -5639,7 +5575,7 @@ test('timetable rule review renders a beginner task workbench instead of raw que
       warnings: [],
   };
   const html = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'review',
@@ -5647,7 +5583,7 @@ test('timetable rule review renders a beginner task workbench instead of raw que
     ruleReview,
   }));
   const readyHtml = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'ready',
@@ -5655,7 +5591,7 @@ test('timetable rule review renders a beginner task workbench instead of raw que
     ruleReview,
   }));
   const conflictHtml = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'conflict',
@@ -5663,7 +5599,7 @@ test('timetable rule review renders a beginner task workbench instead of raw que
     ruleReview,
   }));
   const unsupportedHtml = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'unsupported',
@@ -5671,7 +5607,7 @@ test('timetable rule review renders a beginner task workbench instead of raw que
     ruleReview,
   }));
   const advancedHtml = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'review',
@@ -5679,66 +5615,43 @@ test('timetable rule review renders a beginner task workbench instead of raw que
     ruleReview: { ...ruleReview, advancedOpen: true },
   }));
 
-  assert.match(html, /tt-smart-workbench/);
-  assert.match(html, /tt-smart-task-checklist/);
-  assert.match(html, /待办理事项/);
-  assert.match(html, /确认教师名称/);
-  assert.match(html, /确认课程名称/);
-  assert.match(html, /确认班级名称/);
-  assert.match(html, /修正节次范围/);
-  assert.match(html, /处理冲突风险/);
-  assert.match(html, /查看暂不支持建议/);
-  assert.match(html, /核对可直接应用/);
-  assert.match(html, /data-rule-task-id="confirm_teacher_names"/);
-  assert.match(html, /data-rule-task-id="confirm_subject_names"/);
-  assert.match(html, /data-rule-task-id="fix_slot_range"/);
-  assert.match(html, /data-action="smart-workbench-section"/);
-  assert.match(html, /data-action="rule-task-explain"/);
-  assert.match(html, /data-action="rule-card-edit"/);
-  assert.match(html, /原文出现/);
-  assert.match(html, /存在多个同姓教师/);
-  assert.match(html, /王老师/);
+  assert.match(html, /data-constraint-dialog-overlay/);
+  assert.match(html, /tt-constraint-dialog/);
+  assert.match(html, /已识别约束 \(2\)/);
+  assert.match(html, /数学尽量上午/);
+  assert.match(html, /王老师周三下午不要排/);
+  assert.match(html, /存在多个候选教师/);
+  assert.match(html, /data-constraint-id="auto-1"/);
+  assert.match(html, /data-constraint-id="review-1"/);
+  assert.match(html, /data-action="edit-constraint"/);
+  assert.match(html, /data-action="delete-constraint"/);
+  assert.match(html, /data-action="apply-constraints"/);
+  assert.doesNotMatch(html, /tt-smart-workbench/);
+  assert.doesNotMatch(html, /tt-smart-task-checklist/);
+  assert.doesNotMatch(html, /data-action="smart-workbench-section"/);
   assert.doesNotMatch(html, /你说的王老师是哪一位/);
   assert.doesNotMatch(html, /你说的道法、地理、劳动是哪个课程/);
-  assert.match(html, /data-rule-clarify-question="q_1"/);
-  assert.match(html, /data-rule-clarify-option/);
-  assert.match(html, /data-action="submit-rule-clarification"/);
-  assert.match(html, /data-rule-question-answer="q_1"/);
-  assert.match(readyHtml, /data-action="smart-workbench-preview-rules"/);
-  assert.match(conflictHtml, /李老师不可排与锁定课节冲突/);
-  assert.match(unsupportedHtml, /teacher_free_period_compact/);
-  assert.match(readyHtml, /我理解为|系统理解为/);
-  assert.match(readyHtml, /data-action="rule-card-edit"/);
-  assert.match(readyHtml, /data-action="rule-card-ignore"/);
-  assert.match(readyHtml, /data-action="rule-card-delete"/);
-  assert.match(readyHtml, /data-action="rule-card-effective"/);
-  assert.match(html, /class="tt-smart-details/);
-  assert.match(html, /data-action="rule-review-toggle-advanced"/);
+  assert.doesNotMatch(html, /data-rule-clarify-question="q_1"/);
+  assert.match(readyHtml, /data-action="apply-constraints"/);
+  assert.match(conflictHtml, /data-constraint-dialog-overlay/);
+  assert.match(unsupportedHtml, /data-constraint-dialog-overlay/);
   assert.doesNotMatch(html, /data-rule-review-row="auto-1"/);
-  assert.match(advancedHtml, /data-rule-review-row="auto-1"/);
-  assert.match(advancedHtml, /data-rule-review-field="rawText"/);
-  assert.match(html, /<details class="tt-smart-details"/);
-  assert.doesNotMatch(html, /<details class="tt-smart-details" open/);
+  assert.doesNotMatch(advancedHtml, /data-rule-review-row="auto-1"/);
+  assert.doesNotMatch(advancedHtml, /data-rule-review-field="rawText"/);
 
-  const smartStyles = await readFile(smartWorkbenchStylePath, 'utf8');
-  assert.match(smartStyles, /\.tt-smart-workbench\s*{/);
-  assert.match(smartStyles, /\.tt-smart-task-checklist\s*{/);
-  assert.match(smartStyles, /\.tt-smart-review-tabs\s*{/);
-  assert.match(smartStyles, /\.tt-smart-rule-card\s*{/);
-  assert.match(smartStyles, /\.tt-smart-details\s*{/);
+  const dialogStyles = await readFile(constraintDialogStylePath, 'utf8');
+  assert.match(dialogStyles, /\.tt-constraint-dialog\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-card\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-actions\s*{/);
 });
 
-test('timetable rule review renders empty candidate questions as no-candidate tasks', () => {
+test('timetable constraint dialog renders manual mode without old clarify questions', () => {
   const html = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
-      open: true,
-      stage: 'reviewing_constraints',
-      selectedSection: 'ready',
-    }),
+    constraintDialog: createConstraintDialogState({ open: true }),
     ruleReview: {
       open: true,
-      step: 'review',
-      mode: 'text',
+      step: 'manual',
+      mode: 'manual',
       clarifyingQuestions: [{
         id: 'q_empty',
         question: 'Which all-teacher object?',
@@ -5754,17 +5667,17 @@ test('timetable rule review renders empty candidate questions as no-candidate ta
     },
   }));
 
-  assert.match(html, /当前项目里没有匹配对象/);
-  assert.match(html, /确认名称/);
-  assert.match(html, /data-rule-clarify-question="q_empty"/);
-  assert.match(html, /data-rule-clarify-input="q_empty"/);
-  assert.match(html, /<input[^>]*data-rule-question-answer="q_empty"/);
-  assert.doesNotMatch(html, /<select[^>]*data-rule-question-answer="q_empty"/);
+  assert.match(html, /data-constraint-dialog-overlay/);
+  assert.match(html, /id="tt-manual-target"/);
+  assert.match(html, /id="tt-manual-time"/);
+  assert.match(html, /data-action="add-manual-constraint"/);
+  assert.doesNotMatch(html, /data-rule-clarify-question="q_empty"/);
+  assert.doesNotMatch(html, /data-rule-question-answer="q_empty"/);
 });
 
-test('timetable smart rule review renders the rule report summary and entries', () => {
+test('timetable constraint dialog renders recognized rule cards instead of the removed report workbench', () => {
   const html = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'ready',
@@ -5822,18 +5735,18 @@ test('timetable smart rule review renders the rule report summary and entries', 
     },
   }));
 
-  assert.match(html, /规则报告/);
-  assert.match(html, /保留<\/b>1/);
-  assert.match(html, /降级<\/b>1/);
-  assert.match(html, /丢弃<\/b>0/);
-  assert.match(html, /待审<\/b>1/);
-  assert.match(html, /当前只能作为建议展示，不会直接写入规则。/);
-  assert.match(html, /王老师需要复核后才能生效。/);
+  assert.match(html, /data-constraint-dialog-overlay/);
+  assert.match(html, /已识别约束 \(1\)/);
+  assert.match(html, /数学尽量上午/);
+  assert.match(html, /data-constraint-id="rule_kept"/);
+  assert.match(html, /data-action="apply-constraints"/);
+  assert.doesNotMatch(html, /规则报告/);
+  assert.doesNotMatch(html, /当前只能作为建议展示，不会直接写入规则。/);
 });
 
-test('timetable rule review disables auto apply when blocking conflicts exist', () => {
+test('timetable constraint dialog disables apply when blocking conflicts exist', () => {
   const html = renderWorkbench(sampleWorkbenchState({
-    smartWorkbench: createSmartWorkbenchState({
+    smartWorkbench: createConstraintDialogState({
       open: true,
       stage: 'reviewing_constraints',
       selectedSection: 'ready',
@@ -5859,6 +5772,8 @@ test('timetable rule review disables auto apply when blocking conflicts exist', 
         status: 'effective',
         confidence: 0.92,
         warnings: [],
+        hasConflict: true,
+        conflicts: [{ level: 'blocking', message: '锁定课节与教师不可用冲突。' }],
       }],
       needReview: [],
       conflicts: [{ level: 'blocking', message: '锁定课节与教师不可用冲突。' }],
@@ -5867,8 +5782,9 @@ test('timetable rule review disables auto apply when blocking conflicts exist', 
     },
   }));
 
-  assert.match(html, /data-action="smart-workbench-preview-rules"[^>]*disabled/);
+  assert.match(html, /data-action="apply-constraints"[^>]*disabled/);
   assert.match(html, /锁定课节与教师不可用冲突/);
+  assert.match(html, /tt-constraint-card--conflict/);
 });
 
 test('timetable rule review can clarify questions and request rule diagnosis', async () => {
@@ -6028,8 +5944,8 @@ test('timetable rule review can clarify questions and request rule diagnosis', a
   }
 });
 
-test('timetable rule review table aligns controls with fixed helper rows', async () => {
-  const styles = await readFile(stylePath, 'utf8');
+test('timetable constraint dialog card aligns controls and helper text without the removed table', async () => {
+  const dialogStyles = await readFile(constraintDialogStylePath, 'utf8');
   const html = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
       open: true,
@@ -6058,23 +5974,23 @@ test('timetable rule review table aligns controls with fixed helper rows', async
     },
   }));
 
-  assert.match(html, /<colgroup class="tt-rule-review-cols">/);
-  assert.match(html, /class="tt-rule-review-cell"/);
-  assert.match(html, /class="tt-rule-review-cell-main"/);
-  assert.match(html, /class="tt-rule-review-cell-helper"/);
-  assert.match(html, /class="tt-rule-review-action-cell"/);
-  assert.match(html, /data-rule-review-field="slots"/);
-  assert.match(html, /data-rule-review-field="status"/);
-  assert.match(html, /data-rule-review-delete-row="draft-align-1"/);
+  assert.match(html, /data-constraint-dialog-overlay/);
+  assert.match(html, /data-constraint-id="draft-align-1"/);
+  assert.match(html, /Music should avoid the last periods/);
+  assert.match(html, /Long warning should stay/);
+  assert.match(html, /class="tt-constraint-actions"/);
+  assert.match(html, /data-action="edit-constraint"/);
+  assert.match(html, /data-action="delete-constraint"/);
+  assert.doesNotMatch(html, /<colgroup class="tt-rule-review-cols">/);
+  assert.doesNotMatch(html, /data-rule-review-field="slots"/);
 
-  assert.match(styles, /\.tt-rule-review-table\s*{[^}]*table-layout:\s*fixed/s);
-  assert.match(styles, /\.tt-rule-review-cell\s*{[^}]*display:\s*grid/s);
-  assert.match(styles, /\.tt-rule-review-cell-main\s*{[^}]*min-height:\s*34px/s);
-  assert.match(styles, /\.tt-rule-review-cell-helper\s*{[^}]*white-space:\s*nowrap/s);
-  assert.match(styles, /\.tt-rule-review-action-cell\s*{[^}]*align-items:\s*start/s);
+  assert.match(dialogStyles, /\.tt-constraint-card\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-content\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-warning\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-actions\s*{/);
 });
 
-test('timetable saved smart rules remain visible in the standalone workbench', async () => {
+test('timetable saved smart rules remain summarized while the constraint dialog stays separate', async () => {
   const styles = await readFile(stylePath, 'utf8');
   const project = createDefaultTimetableProject({
     weekdays: 5,
@@ -6137,12 +6053,8 @@ test('timetable saved smart rules remain visible in the standalone workbench', a
 
   const workbenchHtml = renderWorkbench(sampleWorkbenchState({
     project,
-    smartWorkbench: {
-      open: true,
-      stage: 'reviewing_constraints',
-      selectedSection: 'saved',
-      sourceMode: 'text',
-    },
+    constraintDialog: { open: true },
+    smartWorkbench: { open: false },
     ruleReview: {
       open: false,
       draftRows: [],
@@ -6150,10 +6062,13 @@ test('timetable saved smart rules remain visible in the standalone workbench', a
     },
   }));
 
-  assert.match(workbenchHtml, /data-smart-workbench-root/);
+  assert.match(workbenchHtml, /data-constraint-dialog-overlay/);
+  assert.match(workbenchHtml, /智能约束助手/);
   assert.match(workbenchHtml, /已应用约束|已生效约束/);
-  assert.match(workbenchHtml, /data-saved-rule-delete=/);
-  assert.match(workbenchHtml, /新增约束要求/);
+  assert.match(workbenchHtml, /描述您的排课要求/);
+  assert.match(workbenchHtml, /data-action="parse-constraints"/);
+  assert.doesNotMatch(workbenchHtml, /data-smart-workbench-root/);
+  assert.doesNotMatch(workbenchHtml, /data-saved-rule-delete=/);
   assert.doesNotMatch(workbenchHtml, /id="tt-saved-rule-table"/);
   assert.doesNotMatch(workbenchHtml, /id="tt-rule-review-dialog"/);
   assert.doesNotMatch(styles, /(?:^|\n)\.tt-saved-rules\s+\.tt-saved-rule-row\s*\{/);
@@ -7113,7 +7028,7 @@ test('timetable period time cancel discards unsaved clear draft', () => {
 
   assert.deepEqual(controller.state.periodTimeDialog.draftTimes, [
     { period: 1, start: '08:00', end: '08:40' },
-    { period: 2, start: '08:50', end: '09:30' },
+    { period: 2, start: '08:50', end: '09:30', manualOverride: false, segmentLabel: '上午时段' },
   ]);
 });
 
