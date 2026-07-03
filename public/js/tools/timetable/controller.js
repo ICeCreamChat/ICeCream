@@ -1308,14 +1308,6 @@ export class TimetablePlannerController {
         const newTotal = normalized.segments.reduce((sum, seg) => sum + seg.periodCount, 0);
         const totalPeriodCountChanged = previousTotal !== newTotal;
 
-        console.log('updateSegmentConfigFromForm:', {
-            previousSegments: previousConfig?.segments.length || 0,
-            newSegments: normalized.segments.length,
-            previousTotal,
-            newTotal,
-            totalPeriodCountChanged,
-        });
-
         this.state.periodTimeDialog = {
             ...(this.state.periodTimeDialog || {}),
             open: true,
@@ -1326,10 +1318,8 @@ export class TimetablePlannerController {
         };
 
         if (totalPeriodCountChanged) {
-            console.log('Full render (total period count changed)...');
             this.render();
         } else {
-            console.log('Targeted update (only time values changed)...');
             this.writePeriodTimesToDom(draftTimes);
             this.refreshPeriodTimeGapInputsFromDom();
         }
@@ -1511,18 +1501,15 @@ export class TimetablePlannerController {
             console.warn('writePeriodTimesToDom: No rows found');
             return;
         }
-        console.log('writePeriodTimesToDom: Updating', rows.length, 'rows with', times.length, 'times');
         rows.forEach(row => {
             const period = Number(row.dataset.periodTimeRow);
             const entry = timeMap.get(period) || {};
             const startInput = row.querySelector(`[data-period-time-draft-start="${period}"], [data-period-time-start="${period}"]`);
             const endInput = row.querySelector(`[data-period-time-draft-end="${period}"], [data-period-time-end="${period}"]`);
             if (startInput) {
-                console.log(`  Period ${period} start: "${startInput.value}" -> "${entry.start || ''}"`);
                 startInput.value = entry.start || '';
             }
             if (endInput) {
-                console.log(`  Period ${period} end: "${endInput.value}" -> "${entry.end || ''}"`);
                 endInput.value = entry.end || '';
             }
         });

@@ -6390,8 +6390,8 @@ test('timetable period time setup uses a compact entry and modal editor', async 
   assert.match(open, /id="tt-segment-global-break-minutes"/);
   assert.match(open, /id="tt-add-segment"/);
   assert.match(open, /data-segment-template="standard"/);
-  assert.match(open, /data-segment-template="early-evening"/);
-  assert.match(open, /data-segment-template="junior"/);
+  assert.match(open, /data-segment-template="withMorningEvening"/);
+  assert.match(open, /data-segment-template="juniorHigh"/);
   assert.match(open, /data-segment-id="seg-1"/);
   assert.match(open, /data-segment-field="seg-1-label"/);
   assert.match(open, /data-segment-field="seg-1-startTime"/);
@@ -6557,8 +6557,8 @@ test('timetable period time dialog drafts fill, clear and save through project p
     assert.equal(controller.state.periodTimeDialog.segmentConfig.globalDefaults.classMinutes, 40);
     assert.deepEqual(controller.state.periodTimeDialog.draftTimes, [
       { period: 1, start: '07:55', end: '08:35' },
-      { period: 2, start: '08:45', end: '09:25' },
-      { period: 3, start: '09:35', end: '10:15' },
+      { period: 2, start: '08:45', end: '09:25', manualOverride: false, segmentLabel: '上午时段' },
+      { period: 3, start: '09:35', end: '10:15', manualOverride: false, segmentLabel: '上午时段' },
     ]);
 
     controller.autoFillPeriodTimes();
@@ -6566,7 +6566,7 @@ test('timetable period time dialog drafts fill, clear and save through project p
     assert.ok(controller.state.periodTimeDialog.segmentConfig);
     assert.equal(controller.state.periodTimeDialog.segmentConfig.globalDefaults.classMinutes, 45);
     assert.equal(controller.state.periodTimeDialog.draftTimes.length, 3);
-    assert.deepEqual(controller.state.periodTimeDialog.draftTimes[0], { period: 1, start: '08:00', end: '08:45' });
+    assert.deepEqual(controller.state.periodTimeDialog.draftTimes[0], { period: 1, start: '08:00', end: '08:45', manualOverride: false, segmentLabel: '上午时段' });
 
     controller.clearPeriodTimes();
     assert.deepEqual(controller.state.periodTimeDialog.draftTimes, []);
