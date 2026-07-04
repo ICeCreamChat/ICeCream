@@ -892,15 +892,16 @@ body.light-mode .tt-range-setup-card .tt-range-summary-trigger {
     align-self: center;
     width: 30px;
     height: 30px;
-    background: rgba(16, 185, 129, 0.12);
-    border: 1px solid rgba(16, 185, 129, 0.24);
+    background: rgba(8, 145, 178, 0.12);
+    border: 1px solid rgba(8, 145, 178, 0.24);
     border-radius: var(--tt-radius-sm);
-    color: var(--tt-success);
+    color: var(--tt-primary);
 }
 
 .tt-range-setup-card .tt-range-summary-icon .lucide {
     width: 16px;
     height: 16px;
+    color: inherit;
 }
 
 .tt-range-setup-card .tt-period-time-entry {

@@ -37,6 +37,10 @@ export function openConstraintDialog(mode = null) {
  * 关闭智能约束助手弹窗
  */
 export function closeConstraintDialog() {
+    this.constraintDialogFile = null;
+    if (this.state.ruleReview) {
+        this.state.ruleReview.fileName = '';
+    }
     this.state.constraintDialog = {
         open: false,
     };
@@ -50,7 +54,13 @@ export function switchConstraintMode(mode) {
     if (!this.state.ruleReview) {
         this.state.ruleReview = {};
     }
-    this.state.ruleReview.inputMode = mode;
+    const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'text';
+    this.state.ruleReview.inputMode = nextMode;
+    this.state.ruleReview.mode = nextMode;
+    if (nextMode !== 'file') {
+        this.constraintDialogFile = null;
+        this.state.ruleReview.fileName = '';
+    }
     this.render();
 }
 
@@ -95,7 +105,7 @@ export async function parseConstraintsFromDialog() {
         this.state.ruleReview.text = text;
     } else if (mode === 'file') {
         const fileInput = document.getElementById('tt-constraint-file-input');
-        const file = fileInput?.files?.[0];
+        const file = fileInput?.files?.[0] || this.constraintDialogFile;
         if (!file) {
             alert('请选择文件');
             return;
@@ -154,8 +164,12 @@ export async function parseConstraintsFromDialog() {
 
         // 合并新解析的约束
         const existingRows = this.state.ruleReview.draftRows || [];
-        const newRows = result.rows || [];
+        const newRows = result.draftRows || result.rows || [];
         this.state.ruleReview.draftRows = [...existingRows, ...newRows];
+        if (mode === 'file') {
+            this.constraintDialogFile = null;
+            this.state.ruleReview.fileName = '';
+        }
 
         // 自动检测冲突
         await this.detectConstraintConflicts();
@@ -301,9 +315,12 @@ export function handleConstraintFileSelect(event) {
     const file = event.target?.files?.[0];
     if (!file) return;
 
+    this.constraintDialogFile = file;
     if (!this.state.ruleReview) {
         this.state.ruleReview = {};
     }
+    this.state.ruleReview.inputMode = 'file';
+    this.state.ruleReview.mode = 'file';
     this.state.ruleReview.fileName = file.name;
     this.render();
 }

@@ -515,7 +515,7 @@ router.post('/rules', async (req, res) => {
     }
 });
 
-router.post('/rules/parse', upload.single('file'), async (req, res) => {
+async function handleRulesParse(req, res) {
     let current = null;
     try {
         current = await store().loadProject();
@@ -532,7 +532,10 @@ router.post('/rules/parse', upload.single('file'), async (req, res) => {
             reason: error.reason || 'rules_parse_failed',
         });
     }
-});
+}
+
+router.post('/rules/parse', upload.single('file'), handleRulesParse);
+router.post('/rule-review/parse', upload.single('file'), handleRulesParse);
 
 router.post('/rules/normalize', async (req, res) => {
     let current = null;

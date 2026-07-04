@@ -108,9 +108,11 @@ export function renderConstraintEditForm(constraint) {
 export function renderAIChatPanel(state, aiChat) {
     return `
         <div class="tt-ai-chat-panel">
-            <div class="tt-ai-chat-header">
-                <div>
-                    <i data-lucide="sparkles"></i>
+            <div class="tt-ai-chat-toolbar tt-ai-chat-header">
+                <div class="tt-ai-chat-title">
+                    <span class="tt-ai-message-icon tt-ai-message-icon--assistant" aria-hidden="true">
+                        <i data-lucide="sparkles"></i>
+                    </span>
                     <strong>AI 约束优化助手</strong>
                 </div>
                 <button class="tt-btn-icon" data-action="close-ai-chat" title="关闭 AI" type="button">
@@ -118,22 +120,28 @@ export function renderAIChatPanel(state, aiChat) {
                 </button>
             </div>
 
-            <div class="tt-ai-chat-messages">
-                ${(aiChat.messages || []).map(msg => `
-                    <div class="tt-ai-message tt-ai-message--${msg.role}">
-                        ${msg.role === 'assistant' ? '<i data-lucide="bot"></i>' : '<i data-lucide="user"></i>'}
-                        <div class="tt-message-content">${escapeHtml(msg.content)}</div>
-                    </div>
-                `).join('')}
-                ${aiChat.loading ? `
-                    <div class="tt-ai-message tt-ai-message--assistant tt-ai-message--loading">
-                        <i data-lucide="bot"></i>
-                        <div class="tt-message-content">
-                            <i data-lucide="loader-2" class="tt-spin"></i>
-                            <span>正在思考...</span>
+            <div class="tt-ai-chat-stream">
+                <div class="tt-ai-chat-messages">
+                    ${(aiChat.messages || []).map(msg => `
+                        <div class="tt-ai-message tt-ai-message--${msg.role}">
+                            <span class="tt-ai-message-icon tt-ai-message-icon--${msg.role}" aria-hidden="true">
+                                <i data-lucide="${msg.role === 'assistant' ? 'bot' : 'user'}"></i>
+                            </span>
+                            <div class="tt-message-content">${escapeHtml(msg.content)}</div>
                         </div>
-                    </div>
-                ` : ''}
+                    `).join('')}
+                    ${aiChat.loading ? `
+                        <div class="tt-ai-message tt-ai-message--assistant tt-ai-message--loading">
+                            <span class="tt-ai-message-icon tt-ai-message-icon--assistant" aria-hidden="true">
+                                <i data-lucide="bot"></i>
+                            </span>
+                            <div class="tt-message-content">
+                                <i data-lucide="loader-2" class="tt-spin"></i>
+                                <span>正在思考...</span>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
             </div>
 
             ${aiChat.suggestedPrompts && aiChat.suggestedPrompts.length > 0 ? `

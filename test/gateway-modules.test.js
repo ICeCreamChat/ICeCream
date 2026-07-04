@@ -15,6 +15,8 @@ import {
 } from '../gateway/routes/static-video.js';
 import { requireLocalApiToken } from '../gateway/security.js';
 import { cleanupUploadsDirectory, ensureDirectory } from '../gateway/startup/uploads.js';
+import { createDefaultTimetableProject } from '../gateway/services/timetable-project.js';
+import { createTimetableStore } from '../gateway/services/timetable-store.js';
 
 test('gateway app can be constructed without starting the HTTP listener', () => {
     const app = createGatewayApp({ isDev: false });
@@ -64,6 +66,13 @@ test('production gateway errors hide internal details and include requestId', ()
 });
 
 test('gateway mounts legacy timetable APIs', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-gateway-timetable-'));
+    const timetableStore = createTimetableStore();
+    await timetableStore.saveProject(createDefaultTimetableProject({
+        subjects: [{ id: 's1', name: '语文' }],
+    }));
+
     const app = createGatewayApp({ isDev: false });
     const server = app.listen(0);
     await new Promise(resolve => server.once('listening', resolve));
@@ -94,12 +103,27 @@ test('gateway mounts legacy timetable APIs', async () => {
         assert.equal(chatPayload.success, true);
         assert.ok(chatPayload.data.conversationId);
 
+        const ruleReviewResponse = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/rule-review/parse`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: '语文尽量安排到上午' }),
+        });
+        assert.equal(ruleReviewResponse.status, 200);
+        const ruleReviewPayload = await ruleReviewResponse.json();
+        assert.equal(ruleReviewPayload.success, true);
+        assert.ok(ruleReviewPayload.data.draftRows.some(row => row.type === 'subject_morning' && row.targetId === 's1'));
+
         const sharedResponse = await fetch(`http://127.0.0.1:${port}/shared/seating/classroom-layout.js`);
         const sharedSource = await sharedResponse.text();
         assert.equal(sharedResponse.status, 200);
         assert.match(sharedSource, /export const CELL/);
     } finally {
         await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
     }
 });
 

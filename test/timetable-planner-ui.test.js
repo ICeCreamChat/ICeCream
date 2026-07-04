@@ -27,6 +27,7 @@ const sourcePath = new URL('../public/js/tools/timetable-planner.js', import.met
 const stylePath = new URL('../public/css/timetable-planner.css', import.meta.url);
 const appLauncherPath = new URL('../public/js/tools/app-launcher.js', import.meta.url);
 const constraintDialogStylePath = new URL('../public/css/timetable-constraint-dialog.css', import.meta.url);
+const constraintDialogAdvancedStylePath = new URL('../public/css/timetable-constraint-dialog-advanced.css', import.meta.url);
 const moduleRoot = new URL('../public/js/tools/timetable/', import.meta.url);
 
 function createConstraintDialogState(overrides = {}) {
@@ -93,8 +94,15 @@ test('timetable opens smart constraints in the constraint dialog instead of the 
 
   assert.match(html, /data-constraint-dialog-overlay/);
   assert.match(html, /tt-constraint-dialog/);
+  assert.match(html, /tt-dialog-title-icon/);
+  assert.match(html, /tt-constraint-dialog-body--intake/);
+  assert.match(html, /tt-constraint-intake-panel/);
+  assert.match(html, /tt-constraint-mode-row/);
+  assert.match(html, /tt-constraint-form-surface/);
+  assert.match(html, /tt-constraint-command-row/);
   assert.match(html, /智能约束助手/);
-  assert.match(html, /描述您的排课要求/);
+  assert.match(html, /排课要求/);
+  assert.match(html, /理解要求/);
   assert.match(html, /data-action="parse-constraints"/);
   assert.doesNotMatch(html, /data-smart-workbench-root/);
   assert.doesNotMatch(html, /tt-smart-workbench/);
@@ -111,6 +119,10 @@ test('timetable constraint dialog controller exposes the current dialog actions'
   assert.match(dialogControllerSource, /closeConstraintDialog\(/);
   assert.match(dialogControllerSource, /parseConstraintsFromDialog\(/);
   assert.match(dialogControllerSource, /applyConstraintsFromDialog\(/);
+  assert.match(dialogControllerSource, /result\.draftRows/);
+  assert.match(controllerSource, /this\.constraintDialogFile\s*=\s*null/);
+  assert.match(dialogControllerSource, /fileInput\?\.files\?\.\[0\]\s*\|\|\s*this\.constraintDialogFile/);
+  assert.match(dialogControllerSource, /this\.constraintDialogFile\s*=\s*file/);
   assert.match(interactionSource, /open-constraint-dialog/);
   assert.match(interactionSource, /close-constraint-dialog/);
   assert.match(interactionSource, /switch-constraint-mode/);
@@ -4799,7 +4811,9 @@ test('timetable smart rules no longer keep the old inline sidebar renderer', asy
 
 test('timetable constraint dialog shows parse progress feedback', async () => {
   const styles = await readFile(stylePath, 'utf8');
-  const dialogStyles = await readFile(constraintDialogStylePath, 'utf8');
+  const dialogBaseStyles = await readFile(constraintDialogStylePath, 'utf8');
+  const dialogAdvancedStyles = await readFile(constraintDialogAdvancedStylePath, 'utf8');
+  const dialogStyles = `${dialogBaseStyles}\n${dialogAdvancedStyles}`;
   const fileHtml = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
       open: true,
@@ -4846,6 +4860,13 @@ test('timetable constraint dialog shows parse progress feedback', async () => {
   assert.match(styles, /@keyframes\s+tt-spin/);
   assert.match(dialogStyles, /\.tt-parsing-status\s*{/);
   assert.match(dialogStyles, /\.tt-constraint-input-tabs\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-intake-panel\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-mode-row\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-form-surface\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-command-row\s*{/);
+  assert.match(dialogStyles, /\.tt-tab-btn\s+span\s*{[^}]*white-space:\s*nowrap/);
+  assert.match(dialogStyles, /\.tt-tab-btn\.is-active\s*{[^}]*background:\s*var\(--tt-bg-panel\)/);
+  assert.doesNotMatch(dialogStyles, /\.tt-tab-btn\.is-active\s*{[^}]*background:\s*var\(--tt-primary\)/);
 });
 
 test('timetable constraint AI chat is embedded inside the constraint dialog', async () => {
@@ -4853,7 +4874,9 @@ test('timetable constraint AI chat is embedded inside the constraint dialog', as
   const dialogControllerSource = await readFile(new URL('../public/js/tools/timetable/controller-constraint-dialog-advanced.js', import.meta.url), 'utf8');
   const interactionSource = await readFile(new URL('../public/js/tools/timetable/grid-interactions.js', import.meta.url), 'utf8');
   const indexHtml = await readFile(new URL('../public/index.html', import.meta.url), 'utf8');
-  const dialogStyles = await readFile(constraintDialogStylePath, 'utf8');
+  const dialogBaseStyles = await readFile(constraintDialogStylePath, 'utf8');
+  const dialogAdvancedStyles = await readFile(constraintDialogAdvancedStylePath, 'utf8');
+  const dialogStyles = `${dialogBaseStyles}\n${dialogAdvancedStyles}`;
 
   const state = sampleWorkbenchState({
     constraintDialog: createConstraintDialogState({
@@ -4918,6 +4941,11 @@ test('timetable constraint AI chat is embedded inside the constraint dialog', as
   assert.match(dialogControllerSource, /sendConstraintAIMessage/);
   assert.match(html, /tt-constraint-dialog--with-ai/);
   assert.match(html, /tt-ai-chat-panel/);
+  assert.match(html, /tt-constraint-dialog-body/);
+  assert.match(html, /tt-constraint-dialog-body--ai/);
+  assert.match(html, /tt-ai-chat-toolbar/);
+  assert.match(html, /tt-ai-chat-stream/);
+  assert.match(html, /tt-ai-message-icon/);
   assert.match(html, /AI 约束优化助手/);
   assert.match(html, /缺少节次会导致规则不能执行/);
   assert.match(html, /请解释这些约束/);
@@ -4935,8 +4963,18 @@ test('timetable constraint AI chat is embedded inside the constraint dialog', as
   assert.match(interactionSource, /use-ai-prompt/);
   assert.match(indexHtml, /css\/timetable-chat\.css/);
   assert.match(indexHtml, /css\/timetable-constraint-dialog\.css/);
+  assert.match(indexHtml, /css\/timetable-constraint-dialog-advanced\.css/);
   assert.doesNotMatch(indexHtml, /css\/timetable-smart-workbench\.css/);
   assert.match(dialogStyles, /\.tt-constraint-dialog\s*{/);
+  assert.match(dialogStyles, /--tt-dialog-width:\s*780px/);
+  assert.match(dialogStyles, /\.tt-constraint-dialog-body\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-dialog--with-ai\s*{[\s\S]*--tt-dialog-width:\s*960px/);
+  assert.match(dialogStyles, /@media\s*\(max-width:\s*640px\)[\s\S]*\.tt-constraint-dialog/);
+  assert.match(dialogStyles, /\.tt-ai-chat-panel\s*{[\s\S]*background:\s*var\(--tt-bg-input\)/);
+  assert.match(dialogStyles, /\.tt-ai-chat-messages\s*{[\s\S]*max-height:\s*min\(420px,\s*48vh\)/);
+  assert.match(dialogStyles, /\.tt-ai-message-icon\s*{[\s\S]*border-radius:\s*var\(--tt-radius-sm\)/);
+  assert.doesNotMatch(dialogStyles, /\.tt-ai-chat-panel\s*{[\s\S]*height:\s*600px/);
+  assert.doesNotMatch(dialogStyles, /\.tt-suggested-prompt-chip:hover\s*{[\s\S]*box-shadow:\s*0 0 20px/);
 });
 
 test('timetable hides the constraint chat dock until a conversation is open', () => {
@@ -6065,7 +6103,8 @@ test('timetable saved smart rules remain summarized while the constraint dialog 
   assert.match(workbenchHtml, /data-constraint-dialog-overlay/);
   assert.match(workbenchHtml, /智能约束助手/);
   assert.match(workbenchHtml, /已应用约束|已生效约束/);
-  assert.match(workbenchHtml, /描述您的排课要求/);
+  assert.match(workbenchHtml, /排课要求/);
+  assert.match(workbenchHtml, /理解要求/);
   assert.match(workbenchHtml, /data-action="parse-constraints"/);
   assert.doesNotMatch(workbenchHtml, /data-smart-workbench-root/);
   assert.doesNotMatch(workbenchHtml, /data-saved-rule-delete=/);
@@ -6268,6 +6307,8 @@ test('timetable left sidebar range workflow applies only from the range popover 
   assert.match(styles, /\.tt-range-summary-grid/);
   assert.match(styles, /\.tt-multi-select/);
   assert.match(styles, /\.tt-multi-select-popover/);
+  assert.match(styles, /\.tt-range-setup-card\s+\.tt-range-summary-icon\s*{[^}]*background:\s*rgba\(8,\s*145,\s*178,\s*0\.12\);[^}]*border:\s*1px solid rgba\(8,\s*145,\s*178,\s*0\.24\);[^}]*color:\s*var\(--tt-primary\);/s);
+  assert.doesNotMatch(styles, /\.tt-range-setup-card\s+\.tt-range-summary-icon\s*{[^}]*var\(--tt-success\)/s);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-multi-select-popover/);
 });
 
