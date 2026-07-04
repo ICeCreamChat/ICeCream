@@ -73,16 +73,21 @@ test('constraint dialog renders recognized constraints and apply action', () => 
         },
     }));
 
-    assert.match(html, /已识别约束 \(1\)/);
+    assert.match(html, /tt-requirement-workbench/);
+    assert.match(html, /已理解需求 \(1\)/);
+    assert.match(html, /将应用规则/);
     assert.match(html, /数学尽量上午/);
+    assert.match(html, /data-constraint-id="rule_1"/);
+    assert.match(html, /data-action="edit-constraint"/);
+    assert.match(html, /data-action="delete-constraint"/);
     assert.match(html, /data-action="apply-constraints"/);
     assert.match(html, /data-action="start-ai-chat"/);
+    assert.doesNotMatch(html, /已识别约束/);
 });
 
 test('constraint dialog formats recognized constraint time, source row and review warnings', () => {
-    const html = renderConstraintDialog(createTimetablePlannerState({
+    const baseState = {
         project: project(),
-        constraintDialog: { open: true },
         ruleReview: {
             inputMode: 'text',
             draftRows: [{
@@ -117,13 +122,25 @@ test('constraint dialog formats recognized constraint time, source row and revie
                 confidence: 0.9,
             }],
         },
+    };
+    const slotHtml = renderConstraintDialog(createTimetablePlannerState({
+        ...baseState,
+        constraintDialog: { open: true, selectedRequirementId: 'draft_req_rule_slots' },
+    }));
+    const weekHtml = renderConstraintDialog(createTimetablePlannerState({
+        ...baseState,
+        constraintDialog: { open: true, selectedRequirementId: 'draft_req_rule_week' },
+    }));
+    const morningHtml = renderConstraintDialog(createTimetablePlannerState({
+        ...baseState,
+        constraintDialog: { open: true, selectedRequirementId: 'draft_req_rule_morning' },
     }));
 
-    assert.match(html, /周一第1节、周一第2节/);
-    assert.match(html, /来源：AI约束建议 第 2 行/);
-    assert.match(html, /单双周/);
-    assert.match(html, /上午时段/);
-    assert.doesNotMatch(html, /<b>时间：<\/b>-/);
+    assert.match(slotHtml, /周一第1节、周一第2节/);
+    assert.match(slotHtml, /来源：AI约束建议 第 2 行/);
+    assert.match(weekHtml, /单双周/);
+    assert.match(morningHtml, /上午时段/);
+    assert.doesNotMatch(slotHtml + weekHtml + morningHtml, /<b>时间：<\/b>-/);
 });
 
 test('legacy rule review entry opens constraint dialog instead of the removed workbench', () => {

@@ -496,13 +496,19 @@
     min-width: 0;
 }
 
+.tt-requirement-workbench-title {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
 .tt-requirement-workbench-header strong {
     color: var(--tt-text);
     font-size: 0.84rem;
     font-weight: 800;
 }
 
-.tt-requirement-workbench-header span {
+.tt-requirement-workbench-title span {
     color: var(--tt-muted);
     font-size: 0.72rem;
     font-weight: 700;
@@ -771,6 +777,78 @@
     color: var(--tt-text-secondary);
     font-size: 0.74rem;
     line-height: 1.55;
+}
+
+.tt-requirement-machine-rules {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    padding-top: 2px;
+}
+
+.tt-requirement-machine-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+}
+
+.tt-requirement-machine-header em {
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    font-style: normal;
+    font-weight: 700;
+}
+
+.tt-machine-rule-list,
+.tt-semantic-action-list {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+}
+
+.tt-requirement-detail .tt-constraint-card {
+    padding: 10px;
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-input);
+}
+
+.tt-requirement-detail .tt-constraint-content strong {
+    font-size: 0.78rem;
+}
+
+.tt-requirement-detail .tt-constraint-meta {
+    gap: 8px;
+}
+
+.tt-requirement-detail .tt-constraint-actions {
+    justify-content: flex-start;
+}
+
+.tt-semantic-action-item {
+    display: grid;
+    gap: 5px;
+    padding: 9px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-input);
+}
+
+.tt-semantic-action-item strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-text);
+    font-size: 0.76rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-semantic-action-item > span:last-child,
+.tt-requirement-machine-empty {
+    margin: 0;
+    color: var(--tt-muted);
+    font-size: 0.72rem;
 }
 
 /* 约束卡片 */

@@ -202,6 +202,7 @@ test('timetable constraint dialog renders object-first requirements as a review 
   assert.match(html, /默认课时块策略/);
   assert.match(html, /未找到唯一匹配课程/);
   assert.match(html, /data-requirement-id="req_review"[\s\S]*is-selected/);
+  assert.match(html, /应用需求 \(2\)/);
   assert.doesNotMatch(html, /暂不支持[\s\S]{0,80}默认单节/);
 });
 
@@ -354,6 +355,7 @@ test('timetable constraint dialog reserves semantic review height before legacy 
       unsupportedItems: [],
       requirementItems: [{
         id: 'req_review',
+        rowId: 'legacy-draft-1',
         object: { kind: 'subject', name: '未知课程', matchedIds: [], scope: 'ambiguous' },
         intent: 'preferred_periods',
         status: 'needs_review',
@@ -366,13 +368,93 @@ test('timetable constraint dialog reserves semantic review height before legacy 
     constraintDialog: { open: true },
   }));
 
-  assert.match(html, /tt-requirement-workbench[\s\S]*已识别约束 \(1\)/);
+  assert.match(html, /tt-requirement-workbench/);
+  assert.match(html, /已理解需求 \(1\)/);
+  assert.match(html, /将应用规则/);
+  assert.match(html, /data-constraint-id="legacy-draft-1"/);
+  assert.match(html, /data-action="edit-constraint"/);
+  assert.match(html, /data-action="delete-constraint"/);
+  assert.doesNotMatch(html, /已识别约束/);
   assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*--tt-requirement-review-height:\s*clamp/);
   assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*grid-template-rows:\s*auto auto var\(--tt-requirement-review-height\)/);
   assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*block-size:\s*calc\(var\(--tt-requirement-review-height\) \+ 78px\)/);
   assert.match(dialogStyles, /\.tt-requirement-review-layout\s*{[\s\S]*height:\s*var\(--tt-requirement-review-height\)/);
   assert.match(dialogStyles, /\.tt-requirement-table\s*{[\s\S]*grid-template-rows:\s*auto minmax\(0,\s*1fr\)/);
   assert.match(dialogStyles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-requirement-workbench\s*{[\s\S]*block-size:\s*auto/);
+});
+
+test('timetable constraint dialog folds draft-only constraints into understood requirements', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      draftRows: [{
+        id: 'draft-only-1',
+        rawText: '数学尽量上午',
+        type: 'subject_morning',
+        targetType: 'subject',
+        targetName: '数学',
+        status: 'effective',
+        confidence: 0.94,
+        warnings: [],
+      }, {
+        id: 'draft-only-2',
+        rawText: '王老师周一前两节不排',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetName: '王老师',
+        slots: ['1-1', '1-2'],
+        status: 'needs_review',
+        warnings: ['存在多个候选教师'],
+      }],
+      warnings: [],
+      conflicts: [],
+      unsupportedItems: [],
+      requirementItems: [],
+      semanticActions: [],
+    },
+    constraintDialog: { open: true },
+  }));
+
+  assert.match(html, /tt-requirement-workbench/);
+  assert.match(html, /已理解需求 \(2\)/);
+  assert.match(html, /王老师/);
+  assert.match(html, /教师不可排/);
+  assert.match(html, /将应用规则/);
+  assert.match(html, /data-constraint-id="draft-only-2"/);
+  assert.match(html, /周一第1节、周一第2节/);
+  assert.match(html, /应用需求 \(1\)/);
+  assert.doesNotMatch(html, /tt-constraint-preview/);
+  assert.doesNotMatch(html, /已识别约束/);
+});
+
+test('timetable constraint dialog can select synthesized draft requirement rows', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.ruleReview = {
+    draftRows: [{
+      id: 'draft-select-1',
+      rawText: '数学尽量上午',
+      type: 'subject_morning',
+      targetName: '数学',
+      status: 'effective',
+    }, {
+      id: 'draft-select-2',
+      rawText: '王老师周一前两节不排',
+      type: 'teacher_unavailable',
+      targetName: '王老师',
+      slots: ['1-1', '1-2'],
+      status: 'needs_review',
+    }],
+    requirementItems: [],
+    semanticActions: [],
+  };
+  controller.state.constraintDialog = { open: true, requirementFilter: 'all', selectedRequirementId: '' };
+
+  controller.selectRequirement('draft_req_draft-select-1');
+
+  assert.equal(controller.state.constraintDialog.selectedRequirementId, 'draft_req_draft-select-1');
 });
 
 test('timetable constraint dialog controller exposes the current dialog actions', async () => {
@@ -4943,10 +5025,13 @@ test('timetable constraint dialog keeps parsed drafts in the current review flow
   assert.match(sidebar, /id="tt-open-rule-review"/);
   assert.match(html, /data-constraint-dialog-overlay/);
   assert.match(html, /tt-constraint-dialog/);
-  assert.match(html, /已识别约束 \(2\)/);
+  assert.match(html, /tt-requirement-workbench/);
+  assert.match(html, /已理解需求 \(2\)/);
+  assert.match(html, /将应用规则/);
   assert.match(html, /All teachers should be balanced/);
   assert.match(html, /Math should prefer Monday period 2/);
   assert.match(html, /data-action="apply-constraints"/);
+  assert.doesNotMatch(html, /已识别约束/);
   assert.doesNotMatch(html, /data-smart-workbench-root/);
   assert.doesNotMatch(sidebar, /id="tt-pending-rules"/);
   assert.doesNotMatch(sidebar, /data-rule-card="draft-1"/);
@@ -5403,17 +5488,18 @@ test('timetable constraint dialog explains card warnings and source text separat
       advancedOpen: true,
       loading: false,
     },
+    constraintDialog: { open: true, selectedRequirementId: 'draft_req_draft-source-1' },
   }));
 
   assert.match(html, /data-constraint-dialog-overlay/);
-  assert.match(html, /tt-constraint-preview/);
-  assert.match(html, /已识别约束 \(2\)/);
+  assert.match(html, /tt-requirement-workbench/);
+  assert.match(html, /已理解需求 \(2\)/);
+  assert.match(html, /将应用规则/);
+  assert.doesNotMatch(html, /tt-constraint-preview/);
+  assert.doesNotMatch(html, /已识别约束/);
   assert.match(html, /混合课程连堂块不可拆/);
   assert.match(html, /原文：同一位教师同一时间只能给一个班上课。/);
-  assert.match(html, /原文：混合课程连堂块不可拆。/);
-  assert.match(html, /当前版本只能预览这类建议/);
   assert.match(html, /data-constraint-id="draft-source-1"/);
-  assert.match(html, /data-constraint-id="draft-source-2"/);
   assert.doesNotMatch(html, /data-rule-review-row="draft-source-1"/);
   assert.doesNotMatch(html, /data-rule-review-row="draft-source-2"/);
 
@@ -5927,11 +6013,13 @@ test('timetable rule review renders a beginner task workbench instead of raw que
 
   assert.match(html, /data-constraint-dialog-overlay/);
   assert.match(html, /tt-constraint-dialog/);
-  assert.match(html, /已识别约束 \(2\)/);
+  assert.match(html, /tt-requirement-workbench/);
+  assert.match(html, /已理解需求 \(2\)/);
+  assert.match(html, /将应用规则/);
+  assert.doesNotMatch(html, /已识别约束/);
   assert.match(html, /数学尽量上午/);
   assert.match(html, /王老师周三下午不要排/);
   assert.match(html, /存在多个候选教师/);
-  assert.match(html, /data-constraint-id="auto-1"/);
   assert.match(html, /data-constraint-id="review-1"/);
   assert.match(html, /data-action="edit-constraint"/);
   assert.match(html, /data-action="delete-constraint"/);
@@ -6046,7 +6134,10 @@ test('timetable constraint dialog renders recognized rule cards instead of the r
   }));
 
   assert.match(html, /data-constraint-dialog-overlay/);
-  assert.match(html, /已识别约束 \(1\)/);
+  assert.match(html, /tt-requirement-workbench/);
+  assert.match(html, /已理解需求 \(1\)/);
+  assert.match(html, /将应用规则/);
+  assert.doesNotMatch(html, /已识别约束/);
   assert.match(html, /数学尽量上午/);
   assert.match(html, /data-constraint-id="rule_kept"/);
   assert.match(html, /data-action="apply-constraints"/);

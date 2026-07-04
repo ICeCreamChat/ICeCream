@@ -57,7 +57,8 @@ async function main() {
         const clearRecognizedConstraints = async () => {
             await clickByScript('[data-action="clear-all-constraints"]');
             await page.waitForFunction(
-                () => document.querySelectorAll('.tt-constraint-card').length === 0,
+                () => !document.querySelector('.tt-requirement-workbench')
+                    && document.querySelectorAll('.tt-constraint-card').length === 0,
                 { timeout: 10000 },
             );
         };
@@ -95,7 +96,8 @@ async function main() {
         await page.waitForFunction(() => document.querySelectorAll('.tt-constraint-card').length > 0, { timeout: 30000 });
 
         const reviewText = await recognizedText();
-        assert.match(reviewText || '', /已识别约束/);
+        assert.match(reviewText || '', /已理解需求/);
+        assert.match(reviewText || '', /将应用规则/);
         assert.match(reviewText || '', /语文/);
         assert.match(reviewText || '', /上午/);
 
@@ -115,7 +117,8 @@ async function main() {
         await page.waitForFunction(() => document.querySelectorAll('.tt-constraint-card').length > 0, { timeout: 30000 });
 
         const fileReviewText = await recognizedText();
-        assert.match(fileReviewText || '', /已识别约束/);
+        assert.match(fileReviewText || '', /已理解需求/);
+        assert.match(fileReviewText || '', /将应用规则/);
         assert.match(fileReviewText || '', /数学/);
         assert.match(fileReviewText || '', /上午/);
         assert.equal(dialogs.some(item => item.message === '请选择文件'), false);
@@ -139,7 +142,8 @@ async function main() {
         await page.waitForFunction(() => document.querySelectorAll('.tt-constraint-card').length > 0, { timeout: 30000 });
 
         const xlsxReviewText = await recognizedText();
-        assert.match(xlsxReviewText || '', /已识别约束/);
+        assert.match(xlsxReviewText || '', /已理解需求/);
+        assert.match(xlsxReviewText || '', /将应用规则/);
         assert.match(xlsxReviewText || '', /英语/);
         assert.match(xlsxReviewText || '', /上午/);
         assert.equal(dialogs.some(item => /Unexpected token|<!DOCTYPE/i.test(item.message)), false);
@@ -153,7 +157,8 @@ async function main() {
         await page.waitForFunction(() => document.querySelectorAll('.tt-constraint-card').length > 0, { timeout: 10000 });
 
         const manualReviewText = await recognizedText();
-        assert.match(manualReviewText || '', /已识别约束/);
+        assert.match(manualReviewText || '', /已理解需求/);
+        assert.match(manualReviewText || '', /将应用规则/);
         assert.match(manualReviewText || '', /手动添加/);
         assert.match(manualReviewText || '', /周一上午/);
 

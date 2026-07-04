@@ -30,6 +30,7 @@ function renderDialogWithRows(count) {
     return {
         html,
         durationMs: performance.now() - startTime,
+        rowCount: (html.match(/class="tt-requirement-row(?:\s|")/g) || []).length,
         cardCount: (html.match(/class="tt-constraint-card(?:\s|")/g) || []).length,
     };
 }
@@ -38,15 +39,18 @@ describe('智能排课约束弹窗性能测试', () => {
     it('renders a small recognized constraint list quickly', () => {
         const result = renderDialogWithRows(10);
 
-        assert.equal(result.cardCount, 10);
+        assert.equal(result.rowCount, 10);
+        assert.equal(result.cardCount, 1);
         assert.ok(result.durationMs < 50, '10 条约束渲染应在 50ms 内完成');
     });
 
     it('renders a larger constraint list without the removed smart workbench dependency', () => {
         const result = renderDialogWithRows(100);
 
-        assert.equal(result.cardCount, 100);
+        assert.equal(result.rowCount, 100);
+        assert.equal(result.cardCount, 1);
         assert.match(result.html, /tt-constraint-dialog/);
+        assert.match(result.html, /tt-requirement-workbench/);
         assert.doesNotMatch(result.html, /tt-smart-workbench/);
         assert.ok(result.durationMs < 250, '100 条约束渲染应保持在 250ms 内');
     });
@@ -54,7 +58,8 @@ describe('智能排课约束弹窗性能测试', () => {
     it('keeps dialog HTML bounded for school-scale constraint review', () => {
         const result = renderDialogWithRows(200);
 
-        assert.equal(result.cardCount, 200);
+        assert.equal(result.rowCount, 200);
+        assert.equal(result.cardCount, 1);
         assert.ok(result.html.length < 260_000, '200 条约束 HTML 不应膨胀到不可维护体积');
     });
 });

@@ -23,6 +23,12 @@ import {
     renderConstraintEditForm,
     renderAIChatPanel,
 } from './view-constraint-dialog-components.js';
+import {
+    buildUnifiedRequirementItems,
+    filterUnifiedRequirementItems,
+    getActionableRequirementCount,
+    getRequirementGroupKey,
+} from './constraint-dialog-review-model.js';
 
 function renderConstraintCard(constraint, state) {
     return renderCard(constraint, state);
@@ -54,13 +60,25 @@ const DAY_PART_LABELS = {
     night: '晚上',
 };
 
+const RULE_TYPE_LABELS = {
+    teacher_unavailable: '教师不可排',
+    class_unavailable: '班级不可排',
+    locked_slot: '固定课节',
+    subject_morning: '上午优先',
+    subject_preferred_periods: '课程优先节次',
+    subject_avoid_periods: '课程避开节次',
+    teacher_daily_limit: '教师每日上限',
+    teacher_consecutive_limit: '教师连续上限',
+    subject_spread: '课程分散',
+    block_protection: '连堂块保护',
+    teacher_load_balance: '教师负载均衡',
+    forbid: '禁止安排',
+    prefer: '优先安排',
+    avoid: '尽量避开',
+};
+
 function requirementGroupKey(item = {}) {
-    if (item.status === 'handled') return 'handled';
-    if (item.status === 'needs_review' || item.status === 'candidate' || item.applyTo === 'review') return 'review';
-    if (item.applyTo === 'lesson_plan') return 'lesson_plan';
-    if (item.applyTo === 'optimization') return 'optimization';
-    if (item.applyTo === 'rule' || item.applyTo === 'constraint_rule') return 'rule';
-    return item.status === 'actionable' ? 'review' : 'handled';
+    return getRequirementGroupKey(item);
 }
 
 function requirementIntentLabel(intent = '') {
@@ -99,6 +117,9 @@ function requirementIntentLabel(intent = '') {
         class_daily_balance: '班级每日均衡',
         class_subject_spread: '班级课程分散',
         quality_subject_later: '素质课时段建议',
+        forbid: '禁止安排',
+        prefer: '优先安排',
+        avoid: '尽量避开',
     }[key];
     if (label) return label;
     return /[A-Za-z_]/.test(String(intent || '')) ? '排课需求' : intent || '排课需求';
@@ -133,7 +154,10 @@ function requirementParameterLabel(item = {}) {
     }
     if (params.maxConsecutive) return `连续最多 ${params.maxConsecutive} 节`;
     if (params.limit) return `最多 ${params.limit} 节`;
-    if (params.slots?.length) return `${params.slots.length} 个节次`;
+    if (params.slots?.length) {
+        if (params.slots.length <= 3) return params.slots.map(slot => requirementSlotLabel(slot)).join('、');
+        return `${params.slots.length} 个节次`;
+    }
     if (params.balancedTeacherLoad) return '启用负载均衡';
     return '';
 }
@@ -308,8 +332,7 @@ function requirementCounts(requirements = []) {
 }
 
 function filteredRequirements(requirements = [], filter = 'all') {
-    if (!filter || filter === 'all') return requirements;
-    return requirements.filter(item => requirementGroupKey(item) === filter);
+    return filterUnifiedRequirementItems(requirements, filter);
 }
 
 function defaultRequirementSelection(requirements = []) {
@@ -364,7 +387,86 @@ function renderRequirementRow(item = {}, selectedId = '') {
     `;
 }
 
-function renderRequirementDetail(item = null) {
+function normalizeMachineRuleForRender(rule = {}) {
+    const typeKey = String(rule.type || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    const confidence = typeof rule.confidence === 'number'
+        ? (rule.confidence <= 1 ? rule.confidence * 100 : rule.confidence)
+        : null;
+    const confidenceTone = rule.confidenceTone
+        || (confidence === null ? 'medium' : confidence >= 85 ? 'high' : confidence >= 60 ? 'medium' : 'low');
+    const confidenceLabel = rule.confidenceLabel
+        || (confidence === null ? '中' : confidence >= 85 ? '高' : confidence >= 60 ? '中' : '低');
+    return {
+        ...rule,
+        typeLabel: rule.typeLabel || RULE_TYPE_LABELS[typeKey] || '约束规则',
+        confidenceTone,
+        confidenceLabel,
+        understanding: rule.understanding || rule.description || requirementIntentLabel(rule.intent || rule.type),
+    };
+}
+
+function semanticActionLabel(action = {}) {
+    const key = String(action.kind || action.type || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    return {
+        lesson_plan_patch: '任课计划修改',
+        soft_rules_patch: '优化目标修改',
+        optimization_patch: '优化目标修改',
+        rules_patch: '约束规则补丁',
+        rule_patch: '约束规则补丁',
+        handled_notice: '系统已处理',
+    }[key] || '语义动作';
+}
+
+function semanticActionStatusLabel(action = {}) {
+    const key = String(action.status || 'ready').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    return {
+        ready: '可应用',
+        actionable: '可应用',
+        effective: '可应用',
+        handled: '已处理',
+        needs_review: '需复核',
+        review: '需复核',
+        skipped: '已跳过',
+    }[key] || '待确认';
+}
+
+function renderSemanticActionSummary(action = {}) {
+    const targetLabel = action.target?.name || action.targetName || action.object?.name || '';
+    return `
+        <div class="tt-semantic-action-item">
+            <span class="tt-constraint-type">${escapeHtml(semanticActionLabel(action))}</span>
+            <strong>${escapeHtml(targetLabel || semanticActionLabel(action))}</strong>
+            <span>${escapeHtml(semanticActionStatusLabel(action))}</span>
+        </div>
+    `;
+}
+
+function renderRequirementMachineRules(item = {}, state = {}) {
+    const rules = item.machineRules || [];
+    const actions = item.semanticActions || [];
+    return `
+        <div class="tt-requirement-machine-rules">
+            <div class="tt-requirement-machine-header">
+                <span class="tt-requirement-detail-label">将应用规则</span>
+                ${rules.length || actions.length ? `<em>${rules.length + actions.length} 项</em>` : ''}
+            </div>
+            ${rules.length || actions.length ? `
+                ${rules.length ? `
+                    <div class="tt-machine-rule-list">
+                        ${rules.map(rule => renderConstraintCard(normalizeMachineRuleForRender(rule), state)).join('')}
+                    </div>
+                ` : ''}
+                ${actions.length ? `
+                    <div class="tt-semantic-action-list">
+                        ${actions.map(renderSemanticActionSummary).join('')}
+                    </div>
+                ` : ''}
+            ` : '<p class="tt-requirement-machine-empty">暂无可直接写入的机器规则</p>'}
+        </div>
+    `;
+}
+
+function renderRequirementDetail(item = null, state = {}) {
     if (!item) {
         return `
             <aside class="tt-requirement-detail tt-requirement-detail--empty">
@@ -416,6 +518,7 @@ function renderRequirementDetail(item = null) {
                     <p>${escapeHtml(sourceText)}</p>
                 </div>
             ` : ''}
+            ${renderRequirementMachineRules(item, state)}
             ${warnings.length ? `
                 <div class="tt-constraint-warning">
                     <i data-lucide="alert-circle"></i>
@@ -426,7 +529,7 @@ function renderRequirementDetail(item = null) {
     `;
 }
 
-function renderRequirementGroups(requirements = [], dialog = {}) {
+function renderRequirementGroups(requirements = [], dialog = {}, state = {}) {
     if (!requirements.length) return '';
     const activeFilter = REQUIREMENT_FILTERS.some(filter => filter.key === dialog.requirementFilter)
         ? dialog.requirementFilter
@@ -436,8 +539,11 @@ function renderRequirementGroups(requirements = [], dialog = {}) {
     return `
         <div class="tt-requirement-workbench">
             <div class="tt-requirement-workbench-header">
-                <strong>已理解需求 (${requirements.length})</strong>
-                <span>${visibleRequirements.length} 条正在显示</span>
+                <div class="tt-requirement-workbench-title">
+                    <strong>已理解需求 (${requirements.length})</strong>
+                    <span>${visibleRequirements.length} 条正在显示</span>
+                </div>
+                <button class="tt-btn-link" data-action="clear-all-constraints" type="button">清空全部</button>
             </div>
             ${renderRequirementFilterBar(requirements, activeFilter)}
             <div class="tt-requirement-review-layout">
@@ -456,7 +562,7 @@ function renderRequirementGroups(requirements = [], dialog = {}) {
                             : '<div class="tt-requirement-empty">当前分组没有需求</div>'}
                     </div>
                 </div>
-                ${renderRequirementDetail(currentSelection)}
+                ${renderRequirementDetail(currentSelection, state)}
             </div>
         </div>
     `;
@@ -472,8 +578,8 @@ export function renderConstraintDialog(state) {
     const review = state.ruleReview || {};
     const mode = review.inputMode || 'text';
     const constraints = review.draftRows || [];
-    const requirements = review.requirementItems || [];
-    const readySemanticActions = (review.semanticActions || []).filter(action => ['ready', 'actionable'].includes(action.status || 'ready') && action.kind !== 'handled_notice');
+    const requirements = buildUnifiedRequirementItems(review);
+    const actionableRequirementCount = getActionableRequirementCount(review);
     const parsing = review.parsing || false;
     const editingConstraint = dialog.editingConstraint;
     const aiChat = dialog.aiChat;
@@ -499,34 +605,17 @@ export function renderConstraintDialog(state) {
                 </div>
             </div>
             ${editingConstraint ? renderConstraintEditForm(editingConstraint) : ''}
-            ${requirements.length > 0 ? renderRequirementGroups(requirements, dialog) : ''}
-            ${constraints.length > 0 ? `
-                <div class="tt-constraint-preview">
-                    <div class="tt-preview-header">
-                        <strong>已识别约束 (${constraints.length})</strong>
-                        ${review.conflictCheckDone && constraints.some(c => c.hasConflict) ? `
-                            <span class="tt-conflict-badge">
-                                <i data-lucide="alert-triangle"></i>
-                                ${constraints.filter(c => c.hasConflict).length} 条冲突
-                            </span>
-                        ` : ''}
-                        <button class="tt-btn-link" data-action="clear-all-constraints" type="button">清空全部</button>
-                    </div>
-                    <div class="tt-constraint-list">
-                        ${constraints.map(c => renderConstraintCard(c, state)).join('')}
-                    </div>
-                </div>
-            ` : ''}
+            ${requirements.length > 0 ? renderRequirementGroups(requirements, dialog, state) : ''}
         </div>
     `;
     const actionsHtml = aiActive ? '' : `
         <!-- 操作按钮 -->
         <div class="tt-dialog-actions">
             <button class="tt-btn" data-action="close-constraint-dialog" type="button">取消</button>
-            ${constraints.length > 0 || readySemanticActions.length > 0 ? `
+            ${actionableRequirementCount > 0 ? `
                 <button class="tt-btn tt-btn--primary" data-action="apply-constraints" type="button" ${parsing || hasBlockingConflict ? 'disabled' : ''}>
                     <i data-lucide="check"></i>
-                    <span>应用需求 (${constraints.length + readySemanticActions.length})</span>
+                    <span>应用需求 (${actionableRequirementCount})</span>
                 </button>
             ` : ''}
         </div>
