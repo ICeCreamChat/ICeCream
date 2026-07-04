@@ -205,6 +205,55 @@ test('timetable constraint dialog renders object-first requirements as a review 
   assert.doesNotMatch(html, /暂不支持[\s\S]{0,80}默认单节/);
 });
 
+test('timetable constraint dialog localizes semantic enum aliases in requirement review', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      draftRows: [],
+      warnings: [],
+      conflicts: [],
+      unsupportedItems: [],
+      requirementItems: [
+        {
+          id: 'req_candidate_morning',
+          object: { kind: 'subject', name: '语文', matchedIds: ['s1'], scope: 'explicit' },
+          intent: 'morning_preference',
+          status: 'candidate',
+          applyTo: 'rule',
+          parameters: { dayPart: 'morning' },
+          source: { rawText: '语文尽量上午' },
+          confidence: 0.84,
+        },
+        {
+          id: 'req_candidate_spread',
+          object: { kind: 'subject', name: '英语', matchedIds: ['s3'], scope: 'explicit' },
+          intent: 'spread',
+          status: 'candidate',
+          applyTo: 'lesson_plan',
+          parameters: { blockPreference: 'double' },
+          source: { rawText: '如果生成了连堂块' },
+          confidence: 0.78,
+        },
+      ],
+      semanticActions: [],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_candidate_morning' },
+  }));
+
+  assert.match(html, /待确认/);
+  assert.match(html, /上午优先/);
+  assert.match(html, /课程分散/);
+  assert.match(html, /双连堂/);
+  assert.match(html, /时段：上午/);
+  assert.doesNotMatch(html, />candidate</);
+  assert.doesNotMatch(html, />morning_preference</);
+  assert.doesNotMatch(html, />spread</);
+  assert.doesNotMatch(html, /blockPreference/);
+  assert.doesNotMatch(html, /：double|>double</);
+});
+
 test('timetable constraint dialog filters semantic requirements by destination', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
@@ -247,6 +296,47 @@ test('timetable constraint dialog filters semantic requirements by destination',
   assert.match(html, /<span>数学<\/span>/);
   assert.match(html, /双连堂/);
   assert.doesNotMatch(html, /<span>语文<\/span>/);
+});
+
+test('timetable constraint dialog reserves semantic review height before legacy draft rows', async () => {
+  const dialogStyles = await readFile(constraintDialogStylePath, 'utf8');
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'file',
+      draftRows: [{
+        id: 'legacy-draft-1',
+        rawText: '同一位教师同一时间只能给一个班上课。',
+        type: 'teacher_unavailable',
+        targetName: '全部教师',
+        status: 'needs_review',
+        warnings: ['缺少明确节次，请补充后再生效。'],
+      }],
+      warnings: [],
+      conflicts: [],
+      unsupportedItems: [],
+      requirementItems: [{
+        id: 'req_review',
+        object: { kind: 'subject', name: '未知课程', matchedIds: [], scope: 'ambiguous' },
+        intent: 'preferred_periods',
+        status: 'needs_review',
+        applyTo: 'review',
+        parameters: { slots: ['1-1'] },
+        source: { rawText: '未知课程第1节优先', sourceRow: 1 },
+      }],
+      semanticActions: [],
+    },
+    constraintDialog: { open: true },
+  }));
+
+  assert.match(html, /tt-requirement-workbench[\s\S]*已识别约束 \(1\)/);
+  assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*--tt-requirement-review-height:\s*clamp/);
+  assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*grid-template-rows:\s*auto auto var\(--tt-requirement-review-height\)/);
+  assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*block-size:\s*calc\(var\(--tt-requirement-review-height\) \+ 78px\)/);
+  assert.match(dialogStyles, /\.tt-requirement-review-layout\s*{[\s\S]*height:\s*var\(--tt-requirement-review-height\)/);
+  assert.match(dialogStyles, /\.tt-requirement-table\s*{[\s\S]*grid-template-rows:\s*auto minmax\(0,\s*1fr\)/);
+  assert.match(dialogStyles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-requirement-workbench\s*{[\s\S]*block-size:\s*auto/);
 });
 
 test('timetable constraint dialog controller exposes the current dialog actions', async () => {

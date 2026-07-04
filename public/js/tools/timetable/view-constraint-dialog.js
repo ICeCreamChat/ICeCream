@@ -41,9 +41,22 @@ const REQUIREMENT_FILTERS = [
     ...REQUIREMENT_GROUPS,
 ];
 
+const BLOCK_PREFERENCE_LABELS = {
+    single: '单节',
+    double: '双连堂',
+    mixed: '混合连堂',
+};
+
+const DAY_PART_LABELS = {
+    morning: '上午',
+    afternoon: '下午',
+    evening: '晚上',
+    night: '晚上',
+};
+
 function requirementGroupKey(item = {}) {
     if (item.status === 'handled') return 'handled';
-    if (item.status === 'needs_review' || item.applyTo === 'review') return 'review';
+    if (item.status === 'needs_review' || item.status === 'candidate' || item.applyTo === 'review') return 'review';
     if (item.applyTo === 'lesson_plan') return 'lesson_plan';
     if (item.applyTo === 'optimization') return 'optimization';
     if (item.applyTo === 'rule' || item.applyTo === 'constraint_rule') return 'rule';
@@ -51,15 +64,20 @@ function requirementGroupKey(item = {}) {
 }
 
 function requirementIntentLabel(intent = '') {
+    const key = String(intent || '').trim().toLowerCase().replace(/-/g, '_');
     return {
         preferred_periods: '优先节次',
         preferred_day_part: '优先时段',
+        morning_preference: '上午优先',
+        morning: '上午时段',
+        period_preference: '优先节次',
         avoid_periods: '避开节次',
         unavailable_periods: '不可排时间',
         locked_slot: '固定课节',
         teacher_daily_limit: '每日课时上限',
         teacher_consecutive_limit: '连续课时上限',
         subject_spread: '课程分散',
+        spread: '课程分散',
         block_preference: '连堂设置',
         default_block_policy: '默认课时块策略',
         block_integrity: '连堂块保护',
@@ -69,24 +87,34 @@ function requirementIntentLabel(intent = '') {
         class_daily_balance: '班级每日均衡',
         class_subject_spread: '班级课程分散',
         quality_subject_later: '素质课时段建议',
-    }[intent] || intent || '排课需求';
+    }[key] || intent || '排课需求';
 }
 
 function requirementStatusLabel(item = {}) {
-    if (item.status === 'handled') return '已处理';
-    if (item.status === 'actionable') return '可应用';
-    if (item.status === 'needs_review') return '需复核';
-    return item.status || '待确认';
+    const key = String(item.status || '').trim().toLowerCase().replace(/-/g, '_');
+    return {
+        handled: '已处理',
+        ignored: '已处理',
+        actionable: '可应用',
+        ready: '可应用',
+        effective: '可应用',
+        needs_review: '需复核',
+        review: '需复核',
+        candidate: '待确认',
+        pending: '待确认',
+        unsupported: '暂不支持',
+        invalid: '需修正',
+    }[key] || '待确认';
+}
+
+function blockPreferenceLabel(value = '') {
+    return BLOCK_PREFERENCE_LABELS[String(value || '').trim()] || String(value || '');
 }
 
 function requirementParameterLabel(item = {}) {
     const params = item.parameters || {};
     if (params.blockPreference) {
-        return {
-            single: '单节',
-            double: '双连堂',
-            mixed: '混合连堂',
-        }[params.blockPreference] || params.blockPreference;
+        return blockPreferenceLabel(params.blockPreference);
     }
     if (params.maxConsecutive) return `连续最多 ${params.maxConsecutive} 节`;
     if (params.limit) return `最多 ${params.limit} 节`;
@@ -107,8 +135,10 @@ function requirementApplyLabel(applyTo = '') {
 }
 
 function requirementStatusTone(item = {}) {
-    if (item.status === 'handled') return 'handled';
-    if (item.status === 'needs_review') return 'review';
+    const status = String(item.status || '').trim().toLowerCase().replace(/-/g, '_');
+    if (status === 'handled' || status === 'ignored') return 'handled';
+    if (status === 'needs_review' || status === 'review') return 'review';
+    if (status === 'candidate' || status === 'pending') return 'warning';
     if ((item.warnings || []).length) return 'warning';
     return 'actionable';
 }
@@ -139,26 +169,103 @@ function requirementConfidenceLabel(item = {}) {
 }
 
 function requirementStrengthLabel(strength = '') {
+    const key = String(strength || '').trim().toLowerCase().replace(/-/g, '_');
     return {
         hard: '硬约束',
         soft: '软约束',
         preference: '偏好',
         required: '必守',
-    }[strength] || strength || '软约束';
+        optional: '可选',
+    }[key] || strength || '软约束';
+}
+
+function requirementDayLabel(value) {
+    return {
+        1: '周一',
+        2: '周二',
+        3: '周三',
+        4: '周四',
+        5: '周五',
+        6: '周六',
+        7: '周日',
+    }[String(value)] || String(value);
+}
+
+function requirementSlotLabel(value = '') {
+    const match = String(value || '').match(/^(\d{1,2})-(\d{1,2})$/);
+    if (!match) return String(value || '');
+    return `${requirementDayLabel(match[1])}第${match[2]}节`;
+}
+
+function requirementParameterKeyLabel(key = '') {
+    return {
+        blockPreference: '连堂方式',
+        maxConsecutive: '连续最多',
+        limit: '最多节数',
+        slots: '节次',
+        days: '周几',
+        periods: '课节',
+        dayPart: '时段',
+        weekPattern: '单双周',
+        balancedTeacherLoad: '教师负载均衡',
+        teacherLimits: '教师连续保护',
+        lessonPlanIds: '任课计划',
+        subjectIds: '课程',
+        weight: '权重',
+    }[key] || key;
+}
+
+function requirementParameterValueLabel(key = '', value) {
+    if (Array.isArray(value)) {
+        const formatted = value.map(item => requirementParameterValueLabel(key, item)).filter(Boolean);
+        return formatted.join('、');
+    }
+    if (typeof value === 'boolean') return value ? '是' : '否';
+    if (key === 'blockPreference') return blockPreferenceLabel(value);
+    if (key === 'dayPart') return DAY_PART_LABELS[String(value || '').trim()] || String(value || '');
+    if (key === 'slots') return requirementSlotLabel(value);
+    if (key === 'days') return requirementDayLabel(value);
+    if (key === 'periods') return `第${value}节`;
+    if (key === 'weekPattern') {
+        return {
+            odd: '单周',
+            even: '双周',
+            both: '单双周',
+            alternate: '隔周',
+        }[String(value || '').trim()] || String(value || '');
+    }
+    if (key === 'teacherLimits' && value && typeof value === 'object') {
+        const parts = [];
+        if (value.consecutive) parts.push(`连续最多 ${value.consecutive} 节`);
+        if (value.daily) parts.push(`每天最多 ${value.daily} 节`);
+        return parts.join('，') || '已配置';
+    }
+    if (value && typeof value === 'object') return '已配置';
+    return String(value ?? '');
 }
 
 function renderRequirementParameterDetails(item = {}) {
     const params = item.parameters || {};
     const primary = requirementParameterLabel(item);
-    const entries = Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== '');
+    const primaryKeys = new Set();
+    if (params.blockPreference) primaryKeys.add('blockPreference');
+    else if (params.maxConsecutive) primaryKeys.add('maxConsecutive');
+    else if (params.limit) primaryKeys.add('limit');
+    else if (params.slots?.length) primaryKeys.add('slots');
+    else if (params.balancedTeacherLoad) primaryKeys.add('balancedTeacherLoad');
+    const entries = Object.entries(params).filter(([key, value]) => (
+        !primaryKeys.has(key)
+        && value !== undefined
+        && value !== null
+        && value !== ''
+    ));
     if (!entries.length && !primary) return '<span>无额外参数</span>';
     const rendered = [];
     if (primary) rendered.push(`<span>${escapeHtml(primary)}</span>`);
     entries.forEach(([key, value]) => {
-        const valueText = Array.isArray(value)
-            ? value.join('、')
-            : (typeof value === 'object' ? JSON.stringify(value) : String(value));
-        rendered.push(`<span>${escapeHtml(key)}：${escapeHtml(valueText)}</span>`);
+        const keyText = requirementParameterKeyLabel(key);
+        const valueText = requirementParameterValueLabel(key, value);
+        rendered.push(`<span>${escapeHtml(keyText)}：${escapeHtml(valueText)}</span>`);
     });
     return rendered.join('');
 }

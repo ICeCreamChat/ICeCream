@@ -327,6 +327,46 @@ test('parseTimetableRules returns object-first requirement semantics and actions
     assert.equal(blockAction.patch.blockPreference, 'double');
 });
 
+test('normalizeTimetableRuleDraftRows canonicalizes AI semantic requirement aliases', () => {
+    const project = makeProject();
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: [],
+        source: 'ai',
+        semanticRequirements: [
+            {
+                id: 'req_ai_morning',
+                object: { kind: 'subject', name: '语文', matchedIds: ['s1'], scope: 'explicit' },
+                intent: 'morning_preference',
+                status: 'candidate',
+                applyTo: 'rule',
+                parameters: { dayPart: 'morning' },
+                confidence: 0.84,
+                source: { rawText: '语文尽量上午' },
+            },
+            {
+                id: 'req_ai_spread',
+                object: { kind: 'subject', name: '英语', matchedIds: ['s3'], scope: 'explicit' },
+                intent: 'spread',
+                status: 'candidate',
+                applyTo: 'optimization',
+                confidence: 0.78,
+                source: { rawText: '英语不要集中在同一天' },
+            },
+        ],
+    });
+
+    const morning = result.requirementItems.find(item => item.id === 'req_ai_morning');
+    const spread = result.requirementItems.find(item => item.id === 'req_ai_spread');
+    assert.equal(morning.intent, 'preferred_day_part');
+    assert.equal(morning.status, 'needs_review');
+    assert.equal(spread.intent, 'subject_spread');
+    assert.equal(spread.status, 'needs_review');
+    assert.equal(result.requirementItems.some(item => item.intent === 'morning_preference'), false);
+    assert.equal(result.requirementItems.some(item => item.intent === 'spread'), false);
+    assert.equal(result.requirementItems.some(item => item.status === 'candidate'), false);
+});
+
 test('parseTimetableRules treats system invariants as handled requirements instead of noisy all-slot rules', async () => {
     const project = makeProject();
     const result = await parseTimetableRules({

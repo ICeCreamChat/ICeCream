@@ -1399,6 +1399,74 @@ function optimizationRequirementsFromText(project = {}, text = '') {
     return requirements;
 }
 
+function normalizeRequirementIntentAlias(value = '') {
+    const text = asText(value, 120).trim().toLowerCase().replace(/[-\s]+/g, '_');
+    const compact = text.replace(/_/g, '');
+    if (!text) return 'unknown';
+    const aliases = {
+        preferred_periods: 'preferred_periods',
+        subject_preferred_periods: 'preferred_periods',
+        period_preference: 'preferred_periods',
+        periods_preference: 'preferred_periods',
+        preferred_slots: 'preferred_periods',
+        preferred_day_part: 'preferred_day_part',
+        subject_morning: 'preferred_day_part',
+        morning_preference: 'preferred_day_part',
+        morning: 'preferred_day_part',
+        avoid_periods: 'avoid_periods',
+        subject_avoid_periods: 'avoid_periods',
+        unavailable_periods: 'unavailable_periods',
+        teacher_unavailable: 'unavailable_periods',
+        class_unavailable: 'unavailable_periods',
+        spread: 'subject_spread',
+        subject_spread: 'subject_spread',
+        course_spread: 'subject_spread',
+        block: 'block_preference',
+        block_preference: 'block_preference',
+        double_block: 'block_preference',
+        default_block_policy: 'default_block_policy',
+        block_integrity: 'block_integrity',
+        block_protection: 'block_integrity',
+        teacher_load_balance: 'teacher_load_protection',
+        teacher_load_protection: 'teacher_load_protection',
+        class_daily_balance: 'class_daily_balance',
+        class_subject_spread: 'class_subject_spread',
+    };
+    if (aliases[text]) return aliases[text];
+    if (compact === 'morningpreference' || compact === 'subjectmorning') return 'preferred_day_part';
+    if (compact === 'periodpreference' || compact === 'preferredslots') return 'preferred_periods';
+    if (compact === 'spread' || compact === 'subjectspread' || compact === 'coursespread') return 'subject_spread';
+    return text;
+}
+
+function normalizeRequirementStatusAlias(value = '') {
+    const text = asText(value, 40).trim().toLowerCase().replace(/[-\s]+/g, '_');
+    if (!text) return 'needs_review';
+    if (['handled', 'ignored', 'system_handled', 'already_handled'].includes(text)) return 'handled';
+    if (['actionable', 'ready', 'effective', 'applicable'].includes(text)) return 'actionable';
+    if (['needs_review', 'need_review', 'review', 'pending_review', 'candidate', 'pending', 'draft'].includes(text)) return 'needs_review';
+    return 'needs_review';
+}
+
+function normalizeRequirementApplyToAlias(value = '') {
+    const text = asText(value, 80).trim().toLowerCase().replace(/[-\s]+/g, '_');
+    return {
+        rules: 'rule',
+        constraint: 'rule',
+        constraint_rule: 'rule',
+        lesson_plan: 'lesson_plan',
+        lesson_plans: 'lesson_plan',
+        roster: 'lesson_plan',
+        optimization: 'optimization',
+        optimize: 'optimization',
+        solver_policy: 'solver_policy',
+        system_policy: 'solver_policy',
+        handled: 'solver_policy',
+        review: 'review',
+        needs_review: 'review',
+    }[text] || text || 'review';
+}
+
 function externalRequirementItems(items = []) {
     return (Array.isArray(items) ? items : []).map((item, index) => ({
         id: asText(item.id, 120) || `req_external_${index + 1}`,
@@ -1410,12 +1478,12 @@ function externalRequirementItems(items = []) {
                 scope: asText(item.object.scope || 'explicit', 80),
             }
             : entityObject(asText(item.targetType || 'global', 80), asText(item.targetName || item.target || '', 200), item.targetId || '', 'explicit'),
-        intent: asText(item.intent || item.type || 'unknown', 120),
+        intent: normalizeRequirementIntentAlias(item.intent || item.type || 'unknown'),
         condition: item.condition && typeof item.condition === 'object' ? item.condition : {},
         parameters: item.parameters && typeof item.parameters === 'object' ? item.parameters : {},
         strength: asText(item.strength || item.priority || 'soft', 40),
-        status: asText(item.status || 'needs_review', 40),
-        applyTo: asText(item.applyTo || 'review', 80),
+        status: normalizeRequirementStatusAlias(item.status || 'needs_review'),
+        applyTo: normalizeRequirementApplyToAlias(item.applyTo || 'review'),
         confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : null,
         source: item.source && typeof item.source === 'object' ? item.source : { rawText: asText(item.rawText || item.reason || item.description || '', 1000) },
         warnings: Array.isArray(item.warnings) ? item.warnings.map(value => asText(value, 240)).filter(Boolean) : [],
