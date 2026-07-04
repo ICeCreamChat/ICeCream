@@ -236,6 +236,36 @@ test('timetable constraint dialog localizes semantic enum aliases in requirement
           source: { rawText: '如果生成了连堂块' },
           confidence: 0.78,
         },
+        {
+          id: 'req_old_morning',
+          object: { kind: 'subject', name: '数学', matchedIds: ['s2'], scope: 'explicit' },
+          intent: 'subject_morning',
+          status: 'candidate',
+          applyTo: 'lesson_plan',
+          parameters: {},
+          source: { rawText: '数学尽量上午' },
+          confidence: 0.9,
+        },
+        {
+          id: 'req_old_avoid',
+          object: { kind: 'subject', name: '体育', matchedIds: ['s4'], scope: 'explicit' },
+          intent: 'subject_avoid_periods',
+          status: 'suggestion',
+          applyTo: 'constraint_rule',
+          parameters: { periods: [1] },
+          source: { rawText: '体育第一节不要排' },
+          confidence: 0.82,
+        },
+        {
+          id: 'req_old_teacher_time',
+          object: { kind: 'teacher', name: '张老师', matchedIds: ['t1'], scope: 'explicit' },
+          intent: 'teacher_unavailable',
+          status: 'ready',
+          applyTo: 'rule',
+          parameters: { slots: ['1-1'] },
+          source: { rawText: '张老师周一第一节不排' },
+          confidence: 0.91,
+        },
       ],
       semanticActions: [],
     },
@@ -245,11 +275,17 @@ test('timetable constraint dialog localizes semantic enum aliases in requirement
   assert.match(html, /待确认/);
   assert.match(html, /上午优先/);
   assert.match(html, /课程分散/);
+  assert.match(html, /避开节次/);
+  assert.match(html, /教师不可排/);
   assert.match(html, /双连堂/);
   assert.match(html, /时段：上午/);
+  assert.match(html, /建议/);
   assert.doesNotMatch(html, />candidate</);
   assert.doesNotMatch(html, />morning_preference</);
   assert.doesNotMatch(html, />spread</);
+  assert.doesNotMatch(html, /subject_morning/);
+  assert.doesNotMatch(html, /subject_avoid_periods/);
+  assert.doesNotMatch(html, /teacher_unavailable/);
   assert.doesNotMatch(html, /blockPreference/);
   assert.doesNotMatch(html, /：double|>double</);
 });

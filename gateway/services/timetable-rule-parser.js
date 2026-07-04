@@ -1418,6 +1418,9 @@ function normalizeRequirementIntentAlias(value = '') {
         unavailable_periods: 'unavailable_periods',
         teacher_unavailable: 'unavailable_periods',
         class_unavailable: 'unavailable_periods',
+        locked_slot: 'locked_slot',
+        teacher_daily_limit: 'teacher_daily_limit',
+        teacher_consecutive_limit: 'teacher_consecutive_limit',
         spread: 'subject_spread',
         subject_spread: 'subject_spread',
         course_spread: 'subject_spread',
@@ -1429,8 +1432,11 @@ function normalizeRequirementIntentAlias(value = '') {
         block_protection: 'block_integrity',
         teacher_load_balance: 'teacher_load_protection',
         teacher_load_protection: 'teacher_load_protection',
+        teacher_time_conflict: 'teacher_time_conflict',
+        class_time_conflict: 'class_time_conflict',
         class_daily_balance: 'class_daily_balance',
         class_subject_spread: 'class_subject_spread',
+        quality_subject_later: 'quality_subject_later',
     };
     if (aliases[text]) return aliases[text];
     if (compact === 'morningpreference' || compact === 'subjectmorning') return 'preferred_day_part';
@@ -1449,13 +1455,17 @@ function normalizeRequirementStatusAlias(value = '') {
 }
 
 function normalizeRequirementApplyToAlias(value = '') {
-    const text = asText(value, 80).trim().toLowerCase().replace(/[-\s]+/g, '_');
+    const text = asText(value, 80).trim()
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .toLowerCase()
+        .replace(/[-\s]+/g, '_');
     return {
         rules: 'rule',
         constraint: 'rule',
         constraint_rule: 'rule',
         lesson_plan: 'lesson_plan',
         lesson_plans: 'lesson_plan',
+        lessonplan: 'lesson_plan',
         roster: 'lesson_plan',
         optimization: 'optimization',
         optimize: 'optimization',

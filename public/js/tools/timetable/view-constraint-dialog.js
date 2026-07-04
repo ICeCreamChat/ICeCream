@@ -65,29 +65,43 @@ function requirementGroupKey(item = {}) {
 
 function requirementIntentLabel(intent = '') {
     const key = String(intent || '').trim().toLowerCase().replace(/-/g, '_');
-    return {
+    const label = {
         preferred_periods: '优先节次',
+        subject_preferred_periods: '优先节次',
+        subject_prefer_periods: '优先节次',
+        subject_preferred_slots: '优先节次',
         preferred_day_part: '优先时段',
+        subject_morning: '上午优先',
+        morning_subject: '上午优先',
         morning_preference: '上午优先',
         morning: '上午时段',
         period_preference: '优先节次',
         avoid_periods: '避开节次',
+        subject_avoid_periods: '避开节次',
+        subject_avoid_slots: '避开节次',
         unavailable_periods: '不可排时间',
+        teacher_unavailable: '教师不可排',
+        class_unavailable: '班级不可排',
         locked_slot: '固定课节',
         teacher_daily_limit: '每日课时上限',
         teacher_consecutive_limit: '连续课时上限',
         subject_spread: '课程分散',
+        course_spread: '课程分散',
         spread: '课程分散',
         block_preference: '连堂设置',
+        block_protection: '连堂块保护',
         default_block_policy: '默认课时块策略',
         block_integrity: '连堂块保护',
+        teacher_load_balance: '教师负载均衡',
         teacher_load_protection: '高负载教师保护',
         teacher_time_conflict: '教师时间冲突',
         class_time_conflict: '班级时间冲突',
         class_daily_balance: '班级每日均衡',
         class_subject_spread: '班级课程分散',
         quality_subject_later: '素质课时段建议',
-    }[key] || intent || '排课需求';
+    }[key];
+    if (label) return label;
+    return /[A-Za-z_]/.test(String(intent || '')) ? '排课需求' : intent || '排课需求';
 }
 
 function requirementStatusLabel(item = {}) {
@@ -95,6 +109,7 @@ function requirementStatusLabel(item = {}) {
     return {
         handled: '已处理',
         ignored: '已处理',
+        suggestion: '建议',
         actionable: '可应用',
         ready: '可应用',
         effective: '可应用',
@@ -124,14 +139,26 @@ function requirementParameterLabel(item = {}) {
 }
 
 function requirementApplyLabel(applyTo = '') {
+    const key = String(applyTo || '').trim()
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .toLowerCase()
+        .replace(/[-\s]+/g, '_');
     return {
         rule: '约束规则',
+        rules: '约束规则',
+        constraint: '约束规则',
         constraint_rule: '约束规则',
         lesson_plan: '任课计划',
+        lesson_plans: '任课计划',
+        lessonplan: '任课计划',
         optimization: '优化目标',
+        optimize: '优化目标',
         solver_policy: '系统策略',
+        system_policy: '系统策略',
+        handled: '系统策略',
         review: '人工复核',
-    }[applyTo] || applyTo || '复核';
+        needs_review: '人工复核',
+    }[key] || (/[A-Za-z_]/.test(String(applyTo || '')) ? '复核' : applyTo || '复核');
 }
 
 function requirementStatusTone(item = {}) {

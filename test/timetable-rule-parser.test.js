@@ -353,17 +353,45 @@ test('normalizeTimetableRuleDraftRows canonicalizes AI semantic requirement alia
                 confidence: 0.78,
                 source: { rawText: '英语不要集中在同一天' },
             },
+            {
+                id: 'req_ai_subject_morning',
+                object: { kind: 'subject', name: '数学', matchedIds: ['s2'], scope: 'explicit' },
+                intent: 'subject_morning',
+                status: 'ready',
+                applyTo: 'lessonPlan',
+                confidence: 0.9,
+                source: { rawText: '数学尽量上午' },
+            },
+            {
+                id: 'req_ai_teacher_limit',
+                object: { kind: 'teacher', name: '张老师', matchedIds: ['t1'], scope: 'explicit' },
+                intent: 'teacher_daily_limit',
+                status: 'suggestion',
+                applyTo: 'rules',
+                parameters: { limit: 4 },
+                confidence: 0.86,
+                source: { rawText: '张老师每天最多4节' },
+            },
         ],
     });
 
     const morning = result.requirementItems.find(item => item.id === 'req_ai_morning');
     const spread = result.requirementItems.find(item => item.id === 'req_ai_spread');
+    const subjectMorning = result.requirementItems.find(item => item.id === 'req_ai_subject_morning');
+    const teacherLimit = result.requirementItems.find(item => item.id === 'req_ai_teacher_limit');
     assert.equal(morning.intent, 'preferred_day_part');
     assert.equal(morning.status, 'needs_review');
     assert.equal(spread.intent, 'subject_spread');
     assert.equal(spread.status, 'needs_review');
+    assert.equal(subjectMorning.intent, 'preferred_day_part');
+    assert.equal(subjectMorning.status, 'actionable');
+    assert.equal(subjectMorning.applyTo, 'lesson_plan');
+    assert.equal(teacherLimit.intent, 'teacher_daily_limit');
+    assert.equal(teacherLimit.status, 'needs_review');
+    assert.equal(teacherLimit.applyTo, 'rule');
     assert.equal(result.requirementItems.some(item => item.intent === 'morning_preference'), false);
     assert.equal(result.requirementItems.some(item => item.intent === 'spread'), false);
+    assert.equal(result.requirementItems.some(item => item.intent === 'subject_morning'), false);
     assert.equal(result.requirementItems.some(item => item.status === 'candidate'), false);
 });
 
