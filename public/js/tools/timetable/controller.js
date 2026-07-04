@@ -101,6 +101,7 @@ export class TimetablePlannerController {
         this.jobPollTimer = null;
         this.rosterImportFile = null;
         this.ruleReviewFile = null;
+        this.constraintDialogFile = null;
         this.rosterDraftCounter = 0;
         this.ruleDraftCounter = 0;
     }
