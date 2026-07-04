@@ -1,6 +1,47 @@
 import assert from 'node:assert/strict';
 
+import AdmZip from 'adm-zip';
+
 import { withOpenedTimetablePage } from './timetable-ui-smoke-helpers.mjs';
+
+function xmlEscape(value = '') {
+    return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&apos;',
+    })[char]);
+}
+
+function buildConstraintWorkbook(rows = []) {
+    const strings = rows.flat();
+    const sharedStrings = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strings.length}" uniqueCount="${strings.length}">
+${strings.map(value => `<si><t>${xmlEscape(value)}</t></si>`).join('')}
+</sst>`;
+    let stringIndex = 0;
+    const sheetRows = rows.map((row, rowIndex) => {
+        const cells = row.map((_, columnIndex) => {
+            const ref = `${String.fromCharCode(65 + columnIndex)}${rowIndex + 1}`;
+            return `<c r="${ref}" t="s"><v>${stringIndex++}</v></c>`;
+        }).join('');
+        return `<row r="${rowIndex + 1}">${cells}</row>`;
+    }).join('');
+    const zip = new AdmZip();
+    zip.addFile('xl/sharedStrings.xml', Buffer.from(sharedStrings, 'utf8'));
+    zip.addFile('xl/workbook.xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets><sheet name="AI约束建议" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`, 'utf8'));
+    zip.addFile('xl/_rels/workbook.xml.rels', Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`, 'utf8'));
+    zip.addFile('xl/worksheets/sheet1.xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`, 'utf8'));
+    return zip.toBuffer();
+}
 
 async function main() {
     await withOpenedTimetablePage({ port: 3139 }, async ({ page }) => {
@@ -78,6 +119,30 @@ async function main() {
         assert.match(fileReviewText || '', /数学/);
         assert.match(fileReviewText || '', /上午/);
         assert.equal(dialogs.some(item => item.message === '请选择文件'), false);
+
+        await clearRecognizedConstraints();
+
+        await clickByScript('[data-action="switch-constraint-mode"][data-mode="file"]');
+        await page.locator('#tt-constraint-file-input').setInputFiles({
+            name: 'AI排课约束建议.xlsx',
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            buffer: buildConstraintWorkbook([
+                ['约束内容'],
+                ['英语尽量安排到上午'],
+            ]),
+        });
+        await page.waitForFunction(
+            () => /AI排课约束建议\.xlsx/.test(document.querySelector('[data-constraint-dialog-overlay]')?.textContent || ''),
+            { timeout: 10000 },
+        );
+        await clickByScript('[data-action="parse-constraints"]');
+        await page.waitForFunction(() => document.querySelectorAll('.tt-constraint-card').length > 0, { timeout: 30000 });
+
+        const xlsxReviewText = await recognizedText();
+        assert.match(xlsxReviewText || '', /已识别约束/);
+        assert.match(xlsxReviewText || '', /英语/);
+        assert.match(xlsxReviewText || '', /上午/);
+        assert.equal(dialogs.some(item => /Unexpected token|<!DOCTYPE/i.test(item.message)), false);
 
         await clearRecognizedConstraints();
 

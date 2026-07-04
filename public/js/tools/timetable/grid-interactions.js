@@ -184,6 +184,12 @@ function bindDelegatedInteractions(container) {
             controller.parseConstraintsFromDialog();
         } else if (action === 'add-manual-constraint') {
             controller.addManualConstraint();
+        } else if (action === 'filter-requirements') {
+            const filter = event.target.closest('[data-requirement-filter]')?.dataset.requirementFilter;
+            controller.filterRequirements(filter);
+        } else if (action === 'select-requirement') {
+            const requirementId = event.target.closest('[data-requirement-id]')?.dataset.requirementId;
+            controller.selectRequirement(requirementId);
         } else if (action === 'delete-constraint') {
             const constraintId = event.target.closest('[data-constraint-id]')?.dataset.constraintId;
             controller.deleteConstraint(constraintId);

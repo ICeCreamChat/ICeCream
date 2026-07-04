@@ -12,8 +12,46 @@ function escapeAttr(value) {
     return escapeHtml(value);
 }
 
+const DAY_LABELS = ['', '一', '二', '三', '四', '五', '六', '日'];
+
+function slotsFromConstraint(constraint = {}) {
+    return [
+        ...(constraint.time?.slots || []),
+        ...(constraint.slots || []),
+    ].filter(Boolean);
+}
+
+function formatSlot(slot = '') {
+    const match = String(slot).match(/^(\d{1,2})-(\d{1,2})$/);
+    if (!match) return String(slot || '');
+    const day = Number.parseInt(match[1], 10);
+    const period = Number.parseInt(match[2], 10);
+    return `周${DAY_LABELS[day] || day}第${period}节`;
+}
+
+function constraintTimeLabel(constraint = {}) {
+    const explicit = constraint.time?.label || constraint.timeLabel;
+    if (explicit) return explicit;
+    const slots = slotsFromConstraint(constraint);
+    if (slots.length) return slots.map(formatSlot).join('、');
+    if (constraint.type === 'subject_morning') return '上午时段';
+    if (constraint.limit) return `最多 ${constraint.limit} 节`;
+    return '未限定时间';
+}
+
+function constraintSourceLabel(constraint = {}) {
+    const sheet = constraint.sourceSheet || constraint.source;
+    const row = Number.parseInt(constraint.sourceRow, 10);
+    if (sheet && Number.isFinite(row)) return `${sheet} 第 ${row} 行`;
+    if (sheet) return sheet;
+    if (Number.isFinite(row)) return `第 ${row} 行`;
+    return '';
+}
+
 export function renderConstraintCard(constraint, state) {
     const isEditing = state?.constraintDialog?.editingConstraint?.originalId === constraint.id;
+    const timeLabel = constraintTimeLabel(constraint);
+    const sourceLabel = constraintSourceLabel(constraint);
 
     return `
         <div class="tt-constraint-card ${constraint.hasConflict ? 'tt-constraint-card--conflict' : ''}" data-constraint-id="${escapeAttr(constraint.id)}">
@@ -31,10 +69,11 @@ export function renderConstraintCard(constraint, state) {
             <div class="tt-constraint-content">
                 <strong>${escapeHtml(constraint.understanding || constraint.description || '约束规则')}</strong>
                 <p class="tt-constraint-source">原文：${escapeHtml(constraint.sourceText || constraint.rawText || '手动添加')}</p>
+                ${sourceLabel ? `<p class="tt-constraint-source">来源：${escapeHtml(sourceLabel)}</p>` : ''}
             </div>
             <div class="tt-constraint-meta">
                 <span><b>对象：</b>${escapeHtml(constraint.target?.name || constraint.targetName || '-')}</span>
-                <span><b>时间：</b>${escapeHtml(constraint.time?.label || constraint.timeLabel || '-')}</span>
+                <span><b>时间：</b>${escapeHtml(timeLabel)}</span>
             </div>
             ${(constraint.warnings || []).length > 0 ? `
                 <div class="tt-constraint-warning">

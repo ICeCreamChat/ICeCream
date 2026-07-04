@@ -42,6 +42,12 @@ const DAY_NAME_TO_NUMBER = new Map([
     ['一', 1], ['二', 2], ['三', 3], ['四', 4], ['五', 5], ['六', 6], ['日', 7], ['天', 7],
     ['1', 1], ['2', 2], ['3', 3], ['4', 4], ['5', 5], ['6', 6], ['7', 7],
 ]);
+const CHINESE_NUMBER_TO_VALUE = new Map([
+    ['零', 0], ['〇', 0],
+    ['一', 1], ['二', 2], ['两', 2], ['三', 3], ['四', 4], ['五', 5],
+    ['六', 6], ['七', 7], ['八', 8], ['九', 9],
+]);
+const NUMBER_TOKEN_PATTERN = '[0-9一二两三四五六七八九十零〇]{1,4}';
 
 export class TimetableRuleParseError extends Error {
     constructor(message, reason = 'ai_unavailable', status = 503) {
@@ -340,12 +346,46 @@ function uniqueNumbers(values = []) {
         .sort((left, right) => left - right);
 }
 
+function parseLooseNumber(value) {
+    const text = String(value || '').trim();
+    if (!text) return null;
+    if (/^\d{1,2}$/.test(text)) return Number.parseInt(text, 10);
+    if (CHINESE_NUMBER_TO_VALUE.has(text)) return CHINESE_NUMBER_TO_VALUE.get(text);
+    if (text === '十') return 10;
+    const tenIndex = text.indexOf('十');
+    if (tenIndex >= 0) {
+        const left = text.slice(0, tenIndex);
+        const right = text.slice(tenIndex + 1);
+        const tens = left ? CHINESE_NUMBER_TO_VALUE.get(left) : 1;
+        const ones = right ? CHINESE_NUMBER_TO_VALUE.get(right) : 0;
+        if (Number.isInteger(tens) && Number.isInteger(ones)) return tens * 10 + ones;
+    }
+    return null;
+}
+
 function expandRange(left, right, max = 12) {
-    const start = Math.max(1, Number.parseInt(left, 10));
-    const end = Math.min(max, Number.parseInt(right, 10));
+    const startValue = parseLooseNumber(left);
+    const endValue = parseLooseNumber(right);
+    const start = Math.max(1, Number.parseInt(startValue, 10));
+    const end = Math.min(max, Number.parseInt(endValue, 10));
     if (!Number.isInteger(start) || !Number.isInteger(end)) return [];
     const [from, to] = start <= end ? [start, end] : [end, start];
     return Array.from({ length: to - from + 1 }, (_, index) => from + index);
+}
+
+function dayPartName(text = '') {
+    if (/上午|早上|morning/i.test(text)) return 'morning';
+    if (/下午|后半天|afternoon/i.test(text)) return 'afternoon';
+    if (/晚间|晚上|晚自习|夜自习|evening|night/i.test(text)) return 'evening';
+    return '';
+}
+
+function hasExplicitPeriodExpression(text = '') {
+    const value = asText(text, 300);
+    const rangePattern = new RegExp(`第?\\s*${NUMBER_TOKEN_PATTERN}\\s*[-~到至]\\s*${NUMBER_TOKEN_PATTERN}\\s*节?`);
+    const singlePattern = new RegExp(`第\\s*${NUMBER_TOKEN_PATTERN}\\s*节|${NUMBER_TOKEN_PATTERN}\\s*节`);
+    const relativePattern = new RegExp(`(?:前|后)\\s*${NUMBER_TOKEN_PATTERN}\\s*节`);
+    return rangePattern.test(value) || singlePattern.test(value) || relativePattern.test(value);
 }
 
 function parseDays(value, project, fallback = []) {
@@ -355,6 +395,11 @@ function parseDays(value, project, fallback = []) {
     if (/全部|全周|每天|all/i.test(text)) return getActiveWeekdays(project);
     if (/工作日|周一.?周五|周一到周五|monday.?friday/i.test(text)) return getActiveWeekdays(project).filter(day => day <= 5);
     const values = [];
+    for (const range of text.matchAll(/(?:周|星期|礼拜)([一二三四五六日天1-7])\s*[-~到至]\s*(?:周|星期|礼拜)?([一二三四五六日天1-7])/g)) {
+        const start = dayNumber(range[1]);
+        const end = dayNumber(range[2]);
+        if (start && end) values.push(...expandRange(start, end, 7));
+    }
     for (const match of text.matchAll(/(?:周|星期|礼拜)([一二三四五六日天1-7])/g)) {
         const number = dayNumber(match[1]);
         if (number) values.push(number);
@@ -370,18 +415,31 @@ function parsePeriods(value, project, fallback = []) {
     const text = asText(value, 300);
     if (!text) return [...fallback];
     const active = getActivePeriods(project);
-    if (/全部|全日|all/i.test(text)) return active;
-    if (/上午|早上|morning/i.test(text)) return getDayPartPeriods(project, 'morning');
-    if (/下午|后半天|afternoon/i.test(text)) return getDayPartPeriods(project, 'afternoon');
-    if (/晚间|晚上|晚自习|夜自习|evening|night/i.test(text)) return getDayPartPeriods(project, 'evening');
+    const maxPeriod = Math.max(...active, 12);
     const values = [];
-    for (const range of text.matchAll(/第?\s*(\d{1,2})\s*[-~到至]\s*(\d{1,2})\s*节?/g)) {
-        values.push(...expandRange(range[1], range[2], Math.max(...active, 12)));
+    if (/全部|全日|all/i.test(text)) return active;
+
+    const rangePattern = new RegExp(`第?\\s*(${NUMBER_TOKEN_PATTERN})\\s*[-~到至]\\s*(${NUMBER_TOKEN_PATTERN})\\s*节?`, 'g');
+    for (const range of text.matchAll(rangePattern)) {
+        values.push(...expandRange(range[1], range[2], maxPeriod));
     }
-    for (const match of text.matchAll(/第?\s*(\d{1,2})\s*节/g)) {
-        values.push(Number.parseInt(match[1], 10));
+    const singlePattern = new RegExp(`第?\\s*(${NUMBER_TOKEN_PATTERN})\\s*节`, 'g');
+    for (const match of text.matchAll(singlePattern)) {
+        const period = parseLooseNumber(match[1]);
+        if (Number.isInteger(period)) values.push(period);
+    }
+    const relativePattern = new RegExp(`(?:上午|早上|下午|后半天|晚间|晚上|晚自习|夜自习|morning|afternoon|evening|night)?\\s*(前|后)\\s*(${NUMBER_TOKEN_PATTERN})\\s*节`, 'gi');
+    for (const match of text.matchAll(relativePattern)) {
+        const count = parseLooseNumber(match[2]);
+        if (!Number.isInteger(count) || count <= 0) continue;
+        const part = dayPartName(match[0]);
+        const partPeriods = part ? getDayPartPeriods(project, part) : [];
+        const base = partPeriods.length >= count ? partPeriods : active;
+        const selected = match[1] === '前' ? base.slice(0, count) : base.slice(Math.max(0, base.length - count));
+        values.push(...selected);
     }
     if (!values.length && /^\d{1,2}$/.test(text)) values.push(Number.parseInt(text, 10));
+    if (!values.length && dayPartName(text)) return getDayPartPeriods(project, dayPartName(text));
     return uniqueNumbers(values.length ? values : fallback);
 }
 
@@ -411,6 +469,15 @@ function slotsFromConstraint(constraint = {}, project = {}) {
         for (const period of periods) slots.push(slotKey(day, period));
     }
     return [...new Set(slots)].sort();
+}
+
+function weekPatternFromText(value = '') {
+    const text = asText(value, 300);
+    if (/单双周/.test(text)) return 'odd_even';
+    if (/单周|奇数周|odd\s*week/i.test(text)) return 'odd';
+    if (/双周|偶数周|even\s*week/i.test(text)) return 'even';
+    if (/隔周|每隔一周|alternat(?:e|ing)\s*week/i.test(text)) return 'alternating';
+    return '';
 }
 
 function normalizeName(value) {
@@ -667,12 +734,14 @@ function addLockedSlot(rules, locked) {
 function normalizeDraftRow(row = {}, index = 0, project = {}) {
     const type = normalizeConstraintType(row.type || row.ruleType);
     const slots = slotsFromConstraint(row, project);
+    const rawText = asText(row.rawText || row.constraintText || row.text || row.description || row.reason || '', 2000);
     const status = STATUS_LABELS.has(row.status) ? row.status : SUPPORTED_EFFECTIVE_TYPES.has(type) ? 'effective' : 'suggestion';
     return {
         id: asText(row.id, 120) || `rule_draft_${index + 1}`,
         source: asText(row.source || row.sourceSheet || '', 120),
+        sourceSheet: asText(row.sourceSheet || row.sheetName || '', 120),
         sourceRow: Number.parseInt(row.sourceRow, 10) || null,
-        rawText: asText(row.rawText || row.constraintText || row.text || row.description || row.reason || '', 2000),
+        rawText,
         type,
         targetType: targetTypeFor(type, row),
         targetId: asText(row.targetId || row.teacherId || row.classId || row.subjectId || '', 120),
@@ -694,6 +763,7 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
         warnings: Array.isArray(row.warnings) ? row.warnings.map(item => asText(item, 200)).filter(Boolean) : [],
         ambiguity: row.ambiguity || null,
         ambiguities: Array.isArray(row.ambiguities) ? row.ambiguities : [],
+        weekPattern: asText(row.weekPattern || row.week || '', 60) || weekPatternFromText(rawText),
         weight: Number.parseInt(row.weight, 10) || undefined,
         limit: Number.parseInt(row.limit ?? row.value ?? row.max ?? row.count, 10) || undefined,
     };
@@ -828,7 +898,7 @@ function applySingleTarget(row, project, targetType) {
     const warnings = [...(row.warnings || [])];
     const next = { ...row, targetType };
 
-    if (match.candidates.length === 1) {
+    if (match.candidates.length === 1 && (match.candidates[0].confidence || 0) >= 0.96) {
         const [candidate] = match.candidates;
         next.targetId = candidate.id;
         next.targetName = candidate.label;
@@ -838,14 +908,16 @@ function applySingleTarget(row, project, targetType) {
         return { ...next, warnings, status: statusWithConfidence(next, candidate.confidence || 0.9) };
     }
 
-    if (match.candidates.length > 1) {
+    if (match.candidates.length >= 1) {
         const ambiguity = {
             field: 'target',
             targetType,
             targetText: match.targetText || row.targetName || row.targetId || '',
             candidates: match.candidates,
         };
-        warnings.push(`${ambiguity.targetText || '规则对象'} 存在多个候选，请确认后再生效。`);
+        warnings.push(match.candidates.length > 1
+            ? `${ambiguity.targetText || '规则对象'} 存在多个候选，请确认后再生效。`
+            : `${ambiguity.targetText || '规则对象'} 只有低置信候选，请确认后再生效。`);
         return {
             ...next,
             status: 'needs_review',
@@ -978,6 +1050,13 @@ function classifyDraftRow(row = {}, project = {}) {
         next.confidence = next.status === 'effective' ? 0.9 : next.status === 'needs_review' ? 0.65 : 0.5;
     }
     next.status = statusWithConfidence(next, Number(next.confidence));
+    if (next.weekPattern) {
+        next.status = 'needs_review';
+        if (!next.warnings.some(warning => /单双周|不会自动生效/.test(warning))) {
+            next.warnings.push('当前规则模型暂不支持单双周，不会自动生效。');
+        }
+        next.confidence = Math.min(Number(next.confidence) || 0.65, 0.68);
+    }
     return next;
 }
 
@@ -1012,6 +1091,538 @@ function emptyRulesFrom(project) {
 
 function previewRows(rows = []) {
     return rows.map(previewFromRow);
+}
+
+function sourceFromRow(row = {}) {
+    return {
+        rawText: row.rawText || row.description || '',
+        source: row.source || '',
+        sourceSheet: row.sourceSheet || '',
+        sourceRow: row.sourceRow || null,
+    };
+}
+
+function entityObject(kind, name = '', matchedIds = [], scope = 'explicit') {
+    return {
+        kind,
+        name: asText(name, 200),
+        matchedIds: [...new Set((Array.isArray(matchedIds) ? matchedIds : [matchedIds]).map(item => asText(item, 120)).filter(Boolean))],
+        scope,
+    };
+}
+
+function rowRequirementObject(row = {}) {
+    if (row.targetType === 'all_teachers' || isAllTeachersTarget(row)) {
+        return entityObject('teacher_group', '全部教师', ['__all_teachers'], 'group');
+    }
+    if (row.targetType === 'teacher') return entityObject('teacher', row.targetName || row.teacherName || '教师', row.targetId || row.teacherId);
+    if (row.targetType === 'class') return entityObject('class', row.targetName || row.className || '班级', row.targetId || row.classId);
+    if (row.targetType === 'subject') return entityObject('subject', row.targetName || row.subjectName || '课程', row.targetId || row.subjectId);
+    if (row.targetType === 'locked_slot') return entityObject('lesson_slot', row.targetName || '固定课节', row.targetId, 'explicit');
+    return entityObject('global', row.targetName || row.type || '全局', row.targetId, 'global');
+}
+
+function intentForRow(row = {}) {
+    const map = {
+        teacher_unavailable: 'unavailable_periods',
+        class_unavailable: 'unavailable_periods',
+        locked_slot: 'locked_slot',
+        subject_morning: 'preferred_day_part',
+        subject_preferred_periods: 'preferred_periods',
+        subject_avoid_periods: 'avoid_periods',
+        teacher_daily_limit: 'teacher_daily_limit',
+        teacher_consecutive_limit: 'teacher_consecutive_limit',
+        subject_spread: 'subject_spread',
+        teacher_load_balance: 'teacher_load_protection',
+        block_protection: 'block_integrity',
+        class_daily_balance: 'class_daily_balance',
+        class_subject_spread: 'class_subject_spread',
+        quality_subject_later: 'quality_subject_later',
+    };
+    return map[row.type] || row.type || 'unknown';
+}
+
+function applyToForRow(row = {}) {
+    if (SUPPORTED_EFFECTIVE_TYPES.has(row.type)) return 'rule';
+    if (row.type === 'teacher_load_balance' || row.type === 'class_daily_balance' || row.type === 'class_subject_spread') return 'optimization';
+    if (row.type === 'block_protection') return 'solver_policy';
+    return row.status === 'ignored' ? 'solver_policy' : 'review';
+}
+
+function requirementStatusForRow(row = {}) {
+    if (row.status === 'effective') return 'actionable';
+    if (row.status === 'suggestion' && ['teacher_load_balance', 'class_daily_balance', 'class_subject_spread'].includes(row.type)) return 'actionable';
+    if (row.status === 'ignored' || row.type === 'block_protection') return 'handled';
+    return 'needs_review';
+}
+
+function parametersForRow(row = {}) {
+    return {
+        ...(row.slots?.length ? { slots: row.slots } : {}),
+        ...(row.days?.length ? { days: row.days } : {}),
+        ...(row.periods?.length ? { periods: row.periods } : {}),
+        ...(row.limit ? { limit: row.limit } : {}),
+        ...(row.weight ? { weight: row.weight } : {}),
+        ...(row.weekPattern ? { weekPattern: row.weekPattern } : {}),
+    };
+}
+
+function requirementFromRow(row = {}, index = 0) {
+    return {
+        id: `req_${row.id || index + 1}`,
+        rowId: row.id || '',
+        object: rowRequirementObject(row),
+        intent: intentForRow(row),
+        condition: {
+            ...(row.slots?.length ? { slots: row.slots } : {}),
+            ...(row.weekPattern ? { weekPattern: row.weekPattern } : {}),
+        },
+        parameters: parametersForRow(row),
+        strength: row.priority === 'hard' ? 'hard' : 'soft',
+        status: requirementStatusForRow(row),
+        applyTo: applyToForRow(row),
+        confidence: row.confidence,
+        source: sourceFromRow(row),
+        warnings: row.warnings || [],
+    };
+}
+
+function highLoadTeacherIds(project = {}, threshold = 14) {
+    const hours = new Map();
+    for (const plan of project.lessonPlans || []) {
+        const value = Number(plan.weeklyHours || 0);
+        const ids = [plan.teacherId, ...(plan.teacherIds || [])].filter(Boolean);
+        ids.forEach(id => hours.set(id, (hours.get(id) || 0) + value));
+    }
+    return [...hours.entries()]
+        .filter(([, count]) => count >= threshold)
+        .map(([id]) => id);
+}
+
+function teacherNamesById(project = {}, ids = []) {
+    const map = new Map((project.teachers || []).map(teacher => [teacher.id, teacher.name || teacher.id]));
+    return ids.map(id => map.get(id) || id).filter(Boolean);
+}
+
+function lessonPlansForSubjectIds(project = {}, subjectIds = []) {
+    const subjectSet = new Set(subjectIds);
+    return (project.lessonPlans || []).filter(plan => subjectSet.has(plan.subjectId));
+}
+
+function blockPreferenceFromText(text = '') {
+    if (/混合|单双|单双混排|mixed/i.test(text)) return 'mixed';
+    if (/不要连堂|不连堂|避免连堂|默认单节|按单节|单节|single/i.test(text)) return 'single';
+    if (/双连堂|连堂|连续两节|连排|double|block/i.test(text)) return 'double';
+    return '';
+}
+
+function textRequirementBase(id, object, intent, sourceText, {
+    condition = {},
+    parameters = {},
+    strength = 'soft',
+    status = 'actionable',
+    applyTo = 'review',
+    confidence = 0.8,
+    warnings = [],
+} = {}) {
+    return {
+        id,
+        object,
+        intent,
+        condition,
+        parameters,
+        strength,
+        status,
+        applyTo,
+        confidence,
+        source: { rawText: asText(sourceText, 1000) },
+        warnings,
+    };
+}
+
+function systemRequirementsFromText(text = '') {
+    const requirements = [];
+    const sourceText = asText(text, 1200);
+    if (/同一.*教师.*同一.*时间.*(只能|一个班|一门课)|教师.*不能.*同.*时间.*(多个|两个|两个班|上课)/.test(sourceText)) {
+        requirements.push(textRequirementBase(
+            'req_system_teacher_time_conflict',
+            entityObject('global', '全部教师', [], 'global'),
+            'teacher_time_conflict',
+            sourceText,
+            {
+                strength: 'hard',
+                status: 'handled',
+                applyTo: 'solver_policy',
+                confidence: 0.98,
+                warnings: ['这是系统内置硬规则，求解时已自动处理。'],
+            },
+        ));
+    }
+    if (/同一.*班级.*同一.*时间.*(只能|一门|一节)|班级.*不能.*同.*时间.*(多个|两门|两节)/.test(sourceText)) {
+        requirements.push(textRequirementBase(
+            'req_system_class_time_conflict',
+            entityObject('global', '全部班级', [], 'global'),
+            'class_time_conflict',
+            sourceText,
+            {
+                strength: 'hard',
+                status: 'handled',
+                applyTo: 'solver_policy',
+                confidence: 0.98,
+                warnings: ['这是系统内置硬规则，求解时已自动处理。'],
+            },
+        ));
+    }
+    if (/未注明.*默认.*单节|默认.*单节|没有.*连堂.*单节/.test(sourceText)) {
+        requirements.push(textRequirementBase(
+            'req_system_default_single',
+            entityObject('global', '默认课时块策略', [], 'global'),
+            'default_block_policy',
+            sourceText,
+            {
+                parameters: { blockPreference: 'single' },
+                strength: 'default',
+                status: 'handled',
+                applyTo: 'solver_policy',
+                confidence: 0.95,
+                warnings: ['未指定连堂的任课计划默认按单节处理。'],
+            },
+        ));
+    }
+    if (/连堂块.*(不能|不可|不要|不应).*(拆|拆开|打散)|连堂.*(保护|整段|整块)|块.*完整/.test(sourceText)) {
+        requirements.push(textRequirementBase(
+            'req_system_block_integrity',
+            entityObject('lesson_block', '所有连堂课时块', [], 'global'),
+            'block_integrity',
+            sourceText,
+            {
+                strength: 'hard',
+                status: 'handled',
+                applyTo: 'solver_policy',
+                confidence: 0.94,
+                warnings: ['连堂课时块在求解和修复中按整段处理。'],
+            },
+        ));
+    }
+    return requirements;
+}
+
+function blockPreferenceRequirementsFromText(project = {}, text = '') {
+    const requirements = [];
+    splitSentences(text).forEach((sentenceGroup, groupIndex) => {
+        splitClauses(sentenceGroup).forEach((sentence, clauseIndex) => {
+            if (!/(连堂|连排|连续两节|双连堂|单节|混合|单双)/.test(sentence)) return;
+            if (/默认.*单节|未注明.*单节/.test(sentence)) return;
+            const blockPreference = blockPreferenceFromText(sentence);
+            if (!blockPreference) return;
+            const subjects = textSubjectTargets(sentence, project);
+            const idBase = `req_block_${groupIndex + 1}_${clauseIndex + 1}`;
+            if (!subjects.length) {
+                requirements.push(textRequirementBase(
+                    idBase,
+                    entityObject('subject', '未明确课程', [], 'unknown'),
+                    'block_preference',
+                    sentence,
+                    {
+                        parameters: { blockPreference },
+                        strength: /必须|要求|不能|不要/.test(sentence) ? 'hard' : 'soft',
+                        status: 'needs_review',
+                        applyTo: 'lesson_plan',
+                        confidence: 0.62,
+                        warnings: ['缺少明确课程，不能直接修改任课计划。'],
+                    },
+                ));
+                return;
+            }
+            subjects.forEach((subject, subjectIndex) => {
+                const subjectIds = subject.id ? [subject.id] : [];
+                const plans = lessonPlansForSubjectIds(project, subjectIds);
+                requirements.push(textRequirementBase(
+                    `${idBase}_${subjectIndex + 1}`,
+                    entityObject('subject', subject.name, subjectIds, subject.id ? 'explicit' : 'unknown'),
+                    'block_preference',
+                    sentence,
+                    {
+                        parameters: {
+                            blockPreference,
+                            lessonPlanIds: plans.map(plan => plan.id),
+                        },
+                        strength: /必须|要求|不能|不要/.test(sentence) ? 'hard' : 'soft',
+                        status: subject.id && plans.length ? 'actionable' : 'needs_review',
+                        applyTo: 'lesson_plan',
+                        confidence: subject.id ? 0.9 : 0.64,
+                        warnings: plans.length ? [] : ['没有找到可修改的任课计划，请先确认任课数据。'],
+                    },
+                ));
+            });
+        });
+    });
+    return requirements;
+}
+
+function optimizationRequirementsFromText(project = {}, text = '') {
+    const sourceText = asText(text, 1200);
+    const requirements = [];
+    if (/高负载教师|教师.*负载|负载.*教师|连续.*太多|不要.*连续.*太多/.test(sourceText)) {
+        const teacherIds = highLoadTeacherIds(project);
+        const names = teacherIds.length ? teacherNamesById(project, teacherIds).join('、') : '高负载教师';
+        requirements.push(textRequirementBase(
+            'req_optimization_high_load_teachers',
+            entityObject('derived_group', names, teacherIds, 'derived'),
+            'teacher_load_protection',
+            sourceText,
+            {
+                parameters: { maxConsecutive: 3, balancedTeacherLoad: true },
+                strength: 'soft',
+                status: 'actionable',
+                applyTo: 'optimization',
+                confidence: teacherIds.length ? 0.88 : 0.78,
+                warnings: teacherIds.length ? [] : ['当前数据未识别出达到高负载阈值的教师，将先启用教师负载均衡目标。'],
+            },
+        ));
+    }
+    if (/班级.*(每天|每日).*(均衡|平衡)|班级.*(均衡|平衡).*(每天|每日)/.test(sourceText)) {
+        requirements.push(textRequirementBase(
+            'req_optimization_class_daily_balance',
+            entityObject('global', '全部班级', [], 'global'),
+            'class_daily_balance',
+            sourceText,
+            {
+                strength: 'soft',
+                status: 'handled',
+                applyTo: 'optimization',
+                confidence: 0.82,
+                warnings: ['班级每日均衡已纳入课表质量评分。'],
+            },
+        ));
+    }
+    return requirements;
+}
+
+function externalRequirementItems(items = []) {
+    return (Array.isArray(items) ? items : []).map((item, index) => ({
+        id: asText(item.id, 120) || `req_external_${index + 1}`,
+        object: item.object && typeof item.object === 'object'
+            ? {
+                kind: asText(item.object.kind || item.object.type || 'global', 80),
+                name: asText(item.object.name || item.object.label || item.targetName || item.target || '', 200),
+                matchedIds: Array.isArray(item.object.matchedIds) ? item.object.matchedIds.map(value => asText(value, 120)).filter(Boolean) : [],
+                scope: asText(item.object.scope || 'explicit', 80),
+            }
+            : entityObject(asText(item.targetType || 'global', 80), asText(item.targetName || item.target || '', 200), item.targetId || '', 'explicit'),
+        intent: asText(item.intent || item.type || 'unknown', 120),
+        condition: item.condition && typeof item.condition === 'object' ? item.condition : {},
+        parameters: item.parameters && typeof item.parameters === 'object' ? item.parameters : {},
+        strength: asText(item.strength || item.priority || 'soft', 40),
+        status: asText(item.status || 'needs_review', 40),
+        applyTo: asText(item.applyTo || 'review', 80),
+        confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : null,
+        source: item.source && typeof item.source === 'object' ? item.source : { rawText: asText(item.rawText || item.reason || item.description || '', 1000) },
+        warnings: Array.isArray(item.warnings) ? item.warnings.map(value => asText(value, 240)).filter(Boolean) : [],
+    }));
+}
+
+function dedupeRequirements(items = []) {
+    const seen = new Set();
+    const result = [];
+    for (const item of items) {
+        const key = JSON.stringify([
+            item.intent,
+            item.applyTo,
+            item.status,
+            item.object?.kind,
+            item.object?.name,
+            item.object?.matchedIds || [],
+            item.parameters || {},
+            item.source?.rawText || '',
+        ]);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        result.push({ ...item, id: item.id || `req_${result.length + 1}` });
+    }
+    return result;
+}
+
+function actionForRequirement(project = {}, requirement = {}, index = 0) {
+    if (requirement.status === 'handled') {
+        return {
+            id: `act_${requirement.id || index + 1}`,
+            requirementId: requirement.id,
+            kind: 'handled_notice',
+            status: 'handled',
+            applyTo: requirement.applyTo,
+        };
+    }
+    if (requirement.status !== 'actionable') return null;
+    if (requirement.applyTo === 'lesson_plan' && requirement.intent === 'block_preference') {
+        const lessonPlanIds = requirement.parameters?.lessonPlanIds?.length
+            ? requirement.parameters.lessonPlanIds
+            : lessonPlansForSubjectIds(project, requirement.object?.matchedIds || []).map(plan => plan.id);
+        return {
+            id: `act_${requirement.id || index + 1}`,
+            requirementId: requirement.id,
+            kind: 'lesson_plan_patch',
+            target: {
+                subjectIds: requirement.object?.matchedIds || [],
+                lessonPlanIds,
+            },
+            patch: { blockPreference: requirement.parameters?.blockPreference },
+            status: lessonPlanIds.length ? 'ready' : 'needs_review',
+            requiresConfirmation: true,
+        };
+    }
+    if (requirement.applyTo === 'optimization' && requirement.intent === 'teacher_load_protection') {
+        return {
+            id: `act_${requirement.id || index + 1}`,
+            requirementId: requirement.id,
+            kind: 'soft_rules_patch',
+            target: { teacherIds: requirement.object?.matchedIds || [], derivedGroup: 'high_load_teachers' },
+            patch: {
+                balancedTeacherLoad: true,
+                teacherLimits: { consecutive: requirement.parameters?.maxConsecutive || 3 },
+            },
+            status: 'ready',
+            requiresConfirmation: true,
+        };
+    }
+    if (requirement.applyTo === 'rule' && requirement.rowId) {
+        return {
+            id: `act_${requirement.id || index + 1}`,
+            requirementId: requirement.id,
+            kind: 'rules_patch',
+            target: { rowIds: [requirement.rowId] },
+            status: 'ready',
+            requiresConfirmation: true,
+        };
+    }
+    return null;
+}
+
+function buildRequirementSemantics(project = {}, rows = [], {
+    originalText = '',
+    semanticRequirements = [],
+} = {}) {
+    const textRequirements = [
+        ...systemRequirementsFromText(originalText),
+        ...blockPreferenceRequirementsFromText(project, originalText),
+        ...optimizationRequirementsFromText(project, originalText),
+    ];
+    const rowRequirements = rows.map(requirementFromRow);
+    const requirementItems = dedupeRequirements([
+        ...externalRequirementItems(semanticRequirements),
+        ...textRequirements,
+        ...rowRequirements,
+    ]);
+    const semanticActions = requirementItems
+        .map((requirement, index) => actionForRequirement(project, requirement, index))
+        .filter(Boolean);
+    return { requirementItems, semanticActions };
+}
+
+export function applyTimetableRequirementActions({
+    project: inputProject = {},
+    actions = [],
+} = {}) {
+    const project = normalizeTimetableProject(inputProject);
+    const next = normalizeTimetableProject({
+        ...project,
+        lessonPlans: (project.lessonPlans || []).map(plan => ({ ...plan })),
+        rules: cloneValue(project.rules || {}),
+    });
+    next.rules = emptyRulesFrom(next);
+    const applied = [];
+    const skipped = [];
+    const needsReview = [];
+
+    const actionList = Array.isArray(actions) ? actions : [];
+    for (const action of actionList) {
+        const id = asText(action?.id, 120) || `action_${applied.length + skipped.length + needsReview.length + 1}`;
+        const kind = asText(action?.kind, 80);
+        if (action?.status && !['ready', 'actionable'].includes(action.status)) {
+            skipped.push({ id, kind, reason: '动作尚未确认或不可应用。' });
+            continue;
+        }
+
+        if (kind === 'lesson_plan_patch') {
+            const blockPreference = asText(action.patch?.blockPreference, 40);
+            if (!['single', 'double', 'mixed'].includes(blockPreference)) {
+                needsReview.push({ id, kind, reason: '缺少有效连堂设置。' });
+                continue;
+            }
+            const explicitPlanIds = new Set((action.target?.lessonPlanIds || []).map(value => asText(value, 120)).filter(Boolean));
+            const subjectIds = new Set((action.target?.subjectIds || []).map(value => asText(value, 120)).filter(Boolean));
+            const targets = next.lessonPlans.filter(plan => explicitPlanIds.has(plan.id) || (!explicitPlanIds.size && subjectIds.has(plan.subjectId)));
+            if (!targets.length) {
+                needsReview.push({ id, kind, reason: '没有找到可修改的任课计划。' });
+                continue;
+            }
+            targets.forEach(plan => {
+                plan.blockPreference = blockPreference;
+            });
+            applied.push({ id, kind, count: targets.length });
+            continue;
+        }
+
+        if (kind === 'soft_rules_patch') {
+            let changed = false;
+            next.rules.softRules = next.rules.softRules || {};
+            if (action.patch?.balancedTeacherLoad !== undefined) {
+                next.rules.softRules.balancedTeacherLoad = action.patch.balancedTeacherLoad !== false;
+                changed = true;
+            }
+            const teacherLimitPatch = action.patch?.teacherLimits || {};
+            const hasTeacherLimitPatch = Number.isInteger(Number(teacherLimitPatch.daily))
+                || Number.isInteger(Number(teacherLimitPatch.consecutive));
+            if (hasTeacherLimitPatch) {
+                const teacherIds = (action.target?.teacherIds || []).map(value => asText(value, 120)).filter(Boolean);
+                const validTeacherIds = new Set((next.teachers || []).map(teacher => teacher.id));
+                const matched = teacherIds.filter(idValue => validTeacherIds.has(idValue));
+                const missing = teacherIds.filter(idValue => !validTeacherIds.has(idValue));
+                matched.forEach(teacherId => addTeacherLimit(next.rules, teacherId, {
+                    daily: Number.isInteger(Number(teacherLimitPatch.daily)) ? Number(teacherLimitPatch.daily) : undefined,
+                    consecutive: Number.isInteger(Number(teacherLimitPatch.consecutive)) ? Number(teacherLimitPatch.consecutive) : undefined,
+                }));
+                if (matched.length) changed = true;
+                if (missing.length) {
+                    needsReview.push({ id, kind, reason: `教师 ${missing.join('、')} 不存在，未写入这些对象。` });
+                }
+                if (!matched.length && teacherIds.length) {
+                    continue;
+                }
+            }
+            const spreadSubjectIds = (action.patch?.spreadSubjectIds || action.target?.subjectIds || []).map(value => asText(value, 120)).filter(Boolean);
+            if (spreadSubjectIds.length && action.patch?.spreadSubjects !== false) {
+                const validSubjectIds = new Set((next.subjects || []).map(subject => subject.id));
+                spreadSubjectIds.filter(subjectId => validSubjectIds.has(subjectId)).forEach(subjectId => addSpreadSubject(next.rules, subjectId));
+                changed = true;
+            }
+            if (changed) {
+                applied.push({ id, kind });
+            } else {
+                needsReview.push({ id, kind, reason: '没有可写入的优化目标参数。' });
+            }
+            continue;
+        }
+
+        if (kind === 'rules_patch') {
+            skipped.push({ id, kind, reason: '规则类动作请继续通过现有规则应用流程写入。' });
+            continue;
+        }
+
+        if (kind === 'handled_notice') {
+            skipped.push({ id, kind, reason: '该需求已由系统自动处理。' });
+            continue;
+        }
+
+        skipped.push({ id, kind, reason: '未知语义动作类型。' });
+    }
+
+    return {
+        project: normalizeTimetableProject(next),
+        applied,
+        skipped,
+        needsReview,
+    };
 }
 
 function confidenceBucket(row = {}) {
@@ -1383,7 +1994,19 @@ function buildTimetableRuleReport({
     return report.toJSON();
 }
 
-function buildRuleReviewResult({ project, rows, warnings = [], unsupportedItems = [], source, inputType, contextStats, draftRules, previewItems }) {
+function buildRuleReviewResult({
+    project,
+    rows,
+    warnings = [],
+    unsupportedItems = [],
+    source,
+    inputType,
+    contextStats,
+    draftRules,
+    previewItems,
+    requirementItems = [],
+    semanticActions = [],
+}) {
     const conflicts = detectRuleConflicts(project, rows);
     const clarifyingQuestions = buildClarifyingQuestions(project, rows);
     const missingInfo = buildMissingInfo(rows);
@@ -1411,7 +2034,7 @@ function buildRuleReviewResult({ project, rows, warnings = [], unsupportedItems 
     ));
     const nextAction = clarifyingQuestions.length || missingInfo.length
         ? 'ask_user'
-        : !rows.length
+        : !rows.length && !requirementItems.length
             ? 'no_result'
             : conflicts.some(item => item.level === 'blocking') || needReview.length || unsupportedItems.length || autoAcceptable.length < rows.filter(row => row.status === 'effective').length
                 ? 'review'
@@ -1432,6 +2055,8 @@ function buildRuleReviewResult({ project, rows, warnings = [], unsupportedItems 
         draftRules,
         draftRows: rows,
         previewItems,
+        requirementItems,
+        semanticActions,
         autoAcceptable,
         needReview,
         clarifyingQuestions,
@@ -1588,6 +2213,8 @@ export function normalizeTimetableRuleDraftRows({
     inputType = 'review',
     contextStats = null,
     initialWarnings = [],
+    originalText = '',
+    semanticRequirements = [],
 } = {}) {
     const project = normalizeTimetableProject(inputProject);
     const rules = emptyRulesFrom(project);
@@ -1757,11 +2384,18 @@ export function normalizeTimetableRuleDraftRows({
             return { ...row, status: 'unsupported' };
         });
 
+    const semanticLayer = buildRequirementSemantics(project, rows, {
+        originalText,
+        semanticRequirements,
+    });
+
     return splitParseResult({
         project,
         draftRules: normalizeTimetableProject({ ...project, rules }).rules,
         rows,
         previewItems: previewRows(rows),
+        requirementItems: semanticLayer.requirementItems,
+        semanticActions: semanticLayer.semanticActions,
         warnings: [...new Set(warnings.filter(Boolean))],
         source,
         inputType,
@@ -1807,8 +2441,13 @@ function buildPrompt({ project, text, inputType = 'text', contextStats = null, c
             role: 'system',
             content: [
                 '你是中文中小学排课约束候选抽取助手。你只负责从自然语言、TXT、XLSX 内容中抽取候选约束，不负责最终生效判断。',
-                '只输出 JSON 对象，不要 markdown，不要解释文字。优先输出完整 Agent schema：{"draftRows":[],"autoAcceptable":[],"needReview":[],"clarifyingQuestions":[],"missingInfo":[],"conflicts":[],"warnings":[],"unsupportedItems":[],"confidenceSummary":{"high":0,"medium":0,"low":0},"nextAction":"review"}。',
-                'draftRows 必须包含所有候选约束；autoAcceptable/needReview/unsupportedItems 只是你给出的初步分组，系统会重新校验和重分组。',
+                '只输出 JSON 对象，不要 markdown，不要解释文字。优先输出完整 Agent schema：{"requirementItems":[],"draftRows":[],"autoAcceptable":[],"needReview":[],"clarifyingQuestions":[],"missingInfo":[],"conflicts":[],"warnings":[],"unsupportedItems":[],"confidenceSummary":{"high":0,"medium":0,"low":0},"nextAction":"review"}。',
+                'requirementItems 用于表达“对象是谁 + 需求是什么 + 应该落到哪里”；draftRows 用于兼容旧规则草稿。系统会重新校验和重分组。',
+                'requirementItems 每条建议包含 object, intent, condition, parameters, strength, status, applyTo, confidence, source, warnings。',
+                'object.kind 可用 teacher/class/subject/teacher_group/derived_group/global/lesson_block；applyTo 可用 rule/lesson_plan/solver_policy/optimization/review。',
+                '例如“数学必须连堂”输出 requirementItems: object=数学课程, intent=block_preference, parameters.blockPreference=double, applyTo=lesson_plan。',
+                '例如“未注明默认单节”“连堂块不能拆开”“教师同时间只能上一个班”属于 handled/system policy，不要生成 teacher_unavailable 全周全节次噪音规则。',
+                'draftRows 必须包含所有能映射到旧规则模型的候选约束；autoAcceptable/needReview/unsupportedItems 只是你给出的初步分组，系统会重新校验和重分组。',
                 'nextAction 只能是 ask_user、ready_to_apply、review、no_result。遇到歧义或缺失信息时优先 ask_user，不要猜。',
                 '系统会在你输出后做确定性实体匹配、歧义检测、冲突预检和最终 normalize；不要把不确定内容强行标记为可生效。',
                 '',
@@ -1910,9 +2549,9 @@ function rowsFromAiConstraints(constraints = [], { inputRows = [], source = 'ai'
         return {
             id: asText(constraint.id || inputRow.id, 80) || `rule_draft_${index + 1}`,
             source,
-            sourceSheet: inputRow.sourceSheet,
-            sourceRow: inputRow.sourceRow,
-            rawText: constraint.rawText || inputRow.constraintText || constraint.reason || constraint.description || '',
+            sourceSheet: constraint.sourceSheet || inputRow.sourceSheet,
+            sourceRow: constraint.sourceRow || inputRow.sourceRow,
+            rawText: constraint.rawText || constraint.constraintText || inputRow.constraintText || constraint.reason || constraint.description || '',
             type,
             targetType: constraint.targetType || targetTypeFor(type, constraint),
             targetId: constraint.targetId || constraint.teacherId || constraint.classId || constraint.subjectId || '',
@@ -1932,7 +2571,8 @@ function rowsFromAiConstraints(constraints = [], { inputRows = [], source = 'ai'
             ambiguity: constraint.ambiguity || null,
             ambiguities: constraint.ambiguities || [],
             description: constraint.reason || constraint.description || constraint.note || '',
-            warnings: [],
+            warnings: Array.isArray(constraint.warnings) ? constraint.warnings : [],
+            weekPattern: constraint.weekPattern || '',
             weight: constraint.weight,
             limit: constraint.limit ?? constraint.value ?? constraint.max ?? constraint.maxPerDay ?? constraint.maxConsecutive,
         };
@@ -2071,17 +2711,35 @@ function normalizeRosterFallback({ project, preview, contextStats, initialWarnin
 
 function splitSentences(text = '') {
     return String(text)
-        .split(/[\n。；;，,!?！？]+/)
+        .split(/[\n。；;!?！？]+/)
         .map(item => item.trim())
         .filter(Boolean);
 }
 
-function textSlots(sentence, project) {
+function splitClauses(sentence = '') {
+    return String(sentence)
+        .split(/[，,]+/)
+        .map(item => item.trim())
+        .filter(Boolean);
+}
+
+function parseTimeSpec(sentence, project) {
     const days = parseDays(sentence, project, []);
     const periods = parsePeriods(sentence, project, []);
+    const weekPattern = weekPatternFromText(sentence);
     if (!periods.length) return [];
     const targetDays = days.length ? days : getActiveWeekdays(project);
-    return targetDays.flatMap(day => periods.map(period => slotKey(day, period)));
+    const slots = targetDays.flatMap(day => periods.map(period => slotKey(day, period)));
+    return {
+        days,
+        periods,
+        slots,
+        weekPattern,
+    };
+}
+
+function textSlots(sentence, project) {
+    return parseTimeSpec(sentence, project).slots || [];
 }
 
 function uniqueTargets(targets = []) {
@@ -2125,34 +2783,119 @@ function textSubjectTargets(sentence = '', project = {}) {
     project.subjects.forEach(subject => {
         if (subject.name && sentence.includes(subject.name)) targets.push({ id: subject.id, name: subject.name });
     });
-    if (!targets.length && /上午|早上/.test(sentence) && /(尽量|优先|最好|希望|prefer)/i.test(sentence)) {
-        const match = sentence.match(/^(.{1,12}?)(?:尽量|优先|最好|希望|要|排|安排).*?(?:上午|早上)/);
+    if (!targets.length && /(尽量|优先|最好|希望|prefer|避开|不要|不排)/i.test(sentence)) {
+        const match = sentence.match(/^(.{1,12}?)(?:尽量|优先|最好|希望|要|排|安排|避开|不要|不排)/);
         if (match) {
-            const name = match[1].replace(/课程|学科|科目/g, '').trim();
+            const name = match[1].replace(/^\d+\.\s*/, '').replace(/课程|学科|科目/g, '').trim();
             if (name) targets.push({ id: '', name });
         }
     }
     return uniqueTargets(targets);
 }
 
-function localTextConstraints(project, text) {
+function hasMainSubjectShorthand(sentence = '') {
+    return /语数英|语文.*数学.*英语|数学.*语文.*英语|main subjects/i.test(sentence);
+}
+
+function mainSubjectTargets(project = {}) {
+    return project.subjects
+        .filter(subject => /(语文|数学|英语|chinese|math|english)/i.test(subject.name))
+        .map(subject => ({ id: subject.id, name: subject.name }));
+}
+
+function isContinuationClause(sentence = '') {
+    return /^(尤其|其中|同时|并且|而且|另外|优先|最好|特别|更|再|还|也)/.test(sentence.trim());
+}
+
+function withSource(item = {}, sourceMeta = {}) {
+    return {
+        ...item,
+        sourceSheet: sourceMeta.sourceSheet || item.sourceSheet,
+        sourceRow: sourceMeta.sourceRow || item.sourceRow,
+    };
+}
+
+function slotSetIsSubset(left = [], right = []) {
+    if (!left.length || !right.length || left.length >= right.length) return false;
+    const rightSet = new Set(right);
+    return left.every(slot => rightSet.has(slot));
+}
+
+function compactLocalConstraints(constraints = []) {
+    const kept = [];
+    for (const item of constraints) {
+        if (item.type === 'subject_preferred_periods' && (item.slots || []).length) {
+            const keyFor = value => JSON.stringify([
+                value.type,
+                value.targetId || '',
+                value.target || '',
+                value.sourceSheet || '',
+                value.sourceRow || '',
+                value.weekPattern || '',
+            ]);
+            const key = keyFor(item);
+            const existingIndex = kept.findIndex(value => keyFor(value) === key);
+            if (existingIndex >= 0) {
+                const existing = kept[existingIndex];
+                if (slotSetIsSubset(item.slots || [], existing.slots || [])) {
+                    kept[existingIndex] = item;
+                    continue;
+                }
+                if (slotSetIsSubset(existing.slots || [], item.slots || [])) continue;
+            }
+        }
+        kept.push(item);
+    }
+    const seen = new Set();
+    return kept.filter(item => {
+        const key = JSON.stringify([item.type, item.targetId, item.target, item.slots || [], item.limit ?? null, item.sourceSheet || '', item.sourceRow || '', item.weekPattern || '']);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function localTextConstraints(project, text, sourceMeta = {}) {
     const constraints = [];
     const sentences = splitSentences(text);
     const unavailablePattern = /(不要排|不排|不可排|不能排|没空|不可用|unavailable|avoid)/i;
     const preferPattern = /(优先|尽量|prefer|preferred|安排到)/i;
     const avoidPattern = /(避开|不要|不排|avoid)/i;
 
-    for (const sentence of sentences) {
-        const slots = textSlots(sentence, project);
-        const teacherTargets = textTeacherTargets(sentence, project);
-        const classTargets = textClassTargets(sentence, project);
-        const subjectTargets = textSubjectTargets(sentence, project);
+    for (const sentenceGroup of sentences) {
+        const context = {
+            teacherTargets: [],
+            classTargets: [],
+            subjectTargets: [],
+            prefer: false,
+            avoid: false,
+            unavailable: false,
+            rawText: '',
+        };
 
-        if (/(必须|固定|锁定|指定)/.test(sentence) && slots.length && teacherTargets.length && classTargets.length && subjectTargets.length) {
-            const teacher = teacherTargets[0];
-            const klass = classTargets[0];
-            const subject = subjectTargets[0];
-            constraints.push({
+        for (const sentence of splitClauses(sentenceGroup)) {
+            const timeSpec = parseTimeSpec(sentence, project);
+            const slots = timeSpec.slots || [];
+            const continuation = isContinuationClause(sentence);
+            const teacherTargets = textTeacherTargets(sentence, project);
+            const classTargets = textClassTargets(sentence, project);
+            let subjectTargets = continuation ? [] : textSubjectTargets(sentence, project);
+            if (hasMainSubjectShorthand(sentence)) subjectTargets = mainSubjectTargets(project);
+            const effectiveTeacherTargets = teacherTargets.length ? teacherTargets : continuation ? context.teacherTargets : [];
+            const effectiveClassTargets = classTargets.length ? classTargets : continuation ? context.classTargets : [];
+            const effectiveSubjectTargets = subjectTargets.length ? subjectTargets : continuation ? context.subjectTargets : [];
+            const hasPrefer = preferPattern.test(sentence) || (continuation && context.prefer);
+            const hasAvoid = avoidPattern.test(sentence) || (continuation && context.avoid);
+            const hasUnavailable = unavailablePattern.test(sentence) || (continuation && context.unavailable);
+            const rawText = continuation && context.rawText ? `${context.rawText}，${sentence}` : sentence;
+            const weekPattern = timeSpec.weekPattern || weekPatternFromText(sentence) || (continuation ? context.weekPattern : '');
+            const broadDayPartOnly = Boolean(dayPartName(sentence)) && !hasExplicitPeriodExpression(sentence);
+
+            if (/(必须|固定|锁定|指定)/.test(sentence) && slots.length && effectiveTeacherTargets.length && effectiveClassTargets.length && effectiveSubjectTargets.length) {
+                const teacher = effectiveTeacherTargets[0];
+                const klass = effectiveClassTargets[0];
+                const subject = effectiveSubjectTargets[0];
+                constraints.push(withSource({
                 type: 'locked_slot',
                 teacherId: teacher.id,
                 teacher: teacher.name,
@@ -2162,126 +2905,150 @@ function localTextConstraints(project, text) {
                 subject: subject.name,
                 slots: [slots[0]],
                 priority: 'hard',
-                reason: sentence,
+                reason: rawText,
                 confidence: 0.88,
-            });
-            continue;
-        }
+                weekPattern,
+                }, sourceMeta));
+                continue;
+            }
 
-        teacherTargets.forEach(teacher => {
-            if (unavailablePattern.test(sentence) && slots.length) {
-                constraints.push({
+            effectiveTeacherTargets.forEach(teacher => {
+                if (hasUnavailable && slots.length) {
+                    constraints.push(withSource({
                     type: 'teacher_unavailable',
                     targetId: teacher.id,
                     target: teacher.name,
                     slots,
                     priority: 'hard',
-                    reason: sentence,
+                    reason: rawText,
                     confidence: teacher.id ? 0.88 : 0.74,
-                });
-            }
-            // 每天最多 N 节
-            const dailyMatch = sentence.match(/每[天日].*?(?:最多|不超过|不多于|上限)\s*(\d{1,2})\s*节/);
-            if (dailyMatch) {
-                constraints.push({
+                    weekPattern,
+                    }, sourceMeta));
+                }
+                const dailyMatch = sentence.match(new RegExp(`每[天日].*?(?:最多|不超过|不多于|上限)\\s*(${NUMBER_TOKEN_PATTERN})\\s*节`));
+                if (dailyMatch) {
+                    constraints.push(withSource({
                     type: 'teacher_daily_limit',
                     targetId: teacher.id,
                     target: teacher.name,
-                    limit: Number.parseInt(dailyMatch[1], 10),
+                    limit: parseLooseNumber(dailyMatch[1]),
                     priority: 'soft',
-                    reason: sentence,
+                    reason: rawText,
                     confidence: teacher.id ? 0.82 : 0.7,
-                });
-            }
-            // 最多连续 N 节 / 不要连上
-            const consecutiveMatch = sentence.match(/(?:连续|连排|连堂).*?(?:最多|不超过|不多于)\s*(\d{1,2})\s*节/);
-            if (consecutiveMatch) {
-                constraints.push({
+                    weekPattern,
+                    }, sourceMeta));
+                }
+                const consecutiveMatch = sentence.match(new RegExp(`(?:连续|连排|连堂).*?(?:最多|不超过|不多于)\\s*(${NUMBER_TOKEN_PATTERN})\\s*节`));
+                if (consecutiveMatch) {
+                    constraints.push(withSource({
                     type: 'teacher_consecutive_limit',
                     targetId: teacher.id,
                     target: teacher.name,
-                    limit: Number.parseInt(consecutiveMatch[1], 10),
+                    limit: parseLooseNumber(consecutiveMatch[1]),
                     priority: 'soft',
-                    reason: sentence,
+                    reason: rawText,
                     confidence: teacher.id ? 0.8 : 0.68,
-                });
-            }
-        });
-        classTargets.forEach(klass => {
-            if (unavailablePattern.test(sentence) && slots.length) {
-                constraints.push({
+                    weekPattern,
+                    }, sourceMeta));
+                }
+            });
+            effectiveClassTargets.forEach(klass => {
+                if (hasUnavailable && slots.length) {
+                    constraints.push(withSource({
                     type: 'class_unavailable',
                     targetId: klass.id,
                     target: klass.name,
                     slots,
                     priority: 'hard',
-                    reason: sentence,
+                    reason: rawText,
                     confidence: klass.id ? 0.84 : 0.68,
-                });
-            }
-        });
-        subjectTargets.forEach(subject => {
-            const teacherUnavailableSentence = project.teachers.some(teacher => sentence.includes(teacher.name))
-                && unavailablePattern.test(sentence)
-                && !preferPattern.test(sentence);
-            if (teacherUnavailableSentence) return;
-            if (/上午|早上/.test(sentence) && preferPattern.test(sentence)) {
-                constraints.push({
-                    type: 'subject_morning',
-                    targetId: subject.id,
-                    target: subject.name,
-                    priority: 'soft',
-                    reason: sentence,
-                    confidence: subject.id ? 0.86 : 0.68,
-                });
-            } else if (slots.length && preferPattern.test(sentence)) {
-                constraints.push({
+                    weekPattern,
+                    }, sourceMeta));
+                }
+            });
+            effectiveSubjectTargets.forEach(subject => {
+                const teacherUnavailableSentence = project.teachers.some(teacher => sentence.includes(teacher.name))
+                    && hasUnavailable
+                    && !hasPrefer;
+                if (teacherUnavailableSentence) return;
+                if (slots.length && hasPrefer && !broadDayPartOnly) {
+                    constraints.push(withSource({
                     type: 'subject_preferred_periods',
                     targetId: subject.id,
                     target: subject.name,
                     slots,
                     priority: 'soft',
-                    reason: sentence,
-                    confidence: subject.id ? 0.76 : 0.64,
-                });
-            } else if (slots.length && avoidPattern.test(sentence)) {
-                constraints.push({
+                    reason: rawText,
+                    confidence: subject.id ? 0.9 : 0.64,
+                    weekPattern,
+                    }, sourceMeta));
+                } else if (slots.length && hasAvoid) {
+                    constraints.push(withSource({
                     type: 'subject_avoid_periods',
                     targetId: subject.id,
                     target: subject.name,
                     slots,
                     priority: 'soft',
-                    reason: sentence,
-                    confidence: subject.id ? 0.76 : 0.64,
-                });
-            }
-        });
-        if (/语数英|语文.*数学.*英语|数学.*语文.*英语|main subjects/i.test(sentence) && /上午|早上/.test(sentence)) {
-            project.subjects
-                .filter(subject => /(语文|数学|英语|chinese|math|english)/i.test(subject.name))
-                .forEach(subject => constraints.push({
+                    reason: rawText,
+                    confidence: subject.id ? 0.9 : 0.64,
+                    weekPattern,
+                    }, sourceMeta));
+                } else if (/上午|早上/.test(sentence) && hasPrefer) {
+                    constraints.push(withSource({
                     type: 'subject_morning',
                     targetId: subject.id,
                     target: subject.name,
                     priority: 'soft',
-                    reason: sentence,
-                    confidence: 0.8,
-                }));
+                    reason: rawText,
+                    confidence: subject.id ? 0.86 : 0.68,
+                    weekPattern,
+                    }, sourceMeta));
+                }
+            });
+
+            if (teacherTargets.length) context.teacherTargets = teacherTargets;
+            if (classTargets.length) context.classTargets = classTargets;
+            if (subjectTargets.length) context.subjectTargets = subjectTargets;
+            if (hasPrefer) context.prefer = true;
+            if (hasAvoid) context.avoid = true;
+            if (hasUnavailable) context.unavailable = true;
+            if (weekPattern) context.weekPattern = weekPattern;
+            if (teacherTargets.length || classTargets.length || subjectTargets.length || slots.length || hasPrefer || hasAvoid || hasUnavailable) {
+                context.rawText = rawText;
+            }
         }
     }
 
-    const seen = new Set();
-    return constraints.filter(item => {
-        const key = JSON.stringify([item.type, item.targetId, item.slots || [], item.limit ?? null]);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
+    return compactLocalConstraints(constraints);
+}
+
+function localTextConstraintsFromInput(project, text, constraintRows = []) {
+    if (Array.isArray(constraintRows) && constraintRows.length) {
+        return constraintRows.flatMap(row => {
+            const rowText = asText(row.constraintText || row.rawText || row.description || '', 1500);
+            if (!rowText) return [];
+            return localTextConstraints(project, rowText, {
+                sourceSheet: row.sourceSheet,
+                sourceRow: row.sourceRow,
+            });
+        });
+    }
+    return localTextConstraints(project, text);
 }
 
 function parseConstraintsWithLocalFallback({ project, text, inputType, contextStats = null, constraintRows = [], error = null }) {
-    const constraints = localTextConstraints(project, text);
+    const constraints = localTextConstraintsFromInput(project, text, constraintRows);
     if (!constraints.length) {
+        const semanticOnly = normalizeTimetableRuleDraftRows({
+            project,
+            draftRows: [],
+            source: 'local_text',
+            inputType,
+            contextStats,
+            originalText: text,
+            initialWarnings: error ? [`智能解析不可用，已仅提取明确需求：${error.reason || error.message}`] : [],
+        });
+        if ((semanticOnly.requirementItems || []).length) return semanticOnly;
         if (error) throw error;
         throw new TimetableRuleParseError('需要配置智能解析服务才能解析这类约束。', 'ai_not_configured', 503);
     }
@@ -2291,11 +3058,57 @@ function parseConstraintsWithLocalFallback({ project, text, inputType, contextSt
         source: 'local_text',
         inputType,
         contextStats,
+        originalText: text,
         initialWarnings: error ? [`智能解析不可用，已仅提取明确规则：${error.reason || error.message}`] : [],
     });
 }
 
+function hasConfiguredAi(env = {}) {
+    return Boolean(String(env.DEEPSEEK_API_KEY || env.OPENAI_API_KEY || '').trim());
+}
+
+function shouldUseLocalFirst(inputType = '') {
+    return ['text', 'txt', 'csv_text'].includes(inputType);
+}
+
+function localResultIsDecisive(result = {}) {
+    const rows = result.draftRows || [];
+    if (!rows.length) return false;
+    return rows.some(row => row.status === 'effective' || row.weekPattern);
+}
+
+function localResultCanSkipAi(text = '', result = {}) {
+    if (/[A-Za-z]/.test(text)) return false;
+    return localResultIsDecisive(result);
+}
+
 async function parseAiOrLocal({ project, text, inputType, contextStats = null, constraintRows = [], env, fetchImpl }) {
+    if (shouldUseLocalFirst(inputType)) {
+        const localConstraints = localTextConstraintsFromInput(project, text, constraintRows);
+        if (localConstraints.length) {
+            const localResult = normalizeTimetableRuleDraftRows({
+                project,
+                draftRows: rowsFromAiConstraints(localConstraints, { inputRows: constraintRows, source: 'local_text' }),
+                source: 'local_text',
+                inputType,
+                contextStats,
+                originalText: text,
+                initialWarnings: hasConfiguredAi(env) ? [] : ['智能解析不可用，已仅提取明确规则：ai_not_configured'],
+            });
+            if (!hasConfiguredAi(env) || localResultCanSkipAi(text, localResult)) return localResult;
+        } else if (!hasConfiguredAi(env)) {
+            const semanticOnly = normalizeTimetableRuleDraftRows({
+                project,
+                draftRows: [],
+                source: 'local_text',
+                inputType,
+                contextStats,
+                originalText: text,
+                initialWarnings: ['智能解析不可用，已仅提取明确需求：ai_not_configured'],
+            });
+            if ((semanticOnly.requirementItems || []).length) return semanticOnly;
+        }
+    }
     try {
         const parsed = await callAi({ project, text, inputType, contextStats, constraintRows, env, fetchImpl });
         const constraints = aiDraftRowsFromParsed(parsed);
@@ -2310,6 +3123,8 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
             source: 'ai',
             inputType,
             contextStats,
+            originalText: text,
+            semanticRequirements: parsed.requirementItems || [],
             initialWarnings: warnings,
         });
     } catch (error) {

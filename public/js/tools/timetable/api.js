@@ -47,19 +47,47 @@ const REASON_MESSAGES = {
     empty_prompt: '请先输入要解析的约束。',
     ai_invalid_json: '智能解析结果格式异常，请调整描述后重试。',
     ai_failed: '智能约束解析失败，请稍后重试。',
+    non_json_response: '服务返回了非 JSON 响应，请检查接口路径或服务状态。',
 };
 
 export async function requestTimetable(path, options = {}) {
-    const response = await fetch(`/api/tools/timetable${path}`, {
-        ...options,
+    const { fetch: fetchOverride, raw, ...requestOptions } = options;
+    const fetchClient = typeof fetchOverride === 'function' ? fetchOverride : fetch;
+    const response = await fetchClient(`/api/tools/timetable${path}`, {
+        ...requestOptions,
         headers: {
-            ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-            ...(options.headers || {}),
+            ...(requestOptions.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+            ...(requestOptions.headers || {}),
         },
     });
-    if (options.raw) return response;
+    if (raw) return response;
 
-    const payload = await response.json();
+    let payload = {};
+    if (typeof response.text === 'function') {
+        const contentType = response.headers?.get?.('content-type') || '';
+        const bodyText = await response.text();
+        if (bodyText) {
+            try {
+                payload = JSON.parse(bodyText);
+            } catch {
+                const message = '服务返回了非 JSON 响应，请检查接口路径或服务状态。';
+                const error = new Error(message);
+                error.status = response.status;
+                error.payload = {
+                    success: false,
+                    error: message,
+                    data: {
+                        reason: 'non_json_response',
+                        contentType,
+                        bodyPreview: bodyText.slice(0, 160),
+                    },
+                };
+                throw error;
+            }
+        }
+    } else if (typeof response.json === 'function') {
+        payload = await response.json();
+    }
     if (!response.ok || payload.success === false) {
         const error = new Error(payload.error || '请求失败');
         error.payload = payload;

@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import AdmZip from 'adm-zip';
+
 import { createGatewayApp, setDevelopmentStaticHeaders } from '../gateway/app.js';
 import { getGatewayConfig } from '../gateway/config/environment.js';
 import { mapGatewayError } from '../gateway/middleware/error-handler.js';
@@ -17,6 +19,45 @@ import { requireLocalApiToken } from '../gateway/security.js';
 import { cleanupUploadsDirectory, ensureDirectory } from '../gateway/startup/uploads.js';
 import { createDefaultTimetableProject } from '../gateway/services/timetable-project.js';
 import { createTimetableStore } from '../gateway/services/timetable-store.js';
+
+function xmlEscape(value = '') {
+    return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&apos;',
+    })[char]);
+}
+
+function buildConstraintWorkbook(rows = []) {
+    const strings = rows.flat();
+    const sharedStrings = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strings.length}" uniqueCount="${strings.length}">
+${strings.map(value => `<si><t>${xmlEscape(value)}</t></si>`).join('')}
+</sst>`;
+    let stringIndex = 0;
+    const sheetRows = rows.map((row, rowIndex) => {
+        const cells = row.map((_, columnIndex) => {
+            const ref = `${String.fromCharCode(65 + columnIndex)}${rowIndex + 1}`;
+            return `<c r="${ref}" t="s"><v>${stringIndex++}</v></c>`;
+        }).join('');
+        return `<row r="${rowIndex + 1}">${cells}</row>`;
+    }).join('');
+    const zip = new AdmZip();
+    zip.addFile('xl/sharedStrings.xml', Buffer.from(sharedStrings, 'utf8'));
+    zip.addFile('xl/workbook.xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets><sheet name="AI约束建议" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`, 'utf8'));
+    zip.addFile('xl/_rels/workbook.xml.rels', Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`, 'utf8'));
+    zip.addFile('xl/worksheets/sheet1.xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`, 'utf8'));
+    return zip.toBuffer();
+}
 
 test('gateway app can be constructed without starting the HTTP listener', () => {
     const app = createGatewayApp({ isDev: false });
@@ -67,10 +108,22 @@ test('production gateway errors hide internal details and include requestId', ()
 
 test('gateway mounts legacy timetable APIs', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousDeepseekKey = process.env.DEEPSEEK_API_KEY;
+    const previousOpenAiKey = process.env.OPENAI_API_KEY;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-gateway-timetable-'));
+    process.env.DEEPSEEK_API_KEY = '';
+    process.env.OPENAI_API_KEY = '';
     const timetableStore = createTimetableStore();
     await timetableStore.saveProject(createDefaultTimetableProject({
-        subjects: [{ id: 's1', name: '语文' }],
+        teachers: [{ id: 't1', name: '张老师' }],
+        classes: [{ id: 'c1', grade: '一年级', name: '一班' }],
+        subjects: [
+            { id: 's1', name: '语文' },
+            { id: 's2', name: '数学' },
+        ],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 's2', teacherId: 't1', weeklyHours: 4, blockPreference: 'single' },
+        ],
     }));
 
     const app = createGatewayApp({ isDev: false });
@@ -113,6 +166,51 @@ test('gateway mounts legacy timetable APIs', async () => {
         assert.equal(ruleReviewPayload.success, true);
         assert.ok(ruleReviewPayload.data.draftRows.some(row => row.type === 'subject_morning' && row.targetId === 's1'));
 
+        const workbook = buildConstraintWorkbook([
+            ['约束内容'],
+            ['语文尽量安排到上午'],
+        ]);
+        const ruleReviewForm = new FormData();
+        ruleReviewForm.append('file', new Blob([workbook], {
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }), 'AI排课约束建议.xlsx');
+        const xlsxRuleReviewResponse = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/rule-review/parse`, {
+            method: 'POST',
+            body: ruleReviewForm,
+        });
+        assert.equal(xlsxRuleReviewResponse.status, 200);
+        assert.match(xlsxRuleReviewResponse.headers.get('content-type') || '', /application\/json/);
+        const xlsxRuleReviewPayload = await xlsxRuleReviewResponse.json();
+        assert.equal(xlsxRuleReviewPayload.success, true);
+        assert.ok(xlsxRuleReviewPayload.data.draftRows.some(row => row.type === 'subject_morning' && row.targetId === 's1'));
+
+        const semanticApplyResponse = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/requirements/apply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                actions: [
+                    {
+                        id: 'act_math_double',
+                        kind: 'lesson_plan_patch',
+                        target: { lessonPlanIds: ['lp_math'] },
+                        patch: { blockPreference: 'double' },
+                    },
+                    {
+                        id: 'act_teacher_consecutive',
+                        kind: 'soft_rules_patch',
+                        target: { teacherIds: ['t1'] },
+                        patch: { teacherLimits: { consecutive: 3 }, balancedTeacherLoad: true },
+                    },
+                ],
+            }),
+        });
+        assert.equal(semanticApplyResponse.status, 200);
+        const semanticApplyPayload = await semanticApplyResponse.json();
+        assert.equal(semanticApplyPayload.success, true);
+        assert.equal(semanticApplyPayload.data.project.lessonPlans.find(plan => plan.id === 'lp_math').blockPreference, 'double');
+        assert.equal(semanticApplyPayload.data.project.rules.softRules.teacherLimits.t1.consecutive, 3);
+        assert.deepEqual(semanticApplyPayload.data.applied.map(item => item.id), ['act_math_double', 'act_teacher_consecutive']);
+
         const sharedResponse = await fetch(`http://127.0.0.1:${port}/shared/seating/classroom-layout.js`);
         const sharedSource = await sharedResponse.text();
         assert.equal(sharedResponse.status, 200);
@@ -123,6 +221,16 @@ test('gateway mounts legacy timetable APIs', async () => {
             delete process.env.TIMETABLE_DATA_DIR;
         } else {
             process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+        if (previousDeepseekKey === undefined) {
+            delete process.env.DEEPSEEK_API_KEY;
+        } else {
+            process.env.DEEPSEEK_API_KEY = previousDeepseekKey;
+        }
+        if (previousOpenAiKey === undefined) {
+            delete process.env.OPENAI_API_KEY;
+        } else {
+            process.env.OPENAI_API_KEY = previousOpenAiKey;
         }
     }
 });

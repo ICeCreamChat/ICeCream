@@ -79,7 +79,11 @@ export function createTimetablePlannerState(overrides = {}) {
         },
         constraintChat: null,
         smartWorkbench: { open: false },
-        constraintDialog: { open: false },
+        constraintDialog: {
+            open: false,
+            requirementFilter: 'all',
+            selectedRequirementId: '',
+        },
         workflowOpenSections: null,
         rangeDraft: null,
         periodTimeDialog: {

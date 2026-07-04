@@ -5,15 +5,53 @@
 
 import { requestTimetable } from './api.js';
 
+const REQUIREMENT_FILTER_KEYS = new Set(['all', 'rule', 'lesson_plan', 'optimization', 'handled', 'review']);
+
+function semanticRequirementGroup(item = {}) {
+    if (item.status === 'handled') return 'handled';
+    if (item.status === 'needs_review' || item.applyTo === 'review') return 'review';
+    if (item.applyTo === 'lesson_plan') return 'lesson_plan';
+    if (item.applyTo === 'optimization') return 'optimization';
+    if (item.applyTo === 'rule' || item.applyTo === 'constraint_rule') return 'rule';
+    return item.status === 'actionable' ? 'review' : 'handled';
+}
+
+function visibleRequirementItems(items = [], filter = 'all') {
+    if (!filter || filter === 'all') return items;
+    return items.filter(item => semanticRequirementGroup(item) === filter);
+}
+
+function defaultRequirementId(items = [], filter = 'all') {
+    const visibleItems = visibleRequirementItems(items, filter);
+    const selected = visibleItems.find(item => item.status === 'needs_review')
+        || visibleItems.find(item => item.status === 'actionable')
+        || visibleItems[0]
+        || null;
+    return selected?.id || '';
+}
+
+function normalizeRequirementReviewState(dialog = {}, items = []) {
+    const filter = REQUIREMENT_FILTER_KEYS.has(dialog.requirementFilter) ? dialog.requirementFilter : 'all';
+    const visibleItems = visibleRequirementItems(items, filter);
+    const selectedId = visibleItems.some(item => item.id && item.id === dialog.selectedRequirementId)
+        ? dialog.selectedRequirementId
+        : defaultRequirementId(items, filter);
+    return { filter, selectedId };
+}
+
 /**
  * 打开智能约束助手弹窗
  */
 export function openConstraintDialog(mode = null) {
     const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : null;
     const currentReview = this.state.ruleReview || {};
+    const currentDialog = this.state.constraintDialog || {};
+    const reviewState = normalizeRequirementReviewState(currentDialog, currentReview.requirementItems || []);
     this.state.constraintDialog = {
-        ...(this.state.constraintDialog || {}),
+        ...currentDialog,
         open: true,
+        requirementFilter: reviewState.filter,
+        selectedRequirementId: reviewState.selectedId,
     };
     this.state.smartWorkbench = {
         ...(this.state.smartWorkbench || {}),
@@ -27,6 +65,8 @@ export function openConstraintDialog(mode = null) {
         mode: nextMode || currentReview.inputMode || 'text',
         text: currentReview.text || '',
         draftRows: currentReview.draftRows || [],
+        requirementItems: currentReview.requirementItems || [],
+        semanticActions: currentReview.semanticActions || [],
         parsing: Boolean(currentReview.parsing),
     };
 
@@ -44,6 +84,27 @@ export function closeConstraintDialog() {
     this.state.constraintDialog = {
         open: false,
     };
+    this.render();
+}
+
+export function filterRequirements(filter) {
+    const nextFilter = REQUIREMENT_FILTER_KEYS.has(filter) ? filter : 'all';
+    const items = this.state.ruleReview?.requirementItems || [];
+    if (!this.state.constraintDialog) {
+        this.state.constraintDialog = { open: true };
+    }
+    this.state.constraintDialog.requirementFilter = nextFilter;
+    this.state.constraintDialog.selectedRequirementId = defaultRequirementId(items, nextFilter);
+    this.render();
+}
+
+export function selectRequirement(requirementId) {
+    const items = this.state.ruleReview?.requirementItems || [];
+    if (!items.some(item => item.id && item.id === requirementId)) return;
+    if (!this.state.constraintDialog) {
+        this.state.constraintDialog = { open: true };
+    }
+    this.state.constraintDialog.selectedRequirementId = requirementId;
     this.render();
 }
 
@@ -150,7 +211,7 @@ export async function parseConstraintsFromDialog() {
         }
         formData.append('project', JSON.stringify(this.state.project || {}));
 
-        const result = await requestTimetable('/rule-review/parse', {
+        const result = await requestTimetable('/rules/parse', {
             method: 'POST',
             body: formData,
         });
@@ -166,6 +227,22 @@ export async function parseConstraintsFromDialog() {
         const existingRows = this.state.ruleReview.draftRows || [];
         const newRows = result.draftRows || result.rows || [];
         this.state.ruleReview.draftRows = [...existingRows, ...newRows];
+        this.state.ruleReview.requirementItems = [
+            ...(this.state.ruleReview.requirementItems || []),
+            ...(result.requirementItems || []),
+        ];
+        this.state.ruleReview.semanticActions = [
+            ...(this.state.ruleReview.semanticActions || []),
+            ...(result.semanticActions || []),
+        ];
+        this.state.ruleReview.unsupportedItems = result.unsupportedItems || this.state.ruleReview.unsupportedItems || [];
+        this.state.ruleReview.warnings = result.warnings || this.state.ruleReview.warnings || [];
+        const reviewState = normalizeRequirementReviewState(this.state.constraintDialog || {}, this.state.ruleReview.requirementItems || []);
+        this.state.constraintDialog = {
+            ...(this.state.constraintDialog || {}),
+            requirementFilter: reviewState.filter,
+            selectedRequirementId: reviewState.selectedId,
+        };
         if (mode === 'file') {
             this.constraintDialogFile = null;
             this.state.ruleReview.fileName = '';
@@ -253,6 +330,12 @@ export function clearAllConstraints() {
 
     if (this.state.ruleReview) {
         this.state.ruleReview.draftRows = [];
+        this.state.ruleReview.requirementItems = [];
+        this.state.ruleReview.semanticActions = [];
+    }
+    if (this.state.constraintDialog) {
+        this.state.constraintDialog.requirementFilter = 'all';
+        this.state.constraintDialog.selectedRequirementId = '';
     }
     this.render();
 }
@@ -262,8 +345,11 @@ export function clearAllConstraints() {
  */
 export async function applyConstraintsFromDialog() {
     const constraints = this.state.ruleReview?.draftRows || [];
-    if (constraints.length === 0) {
-        alert('没有可应用的约束');
+    const semanticActions = (this.state.ruleReview?.semanticActions || [])
+        .filter(action => ['ready', 'actionable'].includes(action.status || 'ready') && action.kind !== 'handled_notice' && action.kind !== 'rules_patch');
+    const applyCount = constraints.length + semanticActions.length;
+    if (applyCount === 0) {
+        alert('没有可应用的需求');
         return;
     }
     const hasBlockingConflict = constraints.some(c => c.hasConflict)
@@ -273,11 +359,81 @@ export async function applyConstraintsFromDialog() {
         return;
     }
 
-    if (!confirm(`确定要应用 ${constraints.length} 条约束吗？`)) {
+    if (!confirm(`确定要应用 ${applyCount} 条需求吗？`)) {
         return;
     }
 
     try {
+        const supportedRuleTypes = new Set([
+            'teacher_unavailable',
+            'class_unavailable',
+            'locked_slot',
+            'subject_morning',
+            'subject_preferred_periods',
+            'subject_avoid_periods',
+            'teacher_daily_limit',
+            'teacher_consecutive_limit',
+            'subject_spread',
+        ]);
+        const backendRuleRows = constraints.filter(row => supportedRuleTypes.has(row.type) && !['unsupported', 'suggestion', 'invalid', 'ignored'].includes(row.status));
+        if (backendRuleRows.length) {
+            const normalized = await requestTimetable('/rules/normalize', {
+                method: 'POST',
+                body: JSON.stringify({
+                    draftRows: backendRuleRows,
+                    inputType: this.state.ruleReview?.inputType || 'constraint_dialog',
+                    contextStats: this.state.ruleReview?.contextStats || null,
+                }),
+            });
+            const effectiveCount = (normalized.draftRows || []).filter(row => row.status === 'effective').length;
+            if (effectiveCount !== backendRuleRows.length) {
+                this.state.ruleReview = {
+                    ...(this.state.ruleReview || {}),
+                    ...normalized,
+                    open: true,
+                };
+                this.render();
+                alert('部分约束需要复核后才能应用');
+                return;
+            }
+            const savedRules = await requestTimetable('/rules', {
+                method: 'POST',
+                body: JSON.stringify({ rules: normalized.draftRules }),
+            });
+            if (savedRules.project) {
+                if (typeof this.applyProject === 'function') {
+                    this.applyProject(savedRules.project);
+                } else {
+                    this.state.project = savedRules.project;
+                }
+            }
+        }
+
+        const appliedActionIds = new Set();
+        const appliedRequirementIds = new Set();
+        if (semanticActions.length) {
+            const result = await requestTimetable('/requirements/apply', {
+                method: 'POST',
+                body: JSON.stringify({ actions: semanticActions }),
+            });
+            if (result.project) {
+                if (typeof this.applyProject === 'function') {
+                    this.applyProject(result.project);
+                } else {
+                    this.state.project = result.project;
+                }
+            }
+            (result.applied || []).forEach(item => appliedActionIds.add(item.id));
+            semanticActions
+                .filter(action => appliedActionIds.has(action.id))
+                .forEach(action => {
+                    if (action.requirementId) appliedRequirementIds.add(action.requirementId);
+                });
+            if ((result.needsReview || []).length && typeof this.setMessage === 'function') {
+                this.setMessage(`${result.needsReview.length} 条需求需要复核后再应用。`);
+            }
+        }
+
         // 将约束标记为已应用
         constraints.forEach(c => {
             c.status = 'effective';
@@ -294,14 +450,30 @@ export async function applyConstraintsFromDialog() {
 
         // 清空草稿
         this.state.ruleReview.draftRows = [];
+        this.state.ruleReview.semanticActions = (this.state.ruleReview.semanticActions || [])
+            .filter(action => !appliedActionIds.has(action.id));
+        this.state.ruleReview.requirementItems = (this.state.ruleReview.requirementItems || [])
+            .filter(item => !appliedRequirementIds.has(item.id) && item.status !== 'handled');
+        const reviewState = normalizeRequirementReviewState(this.state.constraintDialog || {}, this.state.ruleReview.requirementItems || []);
+        this.state.constraintDialog = {
+            ...(this.state.constraintDialog || {}),
+            requirementFilter: reviewState.filter,
+            selectedRequirementId: reviewState.selectedId,
+        };
 
         // 关闭弹窗
-        this.closeConstraintDialog();
+        if (!this.state.ruleReview.draftRows.length && !this.state.ruleReview.requirementItems.length) {
+            this.closeConstraintDialog();
+        } else {
+            this.render();
+        }
 
         // 重新渲染主界面
         this.render();
 
-        alert(`成功应用 ${constraints.length} 条约束`);
+        alert(semanticActions.length
+            ? `成功应用 ${applyCount} 条需求`
+            : `成功应用 ${constraints.length} 条约束`);
     } catch (error) {
         console.error('Apply constraints error:', error);
         alert(`应用失败：${error.message || '未知错误'}`);

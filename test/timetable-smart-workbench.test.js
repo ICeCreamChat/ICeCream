@@ -28,7 +28,11 @@ test('constraint dialog state replaces the removed smart workbench by default', 
     const state = createTimetablePlannerState({ project: project() });
 
     assert.deepEqual(state.smartWorkbench, { open: false });
-    assert.deepEqual(state.constraintDialog, { open: false });
+    assert.deepEqual(state.constraintDialog, {
+        open: false,
+        requirementFilter: 'all',
+        selectedRequirementId: '',
+    });
 });
 
 test('constraint dialog renders the current intelligent constraints entry without old workbench markers', () => {
@@ -73,6 +77,53 @@ test('constraint dialog renders recognized constraints and apply action', () => 
     assert.match(html, /数学尽量上午/);
     assert.match(html, /data-action="apply-constraints"/);
     assert.match(html, /data-action="start-ai-chat"/);
+});
+
+test('constraint dialog formats recognized constraint time, source row and review warnings', () => {
+    const html = renderConstraintDialog(createTimetablePlannerState({
+        project: project(),
+        constraintDialog: { open: true },
+        ruleReview: {
+            inputMode: 'text',
+            draftRows: [{
+                id: 'rule_slots',
+                rawText: '数学尽量第1-2节',
+                type: 'subject_preferred_periods',
+                targetName: '数学',
+                slots: ['1-1', '1-2'],
+                sourceSheet: 'AI约束建议',
+                sourceRow: 2,
+                priority: 'soft',
+                status: 'effective',
+                confidence: 0.94,
+            }, {
+                id: 'rule_week',
+                rawText: '单周数学第1节优先',
+                type: 'subject_preferred_periods',
+                targetName: '数学',
+                slots: ['1-1'],
+                weekPattern: 'odd',
+                warnings: ['当前规则模型暂不支持单双周，不会自动生效。'],
+                priority: 'soft',
+                status: 'needs_review',
+                confidence: 0.68,
+            }, {
+                id: 'rule_morning',
+                rawText: '数学尽量上午',
+                type: 'subject_morning',
+                targetName: '数学',
+                priority: 'soft',
+                status: 'effective',
+                confidence: 0.9,
+            }],
+        },
+    }));
+
+    assert.match(html, /周一第1节、周一第2节/);
+    assert.match(html, /来源：AI约束建议 第 2 行/);
+    assert.match(html, /单双周/);
+    assert.match(html, /上午时段/);
+    assert.doesNotMatch(html, /<b>时间：<\/b>-/);
 });
 
 test('legacy rule review entry opens constraint dialog instead of the removed workbench', () => {

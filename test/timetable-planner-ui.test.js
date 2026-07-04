@@ -110,6 +110,145 @@ test('timetable opens smart constraints in the constraint dialog instead of the 
   assert.doesNotMatch(html, /id="tt-agent-floating"/);
 });
 
+test('timetable constraint dialog renders object-first requirements as a review workbench', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      text: '数学必须连堂；未注明默认单节；高负载教师不要连续太多；未知课程第1节优先。',
+      draftRows: [],
+      warnings: [],
+      conflicts: [],
+      unsupportedItems: [],
+      requirementItems: [
+        {
+          id: 'req_rule',
+          object: { kind: 'subject', name: '语文', matchedIds: ['s1'], scope: 'explicit' },
+          intent: 'preferred_periods',
+          status: 'actionable',
+          applyTo: 'rule',
+          parameters: { slots: ['1-1'] },
+          source: { rawText: '语文尽量第1节' },
+          confidence: 0.92,
+        },
+        {
+          id: 'req_block',
+          object: { kind: 'subject', name: '数学', matchedIds: ['math'], scope: 'explicit' },
+          intent: 'block_preference',
+          status: 'actionable',
+          applyTo: 'lesson_plan',
+          parameters: { blockPreference: 'double' },
+          source: { rawText: '数学必须连堂' },
+          confidence: 0.91,
+        },
+        {
+          id: 'req_load',
+          object: { kind: 'derived_group', name: '高负载教师', matchedIds: ['t_math'], scope: 'derived' },
+          intent: 'teacher_load_protection',
+          status: 'actionable',
+          applyTo: 'optimization',
+          parameters: { maxConsecutive: 3 },
+          source: { rawText: '高负载教师不要连续太多' },
+          confidence: 0.86,
+        },
+        {
+          id: 'req_handled',
+          object: { kind: 'global', name: '默认课时块策略', matchedIds: [], scope: 'global' },
+          intent: 'default_block_policy',
+          status: 'handled',
+          applyTo: 'solver_policy',
+          parameters: { blockPreference: 'single' },
+          source: { rawText: '未注明默认单节' },
+          confidence: 0.95,
+        },
+        {
+          id: 'req_review',
+          object: { kind: 'subject', name: '未知课程', matchedIds: [], scope: 'ambiguous' },
+          intent: 'preferred_periods',
+          status: 'needs_review',
+          applyTo: 'review',
+          parameters: { slots: ['1-1'] },
+          source: { rawText: '未知课程第1节优先', sourceRow: 4 },
+          warnings: ['未找到唯一匹配课程'],
+          confidence: 0.42,
+        },
+      ],
+      semanticActions: [
+        { id: 'act_block', requirementId: 'req_block', kind: 'lesson_plan_patch', status: 'ready' },
+        { id: 'act_load', requirementId: 'req_load', kind: 'soft_rules_patch', status: 'ready' },
+      ],
+    },
+    constraintDialog: { open: true },
+  }));
+
+  assert.match(html, /tt-constraint-dialog--semantic-review/);
+  assert.match(html, /tt-requirement-workbench/);
+  assert.match(html, /tt-requirement-filter-bar/);
+  assert.match(html, /tt-requirement-table/);
+  assert.match(html, /tt-requirement-detail/);
+  assert.doesNotMatch(html, /tt-requirement-card/);
+  assert.match(html, /可应用到约束规则/);
+  assert.match(html, /可应用到任课计划/);
+  assert.match(html, /可应用到优化目标/);
+  assert.match(html, /已自动处理/);
+  assert.match(html, /需复核/);
+  assert.match(html, /全部[\s\S]*5/);
+  assert.match(html, /data-action="filter-requirements"/);
+  assert.match(html, /data-action="select-requirement"/);
+  assert.match(html, /<span>数学<\/span>/);
+  assert.match(html, /<span>连堂设置<\/span>/);
+  assert.match(html, /<span>高负载教师<\/span>/);
+  assert.match(html, /默认课时块策略/);
+  assert.match(html, /未找到唯一匹配课程/);
+  assert.match(html, /data-requirement-id="req_review"[\s\S]*is-selected/);
+  assert.doesNotMatch(html, /暂不支持[\s\S]{0,80}默认单节/);
+});
+
+test('timetable constraint dialog filters semantic requirements by destination', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      draftRows: [],
+      warnings: [],
+      conflicts: [],
+      unsupportedItems: [],
+      requirementItems: [
+        {
+          id: 'req_rule',
+          object: { kind: 'subject', name: '语文', matchedIds: ['s1'], scope: 'explicit' },
+          intent: 'preferred_periods',
+          status: 'actionable',
+          applyTo: 'rule',
+          parameters: { slots: ['1-1'] },
+          source: { rawText: '语文尽量第1节' },
+        },
+        {
+          id: 'req_block',
+          object: { kind: 'subject', name: '数学', matchedIds: ['math'], scope: 'explicit' },
+          intent: 'block_preference',
+          status: 'actionable',
+          applyTo: 'lesson_plan',
+          parameters: { blockPreference: 'double' },
+          source: { rawText: '数学必须连堂' },
+        },
+      ],
+      semanticActions: [
+        { id: 'act_block', requirementId: 'req_block', kind: 'lesson_plan_patch', status: 'ready' },
+      ],
+    },
+    constraintDialog: { open: true, requirementFilter: 'lesson_plan', selectedRequirementId: 'req_block' },
+  }));
+
+  assert.match(html, /data-requirement-filter="lesson_plan"[\s\S]*aria-pressed="true"/);
+  assert.match(html, /data-requirement-id="req_block"[\s\S]*is-selected/);
+  assert.match(html, /<span>数学<\/span>/);
+  assert.match(html, /双连堂/);
+  assert.doesNotMatch(html, /<span>语文<\/span>/);
+});
+
 test('timetable constraint dialog controller exposes the current dialog actions', async () => {
   const controllerSource = await readFile(new URL('../public/js/tools/timetable/controller.js', import.meta.url), 'utf8');
   const dialogControllerSource = await readFile(new URL('../public/js/tools/timetable/controller-constraint-dialog.js', import.meta.url), 'utf8');
@@ -119,6 +258,8 @@ test('timetable constraint dialog controller exposes the current dialog actions'
   assert.match(dialogControllerSource, /closeConstraintDialog\(/);
   assert.match(dialogControllerSource, /parseConstraintsFromDialog\(/);
   assert.match(dialogControllerSource, /applyConstraintsFromDialog\(/);
+  assert.match(dialogControllerSource, /filterRequirements\(/);
+  assert.match(dialogControllerSource, /selectRequirement\(/);
   assert.match(dialogControllerSource, /result\.draftRows/);
   assert.match(controllerSource, /this\.constraintDialogFile\s*=\s*null/);
   assert.match(dialogControllerSource, /fileInput\?\.files\?\.\[0\]\s*\|\|\s*this\.constraintDialogFile/);
@@ -128,6 +269,8 @@ test('timetable constraint dialog controller exposes the current dialog actions'
   assert.match(interactionSource, /switch-constraint-mode/);
   assert.match(interactionSource, /parse-constraints/);
   assert.match(interactionSource, /apply-constraints/);
+  assert.match(interactionSource, /filter-requirements/);
+  assert.match(interactionSource, /select-requirement/);
   assert.match(interactionSource, /start-ai-chat/);
 });
 
@@ -4784,6 +4927,9 @@ test('timetable smart rules sidebar opens the constraint dialog', async () => {
   assert.match(dialogSource, /data-action="add-manual-constraint"/);
   assert.match(dialogSource, /data-action="parse-constraints"/);
   assert.match(dialogSource, /data-action="apply-constraints"/);
+  const dialogControllerSource = await readFile(new URL('controller-constraint-dialog.js', moduleRoot), 'utf8');
+  assert.match(dialogControllerSource, /requestTimetable\('\/rules\/parse'/);
+  assert.doesNotMatch(dialogControllerSource, /requestTimetable\('\/rule-review\/parse'/);
   assert.match(componentSource, /data-action="edit-constraint"/);
   assert.match(componentSource, /data-action="delete-constraint"/);
 

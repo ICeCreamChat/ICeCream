@@ -21,6 +21,7 @@ import {
     validateTimetablePublication,
 } from '../services/timetable-scheduler.js';
 import {
+    applyTimetableRequirementActions,
     continueTimetableRuleConversation,
     diagnoseTimetableRules,
     normalizeTimetableRuleDraftRows,
@@ -553,6 +554,31 @@ router.post('/rules/normalize', async (req, res) => {
         fail(res, error, 400, {
             project: current,
             reason: 'rules_normalize_failed',
+        });
+    }
+});
+
+router.post('/requirements/apply', async (req, res) => {
+    let current = null;
+    try {
+        current = await store().loadProject();
+        const applied = applyTimetableRequirementActions({
+            project: current,
+            actions: req.body?.actions || [],
+        });
+        const project = normalizeTimetableProject({
+            ...applied.project,
+            schedule: preservePublishedArchive(null, current.schedule),
+        });
+        const saved = await store().saveProject(project);
+        ok(res, {
+            ...applied,
+            project: saved,
+        });
+    } catch (error) {
+        fail(res, error, 400, {
+            project: current,
+            reason: 'requirements_apply_failed',
         });
     }
 });

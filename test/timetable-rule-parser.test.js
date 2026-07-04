@@ -1,7 +1,10 @@
 import { describe, test, mock, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
+import AdmZip from 'adm-zip';
+
 import {
+    applyTimetableRequirementActions,
     parseTimetableRules,
     continueTimetableRuleConversation,
     diagnoseTimetableRules,
@@ -40,6 +43,45 @@ function makeProject(overrides = {}) {
         rules: { hardRules: {}, softRules: {} },
         ...overrides,
     };
+}
+
+function xmlEscape(value = '') {
+    return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&apos;',
+    })[char]);
+}
+
+function buildConstraintWorkbook(rows = []) {
+    const strings = rows.flat();
+    const sharedStrings = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${strings.length}" uniqueCount="${strings.length}">
+${strings.map(value => `<si><t>${xmlEscape(value)}</t></si>`).join('')}
+</sst>`;
+    let stringIndex = 0;
+    const sheetRows = rows.map((row, rowIndex) => {
+        const cells = row.map((_, columnIndex) => {
+            const ref = `${String.fromCharCode(65 + columnIndex)}${rowIndex + 1}`;
+            return `<c r="${ref}" t="s"><v>${stringIndex++}</v></c>`;
+        }).join('');
+        return `<row r="${rowIndex + 1}">${cells}</row>`;
+    }).join('');
+    const zip = new AdmZip();
+    zip.addFile('xl/sharedStrings.xml', Buffer.from(sharedStrings, 'utf8'));
+    zip.addFile('xl/workbook.xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+<sheets><sheet name="AI约束建议" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`, 'utf8'));
+    zip.addFile('xl/_rels/workbook.xml.rels', Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`, 'utf8'));
+    zip.addFile('xl/worksheets/sheet1.xml', Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetRows}</sheetData></worksheet>`, 'utf8'));
+    return zip.toBuffer();
 }
 
 // --- Tests ---
@@ -175,6 +217,193 @@ test('local fallback parses "语数英尽量上午" as 3 subject_morning rules',
     });
     const morningRows = result.draftRows.filter(r => r.type === 'subject_morning' && r.status === 'effective');
     assert.ok(morningRows.length >= 3, `expected >= 3 subject_morning effective rows, got ${morningRows.length}`);
+});
+
+test('local fallback prefers explicit periods over broad morning text', async () => {
+    const project = makeProject();
+    const result = await parseTimetableRules({
+        text: '语文尽量安排在上午第1-3节',
+        project,
+        env: {},
+    });
+    const row = result.draftRows.find(r => r.type === 'subject_preferred_periods' && r.targetId === 's1');
+    assert.ok(row, 'should produce a subject_preferred_periods row');
+    assert.equal(row.status, 'effective');
+    assert.deepEqual(row.slots, [
+        '1-1', '1-2', '1-3',
+        '2-1', '2-2', '2-3',
+        '3-1', '3-2', '3-3',
+        '4-1', '4-2', '4-3',
+        '5-1', '5-2', '5-3',
+    ]);
+    assert.equal(result.draftRows.some(r => r.type === 'subject_morning' && r.targetId === 's1'), false);
+});
+
+test('local fallback keeps continuation context for grouped subject period preferences', async () => {
+    const project = makeProject();
+    const result = await parseTimetableRules({
+        text: '语文、数学、英语尽量安排在上午前四节，尤其优先第1-3节。',
+        project,
+        env: {},
+    });
+    const rows = result.draftRows
+        .filter(row => row.type === 'subject_preferred_periods')
+        .sort((left, right) => left.targetId.localeCompare(right.targetId));
+    assert.deepEqual(rows.map(row => row.targetId), ['s1', 's2', 's3']);
+    assert.ok(rows.every(row => row.status === 'effective'));
+    assert.ok(rows.every(row => row.slots.includes('1-1') && row.slots.includes('5-3')));
+    assert.ok(rows.every(row => !row.slots.includes('1-4') && !row.slots.includes('5-4')));
+});
+
+test('local fallback parses Chinese numeral front periods for unavailable teachers', async () => {
+    const project = makeProject();
+    const result = await parseTimetableRules({
+        text: '张老师周一前两节不排',
+        project,
+        env: {},
+    });
+    const row = result.draftRows.find(r => r.type === 'teacher_unavailable');
+    assert.ok(row);
+    assert.equal(row.targetId, 't1');
+    assert.deepEqual(row.slots, ['1-1', '1-2']);
+    assert.equal(row.status, 'effective');
+});
+
+test('local fallback parses subject avoid periods without a broad day part', async () => {
+    const project = makeProject();
+    const result = await parseTimetableRules({
+        text: '体育第一节不要排',
+        project,
+        env: {},
+    });
+    const row = result.draftRows.find(r => r.type === 'subject_avoid_periods' && r.targetId === 's4');
+    assert.ok(row);
+    assert.equal(row.status, 'effective');
+    assert.deepEqual(row.slots, ['1-1', '2-1', '3-1', '4-1', '5-1']);
+});
+
+test('parseTimetableRules returns object-first requirement semantics and actions for supported demands', async () => {
+    const project = makeProject({
+        lessonPlans: [
+            { id: 'lp_math_c1', classId: 'c1', subjectId: 's2', teacherId: 't1', weeklyHours: 4, blockPreference: 'single' },
+            { id: 'lp_math_c2', classId: 'c2', subjectId: 's2', teacherId: 't2', weeklyHours: 4, blockPreference: 'single' },
+        ],
+    });
+    const result = await parseTimetableRules({
+        text: '数学必须连堂；未注明默认单节；连堂块不能拆开；高负载教师不要连续太多。',
+        project,
+        env: {},
+    });
+
+    const blockRequirement = result.requirementItems.find(item => item.intent === 'block_preference');
+    assert.ok(blockRequirement);
+    assert.equal(blockRequirement.object.kind, 'subject');
+    assert.equal(blockRequirement.object.name, '数学');
+    assert.deepEqual(blockRequirement.object.matchedIds, ['s2']);
+    assert.equal(blockRequirement.applyTo, 'lesson_plan');
+    assert.equal(blockRequirement.parameters.blockPreference, 'double');
+
+    const defaultSingle = result.requirementItems.find(item => item.intent === 'default_block_policy');
+    assert.ok(defaultSingle);
+    assert.equal(defaultSingle.status, 'handled');
+    assert.equal(defaultSingle.applyTo, 'solver_policy');
+
+    const blockIntegrity = result.requirementItems.find(item => item.intent === 'block_integrity');
+    assert.ok(blockIntegrity);
+    assert.equal(blockIntegrity.status, 'handled');
+    assert.equal(blockIntegrity.object.kind, 'lesson_block');
+
+    const highLoad = result.requirementItems.find(item => item.intent === 'teacher_load_protection');
+    assert.ok(highLoad);
+    assert.equal(highLoad.object.kind, 'derived_group');
+    assert.equal(highLoad.applyTo, 'optimization');
+
+    const actionKinds = result.semanticActions.map(action => action.kind).sort();
+    assert.ok(actionKinds.includes('lesson_plan_patch'));
+    assert.ok(actionKinds.includes('soft_rules_patch'));
+    const blockAction = result.semanticActions.find(action => action.kind === 'lesson_plan_patch');
+    assert.equal(blockAction.status, 'ready');
+    assert.deepEqual(blockAction.target.lessonPlanIds.sort(), ['lp_math_c1', 'lp_math_c2']);
+    assert.equal(blockAction.patch.blockPreference, 'double');
+});
+
+test('parseTimetableRules treats system invariants as handled requirements instead of noisy all-slot rules', async () => {
+    const project = makeProject();
+    const result = await parseTimetableRules({
+        text: '同一位教师同一时间只能给一个班上课。同一个班级同一时间只能安排一门课程。',
+        project,
+        env: {},
+    });
+
+    assert.equal(result.draftRows.some(row => row.type === 'teacher_unavailable'), false);
+    assert.equal(result.draftRows.some(row => row.type === 'class_unavailable'), false);
+    assert.ok(result.requirementItems.some(item => item.intent === 'teacher_time_conflict' && item.status === 'handled'));
+    assert.ok(result.requirementItems.some(item => item.intent === 'class_time_conflict' && item.status === 'handled'));
+});
+
+test('applyTimetableRequirementActions applies lesson-plan and soft-rule semantic actions with validation', () => {
+    const project = makeProject({
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 's2', teacherId: 't1', weeklyHours: 4, blockPreference: 'single' },
+        ],
+    });
+    const result = applyTimetableRequirementActions({
+        project,
+        actions: [
+            {
+                id: 'act_block',
+                kind: 'lesson_plan_patch',
+                target: { lessonPlanIds: ['lp_math'] },
+                patch: { blockPreference: 'double' },
+            },
+            {
+                id: 'act_soft',
+                kind: 'soft_rules_patch',
+                target: { teacherIds: ['t1', 'missing_teacher'] },
+                patch: { teacherLimits: { consecutive: 3 }, balancedTeacherLoad: true },
+            },
+        ],
+    });
+
+    assert.equal(result.project.lessonPlans.find(plan => plan.id === 'lp_math').blockPreference, 'double');
+    assert.equal(result.project.rules.softRules.teacherLimits.t1.consecutive, 3);
+    assert.equal(result.project.rules.softRules.balancedTeacherLoad, true);
+    assert.ok(result.applied.some(item => item.id === 'act_block'));
+    assert.ok(result.applied.some(item => item.id === 'act_soft'));
+    assert.ok(result.needsReview.some(item => item.id === 'act_soft' && /missing_teacher/.test(item.reason)));
+});
+
+test('local fallback marks unsupported week-pattern constraints for review instead of applying them', async () => {
+    const project = makeProject();
+    const result = await parseTimetableRules({
+        text: '单周语文第1节优先',
+        project,
+        env: {},
+    });
+    const row = result.draftRows.find(r => r.targetId === 's1' || r.targetName === '语文');
+    assert.ok(row);
+    assert.equal(row.weekPattern, 'odd');
+    assert.equal(row.status, 'needs_review');
+    assert.match(row.warnings.join(' '), /单双周|不会自动生效/);
+    assert.equal(result.draftRules.softRules.subjectPreferredPeriods?.s1, undefined);
+});
+
+test('xlsx local fallback preserves sheet and row source for expanded subject rules', async () => {
+    const project = makeProject();
+    const file = {
+        filename: 'AI排课约束建议.xlsx',
+        buffer: buildConstraintWorkbook([
+            ['约束内容'],
+            ['语文、数学、英语尽量安排在上午第1-3节'],
+        ]),
+    };
+    const result = await parseTimetableRules({ file, project, env: {} });
+    const rows = result.draftRows
+        .filter(row => row.type === 'subject_preferred_periods')
+        .sort((left, right) => left.targetId.localeCompare(right.targetId));
+    assert.deepEqual(rows.map(row => row.targetId), ['s1', 's2', 's3']);
+    assert.ok(rows.every(row => row.sourceSheet === 'AI约束建议'));
+    assert.ok(rows.every(row => row.sourceRow === 2));
 });
 
 test('normalize splits a grouped subject target into independent effective rules', () => {
