@@ -7,6 +7,13 @@ function resizeConstraintChatInput(textarea) {
 export function handleTimetableEscape(event, container, controller, state) {
     if (event?.key !== 'Escape') return false;
 
+    if (state?.constraintDialog?.editingConstraint) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        controller?.cancelEditConstraint?.();
+        return true;
+    }
+
     // Check if we're in an input field that's being edited
     const target = event.target;
     if (target && (target.matches('input[type="text"], input[type="time"], input[type="number"], textarea, select') || target.isContentEditable)) {

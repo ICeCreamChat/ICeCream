@@ -409,6 +409,84 @@ test('parseTimetableRules treats system invariants as handled requirements inste
     assert.ok(result.requirementItems.some(item => item.intent === 'class_time_conflict' && item.status === 'handled'));
 });
 
+test('xlsx AI supplement cannot turn system invariants into all-slot unavailable rules', async () => {
+    const project = makeProject();
+    const allSlots = [
+        '1-1', '1-2', '1-3', '1-4',
+        '2-1', '2-2', '2-3', '2-4',
+        '3-1', '3-2', '3-3', '3-4',
+        '4-1', '4-2', '4-3', '4-4',
+        '5-1', '5-2', '5-3', '5-4',
+    ];
+    const file = {
+        filename: 'AI排课约束建议.xlsx',
+        buffer: buildConstraintWorkbook([
+            ['约束内容'],
+            ['同一位教师同一时间只能给一个班上课。'],
+            ['同一个班级同一时间只能安排一门课程。'],
+            ['每个班级每门课程必须按表中的周课时排满，不能少排或多排。'],
+        ]),
+    };
+    const fetchImpl = async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({
+            choices: [{
+                message: {
+                    content: JSON.stringify({
+                        draftRows: [
+                            {
+                                rawText: '同一位教师同一时间只能给一个班上课。',
+                                type: 'teacher_unavailable',
+                                targetType: 'teacher',
+                                targetName: '全部教师',
+                                slots: allSlots,
+                                priority: 'hard',
+                                confidence: 0.86,
+                                sourceRow: 2,
+                            },
+                            {
+                                rawText: '同一个班级同一时间只能安排一门课程。',
+                                type: 'class_unavailable',
+                                targetType: 'class',
+                                targetName: '全部班级',
+                                slots: allSlots,
+                                priority: 'hard',
+                                confidence: 0.86,
+                                sourceRow: 3,
+                            },
+                            {
+                                rawText: '每个班级每门课程必须按表中的周课时排满，不能少排或多排。',
+                                type: 'class_unavailable',
+                                targetType: 'class',
+                                targetName: '全部班级',
+                                slots: allSlots,
+                                priority: 'hard',
+                                confidence: 0.82,
+                                sourceRow: 4,
+                            },
+                        ],
+                    }),
+                },
+            }],
+        }),
+    });
+
+    const result = await parseTimetableRules({
+        file,
+        project,
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        fetchImpl,
+    });
+
+    assert.equal(result.draftRows.some(row => row.type === 'teacher_unavailable'), false);
+    assert.equal(result.draftRows.some(row => row.type === 'class_unavailable'), false);
+    assert.equal(result.autoAcceptable.length, 0);
+    assert.ok(result.requirementItems.some(item => item.intent === 'teacher_time_conflict' && item.status === 'handled'));
+    assert.ok(result.requirementItems.some(item => item.intent === 'class_time_conflict' && item.status === 'handled'));
+    assert.ok(result.requirementItems.some(item => item.intent === 'lesson_hours_completeness' && item.status === 'handled'));
+});
+
 test('applyTimetableRequirementActions applies lesson-plan and soft-rule semantic actions with validation', () => {
     const project = makeProject({
         lessonPlans: [
@@ -508,6 +586,8 @@ test('xlsx constraints parse locally with stable ids and do not call AI for deci
     assert.equal(first.source, 'local_xlsx');
     assert.equal(first.parseSource, 'local_xlsx');
     assert.ok(first.parserVersion);
+    assert.equal(first.cacheHit, false);
+    assert.equal(second.cacheHit, true);
     assert.deepEqual(
         first.draftRows.map(row => ({
             id: row.id,

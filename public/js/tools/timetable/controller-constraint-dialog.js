@@ -18,6 +18,19 @@ import {
 
 const REQUIREMENT_FILTER_KEYS = new Set(['all', 'rule', 'lesson_plan', 'optimization', 'handled', 'review']);
 
+function updateConstraintParsingProgressDom(container, review = {}) {
+    if (!container) return;
+    const statusText = container.querySelector?.('.tt-parsing-info > span');
+    if (statusText && review.phaseText) {
+        statusText.textContent = review.phaseText;
+    }
+    const progressFill = container.querySelector?.('.tt-progress-fill');
+    if (progressFill && review.parseProgress !== undefined) {
+        const progress = Math.max(0, Math.min(100, Number(review.parseProgress) || 0));
+        progressFill.style.width = `${progress}%`;
+    }
+}
+
 function visibleRequirementItems(items = [], filter = 'all') {
     return filterUnifiedRequirementItems(items, filter);
 }
@@ -282,7 +295,7 @@ export async function parseConstraintsFromDialog() {
             ];
             const phaseIndex = Math.floor(this.state.ruleReview.parseProgress / 25);
             this.state.ruleReview.phaseText = phases[phaseIndex] || phases[phases.length - 1];
-            this.render();
+            updateConstraintParsingProgressDom(this.state.container, this.state.ruleReview);
         }
     }, 300);
 
@@ -310,20 +323,32 @@ export async function parseConstraintsFromDialog() {
         this.state.ruleReview.parseProgress = 100;
         this.state.ruleReview.phaseText = '';
 
-        // 合并新解析的约束
-        const existingRows = this.state.ruleReview.draftRows || [];
         const newRows = result.draftRows || result.rows || [];
-        this.state.ruleReview.draftRows = [...existingRows, ...newRows];
-        this.state.ruleReview.requirementItems = [
-            ...(this.state.ruleReview.requirementItems || []),
-            ...(result.requirementItems || []),
-        ];
-        this.state.ruleReview.semanticActions = [
-            ...(this.state.ruleReview.semanticActions || []),
-            ...(result.semanticActions || []),
-        ];
-        this.state.ruleReview.unsupportedItems = result.unsupportedItems || this.state.ruleReview.unsupportedItems || [];
-        this.state.ruleReview.warnings = result.warnings || this.state.ruleReview.warnings || [];
+        this.state.ruleReview = {
+            ...this.state.ruleReview,
+            draftRules: result.draftRules || null,
+            draftRows: newRows,
+            previewItems: result.previewItems || [],
+            requirementItems: result.requirementItems || [],
+            semanticActions: result.semanticActions || [],
+            autoAcceptable: result.autoAcceptable || [],
+            needReview: result.needReview || [],
+            clarifyingQuestions: result.clarifyingQuestions || [],
+            missingInfo: result.missingInfo || [],
+            conflicts: result.conflicts || [],
+            warnings: result.warnings || [],
+            unsupportedItems: result.unsupportedItems || [],
+            ruleReport: result.ruleReport || null,
+            confidenceSummary: result.confidenceSummary || null,
+            nextAction: result.nextAction || '',
+            source: result.source || '',
+            parseSource: result.parseSource || result.source || '',
+            parserVersion: result.parserVersion || '',
+            cacheHit: Boolean(result.cacheHit),
+            inputType: result.inputType || this.state.ruleReview.inputType || mode,
+            contextStats: result.contextStats || null,
+            excludedApplyItemKeys: [],
+        };
         const reviewState = normalizeRequirementReviewState(this.state.constraintDialog || {}, buildUnifiedRequirementItems(this.state.ruleReview || {}));
         this.state.constraintDialog = {
             ...(this.state.constraintDialog || {}),

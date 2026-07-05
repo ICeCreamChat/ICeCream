@@ -154,6 +154,17 @@ function blockPreferenceLabel(value = '') {
 }
 
 function requirementParameterLabel(item = {}) {
+    const rule = (item.machineRules || [])[0];
+    if (rule) {
+        const slots = rule.slots || rule.time?.slots || [];
+        if (rule.limit) return `最多 ${rule.limit} 节`;
+        if (slots.length) {
+            if (slots.length <= 3) return slots.map(slot => requirementSlotLabel(slot)).join('、');
+            return `${slots.length} 个节次`;
+        }
+        if (rule.type === 'subject_morning') return '上午时段';
+        if (rule.type === 'subject_spread') return '分散排布';
+    }
     const params = item.parameters || {};
     if (params.blockPreference) {
         return blockPreferenceLabel(params.blockPreference);
@@ -191,6 +202,44 @@ function requirementApplyLabel(applyTo = '') {
     }[key] || (/[A-Za-z_]/.test(String(applyTo || '')) ? '复核' : applyTo || '复核');
 }
 
+function normalizedRequirementApplyTo(applyTo = '') {
+    return String(applyTo || '').trim()
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .toLowerCase()
+        .replace(/[-\s]+/g, '_');
+}
+
+function primaryMachineRule(item = {}) {
+    return (item.machineRules || []).find(rule => rule && typeof rule === 'object') || null;
+}
+
+function shouldPreferMachineRuleSource(item = {}) {
+    const applyTo = normalizedRequirementApplyTo(item.applyTo || '');
+    if (['rule', 'rules', 'constraint', 'constraint_rule'].includes(applyTo)) return true;
+    const visibleActions = (item.semanticActions || []).filter(action => !isRulePatchBridgeAction(action));
+    return Boolean((item.machineRules || []).length && !visibleActions.length);
+}
+
+function requirementSourceRecord(item = {}) {
+    const rule = shouldPreferMachineRuleSource(item) ? primaryMachineRule(item) : null;
+    if (rule) {
+        return {
+            rawText: rule.sourceText || rule.rawText || rule.description || '',
+            sourceSheet: rule.sourceSheet || rule.source || '',
+            sourceRow: rule.sourceRow || '',
+            parseSource: rule.parseSource || '',
+            stableKey: rule.stableKey || '',
+        };
+    }
+    return {
+        ...(item.source || {}),
+        rawText: item.source?.rawText || item.rawText || '',
+        sourceSheet: item.source?.sourceSheet || item.source?.sheet || item.sourceSheet || '',
+        sourceRow: item.source?.sourceRow || item.source?.row || item.sourceRow || '',
+        parseSource: item.source?.parseSource || item.parseSource || '',
+    };
+}
+
 function requirementStatusTone(item = {}) {
     const status = String(item.status || '').trim().toLowerCase().replace(/-/g, '_');
     if (status === 'handled' || status === 'ignored') return 'handled';
@@ -201,22 +250,41 @@ function requirementStatusTone(item = {}) {
 }
 
 function requirementObjectName(item = {}) {
+    const rule = (item.machineRules || [])[0];
+    if (rule?.targetName) return rule.targetName;
+    if (rule?.target?.name) return rule.target.name;
     return item.object?.name || item.targetName || '全局';
 }
 
 function requirementRawText(item = {}) {
-    return item.source?.rawText || item.rawText || '';
+    return requirementSourceRecord(item).rawText || '';
+}
+
+function parseSourceLabel(value = '') {
+    const key = String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    return {
+        local_xlsx: '本地识别',
+        local_text: '本地识别',
+        ai_supplement: 'AI 补充',
+        ai: 'AI 识别',
+        cache: '缓存结果',
+        mixed_xlsx: '本地 + AI',
+        local_roster_fallback: '本地建议',
+    }[key] || '';
 }
 
 function requirementSourceLabel(item = {}) {
-    const source = item.source || {};
-    const sheet = source.sourceSheet || source.sheet || item.sourceSheet || '';
-    const row = source.sourceRow || source.row || item.sourceRow || '';
-    if (sheet && row) return `${sheet} 第 ${row} 行`;
-    if (row) return `第 ${row} 行`;
-    if (sheet) return sheet;
-    if (requirementRawText(item)) return '输入文本';
-    return '识别结果';
+    const source = requirementSourceRecord(item);
+    const sheet = source.sourceSheet || source.sheet || '';
+    const row = source.sourceRow || source.row || '';
+    const parseLabel = parseSourceLabel(source.parseSource || '');
+    const locationLabel = sheet && row
+        ? `${sheet} 第 ${row} 行`
+        : row
+            ? `第 ${row} 行`
+            : sheet || '';
+    const baseLabel = locationLabel || (requirementRawText(item) ? '输入文本' : '识别结果');
+    return [baseLabel, parseLabel].filter(Boolean).join(' · ');
 }
 
 function requirementConfidenceLabel(item = {}) {
@@ -386,7 +454,7 @@ function renderRequirementFilterBar(requirements = [], activeFilter = 'all') {
 }
 
 function renderRequirementRow(item = {}, selectedId = '') {
-    const sourceText = item.source?.rawText || item.rawText || '';
+    const sourceText = requirementRawText(item);
     const objectName = requirementObjectName(item);
     const parameterLabel = requirementParameterLabel(item);
     const isSelected = item.id && item.id === selectedId;
@@ -428,8 +496,17 @@ function normalizeMachineRuleForRender(rule = {}, state = {}) {
     };
 }
 
+function semanticActionKindKey(action = {}) {
+    return String(action.kind || action.type || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+}
+
+function isRulePatchBridgeAction(action = {}) {
+    const key = semanticActionKindKey(action);
+    return key === 'rules_patch' || key === 'rule_patch';
+}
+
 function semanticActionLabel(action = {}) {
-    const key = String(action.kind || action.type || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    const key = semanticActionKindKey(action);
     return {
         lesson_plan_patch: '任课计划修改',
         soft_rules_patch: '优化目标修改',
@@ -473,14 +550,15 @@ function renderSemanticActionSummary(action = {}, state = {}) {
 
 function renderRequirementMachineRules(item = {}, state = {}) {
     const rules = item.machineRules || [];
-    const actions = item.semanticActions || [];
+    const actions = (item.semanticActions || []).filter(action => !isRulePatchBridgeAction(action));
+    const itemCount = rules.length + actions.length;
     return `
         <div class="tt-requirement-machine-rules">
             <div class="tt-requirement-machine-header">
                 <span class="tt-requirement-detail-label">将应用规则</span>
-                ${rules.length || actions.length ? `<em>${rules.length + actions.length} 项</em>` : ''}
+                ${itemCount ? `<em>${itemCount} 项</em>` : ''}
             </div>
-            ${rules.length || actions.length ? `
+            ${itemCount ? `
                 ${rules.length ? `
                     <div class="tt-machine-rule-list">
                         ${rules.map(rule => renderConstraintCard(normalizeMachineRuleForRender(rule, state), state)).join('')}
@@ -638,7 +716,6 @@ export function renderConstraintDialog(state) {
                     ${renderInputArea(state, mode, parsing, review)}
                 </div>
             </div>
-            ${editingConstraint ? renderConstraintEditForm(editingConstraint) : ''}
             ${requirements.length > 0 ? renderRequirementGroups(requirements, dialog, state) : ''}
         </div>
     `;
@@ -680,6 +757,7 @@ export function renderConstraintDialog(state) {
                     </div>
                 </div>
                 ${bodyHtml}
+                ${editingConstraint && !aiActive ? renderConstraintEditForm(editingConstraint, state) : ''}
                 ${actionsHtml}
             </section>
         </div>

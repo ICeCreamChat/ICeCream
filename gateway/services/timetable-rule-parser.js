@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import AdmZip from 'adm-zip';
@@ -16,6 +17,9 @@ import {
 } from './timetable-import.js';
 
 const MAX_RULE_FILE_BYTES = 5 * 1024 * 1024;
+const PARSER_VERSION = 'timetable_rule_parser_xlsx_stable_v1';
+const PARSE_CACHE = new Map();
+const MAX_PARSE_CACHE_ITEMS = 40;
 
 const SUPPORTED_EFFECTIVE_TYPES = new Set([
     'teacher_unavailable',
@@ -38,9 +42,21 @@ const SUGGESTION_ONLY_TYPES = new Set([
 ]);
 
 const STATUS_LABELS = new Set(['effective', 'ready', 'needs_review', 'suggestion', 'unsupported', 'invalid', 'ignored']);
+const SYSTEM_TEACHER_TIME_CONFLICT_PATTERN = /同一.*教师.*同一.*时间.*(只能|一个班|一门课)|教师.*不能.*同.*时间.*(多个|两个|两个班|上课)/;
+const SYSTEM_CLASS_TIME_CONFLICT_PATTERN = /同一.*班级.*同一.*时间.*(只能|一门|一节)|班级.*不能.*同.*时间.*(多个|两门|两节)/;
+const SYSTEM_LESSON_HOURS_COMPLETENESS_PATTERN = /(每个|各个)?.*班级.*(每门|各门)?.*课程.*(周课时|课时).*(排满|不能少排|不能多排|不少排|不多排)|周课时.*(排满|不能少排|不能多排)/;
 const DAY_NAME_TO_NUMBER = new Map([
     ['一', 1], ['二', 2], ['三', 3], ['四', 4], ['五', 5], ['六', 6], ['日', 7], ['天', 7],
     ['1', 1], ['2', 2], ['3', 3], ['4', 4], ['5', 5], ['6', 6], ['7', 7],
+]);
+const ENGLISH_DAY_NAME_TO_NUMBER = new Map([
+    ['monday', 1], ['mon', 1],
+    ['tuesday', 2], ['tue', 2], ['tues', 2],
+    ['wednesday', 3], ['wed', 3],
+    ['thursday', 4], ['thu', 4], ['thur', 4], ['thurs', 4],
+    ['friday', 5], ['fri', 5],
+    ['saturday', 6], ['sat', 6],
+    ['sunday', 7], ['sun', 7],
 ]);
 const CHINESE_NUMBER_TO_VALUE = new Map([
     ['零', 0], ['〇', 0],
@@ -60,6 +76,74 @@ export class TimetableRuleParseError extends Error {
 
 function cloneValue(value) {
     return JSON.parse(JSON.stringify(value ?? null));
+}
+
+function stableJson(value) {
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+    if (value && typeof value === 'object') {
+        return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value ?? null);
+}
+
+function hashValue(value, length = 16) {
+    return createHash('sha256')
+        .update(typeof value === 'string' || Buffer.isBuffer(value) ? value : stableJson(value))
+        .digest('hex')
+        .slice(0, length);
+}
+
+function projectFingerprintForParse(project = {}) {
+    return {
+        id: project.id || '',
+        schoolName: project.schoolName || '',
+        term: project.term || '',
+        activeWeekdays: project.activeWeekdays || [],
+        activePeriods: project.activePeriods || [],
+        dayPartBoundaries: project.dayPartBoundaries || {},
+        periodTimes: project.periodTimes || {},
+        periodTimeSegments: project.periodTimeSegments || null,
+        teachers: project.teachers || [],
+        classes: project.classes || [],
+        subjects: project.subjects || [],
+        lessonPlans: project.lessonPlans || [],
+        rules: project.rules || {},
+    };
+}
+
+function parseCacheKey({ fileBuffer, project }) {
+    return [
+        PARSER_VERSION,
+        hashValue(fileBuffer, 32),
+        hashValue(projectFingerprintForParse(project), 24),
+    ].join(':');
+}
+
+function getParseCache(key = '') {
+    if (!key || !PARSE_CACHE.has(key)) return null;
+    const cached = PARSE_CACHE.get(key);
+    PARSE_CACHE.delete(key);
+    PARSE_CACHE.set(key, cached);
+    return cloneValue(cached);
+}
+
+function setParseCache(key = '', value = null) {
+    if (!key || !value) return;
+    while (PARSE_CACHE.size >= MAX_PARSE_CACHE_ITEMS) {
+        const oldestKey = PARSE_CACHE.keys().next().value;
+        if (!oldestKey) break;
+        PARSE_CACHE.delete(oldestKey);
+    }
+    PARSE_CACHE.set(key, cloneValue(value));
+}
+
+function withParseMetadata(result = {}, overrides = {}) {
+    return {
+        ...result,
+        parserVersion: result.parserVersion || PARSER_VERSION,
+        parseSource: overrides.parseSource || result.parseSource || result.source || '',
+        cacheHit: Boolean(overrides.cacheHit ?? result.cacheHit),
+    };
 }
 
 function asText(value, max = 4000) {
@@ -314,6 +398,26 @@ function constraintsTextFromSheet({ sheet, header, headerRowIndex }) {
     };
 }
 
+function textFromConstraintRows(rows = []) {
+    return (Array.isArray(rows) ? rows : [])
+        .map((item, index) => {
+            const direct = asText(item.constraintText || item.rawText, 1500);
+            const text = direct || [
+                item.ruleName ? `名称：${item.ruleName}` : '',
+                item.ruleType ? `类型：${item.ruleType}` : '',
+                item.target ? `对象：${item.target}` : '',
+                item.days ? `周几：${item.days}` : '',
+                item.periods ? `节次：${item.periods}` : '',
+                item.slots ? `时间：${item.slots}` : '',
+                item.priority ? `强度：${item.priority}` : '',
+                item.description ? `说明：${item.description}` : '',
+            ].filter(Boolean).join('；');
+            return text ? `${index + 1}. ${text}` : '';
+        })
+        .filter(Boolean)
+        .join('\n');
+}
+
 function normalizeConstraintType(value) {
     const text = String(value || '').trim().toLowerCase().replace(/-/g, '_');
     const compact = text.replace(/\s+/g, '');
@@ -395,6 +499,10 @@ function parseDays(value, project, fallback = []) {
     if (/全部|全周|每天|all/i.test(text)) return getActiveWeekdays(project);
     if (/工作日|周一.?周五|周一到周五|monday.?friday/i.test(text)) return getActiveWeekdays(project).filter(day => day <= 5);
     const values = [];
+    for (const match of text.matchAll(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tues?|wed|thu(?:rs?)?|fri|sat|sun)\b/gi)) {
+        const number = ENGLISH_DAY_NAME_TO_NUMBER.get(match[1].toLowerCase());
+        if (number) values.push(number);
+    }
     for (const range of text.matchAll(/(?:周|星期|礼拜)([一二三四五六日天1-7])\s*[-~到至]\s*(?:周|星期|礼拜)?([一二三四五六日天1-7])/g)) {
         const start = dayNumber(range[1]);
         const end = dayNumber(range[2]);
@@ -427,6 +535,9 @@ function parsePeriods(value, project, fallback = []) {
     for (const match of text.matchAll(singlePattern)) {
         const period = parseLooseNumber(match[1]);
         if (Number.isInteger(period)) values.push(period);
+    }
+    for (const match of text.matchAll(/\bperiod\s*(\d{1,2})\b/gi)) {
+        values.push(Number.parseInt(match[1], 10));
     }
     const relativePattern = new RegExp(`(?:上午|早上|下午|后半天|晚间|晚上|晚自习|夜自习|morning|afternoon|evening|night)?\\s*(前|后)\\s*(${NUMBER_TOKEN_PATTERN})\\s*节`, 'gi');
     for (const match of text.matchAll(relativePattern)) {
@@ -555,6 +666,23 @@ function normalizeAllTeachersTargetRow(row = {}) {
         ambiguity: null,
         ambiguities: [],
     };
+}
+
+function systemHandledIntentFromText(text = '') {
+    const sourceText = asText(text, 1600);
+    if (SYSTEM_TEACHER_TIME_CONFLICT_PATTERN.test(sourceText)) return 'teacher_time_conflict';
+    if (SYSTEM_CLASS_TIME_CONFLICT_PATTERN.test(sourceText)) return 'class_time_conflict';
+    if (SYSTEM_LESSON_HOURS_COMPLETENESS_PATTERN.test(sourceText)) return 'lesson_hours_completeness';
+    return '';
+}
+
+function isSystemHandledDraftRow(row = {}) {
+    const text = [row.rawText, row.description, row.reason, row.constraintText, row.ruleName]
+        .map(value => asText(value, 1200))
+        .filter(Boolean)
+        .join('。');
+    if (!systemHandledIntentFromText(text)) return false;
+    return ['teacher_unavailable', 'class_unavailable', 'unsupported'].includes(normalizeConstraintType(row.type || row.ruleType));
 }
 
 function matchEntityCandidates(project = {}, targetText = '', targetType = '', { targetId = '' } = {}) {
@@ -738,6 +866,8 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
     const status = STATUS_LABELS.has(row.status) ? row.status : SUPPORTED_EFFECTIVE_TYPES.has(type) ? 'effective' : 'suggestion';
     return {
         id: asText(row.id, 120) || `rule_draft_${index + 1}`,
+        stableKey: asText(row.stableKey || '', 240),
+        parseSource: asText(row.parseSource || row.source || '', 80),
         source: asText(row.source || row.sourceSheet || '', 120),
         sourceSheet: asText(row.sourceSheet || row.sheetName || '', 120),
         sourceRow: Number.parseInt(row.sourceRow, 10) || null,
@@ -1063,6 +1193,8 @@ function classifyDraftRow(row = {}, project = {}) {
 function previewFromRow(row = {}) {
     return {
         id: row.id,
+        stableKey: row.stableKey || '',
+        parseSource: row.parseSource || row.source || '',
         type: row.type,
         targetId: row.targetId || '',
         targetName: row.targetName || '',
@@ -1099,6 +1231,8 @@ function sourceFromRow(row = {}) {
         source: row.source || '',
         sourceSheet: row.sourceSheet || '',
         sourceRow: row.sourceRow || null,
+        parseSource: row.parseSource || row.source || '',
+        stableKey: row.stableKey || '',
     };
 }
 
@@ -1243,7 +1377,7 @@ function textRequirementBase(id, object, intent, sourceText, {
 function systemRequirementsFromText(text = '') {
     const requirements = [];
     const sourceText = asText(text, 1200);
-    if (/同一.*教师.*同一.*时间.*(只能|一个班|一门课)|教师.*不能.*同.*时间.*(多个|两个|两个班|上课)/.test(sourceText)) {
+    if (SYSTEM_TEACHER_TIME_CONFLICT_PATTERN.test(sourceText)) {
         requirements.push(textRequirementBase(
             'req_system_teacher_time_conflict',
             entityObject('global', '全部教师', [], 'global'),
@@ -1258,7 +1392,7 @@ function systemRequirementsFromText(text = '') {
             },
         ));
     }
-    if (/同一.*班级.*同一.*时间.*(只能|一门|一节)|班级.*不能.*同.*时间.*(多个|两门|两节)/.test(sourceText)) {
+    if (SYSTEM_CLASS_TIME_CONFLICT_PATTERN.test(sourceText)) {
         requirements.push(textRequirementBase(
             'req_system_class_time_conflict',
             entityObject('global', '全部班级', [], 'global'),
@@ -1270,6 +1404,21 @@ function systemRequirementsFromText(text = '') {
                 applyTo: 'solver_policy',
                 confidence: 0.98,
                 warnings: ['这是系统内置硬规则，求解时已自动处理。'],
+            },
+        ));
+    }
+    if (SYSTEM_LESSON_HOURS_COMPLETENESS_PATTERN.test(sourceText)) {
+        requirements.push(textRequirementBase(
+            'req_system_lesson_hours_completeness',
+            entityObject('global', '任课计划周课时', [], 'global'),
+            'lesson_hours_completeness',
+            sourceText,
+            {
+                strength: 'hard',
+                status: 'handled',
+                applyTo: 'solver_policy',
+                confidence: 0.94,
+                warnings: ['求解时会按任课计划周课时排满，不需要额外生成不可排规则。'],
             },
         ));
     }
@@ -2084,6 +2233,9 @@ function buildRuleReviewResult({
     previewItems,
     requirementItems = [],
     semanticActions = [],
+    parserVersion = PARSER_VERSION,
+    parseSource = source,
+    cacheHit = false,
 }) {
     const conflicts = detectRuleConflicts(project, rows);
     const clarifyingQuestions = buildClarifyingQuestions(project, rows);
@@ -2146,8 +2298,11 @@ function buildRuleReviewResult({
         confidenceSummary: confidenceSummary(rows),
         nextAction,
         source,
+        parseSource: parseSource || source,
         inputType,
         contextStats,
+        parserVersion,
+        cacheHit: Boolean(cacheHit),
     };
 }
 
@@ -2284,6 +2439,58 @@ export function diagnoseTimetableRules({
     };
 }
 
+function rowIdentityNeedsStabilizing(row = {}, source = '') {
+    return ['local_xlsx', 'ai_supplement', 'cache', 'mixed_xlsx'].includes(row.parseSource || source);
+}
+
+function stableRowSortKey(row = {}) {
+    return [
+        row.sourceSheet || '',
+        String(row.sourceRow || '').padStart(6, '0'),
+        row.type || '',
+        row.targetId || row.targetName || row.teacherId || row.classId || row.subjectId || '',
+        (row.slots || []).join(','),
+        row.rawText || '',
+    ].join('|');
+}
+
+function stableKeyForRow(row = {}) {
+    return hashValue({
+        sourceSheet: row.sourceSheet || '',
+        sourceRow: row.sourceRow || null,
+        type: row.type || '',
+        targetType: row.targetType || '',
+        targetId: row.targetId || '',
+        targetName: row.targetName || '',
+        teacherId: row.teacherId || '',
+        classId: row.classId || '',
+        subjectId: row.subjectId || '',
+        slots: row.slots || [],
+        days: row.days || [],
+        periods: row.periods || [],
+        limit: row.limit || null,
+        weekPattern: row.weekPattern || '',
+        rawText: row.rawText || '',
+    }, 20);
+}
+
+function stabilizeParsedRows(rows = [], source = '') {
+    return [...rows]
+        .sort((left, right) => stableRowSortKey(left).localeCompare(stableRowSortKey(right), 'zh-Hans-CN'))
+        .map((row, index) => {
+            if (!rowIdentityNeedsStabilizing(row, source)) return row;
+            const stableKey = row.stableKey || stableKeyForRow(row);
+            return {
+                ...row,
+                stableKey,
+                id: `rule_${stableKey}`,
+                parseSource: row.parseSource || source,
+                source: row.source || row.parseSource || source,
+                sourceOrder: index + 1,
+            };
+        });
+}
+
 export function normalizeTimetableRuleDraftRows({
     project: inputProject = {},
     draftRows = [],
@@ -2297,9 +2504,12 @@ export function normalizeTimetableRuleDraftRows({
     const project = normalizeTimetableProject(inputProject);
     const rules = emptyRulesFrom(project);
     const warnings = [...initialWarnings].map(item => asText(item, 240)).filter(Boolean);
-    const unsupportedItems = [];
+    let unsupportedItems = [];
 
-    const rows = (Array.isArray(draftRows) ? draftRows : [])
+    const filteredDraftRows = (Array.isArray(draftRows) ? draftRows : [])
+        .filter(row => !isSystemHandledDraftRow(row));
+
+    let rows = filteredDraftRows
         .flatMap((row, index) => expandGroupedEntityTarget(row, index, project))
         .map((row, index) => classifyDraftRow(normalizeDraftRow(row, index, project), project))
         .map(row => {
@@ -2461,6 +2671,10 @@ export function normalizeTimetableRuleDraftRows({
 
             return { ...row, status: 'unsupported' };
         });
+    rows = stabilizeParsedRows(rows, source);
+    unsupportedItems = rows
+        .filter(row => row.status === 'suggestion' || row.status === 'unsupported')
+        .map(previewFromRow);
 
     const semanticLayer = buildRequirementSemantics(project, rows, {
         originalText,
@@ -2588,6 +2802,7 @@ function buildPrompt({ project, text, inputType = 'text', contextStats = null, c
 async function callAi({ project, text, inputType, contextStats, constraintRows, env, fetchImpl }) {
     const { apiKey, baseUrl, model } = resolveAiConfig(env);
     const fetchClient = resolveFetch(fetchImpl);
+    const seed = Number.parseInt(env.TIMETABLE_RULE_AI_SEED, 10);
     const response = await fetchClient(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -2596,7 +2811,8 @@ async function callAi({ project, text, inputType, contextStats, constraintRows, 
         },
         body: JSON.stringify({
             model,
-            temperature: 0.1,
+            temperature: 0,
+            ...(Number.isInteger(seed) ? { seed } : {}),
             response_format: { type: 'json_object' },
             messages: buildPrompt({ project, text, inputType, contextStats, constraintRows }),
         }),
@@ -2626,6 +2842,7 @@ function rowsFromAiConstraints(constraints = [], { inputRows = [], source = 'ai'
         const type = normalizeConstraintType(constraint.type || constraint.ruleType);
         return {
             id: asText(constraint.id || inputRow.id, 80) || `rule_draft_${index + 1}`,
+            parseSource: source,
             source,
             sourceSheet: constraint.sourceSheet || inputRow.sourceSheet,
             sourceRow: constraint.sourceRow || inputRow.sourceRow,
@@ -3100,9 +3317,65 @@ function localTextConstraints(project, text, sourceMeta = {}) {
     return compactLocalConstraints(constraints);
 }
 
-function localTextConstraintsFromInput(project, text, constraintRows = []) {
+function structuredConstraintFromRow(project, row = {}) {
+    const type = normalizeConstraintType(row.ruleType || row.type || '');
+    if (!SUPPORTED_EFFECTIVE_TYPES.has(type) && !SUGGESTION_ONLY_TYPES.has(type)) return null;
+
+    const targetType = targetTypeFor(type, row);
+    const target = asText(row.target || row.targetName || row.teacherName || row.className || row.subjectName || '', 200);
+    const rawText = asText(row.constraintText || row.description || row.ruleName || '', 1500)
+        || [
+            row.ruleName ? `名称：${row.ruleName}` : '',
+            row.ruleType ? `类型：${row.ruleType}` : '',
+            target ? `对象：${target}` : '',
+            row.days ? `周几：${row.days}` : '',
+            row.periods ? `节次：${row.periods}` : '',
+            row.slots ? `时间：${row.slots}` : '',
+        ].filter(Boolean).join('；');
+    const base = {
+        type,
+        target,
+        targetName: target,
+        targetType,
+        slots: normalizeSlotList(row.slots || row.timeSlots || ''),
+        days: row.days || row.weekdays || '',
+        periods: row.periods || row.lessonIndexes || '',
+        priority: row.priority || row.strength,
+        weight: row.weight,
+        limit: row.limit || row.value || row.max,
+        reason: row.description || rawText,
+        confidence: 0.95,
+        sourceSheet: row.sourceSheet,
+        sourceRow: row.sourceRow,
+    };
+
+    if (targetType === 'teacher') {
+        base.teacherId = row.teacherId || row.targetId || '';
+        base.teacher = row.teacherName || target;
+    } else if (targetType === 'class') {
+        base.classId = row.classId || row.targetId || '';
+        base.class = row.className || target;
+    } else if (targetType === 'subject') {
+        base.subjectId = row.subjectId || row.targetId || '';
+        base.subject = row.subjectName || target;
+    }
+
+    if (!base.slots.length && (base.days || base.periods)) {
+        base.slots = slotsFromConstraint(base, project);
+    }
+    if (row.weekPattern) base.weekPattern = row.weekPattern;
+    if (rawText) base.rawText = rawText;
+
+    return base;
+}
+
+function localTextConstraintsFromInput(project, text, constraintRows = [], options = {}) {
     if (Array.isArray(constraintRows) && constraintRows.length) {
         return constraintRows.flatMap(row => {
+            if (options.preferStructuredRows) {
+                const structured = structuredConstraintFromRow(project, row);
+                if (structured) return [structured];
+            }
             const rowText = asText(row.constraintText || row.rawText || row.description || '', 1500);
             if (!rowText) return [];
             return localTextConstraints(project, rowText, {
@@ -3115,12 +3388,15 @@ function localTextConstraintsFromInput(project, text, constraintRows = []) {
 }
 
 function parseConstraintsWithLocalFallback({ project, text, inputType, contextStats = null, constraintRows = [], error = null }) {
-    const constraints = localTextConstraintsFromInput(project, text, constraintRows);
+    const localSource = localParseSourceForInput(inputType);
+    const constraints = localTextConstraintsFromInput(project, text, constraintRows, {
+        preferStructuredRows: inputType === 'xlsx_constraints',
+    });
     if (!constraints.length) {
         const semanticOnly = normalizeTimetableRuleDraftRows({
             project,
             draftRows: [],
-            source: 'local_text',
+            source: localSource,
             inputType,
             contextStats,
             originalText: text,
@@ -3132,8 +3408,8 @@ function parseConstraintsWithLocalFallback({ project, text, inputType, contextSt
     }
     return normalizeTimetableRuleDraftRows({
         project,
-        draftRows: rowsFromAiConstraints(constraints, { inputRows: constraintRows, source: 'local_text' }),
-        source: 'local_text',
+        draftRows: rowsFromAiConstraints(constraints, { inputRows: constraintRows, source: localSource }),
+        source: localSource,
         inputType,
         contextStats,
         originalText: text,
@@ -3146,7 +3422,11 @@ function hasConfiguredAi(env = {}) {
 }
 
 function shouldUseLocalFirst(inputType = '') {
-    return ['text', 'txt', 'csv_text'].includes(inputType);
+    return ['text', 'txt', 'csv_text', 'xlsx_constraints'].includes(inputType);
+}
+
+function localParseSourceForInput(inputType = '') {
+    return inputType === 'xlsx_constraints' ? 'local_xlsx' : 'local_text';
 }
 
 function localResultIsDecisive(result = {}) {
@@ -3155,30 +3435,67 @@ function localResultIsDecisive(result = {}) {
     return rows.some(row => row.status === 'effective' || row.weekPattern);
 }
 
-function localResultCanSkipAi(text = '', result = {}) {
+function localResultCanSkipAi(text = '', result = {}, inputType = '', constraintRows = []) {
+    if (inputType === 'xlsx_constraints') {
+        const rows = result.draftRows || [];
+        const resolvedRows = new Set(
+            rows
+                .filter(row => ['effective', 'suggestion', 'ignored'].includes(row.status))
+                .map(row => row.sourceRow)
+                .filter(value => value !== undefined && value !== null && value !== '')
+                .map(String)
+        );
+        const totalSourceRows = new Set(
+            (Array.isArray(constraintRows) ? constraintRows : [])
+                .map(row => row.sourceRow)
+                .filter(value => value !== undefined && value !== null && value !== '')
+                .map(String)
+        );
+        return Boolean(rows.length)
+            && (!totalSourceRows.size || [...totalSourceRows].every(row => resolvedRows.has(row)))
+            && rows.every(row => ['effective', 'suggestion', 'ignored'].includes(row.status))
+            && rows.some(row => row.status === 'effective');
+    }
     if (/[A-Za-z]/.test(text)) return false;
     return localResultIsDecisive(result);
 }
 
+function unresolvedConstraintRowsForAi(constraintRows = [], localResult = {}) {
+    const resolvedRows = new Set(
+        (localResult.draftRows || [])
+            .filter(row => ['effective', 'suggestion', 'ignored'].includes(row.status))
+            .map(row => row.sourceRow)
+            .filter(value => value !== undefined && value !== null && value !== '')
+            .map(String)
+    );
+    return (Array.isArray(constraintRows) ? constraintRows : [])
+        .filter(row => !resolvedRows.has(String(row.sourceRow || '')));
+}
+
 async function parseAiOrLocal({ project, text, inputType, contextStats = null, constraintRows = [], env, fetchImpl }) {
+    let localConstraints = [];
+    let localResult = null;
     if (shouldUseLocalFirst(inputType)) {
-        const localConstraints = localTextConstraintsFromInput(project, text, constraintRows);
+        const localSource = localParseSourceForInput(inputType);
+        localConstraints = localTextConstraintsFromInput(project, text, constraintRows, {
+            preferStructuredRows: inputType === 'xlsx_constraints',
+        });
         if (localConstraints.length) {
-            const localResult = normalizeTimetableRuleDraftRows({
+            localResult = normalizeTimetableRuleDraftRows({
                 project,
-                draftRows: rowsFromAiConstraints(localConstraints, { inputRows: constraintRows, source: 'local_text' }),
-                source: 'local_text',
+                draftRows: rowsFromAiConstraints(localConstraints, { inputRows: constraintRows, source: localSource }),
+                source: localSource,
                 inputType,
                 contextStats,
                 originalText: text,
                 initialWarnings: hasConfiguredAi(env) ? [] : ['智能解析不可用，已仅提取明确规则：ai_not_configured'],
             });
-            if (!hasConfiguredAi(env) || localResultCanSkipAi(text, localResult)) return localResult;
+            if (!hasConfiguredAi(env) || localResultCanSkipAi(text, localResult, inputType, constraintRows)) return localResult;
         } else if (!hasConfiguredAi(env)) {
             const semanticOnly = normalizeTimetableRuleDraftRows({
                 project,
                 draftRows: [],
-                source: 'local_text',
+                source: localSource,
                 inputType,
                 contextStats,
                 originalText: text,
@@ -3188,8 +3505,25 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
         }
     }
     try {
-        const parsed = await callAi({ project, text, inputType, contextStats, constraintRows, env, fetchImpl });
+        const aiConstraintRows = inputType === 'xlsx_constraints' && localResult
+            ? unresolvedConstraintRowsForAi(constraintRows, localResult)
+            : constraintRows;
+        if (inputType === 'xlsx_constraints' && localResult && !aiConstraintRows.length) return localResult;
+        const aiText = inputType === 'xlsx_constraints'
+            ? textFromConstraintRows(aiConstraintRows) || text
+            : text;
+        const parsed = await callAi({
+            project,
+            text: aiText,
+            inputType,
+            contextStats,
+            constraintRows: aiConstraintRows,
+            env,
+            fetchImpl,
+        });
         const constraints = aiDraftRowsFromParsed(parsed);
+        const aiSource = inputType === 'xlsx_constraints' ? 'ai_supplement' : 'ai';
+        const localSource = localParseSourceForInput(inputType);
         const warnings = [
             ...warningMessagesFromAi(parsed.warnings),
             ...warningMessagesFromAi(parsed.missingInfo),
@@ -3197,8 +3531,13 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
         ];
         return normalizeTimetableRuleDraftRows({
             project,
-            draftRows: rowsFromAiConstraints(constraints, { inputRows: constraintRows, source: 'ai' }),
-            source: 'ai',
+            draftRows: [
+                ...(inputType === 'xlsx_constraints' && localConstraints.length
+                    ? rowsFromAiConstraints(localConstraints, { inputRows: constraintRows, source: localSource })
+                    : []),
+                ...rowsFromAiConstraints(constraints, { inputRows: aiConstraintRows, source: aiSource }),
+            ],
+            source: inputType === 'xlsx_constraints' && localConstraints.length ? 'mixed_xlsx' : aiSource,
             inputType,
             contextStats,
             originalText: text,
@@ -3217,40 +3556,13 @@ async function parseRosterWorkbookRules({ file, project, env, fetchImpl }) {
     const preview = previewTimetableRosterFile(file, { project });
     const contextStats = rosterContext(preview);
     const rosterProject = projectWithRosterPreview(project, preview);
-    const text = [
-        '请根据这份任课表生成排课约束草稿。',
-        '只能根据数据推导通用规则，不要虚构具体教师不可排时间。',
-        JSON.stringify(contextStats),
-    ].join('\n');
-
-    try {
-        const parsed = await parseAiOrLocal({
-            project: rosterProject,
-            text,
-            inputType: 'xlsx_roster',
-            contextStats,
-            constraintRows: preview.draftRows,
-            env,
-            fetchImpl,
-        });
-        if ((parsed.draftRows || []).length) return parsed;
-        return normalizeRosterFallback({
-            project: rosterProject,
-            preview,
-            contextStats,
-            initialWarnings: [
-                ...(parsed.warnings || []),
-                '智能解析没有返回可复核的约束，已根据任课表生成本地基础建议。',
-            ],
-        });
-    } catch (error) {
-        return normalizeRosterFallback({
-            project: rosterProject,
-            preview,
-            contextStats,
-            initialWarnings: [`智能解析不可用，已根据任课表生成本地基础建议：${error.reason || error.message}`],
-        });
-    }
+    void env;
+    void fetchImpl;
+    return normalizeRosterFallback({
+        project: rosterProject,
+        preview,
+        contextStats,
+    });
 }
 
 async function parseConstraintWorkbookRules({ classified, project, env, fetchImpl }) {
@@ -3292,12 +3604,22 @@ export async function parseTimetableRules({
     if (file?.buffer) {
         const ext = path.extname(file.filename || '').toLowerCase();
         if (['.xlsx', '.xls'].includes(ext)) {
+            const cacheKey = parseCacheKey({ fileBuffer: file.buffer, project });
+            const cached = getParseCache(cacheKey);
+            if (cached) {
+                return withParseMetadata(cached, { cacheHit: true, parseSource: 'cache' });
+            }
             const sheets = workbookSheets(file);
             const classified = classifyWorkbook(sheets);
+            let result;
             if (classified.inputType === 'xlsx_roster') {
-                return parseRosterWorkbookRules({ file, project, env, fetchImpl });
+                result = await parseRosterWorkbookRules({ file, project, env, fetchImpl });
+            } else {
+                result = await parseConstraintWorkbookRules({ classified, project, env, fetchImpl });
             }
-            return parseConstraintWorkbookRules({ classified, project, env, fetchImpl });
+            const normalizedResult = withParseMetadata(result);
+            setParseCache(cacheKey, normalizedResult);
+            return normalizedResult;
         }
         if (['.txt', '.csv'].includes(ext)) {
             const fileText = uploadText(file);

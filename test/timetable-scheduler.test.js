@@ -1849,7 +1849,7 @@ test('timetable AI rules parser derives local suggestions from roster Excel when
     assert.ok(result.unsupportedItems.length >= 1);
 });
 
-test('timetable AI rules parser falls back to reviewable roster suggestions when AI returns no constraints', async () => {
+test('timetable AI rules parser uses stable local roster suggestions without calling AI', async () => {
     const project = createDefaultTimetableProject({
         weekdays: 5,
         periodsPerDay: 7,
@@ -1874,16 +1874,9 @@ test('timetable AI rules parser falls back to reviewable roster suggestions when
         },
         project,
         env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
-        fetchImpl: async () => jsonResponse({
-            choices: [{
-                message: {
-                    content: JSON.stringify({
-                        constraints: [],
-                        warnings: ['Roster is incomplete, review manually.'],
-                    }),
-                },
-            }],
-        }),
+        fetchImpl: async () => {
+            throw new Error('AI should not be called for roster workbooks');
+        },
     });
 
     assert.equal(result.inputType, 'xlsx_roster');
@@ -1892,10 +1885,44 @@ test('timetable AI rules parser falls back to reviewable roster suggestions when
     assert.ok(result.draftRows.length > 0);
     assert.ok(result.previewItems.some(item => item.type === 'subject_morning'));
     assert.ok(result.previewItems.some(item => item.type === 'block_protection'));
-    assert.ok(result.warnings.some(warning => warning.includes('Roster is incomplete')));
+    assert.equal(result.warnings.length, 0);
 });
 
-test('timetable AI rules parser sends constraint Excel to AI and maps preferred period rules', async () => {
+test('timetable AI rules parser parses decisive constraint Excel rows locally', async () => {
+    const project = sampleProject({
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        rules: { hardRules: {}, softRules: {} },
+    });
+    let aiCalls = 0;
+
+    const result = await parseTimetableRules({
+        file: {
+            filename: 'constraints.xlsx',
+            buffer: makeTimetableWorkbook([
+                ['rule name', 'type', 'target', 'slots', 'natural language constraint'],
+                ['Math later', 'subject_preferred_periods', 'Math', '1-2', 'Math should be at Monday period 2.'],
+                ['PE not first', 'subject_avoid_periods', 'PE', '1-1', 'PE should avoid Monday period 1.'],
+            ], { sheetName: 'AIConstraints' }),
+        },
+        project,
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        fetchImpl: async () => {
+            aiCalls += 1;
+            throw new Error('AI should not be called for decisive structured rows');
+        },
+    });
+
+    assert.equal(aiCalls, 0);
+    assert.equal(result.inputType, 'xlsx_constraints');
+    assert.equal(result.source, 'local_xlsx');
+    assert.equal(result.parseSource, 'local_xlsx');
+    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.math.prefer, ['1-2']);
+    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.avoid, ['1-1']);
+    assert.ok(result.draftRows.every(row => row.parseSource === 'local_xlsx'));
+});
+
+test('timetable AI rules parser supplements only unresolved constraint Excel rows', async () => {
     const project = sampleProject({
         activeWeekdays: [1, 2, 3, 4, 5],
         activePeriods: [1, 2, 3, 4, 5, 6, 7],
@@ -1909,7 +1936,7 @@ test('timetable AI rules parser sends constraint Excel to AI and maps preferred 
             buffer: makeTimetableWorkbook([
                 ['rule name', 'type', 'target', 'slots', 'natural language constraint'],
                 ['Math later', 'subject_preferred_periods', 'Math', '1-2', 'Math should be at Monday period 2.'],
-                ['PE not first', 'subject_avoid_periods', 'PE', '1-1', 'PE should avoid Monday period 1.'],
+                ['Load balance', '', '', '', 'High-load teachers should not teach too many consecutive periods.'],
             ], { sheetName: 'AIConstraints' }),
         },
         project,
@@ -1918,13 +1945,12 @@ test('timetable AI rules parser sends constraint Excel to AI and maps preferred 
             assert.equal(String(url), 'http://ai.test/chat/completions');
             const request = JSON.parse(options.body);
             observedPrompt = JSON.stringify(request.messages);
+            assert.equal(request.temperature, 0);
             return jsonResponse({
                 choices: [{
                     message: {
                         content: JSON.stringify({
                             constraints: [
-                                { type: 'subject_preferred_periods', targetId: 'math', slots: ['1-2'], priority: 'soft', reason: 'Preferred time' },
-                                { type: 'subject_avoid_periods', targetId: 'pe', slots: ['1-1'], priority: 'soft', reason: 'Avoid early PE' },
                                 { type: 'teacher_load_balance', target: 'Math Teacher', priority: 'soft', reason: 'Balance workload' },
                             ],
                         }),
@@ -1935,15 +1961,17 @@ test('timetable AI rules parser sends constraint Excel to AI and maps preferred 
     });
 
     assert.equal(result.inputType, 'xlsx_constraints');
-    assert.equal(result.source, 'ai');
-    assert.match(observedPrompt, /Math should be at Monday period 2/);
+    assert.equal(result.source, 'mixed_xlsx');
+    assert.match(observedPrompt, /High-load teachers/);
+    assert.doesNotMatch(observedPrompt, /Math should be at Monday period 2/);
     assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.math.prefer, ['1-2']);
-    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.avoid, ['1-1']);
     assert.ok(result.previewItems.some(item => item.type === 'teacher_load_balance' && item.status === 'suggestion'));
     assert.ok(result.unsupportedItems.some(item => item.type === 'teacher_load_balance'));
+    assert.ok(result.draftRows.some(row => row.parseSource === 'local_xlsx'));
+    assert.ok(result.draftRows.some(row => row.parseSource === 'ai_supplement'));
 });
 
-test('timetable AI rules parser recognizes the local AI constraint workbook as constraints', async () => {
+test('timetable AI rules parser combines local AI constraint workbook rows with AI supplements', async () => {
     const project = sampleProject({
         activeWeekdays: [1, 2, 3, 4, 5],
         activePeriods: [1, 2, 3, 4, 5, 6, 7],
@@ -1980,13 +2008,16 @@ test('timetable AI rules parser recognizes the local AI constraint workbook as c
     });
 
     assert.equal(result.inputType, 'xlsx_constraints');
+    assert.equal(result.source, 'mixed_xlsx');
     assert.equal(result.contextStats.sheetName, 'AI约束建议');
     assert.ok(result.contextStats.rowCount >= 10);
     assert.ok(result.draftRows.length >= 3);
     assert.match(observedPrompt, /同一位教师同一时间只能给一个班上课/);
     assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
-    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.prefer, ['1-5', '2-5']);
+    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.prefer, ['1-5', '2-5', '3-3']);
     assert.ok(result.draftRows.some(row => row.status === 'suggestion' && row.type === 'teacher_load_balance'));
+    assert.ok(result.draftRows.some(row => row.parseSource === 'local_xlsx'));
+    assert.ok(result.draftRows.some(row => row.parseSource === 'ai_supplement'));
 });
 
 test('timetable AI rules parser locally extracts obvious text rules when AI is unavailable', async () => {
@@ -2036,6 +2067,7 @@ test('timetable smart rules accept full agent schema from the configured parser'
             DEEPSEEK_API_KEY: 'test-key',
             DEEPSEEK_API_BASE: 'https://example.test',
             DEEPSEEK_MODEL: 'agent-test',
+            TIMETABLE_RULE_AI_SEED: '20260705',
         },
         fetchImpl: async (_url, options = {}) => {
             requestBody = JSON.parse(options.body);
@@ -2077,6 +2109,8 @@ test('timetable smart rules accept full agent schema from the configured parser'
     });
 
     const systemPrompt = requestBody.messages[0].content;
+    assert.equal(requestBody.temperature, 0);
+    assert.equal(requestBody.seed, 20260705);
     assert.match(systemPrompt, /"draftRows"/);
     assert.match(systemPrompt, /"autoAcceptable"/);
     assert.match(systemPrompt, /"clarifyingQuestions"/);

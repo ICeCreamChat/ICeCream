@@ -5,6 +5,95 @@
 
 import { requestTimetable } from './api.js';
 
+const DAY_LABELS = ['', '一', '二', '三', '四', '五', '六', '日'];
+
+const RULE_TYPE_LABELS = {
+    teacher_unavailable: '教师不可排',
+    class_unavailable: '班级不可排',
+    subject_morning: '上午优先',
+    subject_preferred_periods: '课程优先节次',
+    subject_avoid_periods: '课程避开节次',
+    teacher_daily_limit: '教师每日上限',
+    teacher_consecutive_limit: '教师连续上限',
+    subject_spread: '课程分散',
+};
+
+const RULE_TARGET_KIND = {
+    teacher_unavailable: 'teacher',
+    teacher_daily_limit: 'teacher',
+    teacher_consecutive_limit: 'teacher',
+    class_unavailable: 'class',
+    subject_morning: 'subject',
+    subject_preferred_periods: 'subject',
+    subject_avoid_periods: 'subject',
+    subject_spread: 'subject',
+};
+
+const SLOT_RULE_TYPES = new Set([
+    'teacher_unavailable',
+    'class_unavailable',
+    'subject_preferred_periods',
+    'subject_avoid_periods',
+]);
+
+const LIMIT_RULE_TYPES = new Set([
+    'teacher_daily_limit',
+    'teacher_consecutive_limit',
+]);
+
+function normalizeRuleKey(value = '') {
+    return String(value || '').trim()
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .toLowerCase()
+        .replace(/[-\s]+/g, '_');
+}
+
+function entityLabel(kind, item = {}) {
+    if (kind === 'class') return [item.grade, item.name].filter(Boolean).join(' ') || item.name || item.id || '班级';
+    return item.name || item.label || item.id || '对象';
+}
+
+function collectionForKind(project = {}, kind = '') {
+    return {
+        subject: project.subjects || [],
+        teacher: project.teachers || [],
+        class: project.classes || [],
+    }[kind] || [];
+}
+
+function resolveEditTarget(project = {}, value = '') {
+    const [kind, id] = String(value || '').split(':');
+    if (!kind || !id) return null;
+    const item = collectionForKind(project, kind).find(entry => String(entry.id) === id);
+    return {
+        kind,
+        id,
+        name: item ? entityLabel(kind, item) : id,
+    };
+}
+
+function checkedEditSlots() {
+    return Array.from(document.querySelectorAll?.('[data-edit-slot]:checked') || [])
+        .map(input => String(input.value || '').trim())
+        .filter(Boolean);
+}
+
+function formatSlot(slot = '') {
+    const match = String(slot).match(/^(\d{1,2})-(\d{1,2})$/);
+    if (!match) return String(slot || '');
+    const day = Number.parseInt(match[1], 10);
+    const period = Number.parseInt(match[2], 10);
+    return `周${DAY_LABELS[day] || day}第${period}节`;
+}
+
+function summarizeRule(type, targetName, slots = [], limit = null) {
+    if (LIMIT_RULE_TYPES.has(type)) return `${targetName} 最多 ${limit} 节`;
+    if (type === 'subject_morning') return `${targetName} 上午优先`;
+    if (type === 'subject_spread') return `${targetName} 分散排布`;
+    if (slots.length) return `${targetName} ${slots.map(formatSlot).join('、')}`;
+    return `${targetName} ${RULE_TYPE_LABELS[type] || '约束规则'}`;
+}
+
 /**
  * 约束冲突检测
  */
@@ -67,7 +156,7 @@ export function editConstraint(constraintId) {
 
     // 聚焦到编辑表单
     setTimeout(() => {
-        const firstInput = document.querySelector('.tt-constraint-edit-form input, .tt-constraint-edit-form select, .tt-constraint-edit-form textarea');
+        const firstInput = document.querySelector('.tt-constraint-edit-modal input, .tt-constraint-edit-modal select, .tt-constraint-edit-modal textarea');
         firstInput?.focus();
     }, 0);
 }
@@ -79,30 +168,63 @@ export function saveEditedConstraint() {
     const editing = this.state.constraintDialog?.editingConstraint;
     if (!editing) return;
 
-    // 读取表单数据
-    const type = document.getElementById('tt-edit-constraint-type')?.value;
-    const target = document.getElementById('tt-edit-constraint-target')?.value?.trim();
-    const time = document.getElementById('tt-edit-constraint-time')?.value?.trim();
-    const understanding = document.getElementById('tt-edit-constraint-understanding')?.value?.trim();
+    const type = normalizeRuleKey(document.getElementById('tt-edit-constraint-type')?.value);
+    const targetValue = document.getElementById('tt-edit-constraint-target')?.value;
+    const priority = document.getElementById('tt-edit-constraint-priority')?.value || editing.priority || 'soft';
+    const status = document.getElementById('tt-edit-constraint-status')?.value || editing.status || 'effective';
+    const limitText = document.getElementById('tt-edit-constraint-limit')?.value;
+    const slots = checkedEditSlots();
+    const target = resolveEditTarget(this.state.project || {}, targetValue);
+    const expectedKind = RULE_TARGET_KIND[type];
 
-    if (!target || !time) {
-        alert('请填写完整信息');
+    if (!type || !target) {
+        alert('请选择规则类型和对象');
+        return;
+    }
+    if (expectedKind && target.kind !== expectedKind) {
+        alert('对象类型与规则类型不匹配');
+        return;
+    }
+    if (SLOT_RULE_TYPES.has(type) && !slots.length) {
+        alert('请选择至少一个节次');
         return;
     }
 
-    // 更新约束
+    const limit = Number.parseInt(limitText, 10);
+    if (LIMIT_RULE_TYPES.has(type) && (!Number.isInteger(limit) || limit <= 0)) {
+        alert('请填写有效的上限节数');
+        return;
+    }
+
     const updatedConstraint = {
         ...editing,
         type,
-        typeLabel: { forbid: '禁止', prefer: '优先', avoid: '尽量避开' }[type] || type,
-        targetName: target,
-        timeLabel: time,
-        target: { name: target },
-        time: { label: time },
-        understanding: understanding || `${target} ${time} ${{ forbid: '不排课', prefer: '优先排课', avoid: '尽量避开' }[type]}`,
+        typeLabel: RULE_TYPE_LABELS[type] || '约束规则',
+        targetType: target.kind,
+        targetId: target.id,
+        targetName: target.name,
+        target: { type: target.kind, id: target.id, name: target.name },
+        priority,
+        status,
+        description: summarizeRule(type, target.name, slots, LIMIT_RULE_TYPES.has(type) ? limit : null),
+        understanding: summarizeRule(type, target.name, slots, LIMIT_RULE_TYPES.has(type) ? limit : null),
     };
 
-    // 替换原约束
+    delete updatedConstraint.originalId;
+    delete updatedConstraint.time;
+    delete updatedConstraint.timeLabel;
+
+    if (SLOT_RULE_TYPES.has(type)) {
+        updatedConstraint.slots = slots;
+    } else {
+        delete updatedConstraint.slots;
+    }
+    if (LIMIT_RULE_TYPES.has(type)) {
+        updatedConstraint.limit = limit;
+    } else {
+        delete updatedConstraint.limit;
+    }
+
     const index = this.state.ruleReview.draftRows.findIndex(c => c.id === editing.originalId);
     if (index >= 0) {
         this.state.ruleReview.draftRows[index] = updatedConstraint;

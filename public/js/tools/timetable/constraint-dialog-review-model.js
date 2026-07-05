@@ -115,6 +115,8 @@ function draftRowSource(row = {}) {
         rawText: row.sourceText || row.rawText || row.description || '',
         sourceSheet: row.sourceSheet || row.source || '',
         sourceRow: row.sourceRow || '',
+        parseSource: row.parseSource || '',
+        stableKey: row.stableKey || '',
     };
 }
 

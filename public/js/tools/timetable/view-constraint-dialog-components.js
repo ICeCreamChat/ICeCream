@@ -14,6 +14,28 @@ function escapeAttr(value) {
 
 const DAY_LABELS = ['', '一', '二', '三', '四', '五', '六', '日'];
 
+const EDITABLE_RULE_TYPES = [
+    { value: 'subject_preferred_periods', label: '课程优先节次' },
+    { value: 'subject_avoid_periods', label: '课程避开节次' },
+    { value: 'subject_morning', label: '上午优先' },
+    { value: 'subject_spread', label: '课程分散' },
+    { value: 'teacher_unavailable', label: '教师不可排' },
+    { value: 'class_unavailable', label: '班级不可排' },
+    { value: 'teacher_daily_limit', label: '教师每日上限' },
+    { value: 'teacher_consecutive_limit', label: '教师连续上限' },
+];
+
+const STATUS_OPTIONS = [
+    { value: 'effective', label: '可应用' },
+    { value: 'needs_review', label: '需复核' },
+    { value: 'suggestion', label: '建议项' },
+];
+
+const PRIORITY_OPTIONS = [
+    { value: 'soft', label: '尽量满足' },
+    { value: 'hard', label: '必须满足' },
+];
+
 function slotsFromConstraint(constraint = {}) {
     return [
         ...(constraint.time?.slots || []),
@@ -39,13 +61,97 @@ function constraintTimeLabel(constraint = {}) {
     return '未限定时间';
 }
 
+function parseSourceLabel(value = '') {
+    const key = String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    return {
+        local_xlsx: '本地识别',
+        local_text: '本地识别',
+        ai_supplement: 'AI 补充',
+        ai: 'AI 识别',
+        cache: '缓存结果',
+        mixed_xlsx: '本地 + AI',
+        local_roster_fallback: '本地建议',
+    }[key] || '';
+}
+
 function constraintSourceLabel(constraint = {}) {
     const sheet = constraint.sourceSheet || constraint.source;
     const row = Number.parseInt(constraint.sourceRow, 10);
-    if (sheet && Number.isFinite(row)) return `${sheet} 第 ${row} 行`;
-    if (sheet) return sheet;
-    if (Number.isFinite(row)) return `第 ${row} 行`;
+    const parseLabel = parseSourceLabel(constraint.parseSource || '');
+    const locationLabel = sheet && Number.isFinite(row)
+        ? `${sheet} 第 ${row} 行`
+        : sheet || (Number.isFinite(row) ? `第 ${row} 行` : '');
+    return [locationLabel, parseLabel].filter(Boolean).join(' · ');
+}
+
+function activeWeekdays(project = {}) {
+    const days = Array.isArray(project.activeWeekdays) && project.activeWeekdays.length
+        ? project.activeWeekdays
+        : Array.from({ length: Number(project.weekdays) || 5 }, (_, index) => index + 1);
+    return days.map(Number).filter(day => Number.isInteger(day) && day > 0);
+}
+
+function activePeriods(project = {}) {
+    const periods = Array.isArray(project.activePeriods) && project.activePeriods.length
+        ? project.activePeriods
+        : Array.from({ length: Number(project.periodsPerDay) || 7 }, (_, index) => index + 1);
+    return periods.map(Number).filter(period => Number.isInteger(period) && period > 0);
+}
+
+function entityLabel(kind, item = {}) {
+    if (kind === 'class') return [item.grade, item.name].filter(Boolean).join(' ') || item.name || item.id || '班级';
+    return item.name || item.label || item.id || '对象';
+}
+
+function selectedTargetValue(constraint = {}) {
+    const kind = constraint.targetType || constraint.target?.type || constraint.target?.kind || '';
+    const id = constraint.targetId || constraint.target?.id || '';
+    if (kind && id) return `${kind}:${id}`;
     return '';
+}
+
+function renderTargetOptions(project = {}, constraint = {}) {
+    const selectedValue = selectedTargetValue(constraint);
+    const groups = [
+        { kind: 'subject', label: '课程', items: project.subjects || [] },
+        { kind: 'teacher', label: '教师', items: project.teachers || [] },
+        { kind: 'class', label: '班级', items: project.classes || [] },
+    ];
+    const knownValues = new Set();
+    const html = groups.map(group => {
+        const options = (group.items || []).map(item => {
+            const value = `${group.kind}:${item.id}`;
+            knownValues.add(value);
+            return `<option value="${escapeAttr(value)}" ${value === selectedValue ? 'selected' : ''}>${escapeHtml(entityLabel(group.kind, item))}</option>`;
+        }).join('');
+        return options ? `<optgroup label="${escapeAttr(group.label)}">${options}</optgroup>` : '';
+    }).join('');
+
+    if (selectedValue && !knownValues.has(selectedValue)) {
+        const label = constraint.target?.name || constraint.targetName || selectedValue;
+        return `<option value="${escapeAttr(selectedValue)}" selected>${escapeHtml(label)}</option>${html}`;
+    }
+    return html;
+}
+
+function renderSlotCheckboxes(project = {}, constraint = {}) {
+    const selectedSlots = new Set(slotsFromConstraint(constraint).map(String));
+    return activeWeekdays(project).map(day => `
+        <div class="tt-edit-slot-day">
+            <span>周${escapeHtml(DAY_LABELS[day] || day)}</span>
+            <div class="tt-edit-slot-row">
+                ${activePeriods(project).map(period => {
+                    const value = `${day}-${period}`;
+                    return `
+                        <label class="tt-edit-slot-chip">
+                            <input type="checkbox" data-edit-slot value="${escapeAttr(value)}" ${selectedSlots.has(value) ? 'checked' : ''}>
+                            <span>${period}</span>
+                        </label>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    `).join('');
 }
 
 export function renderConstraintCard(constraint, state) {
@@ -109,44 +215,91 @@ export function renderConstraintCard(constraint, state) {
     `;
 }
 
-export function renderConstraintEditForm(constraint) {
+export function renderConstraintEditForm(constraint, state = {}) {
+    const project = state.project || {};
+    const sourceLabel = constraintSourceLabel(constraint);
+    const ruleType = String(constraint.type || 'subject_preferred_periods');
+    const priority = String(constraint.priority || 'soft');
+    const status = String(constraint.status || 'effective');
     return `
-        <div class="tt-constraint-edit-form">
-            <div class="tt-edit-form-header">
-                <strong>编辑约束</strong>
-                <button class="tt-btn-icon" data-action="cancel-edit-constraint" title="取消" type="button">
-                    <i data-lucide="x"></i>
-                </button>
-            </div>
-            <div class="tt-form-grid">
-                <label>
-                    <span>约束类型</span>
-                    <select id="tt-edit-constraint-type">
-                        <option value="forbid" ${constraint.type === 'forbid' ? 'selected' : ''}>禁止安排</option>
-                        <option value="prefer" ${constraint.type === 'prefer' ? 'selected' : ''}>优先安排</option>
-                        <option value="avoid" ${constraint.type === 'avoid' ? 'selected' : ''}>尽量避开</option>
-                    </select>
-                </label>
-                <label>
-                    <span>对象</span>
-                    <input type="text" id="tt-edit-constraint-target" value="${escapeAttr(constraint.target?.name || constraint.targetName || '')}" placeholder="教师名或课程名">
-                </label>
-                <label>
-                    <span>时间</span>
-                    <input type="text" id="tt-edit-constraint-time" value="${escapeAttr(constraint.time?.label || constraint.timeLabel || '')}" placeholder="周一上午 或 第1-2节">
-                </label>
-            </div>
-            <label>
-                <span>理解描述</span>
-                <input type="text" id="tt-edit-constraint-understanding" value="${escapeAttr(constraint.understanding || '')}" placeholder="自动生成">
-            </label>
-            <div class="tt-edit-form-actions">
-                <button class="tt-btn" data-action="cancel-edit-constraint" type="button">取消</button>
-                <button class="tt-btn tt-btn--primary" data-action="save-edit-constraint" type="button">
-                    <i data-lucide="check"></i>
-                    <span>保存修改</span>
-                </button>
-            </div>
+        <div class="tt-constraint-edit-backdrop" data-constraint-edit-backdrop>
+            <section class="tt-constraint-edit-modal" role="dialog" aria-modal="true" aria-labelledby="constraint-edit-title">
+                <div class="tt-dialog-header">
+                    <div class="tt-dialog-title">
+                        <span class="tt-dialog-title-icon"><i data-lucide="pencil"></i></span>
+                        <div class="tt-dialog-title-copy">
+                            <h3 id="constraint-edit-title">编辑将应用规则</h3>
+                            <p>人工校正这条机器规则，保存后仍需应用需求才会写入项目。</p>
+                        </div>
+                    </div>
+                    <button class="tt-icon-btn" data-action="cancel-edit-constraint" aria-label="关闭编辑" type="button">
+                        <i data-lucide="x"></i>
+                    </button>
+                </div>
+                <div class="tt-constraint-edit-body">
+                    <div class="tt-form-grid tt-constraint-edit-grid">
+                        <label>
+                            <span>规则类型</span>
+                            <select id="tt-edit-constraint-type">
+                                ${EDITABLE_RULE_TYPES.map(type => `
+                                    <option value="${escapeAttr(type.value)}" ${type.value === ruleType ? 'selected' : ''}>${escapeHtml(type.label)}</option>
+                                `).join('')}
+                            </select>
+                        </label>
+                        <label>
+                            <span>对象</span>
+                            <select id="tt-edit-constraint-target">
+                                ${renderTargetOptions(project, constraint)}
+                            </select>
+                        </label>
+                        <label>
+                            <span>强度</span>
+                            <select id="tt-edit-constraint-priority">
+                                ${PRIORITY_OPTIONS.map(option => `
+                                    <option value="${escapeAttr(option.value)}" ${option.value === priority ? 'selected' : ''}>${escapeHtml(option.label)}</option>
+                                `).join('')}
+                            </select>
+                        </label>
+                        <label>
+                            <span>状态</span>
+                            <select id="tt-edit-constraint-status">
+                                ${STATUS_OPTIONS.map(option => `
+                                    <option value="${escapeAttr(option.value)}" ${option.value === status ? 'selected' : ''}>${escapeHtml(option.label)}</option>
+                                `).join('')}
+                            </select>
+                        </label>
+                        <label>
+                            <span>上限节数</span>
+                            <input type="number" min="1" id="tt-edit-constraint-limit" value="${escapeAttr(constraint.limit || '')}" placeholder="仅上限规则填写">
+                        </label>
+                    </div>
+                    <div class="tt-constraint-edit-slots">
+                        <span class="tt-field-label">节次</span>
+                        <div class="tt-edit-slot-grid">
+                            ${renderSlotCheckboxes(project, constraint)}
+                        </div>
+                    </div>
+                    <div class="tt-constraint-edit-readonly">
+                        <div>
+                            <span>原文</span>
+                            <p>${escapeHtml(constraint.sourceText || constraint.rawText || '手动添加')}</p>
+                        </div>
+                        ${sourceLabel ? `
+                            <div>
+                                <span>来源</span>
+                                <p>${escapeHtml(sourceLabel)}</p>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+                <div class="tt-dialog-actions">
+                    <button class="tt-btn" data-action="cancel-edit-constraint" type="button">取消</button>
+                    <button class="tt-btn tt-btn--primary" data-action="save-edit-constraint" type="button">
+                        <i data-lucide="check"></i>
+                        <span>保存修改</span>
+                    </button>
+                </div>
+            </section>
         </div>
     `;
 }

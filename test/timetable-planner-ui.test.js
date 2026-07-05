@@ -213,6 +213,101 @@ test('timetable constraint dialog renders object-first requirements as a review 
   assert.doesNotMatch(html, /暂不支持[\s\S]{0,80}默认单节/);
 });
 
+test('timetable constraint dialog does not count rules_patch bridge actions as extra machine rules', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      draftRows: [{
+        id: 'rule-row',
+        requirementId: 'req_rule',
+        rawText: '语文尽量上午前四节',
+        type: 'subject_preferred_periods',
+        targetType: 'subject',
+        targetName: '语文',
+        slots: ['1-1', '1-2', '1-3', '1-4'],
+        priority: 'soft',
+        status: 'effective',
+      }],
+      requirementItems: [{
+        id: 'req_rule',
+        object: { kind: 'subject', name: '语文', matchedIds: ['s1'], scope: 'explicit' },
+        intent: 'preferred_periods',
+        status: 'actionable',
+        applyTo: 'rule',
+        parameters: { slots: ['1-1', '1-2', '1-3', '1-4'] },
+        source: { rawText: '语文尽量上午前四节', sourceRow: 2 },
+      }],
+      semanticActions: [{
+        id: 'act_rule',
+        requirementId: 'req_rule',
+        kind: 'rules_patch',
+        status: 'ready',
+        target: { rowIds: ['rule-row'] },
+      }],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_rule' },
+  }));
+
+  assert.match(html, /将应用规则[\s\S]{0,80}1 项/);
+  assert.match(html, /data-constraint-id="rule-row"/);
+  assert.doesNotMatch(html, /约束规则补丁/);
+});
+
+test('timetable constraint dialog keeps requirement detail source aligned with its machine rule', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'xlsx',
+      draftRows: [{
+        id: 'subject-rule-row',
+        requirementId: 'req_subject_prefer',
+        rawText: '语文尽量安排在上午前四节',
+        type: 'subject_preferred_periods',
+        targetType: 'subject',
+        targetName: '语文',
+        slots: ['1-1', '1-2', '1-3', '1-4'],
+        priority: 'soft',
+        status: 'effective',
+        sourceSheet: 'AI约束建议',
+        sourceRow: 2,
+        parseSource: 'local_xlsx',
+      }],
+      requirementItems: [{
+        id: 'req_subject_prefer',
+        rowId: 'subject-rule-row',
+        object: { kind: 'subject', name: '语文', matchedIds: ['s1'], scope: 'explicit' },
+        intent: 'preferred_periods',
+        status: 'actionable',
+        applyTo: 'rule',
+        parameters: { slots: ['1-1', '1-2', '1-3', '1-4'] },
+        source: {
+          rawText: '同一位教师同一时间只能给一个班上课。',
+          sourceSheet: '基础规则',
+          sourceRow: 1,
+          parseSource: 'ai',
+        },
+      }],
+      semanticActions: [{
+        id: 'act_subject_prefer',
+        requirementId: 'req_subject_prefer',
+        kind: 'rules_patch',
+        status: 'ready',
+        target: { rowIds: ['subject-rule-row'] },
+      }],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_subject_prefer' },
+  }));
+
+  assert.match(html, /<span>语文<\/span>/);
+  assert.match(html, /<strong>语文<\/strong>/);
+  assert.match(html, /原文[\s\S]{0,160}语文尽量安排在上午前四节/);
+  assert.match(html, /来源[\s\S]{0,120}AI约束建议 第 2 行/);
+  assert.doesNotMatch(html, /原文[\s\S]{0,160}同一位教师同一时间只能给一个班上课/);
+});
+
 test('timetable constraint dialog localizes semantic enum aliases in requirement review', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
@@ -547,6 +642,200 @@ test('timetable constraint dialog can remove and restore one apply item without 
   assert.match(restoredHtml, /应用当前分类 \(1\)/);
 });
 
+test('timetable constraint edit opens a compact machine-rule modal', () => {
+  const editingConstraint = {
+    id: 'rule-row',
+    originalId: 'rule-row',
+    requirementId: 'req_rule',
+    type: 'subject_preferred_periods',
+    targetType: 'subject',
+    targetId: 'math',
+    targetName: 'Math',
+    slots: ['1-1', '1-2'],
+    priority: 'soft',
+    status: 'effective',
+    rawText: 'Math should prefer Monday periods 1-2',
+    sourceSheet: 'AI约束建议',
+    sourceRow: 2,
+    parseSource: 'local_xlsx',
+  };
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      draftRows: [editingConstraint],
+      requirementItems: [{
+        id: 'req_rule',
+        object: { kind: 'subject', name: 'Math', matchedIds: ['math'], scope: 'explicit' },
+        intent: 'preferred_periods',
+        status: 'actionable',
+        applyTo: 'rule',
+        parameters: { slots: ['1-1', '1-2'] },
+        source: { rawText: 'Math should prefer Monday periods 1-2', sourceRow: 2 },
+      }],
+      semanticActions: [],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_rule', editingConstraint },
+  }));
+
+  assert.match(html, /tt-constraint-edit-backdrop/);
+  assert.match(html, /tt-constraint-edit-modal/);
+  assert.match(html, /编辑将应用规则/);
+  assert.match(html, /data-action="save-edit-constraint"/);
+  assert.match(html, /data-action="cancel-edit-constraint"/);
+  assert.match(html, /value="subject_preferred_periods" selected/);
+  assert.match(html, /value="subject:math" selected/);
+  assert.match(html, /value="1-1" checked/);
+  assert.match(html, /value="1-2" checked/);
+  assert.match(html, /AI约束建议 第 2 行 · 本地识别/);
+  assert.doesNotMatch(html, /<div class="tt-constraint-edit-form">/);
+});
+
+test('timetable constraint edit saves business fields back to the draft rule', () => {
+  const originalDocument = globalThis.document;
+  const originalAlert = globalThis.alert;
+  const alerts = [];
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.detectConstraintConflicts = () => {};
+  controller.state.project = createDefaultTimetableProject({
+    activeWeekdays: [1, 2],
+    activePeriods: [1, 2, 3],
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [
+      { id: 'math', name: 'Math', priority: 90, color: '#2563eb' },
+      { id: 'english', name: 'English', priority: 90, color: '#0891b2' },
+    ],
+    lessonPlans: [
+      { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 },
+    ],
+  });
+  controller.state.ruleReview = {
+    draftRows: [{
+      id: 'rule-row',
+      requirementId: 'req_rule',
+      type: 'subject_preferred_periods',
+      targetType: 'subject',
+      targetId: 'math',
+      targetName: 'Math',
+      slots: ['1-1'],
+      priority: 'soft',
+      status: 'effective',
+      rawText: 'Math should prefer Monday period 1',
+      sourceSheet: 'AI约束建议',
+      sourceRow: 2,
+      parseSource: 'local_xlsx',
+    }],
+    requirementItems: [{
+      id: 'req_rule',
+      object: { kind: 'subject', name: 'Math', matchedIds: ['math'], scope: 'explicit' },
+      intent: 'preferred_periods',
+      status: 'actionable',
+      applyTo: 'rule',
+      parameters: { slots: ['1-1'] },
+      source: { rawText: 'Math should prefer Monday period 1', sourceRow: 2 },
+    }],
+    semanticActions: [],
+  };
+  controller.state.constraintDialog = {
+    open: true,
+    selectedRequirementId: 'req_rule',
+    editingConstraint: {
+      ...controller.state.ruleReview.draftRows[0],
+      originalId: 'rule-row',
+    },
+  };
+
+  globalThis.alert = message => alerts.push(message);
+  globalThis.document = {
+    getElementById(id) {
+      return {
+        'tt-edit-constraint-type': { value: 'subject_preferred_periods' },
+        'tt-edit-constraint-target': { value: 'subject:english' },
+        'tt-edit-constraint-priority': { value: 'soft' },
+        'tt-edit-constraint-status': { value: 'effective' },
+        'tt-edit-constraint-limit': { value: '' },
+      }[id] || null;
+    },
+    querySelectorAll(selector) {
+      if (selector === '[data-edit-slot]:checked') {
+        return [{ value: '2-2' }, { value: '2-3' }];
+      }
+      return [];
+    },
+  };
+
+  try {
+    controller.saveEditedConstraint();
+
+    assert.deepEqual(alerts, []);
+    assert.equal(controller.state.constraintDialog.editingConstraint, null);
+    assert.deepEqual(controller.state.ruleReview.draftRows.map(row => ({
+      id: row.id,
+      requirementId: row.requirementId,
+      type: row.type,
+      targetType: row.targetType,
+      targetId: row.targetId,
+      targetName: row.targetName,
+      slots: row.slots,
+      priority: row.priority,
+      status: row.status,
+      rawText: row.rawText,
+      sourceRow: row.sourceRow,
+      parseSource: row.parseSource,
+    })), [{
+      id: 'rule-row',
+      requirementId: 'req_rule',
+      type: 'subject_preferred_periods',
+      targetType: 'subject',
+      targetId: 'english',
+      targetName: 'English',
+      slots: ['2-2', '2-3'],
+      priority: 'soft',
+      status: 'effective',
+      rawText: 'Math should prefer Monday period 1',
+      sourceRow: 2,
+      parseSource: 'local_xlsx',
+    }]);
+
+    const html = renderWorkbench(sampleWorkbenchState({
+      project: controller.state.project,
+      ruleReview: controller.state.ruleReview,
+      constraintDialog: { open: true, selectedRequirementId: 'req_rule' },
+    }));
+    assert.match(html, /English/);
+    assert.match(html, /周二第2节、周二第3节/);
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.alert = originalAlert;
+  }
+});
+
+test('timetable Escape closes the constraint edit modal before the main dialog', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.constraintDialog = {
+    open: true,
+    editingConstraint: { id: 'rule-row', originalId: 'rule-row' },
+  };
+  const events = [];
+  const event = {
+    key: 'Escape',
+    target: { matches: () => false, isContentEditable: false },
+    preventDefault: () => events.push('preventDefault'),
+    stopPropagation: () => events.push('stopPropagation'),
+  };
+
+  const handled = handleTimetableEscape(event, null, controller, controller.state);
+
+  assert.equal(handled, true);
+  assert.deepEqual(events, ['preventDefault', 'stopPropagation']);
+  assert.equal(controller.state.constraintDialog.open, true);
+  assert.equal(controller.state.constraintDialog.editingConstraint, null);
+});
+
 test('timetable constraint dialog confirms before deleting one machine rule', () => {
   const confirmations = [];
   const originalConfirm = globalThis.confirm;
@@ -756,6 +1045,165 @@ test('timetable constraint dialog can select synthesized draft requirement rows'
   controller.selectRequirement('draft_req_draft-select-1');
 
   assert.equal(controller.state.constraintDialog.selectedRequirementId, 'draft_req_draft-select-1');
+});
+
+test('timetable constraint dialog replaces previous xlsx parse results instead of appending', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalDocument = globalThis.document;
+  const responses = [
+    {
+      draftRows: [{ id: 'old-row', type: 'subject_morning', targetName: '语文', status: 'effective', parseSource: 'local_xlsx' }],
+      requirementItems: [{ id: 'old-req', rowId: 'old-row', object: { kind: 'subject', name: '语文' }, intent: 'preferred_day_part', applyTo: 'rule', status: 'actionable', source: { rawText: '语文上午' } }],
+      semanticActions: [{ id: 'old-action', requirementId: 'old-req', kind: 'rules_patch', target: { rowIds: ['old-row'] }, status: 'ready' }],
+      unsupportedItems: [{ id: 'old-unsupported', type: 'teacher_load_balance' }],
+      warnings: ['old-warning'],
+    },
+    {
+      draftRows: [{ id: 'new-row', type: 'subject_morning', targetName: '数学', status: 'effective', parseSource: 'local_xlsx' }],
+      requirementItems: [{ id: 'new-req', rowId: 'new-row', object: { kind: 'subject', name: '数学' }, intent: 'preferred_day_part', applyTo: 'rule', status: 'actionable', source: { rawText: '数学上午' } }],
+      semanticActions: [{ id: 'new-action', requirementId: 'new-req', kind: 'rules_patch', target: { rowIds: ['new-row'] }, status: 'ready' }],
+      unsupportedItems: [{ id: 'new-unsupported', type: 'block_protection' }],
+      warnings: ['new-warning'],
+    },
+  ];
+  let callIndex = 0;
+
+  globalThis.document = {
+    getElementById() {
+      return null;
+    },
+  };
+  globalThis.fetch = async url => {
+    assert.equal(String(url), '/api/tools/timetable/rules/parse');
+    const data = responses[callIndex++];
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => 'application/json' },
+      async text() {
+        return JSON.stringify({ success: true, data });
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.detectConstraintConflicts = async () => {};
+    controller.state.project = createDefaultTimetableProject();
+    controller.state.constraintDialog = { open: true, requirementFilter: 'all', selectedRequirementId: '' };
+    controller.state.ruleReview = {
+      inputMode: 'file',
+      mode: 'file',
+      draftRows: [],
+      requirementItems: [],
+      semanticActions: [],
+      excludedApplyItemKeys: ['rule:stale-row'],
+    };
+    controller.constraintDialogFile = new Blob(['fake workbook']);
+
+    await controller.parseConstraintsFromDialog();
+    controller.constraintDialogFile = new Blob(['fake workbook again']);
+    controller.state.ruleReview.excludedApplyItemKeys = ['rule:old-row'];
+    await controller.parseConstraintsFromDialog();
+
+    assert.equal(callIndex, 2);
+    assert.deepEqual(controller.state.ruleReview.draftRows.map(row => row.id), ['new-row']);
+    assert.deepEqual(controller.state.ruleReview.requirementItems.map(item => item.id), ['new-req']);
+    assert.deepEqual(controller.state.ruleReview.semanticActions.map(action => action.id), ['new-action']);
+    assert.deepEqual(controller.state.ruleReview.unsupportedItems.map(item => item.id), ['new-unsupported']);
+    assert.deepEqual(controller.state.ruleReview.warnings, ['new-warning']);
+    assert.deepEqual(controller.state.ruleReview.excludedApplyItemKeys, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.document = originalDocument;
+  }
+});
+
+test('timetable constraint parsing progress does not rerender the spinner on timer ticks', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalDocument = globalThis.document;
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  let intervalCallback = null;
+  let releaseFetch = null;
+  let clearedInterval = false;
+
+  globalThis.document = {
+    getElementById() {
+      return null;
+    },
+  };
+  globalThis.setInterval = (callback, delay) => {
+    assert.equal(delay, 300);
+    intervalCallback = callback;
+    return 'parse-progress-timer';
+  };
+  globalThis.clearInterval = timerId => {
+    if (timerId === 'parse-progress-timer') clearedInterval = true;
+  };
+  globalThis.fetch = async url => {
+    assert.equal(String(url), '/api/tools/timetable/rules/parse');
+    await new Promise(resolve => {
+      releaseFetch = resolve;
+    });
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => 'application/json' },
+      async text() {
+        return JSON.stringify({
+          success: true,
+          data: {
+            draftRows: [],
+            requirementItems: [],
+            semanticActions: [],
+            warnings: [],
+          },
+        });
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    let renderCount = 0;
+    controller.render = () => {
+      renderCount += 1;
+    };
+    controller.detectConstraintConflicts = async () => {};
+    controller.state.project = createDefaultTimetableProject();
+    controller.state.constraintDialog = { open: true, requirementFilter: 'all', selectedRequirementId: '' };
+    controller.state.ruleReview = {
+      inputMode: 'file',
+      mode: 'file',
+      draftRows: [],
+      requirementItems: [],
+      semanticActions: [],
+    };
+    controller.constraintDialogFile = new Blob(['fake workbook']);
+
+    const parsePromise = controller.parseConstraintsFromDialog();
+    assert.equal(renderCount, 1);
+    assert.equal(typeof intervalCallback, 'function');
+    assert.equal(typeof releaseFetch, 'function');
+
+    intervalCallback();
+    intervalCallback();
+    assert.equal(controller.state.ruleReview.parseProgress, 20);
+    assert.equal(renderCount, 1);
+
+    releaseFetch();
+    await parsePromise;
+
+    assert.equal(clearedInterval, true);
+    assert.equal(renderCount, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.document = originalDocument;
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
 });
 
 test('timetable constraint dialog controller exposes the current dialog actions', async () => {

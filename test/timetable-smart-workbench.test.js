@@ -98,6 +98,7 @@ test('constraint dialog formats recognized constraint time, source row and revie
                 slots: ['1-1', '1-2'],
                 sourceSheet: 'AI约束建议',
                 sourceRow: 2,
+                parseSource: 'local_xlsx',
                 priority: 'soft',
                 status: 'effective',
                 confidence: 0.94,
@@ -138,6 +139,7 @@ test('constraint dialog formats recognized constraint time, source row and revie
 
     assert.match(slotHtml, /周一第1节、周一第2节/);
     assert.match(slotHtml, /来源：AI约束建议 第 2 行/);
+    assert.match(slotHtml, /AI约束建议 第 2 行 · 本地识别/);
     assert.match(weekHtml, /单双周/);
     assert.match(morningHtml, /上午时段/);
     assert.doesNotMatch(slotHtml + weekHtml + morningHtml, /<b>时间：<\/b>-/);
