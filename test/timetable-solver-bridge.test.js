@@ -509,6 +509,29 @@ test('solveTimetableWithTimefold rejects hard-score violations and terminates jo
     assert.equal(calls.some(call => call.method === 'DELETE'), true);
 });
 
+test('solveTimetableWithTimefold rejects complex model until Timefold supports it', async () => {
+    const project = sampleProject({
+        timetableModelVersion: 'complex_v1',
+        lessonPlans: [
+            { id: 'lp_odd', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1, weekPattern: 'odd' },
+            { id: 'lp_even', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1, weekPattern: 'even' },
+        ],
+    });
+
+    await assert.rejects(() => solveTimetableWithTimefold({
+        project,
+        env: { TIMEFOLD_SOLVER_URL: 'http://solver', TIMETABLE_SOLVER_TIMEOUT: '2' },
+        fetchImpl: async () => {
+            throw new Error('Timefold should not be called for complex_v1 without support');
+        },
+    }), error => (
+        error instanceof TimetableTimefoldError
+        && error.reason === 'complex_model_not_supported'
+        && error.status === 409
+        && error.solverStats?.accepted === false
+    ));
+});
+
 function jsonResponse(payload, status = 200) {
     return {
         ok: status >= 200 && status < 300,

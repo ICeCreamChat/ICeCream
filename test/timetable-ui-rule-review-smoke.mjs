@@ -97,7 +97,7 @@ async function main() {
 
         const reviewText = await recognizedText();
         assert.match(reviewText || '', /已理解需求/);
-        assert.match(reviewText || '', /将应用规则/);
+        assert.match(reviewText || '', /落地结果/);
         assert.match(reviewText || '', /语文/);
         assert.match(reviewText || '', /上午/);
 
@@ -118,7 +118,7 @@ async function main() {
 
         const fileReviewText = await recognizedText();
         assert.match(fileReviewText || '', /已理解需求/);
-        assert.match(fileReviewText || '', /将应用规则/);
+        assert.match(fileReviewText || '', /落地结果/);
         assert.match(fileReviewText || '', /数学/);
         assert.match(fileReviewText || '', /上午/);
         assert.equal(dialogs.some(item => item.message === '请选择文件'), false);
@@ -143,7 +143,7 @@ async function main() {
 
         const xlsxReviewText = await recognizedText();
         assert.match(xlsxReviewText || '', /已理解需求/);
-        assert.match(xlsxReviewText || '', /将应用规则/);
+        assert.match(xlsxReviewText || '', /落地结果/);
         assert.match(xlsxReviewText || '', /英语/);
         assert.match(xlsxReviewText || '', /上午/);
         assert.equal(dialogs.some(item => /Unexpected token|<!DOCTYPE/i.test(item.message)), false);
@@ -158,7 +158,7 @@ async function main() {
 
         const manualReviewText = await recognizedText();
         assert.match(manualReviewText || '', /已理解需求/);
-        assert.match(manualReviewText || '', /将应用规则/);
+        assert.match(manualReviewText || '', /落地结果/);
         assert.match(manualReviewText || '', /手动添加/);
         assert.match(manualReviewText || '', /周一上午/);
 

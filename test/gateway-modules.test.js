@@ -122,6 +122,7 @@ test('gateway mounts legacy timetable APIs', async () => {
             { id: 's2', name: '数学' },
         ],
         lessonPlans: [
+            { id: 'lp_chinese', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyHours: 4, blockPreference: 'single' },
             { id: 'lp_math', classId: 'c1', subjectId: 's2', teacherId: 't1', weeklyHours: 4, blockPreference: 'single' },
         ],
     }));
@@ -210,6 +211,92 @@ test('gateway mounts legacy timetable APIs', async () => {
         assert.equal(semanticApplyPayload.data.project.lessonPlans.find(plan => plan.id === 'lp_math').blockPreference, 'double');
         assert.equal(semanticApplyPayload.data.project.rules.softRules.teacherLimits.t1.consecutive, 3);
         assert.deepEqual(semanticApplyPayload.data.applied.map(item => item.id), ['act_math_double', 'act_teacher_consecutive']);
+
+        const complexApplyResponse = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/requirements/apply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                actions: [
+                    {
+                        id: 'act_complex_model',
+                        kind: 'complex_model_patch',
+                        patch: { timetableModelVersion: 'complex_v1' },
+                    },
+                    {
+                        id: 'act_week_pattern',
+                        kind: 'complex_model_patch',
+                        target: { subjectIds: ['s1'] },
+                        patch: { weekPattern: 'odd', preferredSlots: ['1-1'] },
+                    },
+                    {
+                        id: 'act_room_requirement',
+                        kind: 'complex_model_patch',
+                        target: { subjectIds: ['s2'] },
+                        patch: { roomRequirement: { roomName: '操场', preferredRoomIds: ['room_playground'], requiredTags: ['sport'] } },
+                    },
+                    {
+                        id: 'act_teaching_group',
+                        kind: 'complex_model_patch',
+                        patch: { teachingGroup: { name: '一班数学合班组', classIds: ['c1'], subjectIds: ['s2'], mode: 'combined_class' } },
+                    },
+                    {
+                        id: 'act_commute',
+                        kind: 'complex_model_patch',
+                        patch: { commuteRules: { defaultGapPeriods: 2 } },
+                    },
+                ],
+            }),
+        });
+        assert.equal(complexApplyResponse.status, 200);
+        const complexApplyPayload = await complexApplyResponse.json();
+        assert.equal(complexApplyPayload.success, true);
+        assert.equal(complexApplyPayload.data.project.timetableModelVersion, 'complex_v1');
+        assert.equal(complexApplyPayload.data.project.complexModelEnabled, true);
+        assert.equal(complexApplyPayload.data.project.rules.softRules.subjectPreferredPeriods.s1.weekPattern, 'odd');
+        assert.equal(complexApplyPayload.data.project.lessonPlans.find(plan => plan.subjectId === 's1').weekPattern, 'odd');
+        assert.ok(complexApplyPayload.data.project.rooms.some(room => room.id === 'room_playground' && room.name === '操场'));
+        assert.deepEqual(complexApplyPayload.data.project.lessonPlans.find(plan => plan.subjectId === 's2').roomRequirement.preferredRoomIds, ['room_playground']);
+        assert.ok(complexApplyPayload.data.project.teachingGroups.some(group => group.name === '一班数学合班组' && group.mode === 'combined_class'));
+        assert.equal(complexApplyPayload.data.project.commuteRules.defaultGapPeriods, 2);
+        assert.deepEqual(complexApplyPayload.data.applied.map(item => item.id), [
+            'act_complex_model',
+            'act_week_pattern',
+            'act_room_requirement',
+            'act_teaching_group',
+            'act_commute',
+        ]);
+
+        const clarifyResponse = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/requirements/clarify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                previousResult: {
+                    requirementItems: [{
+                        id: 'req_high_load',
+                        object: { kind: 'derived_group', name: '高负载教师', matchedIds: ['t1'], scope: 'derived' },
+                        intent: 'teacher_load_protection',
+                        status: 'needs_review',
+                        applyTo: 'optimization',
+                        parameters: { balancedTeacherLoad: true },
+                        clarification: {
+                            id: 'clarify_req_high_load_max_consecutive',
+                            kind: 'number',
+                            field: 'maxConsecutive',
+                            question: '连续超过几节算太多？',
+                            defaultValue: 3,
+                        },
+                    }],
+                    semanticActions: [],
+                    draftRows: [],
+                },
+                answers: [{ requirementId: 'req_high_load', field: 'maxConsecutive', value: 2 }],
+            }),
+        });
+        assert.equal(clarifyResponse.status, 200);
+        const clarifyPayload = await clarifyResponse.json();
+        assert.equal(clarifyPayload.success, true);
+        assert.equal(clarifyPayload.data.requirementItems[0].status, 'actionable');
+        assert.equal(clarifyPayload.data.semanticActions[0].patch.teacherLimits.consecutive, 2);
 
         const sharedResponse = await fetch(`http://127.0.0.1:${port}/shared/seating/classroom-layout.js`);
         const sharedSource = await sharedResponse.text();

@@ -196,6 +196,8 @@ function requirementApplyLabel(applyTo = '') {
         optimize: '优化目标',
         solver_policy: '系统策略',
         system_policy: '系统策略',
+        model_extension: '复杂模型',
+        complex_model: '复杂模型',
         handled: '系统策略',
         review: '人工复核',
         needs_review: '人工复核',
@@ -227,7 +229,7 @@ function requirementSourceRecord(item = {}) {
             rawText: rule.sourceText || rule.rawText || rule.description || '',
             sourceSheet: rule.sourceSheet || rule.source || '',
             sourceRow: rule.sourceRow || '',
-            parseSource: rule.parseSource || '',
+            parseSource: rule.reviewedParseSource || rule.parseSource || '',
             stableKey: rule.stableKey || '',
         };
     }
@@ -236,7 +238,7 @@ function requirementSourceRecord(item = {}) {
         rawText: item.source?.rawText || item.rawText || '',
         sourceSheet: item.source?.sourceSheet || item.source?.sheet || item.sourceSheet || '',
         sourceRow: item.source?.sourceRow || item.source?.row || item.sourceRow || '',
-        parseSource: item.source?.parseSource || item.parseSource || '',
+        parseSource: item.reviewedParseSource || item.source?.parseSource || item.parseSource || '',
     };
 }
 
@@ -264,12 +266,18 @@ function parseSourceLabel(value = '') {
     const key = String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
     return {
         local_xlsx: '本地识别',
+        local_xlsx_ai_reviewed: '本地识别 · AI 已复审',
         local_text: '本地识别',
+        local_text_ai_reviewed: '本地识别 · AI 已复审',
         ai_supplement: 'AI 补充',
+        ai_supplement_ai_reviewed: 'AI 补充 · AI 已复审',
         ai: 'AI 识别',
+        ai_ai_reviewed: 'AI 识别 · AI 已复审',
         cache: '缓存结果',
         mixed_xlsx: '本地 + AI',
+        mixed_xlsx_ai_reviewed: '本地 + AI · AI 已复审',
         local_roster_fallback: '本地建议',
+        local_roster_fallback_ai_reviewed: '本地建议 · AI 已复审',
     }[key] || '';
 }
 
@@ -291,6 +299,49 @@ function requirementConfidenceLabel(item = {}) {
     if (typeof item.confidence !== 'number') return '未提供';
     const normalized = item.confidence <= 1 ? item.confidence * 100 : item.confidence;
     return `${Math.round(normalized)}%`;
+}
+
+function aiReviewStatusLabel(status = '') {
+    const key = String(status || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    return {
+        accepted: 'AI 已复审',
+        reviewed: 'AI 已复审',
+        flagged: 'AI 复审提示',
+        unsupported: 'AI 复审提示',
+        patched: 'AI 已修正',
+        patch_rejected: 'AI 建议未采纳',
+        missed: 'AI 发现漏识别',
+    }[key] || '';
+}
+
+function renderRequirementAiReview(item = {}, review = {}) {
+    const status = item.aiReviewStatus || (review?.status === 'reviewed' ? 'reviewed' : '');
+    const label = aiReviewStatusLabel(status);
+    const warnings = Array.isArray(item.aiReviewWarnings) ? item.aiReviewWarnings.filter(Boolean) : [];
+    const evidence = item.reviewEvidence || {};
+    const reviewStatus = String(review?.status || '').trim().toLowerCase();
+    if (!label && reviewStatus !== 'unavailable' && reviewStatus !== 'skipped') return '';
+    const unavailableMessage = reviewStatus === 'unavailable'
+        ? 'AI 复审未完成，当前展示本地识别结果。'
+        : reviewStatus === 'skipped'
+            ? 'AI 复审已跳过，当前展示本地识别结果。'
+            : '';
+    const message = warnings[0] || evidence.reason || unavailableMessage || 'AI 已复审此项识别结果。';
+    const quote = evidence.quote || '';
+    const toneClass = ['flagged', 'unsupported', 'patch_rejected', 'missed'].includes(String(status || '').toLowerCase())
+        || reviewStatus === 'unavailable'
+        ? 'tt-constraint-warning'
+        : 'tt-constraint-info';
+    return `
+        <div class="${toneClass} tt-requirement-ai-review">
+            <i data-lucide="${toneClass === 'tt-constraint-warning' ? 'alert-circle' : 'check-circle-2'}"></i>
+            <span>
+                <b>${escapeHtml(label || 'AI 复审')}</b>
+                ${escapeHtml(message)}
+                ${quote ? `<em>${escapeHtml(quote)}</em>` : ''}
+            </span>
+        </div>
+    `;
 }
 
 function requirementStrengthLabel(strength = '') {
@@ -369,6 +420,37 @@ function requirementParameterValueLabel(key = '', value) {
     return String(value ?? '');
 }
 
+function requirementHasComplexSignal(item = {}) {
+    const applyTo = normalizedRequirementApplyTo(item.applyTo || '');
+    const params = item.parameters || {};
+    const support = item.modelSupport || {};
+    const actions = item.semanticActions || [];
+    if (applyTo === 'model_extension' || applyTo === 'complex_model') return true;
+    if (support.requiredModel || support.capability) return true;
+    if (params.weekPattern || params.campusId || params.roomId || params.roomRequirement || params.teachingGroupId) return true;
+    return actions.some(action => semanticActionKindKey(action) === 'complex_model_patch');
+}
+
+function requirementComplexBadges(item = {}) {
+    const params = item.parameters || {};
+    const support = item.modelSupport || {};
+    const text = [
+        item.intent,
+        item.applyTo,
+        support.capability,
+        support.requiredModel,
+        ...Object.keys(params),
+        ...Object.values(params).filter(value => typeof value === 'string'),
+    ].filter(Boolean).join(' ').toLowerCase();
+    const badges = [];
+    if (params.weekPattern || /week|单双|单周|双周/.test(text)) badges.push('单双周');
+    if (params.campusId || /campus|校区|commute/.test(text)) badges.push('多校区');
+    if (params.teachingGroupId || /teaching[_-]?group|教学组/.test(text)) badges.push('教学组');
+    if (params.roomId || params.roomRequirement || /room|教室|场地/.test(text)) badges.push('教室要求');
+    if (!badges.length && requirementHasComplexSignal(item)) badges.push('复杂模型');
+    return [...new Set(badges)];
+}
+
 function renderRequirementParameterDetails(item = {}) {
     const params = item.parameters || {};
     const primary = requirementParameterLabel(item);
@@ -395,6 +477,20 @@ function renderRequirementParameterDetails(item = {}) {
     return rendered.join('');
 }
 
+function renderConstraintFlow(compact = false) {
+    const steps = ['输入需求', '智能理解', '人工复核', '应用到项目'];
+    return `
+        <div class="tt-constraint-flow ${compact ? 'tt-constraint-flow--compact' : ''}" aria-label="智能约束处理流程">
+            ${steps.map((step, index) => `
+                <span class="tt-constraint-flow-step">
+                    <b>${escapeHtml(index + 1)}</b>
+                    <em>${escapeHtml(step)}</em>
+                </span>
+            `).join('')}
+        </div>
+    `;
+}
+
 function requirementCounts(requirements = []) {
     const counts = new Map(REQUIREMENT_FILTERS.map(filter => [filter.key, 0]));
     counts.set('all', requirements.length);
@@ -403,6 +499,28 @@ function requirementCounts(requirements = []) {
         counts.set(key, (counts.get(key) || 0) + 1);
     });
     return counts;
+}
+
+function requirementReviewSummary(requirements = [], activeFilter = 'all', review = {}) {
+    return {
+        applicable: getActionableRequirementCount(review, activeFilter),
+        reviewCount: requirementCounts(requirements).get('review') || 0,
+        handledCount: requirementCounts(requirements).get('handled') || 0,
+        complexCount: requirements.filter(requirementHasComplexSignal).length,
+    };
+}
+
+function renderRequirementReviewSummary(requirements = [], activeFilter = 'all', review = {}) {
+    const summary = requirementReviewSummary(requirements, activeFilter, review);
+    return `
+        <div class="tt-requirement-review-summary" aria-label="需求复核概览">
+            <span><b>可应用</b>${escapeHtml(summary.applicable)} 项</span>
+            <span class="${summary.reviewCount ? 'is-warning' : ''}"><b>需复核</b>${escapeHtml(summary.reviewCount)} 项</span>
+            <span><b>已处理</b>${escapeHtml(summary.handledCount)} 项</span>
+            <span class="${summary.complexCount ? 'is-complex' : ''}"><b>复杂模型</b>${escapeHtml(summary.complexCount)} 项</span>
+            <em>当前筛选可应用 ${escapeHtml(summary.applicable)} 项</em>
+        </div>
+    `;
 }
 
 function filteredRequirements(requirements = [], filter = 'all') {
@@ -459,6 +577,7 @@ function renderRequirementRow(item = {}, selectedId = '') {
     const parameterLabel = requirementParameterLabel(item);
     const isSelected = item.id && item.id === selectedId;
     const hasWarning = (item.warnings || []).length > 0;
+    const complexBadges = requirementComplexBadges(item);
     return `
         <button data-action="select-requirement" data-requirement-id="${escapeAttr(item.id || '')}"
             class="tt-requirement-row ${isSelected ? 'is-selected' : ''} ${hasWarning ? 'has-warning' : ''}" type="button" aria-pressed="${isSelected ? 'true' : 'false'}"
@@ -469,7 +588,10 @@ function renderRequirementRow(item = {}, selectedId = '') {
             <span>${escapeHtml(objectName)}</span>
             <span>${escapeHtml(requirementIntentLabel(item.intent))}</span>
             <span>${escapeHtml(requirementApplyLabel(item.applyTo))}</span>
-            <span>${escapeHtml(parameterLabel || '-')}</span>
+            <span>
+                ${escapeHtml(parameterLabel || '-')}
+                ${complexBadges.length ? `<small>${complexBadges.map(badge => escapeHtml(badge)).join(' · ')}</small>` : ''}
+            </span>
             <span>${escapeHtml(requirementSourceLabel(item))}</span>
         </button>
     `;
@@ -511,6 +633,7 @@ function semanticActionLabel(action = {}) {
         lesson_plan_patch: '任课计划修改',
         soft_rules_patch: '优化目标修改',
         optimization_patch: '优化目标修改',
+        complex_model_patch: '复杂模型写入',
         rules_patch: '约束规则补丁',
         rule_patch: '约束规则补丁',
         handled_notice: '系统已处理',
@@ -552,12 +675,25 @@ function renderRequirementMachineRules(item = {}, state = {}) {
     const rules = item.machineRules || [];
     const actions = (item.semanticActions || []).filter(action => !isRulePatchBridgeAction(action));
     const itemCount = rules.length + actions.length;
+    const outcomeLabels = [];
+    if (rules.length) outcomeLabels.push('规则草稿');
+    actions.forEach(action => {
+        const key = semanticActionKindKey(action);
+        if (key === 'lesson_plan_patch') outcomeLabels.push('任课计划');
+        else if (key === 'soft_rules_patch' || key === 'optimization_patch') outcomeLabels.push('优化策略');
+        else if (key === 'complex_model_patch') outcomeLabels.push('模型设置');
+    });
     return `
-        <div class="tt-requirement-machine-rules">
+        <div class="tt-requirement-machine-rules tt-requirement-outcome">
             <div class="tt-requirement-machine-header">
-                <span class="tt-requirement-detail-label">将应用规则</span>
+                <span class="tt-requirement-detail-label">落地结果</span>
                 ${itemCount ? `<em>${itemCount} 项</em>` : ''}
             </div>
+            ${outcomeLabels.length ? `
+                <div class="tt-requirement-outcome-tags">
+                    ${[...new Set(outcomeLabels)].map(label => `<span>${escapeHtml(label)}</span>`).join('')}
+                </div>
+            ` : ''}
             ${itemCount ? `
                 ${rules.length ? `
                     <div class="tt-machine-rule-list">
@@ -574,6 +710,86 @@ function renderRequirementMachineRules(item = {}, state = {}) {
     `;
 }
 
+function renderRequirementClarification(item = {}) {
+    const clarification = item.clarification;
+    const warnings = Array.isArray(item.warnings) ? item.warnings.filter(Boolean) : [];
+    const statusKey = String(item.status || item.reviewStatus || '').toLowerCase();
+    const requiresReview = statusKey === 'needs_review' || statusKey === 'review' || statusKey === 'pending_review';
+    if (!clarification || typeof clarification !== 'object') {
+        if (!requiresReview && !warnings.length) return '';
+        const message = warnings[0] || '请根据复核原因补充必要信息后再应用。';
+        return `
+            <div class="tt-requirement-clarification tt-requirement-clarification--readonly">
+                <div class="tt-requirement-clarification-header">
+                    <span class="tt-requirement-detail-label">待补充信息</span>
+                </div>
+                <p>${escapeHtml(message)}</p>
+            </div>
+        `;
+    }
+    const requirementId = item.id || '';
+    const field = clarification.field || 'value';
+    const kind = clarification.kind || 'text';
+    const defaultValue = clarification.value ?? clarification.defaultValue ?? '';
+    const minAttr = Number.isFinite(Number(clarification.min)) ? ` min="${escapeAttr(clarification.min)}"` : '';
+    const maxAttr = Number.isFinite(Number(clarification.max)) ? ` max="${escapeAttr(clarification.max)}"` : '';
+    const inputHtml = kind === 'number'
+        ? `<input class="tt-input" type="number"${minAttr}${maxAttr} value="${escapeAttr(defaultValue)}"
+                data-requirement-clarify-input="${escapeAttr(requirementId)}"
+                data-requirement-clarify-field="${escapeAttr(field)}">`
+        : `<input class="tt-input" type="text" value="${escapeAttr(defaultValue)}"
+                data-requirement-clarify-input="${escapeAttr(requirementId)}"
+                data-requirement-clarify-field="${escapeAttr(field)}">`;
+    return `
+        <div class="tt-requirement-clarification">
+            <div class="tt-requirement-clarification-header">
+                <span class="tt-requirement-detail-label">待补充信息</span>
+            </div>
+            <label class="tt-constraint-field">
+                <span>${escapeHtml(clarification.question || '请补充这个需求的必要参数')}</span>
+                <div class="tt-requirement-clarification-control">
+                    ${inputHtml}
+                    <button class="tt-btn tt-btn--sm tt-btn--primary" data-action="submit-requirement-clarification"
+                        data-requirement-id="${escapeAttr(requirementId)}" type="button">更新需求</button>
+                </div>
+            </label>
+        </div>
+    `;
+}
+
+function renderRequirementComplexBadges(item = {}) {
+    const badges = requirementComplexBadges(item);
+    if (!badges.length) return '';
+    const support = item.modelSupport || {};
+    const supportLabel = support.supported === true
+        ? '复杂模型已启用'
+        : support.supported === false
+            ? '复杂模型待启用'
+            : '';
+    return `
+        <div class="tt-requirement-complex-badges" aria-label="复杂排课能力">
+            ${badges.map(label => `<span>${escapeHtml(label)}</span>`).join('')}
+            ${supportLabel ? `<em>${escapeHtml(supportLabel)}</em>` : ''}
+        </div>
+    `;
+}
+
+function renderRequirementModelSupport(item = {}) {
+    const support = item.modelSupport;
+    if (!support || typeof support !== 'object') return '';
+    const required = support.requiredModel || 'complex_v1';
+    const supported = support.supported === true;
+    const message = support.message || (supported
+        ? '已启用复杂排课模型，可写入对应模型字段。'
+        : '当前需求需要复杂排课模型支持，暂不会自动生效。');
+    return `
+        <div class="${supported ? 'tt-constraint-info' : 'tt-constraint-warning'} tt-requirement-model-support">
+            <i data-lucide="layers"></i>
+            <span><b>模型支持</b> ${escapeHtml(required)} · ${escapeHtml(supported ? '已支持' : '待启用')} · ${escapeHtml(message)}</span>
+        </div>
+    `;
+}
+
 function renderRequirementDetail(item = null, state = {}) {
     if (!item) {
         return `
@@ -586,6 +802,7 @@ function renderRequirementDetail(item = null, state = {}) {
     const objectName = requirementObjectName(item);
     const sourceText = requirementRawText(item);
     const warnings = item.warnings || [];
+    const review = state.ruleReview?.aiReview || {};
     return `
         <aside class="tt-requirement-detail" data-requirement-detail-id="${escapeAttr(item.id || '')}">
             <div class="tt-requirement-detail-header">
@@ -616,10 +833,14 @@ function renderRequirementDetail(item = null, state = {}) {
                     <dd>${escapeHtml(requirementSourceLabel(item))}</dd>
                 </div>
             </dl>
+            ${renderRequirementAiReview(item, review)}
             <div class="tt-requirement-params">
                 <span class="tt-requirement-detail-label">参数</span>
                 <div>${renderRequirementParameterDetails(item)}</div>
             </div>
+            ${renderRequirementComplexBadges(item)}
+            ${renderRequirementModelSupport(item)}
+            ${renderRequirementClarification(item)}
             ${sourceText ? `
                 <div class="tt-requirement-raw">
                     <span class="tt-requirement-detail-label">原文</span>
@@ -644,15 +865,18 @@ function renderRequirementGroups(requirements = [], dialog = {}, state = {}) {
         : 'all';
     const visibleRequirements = filteredRequirements(requirements, activeFilter);
     const currentSelection = selectedRequirement(visibleRequirements, dialog.selectedRequirementId || '');
+    const review = state.ruleReview || {};
+    const summary = requirementReviewSummary(requirements, activeFilter, review);
     return `
         <div class="tt-requirement-workbench">
             <div class="tt-requirement-workbench-header">
                 <div class="tt-requirement-workbench-title">
                     <strong>已理解需求 (${requirements.length})</strong>
-                    <span>${visibleRequirements.length} 条正在显示</span>
+                    <span>${visibleRequirements.length} 条正在显示 · 当前筛选可应用 ${summary.applicable} 项</span>
                 </div>
                 <button class="tt-btn-link" data-action="clear-all-constraints" type="button">清空全部</button>
             </div>
+            ${renderRequirementReviewSummary(requirements, activeFilter, review)}
             ${renderRequirementFilterBar(requirements, activeFilter)}
             <div class="tt-requirement-review-layout">
                 <div class="tt-requirement-table" role="table" aria-label="已理解需求">
@@ -704,7 +928,8 @@ export function renderConstraintDialog(state) {
         </div>
     ` : `
         <div class="tt-constraint-dialog-body tt-constraint-dialog-body--intake">
-            <div class="tt-constraint-intake-panel">
+            <div class="tt-constraint-intake-panel ${requirements.length > 0 ? 'tt-constraint-intake-panel--compact' : ''}">
+                ${renderConstraintFlow(requirements.length > 0)}
                 <div class="tt-constraint-mode-row">
                     <span class="tt-field-label">规则来源</span>
                     <div class="tt-constraint-input-tabs" role="tablist" aria-label="规则来源">
@@ -715,6 +940,7 @@ export function renderConstraintDialog(state) {
                 <div class="tt-constraint-input-area">
                     ${renderInputArea(state, mode, parsing, review)}
                 </div>
+                <p class="tt-constraint-intake-note">文本、文件、手动补充会进入同一套需求理解与人工复核流程。</p>
             </div>
             ${requirements.length > 0 ? renderRequirementGroups(requirements, dialog, state) : ''}
         </div>
@@ -741,7 +967,7 @@ export function renderConstraintDialog(state) {
                         <span class="tt-dialog-title-icon"><i data-lucide="brain-circuit"></i></span>
                         <div class="tt-dialog-title-copy">
                             <h3 id="constraint-dialog-title">智能约束助手</h3>
-                            <p>把排课要求整理成可复核规则</p>
+                            <p>把自然语言排课需求转换为可复核、可应用的规则和模型设置</p>
                         </div>
                     </div>
                     <div class="tt-dialog-header-actions">

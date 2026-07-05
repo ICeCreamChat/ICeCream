@@ -3,6 +3,9 @@ import multer from 'multer';
 
 import { buildTimetableExportXlsx, TIMETABLE_XLSX_MIME } from '../services/timetable-export.js';
 import {
+    canUseTimefoldForTimetable,
+} from '../services/timetable-solver-bridge.js';
+import {
     buildTimetableRosterFromRows,
     parseRosterAiOrLocal,
     parseTimetableRosterFile,
@@ -22,6 +25,7 @@ import {
 } from '../services/timetable-scheduler.js';
 import {
     applyTimetableRequirementActions,
+    continueTimetableRequirementClarification,
     continueTimetableRuleConversation,
     diagnoseTimetableRules,
     normalizeTimetableRuleDraftRows,
@@ -150,23 +154,35 @@ function preservePublishedArchive(nextSchedule, currentSchedule) {
 function scheduleFromPublishedSnapshot(current = {}, entry = {}) {
     const snapshot = entry.snapshot || {};
     const context = snapshot.projectContext || {};
+    const complex = context.timetableModelVersion === 'complex_v1' || context.complexModelEnabled === true;
     const now = new Date().toISOString();
-    const slots = (snapshot.slots || []).map((slot, index) => ({
-        id: slot.id || `restored_${entry.version || 'history'}_${index + 1}`,
-        day: slot.day,
-        period: slot.period,
-        classId: slot.classId,
-        subjectId: slot.subjectId,
-        teacherId: slot.teacherId,
-        teacherIds: slot.teacherIds || [],
-        lessonPlanId: slot.lessonPlanId,
-        roomId: slot.roomId || null,
-        blockId: slot.blockId || null,
-        blockIndex: slot.blockIndex || 0,
-        blockSize: slot.blockSize || 1,
-        locked: Boolean(slot.locked),
-        manuallyAdjusted: Boolean(slot.manuallyAdjusted),
-    }));
+    const slots = (snapshot.slots || []).map((slot, index) => {
+        const restored = {
+            id: slot.id || `restored_${entry.version || 'history'}_${index + 1}`,
+            day: slot.day,
+            period: slot.period,
+            classId: slot.classId,
+            subjectId: slot.subjectId,
+            teacherId: slot.teacherId,
+            teacherIds: slot.teacherIds || [],
+            lessonPlanId: slot.lessonPlanId,
+            roomId: slot.roomId || null,
+            blockId: slot.blockId || null,
+            blockIndex: slot.blockIndex || 0,
+            blockSize: slot.blockSize || 1,
+            locked: Boolean(slot.locked),
+            manuallyAdjusted: Boolean(slot.manuallyAdjusted),
+        };
+        return complex
+            ? {
+                ...restored,
+                weekPattern: slot.weekPattern || 'every',
+                campusId: slot.campusId || '',
+                teachingGroupId: slot.teachingGroupId || '',
+                classIds: Array.isArray(slot.classIds) ? slot.classIds : [slot.classId].filter(Boolean),
+            }
+            : restored;
+    });
     return {
         ...current.schedule,
         id: `schedule_restored_${entry.version || 'history'}_${Date.now()}`,
@@ -260,6 +276,16 @@ function canonicalPublishedSlot(slot = {}) {
     });
 }
 
+function canonicalComplexPublishedSlot(slot = {}) {
+    return JSON.stringify({
+        ...JSON.parse(canonicalPublishedSlot(slot)),
+        weekPattern: slot.weekPattern || 'every',
+        campusId: slot.campusId || '',
+        teachingGroupId: slot.teachingGroupId || '',
+        classIds: [...new Set([slot.classId, ...(slot.classIds || [])].filter(Boolean))].sort(),
+    });
+}
+
 function scheduleDiffersFromPublishedSnapshot(schedule = {}, project = {}) {
     const published = schedule?.published || null;
     const snapshotSlots = published?.snapshot?.slots || [];
@@ -272,8 +298,13 @@ function scheduleDiffersFromPublishedSnapshot(schedule = {}, project = {}) {
         return true;
     }
     if (snapshotSlots.length !== currentSlots.length) return true;
-    const snapshotKeys = snapshotSlots.map(canonicalPublishedSlot).sort();
-    const currentKeys = currentSlots.map(canonicalPublishedSlot).sort();
+    const complex = published.snapshot?.projectContext?.timetableModelVersion === 'complex_v1'
+        || published.snapshot?.projectContext?.complexModelEnabled === true
+        || project.timetableModelVersion === 'complex_v1'
+        || project.complexModelEnabled === true;
+    const canonical = complex ? canonicalComplexPublishedSlot : canonicalPublishedSlot;
+    const snapshotKeys = snapshotSlots.map(canonical).sort();
+    const currentKeys = currentSlots.map(canonical).sort();
     return snapshotKeys.some((key, index) => key !== currentKeys[index]);
 }
 
@@ -331,6 +362,12 @@ function projectWithPublishedSnapshot(project = {}, version = null) {
         ...(context.activePeriods?.length ? { activePeriods: context.activePeriods } : {}),
         ...(Object.prototype.hasOwnProperty.call(context, 'dayPartBoundaries') ? { dayPartBoundaries: context.dayPartBoundaries } : {}),
         ...(Array.isArray(context.periodTimes) ? { periodTimes: context.periodTimes } : {}),
+        ...(context.timetableModelVersion ? { timetableModelVersion: context.timetableModelVersion } : {}),
+        ...(Object.prototype.hasOwnProperty.call(context, 'complexModelEnabled') ? { complexModelEnabled: context.complexModelEnabled } : {}),
+        ...(Array.isArray(context.campuses) ? { campuses: context.campuses } : {}),
+        ...(Array.isArray(context.rooms) ? { rooms: context.rooms } : {}),
+        ...(Array.isArray(context.teachingGroups) ? { teachingGroups: context.teachingGroups } : {}),
+        ...(context.commuteRules ? { commuteRules: context.commuteRules } : {}),
         ...(Array.isArray(context.teachers) ? { teachers: context.teachers } : {}),
         ...(Array.isArray(context.classes) ? { classes: context.classes } : {}),
         ...(Array.isArray(context.subjects) ? { subjects: context.subjects } : {}),
@@ -583,6 +620,27 @@ router.post('/requirements/apply', async (req, res) => {
     }
 });
 
+router.post('/requirements/clarify', async (req, res) => {
+    let current = null;
+    try {
+        current = await store().loadProject();
+        const previousResult = req.body?.previousResult || {};
+        const result = continueTimetableRequirementClarification({
+            project: req.body?.project || current,
+            previousResult,
+            answers: req.body?.answers || [],
+            inputType: req.body?.inputType || 'requirement_clarification',
+            contextStats: req.body?.contextStats || previousResult.contextStats || null,
+        });
+        ok(res, result);
+    } catch (error) {
+        fail(res, error, 400, {
+            project: current,
+            reason: 'requirements_clarify_failed',
+        });
+    }
+});
+
 router.post('/rules/clarify', async (req, res) => {
     let current = null;
     try {
@@ -659,7 +717,7 @@ router.post('/schedule/run', async (req, res) => {
         }
 
         const saved = await timetableStore.saveProject(fastResult.project);
-        const solverJob = hasTimefoldSolverConfigured()
+        const solverJob = hasTimefoldSolverConfigured() && canUseTimefoldForTimetable(saved)
             ? createTimetableOptimizationJob({
                 project: saved,
                 schedule: saved.schedule,
@@ -921,6 +979,9 @@ router.post('/export', async (req, res) => {
         let current = await timetableStore.loadProject();
         const requested = splitExportType(req.body?.type || req.query?.type || 'class');
         const publishedVersion = req.body?.publishedVersion || req.query?.publishedVersion || null;
+        const weekView = ['odd', 'even', 'merged'].includes(req.body?.weekView || req.query?.weekView)
+            ? (req.body?.weekView || req.query?.weekView)
+            : 'merged';
         const type = requested.type;
         let exportProject = current;
         if (requested.published) {
@@ -1081,7 +1142,7 @@ router.post('/export', async (req, res) => {
                 current = exportProject;
             }
         }
-        const buffer = buildTimetableExportXlsx(exportProject, { type });
+        const buffer = buildTimetableExportXlsx(exportProject, { type, weekView });
         const versionSuffix = requested.published && publishedVersion ? `_V${Number.parseInt(publishedVersion, 10) || publishedVersion}` : '';
         const namePrefix = requested.published ? '已发布' : '';
         const name = type === 'teacher' ? `${namePrefix}教师课表` : type === 'plans' ? '任课信息' : type === 'master' ? `${namePrefix}总课表` : `${namePrefix}班级课表`;

@@ -6,13 +6,19 @@ import {
     removeUsage,
 } from './timetable-conflicts.js';
 import {
+    classIdsForPlan,
     getActivePeriods,
     getActiveWeekdays,
     getTimetableEntityMaps,
+    isComplexTimetableModel,
     isActiveTimetableSlot,
     isMorningPeriod,
     normalizeTimetableProject,
+    slotClassIds,
     slotTeacherIds,
+    teachingGroupForPlan,
+    weekPatternForSlot,
+    weekPatternsOverlap,
 } from './timetable-project.js';
 import {
     buildTimetableScore,
@@ -147,10 +153,24 @@ function blockFits(project, usage, task, day, period) {
     return { ok: true };
 }
 
-function roomCandidatesForTask(task = {}) {
-    const rooms = Array.isArray(task.allowedRoomIds) && task.allowedRoomIds.length
-        ? task.allowedRoomIds
-        : [task.roomId].filter(Boolean);
+function roomCandidatesForTask(task = {}, project = null) {
+    const requirement = task.roomRequirement || {};
+    let rooms = [];
+    if (Array.isArray(requirement.preferredRoomIds) && requirement.preferredRoomIds.length) {
+        rooms = [...requirement.preferredRoomIds];
+    } else if (Array.isArray(requirement.allowedRoomIds) && requirement.allowedRoomIds.length) {
+        rooms = [...requirement.allowedRoomIds];
+    } else if (Array.isArray(task.allowedRoomIds) && task.allowedRoomIds.length) {
+        rooms = [...task.allowedRoomIds];
+    } else {
+        rooms = [task.roomId].filter(Boolean);
+    }
+    const requiredTags = Array.isArray(requirement.requiredTags) ? requirement.requiredTags.filter(Boolean) : [];
+    if (!rooms.length && project && requiredTags.length) {
+        rooms = (project.rooms || [])
+            .filter(room => requiredTags.every(tag => (room.tags || []).includes(tag)))
+            .map(room => room.id);
+    }
     return rooms.length ? rooms : [null];
 }
 
@@ -159,7 +179,7 @@ function getCandidateBlocks(project, usage, task) {
     for (const day of getActiveWeekdays(project)) {
         for (const period of getActivePeriods(project)) {
             if (!hasConsecutiveActivePeriods(project, period, task.blockSize)) continue;
-            for (const roomId of roomCandidatesForTask(task)) {
+            for (const roomId of roomCandidatesForTask(task, project)) {
                 const check = blockFits(project, usage, { ...task, roomId }, day, period);
                 if (check.ok) candidates.push({ day, period, roomId });
             }
@@ -299,7 +319,7 @@ function buildCandidatePressureContext(project, usage, tasks = []) {
 
         bumpCount(classDemand, task.classId, Math.max(1, task.blockSize || 1));
         for (const teacherId of slotTeacherIds(task)) bumpCount(teacherDemand, teacherId, Math.max(1, task.blockSize || 1));
-        for (const roomId of roomCandidatesForTask(task)) {
+        for (const roomId of roomCandidatesForTask(task, project)) {
             if (roomId) bumpCount(roomDemand, roomId, Math.max(1, task.blockSize || 1));
         }
 
@@ -468,9 +488,54 @@ function chooseWeightedCandidate(candidates, seed, taskId, passName) {
     return weighted[weighted.length - 1].candidate;
 }
 
+function buildRoomCampusMap(project = {}) {
+    return new Map((project.rooms || []).map(room => [room.id, room.campusId || '']));
+}
+
+function taskMetadataForPlan(project = {}, plan = null, overrides = {}) {
+    const roomCampus = overrides.roomCampus || buildRoomCampusMap(project);
+    const classId = overrides.classId || plan?.classId || null;
+    const teacherId = overrides.teacherId || plan?.teacherId || null;
+    const teacherIds = slotTeacherIds({
+        teacherId,
+        teacherIds: overrides.teacherIds || plan?.teacherIds || [],
+    });
+    const roomId = Object.prototype.hasOwnProperty.call(overrides, 'roomId')
+        ? overrides.roomId
+        : plan?.roomId || null;
+    const teachingGroupId = overrides.teachingGroupId || plan?.teachingGroupId || '';
+    const planLike = {
+        ...(plan || {}),
+        classId,
+        classIds: overrides.classIds || plan?.classIds || [],
+        teachingGroupId,
+    };
+    const teachingGroup = teachingGroupForPlan(project, planLike);
+    const campusId = overrides.campusId
+        || plan?.campusId
+        || (roomId ? roomCampus.get(roomId) : '')
+        || project.classes?.find(item => item.id === classId)?.campusId
+        || project.teachers?.find(item => item.id === teacherId)?.campusId
+        || '';
+    return {
+        teacherIds,
+        roomId,
+        allowedRoomIds: plan?.allowedRoomIds || [],
+        roomRequirement: plan?.roomRequirement || { preferredRoomIds: [], allowedRoomIds: [], requiredTags: [] },
+        weekPattern: overrides.weekPattern || plan?.weekPattern || 'every',
+        campusId,
+        roomCampus,
+        teachingGroupId,
+        teachingGroupName: teachingGroup?.name || '',
+        classIds: classIdsForPlan(project, planLike),
+    };
+}
+
 function expandLessonPlanTasks(project, placedCountByPlan) {
     const tasks = [];
+    const roomCampus = buildRoomCampusMap(project);
     for (const plan of project.lessonPlans) {
+        const metadata = taskMetadataForPlan(project, plan, { roomCampus });
         const alreadyPlaced = placedCountByPlan.get(plan.id) || 0;
         let remaining = Math.max(0, plan.weeklyHours - alreadyPlaced);
         let blockIndex = placedBlockCountForPlan(plan, alreadyPlaced);
@@ -482,9 +547,16 @@ function expandLessonPlanTasks(project, placedCountByPlan) {
                 classId: plan.classId,
                 subjectId: plan.subjectId,
                 teacherId: plan.teacherId,
-                teacherIds: plan.teacherIds,
-                roomId: plan.roomId || null,
-                allowedRoomIds: plan.allowedRoomIds || [],
+                teacherIds: metadata.teacherIds,
+                roomId: metadata.roomId,
+                allowedRoomIds: metadata.allowedRoomIds,
+                roomRequirement: metadata.roomRequirement,
+                weekPattern: metadata.weekPattern,
+                campusId: metadata.campusId,
+                roomCampus: metadata.roomCampus,
+                teachingGroupId: metadata.teachingGroupId,
+                teachingGroupName: metadata.teachingGroupName,
+                classIds: metadata.classIds,
                 blockSize,
                 blockId: blockSize > 1 ? `${plan.id}_block_${blockIndex}` : null,
             });
@@ -513,12 +585,18 @@ function taskDifficulty(project, usage, task, pressureContext = null) {
     const subject = project.subjects.find(item => item.id === task.subjectId);
     const priority = Number(subject?.priority ?? 50);
     const teacherCount = Math.max(1, slotTeacherIds(task).length);
-    const roomConstrained = task.roomId || (Array.isArray(task.allowedRoomIds) && task.allowedRoomIds.length) ? 1 : 0;
+    const roomConstrained = task.roomId
+        || (Array.isArray(task.allowedRoomIds) && task.allowedRoomIds.length)
+        || (Array.isArray(task.roomRequirement?.preferredRoomIds) && task.roomRequirement.preferredRoomIds.length)
+        || (Array.isArray(task.roomRequirement?.allowedRoomIds) && task.roomRequirement.allowedRoomIds.length)
+        || (Array.isArray(task.roomRequirement?.requiredTags) && task.roomRequirement.requiredTags.length)
+        ? 1
+        : 0;
     const preferredPeriods = project.rules?.softRules?.subjectPreferredPeriods?.[task.subjectId] || null;
     const preferenceWeight = preferredPeriods ? Math.max(1, Math.min(100, Number.parseInt(preferredPeriods.weight, 10) || 20)) : 0;
     const classDemand = pressureContext?.classDemand?.get(task.classId) || 0;
     const teacherDemand = slotTeacherIds(task).reduce((sum, teacherId) => sum + (pressureContext?.teacherDemand?.get(teacherId) || 0), 0);
-    const roomDemand = roomCandidatesForTask(task)
+    const roomDemand = roomCandidatesForTask(task, project)
         .filter(Boolean)
         .reduce((sum, roomId) => sum + (pressureContext?.roomDemand?.get(roomId) || 0), 0);
     return candidates * 100
@@ -535,6 +613,7 @@ function taskPreferenceRank(project, task) {
 }
 
 function makeSlot(task, day, period, index = 0, locked = false, roomId = undefined) {
+    const finalRoomId = roomId === undefined ? task.roomId || null : roomId;
     return {
         id: `${locked ? 'locked' : 'slot'}_${task.lessonPlanId || task.id}_${task.classId}_${day}_${period}_${index}`,
         day,
@@ -544,7 +623,11 @@ function makeSlot(task, day, period, index = 0, locked = false, roomId = undefin
         teacherId: task.teacherId,
         teacherIds: slotTeacherIds(task),
         lessonPlanId: task.lessonPlanId || null,
-        roomId: roomId === undefined ? task.roomId || null : roomId,
+        roomId: finalRoomId,
+        weekPattern: task.weekPattern || 'every',
+        campusId: (finalRoomId && task.roomCampus?.get?.(finalRoomId)) || task.campusId || '',
+        teachingGroupId: task.teachingGroupId || '',
+        classIds: task.classIds || [task.classId].filter(Boolean),
         blockId: task.blockId || null,
         blockIndex: index,
         blockSize: Math.max(1, task.blockSize || 1),
@@ -553,6 +636,7 @@ function makeSlot(task, day, period, index = 0, locked = false, roomId = undefin
 }
 
 function hasSimpleEdgeColoringShape(project) {
+    if (isComplexTimetableModel(project)) return false;
     if ((project.rules?.hardRules?.lockedSlots || []).length > 0) return false;
     if ((project.schedule?.slots || []).some(slot => slot.locked || slot.manuallyAdjusted)) return false;
     if (Object.keys(project.rules?.hardRules?.teacherUnavailable || {}).length > 0) return false;
@@ -999,6 +1083,7 @@ function cloneUsage(usage) {
         teacher: new Set(usage.teacher),
         class: new Set(usage.class),
         room: new Set(usage.room),
+        entries: [...(usage.entries || [])],
         classSubjectDay: new Map(usage.classSubjectDay),
         teacherDay: new Map(usage.teacherDay),
     };
@@ -1008,6 +1093,7 @@ function restoreUsage(target, snapshot) {
     target.teacher = new Set(snapshot.teacher);
     target.class = new Set(snapshot.class);
     target.room = new Set(snapshot.room);
+    target.entries = [...(snapshot.entries || [])];
     target.classSubjectDay = new Map(snapshot.classSubjectDay);
     target.teacherDay = new Map(snapshot.teacherDay);
 }
@@ -1043,6 +1129,12 @@ function taskFromSlotGroup(group = []) {
         teacherIds: slotTeacherIds(first),
         roomId: first.roomId || null,
         allowedRoomIds: first.roomId ? [first.roomId] : [],
+        roomRequirement: first.roomRequirement || { preferredRoomIds: [], allowedRoomIds: [], requiredTags: [] },
+        weekPattern: first.weekPattern || 'every',
+        campusId: first.campusId || '',
+        teachingGroupId: first.teachingGroupId || '',
+        teachingGroupName: first.teachingGroupName || '',
+        classIds: slotClassIds(first),
         blockId: first.blockId || null,
         blockSize: Math.max(1, group.length || first.blockSize || 1),
     };
@@ -1074,7 +1166,7 @@ function groupHasHardAlternative(project, group = [], forbiddenKeys = new Set())
             if (!hasConsecutiveActivePeriods(project, period, task.blockSize)) continue;
             const blockKeys = blockKeysForPlacement(task, day, period);
             if (blockKeys.some(key => forbiddenKeys.has(key))) continue;
-            for (const roomId of roomCandidatesForTask(task)) {
+            for (const roomId of roomCandidatesForTask(task, project)) {
                 const target = { ...task, roomId, day, period };
                 if (blockFits(project, emptyUsage, target, day, period).ok) return true;
             }
@@ -1090,8 +1182,10 @@ function blockerMobilityPenalty(project, blockers = [], forbiddenKeys = new Set(
     }, 0);
 }
 
-function findBlockingGroups(slots, task, day, period, excludedGroupKeys = new Set()) {
+function findBlockingGroups(project, slots, task, day, period, excludedGroupKeys = new Set()) {
     const taskTeachers = slotTeacherIds(task);
+    const taskClasses = slotClassIds(task);
+    const taskWeekPattern = weekPatternForSlot(project, task);
     const targetPeriods = new Set(
         Array.from({ length: Math.max(1, task.blockSize || 1) }, (_, offset) => period + offset),
     );
@@ -1101,7 +1195,8 @@ function findBlockingGroups(slots, task, day, period, excludedGroupKeys = new Se
         const groupKey = slotGroupKey(slot);
         if (excludedGroupKeys.has(groupKey)) continue;
         if (slot.day !== day || !targetPeriods.has(slot.period)) continue;
-        const conflicts = slot.classId === task.classId
+        if (!weekPatternsOverlap(weekPatternForSlot(project, slot), taskWeekPattern)) continue;
+        const conflicts = slotClassIds(slot).some(classId => taskClasses.includes(classId))
             || slotTeacherIds(slot).some(id => taskTeachers.includes(id))
             || (slot.roomId && task.roomId && slot.roomId === task.roomId);
         if (!conflicts) continue;
@@ -1139,10 +1234,10 @@ function candidateListForRepair(project, usage, task, slots, pressureContext, fo
             if (!hasConsecutiveActivePeriods(project, period, task.blockSize)) continue;
             const blockKeys = blockKeysForPlacement(task, day, period);
             if (blockKeys.some(key => forbiddenKeys.has(key))) continue;
-            for (const roomId of roomCandidatesForTask(task)) {
+            for (const roomId of roomCandidatesForTask(task, project)) {
                 const target = { ...task, roomId, day, period };
                 const check = blockFits(project, usage, target, day, period);
-                const blockers = check.ok ? [] : findBlockingGroups(slots, target, day, period, excludedGroupKeys);
+                const blockers = check.ok ? [] : findBlockingGroups(project, slots, target, day, period, excludedGroupKeys);
                 const hardUnavailablePenalty = !check.ok && !blockers.length && !excludedGroupKeys.size ? 10000 : 0;
                 const candidateForbiddenKeys = new Set([...forbiddenKeys, ...blockKeys]);
                 const score = strategyCandidateScore(project, usage, slots, task, { day, period, roomId }, pressureContext)
@@ -1289,7 +1384,7 @@ function repairUnplaced(project, usage, slots, unplaced, pressureContext = null,
             return { ok: false, code, detail, blockers };
         };
 
-        const blockers = findBlockingGroups(slots, effectiveTask, candidate.day, candidate.period, activeExcluded);
+        const blockers = findBlockingGroups(project, slots, effectiveTask, candidate.day, candidate.period, activeExcluded);
         if (blockers.length > config.maxBlockers) {
             return failBranch('too_many_blockers', `${blockers.length} 个 blocker`, blockers);
         }
@@ -1623,6 +1718,7 @@ function seedLockedSlots(project, usage, maps) {
     const placedCountByPlan = new Map();
     const seededKeys = new Set();
     const consumedLockedCells = new Set();
+    const roomCampus = buildRoomCampusMap(project);
     const lockedRules = (project.rules?.hardRules?.lockedSlots || [])
         .map(locked => {
             const plan = planForLockedRule(project, maps, locked);
@@ -1643,14 +1739,35 @@ function seedLockedSlots(project, usage, maps) {
         const blockSize = plan ? nextLockedBlockSizeForPlan(plan, placedHours) : 1;
         const blockNumber = plan ? placedBlockCountForPlan(plan, placedHours) + 1 : 1;
         const lessonPlanId = locked.lessonPlanId || plan?.id || null;
+        const classId = locked.classId || plan?.classId || null;
+        const teacherId = locked.teacherId || plan?.teacherId || null;
+        const roomId = locked.roomId || plan?.roomId || null;
+        const metadata = taskMetadataForPlan(project, plan, {
+            roomCampus,
+            classId,
+            teacherId,
+            roomId,
+            teacherIds: plan ? slotTeacherIds(plan) : [teacherId].filter(Boolean),
+            weekPattern: plan?.weekPattern || locked.weekPattern || 'every',
+            campusId: locked.campusId || plan?.campusId || '',
+            teachingGroupId: plan?.teachingGroupId || locked.teachingGroupId || '',
+        });
         const task = {
             id: locked.id,
             lessonPlanId,
-            classId: locked.classId || plan?.classId || null,
+            classId,
             subjectId: locked.subjectId || plan?.subjectId || null,
-            teacherId: locked.teacherId || plan?.teacherId || null,
-            teacherIds: plan ? slotTeacherIds(plan) : [locked.teacherId].filter(Boolean),
-            roomId: locked.roomId || plan?.roomId || null,
+            teacherId,
+            teacherIds: metadata.teacherIds,
+            roomId: metadata.roomId,
+            allowedRoomIds: metadata.allowedRoomIds,
+            roomRequirement: metadata.roomRequirement,
+            weekPattern: metadata.weekPattern,
+            campusId: metadata.campusId,
+            roomCampus: metadata.roomCampus,
+            teachingGroupId: metadata.teachingGroupId,
+            teachingGroupName: metadata.teachingGroupName,
+            classIds: metadata.classIds,
             blockSize,
             blockId: blockSize > 1 ? `${lessonPlanId || locked.id}_block_${blockNumber}` : null,
         };
@@ -1708,6 +1825,7 @@ function seedProtectedCurrentSlots(project, usage, maps, seededState) {
     const conflicts = [...(seededState?.conflicts || [])];
     const placedCountByPlan = new Map(seededState?.placedCountByPlan || []);
     const seededKeys = new Set(slots.map(slot => `${slot.lessonPlanId || ''}:${slot.classId}:${slot.day}-${slot.period}`));
+    const roomCampus = buildRoomCampusMap(project);
     const seededRuleCells = new Set(
         slots
             .filter(slot => slot.locked)
@@ -1724,10 +1842,29 @@ function seedProtectedCurrentSlots(project, usage, maps, seededState) {
         if (seededRuleCells.has(key) || seededKeys.has(key)) continue;
         if (!isActiveTimetableSlot(project, existing.day, existing.period)) continue;
 
+        const roomId = existing.roomId || plan.roomId || null;
+        const teacherId = existing.teacherId || plan.teacherId || null;
+        const metadata = taskMetadataForPlan(project, plan, {
+            roomCampus,
+            classId: existing.classId || plan.classId,
+            teacherId,
+            roomId,
+            teacherIds: slotTeacherIds(existing).length ? slotTeacherIds(existing) : slotTeacherIds(plan),
+            weekPattern: plan.weekPattern || existing.weekPattern || 'every',
+            campusId: existing.campusId || plan.campusId || '',
+            teachingGroupId: plan.teachingGroupId || existing.teachingGroupId || '',
+            classIds: existing.classIds,
+        });
         const slot = {
             ...existing,
-            teacherIds: slotTeacherIds(existing).length ? slotTeacherIds(existing) : slotTeacherIds(plan),
-            roomId: existing.roomId || null,
+            teacherId,
+            teacherIds: metadata.teacherIds,
+            roomId: metadata.roomId,
+            weekPattern: metadata.weekPattern,
+            campusId: metadata.campusId,
+            teachingGroupId: metadata.teachingGroupId,
+            teachingGroupName: metadata.teachingGroupName,
+            classIds: metadata.classIds,
             locked: Boolean(existing.locked),
             manuallyAdjusted: Boolean(existing.manuallyAdjusted),
         };

@@ -1,9 +1,14 @@
 import AdmZip from 'adm-zip';
 
 import {
+    campusIdForSlot,
     getActivePeriods,
     getActiveWeekdays,
+    isComplexTimetableModel,
+    slotClassIds,
     publicationIssueEntries,
+    weekPatternForSlot,
+    weekPatternsOverlap,
 } from './timetable-project.js';
 
 export const TIMETABLE_XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -67,8 +72,14 @@ function sheetRowsForPlans(project) {
     const classMap = new Map(project.classes.map(item => [item.id, item]));
     const subjectMap = new Map(project.subjects.map(item => [item.id, item]));
     const teacherMap = new Map(project.teachers.map(item => [item.id, item]));
+    const campusMap = new Map((project.campuses || []).map(item => [item.id, item]));
+    const groupMap = new Map((project.teachingGroups || []).map(item => [item.id, item]));
+    const roomMap = new Map((project.rooms || []).map(item => [item.id, item]));
+    const complex = isComplexTimetableModel(project);
+    const baseHeader = ['年级', '班级', '课程', '教师', '周课时', '连堂'];
+    const complexHeader = ['周次', '校区', '教学组', '教室/场地'];
     return [
-        ['年级', '班级', '课程', '教师', '周课时', '连堂'],
+        complex ? [...baseHeader, ...complexHeader] : baseHeader,
         ...project.lessonPlans.map(plan => [
             classMap.get(plan.classId)?.grade || '',
             classMap.get(plan.classId)?.name || plan.className || '',
@@ -76,17 +87,59 @@ function sheetRowsForPlans(project) {
             teacherMap.get(plan.teacherId)?.name || plan.teacherName || '',
             String(plan.weeklyHours || ''),
             plan.blockPreference === 'double' ? '双连堂' : plan.blockPreference === 'mixed' ? '混合' : '单节',
+            ...(complex ? [
+                weekPatternLabel(plan.weekPattern),
+                campusMap.get(plan.campusId)?.name || plan.campusId || '',
+                groupMap.get(plan.teachingGroupId)?.name || plan.teachingGroupId || '',
+                roomMap.get(plan.roomId)?.name || plan.roomId || '',
+            ] : []),
         ]),
     ];
+}
+
+function weekPatternLabel(value = 'every') {
+    return ({
+        every: '每周',
+        odd: '单周',
+        even: '双周',
+        odd_even: '单双周',
+    })[value] || '每周';
+}
+
+function normalizeExportWeekView(value = 'merged') {
+    return ['odd', 'even'].includes(value) ? value : 'merged';
+}
+
+function slotMatchesWeekView(project, slot, weekView = 'merged') {
+    const view = normalizeExportWeekView(weekView);
+    if (view === 'merged' || !isComplexTimetableModel(project)) return true;
+    return weekPatternsOverlap(weekPatternForSlot(project, slot), view);
 }
 
 function lessonLabel(project, slot, mode) {
     const subject = project.subjects.find(item => item.id === slot.subjectId)?.name || slot.subjectId;
     const teacher = project.teachers.find(item => item.id === slot.teacherId)?.name || slot.teacherId;
     const klass = project.classes.find(item => item.id === slot.classId);
-    if (mode === 'teacher') return `${subject}\n${klass?.grade || ''}${klass?.name || ''}`.trim();
-    if (mode === 'master') return `${klass?.grade || ''}${klass?.name || ''}\n${subject}\n${teacher}`.trim();
-    return `${subject}\n${teacher}`.trim();
+    const group = (project.teachingGroups || []).find(item => item.id === slot.teachingGroupId);
+    const room = (project.rooms || []).find(item => item.id === slot.roomId);
+    const campusId = campusIdForSlot(project, slot);
+    const campus = (project.campuses || []).find(item => item.id === campusId);
+    const week = weekPatternLabel(weekPatternForSlot(project, slot));
+    const groupOrClass = group?.name || slotClassIds(slot)
+        .map(classId => {
+            const item = project.classes.find(klassItem => klassItem.id === classId);
+            return item ? `${item.grade || ''}${item.name || ''}` : classId;
+        })
+        .filter(Boolean)
+        .join('、')
+        || `${klass?.grade || ''}${klass?.name || ''}`.trim();
+    const extras = isComplexTimetableModel(project)
+        ? [week, campus?.name || campusId, room?.name || slot.roomId].filter(Boolean).join(' / ')
+        : '';
+    const suffix = extras ? `\n${extras}` : '';
+    if (mode === 'teacher') return `${subject}\n${groupOrClass}${suffix}`.trim();
+    if (mode === 'master') return `${groupOrClass}\n${subject}\n${teacher}${suffix}`.trim();
+    return `${subject}\n${teacher}${suffix}`.trim();
 }
 
 function publicationIssueLabel(type = '') {
@@ -104,9 +157,13 @@ function publicationIssueLabel(type = '') {
         quality_review: '质量建议',
         restored_published_draft: '恢复发布版',
         room_capacity: '教室容量',
+        'room-conflict': '教室冲突',
         room_load: '教室负载',
         subject_avoid_period: '避开节次',
         subject_spread: '同科分散',
+        week_pattern_conflict: '周次冲突',
+        teaching_group_conflict: '教学组冲突',
+        campus_commute_conflict: '跨校区通勤',
         teacher_capacity: '教师容量',
         teacher_consecutive: '教师连续课',
         teacher_daily_limit: '教师日课时',
@@ -118,8 +175,9 @@ function publicationIssueText(item = {}) {
     return item.message || item.targetName || publicationIssueLabel(item.type);
 }
 
-function sheetRowsForSchedule(project, mode) {
-    const slots = project.schedule?.slots || [];
+function sheetRowsForSchedule(project, mode, options = {}) {
+    const weekView = normalizeExportWeekView(options.weekView);
+    const slots = (project.schedule?.slots || []).filter(slot => slotMatchesWeekView(project, slot, weekView));
     const owners = mode === 'teacher' ? project.teachers : mode === 'master' ? [{ id: 'all', name: '总课表' }] : project.classes;
     const weekdayNames = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
     const activeWeekdays = getActiveWeekdays(project);
@@ -130,7 +188,7 @@ function sheetRowsForSchedule(project, mode) {
         const base = `第${period}节`;
         return time?.start && time?.end ? `${base}\n${time.start}-${time.end}` : base;
     };
-    const rows = [['对象/节次', ...activeWeekdays.flatMap(day => activePeriods.map(period => `${weekdayNames[day - 1] || `周${day}`} ${periodLabel(period)}`))]];
+    const rows = [[isComplexTimetableModel(project) ? '对象/周次/节次' : '对象/节次', ...activeWeekdays.flatMap(day => activePeriods.map(period => `${weekdayNames[day - 1] || `周${day}`} ${periodLabel(period)}`))]];
 
     for (const owner of owners) {
         const row = [mode === 'class' ? `${owner.grade}${owner.name}` : owner.name];
@@ -187,10 +245,12 @@ function workbookXml(sheetName) {
 
 export function buildTimetableExportXlsx(project, options = {}) {
     const type = options.type || 'class';
-    const sheetName = type === 'plans' ? '任课信息' : type === 'teacher' ? '教师课表' : type === 'master' ? '总课表' : '班级课表';
+    const weekView = normalizeExportWeekView(options.weekView);
+    const baseSheetName = type === 'plans' ? '任课信息' : type === 'teacher' ? '教师课表' : type === 'master' ? '总课表' : '班级课表';
+    const sheetName = type !== 'plans' && weekView !== 'merged' ? `${baseSheetName}-${weekPatternLabel(weekView)}` : baseSheetName;
     const rows = type === 'plans'
         ? sheetRowsForPlans(project)
-        : [...publicationMetadataRows(project, { ...options, type }), ...sheetRowsForSchedule(project, type)];
+        : [...publicationMetadataRows(project, { ...options, type, weekView }), ...sheetRowsForSchedule(project, type, { ...options, weekView })];
     const sharedStrings = createSharedStringTable();
     const sheet = buildSheet(rows, sharedStrings);
     const zip = new AdmZip();

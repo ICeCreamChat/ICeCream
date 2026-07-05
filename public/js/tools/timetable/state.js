@@ -3,6 +3,7 @@ export function createTimetablePlannerState(overrides = {}) {
         container: null,
         project: null,
         viewMode: 'class',
+        exportWeekView: 'merged',
         selectedOwnerId: '',
         selectedSlotId: '',
         inspectorOpen: false,

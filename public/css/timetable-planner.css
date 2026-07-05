@@ -2314,7 +2314,7 @@ body.light-mode .tt-rules-setup-card .tt-rule-entry {
 
 .tt-rules-setup-card .tt-rule-entry .lucide {
     box-sizing: border-box;
-    grid-row: 1 / span 2;
+    grid-row: 1 / span 3;
     width: 38px;
     height: 38px;
     padding: 8px;
@@ -2344,10 +2344,112 @@ body.light-mode .tt-rules-setup-card .tt-rule-entry {
     line-height: 1.35;
 }
 
+.tt-smart-helper-entry-subtitle {
+    color: var(--tt-text-secondary);
+    font-weight: 700;
+}
+
+.tt-smart-helper-entry-status {
+    color: var(--tt-muted);
+}
+
 .tt-rules-setup-card .tt-rule-entry:hover,
 .tt-rules-setup-card .tt-rule-entry:focus-visible {
     border-color: rgba(8, 145, 178, 0.42);
     box-shadow: 0 10px 24px rgba(8, 145, 178, 0.12);
+}
+
+.tt-smart-helper-flow,
+.tt-smart-helper-metrics {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.tt-smart-helper-flow {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: center;
+    padding: 7px 8px;
+    border: 1px solid rgba(8, 145, 178, 0.16);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-input);
+}
+
+.tt-smart-helper-flow span {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-width: 0;
+    color: var(--tt-muted);
+}
+
+.tt-smart-helper-flow span::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    flex: 0 0 6px;
+    border-radius: 999px;
+    background: var(--tt-border-strong);
+}
+
+.tt-smart-helper-flow span.is-active {
+    color: var(--tt-text-secondary);
+}
+
+.tt-smart-helper-flow span.is-active::before {
+    background: var(--tt-primary);
+}
+
+.tt-smart-helper-flow b,
+.tt-smart-helper-metrics b {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-size: 0.66rem;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-smart-helper-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.tt-smart-helper-metrics span {
+    display: grid;
+    min-height: 34px;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    padding: 6px 8px;
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-input);
+    color: var(--tt-text);
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
+.tt-smart-helper-metrics strong {
+    color: var(--tt-text);
+    font-size: 0.86rem;
+    font-weight: 900;
+}
+
+.tt-smart-helper-metrics em {
+    color: var(--tt-muted);
+    font-size: 0.66rem;
+    font-style: normal;
+    font-weight: 800;
+}
+
+.tt-smart-helper-metrics .is-warning {
+    color: var(--tt-warning);
+}
+
+.tt-smart-helper-metrics .is-complex {
+    color: var(--tt-primary);
 }
 
 .tt-rule-summary {
@@ -3367,6 +3469,56 @@ body.light-mode .tt-export-setup-card .tt-publication-actions {
     gap: 10px;
 }
 
+.tt-export-week-view {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--tt-space-sm);
+    min-width: 0;
+    padding: 8px 10px;
+    background: var(--tt-bg-input);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-md);
+}
+
+.tt-complex-model-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    padding: 9px;
+    background: var(--tt-bg-input);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-md);
+}
+
+.tt-complex-model-strip span {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-text-secondary);
+    font-size: 0.72rem;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-complex-model-strip b {
+    color: var(--tt-muted);
+}
+
+.tt-export-week-view > span {
+    color: var(--tt-text-secondary);
+    font-size: 0.78rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.tt-export-week-segment {
+    flex: 1 1 auto;
+    min-width: min(100%, 210px);
+    max-width: 260px;
+}
+
 .tt-export-setup-card .tt-publication-actions--published {
     display: grid;
     gap: var(--tt-space-sm);
@@ -4324,6 +4476,12 @@ body.light-mode .tt-export-setup-card .tt-publication-actions--published {
         display: block;
         width: 100%;
         min-width: 0;
+    }
+
+    .tt-smart-helper-flow,
+    .tt-smart-helper-metrics,
+    .tt-complex-model-strip {
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .tt-roster-review-table,

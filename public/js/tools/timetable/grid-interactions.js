@@ -197,6 +197,9 @@ function bindDelegatedInteractions(container) {
         } else if (action === 'select-requirement') {
             const requirementId = event.target.closest('[data-requirement-id]')?.dataset.requirementId;
             controller.selectRequirement(requirementId);
+        } else if (action === 'submit-requirement-clarification') {
+            const requirementId = event.target.closest('[data-requirement-id]')?.dataset.requirementId;
+            controller.submitRequirementClarification(requirementId);
         } else if (action === 'toggle-constraint-apply-item') {
             const applyItemKey = event.target.closest('[data-apply-item-key]')?.dataset.applyItemKey;
             controller.toggleConstraintApplyItem(applyItemKey);
@@ -508,12 +511,24 @@ export function bindGridInteractions(container, controller, state) {
         button.addEventListener('click', () => controller.removeLockedSlot(Number(button.dataset.removeLock)));
     });
 
+    container.querySelectorAll('[data-export-week-view]').forEach(button => {
+        button.addEventListener('click', () => {
+            state.exportWeekView = ['odd', 'even'].includes(button.dataset.exportWeekView)
+                ? button.dataset.exportWeekView
+                : 'merged';
+            controller.render();
+        });
+    });
+
     container.querySelectorAll('[data-export-type]').forEach(button => {
-        button.addEventListener('click', () => controller.export(button.dataset.exportType));
+        button.addEventListener('click', () => controller.export(button.dataset.exportType, {
+            weekView: state.exportWeekView || 'merged',
+        }));
     });
     container.querySelectorAll('[data-export-history-type]').forEach(button => {
         button.addEventListener('click', () => controller.export(button.dataset.exportHistoryType, {
             publishedVersion: button.dataset.exportHistoryVersion,
+            weekView: state.exportWeekView || 'merged',
         }));
     });
     container.querySelector('#tt-publish-schedule')?.addEventListener('click', () => controller.openPublishDialog());

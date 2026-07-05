@@ -24,6 +24,11 @@ import { buildRuleReviewTasks, getActiveRuleReviewTask } from './rule-review-tas
 import { renderConstraintChatDock } from './view-chat.js';
 import { renderFixPreview, renderSmartHelperDialog } from './view-smart-helper.js';
 import { renderConstraintDialog } from './view-constraint-dialog.js';
+import {
+    buildUnifiedRequirementItems,
+    getActionableRequirementCount,
+    getRequirementGroupKey,
+} from './constraint-dialog-review-model.js';
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -374,7 +379,7 @@ function renderWorkflow(state) {
                 id: 'rules',
                 icon: 'brain-circuit',
                 title: '智能约束',
-                chip: `${rules.total} 条`,
+                chip: smartHelperSidebarChip(state, rules.total),
                 open: openSections.has('rules'),
                 content: renderRulesSection(state),
             })}
@@ -938,6 +943,101 @@ function renderRosterStats(stats) {
     `;
 }
 
+function smartHelperSidebarChip(state = {}, savedTotal = 0) {
+    const review = state.ruleReview || {};
+    const draftCount = (review.draftRows || []).length || (state.pendingRules || []).length;
+    const requirements = buildUnifiedRequirementItems(review);
+    const semanticCount = Math.max(
+        getActionableRequirementCount(review, 'all'),
+        requirements.length
+    );
+    if (draftCount) return `${draftCount} 条`;
+    if (semanticCount) return `${semanticCount} 项`;
+    if (savedTotal) return `${savedTotal} 条`;
+    return '待处理';
+}
+
+function normalizeTimetableUiKey(value = '') {
+    return String(value || '').trim()
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .toLowerCase()
+        .replace(/[-\s]+/g, '_');
+}
+
+function requirementHasComplexSignal(item = {}) {
+    const applyTo = normalizeTimetableUiKey(item.applyTo || '');
+    const params = item.parameters || {};
+    const support = item.modelSupport || {};
+    const actions = item.semanticActions || [];
+    if (applyTo === 'model_extension' || applyTo === 'complex_model') return true;
+    if (support.requiredModel || support.capability) return true;
+    if (params.weekPattern || params.campusId || params.roomId || params.roomRequirement || params.teachingGroupId) return true;
+    return actions.some(action => normalizeTimetableUiKey(action.kind || action.type || '') === 'complex_model_patch');
+}
+
+function projectHasComplexSignals(project = {}) {
+    if (project.timetableModelVersion === 'complex_v1' || project.complexModelEnabled === true) return true;
+    const hasPattern = item => ['odd', 'even', 'odd_even'].includes(item?.weekPattern);
+    if ((project.lessonPlans || []).some(item => hasPattern(item) || item.campusId || item.roomId || item.roomRequirement || item.teachingGroupId)) return true;
+    if ((project.schedule?.slots || []).some(item => hasPattern(item) || item.campusId || item.roomId || item.roomRequirement || item.teachingGroupId)) return true;
+    if ((project.campuses || []).length || (project.rooms || []).length || (project.teachingGroups || []).length) return true;
+    return Boolean(project.commuteRules && Object.keys(project.commuteRules).length);
+}
+
+function smartHelperStats(state = {}, savedCount = 0, draftCount = 0, warningCount = 0) {
+    const review = state.ruleReview || {};
+    const requirements = buildUnifiedRequirementItems(review);
+    const reviewCount = requirements.filter(item => getRequirementGroupKey(item) === 'review').length;
+    const handledCount = requirements.filter(item => getRequirementGroupKey(item) === 'handled').length;
+    return {
+        actionableCount: getActionableRequirementCount(review, 'all'),
+        reviewCount,
+        handledCount,
+        complexCount: requirements.filter(requirementHasComplexSignal).length,
+        savedCount,
+        draftCount,
+        warningCount,
+        publicationOk: Boolean(state.project?.schedule?.publication?.ok),
+        hasSchedule: Boolean(state.project?.schedule?.slots?.length),
+        complexProject: projectHasComplexSignals(state.project || {}),
+    };
+}
+
+function renderSmartHelperFlow(stats = {}) {
+    const steps = ['理解需求', '补充信息', '生成规则', '发布校验'];
+    const activeIndex = stats.publicationOk ? 3 : stats.hasSchedule ? 3 : stats.actionableCount || stats.savedCount ? 2 : stats.reviewCount || stats.warningCount ? 1 : 0;
+    return `
+        <div class="tt-smart-helper-flow" aria-label="智能约束助手流程">
+            ${steps.map((label, index) => `
+                <span class="${index <= activeIndex ? 'is-active' : ''}">
+                    <b>${escapeHtml(label)}</b>
+                </span>
+            `).join('')}
+        </div>
+    `;
+}
+
+function renderSmartHelperMetrics(stats = {}) {
+    const reviewCount = stats.warningCount || stats.reviewCount || 0;
+    const handledCount = stats.handledCount || stats.savedCount || 0;
+    const metrics = [
+        ['可应用', stats.actionableCount || 0, ''],
+        ['需复核', reviewCount, reviewCount ? 'is-warning' : ''],
+        ['已处理', handledCount, ''],
+    ];
+    return `
+        <div class="tt-smart-helper-metrics" aria-label="智能约束助手状态">
+            ${metrics.map(([label, value, className]) => `
+                <span class="${escapeAttr(className)}">
+                    <b>${escapeHtml(label)}</b>
+                    <strong>${escapeHtml(value)}</strong>
+                    <em>项</em>
+                </span>
+            `).join('')}
+        </div>
+    `;
+}
+
 function renderRulesSection(state) {
     const { project } = state;
     const savedItems = getSavedRuleItems(project);
@@ -946,30 +1046,29 @@ function renderRulesSection(state) {
     const savedCount = savedItems.length;
     const draftCount = draftRows.length;
     const warningCount = (review.warnings || state.ruleWarnings || []).length + (review.unsupportedItems || []).length;
-    const cardTitle = draftCount
-        ? '继续智能排课'
-        : savedCount
-            ? '查看已应用约束'
-            : '打开智能排课助手';
+    const helperStats = smartHelperStats(state, savedCount, draftCount, warningCount);
+    const cardTitle = '智能约束助手';
     const cardDescription = draftCount
-        ? `${draftCount} 条要求待处理${warningCount ? ` / ${warningCount} 条需注意` : ''}，继续完成确认和排课。`
+        ? `${draftCount} 条要求待处理${warningCount ? ` / ${warningCount} 条需注意` : ''}，继续完成理解、复核和落地。`
         : savedCount
             ? `已有 ${savedCount} 条要求应用，可继续检查、调整并生成课表。`
-            : '告诉我排课要求，我会检查数据、整理规则并生成课表。';
+            : '自然语言需求理解、复核与落地。';
 
     return `
         <div class="tt-rule-stack tt-rules-setup-card" data-workflow-step="rules">
             <div class="tt-rules-setup-body">
-                <button class="tt-empty-card tt-roster-entry tt-rule-entry" id="tt-open-rule-review" type="button" data-action="open-constraint-dialog">
+                <button class="tt-empty-card tt-roster-entry tt-rule-entry tt-smart-helper-entry" id="tt-open-rule-review" type="button" data-action="open-constraint-dialog">
                     <i data-lucide="brain-circuit"></i>
                     <strong>${escapeHtml(cardTitle)}</strong>
-                    <span>${escapeHtml(cardDescription)}</span>
+                    <span class="tt-smart-helper-entry-subtitle">自然语言需求理解、复核与落地</span>
+                    <span class="tt-smart-helper-entry-status">${escapeHtml(cardDescription)}</span>
                 </button>
-                ${renderRuleReviewStatus({ savedCount, draftCount, warningCount })}
+                ${renderSmartHelperFlow(helperStats)}
+                ${renderSmartHelperMetrics(helperStats)}
                 ${(savedCount || draftCount || warningCount) ? `
                     <div class="tt-action-row tt-action-row--compact">
                         <button class="tt-btn" id="tt-reparse-rule-review" type="button"><i data-lucide="upload"></i><span>重新解析</span></button>
-                        <button class="tt-btn tt-btn--danger" id="tt-clear-rules" type="button"><i data-lucide="trash-2"></i><span>清空规则</span></button>
+                        <button class="tt-btn tt-btn--danger" id="tt-clear-rules" type="button"><i data-lucide="trash-2"></i><span>清空约束</span></button>
                     </div>
                 ` : ''}
             </div>
@@ -989,7 +1088,7 @@ function renderRuleReviewStatus({ savedCount = 0, draftCount = 0, warningCount =
     const status = draftCount
         ? `${draftCount} 条待检查`
         : savedCount
-            ? '规则已应用'
+            ? '查看已应用约束'
             : '等待解析';
     return `
         <div class="tt-rule-summary">
@@ -2129,6 +2228,57 @@ function publishStatusTone(schedule = {}) {
     return publishedDraftChanged({ schedule }) ? 'tt-chip--warn' : 'tt-chip--ok';
 }
 
+function normalizeExportWeekView(value = 'merged') {
+    return ['odd', 'even'].includes(value) ? value : 'merged';
+}
+
+function hasWeekPatternMetadata(project = {}) {
+    const isComplex = project.timetableModelVersion === 'complex_v1' || project.complexModelEnabled === true;
+    if (!isComplex) return false;
+    const hasPattern = item => ['odd', 'even', 'odd_even'].includes(item?.weekPattern);
+    if ((project.lessonPlans || []).some(hasPattern)) return true;
+    if ((project.schedule?.slots || []).some(hasPattern)) return true;
+    if ((project.schedule?.published?.snapshot?.slots || []).some(hasPattern)) return true;
+    return Object.values(project.rules?.softRules?.subjectPreferredPeriods || {}).some(hasPattern);
+}
+
+function renderExportWeekViewControl(state = {}) {
+    if (!hasWeekPatternMetadata(state.project || {})) return '';
+    const selected = normalizeExportWeekView(state.exportWeekView);
+    const items = [
+        ['merged', '合并'],
+        ['odd', '单周'],
+        ['even', '双周'],
+    ];
+    return `
+        <div class="tt-export-week-view" aria-label="导出周次视图">
+            <span>周次视图</span>
+            <div class="tt-segment tt-export-week-segment" role="group" aria-label="导出周次视图">
+                ${items.map(([value, label]) => `
+                    <button type="button" data-export-week-view="${escapeAttr(value)}" class="${selected === value ? 'is-active' : ''}">${escapeHtml(label)}</button>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderComplexModelStrip(project = {}) {
+    if (!projectHasComplexSignals(project)) return '';
+    const enabled = project.timetableModelVersion === 'complex_v1' || project.complexModelEnabled === true;
+    const checked = Boolean(project.schedule?.publication);
+    const weekPatternVisible = hasWeekPatternMetadata(project);
+    const modelText = `复杂模型：${enabled ? '已启用' : '未启用'}`;
+    const weekText = weekPatternVisible ? '单双周视图：合并 / 单周 / 双周' : '单双周视图：暂无单双周课时';
+    const checkText = `发布校验：${checked ? '已检查复杂冲突' : '待生成课表'}`;
+    return `
+        <div class="tt-complex-model-strip" aria-label="复杂排课模型状态">
+            <span><b>${escapeHtml(modelText)}</b></span>
+            <span><b>${escapeHtml(weekText)}</b></span>
+            <span><b>${escapeHtml(checkText)}</b></span>
+        </div>
+    `;
+}
+
 function renderExportSection(state) {
     const schedule = state.project?.schedule || null;
     const publication = schedule?.publication || null;
@@ -2184,6 +2334,8 @@ function renderExportSection(state) {
                         <i data-lucide="send"></i><span>发布课表</span>
                     </button>
                 </div>
+                ${renderComplexModelStrip(state.project || {})}
+                ${renderExportWeekViewControl(state)}
                 <div class="tt-export-grid">
                     <button class="tt-export-btn" data-export-type="class" type="button" title="${escapeAttr(officialExportBlocked ? officialExportTitle : '导出班级课表')}" ${officialExportBlocked ? 'disabled' : ''}><i data-lucide="table"></i><span>班级</span></button>
                     <button class="tt-export-btn" data-export-type="teacher" type="button" title="${escapeAttr(officialExportBlocked ? officialExportTitle : '导出教师课表')}" ${officialExportBlocked ? 'disabled' : ''}><i data-lucide="users"></i><span>教师</span></button>

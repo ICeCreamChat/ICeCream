@@ -8,7 +8,9 @@ import {
     getActivePeriods,
     getDayPartPeriods,
     getActiveWeekdays,
+    makeTimetableId,
     normalizeTimetableProject,
+    normalizeWeekPattern,
     slotKey,
 } from './timetable-project.js';
 import {
@@ -18,6 +20,8 @@ import {
 
 const MAX_RULE_FILE_BYTES = 5 * 1024 * 1024;
 const PARSER_VERSION = 'timetable_rule_parser_xlsx_stable_v1';
+const AI_REVIEW_PROMPT_VERSION = 'timetable_ai_review_v1';
+const DEFAULT_AI_REVIEW_TIMEOUT_MS = 30_000;
 const PARSE_CACHE = new Map();
 const MAX_PARSE_CACHE_ITEMS = 40;
 
@@ -111,9 +115,31 @@ function projectFingerprintForParse(project = {}) {
     };
 }
 
-function parseCacheKey({ fileBuffer, project }) {
+function aiReviewDisabled(env = {}) {
+    return ['1', 'true', 'yes', 'on'].includes(String(env.TIMETABLE_RULE_AI_REVIEW_DISABLED || '').trim().toLowerCase());
+}
+
+function aiReviewTimeoutMs(env = {}) {
+    const value = Number.parseInt(env.TIMETABLE_RULE_AI_REVIEW_TIMEOUT_MS, 10);
+    if (Number.isInteger(value) && value > 0) return Math.min(value, 120_000);
+    return DEFAULT_AI_REVIEW_TIMEOUT_MS;
+}
+
+function aiReviewCachePart(env = {}) {
+    if (aiReviewDisabled(env)) return 'ai_review_disabled';
+    if (!hasConfiguredAi(env)) return 'ai_review_unavailable';
+    try {
+        const { model } = resolveAiConfig(env);
+        return `ai_review:${AI_REVIEW_PROMPT_VERSION}:${model || 'unknown'}`;
+    } catch {
+        return `ai_review:${AI_REVIEW_PROMPT_VERSION}:unresolved`;
+    }
+}
+
+function parseCacheKey({ fileBuffer, project, env = {} }) {
     return [
         PARSER_VERSION,
+        aiReviewCachePart(env),
         hashValue(fileBuffer, 32),
         hashValue(projectFingerprintForParse(project), 24),
     ].join(':');
@@ -143,6 +169,40 @@ function withParseMetadata(result = {}, overrides = {}) {
         parserVersion: result.parserVersion || PARSER_VERSION,
         parseSource: overrides.parseSource || result.parseSource || result.source || '',
         cacheHit: Boolean(overrides.cacheHit ?? result.cacheHit),
+    };
+}
+
+function aiReviewStatusPayload({
+    status = 'unavailable',
+    reason = '',
+    model = '',
+    reviewItems = [],
+    warnings = [],
+    appliedSuggestionCount = 0,
+    flaggedCount = 0,
+} = {}) {
+    return {
+        status,
+        reason: asText(reason, 120),
+        model: asText(model, 120),
+        reviewedAt: new Date().toISOString(),
+        warningCount: warnings.length,
+        flaggedCount,
+        appliedSuggestionCount,
+        reviewItems,
+    };
+}
+
+function withAiReviewUnavailable(result = {}, reason = 'ai_not_configured', message = 'AI 复审不可用，已返回本地识别结果。') {
+    const warning = asText(message, 240);
+    return {
+        ...result,
+        warnings: [...new Set([...(result.warnings || []), warning].filter(Boolean))],
+        aiReview: aiReviewStatusPayload({
+            status: reason === 'disabled' ? 'skipped' : 'unavailable',
+            reason,
+            warnings: warning ? [warning] : [],
+        }),
     };
 }
 
@@ -800,7 +860,7 @@ function addMorningSubject(rules, subjectId) {
     rules.softRules.morningSubjects = current;
 }
 
-function addSubjectPeriodPreference(rules, subjectId, { prefer = [], avoid = [], weight = 20 } = {}) {
+function addSubjectPeriodPreference(rules, subjectId, { prefer = [], avoid = [], weight = 20, weekPattern = '' } = {}) {
     if (!subjectId) return;
     rules.softRules.subjectPreferredPeriods = { ...(rules.softRules.subjectPreferredPeriods || {}) };
     const current = rules.softRules.subjectPreferredPeriods[subjectId] || { prefer: [], avoid: [], weight };
@@ -808,6 +868,7 @@ function addSubjectPeriodPreference(rules, subjectId, { prefer = [], avoid = [],
         prefer: [...new Set([...(current.prefer || []), ...prefer])].sort(),
         avoid: [...new Set([...(current.avoid || []), ...avoid])].sort(),
         weight: Math.max(1, Math.min(100, Number.parseInt(weight ?? current.weight ?? 20, 10) || 20)),
+        ...(weekPattern ? { weekPattern: normalizeWeekPattern(weekPattern) } : current.weekPattern ? { weekPattern: current.weekPattern } : {}),
     };
 }
 
@@ -825,6 +886,174 @@ function addSpreadSubject(rules, subjectId) {
     const current = rules.softRules.spreadSubjects || [];
     if (!current.includes(subjectId)) current.push(subjectId);
     rules.softRules.spreadSubjects = current;
+}
+
+function ensureComplexModel(project = {}) {
+    project.timetableModelVersion = 'complex_v1';
+    project.complexModelEnabled = true;
+    project.campuses = Array.isArray(project.campuses) ? project.campuses : [];
+    project.rooms = Array.isArray(project.rooms) ? project.rooms : [];
+    project.teachingGroups = Array.isArray(project.teachingGroups) ? project.teachingGroups : [];
+    project.commuteRules = project.commuteRules && typeof project.commuteRules === 'object'
+        ? project.commuteRules
+        : { defaultGapPeriods: 1, teacherGapPeriods: {} };
+    project.rules = project.rules || {};
+    project.rules.softRules = project.rules.softRules || {};
+}
+
+function ensureRoom(project = {}, room = {}) {
+    const name = asText(room.name || room.roomName, 120);
+    const id = asText(room.id, 120) || (name ? makeTimetableId('room', name) : '');
+    if (!id || !name) return null;
+    project.rooms = Array.isArray(project.rooms) ? project.rooms : [];
+    let existing = project.rooms.find(item => item.id === id || item.name === name);
+    if (!existing) {
+        existing = {
+            id,
+            name,
+            campusId: asText(room.campusId || room.campus, 120),
+            capacity: Number.isInteger(Number(room.capacity)) ? Number(room.capacity) : 0,
+            tags: [...new Set((room.tags || room.requiredTags || []).map(value => asText(value, 80)).filter(Boolean))],
+        };
+        project.rooms.push(existing);
+    } else {
+        existing.id = existing.id || id;
+        existing.name = existing.name || name;
+        if (room.campusId || room.campus) existing.campusId = asText(room.campusId || room.campus, 120);
+        if (Number.isInteger(Number(room.capacity))) existing.capacity = Number(room.capacity);
+        const tags = [...new Set([...(existing.tags || []), ...((room.tags || room.requiredTags || []).map(value => asText(value, 80)).filter(Boolean))])];
+        existing.tags = tags;
+    }
+    return existing;
+}
+
+function lessonPlanTargetsForAction(project = {}, action = {}) {
+    const explicitPlanIds = new Set((action.target?.lessonPlanIds || []).map(value => asText(value, 120)).filter(Boolean));
+    const subjectIds = new Set((action.target?.subjectIds || []).map(value => asText(value, 120)).filter(Boolean));
+    return (project.lessonPlans || []).filter(plan => (
+        explicitPlanIds.has(plan.id)
+        || (!explicitPlanIds.size && subjectIds.has(plan.subjectId))
+    ));
+}
+
+function applyComplexModelPatch(project = {}, action = {}) {
+    ensureComplexModel(project);
+    let changed = false;
+    const patch = action.patch || {};
+    const targetPlans = lessonPlanTargetsForAction(project, action);
+
+    if (patch.timetableModelVersion === 'complex_v1' || patch.complexModelEnabled === true) {
+        changed = true;
+    }
+
+    if (patch.weekPattern) {
+        const weekPattern = normalizeWeekPattern(patch.weekPattern);
+        targetPlans.forEach(plan => {
+            plan.weekPattern = weekPattern;
+            changed = true;
+        });
+        const subjectIds = (action.target?.subjectIds || []).map(value => asText(value, 120)).filter(Boolean);
+        if (subjectIds.length && (patch.preferredSlots?.length || patch.avoidSlots?.length)) {
+            subjectIds.forEach(subjectId => addSubjectPeriodPreference(project.rules, subjectId, {
+                prefer: patch.preferredSlots || [],
+                avoid: patch.avoidSlots || [],
+                weight: patch.weight || 30,
+                weekPattern,
+            }));
+            changed = true;
+        }
+    }
+
+    if (patch.roomRequirement && typeof patch.roomRequirement === 'object') {
+        const roomIds = [...new Set([
+            ...(patch.roomRequirement.preferredRoomIds || []),
+            ...(patch.roomRequirement.roomIds || []),
+        ].map(value => asText(value, 120)).filter(Boolean))];
+        const roomName = asText(patch.roomRequirement.roomName || patch.roomRequirement.name, 120);
+        if (roomName && !roomIds.length) {
+            const room = ensureRoom(project, {
+                id: makeTimetableId('room', roomName),
+                name: roomName,
+                tags: patch.roomRequirement.requiredTags || [],
+                campusId: patch.roomRequirement.campusId,
+                capacity: patch.roomRequirement.capacity,
+            });
+            if (room) roomIds.push(room.id);
+        } else if (roomName && roomIds.length) {
+            ensureRoom(project, {
+                id: roomIds[0],
+                name: roomName,
+                tags: patch.roomRequirement.requiredTags || [],
+                campusId: patch.roomRequirement.campusId,
+                capacity: patch.roomRequirement.capacity,
+            });
+        }
+        if (roomIds.length || patch.roomRequirement.requiredTags?.length) {
+            targetPlans.forEach(plan => {
+                plan.roomRequirement = {
+                    ...(plan.roomRequirement || {}),
+                    preferredRoomIds: [...new Set([...(plan.roomRequirement?.preferredRoomIds || []), ...roomIds])],
+                    allowedRoomIds: [...new Set([...(plan.roomRequirement?.allowedRoomIds || []), ...(patch.roomRequirement.allowedRoomIds || [])])],
+                    requiredTags: [...new Set([...(plan.roomRequirement?.requiredTags || []), ...(patch.roomRequirement.requiredTags || [])])],
+                };
+                if (roomIds[0]) {
+                    plan.roomId = plan.roomId || roomIds[0];
+                    plan.allowedRoomIds = [...new Set([...(plan.allowedRoomIds || []), ...roomIds])];
+                }
+                changed = true;
+            });
+        }
+    }
+
+    if (patch.teachingGroup && typeof patch.teachingGroup === 'object') {
+        const classIds = [...new Set((patch.teachingGroup.classIds || []).map(value => asText(value, 120)).filter(Boolean))];
+        const subjectIds = [...new Set((patch.teachingGroup.subjectIds || action.target?.subjectIds || []).map(value => asText(value, 120)).filter(Boolean))];
+        const name = asText(patch.teachingGroup.name, 160)
+            || [classIds.join('、'), subjectIds.join('、'), '教学组'].filter(Boolean).join('-');
+        if (classIds.length && subjectIds.length) {
+            const id = asText(patch.teachingGroup.id, 120) || makeTimetableId('tg', `${name}-${classIds.join('-')}-${subjectIds.join('-')}`);
+            let group = (project.teachingGroups || []).find(item => item.id === id || item.name === name);
+            if (!group) {
+                group = {
+                    id,
+                    name,
+                    mode: ['combined_class', 'rotation', 'split_class'].includes(patch.teachingGroup.mode) ? patch.teachingGroup.mode : 'combined_class',
+                    classIds,
+                    subjectIds,
+                    teacherIds: [...new Set((patch.teachingGroup.teacherIds || []).map(value => asText(value, 120)).filter(Boolean))],
+                    roomIds: [...new Set((patch.teachingGroup.roomIds || []).map(value => asText(value, 120)).filter(Boolean))],
+                };
+                project.teachingGroups.push(group);
+            }
+            (project.lessonPlans || [])
+                .filter(plan => classIds.includes(plan.classId) && subjectIds.includes(plan.subjectId))
+                .forEach(plan => {
+                    plan.teachingGroupId = group.id;
+                });
+            changed = true;
+        }
+    }
+
+    if (patch.commuteRules && typeof patch.commuteRules === 'object') {
+        const defaultGap = Number.parseInt(patch.commuteRules.defaultGapPeriods ?? patch.commuteRules.defaultGap ?? patch.commuteRules.gapPeriods, 10);
+        project.commuteRules = project.commuteRules || { defaultGapPeriods: 1, teacherGapPeriods: {} };
+        if (Number.isInteger(defaultGap) && defaultGap >= 0) {
+            project.commuteRules.defaultGapPeriods = Math.min(12, defaultGap);
+            changed = true;
+        }
+        const teacherGapPeriods = patch.commuteRules.teacherGapPeriods || {};
+        project.commuteRules.teacherGapPeriods = project.commuteRules.teacherGapPeriods || {};
+        Object.entries(teacherGapPeriods).forEach(([teacherIdRaw, gapRaw]) => {
+            const teacherId = asText(teacherIdRaw, 120);
+            const gap = Number.parseInt(gapRaw, 10);
+            if (teacherId && Number.isInteger(gap) && gap >= 0) {
+                project.commuteRules.teacherGapPeriods[teacherId] = Math.min(12, gap);
+                changed = true;
+            }
+        });
+    }
+
+    return changed;
 }
 
 function parseFirstSlot(slots = []) {
@@ -891,6 +1120,17 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
         confidence: row.confidence !== null && row.confidence !== undefined && Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : null,
         description: asText(row.description || row.reason || row.note || '', 500),
         warnings: Array.isArray(row.warnings) ? row.warnings.map(item => asText(item, 200)).filter(Boolean) : [],
+        aiReviewStatus: asText(row.aiReviewStatus || '', 40),
+        aiReviewWarnings: Array.isArray(row.aiReviewWarnings) ? row.aiReviewWarnings.map(item => asText(item, 240)).filter(Boolean) : [],
+        reviewEvidence: row.reviewEvidence && typeof row.reviewEvidence === 'object'
+            ? {
+                quote: asText(row.reviewEvidence.quote || row.reviewEvidence.text || '', 500),
+                reason: asText(row.reviewEvidence.reason || row.reviewEvidence.message || '', 500),
+                sourceSheet: asText(row.reviewEvidence.sourceSheet || '', 120),
+                sourceRow: Number.parseInt(row.reviewEvidence.sourceRow, 10) || null,
+            }
+            : null,
+        reviewedParseSource: asText(row.reviewedParseSource || '', 80),
         ambiguity: row.ambiguity || null,
         ambiguities: Array.isArray(row.ambiguities) ? row.ambiguities : [],
         weekPattern: asText(row.weekPattern || row.week || '', 60) || weekPatternFromText(rawText),
@@ -1181,11 +1421,16 @@ function classifyDraftRow(row = {}, project = {}) {
     }
     next.status = statusWithConfidence(next, Number(next.confidence));
     if (next.weekPattern) {
-        next.status = 'needs_review';
-        if (!next.warnings.some(warning => /单双周|不会自动生效/.test(warning))) {
-            next.warnings.push('当前规则模型暂不支持单双周，不会自动生效。');
+        if (complexModelIsEnabled(project)) {
+            next.status = next.status === 'invalid' ? 'invalid' : 'effective';
+            next.confidence = Math.max(Number(next.confidence) || 0.9, 0.9);
+        } else {
+            next.status = 'needs_review';
+            if (!next.warnings.some(warning => /单双周|不会自动生效/.test(warning))) {
+                next.warnings.push('当前规则模型暂不支持单双周，不会自动生效。');
+            }
+            next.confidence = Math.min(Number(next.confidence) || 0.65, 0.68);
         }
-        next.confidence = Math.min(Number(next.confidence) || 0.65, 0.68);
     }
     return next;
 }
@@ -1245,6 +1490,40 @@ function entityObject(kind, name = '', matchedIds = [], scope = 'explicit') {
     };
 }
 
+function unsupportedComplexModelSupport(capability = '', message = '') {
+    return {
+        supported: false,
+        capability: asText(capability, 80),
+        requiredModel: 'complex_v1',
+        phase: 'phase_2',
+        message: asText(message || '当前需要复杂排课模型支持，暂不会自动生效。', 240),
+    };
+}
+
+function complexModelIsEnabled(project = {}) {
+    return project?.timetableModelVersion === 'complex_v1' || project?.complexModelEnabled === true;
+}
+
+function supportedComplexModelSupport(capability = '', message = '') {
+    return {
+        supported: true,
+        capability: asText(capability, 80),
+        requiredModel: 'complex_v1',
+        phase: 'phase_2',
+        message: asText(message || '已启用 complex_v1，可写入复杂排课模型字段。', 240),
+    };
+}
+
+function modelSupportForRow(row = {}, project = {}) {
+    if (row.weekPattern) {
+        if (complexModelIsEnabled(project)) {
+            return supportedComplexModelSupport('weekPattern', '已启用 complex_v1，单双周需求将写入模型字段。');
+        }
+        return unsupportedComplexModelSupport('weekPattern', '当前规则模型暂不支持单双周自动生效，需要 complex_v1 模型后参与求解。');
+    }
+    return null;
+}
+
 function rowRequirementObject(row = {}) {
     if (row.targetType === 'all_teachers' || isAllTeachersTarget(row)) {
         return entityObject('teacher_group', '全部教师', ['__all_teachers'], 'group');
@@ -1276,14 +1555,16 @@ function intentForRow(row = {}) {
     return map[row.type] || row.type || 'unknown';
 }
 
-function applyToForRow(row = {}) {
+function applyToForRow(row = {}, project = {}) {
+    if (row.weekPattern && complexModelIsEnabled(project)) return 'model_extension';
     if (SUPPORTED_EFFECTIVE_TYPES.has(row.type)) return 'rule';
     if (row.type === 'teacher_load_balance' || row.type === 'class_daily_balance' || row.type === 'class_subject_spread') return 'optimization';
     if (row.type === 'block_protection') return 'solver_policy';
     return row.status === 'ignored' ? 'solver_policy' : 'review';
 }
 
-function requirementStatusForRow(row = {}) {
+function requirementStatusForRow(row = {}, project = {}) {
+    if (row.weekPattern && complexModelIsEnabled(project) && row.status === 'effective') return 'actionable';
     if (row.status === 'effective') return 'actionable';
     if (row.status === 'suggestion' && ['teacher_load_balance', 'class_daily_balance', 'class_subject_spread'].includes(row.type)) return 'actionable';
     if (row.status === 'ignored' || row.type === 'block_protection') return 'handled';
@@ -1301,7 +1582,7 @@ function parametersForRow(row = {}) {
     };
 }
 
-function requirementFromRow(row = {}, index = 0) {
+function requirementFromRow(row = {}, index = 0, project = {}) {
     return {
         id: `req_${row.id || index + 1}`,
         rowId: row.id || '',
@@ -1313,11 +1594,12 @@ function requirementFromRow(row = {}, index = 0) {
         },
         parameters: parametersForRow(row),
         strength: row.priority === 'hard' ? 'hard' : 'soft',
-        status: requirementStatusForRow(row),
-        applyTo: applyToForRow(row),
+        status: requirementStatusForRow(row, project),
+        applyTo: applyToForRow(row, project),
         confidence: row.confidence,
         source: sourceFromRow(row),
         warnings: row.warnings || [],
+        modelSupport: modelSupportForRow(row, project),
     };
 }
 
@@ -1350,6 +1632,50 @@ function blockPreferenceFromText(text = '') {
     return '';
 }
 
+function firstMentionedEntity(items = [], text = '', targetType = '') {
+    const sourceText = asText(text, 1200);
+    const candidates = [];
+    for (const item of items || []) {
+        const names = entityNamesForMatch(item, targetType)
+            .filter(Boolean)
+            .sort((left, right) => right.length - left.length);
+        const matchedName = names.find(name => sourceText.includes(name));
+        if (matchedName) {
+            candidates.push({ item, index: sourceText.indexOf(matchedName), length: matchedName.length });
+        }
+    }
+    candidates.sort((left, right) => left.index - right.index || right.length - left.length);
+    return candidates[0]?.item || null;
+}
+
+function mentionedEntities(items = [], text = '', targetType = '') {
+    const sourceText = asText(text, 1200);
+    const candidates = [];
+    const seen = new Set();
+    for (const item of items || []) {
+        const names = entityNamesForMatch(item, targetType)
+            .filter(Boolean)
+            .sort((left, right) => right.length - left.length);
+        const matchedName = names.find(name => sourceText.includes(name));
+        if (matchedName && !seen.has(item.id)) {
+            seen.add(item.id);
+            candidates.push({ item, index: sourceText.indexOf(matchedName), length: matchedName.length });
+        }
+    }
+    return candidates
+        .sort((left, right) => left.index - right.index || right.length - left.length)
+        .map(candidate => candidate.item);
+}
+
+function maxConsecutiveAcrossCampusFromText(text = '') {
+    const sourceText = asText(text, 400);
+    const match = sourceText.match(new RegExp(`连续\\s*(${NUMBER_TOKEN_PATTERN})\\s*节`));
+    const value = match ? parseLooseNumber(match[1]) : null;
+    if (!Number.isFinite(value) || value <= 0) return null;
+    if (/不要|不能|避免|不许/.test(sourceText)) return Math.max(1, value - 1);
+    return value;
+}
+
 function textRequirementBase(id, object, intent, sourceText, {
     condition = {},
     parameters = {},
@@ -1358,6 +1684,8 @@ function textRequirementBase(id, object, intent, sourceText, {
     applyTo = 'review',
     confidence = 0.8,
     warnings = [],
+    clarification = null,
+    modelSupport = null,
 } = {}) {
     return {
         id,
@@ -1371,7 +1699,161 @@ function textRequirementBase(id, object, intent, sourceText, {
         confidence,
         source: { rawText: asText(sourceText, 1000) },
         warnings,
+        clarification,
+        modelSupport,
     };
+}
+
+function complexRequirementState(project = {}, capability = '', unsupportedMessage = '') {
+    if (complexModelIsEnabled(project)) {
+        return {
+            status: 'actionable',
+            modelSupport: supportedComplexModelSupport(capability, '已启用 complex_v1，可写入复杂排课模型字段。'),
+            clarification: null,
+            warnings: [],
+        };
+    }
+    return {
+        status: 'needs_review',
+        modelSupport: unsupportedComplexModelSupport(capability, unsupportedMessage),
+        clarification: {
+            id: `clarify_${capability || 'complex_model'}_model_support`,
+            kind: 'model_support',
+            field: 'complexModel',
+            question: '该需求需要先启用复杂排课模型后才能生效。',
+            defaultValue: 'complex_v1',
+        },
+        warnings: [],
+    };
+}
+
+function roomTagsFromText(roomName = '', sourceText = '') {
+    const text = `${roomName} ${sourceText}`;
+    const tags = [];
+    if (/操场|体育馆|体育|运动|场地/.test(text)) tags.push('sport');
+    if (/实验室|实验/.test(text)) tags.push('lab');
+    if (/机房|信息|电脑|计算机/.test(text)) tags.push('computer');
+    if (/音乐/.test(text)) tags.push('music');
+    if (/美术/.test(text)) tags.push('art');
+    return [...new Set(tags)];
+}
+
+function complexRequirementsFromText(project = {}, text = '') {
+    const sourceText = asText(text, 1200);
+    const requirements = [];
+
+    if (/(跨校区|校区|通勤)/.test(sourceText) && /(连续|连着|间隔|赶课)/.test(sourceText)) {
+        const teacher = firstMentionedEntity(project.teachers || [], sourceText, 'teacher');
+        const maxConsecutive = maxConsecutiveAcrossCampusFromText(sourceText);
+        const support = complexRequirementState(
+            project,
+            'campus_commute',
+            '跨校区通勤需要 complex_v1 项目模型和求解器支持，当前不会自动生效。',
+        );
+        const object = teacher
+            ? entityObject('teacher', teacher.name || entityLabel(teacher), teacher.id)
+            : entityObject('teacher_group', '教师', [], 'derived');
+        requirements.push(textRequirementBase(
+            'req_complex_campus_commute_gap',
+            object,
+            'campus_commute_gap',
+            sourceText,
+            {
+                parameters: {
+                    commuteScope: 'cross_campus',
+                    ...(maxConsecutive ? { maxConsecutiveAcrossCampus: maxConsecutive } : {}),
+                },
+                strength: 'hard',
+                status: teacher && maxConsecutive && complexModelIsEnabled(project) ? support.status : 'needs_review',
+                applyTo: 'model_extension',
+                confidence: teacher ? 0.82 : 0.68,
+                warnings: teacher ? support.warnings : ['未识别到唯一教师，当前只保留为跨校区通勤需求候选。'],
+                modelSupport: support.modelSupport,
+                clarification: teacher && maxConsecutive ? support.clarification : {
+                    id: 'clarify_req_complex_campus_commute_parameters',
+                    kind: 'model_support',
+                    field: 'complexModel',
+                    question: '跨校区通勤规则需要先确认教师和通勤间隔后才能生效。',
+                    defaultValue: 'complex_v1',
+                },
+            },
+        ));
+    }
+
+    if (/(合班|合上|走班|教学组)/.test(sourceText)) {
+        const classes = mentionedEntities(project.classes || [], sourceText, 'class');
+        const subject = firstMentionedEntity(project.subjects || [], sourceText, 'subject');
+        const support = complexRequirementState(
+            project,
+            'teachingGroup',
+            '合班/走班需要 complex_v1 教学组模型支持，当前不会自动生效。',
+        );
+        if (classes.length >= 2) {
+            const classIds = classes.map(item => item.id).filter(Boolean);
+            const classNames = classes.map(item => entityLabel(item)).filter(Boolean);
+            requirements.push(textRequirementBase(
+                'req_complex_teaching_group_session',
+                entityObject('teaching_group', classNames.join('、') || '教学组', classIds, 'derived'),
+                'teaching_group_session',
+                sourceText,
+                {
+                    parameters: {
+                        classIds,
+                        classNames,
+                        ...(subject?.id ? { subjectIds: [subject.id], subjectName: subject.name || entityLabel(subject) } : {}),
+                        mode: /走班/.test(sourceText) ? 'rotation' : 'combined_class',
+                    },
+                    strength: /必须|不能|不要|固定/.test(sourceText) ? 'hard' : 'soft',
+                    status: subject && complexModelIsEnabled(project) ? support.status : 'needs_review',
+                    applyTo: 'model_extension',
+                    confidence: subject ? 0.82 : 0.72,
+                    warnings: subject ? support.warnings : ['未识别到唯一课程，当前只保留为教学组需求候选。'],
+                    modelSupport: support.modelSupport,
+                    clarification: subject ? support.clarification : {
+                        id: 'clarify_req_complex_teaching_group_parameters',
+                        kind: 'model_support',
+                        field: 'complexModel',
+                        question: '合班/走班需要先确认成员班级和课程后才能生效。',
+                        defaultValue: 'complex_v1',
+                    },
+                },
+            ));
+        }
+    }
+
+    if (/(操场|体育馆|实验室|机房|音乐室|美术室|功能室|场地|教室)/.test(sourceText) && /(安排|排|上|使用|去|在)/.test(sourceText)) {
+        const subject = firstMentionedEntity(project.subjects || [], sourceText, 'subject');
+        const roomMatch = sourceText.match(/(操场|体育馆|实验室|机房|音乐室|美术室|功能室|[\u4e00-\u9fa5A-Za-z0-9_-]{1,12}(?:教室|场地|室|馆))/);
+        const roomName = asText(roomMatch?.[1] || '', 120);
+        const support = complexRequirementState(
+            project,
+            'room_attributes',
+            '教室/场地偏好需要 complex_v1 教室属性模型支持，当前不会自动生效。',
+        );
+        if (subject && roomName) {
+            requirements.push(textRequirementBase(
+                'req_complex_room_requirement',
+                entityObject('subject', subject.name || entityLabel(subject), subject.id),
+                'room_requirement',
+                sourceText,
+                {
+                    parameters: {
+                        subjectIds: [subject.id],
+                        roomName,
+                        requiredTags: roomTagsFromText(roomName, sourceText),
+                    },
+                    strength: /必须|不能|不要|固定/.test(sourceText) ? 'hard' : 'soft',
+                    status: complexModelIsEnabled(project) ? support.status : 'needs_review',
+                    applyTo: 'model_extension',
+                    confidence: 0.82,
+                    modelSupport: support.modelSupport,
+                    clarification: support.clarification,
+                },
+            ));
+        }
+    }
+
+    return requirements;
 }
 
 function systemRequirementsFromText(text = '') {
@@ -1515,18 +1997,33 @@ function optimizationRequirementsFromText(project = {}, text = '') {
     if (/高负载教师|教师.*负载|负载.*教师|连续.*太多|不要.*连续.*太多/.test(sourceText)) {
         const teacherIds = highLoadTeacherIds(project);
         const names = teacherIds.length ? teacherNamesById(project, teacherIds).join('、') : '高负载教师';
+        const thresholdMatch = sourceText.match(new RegExp(`(?:连续|连排).*?(?:最多|不超过|不多于|超过)\\s*(${NUMBER_TOKEN_PATTERN})\\s*节`));
+        const maxConsecutive = thresholdMatch ? parseLooseNumber(thresholdMatch[1]) : null;
+        const needsClarification = !Number.isFinite(maxConsecutive) || maxConsecutive <= 0;
         requirements.push(textRequirementBase(
             'req_optimization_high_load_teachers',
             entityObject('derived_group', names, teacherIds, 'derived'),
             'teacher_load_protection',
             sourceText,
             {
-                parameters: { maxConsecutive: 3, balancedTeacherLoad: true },
+                parameters: {
+                    ...(needsClarification ? {} : { maxConsecutive }),
+                    balancedTeacherLoad: true,
+                },
                 strength: 'soft',
-                status: 'actionable',
+                status: needsClarification ? 'needs_review' : 'actionable',
                 applyTo: 'optimization',
                 confidence: teacherIds.length ? 0.88 : 0.78,
                 warnings: teacherIds.length ? [] : ['当前数据未识别出达到高负载阈值的教师，将先启用教师负载均衡目标。'],
+                clarification: needsClarification ? {
+                    id: 'clarify_req_optimization_high_load_teachers_max_consecutive',
+                    kind: 'number',
+                    field: 'maxConsecutive',
+                    question: '连续超过几节算太多？',
+                    defaultValue: 3,
+                    min: 1,
+                    max: Math.max(3, Number(project.periodsPerDay) || getActivePeriods(project).length || 8),
+                } : null,
             },
         ));
     }
@@ -1626,27 +2123,82 @@ function normalizeRequirementApplyToAlias(value = '') {
     }[text] || text || 'review';
 }
 
+function normalizeRequirementClarification(clarification = null, requirementId = '') {
+    if (!clarification || typeof clarification !== 'object') return null;
+    const field = asText(clarification.field || 'value', 80);
+    const kind = asText(clarification.kind || clarification.type || 'text', 40);
+    const id = asText(clarification.id, 160) || `clarify_${requirementId || 'requirement'}_${field}`;
+    const result = {
+        id,
+        kind,
+        field,
+        question: asText(clarification.question || '请补充这个需求的必要参数。', 240),
+        defaultValue: clarification.defaultValue ?? clarification.default ?? null,
+        value: clarification.value ?? null,
+        options: Array.isArray(clarification.options)
+            ? clarification.options.map(option => ({
+                label: asText(option.label || option.name || option.value || option.id, 120),
+                value: asText(option.value || option.id || option.label, 120),
+            })).filter(option => option.label && option.value)
+            : [],
+    };
+    if (clarification.min !== undefined && clarification.min !== null && Number.isFinite(Number(clarification.min))) {
+        result.min = Number(clarification.min);
+    }
+    if (clarification.max !== undefined && clarification.max !== null && Number.isFinite(Number(clarification.max))) {
+        result.max = Number(clarification.max);
+    }
+    return result;
+}
+
+function normalizeRequirementModelSupport(modelSupport = null) {
+    if (!modelSupport || typeof modelSupport !== 'object') return null;
+    return {
+        supported: Boolean(modelSupport.supported),
+        capability: asText(modelSupport.capability || modelSupport.kind || '', 80),
+        requiredModel: asText(modelSupport.requiredModel || modelSupport.model || '', 80),
+        phase: asText(modelSupport.phase || '', 80),
+        message: asText(modelSupport.message || modelSupport.reason || '', 240),
+    };
+}
+
 function externalRequirementItems(items = []) {
-    return (Array.isArray(items) ? items : []).map((item, index) => ({
-        id: asText(item.id, 120) || `req_external_${index + 1}`,
-        object: item.object && typeof item.object === 'object'
-            ? {
-                kind: asText(item.object.kind || item.object.type || 'global', 80),
-                name: asText(item.object.name || item.object.label || item.targetName || item.target || '', 200),
-                matchedIds: Array.isArray(item.object.matchedIds) ? item.object.matchedIds.map(value => asText(value, 120)).filter(Boolean) : [],
-                scope: asText(item.object.scope || 'explicit', 80),
-            }
-            : entityObject(asText(item.targetType || 'global', 80), asText(item.targetName || item.target || '', 200), item.targetId || '', 'explicit'),
-        intent: normalizeRequirementIntentAlias(item.intent || item.type || 'unknown'),
-        condition: item.condition && typeof item.condition === 'object' ? item.condition : {},
-        parameters: item.parameters && typeof item.parameters === 'object' ? item.parameters : {},
-        strength: asText(item.strength || item.priority || 'soft', 40),
-        status: normalizeRequirementStatusAlias(item.status || 'needs_review'),
-        applyTo: normalizeRequirementApplyToAlias(item.applyTo || 'review'),
-        confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : null,
-        source: item.source && typeof item.source === 'object' ? item.source : { rawText: asText(item.rawText || item.reason || item.description || '', 1000) },
-        warnings: Array.isArray(item.warnings) ? item.warnings.map(value => asText(value, 240)).filter(Boolean) : [],
-    }));
+    return (Array.isArray(items) ? items : []).map((item, index) => {
+        const id = asText(item.id, 120) || `req_external_${index + 1}`;
+        return {
+            id,
+            object: item.object && typeof item.object === 'object'
+                ? {
+                    kind: asText(item.object.kind || item.object.type || 'global', 80),
+                    name: asText(item.object.name || item.object.label || item.targetName || item.target || '', 200),
+                    matchedIds: Array.isArray(item.object.matchedIds) ? item.object.matchedIds.map(value => asText(value, 120)).filter(Boolean) : [],
+                    scope: asText(item.object.scope || 'explicit', 80),
+                }
+                : entityObject(asText(item.targetType || 'global', 80), asText(item.targetName || item.target || '', 200), item.targetId || '', 'explicit'),
+            intent: normalizeRequirementIntentAlias(item.intent || item.type || 'unknown'),
+            condition: item.condition && typeof item.condition === 'object' ? item.condition : {},
+            parameters: item.parameters && typeof item.parameters === 'object' ? item.parameters : {},
+            strength: asText(item.strength || item.priority || 'soft', 40),
+            status: normalizeRequirementStatusAlias(item.status || 'needs_review'),
+            applyTo: normalizeRequirementApplyToAlias(item.applyTo || 'review'),
+            confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : null,
+            source: item.source && typeof item.source === 'object' ? item.source : { rawText: asText(item.rawText || item.reason || item.description || '', 1000) },
+            warnings: Array.isArray(item.warnings) ? item.warnings.map(value => asText(value, 240)).filter(Boolean) : [],
+            aiReviewStatus: asText(item.aiReviewStatus || '', 40),
+            aiReviewWarnings: Array.isArray(item.aiReviewWarnings) ? item.aiReviewWarnings.map(value => asText(value, 240)).filter(Boolean) : [],
+            reviewEvidence: item.reviewEvidence && typeof item.reviewEvidence === 'object'
+                ? {
+                    quote: asText(item.reviewEvidence.quote || item.reviewEvidence.text || '', 500),
+                    reason: asText(item.reviewEvidence.reason || item.reviewEvidence.message || '', 500),
+                    sourceSheet: asText(item.reviewEvidence.sourceSheet || '', 120),
+                    sourceRow: Number.parseInt(item.reviewEvidence.sourceRow, 10) || null,
+                }
+                : null,
+            reviewedParseSource: asText(item.reviewedParseSource || '', 80),
+            clarification: normalizeRequirementClarification(item.clarification, id),
+            modelSupport: normalizeRequirementModelSupport(item.modelSupport),
+        };
+    });
 }
 
 function dedupeRequirements(items = []) {
@@ -1712,6 +2264,98 @@ function actionForRequirement(project = {}, requirement = {}, index = 0) {
             requiresConfirmation: true,
         };
     }
+    if (requirement.applyTo === 'model_extension') {
+        if (!complexModelIsEnabled(project) || requirement.modelSupport?.supported === false) {
+            return null;
+        }
+        if (requirement.intent === 'preferred_periods' && requirement.parameters?.weekPattern) {
+            const subjectIds = requirement.object?.matchedIds || [];
+            return {
+                id: `act_${requirement.id || index + 1}`,
+                requirementId: requirement.id,
+                kind: 'complex_model_patch',
+                target: { subjectIds },
+                patch: {
+                    weekPattern: requirement.parameters.weekPattern,
+                    preferredSlots: requirement.parameters.slots || [],
+                },
+                status: subjectIds.length ? 'ready' : 'needs_review',
+                requiresConfirmation: true,
+            };
+        }
+        if (requirement.intent === 'avoid_periods' && requirement.parameters?.weekPattern) {
+            const subjectIds = requirement.object?.matchedIds || [];
+            return {
+                id: `act_${requirement.id || index + 1}`,
+                requirementId: requirement.id,
+                kind: 'complex_model_patch',
+                target: { subjectIds },
+                patch: {
+                    weekPattern: requirement.parameters.weekPattern,
+                    avoidSlots: requirement.parameters.slots || [],
+                },
+                status: subjectIds.length ? 'ready' : 'needs_review',
+                requiresConfirmation: true,
+            };
+        }
+        if (requirement.intent === 'campus_commute_gap') {
+            const teacherIds = requirement.object?.kind === 'teacher' ? requirement.object?.matchedIds || [] : [];
+            const maxConsecutive = Number.parseInt(requirement.parameters?.maxConsecutiveAcrossCampus, 10);
+            const gap = Number.isInteger(maxConsecutive) ? Math.max(0, maxConsecutive) : 1;
+            return {
+                id: `act_${requirement.id || index + 1}`,
+                requirementId: requirement.id,
+                kind: 'complex_model_patch',
+                target: { teacherIds },
+                patch: {
+                    commuteRules: {
+                        defaultGapPeriods: gap,
+                        teacherGapPeriods: Object.fromEntries(teacherIds.map(teacherId => [teacherId, gap])),
+                    },
+                },
+                status: teacherIds.length ? 'ready' : 'needs_review',
+                requiresConfirmation: true,
+            };
+        }
+        if (requirement.intent === 'teaching_group_session') {
+            const classIds = requirement.parameters?.classIds || requirement.object?.matchedIds || [];
+            const subjectIds = requirement.parameters?.subjectIds || [];
+            return {
+                id: `act_${requirement.id || index + 1}`,
+                requirementId: requirement.id,
+                kind: 'complex_model_patch',
+                target: { classIds, subjectIds },
+                patch: {
+                    teachingGroup: {
+                        name: requirement.object?.name || '教学组',
+                        classIds,
+                        subjectIds,
+                        mode: requirement.parameters?.mode || 'combined_class',
+                    },
+                },
+                status: classIds.length >= 2 && subjectIds.length ? 'ready' : 'needs_review',
+                requiresConfirmation: true,
+            };
+        }
+        if (requirement.intent === 'room_requirement') {
+            const subjectIds = requirement.parameters?.subjectIds || requirement.object?.matchedIds || [];
+            const roomName = asText(requirement.parameters?.roomName, 120);
+            return {
+                id: `act_${requirement.id || index + 1}`,
+                requirementId: requirement.id,
+                kind: 'complex_model_patch',
+                target: { subjectIds },
+                patch: {
+                    roomRequirement: {
+                        roomName,
+                        requiredTags: requirement.parameters?.requiredTags || [],
+                    },
+                },
+                status: subjectIds.length && roomName ? 'ready' : 'needs_review',
+                requiresConfirmation: true,
+            };
+        }
+    }
     if (requirement.applyTo === 'rule' && requirement.rowId) {
         return {
             id: `act_${requirement.id || index + 1}`,
@@ -1733,8 +2377,9 @@ function buildRequirementSemantics(project = {}, rows = [], {
         ...systemRequirementsFromText(originalText),
         ...blockPreferenceRequirementsFromText(project, originalText),
         ...optimizationRequirementsFromText(project, originalText),
+        ...complexRequirementsFromText(project, originalText),
     ];
-    const rowRequirements = rows.map(requirementFromRow);
+    const rowRequirements = rows.map((row, index) => requirementFromRow(row, index, project));
     const requirementItems = dedupeRequirements([
         ...externalRequirementItems(semanticRequirements),
         ...textRequirements,
@@ -1827,6 +2472,16 @@ export function applyTimetableRequirementActions({
                 applied.push({ id, kind });
             } else {
                 needsReview.push({ id, kind, reason: '没有可写入的优化目标参数。' });
+            }
+            continue;
+        }
+
+        if (kind === 'complex_model_patch') {
+            const changed = applyComplexModelPatch(next, action);
+            if (changed) {
+                applied.push({ id, kind });
+            } else {
+                needsReview.push({ id, kind, reason: '没有可写入的复杂模型参数。' });
             }
             continue;
         }
@@ -1948,6 +2603,31 @@ function buildClarifyingQuestions(project = {}, rows = []) {
         merged.push(question);
     });
     return merged;
+}
+
+function buildRequirementClarifyingQuestions(requirementItems = []) {
+    const seen = new Set();
+    return (Array.isArray(requirementItems) ? requirementItems : []).flatMap(item => {
+        const clarification = normalizeRequirementClarification(item?.clarification, item?.id || '');
+        if (!clarification) return [];
+        const requirementId = asText(item.id, 120);
+        const id = clarification.id || `clarify_${requirementId}_${clarification.field || 'value'}`;
+        if (seen.has(id)) return [];
+        seen.add(id);
+        return [{
+            id,
+            requirementId,
+            question: clarification.question,
+            reason: '这个需求缺少必要参数，系统不会自动猜测。',
+            kind: clarification.kind,
+            field: clarification.field,
+            defaultValue: clarification.defaultValue,
+            min: clarification.min,
+            max: clarification.max,
+            options: clarification.options || [],
+            relatedRequirementIds: requirementId ? [requirementId] : [],
+        }];
+    });
 }
 
 function detectRuleConflicts(project = {}, draftRows = []) {
@@ -2238,7 +2918,10 @@ function buildRuleReviewResult({
     cacheHit = false,
 }) {
     const conflicts = detectRuleConflicts(project, rows);
-    const clarifyingQuestions = buildClarifyingQuestions(project, rows);
+    const clarifyingQuestions = [
+        ...buildClarifyingQuestions(project, rows),
+        ...buildRequirementClarifyingQuestions(requirementItems),
+    ];
     const missingInfo = buildMissingInfo(rows);
     const blockingRuleIds = new Set(conflicts.filter(item => item.level === 'blocking').flatMap(item => item.relatedRuleIds || []));
     const autoAcceptable = rows.filter(row => (
@@ -2361,6 +3044,102 @@ function applyClarifyingAnswers(draftRows = [], answers = []) {
     });
 }
 
+function requirementAnswerKey(answer = {}) {
+    return [
+        asText(answer.requirementId || answer.id || '', 120),
+        asText(answer.field || '', 80),
+    ].join(':');
+}
+
+function requirementObjectKey(object = {}) {
+    return JSON.stringify([
+        asText(object?.kind || '', 80),
+        asText(object?.name || '', 200),
+        Array.isArray(object?.matchedIds) ? object.matchedIds.map(value => asText(value, 120)).filter(Boolean).sort() : [],
+    ]);
+}
+
+function looseRequirementObjectKey(object = {}) {
+    return JSON.stringify([
+        asText(object?.kind || '', 80),
+        asText(object?.name || '', 200),
+    ]);
+}
+
+function normalizeClarificationValue(clarification = null, rawValue = null) {
+    if (clarification?.kind === 'number') {
+        const value = Number(rawValue);
+        if (!Number.isFinite(value)) return rawValue;
+        const min = Number.isFinite(Number(clarification.min)) ? Number(clarification.min) : null;
+        const max = Number.isFinite(Number(clarification.max)) ? Number(clarification.max) : null;
+        return Math.min(max ?? value, Math.max(min ?? value, value));
+    }
+    return rawValue;
+}
+
+function applyRequirementClarifyingAnswers(requirementItems = [], answers = []) {
+    const answerMap = new Map((Array.isArray(answers) ? answers : []).map(answer => [
+        requirementAnswerKey(answer),
+        answer,
+    ]));
+    if (!answerMap.size) return requirementItems;
+    const itemById = new Map((Array.isArray(requirementItems) ? requirementItems : [])
+        .map(item => [asText(item?.id, 120), item])
+        .filter(([id]) => id));
+    const answeredSignatures = new Map();
+    const looseAnsweredSignatures = new Map();
+    (Array.isArray(answers) ? answers : []).forEach(answer => {
+        const requirement = itemById.get(asText(answer.requirementId || answer.id, 120));
+        if (!requirement) return;
+        const signature = [
+            normalizeRequirementIntentAlias(requirement.intent || ''),
+            normalizeRequirementApplyToAlias(requirement.applyTo || ''),
+            requirementObjectKey(requirement.object || {}),
+            asText(answer.field || '', 80),
+        ];
+        answeredSignatures.set(JSON.stringify(signature), answer);
+        looseAnsweredSignatures.set(JSON.stringify([
+            signature[0],
+            signature[1],
+            looseRequirementObjectKey(requirement.object || {}),
+            signature[3],
+        ]), answer);
+    });
+    return (Array.isArray(requirementItems) ? requirementItems : []).map(item => {
+        const next = cloneValue(item);
+        const clarification = normalizeRequirementClarification(next.clarification, next.id || '');
+        if (!clarification) return next;
+        const directAnswer = answerMap.get(requirementAnswerKey({
+            requirementId: next.id,
+            field: clarification.field,
+        }));
+        const signatureAnswer = answeredSignatures.get(JSON.stringify([
+            normalizeRequirementIntentAlias(next.intent || ''),
+            normalizeRequirementApplyToAlias(next.applyTo || ''),
+            requirementObjectKey(next.object || {}),
+            clarification.field,
+        ]));
+        const looseSignatureAnswer = looseAnsweredSignatures.get(JSON.stringify([
+            normalizeRequirementIntentAlias(next.intent || ''),
+            normalizeRequirementApplyToAlias(next.applyTo || ''),
+            looseRequirementObjectKey(next.object || {}),
+            clarification.field,
+        ]));
+        const answer = directAnswer || signatureAnswer || looseSignatureAnswer;
+        if (!answer || answer.value === undefined || answer.value === null || String(answer.value).trim() === '') return next;
+        const value = normalizeClarificationValue(clarification, answer.value);
+        next.parameters = {
+            ...(next.parameters && typeof next.parameters === 'object' ? next.parameters : {}),
+            [clarification.field]: value,
+        };
+        next.status = 'actionable';
+        next.clarification = null;
+        next.confidence = Math.max(Number(next.confidence) || 0, 0.86);
+        next.warnings = (next.warnings || []).filter(warning => !/缺少|补充|确认/.test(warning));
+        return next;
+    });
+}
+
 export function continueTimetableRuleConversation({
     project: inputProject = {},
     draftRows = [],
@@ -2384,6 +3163,40 @@ export function continueTimetableRuleConversation({
         answers,
         previousResult,
     };
+}
+
+export function continueTimetableRequirementClarification({
+    project: inputProject = {},
+    previousResult = {},
+    answers = [],
+    inputType = 'requirement_clarification',
+    contextStats = null,
+} = {}) {
+    const project = normalizeTimetableProject(inputProject);
+    const rows = Array.isArray(previousResult?.draftRows) ? cloneValue(previousResult.draftRows) : [];
+    const requirementItems = applyRequirementClarifyingAnswers(
+        externalRequirementItems(previousResult?.requirementItems || []),
+        answers,
+    );
+    const semanticActions = requirementItems
+        .map((requirement, index) => actionForRequirement(project, requirement, index))
+        .filter(Boolean);
+    return buildRuleReviewResult({
+        project,
+        draftRules: previousResult?.draftRules || emptyRulesFrom(project),
+        rows,
+        previewItems: previousResult?.previewItems || previewRows(rows),
+        requirementItems,
+        semanticActions,
+        warnings: previousResult?.warnings || [],
+        unsupportedItems: previousResult?.unsupportedItems || [],
+        source: 'clarification',
+        inputType: inputType || previousResult?.inputType || 'requirement_clarification',
+        contextStats: contextStats || previousResult?.contextStats || null,
+        parserVersion: previousResult?.parserVersion || PARSER_VERSION,
+        parseSource: previousResult?.parseSource || 'clarification',
+        cacheHit: false,
+    });
 }
 
 function nameById(items = [], id = '', fallback = '') {
@@ -2833,6 +3646,203 @@ async function callAi({ project, text, inputType, contextStats, constraintRows, 
         return normalizeAiContent(content);
     } catch {
         throw new TimetableRuleParseError('智能解析结果不是有效 JSON。', 'ai_invalid_json', 502);
+    }
+}
+
+function compactProjectDictionary(project = {}) {
+    return {
+        teachers: (project.teachers || []).map(({ id, name }) => ({ id, name })),
+        classes: (project.classes || []).map(item => ({ id: item.id, name: entityLabel(item) })),
+        subjects: (project.subjects || []).map(({ id, name }) => ({ id, name })),
+        lessonPlans: (project.lessonPlans || []).map(plan => ({
+            id: plan.id,
+            classId: plan.classId,
+            subjectId: plan.subjectId,
+            teacherId: plan.teacherId,
+            teacherIds: plan.teacherIds || [],
+            weeklyHours: plan.weeklyHours,
+            blockPreference: plan.blockPreference || '',
+        })),
+        activeWeekdays: project.activeWeekdays,
+        activePeriods: project.activePeriods,
+        timetableModelVersion: project.timetableModelVersion || 'legacy',
+        complexModelEnabled: complexModelIsEnabled(project),
+    };
+}
+
+function compactParseResultForReview(result = {}) {
+    return {
+        inputType: result.inputType,
+        source: result.source,
+        parseSource: result.parseSource,
+        draftRows: (result.draftRows || []).map(row => ({
+            id: row.id,
+            stableKey: row.stableKey,
+            sourceSheet: row.sourceSheet,
+            sourceRow: row.sourceRow,
+            rawText: row.rawText,
+            type: row.type,
+            targetType: row.targetType,
+            targetId: row.targetId,
+            targetName: row.targetName,
+            slots: row.slots,
+            days: row.days,
+            periods: row.periods,
+            priority: row.priority,
+            status: row.status,
+            confidence: row.confidence,
+            warnings: row.warnings || [],
+        })),
+        requirementItems: (result.requirementItems || []).map(item => ({
+            id: item.id,
+            object: item.object,
+            intent: item.intent,
+            parameters: item.parameters,
+            strength: item.strength,
+            status: item.status,
+            applyTo: item.applyTo,
+            confidence: item.confidence,
+            source: item.source,
+            warnings: item.warnings || [],
+        })),
+        semanticActions: (result.semanticActions || []).map(action => ({
+            id: action.id,
+            requirementId: action.requirementId,
+            kind: action.kind,
+            status: action.status,
+            target: action.target || {},
+            patch: action.patch || {},
+        })),
+    };
+}
+
+function buildAiReviewPrompt({ project, text, inputType, contextStats = null, constraintRows = [], localResult = {} }) {
+    return [
+        {
+            role: 'system',
+            content: [
+                '你是中文中小学排课需求识别结果的复审核查员。你只复审本地解析结果，不直接生成最终规则。',
+                '只输出 JSON 对象，不要 markdown，不要解释文字。格式：{"reviewItems":[],"warnings":[]}。',
+                'reviewItems 每项必须包含 verdict、target、reason、evidence，可选 patch 或 suggestedRequirement。',
+                'verdict 只能是 accept、flag、suggest_patch、missed_requirement、unsupported。',
+                'target 用于定位本地结果，可包含 rowId、requirementId、stableKey、sourceSheet、sourceRow、targetId、type。',
+                'evidence 必须包含 quote 或 sourceRow，说明建议来自哪句原文或哪一行 xlsx。',
+                'suggest_patch 只能提出字段级建议，系统会重新做本地实体匹配、时间校验和能力校验；不要假设建议会自动生效。',
+                'missed_requirement 只能指出漏识别的自然语言需求，不能直接写入项目。',
+                '系统基础规则如“同一位教师同一时间只能给一个班上课”“同一班级同一时间只能一门课”属于已处理系统不变量，不要建议生成全教师/全班级不可排。',
+                '“默认单节”“连堂块不能拆开”属于系统策略或任课计划策略，不要建议生成无意义的 teacher_unavailable/class_unavailable。',
+                '“高负载教师不要连续太多”缺少阈值时应 flag 或 missed_requirement 并要求确认阈值，不要猜成固定 3 节。',
+                '具体节次优先于宽泛时段；例如“上午第1-3节”应核查为具体 slots，而不是只保留 subject_morning。',
+                '对象或时间不唯一时必须 flag，不能猜。',
+            ].join('\n'),
+        },
+        {
+            role: 'user',
+            content: JSON.stringify({
+                aiReviewPromptVersion: AI_REVIEW_PROMPT_VERSION,
+                inputType,
+                request: text,
+                contextStats,
+                constraintRows,
+                project: compactProjectDictionary(project),
+                supportedCapabilities: {
+                    ruleTypes: [...SUPPORTED_EFFECTIVE_TYPES],
+                    suggestionTypes: [...SUGGESTION_ONLY_TYPES],
+                    semanticDestinations: ['rule', 'lesson_plan', 'optimization', 'solver_policy', 'model_extension', 'review'],
+                    complexModelEnabled: complexModelIsEnabled(project),
+                },
+                localResult: compactParseResultForReview(localResult),
+            }),
+        },
+    ];
+}
+
+function normalizeAiReviewContent(content) {
+    const parsed = normalizeAiContent(content);
+    const items = Array.isArray(parsed.reviewItems)
+        ? parsed.reviewItems
+        : Array.isArray(parsed.items)
+            ? parsed.items
+            : Array.isArray(parsed.reviews)
+                ? parsed.reviews
+                : [];
+    return {
+        reviewItems: items,
+        warnings: warningMessagesFromAi(parsed.warnings || parsed.messages || []),
+    };
+}
+
+function aiReviewTimeoutError() {
+    return new TimetableRuleParseError('AI 复审超时。', 'ai_review_timeout', 504);
+}
+
+async function fetchAiReviewWithTimeout(fetchClient, url, options = {}, timeoutMs = DEFAULT_AI_REVIEW_TIMEOUT_MS) {
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+        return fetchClient(url, options);
+    }
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timeoutId = null;
+    const requestOptions = controller ? { ...options, signal: controller.signal } : options;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+            try {
+                controller?.abort();
+            } catch {
+                // Abort is best-effort; the timeout rejection below is authoritative.
+            }
+            reject(aiReviewTimeoutError());
+        }, timeoutMs);
+    });
+
+    try {
+        return await Promise.race([
+            fetchClient(url, requestOptions),
+            timeoutPromise,
+        ]);
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw aiReviewTimeoutError();
+        }
+        throw error;
+    } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+    }
+}
+
+async function callAiReview({ project, text, inputType, contextStats, constraintRows, localResult, env, fetchImpl }) {
+    const { apiKey, baseUrl, model } = resolveAiConfig(env);
+    const fetchClient = resolveFetch(fetchImpl);
+    const seed = Number.parseInt(env.TIMETABLE_RULE_AI_SEED, 10);
+    const response = await fetchAiReviewWithTimeout(fetchClient, `${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+            model,
+            temperature: 0,
+            ...(Number.isInteger(seed) ? { seed } : {}),
+            response_format: { type: 'json_object' },
+            messages: buildAiReviewPrompt({ project, text, inputType, contextStats, constraintRows, localResult }),
+        }),
+    }, aiReviewTimeoutMs(env));
+    const raw = await response.text();
+    let payload = {};
+    try {
+        payload = raw ? JSON.parse(raw) : {};
+    } catch {
+        throw new TimetableRuleParseError('AI 复审返回内容不是有效 JSON。', 'ai_review_invalid_json', 502);
+    }
+    if (!response.ok) {
+        throw new TimetableRuleParseError(payload.error?.message || 'AI 复审失败。', 'ai_review_failed', response.status || 502);
+    }
+
+    const content = payload.choices?.[0]?.message?.content ?? payload;
+    try {
+        return { ...normalizeAiReviewContent(content), model };
+    } catch {
+        throw new TimetableRuleParseError('AI 复审结果不是有效 JSON。', 'ai_review_invalid_json', 502);
     }
 }
 
@@ -3472,6 +4482,318 @@ function unresolvedConstraintRowsForAi(constraintRows = [], localResult = {}) {
         .filter(row => !resolvedRows.has(String(row.sourceRow || '')));
 }
 
+function normalizeReviewVerdict(value = '') {
+    const key = asText(value || '', 80).toLowerCase().replace(/[-\s]+/g, '_');
+    return {
+        accepted: 'accept',
+        ok: 'accept',
+        pass: 'accept',
+        warning: 'flag',
+        needs_review: 'flag',
+        review: 'flag',
+        patch: 'suggest_patch',
+        suggestion: 'suggest_patch',
+        missed: 'missed_requirement',
+        missing: 'missed_requirement',
+        unsupported_item: 'unsupported',
+    }[key] || (['accept', 'flag', 'suggest_patch', 'missed_requirement', 'unsupported'].includes(key) ? key : 'flag');
+}
+
+function normalizeReviewEvidence(item = {}, target = {}) {
+    const evidence = item.evidence && typeof item.evidence === 'object' ? item.evidence : {};
+    return {
+        quote: asText(evidence.quote || evidence.text || item.quote || item.rawText || '', 500),
+        reason: asText(evidence.reason || item.reason || item.message || item.suggestion || '', 500),
+        sourceSheet: asText(evidence.sourceSheet || target.sourceSheet || item.sourceSheet || '', 120),
+        sourceRow: Number.parseInt(evidence.sourceRow ?? target.sourceRow ?? item.sourceRow, 10) || null,
+    };
+}
+
+function normalizeAiReviewItems(items = []) {
+    return (Array.isArray(items) ? items : []).map((item, index) => {
+        const target = item.target && typeof item.target === 'object' ? item.target : {};
+        const verdict = normalizeReviewVerdict(item.verdict || item.status || item.action || item.type);
+        const reason = asText(item.reason || item.message || item.suggestion || '', 500);
+        return {
+            id: asText(item.id, 120) || `review_${index + 1}`,
+            verdict,
+            target: {
+                rowId: asText(target.rowId || target.draftRowId || item.rowId || '', 120),
+                requirementId: asText(target.requirementId || item.requirementId || '', 120),
+                stableKey: asText(target.stableKey || item.stableKey || '', 240),
+                sourceSheet: asText(target.sourceSheet || item.sourceSheet || '', 120),
+                sourceRow: Number.parseInt(target.sourceRow ?? item.sourceRow, 10) || null,
+                targetId: asText(target.targetId || item.targetId || '', 120),
+                type: normalizeConstraintType(target.type || item.ruleType || item.constraintType || ''),
+            },
+            reason,
+            evidence: normalizeReviewEvidence({ ...item, reason }, target),
+            patch: item.patch && typeof item.patch === 'object' ? item.patch : null,
+            suggestedRequirement: item.suggestedRequirement && typeof item.suggestedRequirement === 'object'
+                ? item.suggestedRequirement
+                : null,
+        };
+    });
+}
+
+function appendUniqueText(values = [], next = '') {
+    return [...new Set([...(Array.isArray(values) ? values : []), asText(next, 240)].filter(Boolean))];
+}
+
+function reviewTargetMatchesRow(row = {}, target = {}) {
+    if (target.rowId && row.id === target.rowId) return true;
+    if (target.stableKey && row.stableKey === target.stableKey) return true;
+    if (target.sourceRow && Number(row.sourceRow) === Number(target.sourceRow)) {
+        if (!target.sourceSheet || !row.sourceSheet || target.sourceSheet === row.sourceSheet) return true;
+    }
+    if (target.targetId && row.targetId === target.targetId) {
+        if (!target.type || target.type === row.type) return true;
+    }
+    if (target.type && target.type === row.type && !target.rowId && !target.sourceRow && !target.targetId) return true;
+    return false;
+}
+
+function reviewTargetMatchesRequirement(item = {}, target = {}) {
+    if (target.requirementId && item.id === target.requirementId) return true;
+    if (target.sourceRow && Number(item.source?.sourceRow) === Number(target.sourceRow)) {
+        if (!target.sourceSheet || !item.source?.sourceSheet || target.sourceSheet === item.source.sourceSheet) return true;
+    }
+    if (target.targetId && (item.object?.matchedIds || []).includes(target.targetId)) return true;
+    return false;
+}
+
+function markRowWithAiReview(row = {}, status = 'accepted', reviewItem = {}, warning = '') {
+    const parseSource = row.parseSource || row.source || 'local';
+    return {
+        ...row,
+        aiReviewStatus: status,
+        aiReviewWarnings: warning ? appendUniqueText(row.aiReviewWarnings || [], warning) : row.aiReviewWarnings || [],
+        reviewEvidence: reviewItem.evidence || row.reviewEvidence || null,
+        reviewedParseSource: `${parseSource}_ai_reviewed`,
+        warnings: warning ? appendUniqueText(row.warnings || [], warning) : row.warnings || [],
+    };
+}
+
+function markRequirementWithAiReview(item = {}, status = 'accepted', reviewItem = {}, warning = '') {
+    return {
+        ...item,
+        aiReviewStatus: status,
+        aiReviewWarnings: warning ? appendUniqueText(item.aiReviewWarnings || [], warning) : item.aiReviewWarnings || [],
+        reviewEvidence: reviewItem.evidence || item.reviewEvidence || null,
+        reviewedParseSource: `${item.source?.parseSource || item.parseSource || 'local'}_ai_reviewed`,
+        warnings: warning ? appendUniqueText(item.warnings || [], warning) : item.warnings || [],
+    };
+}
+
+function sanitizedReviewPatch(patch = {}) {
+    const allowed = [
+        'type', 'ruleType', 'targetType', 'targetId', 'targetName',
+        'teacherId', 'teacherName', 'teacher',
+        'classId', 'className', 'class',
+        'subjectId', 'subjectName', 'subject',
+        'slots', 'days', 'periods', 'priority', 'status',
+        'confidence', 'weekPattern', 'limit', 'weight',
+        'rawText', 'description', 'reason',
+    ];
+    return Object.fromEntries(allowed
+        .filter(key => Object.prototype.hasOwnProperty.call(patch, key))
+        .map(key => [key, patch[key]]));
+}
+
+function validatedReviewPatchRow(project = {}, row = {}, patch = {}, { inputType = '', contextStats = null, originalText = '' } = {}) {
+    const candidate = {
+        ...row,
+        ...sanitizedReviewPatch(patch),
+        id: row.id,
+        stableKey: row.stableKey,
+        sourceSheet: row.sourceSheet,
+        sourceRow: row.sourceRow,
+        parseSource: row.parseSource,
+        source: row.source,
+        warnings: [],
+        ambiguity: null,
+        ambiguities: [],
+    };
+    const normalized = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: [candidate],
+        source: candidate.parseSource || row.parseSource || 'ai_review',
+        inputType,
+        contextStats,
+        originalText,
+    });
+    const [validated] = normalized.draftRows || [];
+    if (!validated || (normalized.draftRows || []).length !== 1) return null;
+    if (['needs_review', 'invalid', 'unsupported'].includes(validated.status)) return null;
+    if ((validated.warnings || []).length || validated.ambiguity || (validated.ambiguities || []).length) return null;
+    if (['teacher', 'class', 'subject'].includes(validated.targetType) && !validated.targetId) return null;
+    if (rowNeedsSlots(validated.type) && !(validated.slots || []).length) return null;
+    return validated;
+}
+
+function missedRequirementFromReviewItem(reviewItem = {}, index = 0) {
+    const suggested = reviewItem.suggestedRequirement || {};
+    return {
+        id: asText(suggested.id, 120) || `req_ai_review_missed_${index + 1}`,
+        object: suggested.object || { kind: 'global', name: asText(suggested.targetName || suggested.target || '待确认需求', 120), matchedIds: [], scope: 'unknown' },
+        intent: normalizeRequirementIntentAlias(suggested.intent || suggested.type || 'unknown'),
+        condition: suggested.condition || {},
+        parameters: suggested.parameters || {},
+        strength: asText(suggested.strength || suggested.priority || 'soft', 40),
+        status: 'needs_review',
+        applyTo: normalizeRequirementApplyToAlias(suggested.applyTo || 'review'),
+        confidence: Number.isFinite(Number(suggested.confidence)) ? Number(suggested.confidence) : 0.55,
+        source: suggested.source || {
+            rawText: reviewItem.evidence?.quote || reviewItem.reason,
+            sourceSheet: reviewItem.evidence?.sourceSheet || '',
+            sourceRow: reviewItem.evidence?.sourceRow || null,
+        },
+        warnings: [reviewItem.reason || 'AI 复审发现可能漏识别的需求，请人工确认。'],
+        aiReviewStatus: 'missed',
+        aiReviewWarnings: [reviewItem.reason || 'AI 复审发现可能漏识别的需求，请人工确认。'],
+        reviewEvidence: reviewItem.evidence || null,
+    };
+}
+
+function applyAiReviewToParseResult({
+    project,
+    result,
+    review,
+    text = '',
+    inputType = '',
+    contextStats = null,
+}) {
+    const reviewItems = normalizeAiReviewItems(review.reviewItems || []);
+    let rows = cloneValue(result.draftRows || []);
+    let requirements = cloneValue(result.requirementItems || []);
+    const warnings = [...(result.warnings || []), ...(review.warnings || [])];
+    const missedRequirements = [];
+    let appliedSuggestionCount = 0;
+    let flaggedCount = 0;
+
+    reviewItems.forEach((item, index) => {
+        const rowIndexes = rows
+            .map((row, rowIndex) => reviewTargetMatchesRow(row, item.target) ? rowIndex : -1)
+            .filter(rowIndex => rowIndex >= 0);
+        const requirementIndexes = requirements
+            .map((requirement, requirementIndex) => reviewTargetMatchesRequirement(requirement, item.target) ? requirementIndex : -1)
+            .filter(requirementIndex => requirementIndex >= 0);
+        const reason = item.reason || 'AI 复审提示需要人工确认。';
+
+        if (item.verdict === 'accept') {
+            rowIndexes.forEach(rowIndex => {
+                rows[rowIndex] = markRowWithAiReview(rows[rowIndex], 'accepted', item);
+            });
+            requirementIndexes.forEach(requirementIndex => {
+                requirements[requirementIndex] = markRequirementWithAiReview(requirements[requirementIndex], 'accepted', item);
+            });
+            return;
+        }
+
+        if (item.verdict === 'flag' || item.verdict === 'unsupported') {
+            flaggedCount += Math.max(1, rowIndexes.length || requirementIndexes.length);
+            rowIndexes.forEach(rowIndex => {
+                const row = rows[rowIndex];
+                rows[rowIndex] = {
+                    ...markRowWithAiReview(row, item.verdict === 'unsupported' ? 'unsupported' : 'flagged', item, reason),
+                    status: row.status === 'ignored' ? row.status : 'needs_review',
+                };
+            });
+            requirementIndexes.forEach(requirementIndex => {
+                const requirement = requirements[requirementIndex];
+                requirements[requirementIndex] = {
+                    ...markRequirementWithAiReview(requirement, item.verdict === 'unsupported' ? 'unsupported' : 'flagged', item, reason),
+                    status: requirement.status === 'handled' ? requirement.status : 'needs_review',
+                    applyTo: requirement.status === 'handled' ? requirement.applyTo : 'review',
+                };
+            });
+            return;
+        }
+
+        if (item.verdict === 'suggest_patch') {
+            if (!item.patch || !rowIndexes.length) {
+                warnings.push(`AI 复审建议未通过本地校验：${reason}`);
+                return;
+            }
+            rowIndexes.forEach(rowIndex => {
+                const patched = validatedReviewPatchRow(project, rows[rowIndex], item.patch, {
+                    inputType,
+                    contextStats,
+                    originalText: text,
+                });
+                if (!patched) {
+                    warnings.push(`AI 复审建议未通过本地校验：${reason}`);
+                    rows[rowIndex] = markRowWithAiReview(rows[rowIndex], 'patch_rejected', item, `AI 复审建议未通过本地校验：${reason}`);
+                    return;
+                }
+                rows[rowIndex] = markRowWithAiReview({ ...patched, id: rows[rowIndex].id, stableKey: rows[rowIndex].stableKey }, 'patched', item);
+                appliedSuggestionCount += 1;
+            });
+            return;
+        }
+
+        if (item.verdict === 'missed_requirement') {
+            flaggedCount += 1;
+            missedRequirements.push(missedRequirementFromReviewItem(item, index));
+        }
+    });
+
+    const rebuilt = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: rows,
+        source: result.source || result.parseSource || 'ai_review',
+        inputType: result.inputType || inputType,
+        contextStats: result.contextStats || contextStats,
+        originalText: text,
+        semanticRequirements: [...requirements, ...missedRequirements],
+        initialWarnings: [...new Set(warnings.filter(Boolean))],
+    });
+    return {
+        ...rebuilt,
+        aiReview: aiReviewStatusPayload({
+            status: 'reviewed',
+            model: review.model || '',
+            reviewItems,
+            warnings,
+            appliedSuggestionCount,
+            flaggedCount,
+        }),
+    };
+}
+
+async function reviewTimetableParseResult({ project, text, inputType, contextStats = null, constraintRows = [], result, env, fetchImpl }) {
+    if (aiReviewDisabled(env)) {
+        return withAiReviewUnavailable(result, 'disabled', 'AI 复审已禁用，已返回本地识别结果。');
+    }
+    if (!hasConfiguredAi(env)) {
+        return withAiReviewUnavailable(result, 'ai_not_configured', 'AI 复审不可用，已返回本地识别结果：ai_not_configured');
+    }
+    try {
+        const review = await callAiReview({
+            project,
+            text,
+            inputType,
+            contextStats,
+            constraintRows,
+            localResult: result,
+            env,
+            fetchImpl,
+        });
+        return applyAiReviewToParseResult({
+            project,
+            result,
+            review,
+            text,
+            inputType,
+            contextStats,
+        });
+    } catch (error) {
+        const reason = error instanceof TimetableRuleParseError ? error.reason : 'ai_review_failed';
+        const message = error?.message || reason;
+        return withAiReviewUnavailable(result, reason, `AI 复审未完成，已返回本地识别结果：${message}`);
+    }
+}
+
 async function parseAiOrLocal({ project, text, inputType, contextStats = null, constraintRows = [], env, fetchImpl }) {
     let localConstraints = [];
     let localResult = null;
@@ -3490,7 +4812,12 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
                 originalText: text,
                 initialWarnings: hasConfiguredAi(env) ? [] : ['智能解析不可用，已仅提取明确规则：ai_not_configured'],
             });
-            if (!hasConfiguredAi(env) || localResultCanSkipAi(text, localResult, inputType, constraintRows)) return localResult;
+            if (!hasConfiguredAi(env)) {
+                return reviewTimetableParseResult({ project, text, inputType, contextStats, constraintRows, result: localResult, env, fetchImpl });
+            }
+            if (localResultCanSkipAi(text, localResult, inputType, constraintRows)) {
+                return reviewTimetableParseResult({ project, text, inputType, contextStats, constraintRows, result: localResult, env, fetchImpl });
+            }
         } else if (!hasConfiguredAi(env)) {
             const semanticOnly = normalizeTimetableRuleDraftRows({
                 project,
@@ -3501,14 +4828,18 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
                 originalText: text,
                 initialWarnings: ['智能解析不可用，已仅提取明确需求：ai_not_configured'],
             });
-            if ((semanticOnly.requirementItems || []).length) return semanticOnly;
+            if ((semanticOnly.requirementItems || []).length) {
+                return reviewTimetableParseResult({ project, text, inputType, contextStats, constraintRows, result: semanticOnly, env, fetchImpl });
+            }
         }
     }
     try {
         const aiConstraintRows = inputType === 'xlsx_constraints' && localResult
             ? unresolvedConstraintRowsForAi(constraintRows, localResult)
             : constraintRows;
-        if (inputType === 'xlsx_constraints' && localResult && !aiConstraintRows.length) return localResult;
+        if (inputType === 'xlsx_constraints' && localResult && !aiConstraintRows.length) {
+            return reviewTimetableParseResult({ project, text, inputType, contextStats, constraintRows, result: localResult, env, fetchImpl });
+        }
         const aiText = inputType === 'xlsx_constraints'
             ? textFromConstraintRows(aiConstraintRows) || text
             : text;
@@ -3529,7 +4860,7 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
             ...warningMessagesFromAi(parsed.missingInfo),
             ...warningMessagesFromAi(parsed.conflicts),
         ];
-        return normalizeTimetableRuleDraftRows({
+        const normalized = normalizeTimetableRuleDraftRows({
             project,
             draftRows: [
                 ...(inputType === 'xlsx_constraints' && localConstraints.length
@@ -3544,9 +4875,11 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
             semanticRequirements: parsed.requirementItems || [],
             initialWarnings: warnings,
         });
+        return reviewTimetableParseResult({ project, text, inputType, contextStats, constraintRows, result: normalized, env, fetchImpl });
     } catch (error) {
         if (error instanceof TimetableRuleParseError && ['ai_not_configured', 'missing_fetch'].includes(error.reason)) {
-            return parseConstraintsWithLocalFallback({ project, text, inputType, contextStats, constraintRows, error });
+            const fallback = parseConstraintsWithLocalFallback({ project, text, inputType, contextStats, constraintRows, error });
+            return reviewTimetableParseResult({ project, text, inputType, contextStats, constraintRows, result: fallback, env, fetchImpl });
         }
         throw error;
     }
@@ -3604,7 +4937,7 @@ export async function parseTimetableRules({
     if (file?.buffer) {
         const ext = path.extname(file.filename || '').toLowerCase();
         if (['.xlsx', '.xls'].includes(ext)) {
-            const cacheKey = parseCacheKey({ fileBuffer: file.buffer, project });
+            const cacheKey = parseCacheKey({ fileBuffer: file.buffer, project, env });
             const cached = getParseCache(cacheKey);
             if (cached) {
                 return withParseMetadata(cached, { cacheHit: true, parseSource: 'cache' });

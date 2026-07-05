@@ -3912,7 +3912,11 @@ export class TimetablePlannerController {
         try {
             const response = await requestTimetable('/export', {
                 method: 'POST',
-                body: JSON.stringify({ type, ...(options.publishedVersion ? { publishedVersion: options.publishedVersion } : {}) }),
+                body: JSON.stringify({
+                    type,
+                    ...(options.publishedVersion ? { publishedVersion: options.publishedVersion } : {}),
+                    ...(options.weekView ? { weekView: options.weekView } : {}),
+                }),
                 raw: true,
             });
             if (!response.ok) {

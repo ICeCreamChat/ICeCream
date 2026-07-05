@@ -7,6 +7,7 @@ import {
     getActivePeriods,
     getDayPartPeriods,
     getActiveWeekdays,
+    isComplexTimetableModel,
     isActiveTimetableSlot,
     normalizeTimetableProject,
     slotKey,
@@ -27,6 +28,14 @@ export class TimetableTimefoldError extends Error {
         this.status = status;
         this.solverStats = solverStats;
     }
+}
+
+export function supportsTimefoldComplexTimetable(env = process.env) {
+    return String(env.TIMEFOLD_TIMETABLE_COMPLEX_MODEL || '').trim() === '1';
+}
+
+export function canUseTimefoldForTimetable(project = {}, env = process.env) {
+    return !isComplexTimetableModel(project) || supportsTimefoldComplexTimetable(env);
 }
 
 function asText(value) {
@@ -593,15 +602,28 @@ export async function solveTimetableWithTimefold({
     env = process.env,
     fetchImpl,
 } = {}) {
+    const normalizedProject = normalizeTimetableProject(project);
     const solverUrl = normalizeSolverUrl(env);
     if (!solverUrl) {
         throw new TimetableTimefoldError('TIMEFOLD_SOLVER_URL is not configured', 'not_configured', 503);
+    }
+    if (!canUseTimefoldForTimetable(normalizedProject, env)) {
+        throw new TimetableTimefoldError(
+            'Timefold timetable bridge does not support complex_v1 yet',
+            'complex_model_not_supported',
+            409,
+            {
+                accepted: false,
+                reason: 'complex_model_not_supported',
+                complexModelEnabled: true,
+            },
+        );
     }
     const fetchClient = resolveFetch(fetchImpl);
     const timeout = timeoutMs(env);
     const deadline = Date.now() + timeout;
     const startedAt = Date.now();
-    const problem = buildTimetableProblem(project);
+    const problem = buildTimetableProblem(normalizedProject);
     const problemStats = solverStatsForProblem(problem);
     let jobId = null;
     let status = null;
@@ -677,7 +699,7 @@ export async function solveTimetableWithTimefold({
                 'Timefold timetable solve timed out',
                 'timeout',
                 504,
-                buildTimeoutStats({ project, problem, jobId, status, startedAt, timeout }),
+                buildTimeoutStats({ project: normalizedProject, problem, jobId, status, startedAt, timeout }),
             );
         }
         throw error;

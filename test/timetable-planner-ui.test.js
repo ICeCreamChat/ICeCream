@@ -131,6 +131,8 @@ test('timetable constraint dialog renders object-first requirements as a review 
           parameters: { slots: ['1-1'] },
           source: { rawText: '语文尽量第1节' },
           confidence: 0.92,
+          aiReviewStatus: 'accepted',
+          reviewEvidence: { quote: '语文尽量第1节', reason: 'AI 复审确认本地识别正确。' },
         },
         {
           id: 'req_block',
@@ -151,6 +153,9 @@ test('timetable constraint dialog renders object-first requirements as a review 
           parameters: { maxConsecutive: 3 },
           source: { rawText: '高负载教师不要连续太多' },
           confidence: 0.86,
+          aiReviewStatus: 'flagged',
+          aiReviewWarnings: ['AI 复审提示：连续节次阈值需要人工确认。'],
+          reviewEvidence: { quote: '高负载教师不要连续太多', reason: '缺少明确连续节次阈值。' },
         },
         {
           id: 'req_handled',
@@ -172,18 +177,32 @@ test('timetable constraint dialog renders object-first requirements as a review 
           source: { rawText: '未知课程第1节优先', sourceRow: 4 },
           warnings: ['未找到唯一匹配课程'],
           confidence: 0.42,
+          aiReviewStatus: 'flagged',
+          aiReviewWarnings: ['AI 复审提示：对象未唯一匹配，不能自动应用。'],
+          reviewEvidence: { quote: '未知课程第1节优先', reason: '课程对象未匹配。' },
         },
       ],
       semanticActions: [
         { id: 'act_block', requirementId: 'req_block', kind: 'lesson_plan_patch', status: 'ready' },
         { id: 'act_load', requirementId: 'req_load', kind: 'soft_rules_patch', status: 'ready' },
       ],
+      aiReview: {
+        status: 'reviewed',
+        flaggedCount: 1,
+        appliedSuggestionCount: 0,
+        warningCount: 1,
+      },
     },
     constraintDialog: { open: true },
   }));
 
   assert.match(html, /tt-constraint-dialog--semantic-review/);
   assert.match(html, /tt-requirement-workbench/);
+  assert.match(html, /tt-constraint-flow/);
+  assert.match(html, /输入需求[\s\S]*智能理解[\s\S]*人工复核[\s\S]*应用到项目/);
+  assert.match(html, /把自然语言排课需求转换为可复核、可应用的规则和模型设置/);
+  assert.match(html, /tt-requirement-review-summary/);
+  assert.match(html, /当前筛选可应用 2 项/);
   assert.match(html, /tt-requirement-filter-bar/);
   assert.match(html, /tt-requirement-filter--all/);
   assert.match(html, /tt-requirement-filter-children/);
@@ -206,8 +225,14 @@ test('timetable constraint dialog renders object-first requirements as a review 
   assert.match(html, /<span>数学<\/span>/);
   assert.match(html, /<span>连堂设置<\/span>/);
   assert.match(html, /<span>高负载教师<\/span>/);
+  assert.match(html, /AI 复审提示/);
+  assert.match(html, /对象未唯一匹配/);
+  assert.match(html, /未知课程第1节优先/);
   assert.match(html, /默认课时块策略/);
   assert.match(html, /未找到唯一匹配课程/);
+  assert.match(html, /待补充信息/);
+  assert.match(html, /落地结果/);
+  assert.match(html, /任课计划|优化策略|规则草稿/);
   assert.match(html, /data-requirement-id="req_review"[\s\S]*is-selected/);
   assert.match(html, /应用需求 \(2\)/);
   assert.doesNotMatch(html, /暂不支持[\s\S]{0,80}默认单节/);
@@ -250,7 +275,7 @@ test('timetable constraint dialog does not count rules_patch bridge actions as e
     constraintDialog: { open: true, selectedRequirementId: 'req_rule' },
   }));
 
-  assert.match(html, /将应用规则[\s\S]{0,80}1 项/);
+  assert.match(html, /落地结果[\s\S]{0,80}1 项/);
   assert.match(html, /data-constraint-id="rule-row"/);
   assert.doesNotMatch(html, /约束规则补丁/);
 });
@@ -391,6 +416,229 @@ test('timetable constraint dialog localizes semantic enum aliases in requirement
   assert.doesNotMatch(html, /teacher_unavailable/);
   assert.doesNotMatch(html, /blockPreference/);
   assert.doesNotMatch(html, /：double|>double</);
+});
+
+test('constraint dialog renders requirement clarification and submits structured answer', async () => {
+  const ruleReview = {
+    open: true,
+    mode: 'text',
+    inputMode: 'text',
+    draftRows: [],
+    warnings: [],
+    conflicts: [],
+    unsupportedItems: [],
+    requirementItems: [{
+      id: 'req_high_load',
+      object: { kind: 'derived_group', name: '高负载教师', matchedIds: ['t_math'], scope: 'derived' },
+      intent: 'teacher_load_protection',
+      status: 'needs_review',
+      applyTo: 'optimization',
+      parameters: { balancedTeacherLoad: true },
+      source: { rawText: '高负载教师不要连续太多' },
+      clarification: {
+        id: 'clarify_req_high_load_max_consecutive',
+        kind: 'number',
+        field: 'maxConsecutive',
+        question: '连续超过几节算太多？',
+        defaultValue: 3,
+        min: 1,
+        max: 8,
+      },
+    }],
+    semanticActions: [],
+  };
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview,
+    constraintDialog: { open: true, selectedRequirementId: 'req_high_load' },
+  }));
+
+  assert.match(html, /待补充信息/);
+  assert.match(html, /连续超过几节算太多/);
+  assert.match(html, /data-action="submit-requirement-clarification"/);
+  assert.match(html, /data-requirement-clarify-input="req_high_load"/);
+
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), body });
+    assert.equal(String(url).endsWith('/requirements/clarify'), true);
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          success: true,
+          data: {
+            draftRows: [],
+            requirementItems: [{
+              ...ruleReview.requirementItems[0],
+              status: 'actionable',
+              parameters: { balancedTeacherLoad: true, maxConsecutive: 2 },
+              clarification: null,
+            }],
+            semanticActions: [{
+              id: 'act_high_load',
+              requirementId: 'req_high_load',
+              kind: 'soft_rules_patch',
+              status: 'ready',
+              patch: { teacherLimits: { consecutive: 2 }, balancedTeacherLoad: true },
+            }],
+          },
+        });
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.setMessage = message => {
+      controller.state.message = message;
+    };
+    controller.state.project = createDefaultTimetableProject();
+    controller.state.ruleReview = JSON.parse(JSON.stringify(ruleReview));
+    controller.state.constraintDialog = { open: true, selectedRequirementId: 'req_high_load' };
+    controller.state.container = {
+      querySelector(selector) {
+        if (selector === '[data-requirement-clarify-input="req_high_load"]') return { value: '2' };
+        return null;
+      },
+    };
+
+    await controller.submitRequirementClarification('req_high_load');
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].body.answers, [{ requirementId: 'req_high_load', field: 'maxConsecutive', value: 2 }]);
+    assert.equal(controller.state.ruleReview.requirementItems[0].status, 'actionable');
+    assert.equal(controller.state.ruleReview.semanticActions[0].id, 'act_high_load');
+    assert.match(controller.state.message, /已更新/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('constraint dialog shows unsupported complex model support in requirement detail', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [],
+      warnings: [],
+      conflicts: [],
+      unsupportedItems: [],
+      requirementItems: [{
+        id: 'req_campus',
+        object: { kind: 'teacher', name: '张老师', matchedIds: ['t1'], scope: 'explicit' },
+        intent: 'campus_commute_gap',
+        status: 'needs_review',
+        applyTo: 'model_extension',
+        parameters: { maxConsecutiveAcrossCampus: 1 },
+        source: { rawText: '张老师跨校区不要连续两节' },
+        modelSupport: {
+          supported: false,
+          capability: 'campus_commute',
+          requiredModel: 'complex_v1',
+          phase: 'phase_2',
+          message: '跨校区通勤需要 complex_v1 项目模型和求解器支持，当前不会自动生效。',
+        },
+      }],
+      semanticActions: [],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_campus' },
+  }));
+
+  assert.match(html, /模型支持/);
+  assert.match(html, /complex_v1/);
+  assert.match(html, /当前不会自动生效/);
+});
+
+test('constraint dialog shows supported complex model actions in requirement detail', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [],
+      warnings: [],
+      conflicts: [],
+      unsupportedItems: [],
+      requirementItems: [{
+        id: 'req_week_pattern',
+        object: { kind: 'subject', name: '语文', matchedIds: ['s1'], scope: 'explicit' },
+        intent: 'preferred_periods',
+        status: 'actionable',
+        applyTo: 'model_extension',
+        parameters: { weekPattern: 'odd', slots: ['1-1'] },
+        source: { rawText: '单周语文第1节优先' },
+        modelSupport: {
+          supported: true,
+          capability: 'weekPattern',
+          requiredModel: 'complex_v1',
+          phase: 'phase_2',
+          message: '已启用 complex_v1，单双周需求将写入模型字段。',
+        },
+      }],
+      semanticActions: [{
+        id: 'act_week_pattern',
+        requirementId: 'req_week_pattern',
+        kind: 'complex_model_patch',
+        status: 'ready',
+        target: { subjectIds: ['s1'] },
+        patch: { weekPattern: 'odd', preferredSlots: ['1-1'] },
+      }],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_week_pattern' },
+  }));
+
+  assert.match(html, /复杂模型/);
+  assert.match(html, /模型支持/);
+  assert.match(html, /complex_v1/);
+  assert.match(html, /已支持/);
+  assert.match(html, /复杂模型写入/);
+  assert.match(html, /tt-constraint-info/);
+});
+
+test('constraint dialog manual entry creates an explicit requirement item', () => {
+  const originalDocument = globalThis.document;
+  const originalAlert = globalThis.alert;
+  const originalSetTimeout = globalThis.setTimeout;
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.ruleReview = { draftRows: [], requirementItems: [], semanticActions: [] };
+  controller.state.constraintDialog = { open: true, requirementFilter: 'all', selectedRequirementId: '' };
+  globalThis.alert = () => {};
+  globalThis.document = {
+    getElementById(id) {
+      return {
+        'tt-manual-type': { value: 'prefer' },
+        'tt-manual-target': { value: '体育' },
+        'tt-manual-time': { value: '周一第1节' },
+      }[id] || null;
+    },
+  };
+  globalThis.setTimeout = callback => {
+    callback();
+    return 0;
+  };
+
+  try {
+    controller.addManualConstraint();
+    assert.equal(controller.state.ruleReview.draftRows.length, 1);
+    assert.equal(controller.state.ruleReview.requirementItems.length, 1);
+    const row = controller.state.ruleReview.draftRows[0];
+    const requirement = controller.state.ruleReview.requirementItems[0];
+    assert.equal(requirement.rowId, row.id);
+    assert.equal(requirement.object.name, '体育');
+    assert.equal(requirement.intent, 'preferred_periods');
+    assert.equal(requirement.source.rawText, '手动添加');
+    assert.equal(controller.state.constraintDialog.selectedRequirementId, requirement.id);
+  } finally {
+    globalThis.document = originalDocument;
+    globalThis.alert = originalAlert;
+    globalThis.setTimeout = originalSetTimeout;
+  }
 });
 
 test('timetable constraint dialog filters semantic requirements by destination', () => {
@@ -960,14 +1208,14 @@ test('timetable constraint dialog reserves semantic review height before legacy 
 
   assert.match(html, /tt-requirement-workbench/);
   assert.match(html, /已理解需求 \(1\)/);
-  assert.match(html, /将应用规则/);
+  assert.match(html, /落地结果/);
   assert.match(html, /data-constraint-id="legacy-draft-1"/);
   assert.match(html, /data-action="edit-constraint"/);
   assert.match(html, /data-action="delete-constraint"/);
   assert.doesNotMatch(html, /已识别约束/);
   assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*--tt-requirement-review-height:\s*clamp/);
-  assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*grid-template-rows:\s*auto auto var\(--tt-requirement-review-height\)/);
-  assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*block-size:\s*calc\(var\(--tt-requirement-review-height\) \+ 78px\)/);
+  assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*grid-template-rows:\s*auto auto auto var\(--tt-requirement-review-height\)/);
+  assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*block-size:\s*calc\(var\(--tt-requirement-review-height\) \+ 118px\)/);
   assert.match(dialogStyles, /\.tt-requirement-review-layout\s*{[\s\S]*height:\s*var\(--tt-requirement-review-height\)/);
   assert.match(dialogStyles, /\.tt-requirement-table\s*{[\s\S]*grid-template-rows:\s*auto minmax\(0,\s*1fr\)/);
   assert.match(dialogStyles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-requirement-workbench\s*{[\s\S]*block-size:\s*auto/);
@@ -1011,7 +1259,7 @@ test('timetable constraint dialog folds draft-only constraints into understood r
   assert.match(html, /已理解需求 \(2\)/);
   assert.match(html, /王老师/);
   assert.match(html, /教师不可排/);
-  assert.match(html, /将应用规则/);
+  assert.match(html, /落地结果/);
   assert.match(html, /data-constraint-id="draft-only-2"/);
   assert.match(html, /周一第1节、周一第2节/);
   assert.match(html, /应用需求 \(1\)/);
@@ -2823,6 +3071,79 @@ test('timetable workflow exposes publish action and published status', () => {
   assert.match(html, /发布课表/);
   assert.match(html, /未发布/);
   assert.doesNotMatch(html, /id="tt-publish-schedule"[^>]*disabled/);
+});
+
+test('timetable export panel exposes week-pattern views for complex schedules', async () => {
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const state = sampleWorkbenchState({
+    exportWeekView: 'odd',
+    project: createDefaultTimetableProject({
+      timetableModelVersion: 'complex_v1',
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [], campusId: 'north' }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1', campusId: 'north' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1, weekPattern: 'odd', campusId: 'north' }],
+      rules: { hardRules: {}, softRules: {} },
+      schedule: {
+        id: 'complex-publish-ready',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        source: 'published',
+        slots: [{
+          id: 'slot-1',
+          day: 1,
+          period: 1,
+          classId: 'c1',
+          classIds: ['c1'],
+          subjectId: 'math',
+          teacherId: 't_math',
+          teacherIds: ['t_math'],
+          lessonPlanId: 'lp_math',
+          weekPattern: 'odd',
+          campusId: 'north',
+        }],
+        lockedSlots: [],
+        conflicts: [],
+        unplaced: [],
+        publication: {
+          ok: true,
+          reason: 'ready',
+          blockingIssues: [],
+          warnings: [],
+          reviewItems: [],
+          summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+        },
+        published: {
+          status: 'published',
+          version: 1,
+          publishedAt: '2026-01-02T08:00:00.000Z',
+          scheduleId: 'complex-publish-ready',
+          snapshot: { scheduleId: 'complex-publish-ready', slotCount: 1, slots: [] },
+        },
+        score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+      },
+    }),
+  });
+
+  const html = renderWorkbench(state);
+
+  assert.match(html, /tt-complex-model-strip/);
+  assert.match(html, /复杂模型：已启用/);
+  assert.match(html, /发布校验：已检查复杂冲突/);
+  assert.match(html, /单双周视图：合并 \/ 单周 \/ 双周/);
+  assert.match(html, /data-export-week-view="merged"/);
+  assert.match(html, /data-export-week-view="odd"[^>]*is-active/);
+  assert.match(html, /data-export-week-view="even"/);
+  assert.match(html, /合并/);
+  assert.match(html, /单周/);
+  assert.match(html, /双周/);
+  assert.match(interactionSource, /data-export-week-view/);
+  assert.match(interactionSource, /weekView:\s*state\.exportWeekView/);
+  assert.match(controllerSource, /weekView:\s*options\.weekView/);
 });
 
 test('timetable publish uses a confirmation dialog with editable note', async () => {
@@ -5294,7 +5615,10 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.match(html, /data-workflow-step="rules"[\s\S]*?id="tt-open-rule-review"/);
   assert.match(html, /class="[^"]*tt-rule-stack[^"]*tt-rules-setup-card[^"]*"/);
   assert.match(html, /class="[^"]*tt-rules-setup-body[^"]*"/);
-  assert.match(html, /class="[^"]*tt-rule-summary[^"]*"/);
+  assert.match(html, /class="[^"]*tt-smart-helper-entry[^"]*"/);
+  assert.match(html, /class="[^"]*tt-smart-helper-flow[^"]*"/);
+  assert.match(html, /class="[^"]*tt-smart-helper-metrics[^"]*"/);
+  assert.doesNotMatch(html, /class="[^"]*tt-rule-summary[^"]*"/);
   assert.match(html, /id="tt-range-weekdays-trigger"/);
   assert.match(html, /id="tt-range-periods-trigger"/);
   const weekdayTrigger = html.match(/<summary class="[^"]*" id="tt-range-weekdays-trigger">[\s\S]*?<\/summary>/)?.[0] || '';
@@ -5776,7 +6100,7 @@ test('timetable constraint dialog keeps parsed drafts in the current review flow
   assert.match(html, /tt-constraint-dialog/);
   assert.match(html, /tt-requirement-workbench/);
   assert.match(html, /已理解需求 \(2\)/);
-  assert.match(html, /将应用规则/);
+  assert.match(html, /落地结果/);
   assert.match(html, /All teachers should be balanced/);
   assert.match(html, /Math should prefer Monday period 2/);
   assert.match(html, /data-action="apply-constraints"/);
@@ -5873,11 +6197,15 @@ test('timetable smart rules sidebar opens the constraint dialog', async () => {
   assert.match(sidebar, /class="[^"]*tt-rule-stack[^"]*tt-rules-setup-card[^"]*"/);
   assert.match(sidebar, /class="[^"]*tt-rules-setup-body[^"]*"/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
-  assert.match(sidebar, /打开智能排课助手/);
-  assert.match(sidebar, /已应用|已生效/);
-  assert.match(sidebar, /待处理/);
-  assert.match(sidebar, /需注意/);
-  assert.match(sidebar, /class="[^"]*tt-rule-summary[^"]*"/);
+  assert.match(sidebar, /智能约束助手/);
+  assert.match(sidebar, /自然语言需求理解、复核与落地/);
+  assert.match(sidebar, /tt-smart-helper-flow/);
+  assert.match(sidebar, /理解需求[\s\S]*补充信息[\s\S]*生成规则[\s\S]*发布校验/);
+  assert.match(sidebar, /可应用/);
+  assert.match(sidebar, /需复核/);
+  assert.match(sidebar, /已处理/);
+  assert.doesNotMatch(sidebar, /需注意/);
+  assert.doesNotMatch(sidebar, /class="[^"]*tt-rule-summary[^"]*"/);
   assert.doesNotMatch(sidebar, /tt-rule-entry-card/);
   // No dialog rendered when no pending rules and no open state
   assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
@@ -6243,7 +6571,7 @@ test('timetable constraint dialog explains card warnings and source text separat
   assert.match(html, /data-constraint-dialog-overlay/);
   assert.match(html, /tt-requirement-workbench/);
   assert.match(html, /已理解需求 \(2\)/);
-  assert.match(html, /将应用规则/);
+  assert.match(html, /落地结果/);
   assert.doesNotMatch(html, /tt-constraint-preview/);
   assert.doesNotMatch(html, /已识别约束/);
   assert.match(html, /混合课程连堂块不可拆/);
@@ -6764,7 +7092,7 @@ test('timetable rule review renders a beginner task workbench instead of raw que
   assert.match(html, /tt-constraint-dialog/);
   assert.match(html, /tt-requirement-workbench/);
   assert.match(html, /已理解需求 \(2\)/);
-  assert.match(html, /将应用规则/);
+  assert.match(html, /落地结果/);
   assert.doesNotMatch(html, /已识别约束/);
   assert.match(html, /数学尽量上午/);
   assert.match(html, /王老师周三下午不要排/);
@@ -6885,7 +7213,7 @@ test('timetable constraint dialog renders recognized rule cards instead of the r
   assert.match(html, /data-constraint-dialog-overlay/);
   assert.match(html, /tt-requirement-workbench/);
   assert.match(html, /已理解需求 \(1\)/);
-  assert.match(html, /将应用规则/);
+  assert.match(html, /落地结果/);
   assert.doesNotMatch(html, /已识别约束/);
   assert.match(html, /数学尽量上午/);
   assert.match(html, /data-constraint-id="rule_kept"/);
@@ -7188,12 +7516,22 @@ test('timetable saved smart rules remain summarized while the constraint dialog 
 
   // New card-based saved rules section
   assert.match(sidebar, /id="tt-open-rule-review"/);
+  assert.match(sidebar, /tt-smart-helper-entry/);
+  assert.match(sidebar, /智能约束助手/);
+  assert.match(sidebar, /自然语言需求理解、复核与落地/);
+  assert.match(sidebar, /tt-smart-helper-flow/);
+  assert.match(sidebar, /理解需求[\s\S]*补充信息[\s\S]*生成规则[\s\S]*发布校验/);
+  assert.match(sidebar, /tt-smart-helper-metrics/);
+  assert.match(sidebar, /可应用/);
+  assert.match(sidebar, /需复核/);
+  assert.match(sidebar, /已处理/);
   assert.match(sidebar, /class="[^"]*tt-rule-stack[^"]*tt-rules-setup-card[^"]*"/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
-  assert.match(sidebar, /class="[^"]*tt-rule-summary[^"]*"/);
-  assert.match(sidebar, /查看已应用约束|查看已生效约束/);
+  assert.doesNotMatch(sidebar, /class="[^"]*tt-rule-summary[^"]*"/);
+  assert.doesNotMatch(sidebar, /查看已应用约束|查看已生效约束/);
   assert.match(sidebar, /9/);
   assert.match(sidebar, /id="tt-clear-rules"/);
+  assert.match(sidebar, /清空约束/);
   assert.doesNotMatch(sidebar, /id="tt-saved-rules"/);
   assert.doesNotMatch(sidebar, /data-saved-rule-delete=/);
   assert.doesNotMatch(sidebar, /data-saved-rule="/);
@@ -7214,7 +7552,7 @@ test('timetable saved smart rules remain summarized while the constraint dialog 
 
   assert.match(workbenchHtml, /data-constraint-dialog-overlay/);
   assert.match(workbenchHtml, /智能约束助手/);
-  assert.match(workbenchHtml, /已应用约束|已生效约束/);
+  assert.match(workbenchHtml, /自然语言需求理解、复核与落地/);
   assert.match(workbenchHtml, /排课要求/);
   assert.match(workbenchHtml, /理解要求/);
   assert.match(workbenchHtml, /data-action="parse-constraints"/);

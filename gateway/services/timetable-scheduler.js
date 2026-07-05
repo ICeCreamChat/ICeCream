@@ -1,11 +1,14 @@
 export {
     cleanText,
+    campusIdForSlot,
+    classIdsForPlan,
     createDefaultTimetableProject,
     getActivePeriods,
     getActiveWeekdays,
     getDayPartBoundaries,
     getDayPartPeriods,
     getTimetableEntityMaps,
+    isComplexTimetableModel,
     isAfternoonPeriod,
     isActiveTimetableSlot,
     isEveningPeriod,
@@ -18,8 +21,13 @@ export {
     normalizeSubjectCategory,
     normalizeSubjectTags,
     normalizeTimetableProject,
+    normalizeWeekPattern,
     slotKey,
+    slotClassIds,
     slotTeacherIds,
+    teachingGroupForPlan,
+    weekPatternForSlot,
+    weekPatternsOverlap,
 } from './timetable-project.js';
 
 export {

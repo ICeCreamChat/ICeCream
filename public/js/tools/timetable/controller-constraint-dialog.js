@@ -44,6 +44,71 @@ function normalizeRequirementReviewState(dialog = {}, items = []) {
     return { filter, selectedId };
 }
 
+function mergeRuleReviewResult(currentReview = {}, result = {}) {
+    return {
+        ...currentReview,
+        draftRules: result.draftRules ?? currentReview.draftRules ?? null,
+        draftRows: result.draftRows || [],
+        previewItems: result.previewItems || [],
+        requirementItems: result.requirementItems || [],
+        semanticActions: result.semanticActions || [],
+        autoAcceptable: result.autoAcceptable || [],
+        needReview: result.needReview || [],
+        clarifyingQuestions: result.clarifyingQuestions || [],
+        missingInfo: result.missingInfo || [],
+        conflicts: result.conflicts || [],
+        warnings: result.warnings || [],
+        unsupportedItems: result.unsupportedItems || [],
+        ruleReport: result.ruleReport || null,
+        confidenceSummary: result.confidenceSummary || null,
+        nextAction: result.nextAction || '',
+        source: result.source || currentReview.source || '',
+        parseSource: result.parseSource || result.source || currentReview.parseSource || '',
+        parserVersion: result.parserVersion || currentReview.parserVersion || '',
+        cacheHit: Boolean(result.cacheHit),
+        aiReview: result.aiReview || currentReview.aiReview || null,
+        inputType: result.inputType || currentReview.inputType || 'constraint_dialog',
+        contextStats: result.contextStats || currentReview.contextStats || null,
+    };
+}
+
+function cssAttributeValue(value = '') {
+    return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function manualRequirementIntent(type = '') {
+    return {
+        forbid: 'unavailable_periods',
+        prefer: 'preferred_periods',
+        avoid: 'avoid_periods',
+    }[type] || 'manual_requirement';
+}
+
+function manualRequirementFromConstraint(constraint = {}) {
+    const id = `req_${constraint.id || Date.now()}`;
+    return {
+        id,
+        rowId: constraint.id || '',
+        object: {
+            kind: 'manual_target',
+            name: constraint.targetName || constraint.target?.name || '手动对象',
+            matchedIds: [],
+            scope: 'manual',
+        },
+        intent: manualRequirementIntent(constraint.type),
+        condition: constraint.timeLabel ? { timeText: constraint.timeLabel } : {},
+        parameters: {
+            ...(constraint.timeLabel ? { timeText: constraint.timeLabel } : {}),
+        },
+        strength: constraint.type === 'forbid' ? 'hard' : 'soft',
+        status: 'needs_review',
+        applyTo: 'review',
+        confidence: 0.7,
+        source: { rawText: constraint.sourceText || '手动添加' },
+        warnings: ['手动填写已进入需求审核，请在应用前确认对象和时间。'],
+    };
+}
+
 function getRequirementOwnersForDraftRow(review = {}, constraintId = '') {
     const targetId = String(constraintId || '');
     if (!targetId) return new Set();
@@ -208,6 +273,62 @@ export function toggleConstraintApplyItem(applyItemKey) {
     this.render();
 }
 
+export async function submitRequirementClarification(requirementId) {
+    const id = String(requirementId || '').trim();
+    if (!id) return;
+    const items = buildUnifiedRequirementItems(this.state.ruleReview || {});
+    const requirement = items.find(item => item.id === id);
+    const clarification = requirement?.clarification;
+    if (!requirement || !clarification) return;
+
+    const selector = `[data-requirement-clarify-input="${cssAttributeValue(id)}"]`;
+    const input = this.state.container?.querySelector?.(selector)
+        || (typeof document !== 'undefined' ? document.querySelector?.(selector) : null);
+    const rawValue = input?.value;
+    if (rawValue === undefined || rawValue === null || String(rawValue).trim() === '') {
+        alert('请先填写补充信息');
+        return;
+    }
+    const value = clarification.kind === 'number' ? Number(rawValue) : String(rawValue).trim();
+    if (clarification.kind === 'number' && !Number.isFinite(value)) {
+        alert('请填写有效数字');
+        return;
+    }
+
+    try {
+        const result = await requestTimetable('/requirements/clarify', {
+            method: 'POST',
+            body: JSON.stringify({
+                project: this.state.project || {},
+                previousResult: this.state.ruleReview || {},
+                answers: [{
+                    requirementId: id,
+                    field: clarification.field || input?.dataset?.requirementClarifyField || 'value',
+                    value,
+                }],
+                inputType: this.state.ruleReview?.inputType || 'requirement_clarification',
+                contextStats: this.state.ruleReview?.contextStats || null,
+            }),
+        });
+        this.state.ruleReview = mergeRuleReviewResult(this.state.ruleReview || {}, result);
+        const reviewState = normalizeRequirementReviewState(this.state.constraintDialog || {}, buildUnifiedRequirementItems(this.state.ruleReview || {}));
+        this.state.constraintDialog = {
+            ...(this.state.constraintDialog || {}),
+            requirementFilter: reviewState.filter,
+            selectedRequirementId: buildUnifiedRequirementItems(this.state.ruleReview || {}).some(item => item.id === id)
+                ? id
+                : reviewState.selectedId,
+        };
+        if (typeof this.setMessage === 'function') {
+            this.setMessage('已更新需求，请复核后应用。');
+        }
+        this.render();
+    } catch (error) {
+        console.error('Submit requirement clarification error:', error);
+        alert(`更新失败：${error.message || '未知错误'}`);
+    }
+}
+
 /**
  * 切换输入模式
  */
@@ -280,7 +401,7 @@ export async function parseConstraintsFromDialog() {
     // 设置解析状态
     this.state.ruleReview.parsing = true;
     this.state.ruleReview.parseProgress = 0;
-    this.state.ruleReview.phaseText = '正在分析您的要求...';
+    this.state.ruleReview.phaseText = '正在本地识别需求...';
     this.render();
 
     // 模拟进度更新
@@ -288,10 +409,10 @@ export async function parseConstraintsFromDialog() {
         if (this.state.ruleReview.parseProgress < 90) {
             this.state.ruleReview.parseProgress += 10;
             const phases = [
-                '正在分析您的要求...',
-                '正在识别教师和课程...',
-                '正在理解时间约束...',
-                '正在生成结构化规则...',
+                '正在本地识别需求...',
+                '正在让 AI 复审识别结果...',
+                '正在校验复审建议...',
+                '正在生成审核台...',
             ];
             const phaseIndex = Math.floor(this.state.ruleReview.parseProgress / 25);
             this.state.ruleReview.phaseText = phases[phaseIndex] || phases[phases.length - 1];
@@ -345,6 +466,7 @@ export async function parseConstraintsFromDialog() {
             parseSource: result.parseSource || result.source || '',
             parserVersion: result.parserVersion || '',
             cacheHit: Boolean(result.cacheHit),
+            aiReview: result.aiReview || null,
             inputType: result.inputType || this.state.ruleReview.inputType || mode,
             contextStats: result.contextStats || null,
             excludedApplyItemKeys: [],
@@ -402,6 +524,8 @@ export function addManualConstraint() {
         confidenceLabel: '高',
         status: 'ready',
     };
+    const requirement = manualRequirementFromConstraint(constraint);
+    constraint.requirementId = requirement.id;
 
     if (!this.state.ruleReview) {
         this.state.ruleReview = { draftRows: [] };
@@ -409,8 +533,18 @@ export function addManualConstraint() {
     if (!this.state.ruleReview.draftRows) {
         this.state.ruleReview.draftRows = [];
     }
+    if (!this.state.ruleReview.requirementItems) {
+        this.state.ruleReview.requirementItems = [];
+    }
 
     this.state.ruleReview.draftRows.push(constraint);
+    this.state.ruleReview.requirementItems.push(requirement);
+    const reviewState = normalizeRequirementReviewState(this.state.constraintDialog || {}, buildUnifiedRequirementItems(this.state.ruleReview || {}));
+    this.state.constraintDialog = {
+        ...(this.state.constraintDialog || {}),
+        requirementFilter: reviewState.filter,
+        selectedRequirementId: requirement.id,
+    };
     this.render();
 
     // 清空表单
@@ -572,6 +706,10 @@ export async function applyConstraintsFromDialog() {
 
         // 清空草稿
         const appliedRuleIds = new Set(actionableDraftRows.map(row => row.id));
+        actionableDraftRows.forEach(row => {
+            getRequirementOwnersForDraftRow(this.state.ruleReview || {}, row.id)
+                .forEach(ownerId => appliedRequirementIds.add(ownerId));
+        });
         const appliedApplyItemKeys = new Set([
             ...actionableDraftRows.map(row => draftRowApplyItemKey(row)),
             ...semanticActions.map(action => semanticActionApplyItemKey(action)),

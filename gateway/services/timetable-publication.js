@@ -72,7 +72,46 @@ export function nextPublishedHistory(published = null, limit = 10) {
         .slice(-limit);
 }
 
+function complexModelEnabled(project = {}) {
+    return project?.timetableModelVersion === 'complex_v1' || project?.complexModelEnabled === true;
+}
+
+function legacyTeacherSnapshot(item = {}) {
+    return {
+        id: item.id,
+        name: item.name,
+        subjects: Array.isArray(item.subjects) ? [...item.subjects] : [],
+        unavailableSlots: Array.isArray(item.unavailableSlots) ? [...item.unavailableSlots] : [],
+    };
+}
+
+function legacyClassSnapshot(item = {}) {
+    return {
+        id: item.id,
+        grade: item.grade,
+        name: item.name,
+    };
+}
+
+function legacyLessonPlanSnapshot(item = {}) {
+    return {
+        id: item.id,
+        classId: item.classId,
+        subjectId: item.subjectId,
+        teacherId: item.teacherId,
+        teacherIds: Array.isArray(item.teacherIds) ? [...item.teacherIds] : [],
+        weeklyHours: item.weeklyHours,
+        blockPreference: item.blockPreference || 'single',
+        roomId: item.roomId || null,
+        allowedRoomIds: Array.isArray(item.allowedRoomIds) ? [...item.allowedRoomIds] : [],
+        className: item.className || '',
+        subjectName: item.subjectName || '',
+        teacherName: item.teacherName || '',
+    };
+}
+
 function snapshotProjectContext(project = {}) {
+    const complex = complexModelEnabled(project);
     return {
         schoolName: project.schoolName || '',
         term: project.term || '',
@@ -82,15 +121,55 @@ function snapshotProjectContext(project = {}) {
         activePeriods: Array.isArray(project.activePeriods) ? [...project.activePeriods] : [],
         dayPartBoundaries: project.dayPartBoundaries ? { ...project.dayPartBoundaries } : { afternoonStartPeriod: null, eveningStartPeriod: null },
         periodTimes: Array.isArray(project.periodTimes) ? project.periodTimes.map(item => ({ ...item })) : [],
-        teachers: Array.isArray(project.teachers) ? project.teachers.map(item => ({ ...item })) : [],
-        classes: Array.isArray(project.classes) ? project.classes.map(item => ({ ...item })) : [],
+        ...(complex ? {
+            timetableModelVersion: 'complex_v1',
+            complexModelEnabled: true,
+            campuses: Array.isArray(project.campuses) ? project.campuses.map(item => ({ ...item })) : [],
+            rooms: Array.isArray(project.rooms) ? project.rooms.map(item => ({ ...item })) : [],
+            teachingGroups: Array.isArray(project.teachingGroups) ? project.teachingGroups.map(item => ({ ...item })) : [],
+            commuteRules: project.commuteRules ? JSON.parse(JSON.stringify(project.commuteRules)) : { defaultGapPeriods: 1, teacherGapPeriods: {} },
+        } : {}),
+        teachers: Array.isArray(project.teachers)
+            ? project.teachers.map(item => (complex ? { ...item } : legacyTeacherSnapshot(item)))
+            : [],
+        classes: Array.isArray(project.classes)
+            ? project.classes.map(item => (complex ? { ...item } : legacyClassSnapshot(item)))
+            : [],
         subjects: Array.isArray(project.subjects) ? project.subjects.map(item => ({ ...item })) : [],
-        lessonPlans: Array.isArray(project.lessonPlans) ? project.lessonPlans.map(item => ({ ...item })) : [],
+        lessonPlans: Array.isArray(project.lessonPlans)
+            ? project.lessonPlans.map(item => (complex ? { ...item } : legacyLessonPlanSnapshot(item)))
+            : [],
         rules: project.rules ? JSON.parse(JSON.stringify(project.rules)) : null,
     };
 }
 
+function publishedSlotSnapshot(slot = {}, complex = false) {
+    return {
+        id: slot.id,
+        day: slot.day,
+        period: slot.period,
+        classId: slot.classId,
+        subjectId: slot.subjectId,
+        teacherId: slot.teacherId,
+        teacherIds: Array.isArray(slot.teacherIds) ? [...slot.teacherIds] : [],
+        lessonPlanId: slot.lessonPlanId,
+        roomId: slot.roomId || null,
+        blockId: slot.blockId || null,
+        blockIndex: slot.blockIndex || 0,
+        blockSize: slot.blockSize || 1,
+        locked: Boolean(slot.locked),
+        manuallyAdjusted: Boolean(slot.manuallyAdjusted),
+        ...(complex ? {
+            weekPattern: slot.weekPattern || 'every',
+            campusId: slot.campusId || '',
+            teachingGroupId: slot.teachingGroupId || '',
+            classIds: Array.isArray(slot.classIds) ? [...slot.classIds] : [slot.classId].filter(Boolean),
+        } : {}),
+    };
+}
+
 export function buildPublishedSnapshot(schedule = {}, publication = {}, project = {}) {
+    const complex = complexModelEnabled(project);
     const snapshot = {
         scheduleId: schedule.id || null,
         generatedAt: schedule.generatedAt || null,
@@ -99,22 +178,7 @@ export function buildPublishedSnapshot(schedule = {}, publication = {}, project 
         score: schedule.score || {},
         publicationSummary: publication.summary || {},
         projectContext: snapshotProjectContext(project),
-        slots: (schedule.slots || []).map(slot => ({
-            id: slot.id,
-            day: slot.day,
-            period: slot.period,
-            classId: slot.classId,
-            subjectId: slot.subjectId,
-            teacherId: slot.teacherId,
-            teacherIds: slot.teacherIds || [],
-            lessonPlanId: slot.lessonPlanId,
-            roomId: slot.roomId || null,
-            blockId: slot.blockId || null,
-            blockIndex: slot.blockIndex || 0,
-            blockSize: slot.blockSize || 1,
-            locked: Boolean(slot.locked),
-            manuallyAdjusted: Boolean(slot.manuallyAdjusted),
-        })),
+        slots: (schedule.slots || []).map(slot => publishedSlotSnapshot(slot, complex)),
     };
     return {
         ...snapshot,

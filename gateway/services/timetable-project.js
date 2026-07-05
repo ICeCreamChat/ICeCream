@@ -11,6 +11,8 @@ const DEFAULT_SUBJECT_COLORS = [
 
 const DEFAULT_PROJECT = {
     id: 'default',
+    timetableModelVersion: 'legacy',
+    complexModelEnabled: false,
     schoolName: 'ICeCream 学校',
     term: '2026-2027 第一学期',
     weekdays: 5,
@@ -25,6 +27,13 @@ const DEFAULT_PROJECT = {
     teachers: [],
     classes: [],
     subjects: [],
+    campuses: [],
+    rooms: [],
+    teachingGroups: [],
+    commuteRules: {
+        defaultGapPeriods: 1,
+        teacherGapPeriods: {},
+    },
     lessonPlans: [],
     rules: {
         hardRules: {
@@ -39,6 +48,9 @@ const DEFAULT_PROJECT = {
     },
     schedule: null,
 };
+
+const WEEK_PATTERNS = new Set(['every', 'odd', 'even', 'odd_even']);
+const TEACHING_GROUP_MODES = new Set(['combined_class', 'rotation', 'split_class']);
 
 export function cleanText(value, max = 80) {
     return String(value ?? '')
@@ -150,6 +162,106 @@ function intInRange(value, fallback, min, max) {
     const num = Number.parseInt(value, 10);
     if (!Number.isInteger(num)) return fallback;
     return Math.max(min, Math.min(max, num));
+}
+
+export function normalizeWeekPattern(value = '', fallback = 'every') {
+    const normalized = cleanText(value, 40).toLowerCase()
+        .replace(/[-\s]+/g, '_');
+    if (WEEK_PATTERNS.has(normalized)) return normalized;
+    if (['single', 'odd_week', 'odd_weeks'].includes(normalized)) return 'odd';
+    if (['double', 'even_week', 'even_weeks'].includes(normalized)) return 'even';
+    if (['both', 'mixed', 'odd_even_week', 'odd_even_weeks'].includes(normalized)) return 'odd_even';
+    return WEEK_PATTERNS.has(fallback) ? fallback : 'every';
+}
+
+export function isComplexTimetableModel(project = {}) {
+    return project?.timetableModelVersion === 'complex_v1' || project?.complexModelEnabled === true;
+}
+
+function weekPatternSet(value = 'every') {
+    const pattern = normalizeWeekPattern(value, 'every');
+    if (pattern === 'odd') return new Set(['odd']);
+    if (pattern === 'even') return new Set(['even']);
+    return new Set(['odd', 'even']);
+}
+
+export function weekPatternsOverlap(left = 'every', right = 'every') {
+    const leftSet = weekPatternSet(left);
+    const rightSet = weekPatternSet(right);
+    return [...leftSet].some(item => rightSet.has(item));
+}
+
+function complexModelEnabled(raw = {}) {
+    return isComplexTimetableModel(raw);
+}
+
+function normalizeCampus(raw = {}, index = 0) {
+    const name = cleanText(raw.name || raw.campusName || `校区${index + 1}`, 60);
+    return {
+        id: cleanText(raw.id, 80) || makeTimetableId('campus', name),
+        name,
+    };
+}
+
+function normalizeRoom(raw = {}, index = 0, enabled = false) {
+    const name = cleanText(raw.name || raw.roomName || `教室${index + 1}`, 60);
+    return {
+        id: cleanText(raw.id, 80) || makeTimetableId('room', name),
+        name,
+        campusId: enabled ? cleanText(raw.campusId || raw.campus, 80) : '',
+        capacity: Math.max(0, Math.min(5000, Number.parseInt(raw.capacity, 10) || 0)),
+        tags: normalizeSubjectTags(raw.tags || raw.roomTags || raw.attributes),
+    };
+}
+
+function normalizeRoomRequirement(raw = {}, enabled = false) {
+    if (!enabled || !raw || typeof raw !== 'object') {
+        return {
+            preferredRoomIds: [],
+            allowedRoomIds: [],
+            requiredTags: [],
+        };
+    }
+    return {
+        preferredRoomIds: normalizeIdList(raw.preferredRoomIds || raw.roomIds || raw.rooms),
+        allowedRoomIds: normalizeIdList(raw.allowedRoomIds),
+        requiredTags: normalizeSubjectTags(raw.requiredTags || raw.tags),
+    };
+}
+
+function normalizeTeachingGroup(raw = {}, index = 0) {
+    const classIds = normalizeIdList(raw.classIds || raw.classes);
+    const subjectIds = normalizeIdList(raw.subjectIds || raw.subjects);
+    const name = cleanText(raw.name || raw.groupName || `教学组${index + 1}`, 80);
+    const mode = TEACHING_GROUP_MODES.has(cleanText(raw.mode, 40)) ? cleanText(raw.mode, 40) : 'combined_class';
+    return {
+        id: cleanText(raw.id, 80) || makeTimetableId('tg', `${name}-${classIds.join('-')}-${subjectIds.join('-')}`),
+        name,
+        mode,
+        classIds,
+        subjectIds,
+        teacherIds: normalizeIdList(raw.teacherIds),
+        roomIds: normalizeIdList(raw.roomIds),
+    };
+}
+
+function normalizeCommuteRules(raw = {}, enabled = false) {
+    if (!enabled) {
+        return {
+            defaultGapPeriods: 1,
+            teacherGapPeriods: {},
+        };
+    }
+    const defaultGapPeriods = Math.max(0, Math.min(12, Number.parseInt(raw.defaultGapPeriods ?? raw.defaultGap ?? raw.gapPeriods, 10) || 1));
+    const teacherGapPeriods = {};
+    for (const [key, value] of Object.entries(raw.teacherGapPeriods || raw.teacherGaps || {})) {
+        const teacherId = cleanText(key, 80);
+        const gap = Number.parseInt(value, 10);
+        if (teacherId && Number.isInteger(gap) && gap >= 0) {
+            teacherGapPeriods[teacherId] = Math.min(12, gap);
+        }
+    }
+    return { defaultGapPeriods, teacherGapPeriods };
 }
 
 function rangeList(max) {
@@ -333,7 +445,7 @@ export function generateDefaultPeriodTimes(activePeriods = [], options = {}) {
     });
 }
 
-function normalizeTeacher(raw = {}, index = 0) {
+function normalizeTeacher(raw = {}, index = 0, enabled = false) {
     const name = cleanText(raw.name || raw.teacherName || `教师${index + 1}`, 40);
     const id = cleanText(raw.id, 60) || makeTimetableId('t', name);
     return {
@@ -341,14 +453,20 @@ function normalizeTeacher(raw = {}, index = 0) {
         name,
         subjects: Array.isArray(raw.subjects) ? raw.subjects.map(value => cleanText(value, 60)).filter(Boolean) : [],
         unavailableSlots: normalizeSlotList(raw.unavailableSlots),
+        campusId: enabled ? cleanText(raw.campusId || raw.campus, 80) : '',
     };
 }
 
-function normalizeClass(raw = {}, index = 0) {
+function normalizeClass(raw = {}, index = 0, enabled = false) {
     const grade = cleanText(raw.grade || '默认年级', 40);
     const name = cleanText(raw.name || raw.className || `班级${index + 1}`, 40);
     const id = cleanText(raw.id, 60) || makeTimetableId('c', `${grade}-${name}`);
-    return { id, grade, name };
+    return {
+        id,
+        grade,
+        name,
+        campusId: enabled ? cleanText(raw.campusId || raw.campus, 80) : '',
+    };
 }
 
 function normalizeSubject(raw = {}, index = 0) {
@@ -366,7 +484,7 @@ function normalizeSubject(raw = {}, index = 0) {
     };
 }
 
-function normalizeLessonPlan(raw = {}, index = 0) {
+function normalizeLessonPlan(raw = {}, index = 0, enabled = false) {
     const weeklyHours = Math.max(0, Math.min(60, Number.parseInt(raw.weeklyHours ?? raw.hours, 10) || 0));
     const blockPreference = ['single', 'double', 'mixed'].includes(raw.blockPreference) ? raw.blockPreference : 'single';
     const teacherIds = normalizeIdList(raw.teacherIds);
@@ -385,6 +503,10 @@ function normalizeLessonPlan(raw = {}, index = 0) {
         blockPreference,
         roomId,
         allowedRoomIds,
+        weekPattern: normalizeWeekPattern(enabled ? raw.weekPattern : '', 'every'),
+        campusId: enabled ? cleanText(raw.campusId || raw.campus, 80) : '',
+        teachingGroupId: enabled ? cleanText(raw.teachingGroupId || raw.groupId, 80) : '',
+        roomRequirement: normalizeRoomRequirement(raw.roomRequirement, enabled),
         className: cleanText(raw.className, 80),
         subjectName: cleanText(raw.subjectName, 80),
         teacherName: cleanText(raw.teacherName, 80),
@@ -400,7 +522,7 @@ function normalizeRuleMap(raw = {}) {
     return result;
 }
 
-function normalizeSubjectPreferredPeriods(raw = {}) {
+function normalizeSubjectPreferredPeriods(raw = {}, enabled = false) {
     const result = {};
     for (const [key, value] of Object.entries(raw || {})) {
         const subjectId = cleanText(key, 80);
@@ -409,7 +531,12 @@ function normalizeSubjectPreferredPeriods(raw = {}) {
         const avoid = normalizeSlotList(value.avoid || value.blocked || value.disliked);
         const weight = Math.max(1, Math.min(100, Number.parseInt(value.weight, 10) || 20));
         if (prefer.length || avoid.length) {
-            result[subjectId] = { prefer, avoid, weight };
+            result[subjectId] = {
+                prefer,
+                avoid,
+                weight,
+                ...(enabled && value.weekPattern ? { weekPattern: normalizeWeekPattern(value.weekPattern) } : {}),
+            };
         }
     }
     return result;
@@ -438,7 +565,7 @@ function normalizeSpreadSubjects(values = []) {
         : [];
 }
 
-function normalizeLockedSlots(values = []) {
+function normalizeLockedSlots(values = [], enabled = false) {
     return (Array.isArray(values) ? values : [])
         .map((item, index) => ({
             id: cleanText(item.id, 80) || `locked_${index + 1}`,
@@ -449,16 +576,21 @@ function normalizeLockedSlots(values = []) {
             teacherId: cleanText(item.teacherId, 80),
             lessonPlanId: cleanText(item.lessonPlanId, 80) || null,
             roomId: cleanText(item.roomId, 80) || null,
+            ...(enabled ? {
+                weekPattern: normalizeWeekPattern(item.weekPattern, 'every'),
+                campusId: cleanText(item.campusId || item.campus, 80),
+                teachingGroupId: cleanText(item.teachingGroupId || item.groupId, 80),
+            } : {}),
         }))
         .filter(item => Number.isInteger(item.day) && Number.isInteger(item.period) && item.classId && item.subjectId && item.teacherId);
 }
 
-function normalizeRules(raw = {}) {
+function normalizeRules(raw = {}, enabled = false) {
     const hardRules = raw.hardRules || {};
     const softRules = raw.softRules || {};
     return {
         hardRules: {
-            lockedSlots: normalizeLockedSlots(hardRules.lockedSlots),
+            lockedSlots: normalizeLockedSlots(hardRules.lockedSlots, enabled),
             teacherUnavailable: normalizeRuleMap(hardRules.teacherUnavailable),
             classUnavailable: normalizeRuleMap(hardRules.classUnavailable),
         },
@@ -467,14 +599,62 @@ function normalizeRules(raw = {}) {
                 ? softRules.morningSubjects.map(value => cleanText(value, 80)).filter(Boolean)
                 : [],
             balancedTeacherLoad: softRules.balancedTeacherLoad !== false,
-            subjectPreferredPeriods: normalizeSubjectPreferredPeriods(softRules.subjectPreferredPeriods),
+            subjectPreferredPeriods: normalizeSubjectPreferredPeriods(softRules.subjectPreferredPeriods, enabled),
             teacherLimits: normalizeTeacherLimits(softRules.teacherLimits),
             spreadSubjects: normalizeSpreadSubjects(softRules.spreadSubjects),
         },
     };
 }
 
-function normalizePublishedSnapshot(rawSnapshot, fallback = {}) {
+function normalizePublishedSnapshotTeacher(raw = {}, index = 0, enabled = false) {
+    if (enabled) return normalizeTeacher(raw, index, true);
+    const name = cleanText(raw.name || raw.teacherName || `教师${index + 1}`, 40);
+    return {
+        id: cleanText(raw.id, 60) || makeTimetableId('t', name),
+        name,
+        subjects: Array.isArray(raw.subjects) ? raw.subjects.map(value => cleanText(value, 60)).filter(Boolean) : [],
+        unavailableSlots: normalizeSlotList(raw.unavailableSlots),
+    };
+}
+
+function normalizePublishedSnapshotClass(raw = {}, index = 0, enabled = false) {
+    if (enabled) return normalizeClass(raw, index, true);
+    const grade = cleanText(raw.grade || '默认年级', 40);
+    const name = cleanText(raw.name || raw.className || `班级${index + 1}`, 40);
+    return {
+        id: cleanText(raw.id, 60) || makeTimetableId('c', `${grade}-${name}`),
+        grade,
+        name,
+    };
+}
+
+function normalizePublishedSnapshotLessonPlan(raw = {}, index = 0, enabled = false) {
+    if (enabled) return normalizeLessonPlan(raw, index, true);
+    const weeklyHours = Math.max(0, Math.min(60, Number.parseInt(raw.weeklyHours ?? raw.hours, 10) || 0));
+    const blockPreference = ['single', 'double', 'mixed'].includes(raw.blockPreference) ? raw.blockPreference : 'single';
+    const teacherIds = normalizeIdList(raw.teacherIds);
+    const teacherId = cleanText(raw.teacherId, 80) || teacherIds[0] || '';
+    if (teacherId && !teacherIds.includes(teacherId)) teacherIds.unshift(teacherId);
+    const allowedRoomIds = normalizeIdList(raw.allowedRoomIds);
+    const roomId = cleanText(raw.roomId, 80) || allowedRoomIds[0] || null;
+    if (roomId && !allowedRoomIds.includes(roomId)) allowedRoomIds.unshift(roomId);
+    return {
+        id: cleanText(raw.id, 80) || `lp_${index + 1}`,
+        classId: cleanText(raw.classId, 80),
+        subjectId: cleanText(raw.subjectId, 80),
+        teacherId,
+        teacherIds,
+        weeklyHours,
+        blockPreference,
+        roomId,
+        allowedRoomIds,
+        className: cleanText(raw.className, 80),
+        subjectName: cleanText(raw.subjectName, 80),
+        teacherName: cleanText(raw.teacherName, 80),
+    };
+}
+
+function normalizePublishedSnapshot(rawSnapshot, fallback = {}, enabled = false) {
     if (!rawSnapshot || typeof rawSnapshot !== 'object') return null;
     const fingerprint = cleanText(rawSnapshot.fingerprint || fallback.fingerprint, 80);
     return {
@@ -511,20 +691,34 @@ function normalizePublishedSnapshot(rawSnapshot, fallback = {}) {
                         ),
                     }
                     : {}),
+                ...(enabled ? {
+                    timetableModelVersion: 'complex_v1',
+                    complexModelEnabled: true,
+                    campuses: Array.isArray(rawSnapshot.projectContext.campuses)
+                        ? rawSnapshot.projectContext.campuses.map(normalizeCampus)
+                        : [],
+                    rooms: Array.isArray(rawSnapshot.projectContext.rooms)
+                        ? rawSnapshot.projectContext.rooms.map((room, index) => normalizeRoom(room, index, true))
+                        : [],
+                    teachingGroups: Array.isArray(rawSnapshot.projectContext.teachingGroups)
+                        ? rawSnapshot.projectContext.teachingGroups.map(normalizeTeachingGroup)
+                        : [],
+                    commuteRules: normalizeCommuteRules(rawSnapshot.projectContext.commuteRules, true),
+                } : {}),
                 teachers: Array.isArray(rawSnapshot.projectContext.teachers)
-                    ? rawSnapshot.projectContext.teachers.map(normalizeTeacher)
+                    ? rawSnapshot.projectContext.teachers.map((teacher, index) => normalizePublishedSnapshotTeacher(teacher, index, enabled))
                     : [],
                 classes: Array.isArray(rawSnapshot.projectContext.classes)
-                    ? rawSnapshot.projectContext.classes.map(normalizeClass)
+                    ? rawSnapshot.projectContext.classes.map((klass, index) => normalizePublishedSnapshotClass(klass, index, enabled))
                     : [],
                 subjects: Array.isArray(rawSnapshot.projectContext.subjects)
                     ? rawSnapshot.projectContext.subjects.map(normalizeSubject)
                     : [],
                 lessonPlans: Array.isArray(rawSnapshot.projectContext.lessonPlans)
-                    ? rawSnapshot.projectContext.lessonPlans.map(normalizeLessonPlan)
+                    ? rawSnapshot.projectContext.lessonPlans.map((plan, index) => normalizePublishedSnapshotLessonPlan(plan, index, enabled))
                         .filter(plan => plan.classId && plan.subjectId && plan.teacherId && plan.weeklyHours > 0)
                     : [],
-                rules: normalizeRules(rawSnapshot.projectContext.rules || {}),
+                rules: normalizeRules(rawSnapshot.projectContext.rules || {}, enabled),
             }
             : null,
         slots: Array.isArray(rawSnapshot.slots)
@@ -543,6 +737,12 @@ function normalizePublishedSnapshot(rawSnapshot, fallback = {}) {
                 blockSize: Math.max(1, Number.parseInt(slot.blockSize, 10) || 1),
                 locked: Boolean(slot.locked),
                 manuallyAdjusted: Boolean(slot.manuallyAdjusted),
+                ...(enabled ? {
+                    weekPattern: normalizeWeekPattern(slot.weekPattern, 'every'),
+                    campusId: cleanText(slot.campusId || slot.campus, 80),
+                    teachingGroupId: cleanText(slot.teachingGroupId || slot.groupId, 80),
+                    classIds: normalizeIdList([slot.classId, ...(slot.classIds || [])]),
+                } : {}),
             })).filter(slot => slot.id && Number.isInteger(slot.day) && Number.isInteger(slot.period))
             : [],
     };
@@ -555,7 +755,7 @@ function normalizePublishedHistory(values = [], fallback = {}) {
             const snapshot = normalizePublishedSnapshot(item.snapshot, {
                 ...fallback,
                 scheduleId: item.scheduleId,
-            });
+            }, complexModelEnabled(item.snapshot?.projectContext || fallback));
             if (!snapshot) return null;
             return {
                 version: Math.max(1, Number.parseInt(item.version, 10) || 1),
@@ -629,18 +829,20 @@ export function publicationIssueEntries(publication = null) {
     });
 }
 
-export function normalizeSchedule(raw) {
+export function normalizeSchedule(raw, enabled = false) {
     if (!raw || !Array.isArray(raw.slots)) return null;
     const snapshot = normalizePublishedSnapshot(raw.published?.snapshot, {
         scheduleId: raw.published?.scheduleId,
         id: raw.id,
         generatedAt: raw.generatedAt,
         source: raw.source,
-    });
+    }, enabled);
     const history = normalizePublishedHistory(raw.published?.history, {
         id: raw.id,
         generatedAt: raw.generatedAt,
         source: raw.source,
+        timetableModelVersion: enabled ? 'complex_v1' : 'legacy',
+        complexModelEnabled: enabled,
     });
     const published = raw.published && typeof raw.published === 'object'
         ? {
@@ -677,6 +879,12 @@ export function normalizeSchedule(raw) {
                 blockSize: Math.max(1, Number.parseInt(slot.blockSize, 10) || 1),
                 locked: Boolean(slot.locked),
                 manuallyAdjusted: Boolean(slot.manuallyAdjusted),
+                ...(enabled ? {
+                    weekPattern: normalizeWeekPattern(slot.weekPattern, 'every'),
+                    campusId: cleanText(slot.campusId || slot.campus, 80),
+                    teachingGroupId: cleanText(slot.teachingGroupId || slot.groupId, 80),
+                    classIds: normalizeIdList([slot.classId, ...(slot.classIds || [])]),
+                } : {}),
             };
         }).filter(slot => slot.id && slot.classId && slot.subjectId && slot.teacherId && Number.isInteger(slot.day) && Number.isInteger(slot.period)),
         lockedSlots: Array.isArray(raw.lockedSlots) ? raw.lockedSlots : [],
@@ -694,19 +902,25 @@ export function normalizeSchedule(raw) {
 
 export function normalizeTimetableProject(raw = {}) {
     const base = { ...DEFAULT_PROJECT, ...raw };
+    const enabled = complexModelEnabled(base);
     const legacyWeekdays = intInRange(base.weekdays, DEFAULT_PROJECT.weekdays, 1, 7);
     const legacyPeriodsPerDay = intInRange(base.periodsPerDay, DEFAULT_PROJECT.periodsPerDay, 1, 12);
     const hasActiveWeekdays = Object.prototype.hasOwnProperty.call(raw, 'activeWeekdays');
     const hasActivePeriods = Object.prototype.hasOwnProperty.call(raw, 'activePeriods');
     const activeWeekdays = normalizeNumberList(hasActiveWeekdays ? raw.activeWeekdays : [], rangeList(legacyWeekdays), 1, 7);
     const activePeriods = normalizeNumberList(hasActivePeriods ? raw.activePeriods : [], rangeList(legacyPeriodsPerDay), 1, 12);
-    const teachers = (Array.isArray(base.teachers) ? base.teachers : []).map(normalizeTeacher);
-    const classes = (Array.isArray(base.classes) ? base.classes : []).map(normalizeClass);
+    const teachers = (Array.isArray(base.teachers) ? base.teachers : [])
+        .map((teacher, index) => normalizeTeacher(teacher, index, enabled));
+    const classes = (Array.isArray(base.classes) ? base.classes : [])
+        .map((klass, index) => normalizeClass(klass, index, enabled));
     const subjects = (Array.isArray(base.subjects) ? base.subjects : []).map(normalizeSubject);
-    const lessonPlans = (Array.isArray(base.lessonPlans) ? base.lessonPlans : []).map(normalizeLessonPlan)
+    const lessonPlans = (Array.isArray(base.lessonPlans) ? base.lessonPlans : [])
+        .map((plan, index) => normalizeLessonPlan(plan, index, enabled))
         .filter(plan => plan.classId && plan.subjectId && plan.teacherId && plan.weeklyHours > 0);
     const normalized = {
         id: cleanText(base.id, 80) || 'default',
+        timetableModelVersion: enabled ? 'complex_v1' : 'legacy',
+        complexModelEnabled: enabled,
         schoolName: cleanText(base.schoolName, 80) || DEFAULT_PROJECT.schoolName,
         term: cleanText(base.term, 80) || DEFAULT_PROJECT.term,
         weekdays: Math.max(...activeWeekdays),
@@ -718,9 +932,19 @@ export function normalizeTimetableProject(raw = {}) {
         teachers,
         classes,
         subjects,
+        campuses: enabled && Array.isArray(base.campuses)
+            ? base.campuses.map(normalizeCampus)
+            : [],
+        rooms: enabled && Array.isArray(base.rooms)
+            ? base.rooms.map((room, index) => normalizeRoom(room, index, enabled))
+            : [],
+        teachingGroups: enabled && Array.isArray(base.teachingGroups)
+            ? base.teachingGroups.map(normalizeTeachingGroup)
+            : [],
+        commuteRules: normalizeCommuteRules(base.commuteRules, enabled),
         lessonPlans,
-        rules: normalizeRules(base.rules),
-        schedule: normalizeSchedule(base.schedule),
+        rules: normalizeRules(base.rules, enabled),
+        schedule: normalizeSchedule(base.schedule, enabled),
         version: base.version || Date.now(),
         updatedAt: base.updatedAt || new Date().toISOString(),
     };
@@ -741,6 +965,9 @@ export function getTimetableEntityMaps(project) {
         classes: new Map(project.classes.map(item => [item.id, item])),
         subjects: new Map(project.subjects.map(item => [item.id, item])),
         plans: new Map(project.lessonPlans.map(item => [item.id, item])),
+        rooms: new Map((project.rooms || []).map(item => [item.id, item])),
+        campuses: new Map((project.campuses || []).map(item => [item.id, item])),
+        teachingGroups: new Map((project.teachingGroups || []).map(item => [item.id, item])),
     };
 }
 
@@ -748,4 +975,41 @@ export function slotTeacherIds(slot) {
     const ids = normalizeIdList(slot?.teacherIds);
     if (slot?.teacherId && !ids.includes(slot.teacherId)) ids.unshift(slot.teacherId);
     return ids;
+}
+
+export function teachingGroupForPlan(project = {}, plan = {}) {
+    const groupId = cleanText(plan.teachingGroupId || plan.groupId, 80);
+    if (!groupId) return null;
+    return (project.teachingGroups || []).find(item => item.id === groupId) || null;
+}
+
+export function classIdsForPlan(project = {}, plan = {}) {
+    const ids = normalizeIdList([plan.classId, ...(plan.classIds || [])]);
+    const group = teachingGroupForPlan(project, plan);
+    for (const id of normalizeIdList(group?.classIds || [])) {
+        if (!ids.includes(id)) ids.push(id);
+    }
+    return ids;
+}
+
+export function slotClassIds(slot = {}) {
+    return normalizeIdList([slot.classId, ...(slot.classIds || [])]);
+}
+
+export function weekPatternForSlot(project = {}, slot = {}) {
+    if (slot.weekPattern) return normalizeWeekPattern(slot.weekPattern, 'every');
+    const plan = (project.lessonPlans || []).find(item => item.id === slot.lessonPlanId);
+    return normalizeWeekPattern(plan?.weekPattern, 'every');
+}
+
+export function campusIdForSlot(project = {}, slot = {}) {
+    if (slot.campusId) return cleanText(slot.campusId, 80);
+    const plan = (project.lessonPlans || []).find(item => item.id === slot.lessonPlanId);
+    if (plan?.campusId) return plan.campusId;
+    const room = (project.rooms || []).find(item => item.id === slot.roomId);
+    if (room?.campusId) return room.campusId;
+    const klass = (project.classes || []).find(item => item.id === slot.classId);
+    if (klass?.campusId) return klass.campusId;
+    const teacher = (project.teachers || []).find(item => item.id === slot.teacherId);
+    return teacher?.campusId || '';
 }

@@ -75,7 +75,7 @@ test('constraint dialog renders recognized constraints and apply action', () => 
 
     assert.match(html, /tt-requirement-workbench/);
     assert.match(html, /已理解需求 \(1\)/);
-    assert.match(html, /将应用规则/);
+    assert.match(html, /落地结果/);
     assert.match(html, /数学尽量上午/);
     assert.match(html, /data-constraint-id="rule_1"/);
     assert.match(html, /data-action="edit-constraint"/);

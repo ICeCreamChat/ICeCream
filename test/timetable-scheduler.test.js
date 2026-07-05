@@ -18,6 +18,7 @@ import {
 } from '../gateway/services/timetable-optimization-jobs.js';
 import { buildPublishedSnapshot } from '../gateway/services/timetable-publication.js';
 import { buildTimetableProblem } from '../gateway/services/timetable-solver-bridge.js';
+import { buildTimetableExportXlsx } from '../gateway/services/timetable-export.js';
 import {
     normalizeTimetableRuleDraftRows,
     parseTimetableRules,
@@ -209,6 +210,62 @@ function solveBenchmark(project, options = {}) {
             durationMs,
         },
     };
+}
+
+function complexProject(overrides = {}) {
+    return createDefaultTimetableProject({
+        timetableModelVersion: 'complex_v1',
+        weekdays: 5,
+        periodsPerDay: 4,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4],
+        campuses: [
+            { id: 'north', name: '北校区' },
+            { id: 'south', name: '南校区' },
+        ],
+        rooms: [
+            { id: 'gym', name: '操场', campusId: 'north', tags: ['sport', 'outdoor'] },
+            { id: 'lab', name: '实验室', campusId: 'south', tags: ['lab'] },
+        ],
+        teachers: [
+            { id: 't_shared', name: '张老师', subjects: ['math'], unavailableSlots: [], campusId: 'north' },
+            { id: 't_music', name: '王老师', subjects: ['music'], unavailableSlots: [], campusId: 'north' },
+            { id: 't_pe', name: '周老师', subjects: ['pe'], unavailableSlots: [], campusId: 'north' },
+            { id: 't_lab', name: '赵老师', subjects: ['science'], unavailableSlots: [], campusId: 'south' },
+        ],
+        classes: [
+            { id: 'c1', grade: '七年级', name: '1班', campusId: 'north' },
+            { id: 'c2', grade: '七年级', name: '2班', campusId: 'north' },
+            { id: 'c3', grade: '七年级', name: '3班', campusId: 'south' },
+        ],
+        subjects: [
+            { id: 'math', name: '数学', priority: 95, color: '#2563eb' },
+            { id: 'music', name: '音乐', priority: 50, color: '#16a34a' },
+            { id: 'pe', name: '体育', priority: 40, color: '#f97316' },
+            { id: 'science', name: '科学', priority: 70, color: '#7c3aed' },
+        ],
+        teachingGroups: [
+            { id: 'tg_music', name: '七年级音乐合班', mode: 'combined_class', classIds: ['c1', 'c2'], subjectIds: ['music'], teacherIds: ['t_music'], roomIds: ['gym'] },
+        ],
+        commuteRules: { defaultGapPeriods: 1, teacherGapPeriods: { t_shared: 1 } },
+        lessonPlans: [
+            { id: 'lp_math_odd', classId: 'c1', subjectId: 'math', teacherId: 't_shared', weeklyHours: 1, weekPattern: 'odd', campusId: 'north' },
+            { id: 'lp_math_even', classId: 'c1', subjectId: 'math', teacherId: 't_shared', weeklyHours: 1, weekPattern: 'even', campusId: 'north' },
+            { id: 'lp_music_group', classId: 'c1', subjectId: 'music', teacherId: 't_music', weeklyHours: 1, teachingGroupId: 'tg_music', roomId: 'gym', campusId: 'north' },
+            { id: 'lp_pe_room', classId: 'c2', subjectId: 'pe', teacherId: 't_pe', weeklyHours: 1, roomRequirement: { preferredRoomIds: ['gym'], requiredTags: ['sport'] }, campusId: 'north' },
+            { id: 'lp_science_south', classId: 'c3', subjectId: 'science', teacherId: 't_shared', weeklyHours: 1, campusId: 'south', roomRequirement: { preferredRoomIds: ['lab'], requiredTags: ['lab'] } },
+        ],
+        rules: { hardRules: { lockedSlots: [], teacherUnavailable: {}, classUnavailable: {} }, softRules: {} },
+        ...overrides,
+    });
+}
+
+function workbookText(buffer) {
+    const workbook = new AdmZip(buffer);
+    return workbook.getEntries()
+        .filter(entry => entry.entryName === 'xl/sharedStrings.xml' || /^xl\/worksheets\/sheet\d+\.xml$/.test(entry.entryName))
+        .map(entry => workbook.readAsText(entry))
+        .join('\n');
 }
 
 function findValidManualMoveTarget(projectInput, slotId) {
@@ -1895,6 +1952,7 @@ test('timetable AI rules parser parses decisive constraint Excel rows locally', 
         rules: { hardRules: {}, softRules: {} },
     });
     let aiCalls = 0;
+    let reviewPrompt = '';
 
     const result = await parseTimetableRules({
         file: {
@@ -1907,13 +1965,23 @@ test('timetable AI rules parser parses decisive constraint Excel rows locally', 
         },
         project,
         env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
-        fetchImpl: async () => {
+        fetchImpl: async (_url, options = {}) => {
             aiCalls += 1;
-            throw new Error('AI should not be called for decisive structured rows');
+            const request = JSON.parse(options.body || '{}');
+            reviewPrompt = request.messages?.[0]?.content || '';
+            assert.match(reviewPrompt, /复审/);
+            return jsonResponse({
+                choices: [{
+                    message: {
+                        content: JSON.stringify({ reviewItems: [] }),
+                    },
+                }],
+            });
         },
     });
 
-    assert.equal(aiCalls, 0);
+    assert.equal(aiCalls, 1);
+    assert.equal(result.aiReview?.status, 'reviewed');
     assert.equal(result.inputType, 'xlsx_constraints');
     assert.equal(result.source, 'local_xlsx');
     assert.equal(result.parseSource, 'local_xlsx');
@@ -1928,7 +1996,8 @@ test('timetable AI rules parser supplements only unresolved constraint Excel row
         activePeriods: [1, 2, 3, 4, 5, 6, 7],
         rules: { hardRules: {}, softRules: {} },
     });
-    let observedPrompt = '';
+    let observedSupplementPrompt = '';
+    let observedReviewPrompt = '';
 
     const result = await parseTimetableRules({
         file: {
@@ -1944,7 +2013,18 @@ test('timetable AI rules parser supplements only unresolved constraint Excel row
         fetchImpl: async (url, options = {}) => {
             assert.equal(String(url), 'http://ai.test/chat/completions');
             const request = JSON.parse(options.body);
-            observedPrompt = JSON.stringify(request.messages);
+            const systemPrompt = request.messages?.[0]?.content || '';
+            if (/复审|审计/.test(systemPrompt)) {
+                observedReviewPrompt = JSON.stringify(request.messages);
+                return jsonResponse({
+                    choices: [{
+                        message: {
+                            content: JSON.stringify({ reviewItems: [] }),
+                        },
+                    }],
+                });
+            }
+            observedSupplementPrompt = JSON.stringify(request.messages);
             assert.equal(request.temperature, 0);
             return jsonResponse({
                 choices: [{
@@ -1962,8 +2042,9 @@ test('timetable AI rules parser supplements only unresolved constraint Excel row
 
     assert.equal(result.inputType, 'xlsx_constraints');
     assert.equal(result.source, 'mixed_xlsx');
-    assert.match(observedPrompt, /High-load teachers/);
-    assert.doesNotMatch(observedPrompt, /Math should be at Monday period 2/);
+    assert.match(observedSupplementPrompt, /High-load teachers/);
+    assert.doesNotMatch(observedSupplementPrompt, /Math should be at Monday period 2/);
+    assert.match(observedReviewPrompt, /Math should be at Monday period 2/);
     assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.math.prefer, ['1-2']);
     assert.ok(result.previewItems.some(item => item.type === 'teacher_load_balance' && item.status === 'suggestion'));
     assert.ok(result.unsupportedItems.some(item => item.type === 'teacher_load_balance'));
@@ -1978,7 +2059,7 @@ test('timetable AI rules parser combines local AI constraint workbook rows with 
         rules: { hardRules: {}, softRules: {} },
     });
     const workbook = await readFile(path.join(process.cwd(), 'AI排课约束建议.xlsx'));
-    let observedPrompt = '';
+    let observedSupplementPrompt = '';
 
     const result = await parseTimetableRules({
         file: {
@@ -1989,7 +2070,18 @@ test('timetable AI rules parser combines local AI constraint workbook rows with 
         env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
         fetchImpl: async (url, options = {}) => {
             assert.equal(String(url), 'http://ai.test/chat/completions');
-            observedPrompt = JSON.stringify(JSON.parse(options.body).messages);
+            const request = JSON.parse(options.body);
+            const systemPrompt = request.messages?.[0]?.content || '';
+            if (/复审|审计/.test(systemPrompt)) {
+                return jsonResponse({
+                    choices: [{
+                        message: {
+                            content: JSON.stringify({ reviewItems: [] }),
+                        },
+                    }],
+                });
+            }
+            observedSupplementPrompt = JSON.stringify(request.messages);
             return jsonResponse({
                 choices: [{
                     message: {
@@ -2012,7 +2104,7 @@ test('timetable AI rules parser combines local AI constraint workbook rows with 
     assert.equal(result.contextStats.sheetName, 'AI约束建议');
     assert.ok(result.contextStats.rowCount >= 10);
     assert.ok(result.draftRows.length >= 3);
-    assert.match(observedPrompt, /同一位教师同一时间只能给一个班上课/);
+    assert.match(observedSupplementPrompt, /同一位教师同一时间只能给一个班上课/);
     assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
     assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.prefer, ['1-5', '2-5', '3-3']);
     assert.ok(result.draftRows.some(row => row.status === 'suggestion' && row.type === 'teacher_load_balance'));
@@ -2060,6 +2152,7 @@ test('timetable smart rules accept full agent schema from the configured parser'
     });
 
     let requestBody = null;
+    let reviewRequestBody = null;
     const result = await parseTimetableRules({
         text: 'Math Teacher 周三第4节不要排。',
         project,
@@ -2070,7 +2163,25 @@ test('timetable smart rules accept full agent schema from the configured parser'
             TIMETABLE_RULE_AI_SEED: '20260705',
         },
         fetchImpl: async (_url, options = {}) => {
-            requestBody = JSON.parse(options.body);
+            const body = JSON.parse(options.body);
+            const systemPrompt = body.messages?.[0]?.content || '';
+            if (/复审|审计/.test(systemPrompt)) {
+                reviewRequestBody = body;
+                return {
+                    ok: true,
+                    status: 200,
+                    async text() {
+                        return JSON.stringify({
+                            choices: [{
+                                message: {
+                                    content: JSON.stringify({ reviewItems: [] }),
+                                },
+                            }],
+                        });
+                    },
+                };
+            }
+            requestBody = body;
             return {
                 ok: true,
                 status: 200,
@@ -2111,6 +2222,8 @@ test('timetable smart rules accept full agent schema from the configured parser'
     const systemPrompt = requestBody.messages[0].content;
     assert.equal(requestBody.temperature, 0);
     assert.equal(requestBody.seed, 20260705);
+    assert.ok(reviewRequestBody);
+    assert.match(reviewRequestBody.messages[0].content, /复审/);
     assert.match(systemPrompt, /"draftRows"/);
     assert.match(systemPrompt, /"autoAcceptable"/);
     assert.match(systemPrompt, /"clarifyingQuestions"/);
@@ -5913,6 +6026,264 @@ test('manual-adjusted schedules keep protected slots and seed Timefold pinned me
         pinnedAssignments.map(assignment => [assignment.lessonPlanId, assignment.pinnedTimeSlotId]).sort(),
         [['lp_cn', '4-3'], ['lp_math', '3-2']],
     );
+});
+
+test('complex timetable scheduler allows odd and even lessons to share one cell without conflict', () => {
+    const project = complexProject({
+        activeWeekdays: [1],
+        activePeriods: [1],
+        weekdays: 1,
+        periodsPerDay: 1,
+        teachers: [{ id: 't_shared', name: '张老师', subjects: ['math'], unavailableSlots: [], campusId: 'north' }],
+        classes: [{ id: 'c1', grade: '七年级', name: '1班', campusId: 'north' }],
+        subjects: [{ id: 'math', name: '数学', priority: 95, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp_math_odd', classId: 'c1', subjectId: 'math', teacherId: 't_shared', weeklyHours: 1, weekPattern: 'odd', campusId: 'north' },
+            { id: 'lp_math_even', classId: 'c1', subjectId: 'math', teacherId: 't_shared', weeklyHours: 1, weekPattern: 'even', campusId: 'north' },
+        ],
+    });
+
+    const result = runTimetableScheduler(project, { seed: 'complex-week-pattern' });
+
+    assert.equal(result.success, true);
+    assert.equal(result.schedule.score.hardConflicts, 0);
+    assert.equal(result.schedule.unplaced.length, 0);
+    assert.deepEqual(
+        result.schedule.slots
+            .map(slot => [slot.lessonPlanId, slot.day, slot.period, slot.weekPattern])
+            .sort(),
+        [
+            ['lp_math_even', 1, 1, 'even'],
+            ['lp_math_odd', 1, 1, 'odd'],
+        ],
+    );
+});
+
+test('complex timetable scheduler expands teaching groups and uses room requirements', () => {
+    const result = runTimetableScheduler(complexProject(), { seed: 'complex-group-room' });
+    const groupSlot = result.schedule.slots.find(slot => slot.lessonPlanId === 'lp_music_group');
+    const peSlot = result.schedule.slots.find(slot => slot.lessonPlanId === 'lp_pe_room');
+    const scienceSlot = result.schedule.slots.find(slot => slot.lessonPlanId === 'lp_science_south');
+
+    assert.equal(result.success, true);
+    assert.equal(result.schedule.score.hardConflicts, 0);
+    assert.deepEqual(groupSlot.classIds, ['c1', 'c2']);
+    assert.equal(groupSlot.teachingGroupId, 'tg_music');
+    assert.equal(groupSlot.roomId, 'gym');
+    assert.equal(peSlot.roomId, 'gym');
+    assert.equal(peSlot.campusId, 'north');
+    assert.equal(scienceSlot.roomId, 'lab');
+    assert.equal(scienceSlot.campusId, 'south');
+});
+
+test('complex timetable scheduler preserves complex metadata for locked lessons', () => {
+    const project = complexProject({
+        rules: {
+            hardRules: {
+                lockedSlots: [
+                    { id: 'locked_math_odd', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_shared', lessonPlanId: 'lp_math_odd' },
+                    { id: 'locked_music_group', day: 2, period: 1, classId: 'c1', subjectId: 'music', teacherId: 't_music', lessonPlanId: 'lp_music_group', roomId: 'gym' },
+                ],
+                teacherUnavailable: {},
+                classUnavailable: {},
+            },
+            softRules: {},
+        },
+    });
+
+    const result = runTimetableScheduler(project, { seed: 'complex-locked-metadata' });
+    const oddSlot = result.schedule.slots.find(slot => slot.lessonPlanId === 'lp_math_odd' && slot.locked);
+    const groupSlot = result.schedule.slots.find(slot => slot.lessonPlanId === 'lp_music_group' && slot.locked);
+
+    assert.equal(result.success, true);
+    assert.equal(result.schedule.score.hardConflicts, 0);
+    assert.equal(oddSlot.weekPattern, 'odd');
+    assert.equal(oddSlot.campusId, 'north');
+    assert.equal(groupSlot.teachingGroupId, 'tg_music');
+    assert.deepEqual(groupSlot.classIds, ['c1', 'c2']);
+    assert.equal(groupSlot.roomId, 'gym');
+    assert.equal(groupSlot.campusId, 'north');
+});
+
+test('complex timetable scheduler enriches protected current slots from complex lesson plans', () => {
+    const project = complexProject({
+        schedule: {
+            id: 'complex_protected_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'manual_adjusted',
+            slots: [
+                {
+                    id: 'manual_music_group',
+                    day: 2,
+                    period: 1,
+                    classId: 'c1',
+                    subjectId: 'music',
+                    teacherId: 't_music',
+                    teacherIds: ['t_music'],
+                    lessonPlanId: 'lp_music_group',
+                    roomId: 'gym',
+                    locked: true,
+                    manuallyAdjusted: true,
+                },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0, completeness: 20 },
+        },
+    });
+
+    const result = runTimetableScheduler(project, { seed: 'complex-protected-metadata' });
+    const protectedSlot = result.schedule.slots.find(slot => slot.id === 'manual_music_group');
+
+    assert.equal(result.success, true);
+    assert.equal(protectedSlot.locked, true);
+    assert.equal(protectedSlot.manuallyAdjusted, true);
+    assert.equal(protectedSlot.teachingGroupId, 'tg_music');
+    assert.deepEqual(protectedSlot.classIds, ['c1', 'c2']);
+    assert.equal(protectedSlot.roomId, 'gym');
+    assert.equal(protectedSlot.campusId, 'north');
+});
+
+test('complex publication validation blocks overlapping weekPattern, teaching group, commute and room conflicts', () => {
+    const project = complexProject({
+        schedule: {
+            id: 'complex_bad_schedule',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'manual_adjusted',
+            slots: [
+                { id: 'odd', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_shared', teacherIds: ['t_shared'], lessonPlanId: 'lp_math_odd', weekPattern: 'odd', campusId: 'north' },
+                { id: 'every', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_shared', teacherIds: ['t_shared'], lessonPlanId: 'lp_math_even', weekPattern: 'every', campusId: 'north' },
+                { id: 'group', day: 2, period: 1, classId: 'c1', classIds: ['c1', 'c2'], subjectId: 'music', teacherId: 't_music', teacherIds: ['t_music'], lessonPlanId: 'lp_music_group', teachingGroupId: 'tg_music', roomId: 'gym', campusId: 'north' },
+                { id: 'c2_math', day: 2, period: 1, classId: 'c2', subjectId: 'math', teacherId: 't_shared', teacherIds: ['t_shared'], lessonPlanId: 'lp_math_odd', weekPattern: 'every', campusId: 'north' },
+                { id: 'north', day: 3, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_shared', teacherIds: ['t_shared'], lessonPlanId: 'lp_math_odd', weekPattern: 'every', campusId: 'north' },
+                { id: 'south', day: 3, period: 2, classId: 'c3', subjectId: 'science', teacherId: 't_shared', teacherIds: ['t_shared'], lessonPlanId: 'lp_science_south', weekPattern: 'every', roomId: 'lab', campusId: 'south' },
+                { id: 'room_a', day: 4, period: 1, classId: 'c1', subjectId: 'music', teacherId: 't_music', teacherIds: ['t_music'], lessonPlanId: 'lp_music_group', weekPattern: 'every', roomId: 'gym', campusId: 'north' },
+                { id: 'room_b', day: 4, period: 1, classId: 'c2', subjectId: 'pe', teacherId: 't_pe', teacherIds: ['t_pe'], lessonPlanId: 'lp_pe_room', weekPattern: 'every', roomId: 'gym', campusId: 'north' },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            score: { totalLessons: 8, placedLessons: 8, unplacedLessons: 0, hardConflicts: 0, completeness: 100 },
+        },
+    });
+
+    const publication = validateTimetablePublication(project);
+    const types = new Set(publication.issueEntries.map(item => item.type));
+
+    assert.equal(publication.ok, false);
+    assert.equal(types.has('week_pattern_conflict'), true);
+    assert.equal(types.has('teaching_group_conflict'), true);
+    assert.equal(types.has('campus_commute_conflict'), true);
+    assert.equal(types.has('room-conflict'), true);
+});
+
+test('complex timetable export includes week pattern, campus, teaching group and room labels', () => {
+    const scheduled = runTimetableScheduler(complexProject(), { seed: 'complex-export' }).project;
+    const buffer = buildTimetableExportXlsx(scheduled, { type: 'master', weekView: 'merged' });
+    const text = workbookText(buffer);
+
+    assert.match(text, /单双周|周次/);
+    assert.match(text, /北校区|南校区/);
+    assert.match(text, /七年级音乐合班/);
+    assert.match(text, /操场|实验室/);
+});
+
+test('complex timetable export filters odd and even week views', () => {
+    const scheduled = runTimetableScheduler(complexProject({
+        activeWeekdays: [1],
+        activePeriods: [1],
+        weekdays: 1,
+        periodsPerDay: 1,
+        teachers: [{ id: 't_shared', name: '张老师', subjects: ['alpha', 'beta'], unavailableSlots: [], campusId: 'north' }],
+        classes: [{ id: 'c1', grade: '七年级', name: '1班', campusId: 'north' }],
+        subjects: [
+            { id: 'alpha', name: '甲课', priority: 90, color: '#2563eb' },
+            { id: 'beta', name: '乙课', priority: 80, color: '#16a34a' },
+        ],
+        lessonPlans: [
+            { id: 'lp_alpha_odd', classId: 'c1', subjectId: 'alpha', teacherId: 't_shared', weeklyHours: 1, weekPattern: 'odd', campusId: 'north' },
+            { id: 'lp_beta_even', classId: 'c1', subjectId: 'beta', teacherId: 't_shared', weeklyHours: 1, weekPattern: 'even', campusId: 'north' },
+        ],
+    }), { seed: 'complex-export-week-view' }).project;
+
+    const oddText = workbookText(buildTimetableExportXlsx(scheduled, { type: 'master', weekView: 'odd' }));
+    const evenText = workbookText(buildTimetableExportXlsx(scheduled, { type: 'master', weekView: 'even' }));
+
+    assert.match(oddText, /甲课/);
+    assert.doesNotMatch(oddText, /乙课/);
+    assert.match(evenText, /乙课/);
+    assert.doesNotMatch(evenText, /甲课/);
+});
+
+test('timetable export API filters complex odd and even week views', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-complex-export-api-'));
+
+    const store = createTimetableStore();
+    const scheduled = runTimetableScheduler(complexProject({
+        activeWeekdays: [1],
+        activePeriods: [1],
+        weekdays: 1,
+        periodsPerDay: 1,
+        teachers: [{ id: 't_shared', name: '张老师', subjects: ['alpha', 'beta'], unavailableSlots: [], campusId: 'north' }],
+        classes: [{ id: 'c1', grade: '七年级', name: '1班', campusId: 'north' }],
+        subjects: [
+            { id: 'alpha', name: '甲课', priority: 90, color: '#2563eb' },
+            { id: 'beta', name: '乙课', priority: 80, color: '#16a34a' },
+        ],
+        lessonPlans: [
+            { id: 'lp_alpha_odd', classId: 'c1', subjectId: 'alpha', teacherId: 't_shared', weeklyHours: 1, weekPattern: 'odd', campusId: 'north' },
+            { id: 'lp_beta_even', classId: 'c1', subjectId: 'beta', teacherId: 't_shared', weeklyHours: 1, weekPattern: 'even', campusId: 'north' },
+        ],
+    }), { seed: 'complex-export-api-week-view' }).project;
+    await store.saveProject(scheduled);
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const publishResponse = await fetch(`${baseUrl}/api/tools/timetable/schedule/publish`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note: 'complex export week view' }),
+        });
+        assert.equal(publishResponse.status, 200);
+
+        const oddResponse = await fetch(`${baseUrl}/api/tools/timetable/export`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'master', weekView: 'odd' }),
+        });
+        const evenResponse = await fetch(`${baseUrl}/api/tools/timetable/export`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'master', weekView: 'even' }),
+        });
+
+        assert.equal(oddResponse.status, 200);
+        assert.equal(evenResponse.status, 200);
+        const oddText = workbookText(Buffer.from(await oddResponse.arrayBuffer()));
+        const evenText = workbookText(Buffer.from(await evenResponse.arrayBuffer()));
+
+        assert.match(oddText, /甲课/);
+        assert.doesNotMatch(oddText, /乙课/);
+        assert.match(evenText, /乙课/);
+        assert.doesNotMatch(evenText, /甲课/);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
 });
 
 test('timetable API clears roster data while preserving active timetable range', async () => {
