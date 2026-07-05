@@ -516,14 +516,47 @@
 
 .tt-requirement-filter-bar {
     display: flex;
+    align-items: center;
     flex-wrap: wrap;
-    gap: 7px;
+    column-gap: 12px;
+    row-gap: 8px;
     min-width: 0;
+}
+
+.tt-requirement-filter-children {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+    padding: 4px 0 4px 18px;
+    border-left: 1px solid rgba(148, 163, 184, 0.32);
+}
+
+.tt-requirement-filter-children::before {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 10px;
+    height: 1px;
+    border-top: 1px solid rgba(148, 163, 184, 0.44);
+    content: "";
+    transform: translateY(-50%);
+}
+
+.tt-requirement-filter-children-label {
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 1;
+    white-space: nowrap;
 }
 
 .tt-requirement-filter {
     display: inline-grid;
-    grid-template-columns: 14px auto minmax(20px, auto);
+    grid-template-columns: 24px auto minmax(20px, auto);
     align-items: center;
     gap: 6px;
     min-height: 30px;
@@ -538,6 +571,22 @@
     cursor: pointer;
 }
 
+.tt-requirement-filter--all {
+    min-height: 34px;
+    padding-inline: 11px;
+    border-color: rgba(148, 163, 184, 0.34);
+    background: rgba(15, 23, 42, 0.18);
+    color: var(--tt-text);
+    box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.08);
+}
+
+.tt-requirement-filter--child {
+    min-height: 28px;
+    padding-inline: 8px;
+    background: rgba(15, 23, 42, 0.08);
+    font-size: 0.71rem;
+}
+
 .tt-requirement-filter:hover,
 .tt-requirement-filter.is-active {
     border-color: rgba(8, 145, 178, 0.42);
@@ -545,9 +594,54 @@
     color: var(--tt-primary);
 }
 
-.tt-requirement-filter i {
+.tt-requirement-filter--all.is-active {
+    border-color: rgba(8, 145, 178, 0.58);
+    background: rgba(8, 145, 178, 0.12);
+}
+
+.tt-requirement-filter-icon {
+    justify-self: center;
+    width: 16px;
+    height: 16px;
+}
+
+.tt-requirement-filter-entry {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border: 1px solid rgba(8, 145, 178, 0.28);
+    border-radius: 999px;
+    background: rgba(8, 145, 178, 0.1);
+    color: inherit;
+    box-shadow: inset 0 0 0 1px rgba(8, 145, 178, 0.08);
+}
+
+.tt-requirement-filter-entry i,
+.tt-requirement-filter-entry svg {
     width: 14px;
     height: 14px;
+}
+
+.tt-requirement-filter-entry em {
+    position: absolute;
+    top: -3px;
+    right: -1px;
+    display: inline-grid;
+    place-items: center;
+    min-width: 12px;
+    height: 12px;
+    padding: 0 2px;
+    border: 1px solid var(--tt-bg-panel);
+    border-radius: 999px;
+    background: var(--tt-primary);
+    color: white;
+    font-size: 0.52rem;
+    font-style: normal;
+    font-weight: 900;
+    line-height: 1;
+    box-shadow: 0 2px 6px rgba(8, 145, 178, 0.26);
 }
 
 .tt-requirement-filter b {
@@ -814,6 +908,12 @@
     background: var(--tt-bg-input);
 }
 
+.tt-requirement-detail .tt-constraint-card--excluded,
+.tt-semantic-action-item--excluded {
+    border-style: dashed;
+    opacity: 0.72;
+}
+
 .tt-requirement-detail .tt-constraint-content strong {
     font-size: 0.78rem;
 }
@@ -824,6 +924,17 @@
 
 .tt-requirement-detail .tt-constraint-actions {
     justify-content: flex-start;
+}
+
+.tt-apply-toggle {
+    min-height: 30px;
+    padding-inline: 10px;
+    white-space: nowrap;
+}
+
+.tt-apply-toggle.is-excluded {
+    border-color: rgba(8, 145, 178, 0.38);
+    color: var(--tt-primary);
 }
 
 .tt-semantic-action-item {
@@ -1149,6 +1260,12 @@
         margin: 0 -2px;
         overflow-x: auto;
         padding: 0 2px 2px;
+    }
+
+    .tt-requirement-filter-children {
+        flex: 0 0 auto;
+        flex-wrap: nowrap;
+        padding: 4px 0 4px 16px;
     }
 
     .tt-requirement-filter {

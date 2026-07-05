@@ -6,12 +6,14 @@
 import { requestTimetable } from './api.js';
 import {
     buildUnifiedRequirementItems,
+    draftRowApplyItemKey,
     filterUnifiedRequirementItems,
     getActionableDraftRows,
     getActionableRequirementCount,
     getApplicableSemanticActions,
     getBackendRuleRows,
     getDefaultRequirementId,
+    semanticActionApplyItemKey,
 } from './constraint-dialog-review-model.js';
 
 const REQUIREMENT_FILTER_KEYS = new Set(['all', 'rule', 'lesson_plan', 'optimization', 'handled', 'review']);
@@ -27,6 +29,34 @@ function normalizeRequirementReviewState(dialog = {}, items = []) {
         ? dialog.selectedRequirementId
         : getDefaultRequirementId(items, filter);
     return { filter, selectedId };
+}
+
+function getRequirementOwnersForDraftRow(review = {}, constraintId = '') {
+    const targetId = String(constraintId || '');
+    if (!targetId) return new Set();
+
+    return new Set(
+        buildUnifiedRequirementItems(review)
+            .filter(item => (item.machineRules || []).some(row => String(row?.id || '') === targetId))
+            .map(item => item.id)
+            .filter(Boolean)
+    );
+}
+
+function removeEmptyRequirementOwners(review = {}, ownerIds = new Set()) {
+    if (!ownerIds.size || !Array.isArray(review.requirementItems)) return;
+
+    const remainingItems = buildUnifiedRequirementItems(review);
+    const removableOwners = new Set(
+        remainingItems
+            .filter(item => ownerIds.has(item.id))
+            .filter(item => !(item.machineRules || []).length && !(item.semanticActions || []).length)
+            .map(item => item.id)
+    );
+
+    if (!removableOwners.size) return;
+
+    review.requirementItems = review.requirementItems.filter(item => !removableOwners.has(item.id));
 }
 
 /**
@@ -57,6 +87,7 @@ export function openConstraintDialog(mode = null) {
         draftRows: currentReview.draftRows || [],
         requirementItems: currentReview.requirementItems || [],
         semanticActions: currentReview.semanticActions || [],
+        excludedApplyItemKeys: currentReview.excludedApplyItemKeys || [],
         parsing: Boolean(currentReview.parsing),
     };
 
@@ -95,6 +126,22 @@ export function selectRequirement(requirementId) {
         this.state.constraintDialog = { open: true };
     }
     this.state.constraintDialog.selectedRequirementId = requirementId;
+    this.render();
+}
+
+export function toggleConstraintApplyItem(applyItemKey) {
+    const key = String(applyItemKey || '').trim();
+    if (!key) return;
+    if (!this.state.ruleReview) {
+        this.state.ruleReview = {};
+    }
+    const keys = new Set((this.state.ruleReview.excludedApplyItemKeys || []).map(String).filter(Boolean));
+    if (keys.has(key)) {
+        keys.delete(key);
+    } else {
+        keys.add(key);
+    }
+    this.state.ruleReview.excludedApplyItemKeys = [...keys];
     this.render();
 }
 
@@ -305,10 +352,17 @@ export function addManualConstraint() {
  */
 export function deleteConstraint(constraintId) {
     if (!this.state.ruleReview?.draftRows) return;
+    if (typeof confirm === 'function' && !confirm('确定要删除这条规则吗？删除后需要重新识别或手动添加。')) {
+        return;
+    }
 
+    const ownerIds = getRequirementOwnersForDraftRow(this.state.ruleReview, constraintId);
     this.state.ruleReview.draftRows = this.state.ruleReview.draftRows.filter(
         c => c.id !== constraintId
     );
+    removeEmptyRequirementOwners(this.state.ruleReview, ownerIds);
+    this.state.ruleReview.excludedApplyItemKeys = (this.state.ruleReview.excludedApplyItemKeys || [])
+        .filter(key => key !== `rule:${constraintId}`);
     const reviewState = normalizeRequirementReviewState(this.state.constraintDialog || {}, buildUnifiedRequirementItems(this.state.ruleReview || {}));
     this.state.constraintDialog = {
         ...(this.state.constraintDialog || {}),
@@ -328,6 +382,7 @@ export function clearAllConstraints() {
         this.state.ruleReview.draftRows = [];
         this.state.ruleReview.requirementItems = [];
         this.state.ruleReview.semanticActions = [];
+        this.state.ruleReview.excludedApplyItemKeys = [];
     }
     if (this.state.constraintDialog) {
         this.state.constraintDialog.requirementFilter = 'all';
@@ -341,10 +396,13 @@ export function clearAllConstraints() {
  */
 export async function applyConstraintsFromDialog() {
     const constraints = this.state.ruleReview?.draftRows || [];
-    const actionableDraftRows = getActionableDraftRows(this.state.ruleReview || {});
-    const backendRuleRows = getBackendRuleRows(this.state.ruleReview || {});
-    const semanticActions = getApplicableSemanticActions(this.state.ruleReview || {});
-    const applyCount = getActionableRequirementCount(this.state.ruleReview || {});
+    const activeFilter = REQUIREMENT_FILTER_KEYS.has(this.state.constraintDialog?.requirementFilter)
+        ? this.state.constraintDialog.requirementFilter
+        : 'all';
+    const actionableDraftRows = getActionableDraftRows(this.state.ruleReview || {}, activeFilter);
+    const backendRuleRows = getBackendRuleRows(this.state.ruleReview || {}, activeFilter);
+    const semanticActions = getApplicableSemanticActions(this.state.ruleReview || {}, activeFilter);
+    const applyCount = getActionableRequirementCount(this.state.ruleReview || {}, activeFilter);
     if (applyCount === 0) {
         alert('没有可应用的需求');
         return;
@@ -356,7 +414,10 @@ export async function applyConstraintsFromDialog() {
         return;
     }
 
-    if (!confirm(`确定要应用 ${applyCount} 条需求吗？`)) {
+    const confirmMessage = activeFilter === 'all'
+        ? `确定要应用 ${applyCount} 条需求吗？`
+        : `确定要应用当前分类的 ${applyCount} 条需求吗？`;
+    if (!confirm(confirmMessage)) {
         return;
     }
 
@@ -435,10 +496,16 @@ export async function applyConstraintsFromDialog() {
 
         // 清空草稿
         const appliedRuleIds = new Set(actionableDraftRows.map(row => row.id));
+        const appliedApplyItemKeys = new Set([
+            ...actionableDraftRows.map(row => draftRowApplyItemKey(row)),
+            ...semanticActions.map(action => semanticActionApplyItemKey(action)),
+        ]);
         this.state.ruleReview.draftRows = (this.state.ruleReview.draftRows || [])
             .filter(row => !appliedRuleIds.has(row.id));
         this.state.ruleReview.semanticActions = (this.state.ruleReview.semanticActions || [])
             .filter(action => !appliedActionIds.has(action.id));
+        this.state.ruleReview.excludedApplyItemKeys = (this.state.ruleReview.excludedApplyItemKeys || [])
+            .filter(key => !appliedApplyItemKeys.has(key));
         this.state.ruleReview.requirementItems = (this.state.ruleReview.requirementItems || [])
             .filter(item => !appliedRequirementIds.has(item.id) && item.status !== 'handled');
         const reviewState = normalizeRequirementReviewState(this.state.constraintDialog || {}, buildUnifiedRequirementItems(this.state.ruleReview || {}));

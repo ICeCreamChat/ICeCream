@@ -52,13 +52,15 @@ export function renderConstraintCard(constraint, state) {
     const isEditing = state?.constraintDialog?.editingConstraint?.originalId === constraint.id;
     const timeLabel = constraintTimeLabel(constraint);
     const sourceLabel = constraintSourceLabel(constraint);
+    const applyItemKey = constraint.applyItemKey || '';
+    const applyExcluded = Boolean(constraint.applyExcluded);
 
     return `
-        <div class="tt-constraint-card ${constraint.hasConflict ? 'tt-constraint-card--conflict' : ''}" data-constraint-id="${escapeAttr(constraint.id)}">
+        <div class="tt-constraint-card ${constraint.hasConflict ? 'tt-constraint-card--conflict' : ''} ${applyExcluded ? 'tt-constraint-card--excluded' : ''}" data-constraint-id="${escapeAttr(constraint.id)}" ${applyItemKey ? `data-apply-item-key="${escapeAttr(applyItemKey)}"` : ''}>
             <div class="tt-constraint-card-header">
                 <span class="tt-constraint-type">${escapeHtml(constraint.typeLabel || constraint.type)}</span>
                 <span class="tt-constraint-confidence tt-confidence--${escapeAttr(constraint.confidenceTone || 'medium')}">
-                    ${escapeHtml(constraint.confidenceLabel || '中')}
+                    ${escapeHtml(applyExcluded ? '暂不应用' : (constraint.confidenceLabel || '中'))}
                 </span>
                 ${constraint.hasConflict ? `
                     <span class="tt-constraint-conflict-badge" title="${constraint.conflicts?.length || 0} 个冲突">
@@ -97,6 +99,11 @@ export function renderConstraintCard(constraint, state) {
                 <button class="tt-btn-icon" data-action="delete-constraint" title="删除" type="button">
                     <i data-lucide="trash-2"></i>
                 </button>
+                ${applyItemKey ? `
+                    <button class="tt-btn tt-btn--sm tt-btn--ghost tt-apply-toggle ${applyExcluded ? 'is-excluded' : ''}" data-action="toggle-constraint-apply-item" data-apply-item-key="${escapeAttr(applyItemKey)}" type="button">
+                        ${escapeHtml(applyExcluded ? '恢复应用' : '暂停应用')}
+                    </button>
+                ` : ''}
             </div>
         </div>
     `;

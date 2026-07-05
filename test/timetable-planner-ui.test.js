@@ -185,6 +185,13 @@ test('timetable constraint dialog renders object-first requirements as a review 
   assert.match(html, /tt-constraint-dialog--semantic-review/);
   assert.match(html, /tt-requirement-workbench/);
   assert.match(html, /tt-requirement-filter-bar/);
+  assert.match(html, /tt-requirement-filter--all/);
+  assert.match(html, /tt-requirement-filter-children/);
+  assert.match(html, /tt-requirement-filter-children-label[\s\S]*分类/);
+  assert.match(html, /tt-requirement-filter--child/);
+  assert.match(html, /tt-requirement-filter-icon" data-lucide="list-filter"/);
+  assert.match(html, /tt-requirement-filter-entry[\s\S]*data-lucide="door-open"/);
+  assert.doesNotMatch(html, /tt-requirement-filter-entry[\s\S]{0,160}<em>/);
   assert.match(html, /tt-requirement-table/);
   assert.match(html, /tt-requirement-detail/);
   assert.doesNotMatch(html, /tt-requirement-card/);
@@ -333,6 +340,255 @@ test('timetable constraint dialog filters semantic requirements by destination',
   assert.match(html, /<span>数学<\/span>/);
   assert.match(html, /双连堂/);
   assert.doesNotMatch(html, /<span>语文<\/span>/);
+});
+
+test('timetable constraint dialog applies only the current filtered requirements', async () => {
+  const ruleReview = {
+    open: true,
+    step: 'review',
+    mode: 'text',
+    draftRows: [{
+      id: 'rule-row',
+      requirementId: 'req_rule',
+      type: 'subject_morning',
+      targetType: 'subject',
+      targetName: '语文',
+      status: 'effective',
+      confidence: 0.94,
+      warnings: [],
+    }],
+    warnings: [],
+    conflicts: [],
+    unsupportedItems: [],
+    requirementItems: [
+      {
+        id: 'req_rule',
+        object: { kind: 'subject', name: '语文', matchedIds: ['s1'], scope: 'explicit' },
+        intent: 'preferred_periods',
+        status: 'actionable',
+        applyTo: 'rule',
+        parameters: { dayPart: 'morning' },
+        source: { rawText: '语文尽量上午' },
+      },
+      {
+        id: 'req_block',
+        object: { kind: 'subject', name: '数学', matchedIds: ['math'], scope: 'explicit' },
+        intent: 'block_preference',
+        status: 'actionable',
+        applyTo: 'lesson_plan',
+        parameters: { blockPreference: 'double' },
+        source: { rawText: '数学必须连堂' },
+      },
+    ],
+    semanticActions: [
+      { id: 'act_block', requirementId: 'req_block', kind: 'lesson_plan_patch', status: 'ready', payload: { blockPreference: 'double' } },
+    ],
+  };
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview,
+    constraintDialog: { open: true, requirementFilter: 'lesson_plan', selectedRequirementId: 'req_block' },
+  }));
+  assert.match(html, /data-requirement-filter="lesson_plan"[\s\S]*aria-pressed="true"/);
+  assert.match(html, /data-action="toggle-constraint-apply-item"/);
+  assert.match(html, /data-apply-item-key="action:act_block"/);
+  assert.match(html, /暂停应用/);
+  assert.match(html, /应用当前分类 \(1\)/);
+  assert.doesNotMatch(html, /应用需求 \(2\)/);
+
+  const calls = [];
+  const alerts = [];
+  const confirmations = [];
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.confirm;
+  const originalAlert = globalThis.alert;
+  globalThis.confirm = message => {
+    confirmations.push(message);
+    return true;
+  };
+  globalThis.alert = message => alerts.push(message);
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), body });
+    if (String(url).endsWith('/rules/normalize')) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            success: true,
+            data: {
+              draftRows: [{ id: 'rule-row', status: 'effective' }],
+              draftRules: { hardRules: {}, softRules: { subjectMorning: ['s1'] } },
+            },
+          });
+        },
+      };
+    }
+    if (String(url).endsWith('/rules')) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            success: true,
+            data: { project: createDefaultTimetableProject() },
+          });
+        },
+      };
+    }
+    if (String(url).endsWith('/requirements/apply')) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            success: true,
+            data: {
+              project: createDefaultTimetableProject(),
+              applied: [{ id: 'act_block' }],
+              skipped: [],
+              needsReview: [],
+            },
+          });
+        },
+      };
+    }
+    throw new Error(`Unexpected fetch ${url}`);
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.project = createDefaultTimetableProject();
+    controller.state.ruleReview = JSON.parse(JSON.stringify(ruleReview));
+    controller.state.constraintDialog = { open: true, requirementFilter: 'lesson_plan', selectedRequirementId: 'req_block' };
+
+    await controller.applyConstraintsFromDialog();
+
+    assert.deepEqual(calls.filter(call => call.url.endsWith('/rules/normalize')), []);
+    assert.deepEqual(calls.filter(call => call.url.endsWith('/rules')), []);
+    assert.deepEqual(
+      calls.find(call => call.url.endsWith('/requirements/apply'))?.body.actions.map(action => action.id),
+      ['act_block']
+    );
+    assert.deepEqual(controller.state.ruleReview.draftRows.map(row => row.id), ['rule-row']);
+    assert.deepEqual(controller.state.ruleReview.semanticActions.map(action => action.id), []);
+    assert.ok(confirmations.some(message => /当前分类的 1 条需求/.test(message)));
+    assert.ok(alerts.some(message => /成功应用 1 条需求/.test(message)));
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.confirm = originalConfirm;
+    globalThis.alert = originalAlert;
+  }
+});
+
+test('timetable constraint dialog can remove and restore one apply item without deleting it', () => {
+  const ruleReview = {
+    open: true,
+    step: 'review',
+    mode: 'text',
+    draftRows: [{
+      id: 'rule-row',
+      requirementId: 'req_rule',
+      type: 'subject_morning',
+      targetType: 'subject',
+      targetName: '语文',
+      status: 'effective',
+      confidence: 0.94,
+      warnings: [],
+    }],
+    warnings: [],
+    conflicts: [],
+    unsupportedItems: [],
+    requirementItems: [{
+      id: 'req_rule',
+      object: { kind: 'subject', name: '语文', matchedIds: ['s1'], scope: 'explicit' },
+      intent: 'preferred_periods',
+      status: 'actionable',
+      applyTo: 'rule',
+      parameters: { dayPart: 'morning' },
+      source: { rawText: '语文尽量上午' },
+    }],
+    semanticActions: [],
+  };
+  const initialHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview,
+    constraintDialog: { open: true, requirementFilter: 'rule', selectedRequirementId: 'req_rule' },
+  }));
+  assert.match(initialHtml, /data-apply-item-key="rule:rule-row"/);
+  assert.match(initialHtml, /暂停应用/);
+  assert.match(initialHtml, /应用当前分类 \(1\)/);
+
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.ruleReview = JSON.parse(JSON.stringify(ruleReview));
+  controller.state.constraintDialog = { open: true, requirementFilter: 'rule', selectedRequirementId: 'req_rule' };
+
+  controller.toggleConstraintApplyItem('rule:rule-row');
+
+  assert.deepEqual(controller.state.ruleReview.excludedApplyItemKeys, ['rule:rule-row']);
+  assert.deepEqual(controller.state.ruleReview.draftRows.map(row => row.id), ['rule-row']);
+  const removedHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: controller.state.ruleReview,
+    constraintDialog: controller.state.constraintDialog,
+  }));
+  assert.match(removedHtml, /tt-constraint-card--excluded/);
+  assert.match(removedHtml, /恢复应用/);
+  assert.doesNotMatch(removedHtml, /应用当前分类 \(1\)/);
+
+  controller.toggleConstraintApplyItem('rule:rule-row');
+
+  assert.deepEqual(controller.state.ruleReview.excludedApplyItemKeys, []);
+  const restoredHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: controller.state.ruleReview,
+    constraintDialog: controller.state.constraintDialog,
+  }));
+  assert.match(restoredHtml, /暂停应用/);
+  assert.match(restoredHtml, /应用当前分类 \(1\)/);
+});
+
+test('timetable constraint dialog confirms before deleting one machine rule', () => {
+  const confirmations = [];
+  const originalConfirm = globalThis.confirm;
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.ruleReview = {
+      draftRows: [{ id: 'rule-row', requirementId: 'req_rule', type: 'subject_morning', status: 'effective' }],
+      requirementItems: [{
+        id: 'req_rule',
+        object: { kind: 'subject', name: '语文', matchedIds: ['s1'], scope: 'explicit' },
+        intent: 'preferred_periods',
+        status: 'actionable',
+        applyTo: 'rule',
+        source: { rawText: '语文尽量上午' },
+      }],
+      semanticActions: [],
+      excludedApplyItemKeys: ['rule:rule-row'],
+    };
+    controller.state.constraintDialog = { open: true, requirementFilter: 'rule', selectedRequirementId: '' };
+
+    globalThis.confirm = message => {
+      confirmations.push(message);
+      return false;
+    };
+    controller.deleteConstraint('rule-row');
+    assert.deepEqual(controller.state.ruleReview.draftRows.map(row => row.id), ['rule-row']);
+    assert.deepEqual(controller.state.ruleReview.requirementItems.map(item => item.id), ['req_rule']);
+    assert.deepEqual(controller.state.ruleReview.excludedApplyItemKeys, ['rule:rule-row']);
+
+    globalThis.confirm = message => {
+      confirmations.push(message);
+      return true;
+    };
+    controller.deleteConstraint('rule-row');
+    assert.deepEqual(controller.state.ruleReview.draftRows, []);
+    assert.deepEqual(controller.state.ruleReview.requirementItems, []);
+    assert.deepEqual(controller.state.ruleReview.excludedApplyItemKeys, []);
+    assert.ok(confirmations.some(message => /删除这条规则/.test(message)));
+  } finally {
+    globalThis.confirm = originalConfirm;
+  }
 });
 
 test('timetable constraint dialog reserves semantic review height before legacy draft rows', async () => {

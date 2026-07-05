@@ -190,6 +190,9 @@ function bindDelegatedInteractions(container) {
         } else if (action === 'select-requirement') {
             const requirementId = event.target.closest('[data-requirement-id]')?.dataset.requirementId;
             controller.selectRequirement(requirementId);
+        } else if (action === 'toggle-constraint-apply-item') {
+            const applyItemKey = event.target.closest('[data-apply-item-key]')?.dataset.applyItemKey;
+            controller.toggleConstraintApplyItem(applyItemKey);
         } else if (action === 'delete-constraint') {
             const constraintId = event.target.closest('[data-constraint-id]')?.dataset.constraintId;
             controller.deleteConstraint(constraintId);

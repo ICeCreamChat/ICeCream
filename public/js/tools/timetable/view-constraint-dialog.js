@@ -25,9 +25,12 @@ import {
 } from './view-constraint-dialog-components.js';
 import {
     buildUnifiedRequirementItems,
+    draftRowApplyItemKey,
     filterUnifiedRequirementItems,
     getActionableRequirementCount,
     getRequirementGroupKey,
+    isApplyItemExcluded,
+    semanticActionApplyItemKey,
 } from './constraint-dialog-review-model.js';
 
 function renderConstraintCard(constraint, state) {
@@ -40,7 +43,10 @@ const REQUIREMENT_GROUPS = [
     { key: 'optimization', title: '可应用到优化目标', icon: 'sliders-horizontal' },
     { key: 'handled', title: '已自动处理', icon: 'check-circle-2' },
     { key: 'review', title: '需复核', icon: 'circle-alert' },
-];
+].map((group) => ({
+    ...group,
+    entryIcon: 'door-open',
+}));
 
 const REQUIREMENT_FILTERS = [
     { key: 'all', title: '全部', icon: 'list-filter' },
@@ -348,19 +354,33 @@ function selectedRequirement(requirements = [], selectedId = '') {
 
 function renderRequirementFilterBar(requirements = [], activeFilter = 'all') {
     const counts = requirementCounts(requirements);
+    const renderFilterButton = (filter, extraClass = '') => {
+        const isActive = (activeFilter || 'all') === filter.key;
+        const icon = filter.entryIcon
+            ? `
+                <span class="tt-requirement-filter-entry" aria-hidden="true">
+                    <i data-lucide="${escapeAttr(filter.entryIcon || 'door-open')}"></i>
+                </span>
+            `
+            : `<i class="tt-requirement-filter-icon" data-lucide="${escapeAttr(filter.icon)}"></i>`;
+        return `
+            <button class="tt-requirement-filter ${extraClass} ${isActive ? 'is-active' : ''}" type="button"
+                data-action="filter-requirements" data-requirement-filter="${escapeAttr(filter.key)}" aria-pressed="${isActive ? 'true' : 'false'}">
+                ${icon}
+                <span>${escapeHtml(filter.title)}</span>
+                <b>${counts.get(filter.key) || 0}</b>
+            </button>
+        `;
+    };
+    const allFilter = REQUIREMENT_FILTERS.find(filter => filter.key === 'all');
+    const childFilters = REQUIREMENT_FILTERS.filter(filter => filter.key !== 'all');
     return `
         <div class="tt-requirement-filter-bar" role="toolbar" aria-label="需求分组筛选">
-            ${REQUIREMENT_FILTERS.map(filter => {
-                const isActive = (activeFilter || 'all') === filter.key;
-                return `
-                    <button class="tt-requirement-filter ${isActive ? 'is-active' : ''}" type="button"
-                        data-action="filter-requirements" data-requirement-filter="${escapeAttr(filter.key)}" aria-pressed="${isActive ? 'true' : 'false'}">
-                        <i data-lucide="${escapeAttr(filter.icon)}"></i>
-                        <span>${escapeHtml(filter.title)}</span>
-                        <b>${counts.get(filter.key) || 0}</b>
-                    </button>
-                `;
-            }).join('')}
+            ${allFilter ? renderFilterButton(allFilter, 'tt-requirement-filter--all') : ''}
+            <div class="tt-requirement-filter-children" role="group" aria-label="需求子分类">
+                <span class="tt-requirement-filter-children-label">分类</span>
+                ${childFilters.map(filter => renderFilterButton(filter, 'tt-requirement-filter--child')).join('')}
+            </div>
         </div>
     `;
 }
@@ -387,7 +407,7 @@ function renderRequirementRow(item = {}, selectedId = '') {
     `;
 }
 
-function normalizeMachineRuleForRender(rule = {}) {
+function normalizeMachineRuleForRender(rule = {}, state = {}) {
     const typeKey = String(rule.type || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
     const confidence = typeof rule.confidence === 'number'
         ? (rule.confidence <= 1 ? rule.confidence * 100 : rule.confidence)
@@ -396,12 +416,15 @@ function normalizeMachineRuleForRender(rule = {}) {
         || (confidence === null ? 'medium' : confidence >= 85 ? 'high' : confidence >= 60 ? 'medium' : 'low');
     const confidenceLabel = rule.confidenceLabel
         || (confidence === null ? '中' : confidence >= 85 ? '高' : confidence >= 60 ? '中' : '低');
+    const applyItemKey = draftRowApplyItemKey(rule);
     return {
         ...rule,
         typeLabel: rule.typeLabel || RULE_TYPE_LABELS[typeKey] || '约束规则',
         confidenceTone,
         confidenceLabel,
         understanding: rule.understanding || rule.description || requirementIntentLabel(rule.intent || rule.type),
+        applyItemKey,
+        applyExcluded: isApplyItemExcluded(state.ruleReview || {}, applyItemKey),
     };
 }
 
@@ -430,13 +453,20 @@ function semanticActionStatusLabel(action = {}) {
     }[key] || '待确认';
 }
 
-function renderSemanticActionSummary(action = {}) {
+function renderSemanticActionSummary(action = {}, state = {}) {
     const targetLabel = action.target?.name || action.targetName || action.object?.name || '';
+    const applyItemKey = semanticActionApplyItemKey(action);
+    const applyExcluded = isApplyItemExcluded(state.ruleReview || {}, applyItemKey);
     return `
-        <div class="tt-semantic-action-item">
+        <div class="tt-semantic-action-item ${applyExcluded ? 'tt-semantic-action-item--excluded' : ''}" data-apply-item-key="${escapeAttr(applyItemKey)}">
             <span class="tt-constraint-type">${escapeHtml(semanticActionLabel(action))}</span>
             <strong>${escapeHtml(targetLabel || semanticActionLabel(action))}</strong>
-            <span>${escapeHtml(semanticActionStatusLabel(action))}</span>
+            <span>${escapeHtml(applyExcluded ? '暂不应用' : semanticActionStatusLabel(action))}</span>
+            <div class="tt-constraint-actions tt-semantic-action-actions">
+                <button class="tt-btn tt-btn--sm tt-btn--ghost tt-apply-toggle ${applyExcluded ? 'is-excluded' : ''}" data-action="toggle-constraint-apply-item" data-apply-item-key="${escapeAttr(applyItemKey)}" type="button">
+                    ${escapeHtml(applyExcluded ? '恢复应用' : '暂停应用')}
+                </button>
+            </div>
         </div>
     `;
 }
@@ -453,12 +483,12 @@ function renderRequirementMachineRules(item = {}, state = {}) {
             ${rules.length || actions.length ? `
                 ${rules.length ? `
                     <div class="tt-machine-rule-list">
-                        ${rules.map(rule => renderConstraintCard(normalizeMachineRuleForRender(rule), state)).join('')}
+                        ${rules.map(rule => renderConstraintCard(normalizeMachineRuleForRender(rule, state), state)).join('')}
                     </div>
                 ` : ''}
                 ${actions.length ? `
                     <div class="tt-semantic-action-list">
-                        ${actions.map(renderSemanticActionSummary).join('')}
+                        ${actions.map(action => renderSemanticActionSummary(action, state)).join('')}
                     </div>
                 ` : ''}
             ` : '<p class="tt-requirement-machine-empty">暂无可直接写入的机器规则</p>'}
@@ -579,7 +609,11 @@ export function renderConstraintDialog(state) {
     const mode = review.inputMode || 'text';
     const constraints = review.draftRows || [];
     const requirements = buildUnifiedRequirementItems(review);
-    const actionableRequirementCount = getActionableRequirementCount(review);
+    const activeFilter = REQUIREMENT_FILTERS.some(filter => filter.key === dialog.requirementFilter)
+        ? dialog.requirementFilter
+        : 'all';
+    const actionableRequirementCount = getActionableRequirementCount(review, activeFilter);
+    const applyButtonLabel = activeFilter === 'all' ? '应用需求' : '应用当前分类';
     const parsing = review.parsing || false;
     const editingConstraint = dialog.editingConstraint;
     const aiChat = dialog.aiChat;
@@ -615,7 +649,7 @@ export function renderConstraintDialog(state) {
             ${actionableRequirementCount > 0 ? `
                 <button class="tt-btn tt-btn--primary" data-action="apply-constraints" type="button" ${parsing || hasBlockingConflict ? 'disabled' : ''}>
                     <i data-lucide="check"></i>
-                    <span>应用需求 (${actionableRequirementCount})</span>
+                    <span>${applyButtonLabel} (${actionableRequirementCount})</span>
                 </button>
             ` : ''}
         </div>

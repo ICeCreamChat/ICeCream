@@ -265,21 +265,74 @@ export function isSemanticActionApplicable(action = {}) {
         && ['ready', 'actionable', 'effective'].includes(status);
 }
 
-export function getActionableDraftRows(review = {}) {
-    return (review.draftRows || []).filter(row => isDraftRowActionable(row));
+function fallbackKey(prefix, item = {}) {
+    return `${prefix}:${item.id || item.rowId || item.actionId || item.requirementId || ''}`;
 }
 
-export function getBackendRuleRows(review = {}) {
-    return getActionableDraftRows(review).filter(row => BACKEND_RULE_TYPES.has(normalizeKey(row.type || row.intent || '')));
+export function draftRowApplyItemKey(row = {}) {
+    return fallbackKey('rule', row);
 }
 
-export function getApplicableSemanticActions(review = {}) {
-    return (review.semanticActions || []).filter(action => isSemanticActionApplicable(action));
+export function semanticActionApplyItemKey(action = {}) {
+    return fallbackKey('action', action);
 }
 
-export function getActionableRequirementCount(review = {}) {
-    return buildUnifiedRequirementItems(review).filter(item => (
-        (item.machineRules || []).some(row => isDraftRowActionable(row))
-        || (item.semanticActions || []).some(action => isSemanticActionApplicable(action))
-    )).length;
+function excludedApplyItemKeySet(review = {}) {
+    return new Set((review.excludedApplyItemKeys || []).map(String).filter(Boolean));
+}
+
+export function isApplyItemExcluded(review = {}, key = '') {
+    return excludedApplyItemKeySet(review).has(String(key || ''));
+}
+
+function requirementItemIsActionable(item = {}, review = {}) {
+    return (item.machineRules || []).some(row => (
+        isDraftRowActionable(row)
+        && !isApplyItemExcluded(review, draftRowApplyItemKey(row))
+    ))
+        || (item.semanticActions || []).some(action => (
+            isSemanticActionApplicable(action)
+            && !isApplyItemExcluded(review, semanticActionApplyItemKey(action))
+        ));
+}
+
+export function getActionableRequirementItems(review = {}, filter = 'all') {
+    return filterUnifiedRequirementItems(buildUnifiedRequirementItems(review), filter)
+        .filter(item => requirementItemIsActionable(item, review));
+}
+
+export function getActionableDraftRows(review = {}, filter = 'all') {
+    const rows = [];
+    const seen = new Set();
+    getActionableRequirementItems(review, filter).forEach(item => {
+        (item.machineRules || []).forEach(row => {
+            const key = draftRowApplyItemKey(row);
+            if (seen.has(key) || isApplyItemExcluded(review, key) || !isDraftRowActionable(row)) return;
+            seen.add(key);
+            rows.push(row);
+        });
+    });
+    return rows;
+}
+
+export function getBackendRuleRows(review = {}, filter = 'all') {
+    return getActionableDraftRows(review, filter).filter(row => BACKEND_RULE_TYPES.has(normalizeKey(row.type || row.intent || '')));
+}
+
+export function getApplicableSemanticActions(review = {}, filter = 'all') {
+    const actions = [];
+    const seen = new Set();
+    getActionableRequirementItems(review, filter).forEach(item => {
+        (item.semanticActions || []).forEach(action => {
+            const key = semanticActionApplyItemKey(action);
+            if (seen.has(key) || isApplyItemExcluded(review, key) || !isSemanticActionApplicable(action)) return;
+            seen.add(key);
+            actions.push(action);
+        });
+    });
+    return actions;
+}
+
+export function getActionableRequirementCount(review = {}, filter = 'all') {
+    return getActionableRequirementItems(review, filter).length;
 }
