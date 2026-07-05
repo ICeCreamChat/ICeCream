@@ -2551,21 +2551,22 @@ test('timetable rule draft row normalization saves locked slot review rows', () 
     }]);
 });
 
-test('timetable constraint Excel requires AI when it is not a roster table', async () => {
-    await assert.rejects(
-        () => parseTimetableRules({
-            file: {
-                filename: 'constraints.xlsx',
-                buffer: makeTimetableWorkbook([
-                    ['rule name', 'natural language constraint'],
-                    ['Teacher unavailable', 'Math Teacher cannot teach Monday period 1.'],
-                ], { sheetName: 'AIConstraints' }),
-            },
-            project: sampleProject(),
-            env: {},
-        }),
-        error => error instanceof TimetableRuleParseError && error.reason === 'ai_not_configured',
-    );
+test('timetable constraint Excel parses decisive rows locally without AI', async () => {
+    const result = await parseTimetableRules({
+        file: {
+            filename: 'constraints.xlsx',
+            buffer: makeTimetableWorkbook([
+                ['rule name', 'natural language constraint'],
+                ['Teacher unavailable', '陈老师周一第1节不排'],
+            ], { sheetName: 'AIConstraints' }),
+        },
+        project: sampleProject(),
+        env: {},
+    });
+
+    assert.equal(result.inputType, 'xlsx_constraints');
+    assert.equal(result.source, 'local_xlsx');
+    assert.deepEqual(result.draftRules.hardRules.teacherUnavailable.t_math, ['1-1']);
 });
 
 test('timetable store persists project data atomically in a local data directory', async () => {

@@ -474,6 +474,67 @@ test('xlsx local fallback preserves sheet and row source for expanded subject ru
     assert.ok(rows.every(row => row.sourceRow === 2));
 });
 
+test('xlsx constraints parse locally with stable ids and do not call AI for decisive rows', async () => {
+    const project = makeProject();
+    let aiCalls = 0;
+    const file = {
+        filename: 'constraints.xlsx',
+        buffer: buildConstraintWorkbook([
+            ['约束内容'],
+            ['数学尽量安排在上午第1-2节'],
+            ['张老师周一前两节不排'],
+        ]),
+    };
+    const fetchImpl = async () => {
+        aiCalls += 1;
+        throw new Error('AI should not be called for decisive xlsx rows');
+    };
+
+    const first = await parseTimetableRules({
+        file,
+        project,
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        fetchImpl,
+    });
+    const second = await parseTimetableRules({
+        file,
+        project,
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        fetchImpl,
+    });
+
+    assert.equal(aiCalls, 0);
+    assert.equal(first.inputType, 'xlsx_constraints');
+    assert.equal(first.source, 'local_xlsx');
+    assert.equal(first.parseSource, 'local_xlsx');
+    assert.ok(first.parserVersion);
+    assert.deepEqual(
+        first.draftRows.map(row => ({
+            id: row.id,
+            stableKey: row.stableKey,
+            parseSource: row.parseSource,
+            type: row.type,
+            targetId: row.targetId,
+            sourceRow: row.sourceRow,
+        })),
+        second.draftRows.map(row => ({
+            id: row.id,
+            stableKey: row.stableKey,
+            parseSource: row.parseSource,
+            type: row.type,
+            targetId: row.targetId,
+            sourceRow: row.sourceRow,
+        })),
+    );
+    assert.ok(first.draftRows.every(row => row.parseSource === 'local_xlsx'));
+    assert.ok(first.draftRows.every(row => row.stableKey));
+    assert.deepEqual(first.draftRows.map(row => row.sourceRow), [...first.draftRows.map(row => row.sourceRow)].sort((a, b) => a - b));
+    assert.deepEqual(first.draftRules.softRules.subjectPreferredPeriods.s2.prefer, [
+        '1-1', '1-2', '2-1', '2-2', '3-1', '3-2', '4-1', '4-2', '5-1', '5-2',
+    ]);
+    assert.deepEqual(first.draftRules.hardRules.teacherUnavailable.t1, ['1-1', '1-2']);
+});
+
 test('normalize splits a grouped subject target into independent effective rules', () => {
     const project = makeProject();
     const result = normalizeTimetableRuleDraftRows({

@@ -59,6 +59,56 @@ function removeEmptyRequirementOwners(review = {}, ownerIds = new Set()) {
     review.requirementItems = review.requirementItems.filter(item => !removableOwners.has(item.id));
 }
 
+function normalizeActionKind(action = {}) {
+    return String(action.kind || action.type || '').trim()
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .toLowerCase()
+        .replace(/[-\s]+/g, '_');
+}
+
+function collectSemanticActionRowIds(action = {}) {
+    const target = action.target || {};
+    const source = action.source || {};
+    return [
+        action.rowId,
+        action.ruleId,
+        action.draftRowId,
+        target.rowId,
+        target.ruleId,
+        target.draftRowId,
+        source.rowId,
+        source.ruleId,
+        source.draftRowId,
+        ...(action.rowIds || []),
+        ...(action.ruleIds || []),
+        ...(action.draftRowIds || []),
+        ...(target.rowIds || []),
+        ...(target.ruleIds || []),
+        ...(target.draftRowIds || []),
+        ...(source.rowIds || []),
+        ...(source.ruleIds || []),
+        ...(source.draftRowIds || []),
+    ].filter(value => value !== undefined && value !== null && String(value) !== '').map(String);
+}
+
+function removeSemanticActionsForDraftRow(review = {}, constraintId = '', ownerIds = new Set()) {
+    if (!Array.isArray(review.semanticActions)) return new Set();
+
+    const targetId = String(constraintId || '');
+    const removedKeys = new Set();
+    review.semanticActions = review.semanticActions.filter(action => {
+        const rowLinked = collectSemanticActionRowIds(action).includes(targetId);
+        const ownerLinkedRulePatch = ['rules_patch', 'rule_patch'].includes(normalizeActionKind(action))
+            && action.requirementId
+            && ownerIds.has(action.requirementId);
+        const shouldRemove = rowLinked || ownerLinkedRulePatch;
+        if (shouldRemove) removedKeys.add(semanticActionApplyItemKey(action));
+        return !shouldRemove;
+    });
+
+    return removedKeys;
+}
+
 /**
  * 打开智能约束助手弹窗
  */
@@ -360,9 +410,10 @@ export function deleteConstraint(constraintId) {
     this.state.ruleReview.draftRows = this.state.ruleReview.draftRows.filter(
         c => c.id !== constraintId
     );
+    const removedActionKeys = removeSemanticActionsForDraftRow(this.state.ruleReview, constraintId, ownerIds);
     removeEmptyRequirementOwners(this.state.ruleReview, ownerIds);
     this.state.ruleReview.excludedApplyItemKeys = (this.state.ruleReview.excludedApplyItemKeys || [])
-        .filter(key => key !== `rule:${constraintId}`);
+        .filter(key => key !== `rule:${constraintId}` && !removedActionKeys.has(key));
     const reviewState = normalizeRequirementReviewState(this.state.constraintDialog || {}, buildUnifiedRequirementItems(this.state.ruleReview || {}));
     this.state.constraintDialog = {
         ...(this.state.constraintDialog || {}),

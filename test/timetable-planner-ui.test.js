@@ -563,7 +563,13 @@ test('timetable constraint dialog confirms before deleting one machine rule', ()
         applyTo: 'rule',
         source: { rawText: '语文尽量上午' },
       }],
-      semanticActions: [],
+      semanticActions: [{
+        id: 'act_rule',
+        requirementId: 'req_rule',
+        kind: 'rules_patch',
+        status: 'ready',
+        target: { rowIds: ['rule-row'] },
+      }],
       excludedApplyItemKeys: ['rule:rule-row'],
     };
     controller.state.constraintDialog = { open: true, requirementFilter: 'rule', selectedRequirementId: '' };
@@ -584,8 +590,47 @@ test('timetable constraint dialog confirms before deleting one machine rule', ()
     controller.deleteConstraint('rule-row');
     assert.deepEqual(controller.state.ruleReview.draftRows, []);
     assert.deepEqual(controller.state.ruleReview.requirementItems, []);
+    assert.deepEqual(controller.state.ruleReview.semanticActions, []);
     assert.deepEqual(controller.state.ruleReview.excludedApplyItemKeys, []);
     assert.ok(confirmations.some(message => /删除这条规则/.test(message)));
+  } finally {
+    globalThis.confirm = originalConfirm;
+  }
+});
+
+test('timetable constraint dialog keeps a requirement when deleting one rule leaves another semantic action', () => {
+  const originalConfirm = globalThis.confirm;
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.ruleReview = {
+      draftRows: [{ id: 'rule-row', requirementId: 'req_mixed', type: 'subject_morning', status: 'effective' }],
+      requirementItems: [{
+        id: 'req_mixed',
+        object: { kind: 'subject', name: '数学', matchedIds: ['math'], scope: 'explicit' },
+        intent: 'block_preference',
+        status: 'actionable',
+        applyTo: 'lesson_plan',
+        source: { rawText: '数学必须连堂，也尽量上午' },
+      }],
+      semanticActions: [{
+        id: 'act_block',
+        requirementId: 'req_mixed',
+        kind: 'lesson_plan_patch',
+        status: 'ready',
+        payload: { blockPreference: 'double' },
+      }],
+      excludedApplyItemKeys: ['rule:rule-row', 'action:act_block'],
+    };
+    controller.state.constraintDialog = { open: true, requirementFilter: 'all', selectedRequirementId: 'req_mixed' };
+    globalThis.confirm = () => true;
+
+    controller.deleteConstraint('rule-row');
+
+    assert.deepEqual(controller.state.ruleReview.draftRows, []);
+    assert.deepEqual(controller.state.ruleReview.requirementItems.map(item => item.id), ['req_mixed']);
+    assert.deepEqual(controller.state.ruleReview.semanticActions.map(action => action.id), ['act_block']);
+    assert.deepEqual(controller.state.ruleReview.excludedApplyItemKeys, ['action:act_block']);
   } finally {
     globalThis.confirm = originalConfirm;
   }
