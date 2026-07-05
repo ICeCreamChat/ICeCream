@@ -17,6 +17,58 @@ import {
 } from './constraint-dialog-review-model.js';
 
 const REQUIREMENT_FILTER_KEYS = new Set(['all', 'rule', 'lesson_plan', 'optimization', 'handled', 'review']);
+const CONSTRAINT_FLOW_STEPS = ['input', 'understand', 'review', 'apply'];
+
+function getConstraintFlowStageFromReview(review = {}) {
+    const phase = String(review.phase || '');
+    if (review.applying || phase === 'saving' || phase === 'save' || phase === 'applying' || phase === 'apply') {
+        return 'apply';
+    }
+    if (review.parsing || review.loading) {
+        return 'understand';
+    }
+    if (
+        review.step === 'review'
+        || (review.draftRows || []).length > 0
+        || (review.requirementItems || []).length > 0
+        || (review.semanticActions || []).length > 0
+    ) {
+        return 'review';
+    }
+    return 'input';
+}
+
+function getConstraintFlowStatusText(review = {}) {
+    const stage = getConstraintFlowStageFromReview(review);
+    if (stage === 'apply') return '当前：正在应用到项目';
+    if (stage === 'review') return '当前：请复核已理解需求';
+    if (stage === 'understand') {
+        return `当前：智能理解中，${review.phaseText || '正在本地识别需求'}`;
+    }
+    return '当前：输入排课需求';
+}
+
+function updateConstraintFlowProgressDom(container, review = {}) {
+    const stage = getConstraintFlowStageFromReview(review);
+    const currentIndex = Math.max(0, CONSTRAINT_FLOW_STEPS.indexOf(stage));
+    const status = container.querySelector?.('[data-constraint-flow-status]');
+    if (status) {
+        status.textContent = getConstraintFlowStatusText(review);
+        status.dataset.currentFlowStep = stage;
+    }
+    CONSTRAINT_FLOW_STEPS.forEach((step, index) => {
+        const element = container.querySelector?.(`[data-flow-step="${step}"]`);
+        if (!element) return;
+        element.classList.toggle('is-complete', index < currentIndex);
+        element.classList.toggle('is-current', index === currentIndex);
+        element.classList.toggle('is-upcoming', index > currentIndex);
+        if (index === currentIndex) {
+            element.setAttribute('aria-current', 'step');
+        } else {
+            element.removeAttribute('aria-current');
+        }
+    });
+}
 
 function updateConstraintParsingProgressDom(container, review = {}) {
     if (!container) return;
@@ -29,6 +81,7 @@ function updateConstraintParsingProgressDom(container, review = {}) {
         const progress = Math.max(0, Math.min(100, Number(review.parseProgress) || 0));
         progressFill.style.width = `${progress}%`;
     }
+    updateConstraintFlowProgressDom(container, review);
 }
 
 function visibleRequirementItems(items = [], filter = 'all') {
@@ -631,6 +684,17 @@ export async function applyConstraintsFromDialog() {
         return;
     }
 
+    this.state.ruleReview = {
+        ...(this.state.ruleReview || {}),
+        loading: true,
+        parsing: true,
+        applying: true,
+        phase: 'saving',
+        phaseText: '正在应用到项目...',
+        parseProgress: 100,
+    };
+    this.render();
+
     try {
         if (backendRuleRows.length) {
             const normalized = await requestTimetable('/rules/normalize', {
@@ -647,6 +711,11 @@ export async function applyConstraintsFromDialog() {
                     ...(this.state.ruleReview || {}),
                     ...normalized,
                     open: true,
+                    loading: false,
+                    parsing: false,
+                    applying: false,
+                    phase: '',
+                    phaseText: '',
                 };
                 this.render();
                 alert('部分约束需要复核后才能应用');
@@ -723,6 +792,14 @@ export async function applyConstraintsFromDialog() {
         this.state.ruleReview.requirementItems = (this.state.ruleReview.requirementItems || [])
             .filter(item => !appliedRequirementIds.has(item.id) && item.status !== 'handled');
         const reviewState = normalizeRequirementReviewState(this.state.constraintDialog || {}, buildUnifiedRequirementItems(this.state.ruleReview || {}));
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || {}),
+            loading: false,
+            parsing: false,
+            applying: false,
+            phase: '',
+            phaseText: '',
+        };
         this.state.constraintDialog = {
             ...(this.state.constraintDialog || {}),
             requirementFilter: reviewState.filter,
@@ -744,6 +821,15 @@ export async function applyConstraintsFromDialog() {
             : `成功应用 ${actionableDraftRows.length} 条约束`);
     } catch (error) {
         console.error('Apply constraints error:', error);
+        this.state.ruleReview = {
+            ...(this.state.ruleReview || {}),
+            loading: false,
+            parsing: false,
+            applying: false,
+            phase: '',
+            phaseText: '',
+        };
+        this.render();
         alert(`应用失败：${error.message || '未知错误'}`);
     }
 }

@@ -2417,6 +2417,25 @@ body.light-mode .tt-rules-setup-card .tt-rule-entry {
     grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.tt-rules-setup-card .tt-smart-helper-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tt-rules-setup-card .tt-smart-helper-flow span {
+    justify-content: center;
+}
+
+.tt-rules-setup-card .tt-smart-helper-flow b,
+.tt-rules-setup-card .tt-smart-helper-metrics b {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+}
+
+.tt-rules-setup-card .tt-smart-helper-metrics {
+    grid-template-columns: minmax(0, 1fr);
+}
+
 .tt-smart-helper-metrics span {
     display: grid;
     min-height: 34px;
@@ -2431,10 +2450,20 @@ body.light-mode .tt-rules-setup-card .tt-rule-entry {
     font-weight: 800;
 }
 
+.tt-rules-setup-card .tt-smart-helper-metrics span {
+    min-height: 32px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 4px;
+}
+
 .tt-smart-helper-metrics strong {
     color: var(--tt-text);
     font-size: 0.86rem;
     font-weight: 900;
+}
+
+.tt-rules-setup-card .tt-smart-helper-metrics strong {
+    justify-self: end;
 }
 
 .tt-smart-helper-metrics em {

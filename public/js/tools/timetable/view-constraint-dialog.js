@@ -477,16 +477,61 @@ function renderRequirementParameterDetails(item = {}) {
     return rendered.join('');
 }
 
-function renderConstraintFlow(compact = false) {
-    const steps = ['输入需求', '智能理解', '人工复核', '应用到项目'];
+function constraintFlowStage(review = {}, requirements = []) {
+    const phase = String(review.phase || '');
+    if (review.applying || phase === 'saving' || phase === 'save' || phase === 'applying' || phase === 'apply') {
+        return 'apply';
+    }
+    if (review.parsing || review.loading) {
+        return 'understand';
+    }
+    if (
+        review.step === 'review'
+        || requirements.length > 0
+        || (review.draftRows || []).length > 0
+        || (review.semanticActions || []).length > 0
+    ) {
+        return 'review';
+    }
+    return 'input';
+}
+
+function constraintFlowStatusText(review = {}, stage = 'input') {
+    if (stage === 'apply') return '当前：正在应用到项目';
+    if (stage === 'review') return '当前：请复核已理解需求';
+    if (stage === 'understand') {
+        return `当前：智能理解中，${review.phaseText || '正在本地识别需求'}`;
+    }
+    return '当前：输入排课需求';
+}
+
+function renderConstraintFlow(compact = false, review = {}, requirements = []) {
+    const steps = [
+        { key: 'input', label: '输入需求' },
+        { key: 'understand', label: '智能理解' },
+        { key: 'review', label: '人工复核' },
+        { key: 'apply', label: '应用到项目' },
+    ];
+    const currentStage = constraintFlowStage(review, requirements);
+    const currentIndex = Math.max(0, steps.findIndex(step => step.key === currentStage));
+    const statusText = constraintFlowStatusText(review, currentStage);
     return `
-        <div class="tt-constraint-flow ${compact ? 'tt-constraint-flow--compact' : ''}" aria-label="智能约束处理流程">
-            ${steps.map((step, index) => `
-                <span class="tt-constraint-flow-step">
+        <div class="tt-constraint-flow-wrap">
+            <div class="tt-constraint-flow ${compact ? 'tt-constraint-flow--compact' : ''}" aria-label="智能约束处理流程">
+                ${steps.map((step, index) => {
+                    const stepState = index < currentIndex ? 'is-complete' : index === currentIndex ? 'is-current' : 'is-upcoming';
+                    const ariaCurrent = stepState === 'is-current' ? ' aria-current="step"' : '';
+                    return `
+                <span data-flow-step="${escapeAttr(step.key)}" class="tt-constraint-flow-step ${stepState}"${ariaCurrent}>
                     <b>${escapeHtml(index + 1)}</b>
-                    <em>${escapeHtml(step)}</em>
+                    <em>${escapeHtml(step.label)}</em>
                 </span>
-            `).join('')}
+            `;
+                }).join('')}
+            </div>
+            <div class="tt-constraint-flow-status" data-constraint-flow-status data-current-flow-step="${escapeAttr(currentStage)}">
+                ${escapeHtml(statusText)}
+            </div>
         </div>
     `;
 }
@@ -929,7 +974,7 @@ export function renderConstraintDialog(state) {
     ` : `
         <div class="tt-constraint-dialog-body tt-constraint-dialog-body--intake">
             <div class="tt-constraint-intake-panel ${requirements.length > 0 ? 'tt-constraint-intake-panel--compact' : ''}">
-                ${renderConstraintFlow(requirements.length > 0)}
+                ${renderConstraintFlow(requirements.length > 0, review, requirements)}
                 <div class="tt-constraint-mode-row">
                     <span class="tt-field-label">规则来源</span>
                     <div class="tt-constraint-input-tabs" role="tablist" aria-label="规则来源">
