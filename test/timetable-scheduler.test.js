@@ -6,7 +6,10 @@ import test from 'node:test';
 import AdmZip from 'adm-zip';
 
 import { createGatewayApp } from '../gateway/app.js';
-import { summarizeScheduleConflicts } from '../gateway/services/timetable-conflicts.js';
+import {
+    detectScheduleConflicts,
+    summarizeScheduleConflicts,
+} from '../gateway/services/timetable-conflicts.js';
 import {
     parseTimetableRosterText,
     previewTimetableRosterFile,
@@ -211,6 +214,48 @@ function solveBenchmark(project, options = {}) {
         },
     };
 }
+
+test('duty assignments conflict with overlapping formal lessons for the same teacher', () => {
+    const project = sampleProject({
+        periodTimes: [{ period: 1, start: '08:00', end: '08:40' }],
+        periodTimeSegments: {
+            globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+            segments: [
+                { id: 'early-study', label: '早自习', startTime: '07:50', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+                { id: 'morning', label: '上午', startTime: '08:00', periodCount: 4, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+            ],
+        },
+        dutyAssignments: [
+            { id: 'duty-1', day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: 't_math' },
+        ],
+    });
+
+    const conflicts = detectScheduleConflicts(project, [
+        { id: 'slot-1', day: 1, period: 1, classId: 'c2', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp3' },
+    ]);
+
+    assert.equal(conflicts.some(item => item.type === 'duty_lesson_teacher_conflict' && item.teacherId === 't_math'), true);
+});
+
+test('duty assignments conflict with other overlapping duty assignments for the same teacher', () => {
+    const project = sampleProject({
+        periodTimeSegments: {
+            globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+            segments: [
+                { id: 'early-study', label: '早自习', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+                { id: 'morning', label: '上午', startTime: '08:00', periodCount: 4, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+            ],
+        },
+        dutyAssignments: [
+            { id: 'duty-c1', day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: 't_cn' },
+            { id: 'duty-c2', day: 1, classId: 'c2', timeBlockId: 'early-study', teacherId: 't_cn' },
+        ],
+    });
+
+    const conflicts = detectScheduleConflicts(project, []);
+
+    assert.equal(conflicts.some(item => item.type === 'duty_teacher_conflict' && item.teacherId === 't_cn'), true);
+});
 
 function complexProject(overrides = {}) {
     return createDefaultTimetableProject({
@@ -2731,6 +2776,60 @@ test('timetable store persists project data atomically in a local data directory
     assert.match(raw, /持久化学校/);
 });
 
+test('timetable project API rejects duty assignments outside duty time blocks', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-duty-validation-'));
+    const timetableStore = createTimetableStore({ dataDir: process.env.TIMETABLE_DATA_DIR });
+    await timetableStore.saveProject(sampleProject({
+        periodTimeSegments: {
+            globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+            segments: [
+                { id: 'early-study', label: '早自习', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+                { id: 'morning', label: '上午', startTime: '08:00', periodCount: 4, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+                { id: 'evening-display', label: '晚自习展示', startTime: '19:00', periodCount: 1, classMinutes: 45, breakMinutes: 10, kind: 'display' },
+            ],
+        },
+    }));
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const response = await fetch(`${baseUrl}/api/tools/timetable/project`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                dutyAssignments: [
+                    { day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: 't_cn' },
+                    { day: 1, classId: 'c1', timeBlockId: 'evening-display', teacherId: 't_cn' },
+                    { day: 1, classId: 'c1', timeBlockId: 'missing-block', teacherId: 't_cn' },
+                ],
+            }),
+        });
+        const payload = await response.json();
+
+        assert.equal(response.status, 422);
+        assert.equal(payload.success, false);
+        assert.equal(payload.data.reason, 'invalid_duty_assignments');
+        assert.equal(payload.data.errors.length, 2);
+        const persisted = await timetableStore.loadProject();
+        assert.deepEqual(persisted.dutyAssignments, []);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
 test('timetable project API saves period times without clearing schedule and marks published draft changed', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-period-times-'));
@@ -3276,6 +3375,64 @@ test('timetable API saves a fast schedule when Timefold is unavailable', async (
 
         const stored = await store.loadProject();
         assert.equal(stored.schedule.source, 'fast_constructed');
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+        if (previousSolverUrl === undefined) {
+            delete process.env.TIMEFOLD_SOLVER_URL;
+        } else {
+            process.env.TIMEFOLD_SOLVER_URL = previousSolverUrl;
+        }
+    }
+});
+
+test('timetable API reports Timefold downgrade when duty assignments require local occupancy handling', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-duty-downgrade-'));
+    process.env.TIMEFOLD_SOLVER_URL = 'http://timefold.test';
+
+    const store = createTimetableStore();
+    await store.saveProject(sampleProject({
+        periodTimes: [
+            { period: 1, start: '08:00', end: '08:40' },
+            { period: 2, start: '08:50', end: '09:30' },
+            { period: 3, start: '09:40', end: '10:20' },
+            { period: 4, start: '10:30', end: '11:10' },
+        ],
+        periodTimeSegments: {
+            globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+            segments: [
+                { id: 'early-study', label: '早自习', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+                { id: 'morning', label: '上午', startTime: '08:00', periodCount: 4, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+            ],
+        },
+        dutyAssignments: [
+            { id: 'duty-1', day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: 't_cn' },
+        ],
+    }));
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const runResponse = await fetch(`${baseUrl}/api/tools/timetable/schedule/run`, { method: 'POST' });
+        const runPayload = await runResponse.json();
+
+        assert.equal(runResponse.status, 200);
+        assert.equal(runPayload.success, true);
+        assert.equal(runPayload.data.solverJob, null);
+        assert.equal(runPayload.data.solverDowngrade.reason, 'duty_assignments_not_supported');
     } finally {
         await new Promise(resolve => server.close(resolve));
         if (previousDataDir === undefined) {

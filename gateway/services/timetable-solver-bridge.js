@@ -35,7 +35,36 @@ export function supportsTimefoldComplexTimetable(env = process.env) {
 }
 
 export function canUseTimefoldForTimetable(project = {}, env = process.env) {
+    const activeDutyCount = (project.dutyAssignments || []).filter(item => item && item.status !== 'paused').length;
+    if (activeDutyCount > 0) return false;
     return !isComplexTimetableModel(project) || supportsTimefoldComplexTimetable(env);
+}
+
+export function timefoldTimetableUnsupportedReason(project = {}, env = process.env) {
+    const activeDutyCount = (project.dutyAssignments || []).filter(item => item && item.status !== 'paused').length;
+    if (activeDutyCount > 0) {
+        return {
+            reason: 'duty_assignments_not_supported',
+            message: 'Timefold timetable bridge does not support duty assignment occupancy yet',
+            solverStats: {
+                accepted: false,
+                reason: 'duty_assignments_not_supported',
+                dutyAssignmentCount: activeDutyCount,
+            },
+        };
+    }
+    if (isComplexTimetableModel(project) && !supportsTimefoldComplexTimetable(env)) {
+        return {
+            reason: 'complex_model_not_supported',
+            message: 'Timefold timetable bridge does not support complex_v1 yet',
+            solverStats: {
+                accepted: false,
+                reason: 'complex_model_not_supported',
+                complexModelEnabled: true,
+            },
+        };
+    }
+    return null;
 }
 
 function asText(value) {
@@ -607,16 +636,13 @@ export async function solveTimetableWithTimefold({
     if (!solverUrl) {
         throw new TimetableTimefoldError('TIMEFOLD_SOLVER_URL is not configured', 'not_configured', 503);
     }
-    if (!canUseTimefoldForTimetable(normalizedProject, env)) {
+    const unsupported = timefoldTimetableUnsupportedReason(normalizedProject, env);
+    if (unsupported) {
         throw new TimetableTimefoldError(
-            'Timefold timetable bridge does not support complex_v1 yet',
-            'complex_model_not_supported',
+            unsupported.message,
+            unsupported.reason,
             409,
-            {
-                accepted: false,
-                reason: 'complex_model_not_supported',
-                complexModelEnabled: true,
-            },
+            unsupported.solverStats,
         );
     }
     const fetchClient = resolveFetch(fetchImpl);

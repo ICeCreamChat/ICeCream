@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
     buildTimetableProblem,
+    canUseTimefoldForTimetable,
     solveTimetableWithTimefold,
     TimetableTimefoldError,
     transformTimetableSolutionToSchedule,
@@ -114,6 +115,26 @@ test('buildTimetableProblem mirrors fast scheduler mixed block splitting', () =>
     assert.deepEqual(assignments.map(assignment => assignment.blockSize), [2, 2, 2, 2, 1, 1]);
     assert.equal(doubleBlocks.size, 2);
     assert.equal(singleAssignments.length, 2);
+});
+
+test('buildTimetableProblem does not convert duty assignments into lesson assignments', () => {
+    const project = sampleProject({
+        periodTimeSegments: {
+            globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+            segments: [
+                { id: 'early-study', label: '早自习', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+                { id: 'morning', label: '上午', startTime: '08:00', periodCount: 4, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+            ],
+        },
+        dutyAssignments: [
+            { id: 'duty-1', day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: 't_math' },
+        ],
+    });
+
+    const problem = buildTimetableProblem(project);
+
+    assert.equal(problem.lessonAssignments.length, 3);
+    assert.equal(problem.lessonAssignments.some(assignment => String(assignment.id).includes('duty')), false);
 });
 
 test('buildTimetableProblem sends current schedule as initial solution and pins protected slots', () => {
@@ -527,6 +548,35 @@ test('solveTimetableWithTimefold rejects complex model until Timefold supports i
     }), error => (
         error instanceof TimetableTimefoldError
         && error.reason === 'complex_model_not_supported'
+        && error.status === 409
+        && error.solverStats?.accepted === false
+    ));
+});
+
+test('Timefold bridge downgrades projects with duty assignments until duty occupancy is supported', async () => {
+    const project = sampleProject({
+        periodTimeSegments: {
+            globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+            segments: [
+                { id: 'early-study', label: '早自习', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+                { id: 'morning', label: '上午', startTime: '08:00', periodCount: 4, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+            ],
+        },
+        dutyAssignments: [
+            { id: 'duty-1', day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: 't_math' },
+        ],
+    });
+
+    assert.equal(canUseTimefoldForTimetable(project, { TIMEFOLD_SOLVER_URL: 'http://solver' }), false);
+    await assert.rejects(() => solveTimetableWithTimefold({
+        project,
+        env: { TIMEFOLD_SOLVER_URL: 'http://solver', TIMETABLE_SOLVER_TIMEOUT: '2' },
+        fetchImpl: async () => {
+            throw new Error('Timefold should not be called when duty assignments exist');
+        },
+    }), error => (
+        error instanceof TimetableTimefoldError
+        && error.reason === 'duty_assignments_not_supported'
         && error.status === 409
         && error.solverStats?.accepted === false
     ));

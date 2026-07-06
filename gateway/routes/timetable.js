@@ -4,6 +4,7 @@ import multer from 'multer';
 import { buildTimetableExportXlsx, TIMETABLE_XLSX_MIME } from '../services/timetable-export.js';
 import {
     canUseTimefoldForTimetable,
+    timefoldTimetableUnsupportedReason,
 } from '../services/timetable-solver-bridge.js';
 import {
     buildTimetableRosterFromRows,
@@ -20,6 +21,7 @@ import {
     createDefaultTimetableProject,
     normalizeTimetableProject,
     runTimetableScheduler,
+    validateDutyAssignments,
     validateTimetableProjectForSolve,
     validateTimetablePublication,
 } from '../services/timetable-scheduler.js';
@@ -441,6 +443,27 @@ router.post('/project', async (req, res) => {
             version: Date.now(), // 生成新版本号
         });
         if (
+            Object.prototype.hasOwnProperty.call(req.body || {}, 'dutyAssignments')
+            || Object.prototype.hasOwnProperty.call(req.body || {}, 'periodTimeSegments')
+            || Object.prototype.hasOwnProperty.call(req.body || {}, 'classes')
+            || Object.prototype.hasOwnProperty.call(req.body || {}, 'teachers')
+        ) {
+            const rawDutyAssignments = Object.prototype.hasOwnProperty.call(req.body || {}, 'dutyAssignments')
+                ? req.body.dutyAssignments
+                : current.dutyAssignments;
+            const dutyValidation = validateDutyAssignments(rawDutyAssignments || [], project.periodTimeSegments, {
+                classes: project.classes,
+                teachers: project.teachers,
+            });
+            if (!dutyValidation.ok) {
+                return fail(res, new Error('自习值班安排校验失败。'), 422, {
+                    reason: 'invalid_duty_assignments',
+                    errors: dutyValidation.errors,
+                    project: current,
+                });
+            }
+        }
+        if (
             !sameNumberList(current.activeWeekdays, project.activeWeekdays)
             || !sameNumberList(current.activePeriods, project.activePeriods)
         ) {
@@ -717,14 +740,17 @@ router.post('/schedule/run', async (req, res) => {
         }
 
         const saved = await timetableStore.saveProject(fastResult.project);
-        const solverJob = hasTimefoldSolverConfigured() && canUseTimefoldForTimetable(saved)
+        const solverDowngrade = hasTimefoldSolverConfigured() && !canUseTimefoldForTimetable(saved)
+            ? timefoldTimetableUnsupportedReason(saved)
+            : null;
+        const solverJob = hasTimefoldSolverConfigured() && !solverDowngrade
             ? createTimetableOptimizationJob({
                 project: saved,
                 schedule: saved.schedule,
                 store: timetableStore,
             })
             : null;
-        ok(res, { project: saved, schedule: saved.schedule, solverJob });
+        ok(res, { project: saved, schedule: saved.schedule, solverJob, solverDowngrade });
     } catch (error) {
         fail(res, error, 500);
     }

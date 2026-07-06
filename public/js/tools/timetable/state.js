@@ -95,6 +95,15 @@ export function createTimetablePlannerState(overrides = {}) {
             errors: [],
             draftTimes: [],
         },
+        dutyDialog: {
+            open: false,
+            day: null,
+            classId: '',
+            timeBlockId: '',
+            teacherId: '',
+            saving: false,
+            error: '',
+        },
         bulkRuleDraft: {
             days: [],
             periods: [],

@@ -45,6 +45,10 @@ export function handleTimetableEscape(event, container, controller, state) {
         controller.closePeriodTimeDialog?.();
         return true;
     }
+    if (state.dutyDialog?.open) {
+        controller.closeDutyAssignmentDialog?.();
+        return true;
+    }
     if (state.rosterImport?.open) {
         controller.closeRosterImport?.();
         return true;
@@ -107,6 +111,10 @@ function bindDelegatedInteractions(container) {
         }
         if (event.target.matches('[data-constraint-dialog-overlay]')) {
             controller.closeConstraintDialog();
+            return;
+        }
+        if (event.target.matches('[data-duty-assignment-overlay]')) {
+            controller.closeDutyAssignmentDialog?.();
             return;
         }
         const action = event.target.closest('[data-action]')?.dataset.action || '';
@@ -211,6 +219,17 @@ function bindDelegatedInteractions(container) {
         } else if (action === 'apply-constraints') {
             controller.applyConstraintsFromDialog();
         }
+        // 自习值班编辑
+        else if (action === 'edit-duty-assignment') {
+            const node = event.target.closest('[data-time-block-id]');
+            controller.openDutyAssignmentDialog?.(node?.dataset.day, node?.dataset.timeBlockId);
+        } else if (action === 'save-duty-assignment') {
+            controller.saveDutyAssignmentDialog?.();
+        } else if (action === 'clear-duty-assignment') {
+            controller.clearDutyAssignmentDialog?.();
+        } else if (action === 'close-duty-assignment') {
+            controller.closeDutyAssignmentDialog?.();
+        }
         // 约束编辑actions
         else if (action === 'edit-constraint') {
             const constraintId = event.target.closest('[data-constraint-id]')?.dataset.constraintId;
@@ -280,7 +299,6 @@ function bindDelegatedInteractions(container) {
         const controller = container.__ttController;
         if (!controller) return;
         if (event.target.matches('[data-segment-field], [data-global-default-field]')) {
-            console.log('change event fired:', event.target.getAttribute('data-segment-field') || event.target.getAttribute('data-global-default-field'));
             controller.updateSegmentConfigFromForm();
         } else if (event.target.matches('[data-period-time-setting]')) {
             controller.updatePeriodTimeSettingsFromForm();
@@ -298,7 +316,6 @@ function bindDelegatedInteractions(container) {
         const controller = container.__ttController;
         if (!controller) return;
         if (event.target.matches('[data-segment-field], [data-global-default-field]')) {
-            console.log('input event fired:', event.target.getAttribute('data-segment-field') || event.target.getAttribute('data-global-default-field'));
             controller.updateSegmentConfigFromForm();
         } else if (event.target.matches('[data-period-time-setting]')) {
             controller.updatePeriodTimeSettingsFromForm();

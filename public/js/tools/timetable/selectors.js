@@ -17,14 +17,30 @@ export function getActiveWeekdays(project = {}) {
     return numberList(project.activeWeekdays, project.weekdays || 5, 1, 7);
 }
 
+function timeBlockKind(segment = {}) {
+    return ['teaching', 'duty', 'display'].includes(segment.kind) ? segment.kind : 'teaching';
+}
+
+function segmentPeriodCount(segment = {}) {
+    return Math.max(0, Number.parseInt(segment.periodCount, 10) || 0);
+}
+
 export function getTotalPeriods(project = {}) {
     const segmentConfig = project?.periodTimeSegments;
     if (!segmentConfig || !Array.isArray(segmentConfig.segments)) return 0;
-    return segmentConfig.segments.reduce((sum, seg) => sum + (seg.periodCount || 0), 0);
+    return segmentConfig.segments.reduce((sum, seg) => sum + segmentPeriodCount(seg), 0);
+}
+
+export function getTeachingPeriodCount(project = {}) {
+    const segmentConfig = project?.periodTimeSegments;
+    if (!segmentConfig || !Array.isArray(segmentConfig.segments)) return 0;
+    return segmentConfig.segments
+        .filter(seg => timeBlockKind(seg) === 'teaching')
+        .reduce((sum, seg) => sum + segmentPeriodCount(seg), 0);
 }
 
 export function getActivePeriods(project = {}) {
-    // 新逻辑：从 periodTimeSegments 派生总节次数，排除禁用的节次
+    // 从 periodTimeSegments 派生正式节次；自习值班/仅展示时段不占第 N 节。
     const segmentConfig = project?.periodTimeSegments;
 
     // 兼容旧数据：如果没有 periodTimeSegments，fallback 到 activePeriods
@@ -32,8 +48,7 @@ export function getActivePeriods(project = {}) {
         return numberList(project.activePeriods, project.periodsPerDay || 7, 1, 12);
     }
 
-    // 新逻辑：从时段配置计算总节次
-    const total = getTotalPeriods(project);
+    const total = getTeachingPeriodCount(project);
     const allPeriods = Array.from({ length: total }, (_, i) => i + 1);
     const disabledSet = new Set(project.disabledPeriods || []);
     return allPeriods.filter(p => !disabledSet.has(p));

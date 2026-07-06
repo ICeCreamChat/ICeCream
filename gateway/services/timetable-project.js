@@ -51,6 +51,8 @@ const DEFAULT_PROJECT = {
 
 const WEEK_PATTERNS = new Set(['every', 'odd', 'even', 'odd_even']);
 const TEACHING_GROUP_MODES = new Set(['combined_class', 'rotation', 'split_class']);
+const TIME_BLOCK_KINDS = new Set(['teaching', 'duty', 'display']);
+const DUTY_ASSIGNMENT_STATUSES = new Set(['active', 'paused']);
 
 export function cleanText(value, max = 80) {
     return String(value ?? '')
@@ -277,11 +279,49 @@ function normalizeNumberList(values, fallback, min, max) {
     return [...new Set(source)].sort((left, right) => left - right);
 }
 
+export function normalizeTimeBlockKind(value, fallback = 'teaching') {
+    const kind = cleanText(value, 20);
+    if (TIME_BLOCK_KINDS.has(kind)) return kind;
+    return TIME_BLOCK_KINDS.has(fallback) ? fallback : 'teaching';
+}
+
+export function getTimeBlockKind(segment = {}) {
+    return normalizeTimeBlockKind(segment.kind, 'teaching');
+}
+
+export function suggestTimeBlockKind(segment = {}) {
+    const label = cleanText(segment.label, 40);
+    if (/早自习|早读|早修|晨读|晚自习|晚修/.test(label)) return 'duty';
+    return 'teaching';
+}
+
+function segmentPeriodCount(segment = {}) {
+    return Math.max(0, Math.min(12, Number.parseInt(segment.periodCount, 10) || 0));
+}
+
+export function getTotalPeriodsFromSegments(periodTimeSegments = null) {
+    const segments = Array.isArray(periodTimeSegments?.segments) ? periodTimeSegments.segments : [];
+    return segments.reduce((sum, segment) => sum + segmentPeriodCount(segment), 0);
+}
+
+export function getTeachingPeriodCount(periodTimeSegments = null) {
+    const segments = Array.isArray(periodTimeSegments?.segments) ? periodTimeSegments.segments : [];
+    return segments
+        .filter(segment => getTimeBlockKind(segment) === 'teaching')
+        .reduce((sum, segment) => sum + segmentPeriodCount(segment), 0);
+}
+
+export function deriveActivePeriodsFromTimeBlocks(periodTimeSegments = null) {
+    return rangeList(Math.min(12, getTeachingPeriodCount(periodTimeSegments)));
+}
+
 export function getActiveWeekdays(project = {}) {
     return normalizeNumberList(project.activeWeekdays, rangeList(intInRange(project.weekdays, DEFAULT_PROJECT.weekdays, 1, 7)), 1, 7);
 }
 
 export function getActivePeriods(project = {}) {
+    const segmentPeriods = deriveActivePeriodsFromTimeBlocks(project.periodTimeSegments);
+    if (Array.isArray(project.periodTimeSegments?.segments) && project.periodTimeSegments.segments.length) return segmentPeriods;
     return normalizeNumberList(project.activePeriods, rangeList(intInRange(project.periodsPerDay, DEFAULT_PROJECT.periodsPerDay, 1, 12)), 1, 12);
 }
 
@@ -400,6 +440,7 @@ export function normalizePeriodTimeSegment(raw = {}, index = 0) {
         periodCount,
         classMinutes,
         breakMinutes,
+        kind: normalizeTimeBlockKind(raw.kind, 'teaching'),
     };
 }
 
@@ -414,6 +455,102 @@ export function normalizePeriodTimeSegments(raw = null) {
         : [];
     if (!segments.length) return null;
     return { globalDefaults, segments };
+}
+
+export function validateDutyAssignments(raw = [], periodTimeSegments = null, options = {}) {
+    const errors = [];
+    if (!Array.isArray(raw)) {
+        return {
+            ok: false,
+            errors: [{ index: -1, field: 'dutyAssignments', message: '值班安排必须是数组。' }],
+        };
+    }
+
+    const segments = Array.isArray(periodTimeSegments?.segments) ? periodTimeSegments.segments : [];
+    const segmentById = new Map(segments.map(segment => [segment.id, segment]));
+    const knownClasses = new Set((options.classes || []).map(item => item.id).filter(Boolean));
+    const knownTeachers = new Set((options.teachers || []).map(item => item.id).filter(Boolean));
+    const seen = new Set();
+
+    raw.forEach((item, index) => {
+        if (!item || typeof item !== 'object') {
+            errors.push({ index, field: 'dutyAssignments', message: '值班安排格式无效。' });
+            return;
+        }
+        const day = Number.parseInt(item.day ?? item.weekday, 10);
+        const classId = cleanText(item.classId, 80);
+        const timeBlockId = cleanText(item.timeBlockId || item.segmentId, 80);
+        const teacherId = cleanText(item.teacherId, 80);
+        if (!Number.isInteger(day) || day < 1 || day > 7) {
+            errors.push({ index, field: 'day', message: '值班日期必须是周一到周日。' });
+        }
+        if (!classId || (knownClasses.size && !knownClasses.has(classId))) {
+            errors.push({ index, field: 'classId', message: '值班班级不存在。' });
+        }
+        if (!teacherId || (knownTeachers.size && !knownTeachers.has(teacherId))) {
+            errors.push({ index, field: 'teacherId', message: '值班老师不存在。' });
+        }
+        const segment = segmentById.get(timeBlockId);
+        if (!timeBlockId || !segment || getTimeBlockKind(segment) !== 'duty') {
+            errors.push({ index, field: 'timeBlockId', message: '值班时段必须指向自习值班时段，不能使用正式课、仅展示或不存在的时段。' });
+        }
+        const key = `${day}|${classId}|${timeBlockId}`;
+        if (classId && timeBlockId && seen.has(key)) {
+            errors.push({ index, field: 'dutyAssignments', message: '同一班级同一天同一自习时段只能安排一名值班老师。' });
+        }
+        if (classId && timeBlockId) seen.add(key);
+    });
+
+    return { ok: errors.length === 0, errors };
+}
+
+export function normalizeDutyAssignments(raw = [], periodTimeSegments = null, options = {}) {
+    if (!Array.isArray(raw)) return [];
+    const dutyBlockIds = new Set((periodTimeSegments?.segments || [])
+        .filter(segment => getTimeBlockKind(segment) === 'duty')
+        .map(segment => segment.id));
+    if (!dutyBlockIds.size) return [];
+
+    const knownClasses = new Set((options.classes || []).map(item => item.id).filter(Boolean));
+    const knownTeachers = new Set((options.teachers || []).map(item => item.id).filter(Boolean));
+    const seen = new Set();
+    const assignments = [];
+
+    for (const item of raw) {
+        if (!item || typeof item !== 'object') continue;
+        const day = Number.parseInt(item.day ?? item.weekday, 10);
+        const classId = cleanText(item.classId, 80);
+        const timeBlockId = cleanText(item.timeBlockId || item.segmentId, 80);
+        const teacherId = cleanText(item.teacherId, 80);
+        if (!Number.isInteger(day) || day < 1 || day > 7) continue;
+        if (!classId || !timeBlockId || !teacherId) continue;
+        if (!dutyBlockIds.has(timeBlockId)) continue;
+        if (knownClasses.size && !knownClasses.has(classId)) continue;
+        if (knownTeachers.size && !knownTeachers.has(teacherId)) continue;
+        const key = `${day}|${classId}|${timeBlockId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const normalized = {
+            id: cleanText(item.id, 120) || makeTimetableId('duty', `${key}|${teacherId}`),
+            day,
+            classId,
+            timeBlockId,
+            teacherId,
+            source: cleanText(item.source, 40) || 'manual',
+            status: DUTY_ASSIGNMENT_STATUSES.has(item.status) ? item.status : 'active',
+        };
+        const sourceSheet = cleanText(item.sourceSheet, 80);
+        const rawText = cleanText(item.rawText, 300);
+        const parseSource = cleanText(item.parseSource, 40);
+        const sourceRow = Number.parseInt(item.sourceRow, 10);
+        if (sourceSheet) normalized.sourceSheet = sourceSheet;
+        if (Number.isInteger(sourceRow) && sourceRow > 0) normalized.sourceRow = sourceRow;
+        if (rawText) normalized.rawText = rawText;
+        if (parseSource) normalized.parseSource = parseSource;
+        assignments.push(normalized);
+    }
+
+    return assignments;
 }
 
 export function generateDefaultPeriodTimes(activePeriods = [], options = {}) {
@@ -907,8 +1044,12 @@ export function normalizeTimetableProject(raw = {}) {
     const legacyPeriodsPerDay = intInRange(base.periodsPerDay, DEFAULT_PROJECT.periodsPerDay, 1, 12);
     const hasActiveWeekdays = Object.prototype.hasOwnProperty.call(raw, 'activeWeekdays');
     const hasActivePeriods = Object.prototype.hasOwnProperty.call(raw, 'activePeriods');
+    const periodTimeSegments = normalizePeriodTimeSegments(base.periodTimeSegments);
+    const segmentActivePeriods = deriveActivePeriodsFromTimeBlocks(periodTimeSegments);
     const activeWeekdays = normalizeNumberList(hasActiveWeekdays ? raw.activeWeekdays : [], rangeList(legacyWeekdays), 1, 7);
-    const activePeriods = normalizeNumberList(hasActivePeriods ? raw.activePeriods : [], rangeList(legacyPeriodsPerDay), 1, 12);
+    const activePeriods = periodTimeSegments
+        ? segmentActivePeriods
+        : normalizeNumberList(hasActivePeriods ? raw.activePeriods : [], rangeList(legacyPeriodsPerDay), 1, 12);
     const teachers = (Array.isArray(base.teachers) ? base.teachers : [])
         .map((teacher, index) => normalizeTeacher(teacher, index, enabled));
     const classes = (Array.isArray(base.classes) ? base.classes : [])
@@ -924,7 +1065,7 @@ export function normalizeTimetableProject(raw = {}) {
         schoolName: cleanText(base.schoolName, 80) || DEFAULT_PROJECT.schoolName,
         term: cleanText(base.term, 80) || DEFAULT_PROJECT.term,
         weekdays: Math.max(...activeWeekdays),
-        periodsPerDay: Math.max(...activePeriods),
+        periodsPerDay: activePeriods.length ? Math.max(...activePeriods) : 0,
         activeWeekdays,
         activePeriods,
         dayPartBoundaries: normalizeDayPartBoundaries(base.dayPartBoundaries, activePeriods),
@@ -943,12 +1084,12 @@ export function normalizeTimetableProject(raw = {}) {
             : [],
         commuteRules: normalizeCommuteRules(base.commuteRules, enabled),
         lessonPlans,
+        dutyAssignments: normalizeDutyAssignments(base.dutyAssignments, periodTimeSegments, { classes, teachers }),
         rules: normalizeRules(base.rules, enabled),
         schedule: normalizeSchedule(base.schedule, enabled),
         version: base.version || Date.now(),
         updatedAt: base.updatedAt || new Date().toISOString(),
     };
-    const periodTimeSegments = normalizePeriodTimeSegments(base.periodTimeSegments);
     if (periodTimeSegments) {
         normalized.periodTimeSegments = periodTimeSegments;
     }

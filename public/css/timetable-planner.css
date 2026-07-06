@@ -2620,6 +2620,7 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 
 .tt-roster-import-dialog,
 .tt-period-time-dialog,
+.tt-duty-assignment-dialog,
 .tt-publish-dialog,
 .tt-publication-history-dialog {
     display: grid;
@@ -2644,6 +2645,11 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 .tt-period-time-dialog {
     --tt-dialog-width: 960px;
     --tt-dialog-max-height: 820px;
+}
+
+.tt-duty-assignment-dialog {
+    --tt-dialog-width: 520px;
+    --tt-dialog-max-height: 680px;
 }
 
 .tt-publish-dialog {
@@ -3185,6 +3191,71 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     gap: var(--tt-space-xs);
 }
 
+.tt-nonformal-time-preview {
+    display: grid;
+    gap: var(--tt-space-xs);
+    padding: var(--tt-space-sm);
+    border: 1px solid rgba(8, 145, 178, 0.22);
+    border-radius: var(--tt-radius-sm);
+    background: rgba(8, 145, 178, 0.06);
+}
+
+.tt-nonformal-time-preview-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--tt-space-sm);
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+}
+
+.tt-nonformal-time-preview-head strong {
+    color: var(--tt-text);
+    font-size: 0.8rem;
+}
+
+.tt-nonformal-time-preview-head span {
+    text-align: right;
+}
+
+.tt-nonformal-time-list {
+    display: grid;
+    gap: 6px;
+}
+
+.tt-nonformal-time-item {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) auto auto auto;
+    align-items: center;
+    gap: var(--tt-space-xs);
+    min-width: 0;
+    padding: 7px 8px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-input);
+    color: var(--tt-text);
+    font-size: 0.76rem;
+}
+
+.tt-nonformal-time-item strong,
+.tt-nonformal-time-item span,
+.tt-nonformal-time-item em {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-nonformal-time-item span,
+.tt-nonformal-time-item em {
+    color: var(--tt-muted);
+}
+
+.tt-nonformal-time-item em {
+    font-style: normal;
+    font-weight: 700;
+}
+
 .tt-period-time-setting-field {
     display: grid;
     gap: 6px;
@@ -3316,6 +3387,62 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 
 .tt-period-time-table tr.is-error td {
     background: rgba(245, 158, 11, 0.12);
+}
+
+.tt-period-time-duty-row td {
+    padding: 7px 8px;
+    background: transparent;
+}
+
+.tt-period-time-duty-card {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) auto auto auto;
+    align-items: center;
+    gap: var(--tt-space-xs);
+    min-width: 0;
+    padding: 9px 10px;
+    border: 1px dashed rgba(8, 145, 178, 0.42);
+    border-radius: var(--tt-radius-sm);
+    background: rgba(8, 145, 178, 0.08);
+    color: var(--tt-text-secondary);
+}
+
+.tt-period-time-duty-card strong,
+.tt-period-time-duty-card span,
+.tt-period-time-duty-card em {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-period-time-duty-card strong {
+    color: var(--tt-text);
+    font-size: 0.8rem;
+}
+
+.tt-period-time-duty-time,
+.tt-period-time-duty-chip,
+.tt-period-time-duty-card em {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    min-width: 0;
+    font-size: 0.74rem;
+    font-weight: 700;
+}
+
+.tt-period-time-duty-chip {
+    padding: 3px 8px;
+    border: 1px solid rgba(8, 145, 178, 0.28);
+    border-radius: 999px;
+    background: rgba(8, 145, 178, 0.1);
+    color: var(--tt-primary);
+}
+
+.tt-period-time-duty-card em {
+    color: var(--tt-muted);
+    font-style: normal;
 }
 
 .tt-period-time-error-row td {
@@ -3952,6 +4079,112 @@ body.light-mode .tt-export-setup-card .tt-publication-actions--published {
 .tt-cell.is-drop-target,
 .tt-cell:hover {
     background: rgba(8, 145, 178, 0.12);
+}
+
+.tt-study-period {
+    border-style: dashed;
+    background: color-mix(in srgb, var(--tt-bg-input) 82%, transparent);
+}
+
+.tt-study-period strong {
+    color: var(--tt-text);
+}
+
+.tt-study-cell {
+    min-height: 72px;
+    padding: 5px;
+    border: 1px dashed var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: color-mix(in srgb, var(--tt-bg-panel) 78%, transparent);
+    display: grid;
+    align-content: center;
+}
+
+button.tt-duty-cell {
+    width: 100%;
+    color: inherit;
+    font: inherit;
+    text-align: center;
+    cursor: pointer;
+}
+
+button.tt-duty-cell:hover,
+button.tt-duty-cell:focus-visible {
+    border-color: var(--tt-primary);
+    outline: none;
+    background: color-mix(in srgb, var(--tt-primary) 10%, var(--tt-bg-panel));
+}
+
+.tt-duty-cell span,
+.tt-display-cell span {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    max-width: 100%;
+    min-height: 28px;
+    padding: 4px 8px;
+    border-radius: var(--tt-radius-sm);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.tt-duty-cell.is-assigned span {
+    color: var(--tt-primary);
+    background: color-mix(in srgb, var(--tt-primary) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--tt-primary) 30%, var(--tt-border));
+}
+
+.tt-duty-cell.is-missing span {
+    color: var(--tt-muted);
+    background: var(--tt-bg-input);
+    border: 1px dashed var(--tt-border);
+}
+
+.tt-display-cell {
+    color: var(--tt-muted);
+}
+
+.tt-duty-assignment-form {
+    display: grid;
+    gap: var(--tt-space-sm);
+}
+
+.tt-duty-field {
+    display: grid;
+    gap: 6px;
+    color: var(--tt-muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.tt-duty-readonly {
+    display: grid;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-input);
+}
+
+.tt-duty-readonly span,
+.tt-duty-readonly small {
+    color: var(--tt-muted);
+    font-size: 0.78rem;
+}
+
+.tt-duty-error {
+    padding: 8px 10px;
+    border: 1px solid color-mix(in srgb, var(--tt-danger) 40%, var(--tt-border));
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-danger);
+    background: color-mix(in srgb, var(--tt-danger) 10%, transparent);
+    font-size: 0.82rem;
+}
+
+.tt-display-cell span {
+    background: transparent;
+    border: 0;
+    padding-left: 0;
 }
 
 .tt-main-empty-cell {
@@ -4632,6 +4865,20 @@ body.light-mode .tt-export-setup-card .tt-publication-actions--published {
 
     .tt-segment-fields {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tt-nonformal-time-preview-head {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .tt-nonformal-time-preview-head span {
+        text-align: left;
+    }
+
+    .tt-nonformal-time-item {
+        grid-template-columns: minmax(0, 1fr);
+        align-items: flex-start;
     }
 
     .tt-period-time-setting-actions {
