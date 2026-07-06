@@ -281,28 +281,98 @@
 
 .tt-constraint-flow-wrap {
     display: grid;
-    gap: 6px;
+    gap: 8px;
     min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-left: 3px solid var(--tt-primary);
+    border-radius: var(--tt-radius-md);
+    background: var(--tt-bg-panel);
+}
+
+.tt-constraint-flow-current {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    gap: 8px;
+    align-items: center;
+    min-width: 0;
+}
+
+.tt-constraint-flow-current > span {
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    font-weight: 900;
+    white-space: nowrap;
+}
+
+.tt-constraint-flow-current > b {
+    flex: 0 0 auto;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--tt-primary);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 900;
+    line-height: 1.35;
+}
+
+.tt-constraint-flow-current small {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-text-secondary);
+    font-size: 0.72rem;
+    font-weight: 800;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .tt-constraint-flow {
+    position: relative;
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 6px;
+    gap: 0;
     min-width: 0;
+    padding: 2px 4px 0;
+}
+
+.tt-constraint-flow::before,
+.tt-constraint-flow::after {
+    position: absolute;
+    top: 15px;
+    height: 2px;
+    border-radius: 999px;
+    content: "";
+    pointer-events: none;
+}
+
+.tt-constraint-flow::before {
+    right: 12.5%;
+    left: 12.5%;
+    background: var(--tt-border);
+}
+
+.tt-constraint-flow::after {
+    left: 12.5%;
+    width: var(--tt-flow-fill, 0%);
+    max-width: 75%;
+    background: var(--tt-primary);
 }
 
 .tt-constraint-flow-step {
-    display: inline-flex;
-    align-items: center;
+    position: relative;
+    z-index: 1;
+    display: grid;
+    align-content: start;
     justify-content: center;
-    gap: 6px;
+    justify-items: center;
+    gap: 4px;
     min-width: 0;
-    min-height: 28px;
-    padding: 0 8px;
-    border: 1px solid rgba(8, 145, 178, 0.18);
-    border-radius: var(--tt-radius-sm);
-    background: var(--tt-bg-input);
+    min-height: 36px;
+    padding: 0 4px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
     color: var(--tt-text-secondary);
     font-size: 0.72rem;
     font-weight: 800;
@@ -311,44 +381,50 @@
 }
 
 .tt-constraint-flow-step.is-complete {
-    border-color: rgba(8, 145, 178, 0.24);
-    background: rgba(8, 145, 178, 0.08);
     color: var(--tt-text);
 }
 
 .tt-constraint-flow-step.is-current {
-    border-color: rgba(8, 145, 178, 0.5);
-    background: rgba(8, 145, 178, 0.14);
     color: var(--tt-primary);
     font-weight: 900;
-    box-shadow: inset 0 0 0 1px rgba(8, 145, 178, 0.08);
 }
 
 .tt-constraint-flow-step.is-upcoming {
-    border-color: var(--tt-border);
-    background: var(--tt-bg-input);
     color: var(--tt-muted);
 }
 
 .tt-constraint-flow-step b {
     display: inline-grid;
-    flex: 0 0 auto;
     place-items: center;
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
+    border: 2px solid rgba(8, 145, 178, 0.2);
     border-radius: 999px;
-    background: rgba(8, 145, 178, 0.12);
+    background: var(--tt-bg-panel);
     color: var(--tt-primary);
-    font-size: 0.66rem;
+    font-size: 0.68rem;
+    font-weight: 900;
+}
+
+.tt-constraint-flow-step b svg {
+    width: 13px;
+    height: 13px;
+    stroke-width: 3;
 }
 
 .tt-constraint-flow-step.is-complete b {
-    background: rgba(8, 145, 178, 0.18);
+    border-color: var(--tt-primary);
+    background: var(--tt-primary);
+    color: #fff;
 }
 
 .tt-constraint-flow-step.is-current b {
+    width: 26px;
+    height: 26px;
+    border-color: var(--tt-primary);
     background: var(--tt-primary);
     color: #fff;
+    box-shadow: 0 0 0 4px rgba(8, 145, 178, 0.13);
 }
 
 .tt-constraint-flow-step.is-upcoming b {
@@ -358,22 +434,15 @@
 
 .tt-constraint-flow-step em {
     min-width: 0;
+    max-width: 100%;
     overflow: hidden;
     font-style: normal;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.tt-constraint-flow-status {
-    min-width: 0;
-    color: var(--tt-primary);
-    font-size: 0.72rem;
-    font-weight: 800;
-    line-height: 1.35;
-}
-
 .tt-constraint-flow--compact .tt-constraint-flow-step {
-    min-height: 24px;
+    min-height: 34px;
     font-size: 0.68rem;
 }
 
@@ -1610,6 +1679,19 @@
     .tt-constraint-flow,
     .tt-requirement-review-summary {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tt-constraint-flow::before,
+    .tt-constraint-flow::after {
+        display: none;
+    }
+
+    .tt-constraint-flow-current {
+        grid-template-columns: 1fr;
+    }
+
+    .tt-constraint-flow-current small {
+        grid-column: 1;
     }
 
     .tt-requirement-review-summary em {

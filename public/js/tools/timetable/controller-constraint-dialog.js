@@ -40,17 +40,32 @@ function getConstraintFlowStageFromReview(review = {}) {
 
 function getConstraintFlowStatusText(review = {}) {
     const stage = getConstraintFlowStageFromReview(review);
-    if (stage === 'apply') return '当前：正在应用到项目';
-    if (stage === 'review') return '当前：请复核已理解需求';
+    if (stage === 'apply') return '正在写入项目规则和模型设置';
+    if (stage === 'review') return '请检查已理解需求和落地结果';
     if (stage === 'understand') {
-        return `当前：智能理解中，${review.phaseText || '正在本地识别需求'}`;
+        return review.phaseText || '正在本地识别需求';
     }
-    return '当前：输入排课需求';
+    return '等待输入文本、文件或手动补充';
 }
 
 function updateConstraintFlowProgressDom(container, review = {}) {
     const stage = getConstraintFlowStageFromReview(review);
     const currentIndex = Math.max(0, CONSTRAINT_FLOW_STEPS.indexOf(stage));
+    const flowPercent = CONSTRAINT_FLOW_STEPS.length > 1
+        ? Math.round((currentIndex / (CONSTRAINT_FLOW_STEPS.length - 1)) * 10000) / 100
+        : 0;
+    const flowFill = Math.round(flowPercent * 0.75 * 100) / 100;
+    const wrap = container.querySelector?.('.tt-constraint-flow-wrap');
+    if (wrap) wrap.dataset.currentFlowStep = stage;
+    const flow = container.querySelector?.('.tt-constraint-flow');
+    if (flow) {
+        flow.style.setProperty('--tt-flow-percent', `${flowPercent}%`);
+        flow.style.setProperty('--tt-flow-fill', `${flowFill}%`);
+    }
+    const currentIndexElement = container.querySelector?.('[data-constraint-flow-current-index]');
+    if (currentIndexElement) {
+        currentIndexElement.textContent = `${currentIndex + 1} / ${CONSTRAINT_FLOW_STEPS.length}`;
+    }
     const status = container.querySelector?.('[data-constraint-flow-status]');
     if (status) {
         status.textContent = getConstraintFlowStatusText(review);

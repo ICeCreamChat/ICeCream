@@ -497,12 +497,12 @@ function constraintFlowStage(review = {}, requirements = []) {
 }
 
 function constraintFlowStatusText(review = {}, stage = 'input') {
-    if (stage === 'apply') return '当前：正在应用到项目';
-    if (stage === 'review') return '当前：请复核已理解需求';
+    if (stage === 'apply') return '正在写入项目规则和模型设置';
+    if (stage === 'review') return '请检查已理解需求和落地结果';
     if (stage === 'understand') {
-        return `当前：智能理解中，${review.phaseText || '正在本地识别需求'}`;
+        return review.phaseText || '正在本地识别需求';
     }
-    return '当前：输入排课需求';
+    return '等待输入文本、文件或手动补充';
 }
 
 function renderConstraintFlow(compact = false, review = {}, requirements = []) {
@@ -514,23 +514,27 @@ function renderConstraintFlow(compact = false, review = {}, requirements = []) {
     ];
     const currentStage = constraintFlowStage(review, requirements);
     const currentIndex = Math.max(0, steps.findIndex(step => step.key === currentStage));
+    const flowPercent = steps.length > 1 ? Math.round((currentIndex / (steps.length - 1)) * 10000) / 100 : 0;
+    const flowFill = Math.round(flowPercent * 0.75 * 100) / 100;
     const statusText = constraintFlowStatusText(review, currentStage);
     return `
-        <div class="tt-constraint-flow-wrap">
-            <div class="tt-constraint-flow ${compact ? 'tt-constraint-flow--compact' : ''}" aria-label="智能约束处理流程">
+        <div class="tt-constraint-flow-wrap" data-current-flow-step="${escapeAttr(currentStage)}">
+            <div class="tt-constraint-flow-current">
+                <span>当前进度</span>
+                <b data-constraint-flow-current-index>${escapeHtml(`${currentIndex + 1} / ${steps.length}`)}</b>
+                <small data-constraint-flow-status>${escapeHtml(statusText)}</small>
+            </div>
+            <div class="tt-constraint-flow ${compact ? 'tt-constraint-flow--compact' : ''}" aria-label="智能约束处理流程" style="--tt-flow-percent: ${flowPercent}%; --tt-flow-fill: ${flowFill}%">
                 ${steps.map((step, index) => {
                     const stepState = index < currentIndex ? 'is-complete' : index === currentIndex ? 'is-current' : 'is-upcoming';
                     const ariaCurrent = stepState === 'is-current' ? ' aria-current="step"' : '';
                     return `
                 <span data-flow-step="${escapeAttr(step.key)}" class="tt-constraint-flow-step ${stepState}"${ariaCurrent}>
-                    <b>${escapeHtml(index + 1)}</b>
+                    <b>${index < currentIndex ? '<i data-lucide="check"></i>' : escapeHtml(index + 1)}</b>
                     <em>${escapeHtml(step.label)}</em>
                 </span>
             `;
                 }).join('')}
-            </div>
-            <div class="tt-constraint-flow-status" data-constraint-flow-status data-current-flow-step="${escapeAttr(currentStage)}">
-                ${escapeHtml(statusText)}
             </div>
         </div>
     `;

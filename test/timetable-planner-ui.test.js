@@ -6314,25 +6314,32 @@ test('timetable constraint dialog shows parse progress feedback', async () => {
     },
   }));
 
+  assert.match(initialHtml, /tt-constraint-flow-current/);
+  assert.match(initialHtml, /当前进度/);
+  assert.match(initialHtml, /data-constraint-flow-current-index[^>]*>1 \/ 4</);
+  assert.doesNotMatch(initialHtml, /data-constraint-flow-current-title/);
+  assert.match(initialHtml, /等待输入文本、文件或手动补充/);
   assert.match(initialHtml, /data-flow-step="input"[^>]*aria-current="step"/);
   assert.match(initialHtml, /tt-constraint-flow-step[^"]*is-current[\s\S]*?输入需求/);
-  assert.match(initialHtml, /当前：输入排课需求/);
   assert.match(fileHtml, /data-constraint-dialog-overlay/);
   assert.match(fileHtml, /智能-rules\.xlsx/);
   assert.match(fileHtml, /data-action="parse-constraints"[^>]*disabled/);
   assert.match(fileHtml, /data-lucide="loader-2"[^>]*class="tt-spin"/);
   assert.match(fileHtml, /正在解析/);
   assert.match(fileHtml, /data-flow-step="understand"[^>]*aria-current="step"/);
+  assert.match(fileHtml, /data-constraint-flow-current-index[^>]*>2 \/ 4</);
   assert.match(fileHtml, /data-flow-step="input"[^>]*is-complete/);
+  assert.match(fileHtml, /tt-constraint-flow[^>]*--tt-flow-percent:/);
   assert.match(fileHtml, /data-action="switch-constraint-mode"[\s\S]*?disabled/);
   assert.match(fileHtml, /id="tt-constraint-file-input"[^>]*disabled/);
   assert.doesNotMatch(fileHtml, /data-smart-workbench-root/);
   assert.doesNotMatch(fileHtml, /id="tt-rule-review-dialog"/);
   assert.match(aiReviewHtml, /data-flow-step="understand"[^>]*aria-current="step"/);
-  assert.match(aiReviewHtml, /当前：智能理解中，正在让 AI 复审识别结果/);
+  assert.match(aiReviewHtml, /正在让 AI 复审识别结果/);
   assert.match(reviewHtml, /data-flow-step="review"[^>]*aria-current="step"/);
+  assert.match(reviewHtml, /data-constraint-flow-current-index[^>]*>3 \/ 4</);
   assert.match(reviewHtml, /data-flow-step="understand"[^>]*is-complete/);
-  assert.match(reviewHtml, /当前：请复核已理解需求/);
+  assert.match(reviewHtml, /请检查已理解需求和落地结果/);
 
   const textHtml = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
@@ -6359,10 +6366,13 @@ test('timetable constraint dialog shows parse progress feedback', async () => {
   assert.match(dialogStyles, /\.tt-constraint-mode-row\s*{/);
   assert.match(dialogStyles, /\.tt-constraint-form-surface\s*{/);
   assert.match(dialogStyles, /\.tt-constraint-command-row\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-flow-current\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-flow::before\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-flow::after\s*{/);
   assert.match(dialogStyles, /\.tt-constraint-flow-step\.is-current\s*{/);
   assert.match(dialogStyles, /\.tt-constraint-flow-step\.is-complete\s*{/);
   assert.match(dialogStyles, /\.tt-constraint-flow-step\.is-upcoming\s*{/);
-  assert.match(dialogStyles, /\.tt-constraint-flow-status\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-flow-current\s+small\s*{/);
   assert.match(dialogStyles, /\.tt-tab-btn\s+span\s*{[^}]*white-space:\s*nowrap/);
   assert.match(dialogStyles, /\.tt-tab-btn\.is-active\s*{[^}]*background:\s*var\(--tt-bg-panel\)/);
   assert.doesNotMatch(dialogStyles, /\.tt-tab-btn\.is-active\s*{[^}]*background:\s*var\(--tt-primary\)/);
@@ -6567,8 +6577,9 @@ test('timetable constraint dialog locks inputs while rules are being written', (
 
   assert.match(html, /正在解析/);
   assert.match(html, /data-flow-step="apply"[^>]*aria-current="step"/);
+  assert.match(html, /data-constraint-flow-current-index[^>]*>4 \/ 4</);
   assert.match(html, /data-flow-step="review"[^>]*is-complete/);
-  assert.match(html, /当前：正在应用到项目/);
+  assert.match(html, /正在写入项目规则和模型设置/);
   assert.match(html, /data-action="parse-constraints"[^>]*disabled/);
   assert.match(html, /data-action="apply-constraints"[^>]*disabled/);
   assert.match(html, /data-lucide="loader-2"[^>]*class="tt-spin"/);
