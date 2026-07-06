@@ -34,7 +34,12 @@ import { buildRuleReviewTasks } from './rule-review-tasks.js';
 import smartHelperMethods from './controller-smart-helper.js';
 import * as constraintDialogMethods from './controller-constraint-dialog.js';
 import * as constraintDialogAdvancedMethods from './controller-constraint-dialog-advanced.js';
-import { renderNonTeachingSegmentPreview, renderPeriodTimeTableBody, renderWorkbench } from './view.js';
+import {
+    formatPeriodTimeSegmentMeta,
+    renderNonTeachingSegmentPreview,
+    renderPeriodTimeTableBody,
+    renderWorkbench,
+} from './view.js';
 import { PRESET_TEMPLATES } from './preset-templates.js';
 
 function createSmartWorkbenchState(overrides = {}) {
@@ -90,6 +95,12 @@ function isEarlyStudySegmentLabel(label = '') {
 
 function isEveningStudySegmentLabel(label = '') {
     return /晚自习|晚修/.test(String(label || ''));
+}
+
+function defaultSegmentKindForLabel(label = '') {
+    return isEarlyStudySegmentLabel(label) || isEveningStudySegmentLabel(label)
+        ? 'duty'
+        : 'teaching';
 }
 
 function buildRuleChangePreview({ currentItems = [], nextItems = [], draftRows = [] } = {}) {
@@ -187,6 +198,12 @@ export class TimetablePlannerController {
             selector = `[data-period-time-draft-end="${active.dataset.periodTimeDraftEnd}"]`;
         } else if (active.dataset?.periodTimeGapAfter) {
             selector = `[data-period-time-gap-after="${active.dataset.periodTimeGapAfter}"]`;
+        } else if (active.dataset?.periodTimeBlockStart) {
+            selector = `[data-period-time-block-start="${active.dataset.periodTimeBlockStart}"]`;
+        } else if (active.dataset?.periodTimeBlockEnd) {
+            selector = `[data-period-time-block-end="${active.dataset.periodTimeBlockEnd}"]`;
+        } else if (active.dataset?.periodTimeBlockGapAfter) {
+            selector = `[data-period-time-block-gap-after="${active.dataset.periodTimeBlockGapAfter}"]`;
         }
         if (!selector) return null;
         return {
@@ -679,6 +696,76 @@ export class TimetablePlannerController {
         return `${String(Math.floor(bounded / 60)).padStart(2, '0')}:${String(bounded % 60).padStart(2, '0')}`;
     }
 
+    splitAdditionalSegmentId(id = '', index = 0) {
+        return `${id || 'seg'}__p${index + 1}`;
+    }
+
+    splitAdditionalSegmentLabel(label = '', index = 0, total = 1) {
+        if (total <= 1) return label || '附加时段';
+        return `${label || '附加时段'}${index + 1}`;
+    }
+
+    expandPeriodTimeSegment(segment = {}, globalDefaults = {}) {
+        const kind = ['teaching', 'duty', 'display'].includes(segment.kind)
+            ? segment.kind
+            : defaultSegmentKindForLabel(segment.label);
+        const periodCount = Math.max(0, Number.parseInt(segment.periodCount, 10) || 0);
+        if (kind === 'teaching' || periodCount <= 1) return [segment];
+        const startMinutes = this.timeToMinutes(segment.startTime);
+        const classMinutes = Math.max(1, Math.min(180, Number.parseInt(segment.classMinutes ?? globalDefaults.classMinutes, 10) || 45));
+        const breakMinutes = Math.max(0, Math.min(120, Number.parseInt(segment.breakMinutes ?? globalDefaults.breakMinutes, 10) || 0));
+        return Array.from({ length: periodCount }, (_, index) => ({
+            ...segment,
+            id: this.splitAdditionalSegmentId(segment.id, index),
+            label: this.splitAdditionalSegmentLabel(segment.label, index, periodCount),
+            startTime: startMinutes === null ? segment.startTime : this.minutesToTime(startMinutes + index * (classMinutes + breakMinutes)),
+            periodCount: 1,
+            classMinutes,
+            breakMinutes,
+            kind,
+        }));
+    }
+
+    buildDutyTimeBlockMigration(rawConfig = null, normalizedConfig = null) {
+        const rawSegments = Array.isArray(rawConfig?.segments) ? rawConfig.segments : [];
+        const normalizedIds = new Set((normalizedConfig?.segments || []).map(segment => segment.id));
+        const migration = new Map();
+        const globalDefaults = normalizedConfig?.globalDefaults || rawConfig?.globalDefaults || {};
+        rawSegments.forEach((segment, index) => {
+            const id = String(segment.id || `seg-${index + 1}`);
+            const label = String(segment.label || `时段${index + 1}`).trim().slice(0, 40) || `时段${index + 1}`;
+            const kind = ['teaching', 'duty', 'display'].includes(segment.kind)
+                ? segment.kind
+                : defaultSegmentKindForLabel(label);
+            const periodCount = Math.max(0, Number.parseInt(segment.periodCount, 10) || 0);
+            if (kind === 'teaching' || periodCount <= 1) return;
+            const targets = Array.from({ length: periodCount }, (_, itemIndex) => this.splitAdditionalSegmentId(id, itemIndex))
+                .filter(targetId => normalizedIds.has(targetId));
+            if (targets.length > 1) migration.set(id, targets);
+        });
+        return migration;
+    }
+
+    migrateDutyAssignmentsForSplitTimeBlocks(assignments = [], rawConfig = null, normalizedConfig = null) {
+        const migration = this.buildDutyTimeBlockMigration(rawConfig, normalizedConfig);
+        if (!migration.size || !Array.isArray(assignments) || !assignments.length) {
+            return { assignments: Array.isArray(assignments) ? assignments : [], changed: false };
+        }
+        let changed = false;
+        const migrated = assignments.flatMap(item => {
+            const timeBlockId = String(item?.timeBlockId || item?.segmentId || '');
+            const targets = migration.get(timeBlockId);
+            if (!targets?.length) return [item];
+            changed = true;
+            return targets.map((targetId, index) => ({
+                ...item,
+                id: item?.id ? `${item.id}__p${index + 1}` : undefined,
+                timeBlockId: targetId,
+            }));
+        });
+        return { assignments: migrated, changed };
+    }
+
     getDefaultSegmentConfig(periods = null) {
         const activePeriods = periods ? [...periods].sort((left, right) => left - right) : getActivePeriods(this.state.project);
         const halfPoint = Math.floor(activePeriods.length / 2);
@@ -725,16 +812,9 @@ export class TimetablePlannerController {
             return minutes === null ? fallback : this.minutesToTime(minutes);
         };
         const normalizeKind = (value, id, label) => {
-            let kind = ['teaching', 'duty', 'display'].includes(value) ? value : (isEarlyStudySegmentLabel(label) ? 'duty' : 'teaching');
-            if (kind !== 'display' && isEarlyStudySegmentLabel(label)) {
-                kind = 'duty';
-            }
-            const hasDutyAssignment = (this.state.project?.dutyAssignments || [])
-                .some(item => item?.timeBlockId === id);
-            if (kind === 'duty' && isEveningStudySegmentLabel(label) && !hasDutyAssignment) {
-                kind = 'teaching';
-            }
-            return kind;
+            return ['teaching', 'duty', 'display'].includes(value)
+                ? value
+                : defaultSegmentKindForLabel(label);
         };
         const globalDefaults = {
             classMinutes: toInteger(config.globalDefaults?.classMinutes, defaults.globalDefaults.classMinutes, 1, 180),
@@ -754,6 +834,7 @@ export class TimetablePlannerController {
                     : toInteger(seg.breakMinutes, globalDefaults.breakMinutes, 0, 120);
                 return { id, label, startTime, periodCount, classMinutes, breakMinutes, kind: normalizeKind(seg.kind, id, label) };
             })
+            .flatMap(segment => this.expandPeriodTimeSegment(segment, globalDefaults))
             .slice(0, 10);
         return { globalDefaults, segments: segments.length ? segments : defaults.segments };
     }
@@ -762,17 +843,9 @@ export class TimetablePlannerController {
         const segments = Array.isArray(config?.segments) ? config.segments : [];
         const resolveKind = segment => {
             const label = String(segment?.label || '');
-            let kind = ['teaching', 'duty', 'display'].includes(segment?.kind)
+            const kind = ['teaching', 'duty', 'display'].includes(segment?.kind)
                 ? segment.kind
-                : (isEarlyStudySegmentLabel(label) ? 'duty' : 'teaching');
-            if (kind !== 'display' && isEarlyStudySegmentLabel(label)) {
-                kind = 'duty';
-            }
-            const hasDutyAssignment = (this.state.project?.dutyAssignments || [])
-                .some(item => item?.timeBlockId === segment?.id);
-            if (kind === 'duty' && isEveningStudySegmentLabel(label) && !hasDutyAssignment) {
-                kind = 'teaching';
-            }
+                : defaultSegmentKindForLabel(label);
             return kind;
         };
         const count = segments
@@ -794,10 +867,9 @@ export class TimetablePlannerController {
         const previewSegments = segments
             .map(segment => {
                 const label = String(segment.label || '');
-                let kind = ['teaching', 'duty', 'display'].includes(segment.kind)
+                const kind = ['teaching', 'duty', 'display'].includes(segment.kind)
                     ? segment.kind
-                    : (isEarlyStudySegmentLabel(label) ? 'duty' : 'teaching');
-                if (kind !== 'display' && isEarlyStudySegmentLabel(label)) kind = 'duty';
+                    : defaultSegmentKindForLabel(label);
                 if (kind === 'teaching') return null;
                 return {
                     id: segment.id || '',
@@ -1408,7 +1480,7 @@ export class TimetablePlannerController {
         this.render();
     }
 
-    readSegmentConfigFromDom() {
+    readSegmentConfigFromDom({ includePeriodTimeBlockInputs = false } = {}) {
         if (!this.state.container) return null;
         const globalClassMinutes = this.state.container.querySelector('#tt-segment-global-class-minutes')?.value;
         const globalBreakMinutes = this.state.container.querySelector('#tt-segment-global-break-minutes')?.value;
@@ -1417,24 +1489,129 @@ export class TimetablePlannerController {
             const id = card.dataset.segmentId;
             const classMinutesValue = card.querySelector(`[data-segment-field="${id}-classMinutes"]`)?.value;
             const breakMinutesValue = card.querySelector(`[data-segment-field="${id}-breakMinutes"]`)?.value;
-            const kindValue = card.querySelector(`[data-segment-field="${id}-kind"]`)?.value || card.dataset.segmentKind || 'teaching';
+            const kindInput = card.querySelector(`[data-segment-field="${id}-kind"]`);
+            const dutyInput = card.querySelector(`[data-segment-field="${id}-dutyEnabled"]`);
+            const label = card.querySelector(`[data-segment-field="${id}-label"]`)?.value || '时段';
+            const kindValue = kindInput ? kindInput.value : (card.dataset.segmentKind || '');
+            const kind = (() => {
+                if (kindValue === 'teaching') return 'teaching';
+                if (kindValue === 'additional') {
+                    const checked = dutyInput
+                        ? Boolean(dutyInput.checked)
+                        : card.dataset.segmentKind === 'duty' || defaultSegmentKindForLabel(label) === 'duty';
+                    return checked ? 'duty' : 'display';
+                }
+                return ['duty', 'display'].includes(kindValue)
+                    ? kindValue
+                    : defaultSegmentKindForLabel(label);
+            })();
             return {
                 id,
-                label: card.querySelector(`[data-segment-field="${id}-label"]`)?.value || '时段',
+                label,
                 startTime: card.querySelector(`[data-segment-field="${id}-startTime"]`)?.value || '08:00',
                 periodCount: card.querySelector(`[data-segment-field="${id}-periodCount"]`)?.value || '1',
                 classMinutes: classMinutesValue === '' ? null : classMinutesValue,
                 breakMinutes: breakMinutesValue === '' ? null : breakMinutesValue,
-                kind: kindValue,
+                kind,
             };
         });
-        return {
+        const config = {
             globalDefaults: {
                 classMinutes: globalClassMinutes,
                 breakMinutes: globalBreakMinutes,
             },
             segments,
         };
+        return includePeriodTimeBlockInputs
+            ? this.applyPeriodTimeBlockInputsToSegmentConfig(config)
+            : config;
+    }
+
+    applyPeriodTimeBlockInputsToSegmentConfig(config = {}) {
+        if (!this.state.container || typeof this.state.container.querySelectorAll !== 'function') return config;
+        const blockRows = [...this.state.container.querySelectorAll('[data-period-time-block-row]')];
+        if (!blockRows.length || !Array.isArray(config.segments)) return config;
+        const normalizedConfig = this.normalizeSegmentConfig(config, []);
+        const rowById = new Map(blockRows
+            .map(row => [row.dataset?.periodTimeBlockRow || '', row])
+            .filter(([id]) => id));
+        const toMinutes = value => this.timeToMinutes(value);
+        const defaultBreakMinutes = Number(normalizedConfig.globalDefaults?.breakMinutes);
+        const segments = normalizedConfig.segments.map(segment => {
+            const row = rowById.get(segment.id);
+            if (!row) return segment;
+            const startValue = row.querySelector('[data-period-time-block-start]')?.value || '';
+            const endValue = row.querySelector('[data-period-time-block-end]')?.value || '';
+            const startMinutes = toMinutes(startValue);
+            const endMinutes = toMinutes(endValue);
+            const updated = { ...segment };
+            if (startMinutes !== null) {
+                updated.startTime = this.minutesToTime(startMinutes);
+            }
+            if (startMinutes !== null && endMinutes !== null && endMinutes > startMinutes) {
+                const periodCount = Math.max(1, Number.parseInt(updated.periodCount, 10) || 1);
+                const breakMinutes = Number.isFinite(Number(updated.breakMinutes))
+                    ? Number(updated.breakMinutes)
+                    : (Number.isFinite(defaultBreakMinutes) ? defaultBreakMinutes : 0);
+                const totalBreakMinutes = Math.max(0, periodCount - 1) * breakMinutes;
+                const classMinutes = Math.max(1, Math.round((endMinutes - startMinutes - totalBreakMinutes) / periodCount));
+                updated.classMinutes = classMinutes;
+            }
+            return updated;
+        });
+        return { ...normalizedConfig, segments };
+    }
+
+    syncSegmentCardSummariesToDom(segmentConfig = {}) {
+        if (!this.state.container || typeof this.state.container.querySelectorAll !== 'function') return;
+        const segments = Array.isArray(segmentConfig.segments) ? segmentConfig.segments : [];
+        const segmentById = new Map(segments.map((segment, index) => [segment.id, { segment, index }]));
+        const cards = [...this.state.container.querySelectorAll('[data-period-time-segment-card]')];
+        cards.forEach(card => {
+            const id = card.dataset?.segmentId || '';
+            const entry = segmentById.get(id);
+            if (!entry) return;
+            const { segment, index } = entry;
+            if (card.dataset) card.dataset.segmentKind = segment.kind || '';
+            const meta = card.querySelector?.('.tt-segment-index');
+            if (meta) meta.textContent = formatPeriodTimeSegmentMeta(segment, index);
+            const dutyStatus = card.querySelector?.('[data-segment-duty-status]');
+            if (dutyStatus) dutyStatus.textContent = segment.kind === 'duty' ? '开启' : '关闭';
+        });
+    }
+
+    syncPeriodTimeBlockSegmentFieldsToDom(segmentConfig = {}) {
+        if (!this.state.container || typeof this.state.container.querySelector !== 'function') return;
+        (segmentConfig.segments || []).forEach(segment => {
+            const id = segment.id || '';
+            if (!id) return;
+            const startInput = this.state.container.querySelector(`[data-segment-field="${id}-startTime"]`);
+            const classMinutesInput = this.state.container.querySelector(`[data-segment-field="${id}-classMinutes"]`);
+            if (startInput) startInput.value = segment.startTime || '';
+            if (classMinutesInput && segment.classMinutes !== null && segment.classMinutes !== undefined) {
+                classMinutesInput.value = String(segment.classMinutes);
+            }
+        });
+    }
+
+    updatePeriodTimeBlockFromDom(input) {
+        if (!input || !this.state.container) return null;
+        const config = this.readSegmentConfigFromDom({ includePeriodTimeBlockInputs: true });
+        if (!config) return null;
+        const normalized = this.normalizeSegmentConfig(config, []);
+        const existingTimes = this.state.periodTimeDialog?.draftTimes || [];
+        const draftTimes = this.buildPeriodTimesFromSegments(normalized, null, existingTimes);
+        this.state.periodTimeDialog = {
+            ...(this.state.periodTimeDialog || {}),
+            open: true,
+            segmentConfig: normalized,
+            errors: [],
+            cleared: false,
+            draftTimes,
+        };
+        this.syncPeriodTimeBlockSegmentFieldsToDom(normalized);
+        this.refreshPeriodTimeGapInputsFromDom();
+        return normalized;
     }
 
     updateSegmentConfigFromForm() {
@@ -1469,6 +1646,7 @@ export class TimetablePlannerController {
         if (totalPeriodCountChanged) {
             this.render();
         } else {
+            this.syncSegmentCardSummariesToDom(normalized);
             this.writePeriodTimesToDom(draftTimes);
             this.refreshPeriodTimeGapInputsFromDom();
             if (nonTeachingPreviewChanged) {
@@ -1714,7 +1892,7 @@ export class TimetablePlannerController {
     refreshNonTeachingSegmentPreviewFromDom(segmentConfig = {}) {
         if (!this.state.container || typeof this.state.container.querySelector !== 'function') return false;
         const slot = this.state.container.querySelector('[data-nonformal-time-preview-slot]');
-        if (!slot) return false;
+        if (!slot) return true;
         slot.innerHTML = renderNonTeachingSegmentPreview(segmentConfig);
         return true;
     }
@@ -1755,6 +1933,64 @@ export class TimetablePlannerController {
             };
             gapInput.value = String(this.calculatePeriodGap(current, next));
         });
+        const timelineRows = [...this.state.container.querySelectorAll('[data-period-time-row], [data-period-time-block-row]')];
+        timelineRows.forEach((row, index) => {
+            const gapInput = row.querySelector('[data-period-time-block-gap-after]');
+            if (!gapInput) return;
+            const current = {
+                end: row.querySelector('[data-period-time-draft-end], [data-period-time-end], [data-period-time-block-end]')?.value || '',
+            };
+            const nextRow = timelineRows[index + 1];
+            const next = {
+                start: nextRow?.querySelector('[data-period-time-draft-start], [data-period-time-start], [data-period-time-block-start]')?.value || '',
+            };
+            gapInput.value = String(this.calculatePeriodGap(current, next));
+        });
+    }
+
+    updatePeriodTimeBlockGapFromDom(input) {
+        if (!input || !this.state.container) return;
+        const rows = [...this.state.container.querySelectorAll('[data-period-time-row], [data-period-time-block-row]')];
+        const blockId = input.dataset.periodTimeBlockGapAfter;
+        const rowIndex = rows.findIndex(row => row.dataset?.periodTimeBlockRow === blockId);
+        if (rowIndex < 0 || rowIndex >= rows.length - 1) return;
+        const currentEnd = this.timeToMinutes(rows[rowIndex].querySelector('[data-period-time-block-end]')?.value);
+        if (currentEnd === null || String(input.value || '').trim() === '') {
+            this.updatePeriodTimeBlockFromDom(input);
+            return;
+        }
+        const toGap = value => {
+            const number = Number(value);
+            return Number.isFinite(number) ? Math.max(0, Math.min(240, Math.round(number))) : 0;
+        };
+        let nextStart = currentEnd + toGap(input.value);
+        for (let index = rowIndex + 1; index < rows.length; index += 1) {
+            const row = rows[index];
+            const startInput = row.querySelector('[data-period-time-draft-start], [data-period-time-start], [data-period-time-block-start]');
+            const endInput = row.querySelector('[data-period-time-draft-end], [data-period-time-end], [data-period-time-block-end]');
+            const existingStart = this.timeToMinutes(startInput?.value);
+            const existingEnd = this.timeToMinutes(endInput?.value);
+            const duration = existingStart !== null && existingEnd !== null && existingEnd > existingStart
+                ? existingEnd - existingStart
+                : 45;
+            if (startInput) startInput.value = this.minutesToTime(nextStart);
+            if (endInput) endInput.value = this.minutesToTime(nextStart + duration);
+            const gapInput = row.querySelector('[data-period-time-gap-after], [data-period-time-block-gap-after]');
+            nextStart += duration + (gapInput ? toGap(gapInput.value) : 0);
+        }
+        const config = this.readSegmentConfigFromDom({ includePeriodTimeBlockInputs: true });
+        const normalized = this.normalizeSegmentConfig(config, []);
+        const draftTimes = this.normalizePeriodTimeDraft(this.collectPeriodTimesFromDom() || [], this.getFormalPeriodsForSegmentConfig(normalized));
+        this.state.periodTimeDialog = {
+            ...(this.state.periodTimeDialog || {}),
+            open: true,
+            segmentConfig: normalized,
+            draftTimes,
+            errors: [],
+            cleared: false,
+        };
+        this.syncPeriodTimeBlockSegmentFieldsToDom(normalized);
+        this.refreshPeriodTimeGapInputsFromDom();
     }
 
     updatePeriodTimeGapFromDom(input) {
@@ -1854,7 +2090,9 @@ export class TimetablePlannerController {
 
     async savePeriodTimes() {
         const rawTimes = this.collectPeriodTimesFromDom() || this.state.periodTimeDialog?.draftTimes || [];
-        const segmentConfig = this.readSegmentConfigFromDom() || this.state.periodTimeDialog?.segmentConfig || this.getDefaultSegmentConfig(getActivePeriods(this.state.project));
+        const segmentConfig = this.readSegmentConfigFromDom({ includePeriodTimeBlockInputs: true })
+            || this.state.periodTimeDialog?.segmentConfig
+            || this.getDefaultSegmentConfig(getActivePeriods(this.state.project));
         const inputActivePeriods = this.getFormalPeriodsForSegmentConfig(segmentConfig);
         const normalizedSegmentConfig = this.normalizeSegmentConfig(segmentConfig, inputActivePeriods);
         const activePeriods = this.getFormalPeriodsForSegmentConfig(normalizedSegmentConfig);
@@ -1903,16 +2141,25 @@ export class TimetablePlannerController {
             if (eveningBoundary === null && teachingSegments.length >= 3) {
                 eveningBoundary = activePeriods[teachingSegments.slice(0, 2).reduce((sum, seg) => sum + seg.periodCount, 0)] || null;
             }
+            const dutyMigration = this.migrateDutyAssignmentsForSplitTimeBlocks(
+                this.state.project?.dutyAssignments || [],
+                this.state.project?.periodTimeSegments,
+                normalizedSegmentConfig,
+            );
+            const payload = {
+                periodTimes: draftTimes,
+                periodTimeSegments: normalizedSegmentConfig,
+                dayPartBoundaries: {
+                    afternoonStartPeriod: afternoonBoundary,
+                    eveningStartPeriod: eveningBoundary,
+                },
+            };
+            if (dutyMigration.changed) {
+                payload.dutyAssignments = dutyMigration.assignments;
+            }
             const result = await requestTimetable('/project', {
                 method: 'POST',
-                body: JSON.stringify({
-                    periodTimes: draftTimes,
-                    periodTimeSegments: normalizedSegmentConfig,
-                    dayPartBoundaries: {
-                        afternoonStartPeriod: afternoonBoundary,
-                        eveningStartPeriod: eveningBoundary,
-                    },
-                }),
+                body: JSON.stringify(payload),
             });
             this.applyProject(result.project);
             this.state.lastFailure = null;

@@ -693,8 +693,8 @@ button.tt-section-title {
 
 .tt-period-time-entry {
     display: grid;
-    grid-template-columns: 34px minmax(0, 1fr) auto;
-    align-items: center;
+    grid-template-columns: 34px minmax(0, 1fr);
+    align-items: start;
     gap: 10px;
     width: 100%;
     margin-top: var(--tt-space-sm);
@@ -735,12 +735,14 @@ button.tt-section-title {
 
 .tt-period-time-entry-copy {
     display: grid;
-    gap: 2px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 3px 8px;
     min-width: 0;
 }
 
 .tt-period-time-entry-copy strong,
-.tt-period-time-entry-copy em {
+.tt-period-time-entry-copy em,
+.tt-period-time-entry-copy span {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -756,6 +758,25 @@ button.tt-section-title {
     color: var(--tt-muted);
     font-size: 0.72rem;
     font-style: normal;
+}
+
+.tt-period-time-entry-action {
+    justify-self: end;
+    padding: 3px 8px;
+    background: rgba(8, 145, 178, 0.12);
+    border: 1px solid rgba(8, 145, 178, 0.22);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-primary);
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
+.tt-period-time-entry-range {
+    grid-column: 1 / -1;
+}
+
+.tt-period-time-entry-status {
+    grid-column: 1 / -1;
 }
 
 .tt-range-setup-card,
@@ -805,8 +826,8 @@ body.light-mode .tt-rules-setup-card {
 .tt-range-setup-card .tt-range-summary-trigger {
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: auto auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
     align-content: center;
     gap: 3px 8px;
     min-height: 58px;
@@ -872,6 +893,10 @@ body.light-mode .tt-range-setup-card .tt-range-summary-trigger {
     line-height: 1.2;
 }
 
+.tt-range-summary-detail {
+    display: block;
+}
+
 .tt-range-setup-card .tt-multi-select-trigger .lucide {
     grid-column: 2;
     grid-row: 1 / 3;
@@ -884,26 +909,6 @@ body.light-mode .tt-range-setup-card .tt-range-summary-trigger {
     box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.12);
 }
 
-.tt-range-setup-card .tt-range-summary-icon {
-    display: inline-grid;
-    grid-column: 2;
-    grid-row: 1 / 4;
-    place-items: center;
-    align-self: center;
-    width: 30px;
-    height: 30px;
-    background: rgba(8, 145, 178, 0.12);
-    border: 1px solid rgba(8, 145, 178, 0.24);
-    border-radius: var(--tt-radius-sm);
-    color: var(--tt-primary);
-}
-
-.tt-range-setup-card .tt-range-summary-icon .lucide {
-    width: 16px;
-    height: 16px;
-    color: inherit;
-}
-
 .tt-range-setup-card .tt-period-time-entry {
     min-height: 60px;
     margin-top: 0;
@@ -914,12 +919,6 @@ body.light-mode .tt-range-setup-card .tt-range-summary-trigger {
 
 body.light-mode .tt-range-setup-card .tt-period-time-entry {
     background: rgba(255, 255, 255, 0.82);
-}
-
-.tt-range-setup-card .tt-period-time-entry .tt-chip {
-    background: rgba(8, 145, 178, 0.12);
-    border: 1px solid rgba(8, 145, 178, 0.22);
-    color: var(--tt-primary);
 }
 
 .tt-import-setup-card .tt-empty-card {
@@ -3123,6 +3122,38 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     gap: var(--tt-space-xs);
 }
 
+.tt-segment-group {
+    display: grid;
+    gap: var(--tt-space-xs);
+}
+
+.tt-segment-group-head {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    width: fit-content;
+    min-height: 22px;
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 0;
+}
+
+.tt-segment-group-head strong {
+    font: inherit;
+}
+
+.tt-segment-group-rule {
+    display: block;
+    flex: 0 0 22px;
+    width: 22px;
+    min-width: 22px;
+    height: 1px;
+    background: color-mix(in srgb, var(--tt-muted) 38%, transparent);
+    border-radius: 999px;
+}
+
 .tt-segment-card {
     display: grid;
     gap: var(--tt-space-xs);
@@ -3163,7 +3194,7 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 
 .tt-segment-fields {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: var(--tt-space-xs);
 }
 
@@ -3185,75 +3216,39 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     font-size: 0.8rem;
 }
 
+.tt-segment-duty-field.is-hidden {
+    display: none;
+}
+
+.tt-segment-duty-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-base);
+    color: var(--tt-text-secondary);
+    font-size: 0.8rem;
+    font-weight: 800;
+}
+
+.tt-segment-duty-toggle input {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--tt-primary);
+}
+
+.tt-segment-duty-toggle em {
+    font-style: normal;
+}
+
 .tt-segment-actions {
     display: flex;
     justify-content: flex-start;
     gap: var(--tt-space-xs);
-}
-
-.tt-nonformal-time-preview {
-    display: grid;
-    gap: var(--tt-space-xs);
-    padding: var(--tt-space-sm);
-    border: 1px solid rgba(8, 145, 178, 0.22);
-    border-radius: var(--tt-radius-sm);
-    background: rgba(8, 145, 178, 0.06);
-}
-
-.tt-nonformal-time-preview-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--tt-space-sm);
-    color: var(--tt-muted);
-    font-size: 0.72rem;
-}
-
-.tt-nonformal-time-preview-head strong {
-    color: var(--tt-text);
-    font-size: 0.8rem;
-}
-
-.tt-nonformal-time-preview-head span {
-    text-align: right;
-}
-
-.tt-nonformal-time-list {
-    display: grid;
-    gap: 6px;
-}
-
-.tt-nonformal-time-item {
-    display: grid;
-    grid-template-columns: minmax(120px, 1fr) auto auto;
-    align-items: center;
-    gap: var(--tt-space-xs);
-    min-width: 0;
-    padding: 7px 8px;
-    border: 1px solid var(--tt-border);
-    border-radius: var(--tt-radius-sm);
-    background: var(--tt-bg-input);
-    color: var(--tt-text);
-    font-size: 0.76rem;
-}
-
-.tt-nonformal-time-item strong,
-.tt-nonformal-time-item span,
-.tt-nonformal-time-item em {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.tt-nonformal-time-item span,
-.tt-nonformal-time-item em {
-    color: var(--tt-muted);
-}
-
-.tt-nonformal-time-item em {
-    font-style: normal;
-    font-weight: 700;
 }
 
 .tt-period-time-setting-field {
@@ -3396,6 +3391,16 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.tt-period-time-label-note {
+    display: block;
+    width: fit-content;
+    margin-top: 3px;
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 1.2;
 }
 
 .tt-period-time-gap-empty {
@@ -4133,7 +4138,6 @@ body.light-mode .tt-export-setup-card .tt-publication-actions--published {
 }
 
 .tt-study-period {
-    border-style: dashed;
     background: color-mix(in srgb, var(--tt-bg-input) 82%, transparent);
 }
 
@@ -4156,11 +4160,12 @@ body.light-mode .tt-export-setup-card .tt-publication-actions--published {
 .tt-study-cell {
     min-height: 72px;
     padding: 5px;
-    border: 1px dashed var(--tt-border);
-    border-radius: var(--tt-radius-sm);
-    background: color-mix(in srgb, var(--tt-bg-panel) 78%, transparent);
+    border: 0;
+    border-radius: 0;
+    background: var(--tt-bg-base);
     display: grid;
     align-content: center;
+    justify-items: center;
 }
 
 button.tt-duty-cell {
@@ -4173,15 +4178,21 @@ button.tt-duty-cell {
 
 button.tt-duty-cell:hover,
 button.tt-duty-cell:focus-visible {
-    border-color: var(--tt-primary);
     outline: none;
-    background: color-mix(in srgb, var(--tt-primary) 10%, var(--tt-bg-panel));
+    background: var(--tt-bg-base);
+}
+
+button.tt-duty-cell:hover span,
+button.tt-duty-cell:focus-visible span {
+    border-color: var(--tt-primary);
+    background: color-mix(in srgb, var(--tt-primary) 8%, var(--tt-bg-input));
 }
 
 .tt-duty-cell span,
 .tt-display-cell span {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     width: fit-content;
     max-width: 100%;
     min-height: 28px;
@@ -4189,6 +4200,7 @@ button.tt-duty-cell:focus-visible {
     border-radius: var(--tt-radius-sm);
     font-size: 12px;
     line-height: 1.35;
+    text-align: center;
 }
 
 .tt-duty-cell.is-assigned span {
@@ -4200,7 +4212,7 @@ button.tt-duty-cell:focus-visible {
 .tt-duty-cell.is-missing span {
     color: var(--tt-muted);
     background: var(--tt-bg-input);
-    border: 1px dashed var(--tt-border);
+    border: 1px dashed var(--tt-border-strong);
 }
 
 .tt-display-cell {
@@ -4928,20 +4940,6 @@ button.tt-duty-cell:focus-visible {
 
     .tt-segment-fields {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .tt-nonformal-time-preview-head {
-        align-items: flex-start;
-        flex-direction: column;
-    }
-
-    .tt-nonformal-time-preview-head span {
-        text-align: left;
-    }
-
-    .tt-nonformal-time-item {
-        grid-template-columns: minmax(0, 1fr);
-        align-items: flex-start;
     }
 
     .tt-period-time-setting-actions {

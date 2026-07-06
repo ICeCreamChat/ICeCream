@@ -299,7 +299,7 @@ function isEveningStudyLabel(label = '') {
 
 export function suggestTimeBlockKind(segment = {}) {
     const label = cleanText(segment.label, 40);
-    if (isEarlyStudyLabel(label)) return 'duty';
+    if (isEarlyStudyLabel(label) || isEveningStudyLabel(label)) return 'duty';
     return 'teaching';
 }
 
@@ -417,6 +417,20 @@ export function isEveningPeriod(project = {}, period) {
 
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
+function timeToMinutes(value) {
+    const match = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return null;
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+    return hours * 60 + minutes;
+}
+
+function minutesToTime(minutes) {
+    const bounded = Math.max(0, Math.min(23 * 60 + 59, Math.round(Number(minutes) || 0)));
+    return `${String(Math.floor(bounded / 60)).padStart(2, '0')}:${String(bounded % 60).padStart(2, '0')}`;
+}
+
 export function normalizePeriodTimes(raw, activePeriods = []) {
     if (!Array.isArray(raw)) return [];
     const activeSet = new Set(activePeriods);
@@ -443,16 +457,7 @@ export function normalizePeriodTimeSegment(raw = {}, index = 0, options = {}) {
         : Math.max(0, Math.min(120, Number.parseInt(raw.breakMinutes, 10) || 10));
     const rawKindText = cleanText(raw.kind, 20);
     const rawKind = TIME_BLOCK_KINDS.has(rawKindText) ? rawKindText : '';
-    const dutyAssignmentTimeBlockIds = options.dutyAssignmentTimeBlockIds instanceof Set
-        ? options.dutyAssignmentTimeBlockIds
-        : new Set(options.dutyAssignmentTimeBlockIds || []);
     let kind = rawKind || suggestTimeBlockKind({ label });
-    if (kind !== 'display' && isEarlyStudyLabel(label)) {
-        kind = 'duty';
-    }
-    if (kind === 'duty' && isEveningStudyLabel(label) && !dutyAssignmentTimeBlockIds.has(id)) {
-        kind = 'teaching';
-    }
     return {
         id,
         label,
@@ -464,6 +469,33 @@ export function normalizePeriodTimeSegment(raw = {}, index = 0, options = {}) {
     };
 }
 
+function splitAdditionalSegmentLabel(label = '', index = 0, total = 1) {
+    if (total <= 1) return label || '附加时段';
+    return `${label || '附加时段'}${index + 1}`;
+}
+
+function splitAdditionalSegmentId(id = '', index = 0) {
+    return `${id || 'seg'}__p${index + 1}`;
+}
+
+function expandPeriodTimeSegment(segment = {}, globalDefaults = {}) {
+    const kind = getTimeBlockKind(segment);
+    const periodCount = segmentPeriodCount(segment);
+    if (kind === 'teaching' || periodCount <= 1) return [segment];
+    const startMinutes = timeToMinutes(segment.startTime);
+    const classMinutes = Math.max(1, Math.min(180, Number.parseInt(segment.classMinutes ?? globalDefaults.classMinutes, 10) || 45));
+    const breakMinutes = Math.max(0, Math.min(120, Number.parseInt(segment.breakMinutes ?? globalDefaults.breakMinutes, 10) || 0));
+    return Array.from({ length: periodCount }, (_, index) => ({
+        ...segment,
+        id: splitAdditionalSegmentId(segment.id, index),
+        label: splitAdditionalSegmentLabel(segment.label, index, periodCount),
+        startTime: startMinutes === null ? segment.startTime : minutesToTime(startMinutes + index * (classMinutes + breakMinutes)),
+        periodCount: 1,
+        classMinutes,
+        breakMinutes,
+    }));
+}
+
 export function normalizePeriodTimeSegments(raw = null, options = {}) {
     if (!raw || typeof raw !== 'object') return null;
     const globalDefaults = {
@@ -471,10 +503,46 @@ export function normalizePeriodTimeSegments(raw = null, options = {}) {
         breakMinutes: Math.max(0, Math.min(120, Number.parseInt(raw.globalDefaults?.breakMinutes, 10) || 10)),
     };
     const segments = Array.isArray(raw.segments)
-        ? raw.segments.map((seg, index) => normalizePeriodTimeSegment(seg, index, options)).slice(0, 10)
+        ? raw.segments
+            .map((seg, index) => normalizePeriodTimeSegment(seg, index, options))
+            .flatMap(segment => expandPeriodTimeSegment(segment, globalDefaults))
+            .slice(0, 10)
         : [];
     if (!segments.length) return null;
     return { globalDefaults, segments };
+}
+
+function buildDutyTimeBlockMigration(rawSegments = [], normalizedSegments = [], globalDefaults = {}) {
+    const normalizedIds = new Set(normalizedSegments.map(segment => segment.id));
+    const migration = new Map();
+    rawSegments.forEach((rawSegment, index) => {
+        const normalized = normalizePeriodTimeSegment(rawSegment, index);
+        const kind = getTimeBlockKind(normalized);
+        const periodCount = segmentPeriodCount(normalized);
+        if (kind === 'teaching' || periodCount <= 1) return;
+        const targets = Array.from({ length: periodCount }, (_, itemIndex) => splitAdditionalSegmentId(normalized.id, itemIndex))
+            .filter(id => normalizedIds.has(id));
+        if (targets.length > 1) migration.set(normalized.id, targets);
+    });
+    return migration;
+}
+
+function migrateDutyAssignmentsForSplitTimeBlocks(raw = [], rawPeriodTimeSegments = null, normalizedPeriodTimeSegments = null) {
+    if (!Array.isArray(raw) || !raw.length) return raw;
+    const rawSegments = Array.isArray(rawPeriodTimeSegments?.segments) ? rawPeriodTimeSegments.segments : [];
+    const normalizedSegments = Array.isArray(normalizedPeriodTimeSegments?.segments) ? normalizedPeriodTimeSegments.segments : [];
+    const migration = buildDutyTimeBlockMigration(rawSegments, normalizedSegments, normalizedPeriodTimeSegments?.globalDefaults || {});
+    if (!migration.size) return raw;
+    return raw.flatMap(item => {
+        const timeBlockId = cleanText(item?.timeBlockId || item?.segmentId, 80);
+        const targets = migration.get(timeBlockId);
+        if (!targets?.length) return [item];
+        return targets.map((targetId, index) => ({
+            ...item,
+            id: item?.id ? `${item.id}__p${index + 1}` : undefined,
+            timeBlockId: targetId,
+        }));
+    });
 }
 
 export function validateDutyAssignments(raw = [], periodTimeSegments = null, options = {}) {
@@ -512,7 +580,7 @@ export function validateDutyAssignments(raw = [], periodTimeSegments = null, opt
         }
         const segment = segmentById.get(timeBlockId);
         if (!timeBlockId || !segment || getTimeBlockKind(segment) !== 'duty') {
-            errors.push({ index, field: 'timeBlockId', message: '值班时段必须指向自习值班时段，不能使用正式课、仅展示或不存在的时段。' });
+            errors.push({ index, field: 'timeBlockId', message: '值班时段必须指向已开启值班老师的附加时段，不能使用正式节次、未开启值班或不存在的时段。' });
         }
         const key = `${day}|${classId}|${timeBlockId}`;
         if (classId && timeBlockId && seen.has(key)) {
@@ -1081,6 +1149,7 @@ export function normalizeTimetableProject(raw = {}) {
     const lessonPlans = (Array.isArray(base.lessonPlans) ? base.lessonPlans : [])
         .map((plan, index) => normalizeLessonPlan(plan, index, enabled))
         .filter(plan => plan.classId && plan.subjectId && plan.teacherId && plan.weeklyHours > 0);
+    const migratedDutyAssignments = migrateDutyAssignmentsForSplitTimeBlocks(base.dutyAssignments, base.periodTimeSegments, periodTimeSegments);
     const normalized = {
         id: cleanText(base.id, 80) || 'default',
         timetableModelVersion: enabled ? 'complex_v1' : 'legacy',
@@ -1107,7 +1176,7 @@ export function normalizeTimetableProject(raw = {}) {
             : [],
         commuteRules: normalizeCommuteRules(base.commuteRules, enabled),
         lessonPlans,
-        dutyAssignments: normalizeDutyAssignments(base.dutyAssignments, periodTimeSegments, { classes, teachers }),
+        dutyAssignments: normalizeDutyAssignments(migratedDutyAssignments, periodTimeSegments, { classes, teachers }),
         rules: normalizeRules(base.rules, enabled),
         schedule: normalizeSchedule(base.schedule, enabled),
         version: base.version || Date.now(),

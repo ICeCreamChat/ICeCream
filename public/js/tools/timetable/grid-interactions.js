@@ -219,7 +219,7 @@ function bindDelegatedInteractions(container) {
         } else if (action === 'apply-constraints') {
             controller.applyConstraintsFromDialog();
         }
-        // 自习值班编辑
+        // 附加时段值班编辑
         else if (action === 'edit-duty-assignment') {
             const node = event.target.closest('[data-time-block-id]');
             controller.openDutyAssignmentDialog?.(node?.dataset.day, node?.dataset.timeBlockId);
@@ -304,6 +304,10 @@ function bindDelegatedInteractions(container) {
             controller.updatePeriodTimeSettingsFromForm();
         } else if (event.target.matches('[data-period-time-gap-after]')) {
             controller.updatePeriodTimeGapFromDom(event.target);
+        } else if (event.target.matches('[data-period-time-block-gap-after]')) {
+            controller.updatePeriodTimeBlockGapFromDom(event.target);
+        } else if (event.target.matches('[data-period-time-block-start], [data-period-time-block-end]')) {
+            controller.updatePeriodTimeBlockFromDom(event.target);
         } else if (event.target.matches('[data-period-time-draft-start], [data-period-time-draft-end], [data-period-time-start], [data-period-time-end]')) {
             controller.readPeriodTimesFromDom();
             controller.refreshPeriodTimeGapInputsFromDom();
@@ -321,6 +325,10 @@ function bindDelegatedInteractions(container) {
             controller.updatePeriodTimeSettingsFromForm();
         } else if (event.target.matches('[data-period-time-gap-after]')) {
             controller.updatePeriodTimeGapFromDom(event.target);
+        } else if (event.target.matches('[data-period-time-block-gap-after]')) {
+            controller.updatePeriodTimeBlockGapFromDom(event.target);
+        } else if (event.target.matches('[data-period-time-block-start], [data-period-time-block-end]')) {
+            controller.updatePeriodTimeBlockFromDom(event.target);
         } else if (event.target.matches('[data-period-time-draft-start], [data-period-time-draft-end], [data-period-time-start], [data-period-time-end]')) {
             controller.readPeriodTimesFromDom();
             controller.refreshPeriodTimeGapInputsFromDom();

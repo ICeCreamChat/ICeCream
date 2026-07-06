@@ -213,7 +213,7 @@ export function canUseSlot(project, usage, slot, options = {}) {
     if (!options.ignoreTeacher) {
         for (const teacherId of teacherIds) {
             if (usageConflicts(project, usage, slot, 'teacher', teacherId)) return { ok: false, reason: '教师同节已有课程' };
-            if (dutyConflictsForSlot(project, slot, teacherId)) return { ok: false, reason: '教师自习值班时间冲突' };
+            if (dutyConflictsForSlot(project, slot, teacherId)) return { ok: false, reason: '教师附加时段值班冲突' };
             if (usageCommuteConflict(project, usage, slot, teacherId)) return { ok: false, reason: '教师跨校区通勤间隔不足' };
         }
     }

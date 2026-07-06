@@ -403,10 +403,8 @@ function renderPeriodTimesConfig(state) {
     const configuredCount = validTimes.length;
     const firstStart = validTimes.find(item => item.start)?.start || '';
     const lastEnd = [...validTimes].reverse().find(item => item.end)?.end || '';
-    const blockSummary = summarizeTimeBlockKinds(state.project);
-    const summary = configuredCount
-        ? `${firstStart && lastEnd ? `${firstStart}-${lastEnd} · ` : ''}${blockSummary || `已配置 ${configuredCount} 节`}`
-        : '未配置';
+    const rangeLabel = configuredCount && firstStart && lastEnd ? `${firstStart}-${lastEnd}` : '';
+    const statusLabel = configuredCount ? `${configuredCount}节 · 已配置` : '未配置';
     return `
         <button class="tt-period-time-entry" id="tt-open-period-time-dialog" type="button">
             <span class="tt-period-time-entry-icon">
@@ -414,20 +412,31 @@ function renderPeriodTimesConfig(state) {
             </span>
             <span class="tt-period-time-entry-copy">
                 <strong>节次时间</strong>
-                <em>${escapeHtml(summary)}</em>
+                <span class="tt-period-time-entry-action">配置时间</span>
+                ${rangeLabel ? `<em class="tt-period-time-entry-range">${escapeHtml(rangeLabel)}</em>` : ''}
+                <em class="tt-period-time-entry-status">${escapeHtml(statusLabel)}</em>
             </span>
-            <span class="tt-chip">配置时间</span>
         </button>
     `;
 }
 
 function periodSetupKind(segment = {}) {
-    const kind = ['teaching', 'duty', 'display'].includes(segment.kind) ? segment.kind : 'teaching';
+    const kind = ['teaching', 'duty', 'display'].includes(segment.kind)
+        ? segment.kind
+        : (isStudySegment(segment) ? 'duty' : 'teaching');
     return kind;
 }
 
 function isEarlyStudySegment(segment = {}) {
     return /早自习|早读|早修|晨读/.test(String(segment.label || ''));
+}
+
+function isEveningStudySegment(segment = {}) {
+    return /晚自习|晚修/.test(String(segment.label || ''));
+}
+
+function isStudySegment(segment = {}) {
+    return isEarlyStudySegment(segment) || isEveningStudySegment(segment);
 }
 
 function periodSetupPeriodCount(segmentConfig = {}) {
@@ -437,21 +446,62 @@ function periodSetupPeriodCount(segmentConfig = {}) {
         .reduce((sum, segment) => sum + (Math.max(0, Number.parseInt(segment.periodCount, 10) || 0)), 0);
 }
 
+function splitAdditionalSegmentId(id = '', index = 0) {
+    return `${id || 'seg'}__p${index + 1}`;
+}
+
+function splitAdditionalSegmentLabel(label = '', index = 0, total = 1) {
+    if (total <= 1) return label || '附加时段';
+    return `${label || '附加时段'}${index + 1}`;
+}
+
+function expandPeriodTimeSegments(segmentConfig = {}) {
+    const segments = Array.isArray(segmentConfig.segments) ? segmentConfig.segments : [];
+    const projectForPreview = { periodTimeSegments: segmentConfig };
+    return segments.flatMap(segment => {
+        const kind = periodSetupKind(segment);
+        const periodCount = Math.max(0, Number.parseInt(segment.periodCount, 10) || 0);
+        if (kind === 'teaching' || periodCount <= 1) return [segment];
+        const startMinutes = timeToMinutes(segment.startTime);
+        const { classMinutes, breakMinutes } = segmentDurationMinutes(projectForPreview, segment);
+        return Array.from({ length: periodCount }, (_, index) => ({
+            ...segment,
+            id: splitAdditionalSegmentId(segment.id, index),
+            label: splitAdditionalSegmentLabel(segment.label, index, periodCount),
+            startTime: startMinutes === null ? segment.startTime : minutesToTime(startMinutes + index * (classMinutes + breakMinutes)),
+            periodCount: 1,
+            classMinutes,
+            breakMinutes,
+        }));
+    });
+}
+
+function segmentUiType(kind = 'teaching') {
+    return kind === 'teaching' ? 'teaching' : 'additional';
+}
+
+export function formatPeriodTimeSegmentMeta(segment = {}, index = 0) {
+    const kind = periodSetupKind(segment);
+    const usedCount = segment.periodCount || 0;
+    const metaParts = [`时段${index + 1}`, timeBlockKindLabel(kind)];
+    if (kind === 'teaching') metaParts.push(`${usedCount}节`);
+    if (kind === 'duty') metaParts.push('值班');
+    return metaParts.join(' · ');
+}
+
 function renderSegmentCard(segment, index, totalSegments, activePeriods, saving) {
     const canDelete = totalSegments > 1;
-    const usedCount = segment.periodCount || 0;
     const kind = periodSetupKind(segment);
+    const uiType = segmentUiType(kind);
+    const dutyChecked = kind === 'duty' || (kind === 'teaching' && isStudySegment(segment));
     const maxCount = 12;
     const escapeAttr = value => String(value ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     const escapeHtml = value => String(value ?? '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const supportsDutyOption = isEarlyStudySegment(segment) || kind === 'duty';
     const typeOptions = [
-        supportsDutyOption ? `<option value="duty" ${kind === 'duty' ? 'selected' : ''}>自习值班</option>` : '',
-        !isEarlyStudySegment(segment) ? `<option value="teaching" ${kind === 'teaching' ? 'selected' : ''}>正式课</option>` : '',
-        `<option value="display" ${kind === 'display' ? 'selected' : ''}>仅展示</option>`,
+        `<option value="teaching" ${uiType === 'teaching' ? 'selected' : ''}>正式节次</option>`,
+        `<option value="additional" ${uiType === 'additional' ? 'selected' : ''}>附加时段</option>`,
     ].filter(Boolean).join('');
-    const metaParts = [`时段${index + 1}`, timeBlockKindLabel(kind)];
-    if (kind === 'teaching') metaParts.push(`${usedCount}节`);
+    const metaText = formatPeriodTimeSegmentMeta(segment, index);
 
     return `
         <div class="tt-segment-card" data-period-time-segment-card data-segment-id="${escapeAttr(segment.id)}" data-segment-kind="${escapeAttr(kind)}">
@@ -463,7 +513,7 @@ function renderSegmentCard(segment, index, totalSegments, activePeriods, saving)
                     placeholder="时段名称"
                     maxlength="40"
                     ${saving ? 'disabled' : ''}>
-                <span class="tt-segment-index">${escapeHtml(metaParts.join(' · '))}</span>
+                <span class="tt-segment-index">${escapeHtml(metaText)}</span>
                 ${canDelete ? `
                     <button type="button"
                         class="tt-icon-btn tt-segment-remove-btn"
@@ -483,6 +533,16 @@ function renderSegmentCard(segment, index, totalSegments, activePeriods, saving)
                         ${typeOptions}
                     </select>
                 </label>
+                <div class="tt-segment-field tt-segment-duty-field ${uiType === 'teaching' ? 'is-hidden' : ''}" ${uiType === 'teaching' ? 'hidden aria-hidden="true"' : ''}>
+                    <span>值班教师</span>
+                    <label class="tt-segment-duty-toggle">
+                        <input type="checkbox"
+                            data-segment-field="${escapeAttr(segment.id)}-dutyEnabled"
+                            ${dutyChecked ? 'checked' : ''}
+                            ${saving || uiType === 'teaching' ? 'disabled' : ''}>
+                        <em data-segment-duty-status>${dutyChecked ? '开启' : '关闭'}</em>
+                    </label>
+                </div>
                 <label class="tt-segment-field">
                     <span>首节开始</span>
                     <input type="time"
@@ -533,20 +593,20 @@ function renderSegmentCard(segment, index, totalSegments, activePeriods, saving)
 }
 
 function renderSegmentGroups(segmentConfig = {}, activePeriods = [], saving = false) {
-    const segments = Array.isArray(segmentConfig.segments) ? segmentConfig.segments : [];
+    const segments = expandPeriodTimeSegments(segmentConfig);
     const groups = [
-        { key: 'duty', title: '附加时段' },
-        { key: 'teaching', title: '正式课时段' },
-        { key: 'display', title: '仅展示' },
+        { key: 'additional', title: '附加时段', match: segment => periodSetupKind(segment) !== 'teaching' },
+        { key: 'teaching', title: '正式节次', match: segment => periodSetupKind(segment) === 'teaching' },
     ];
     return groups.map(group => {
         const items = segments
             .map((segment, index) => ({ segment, index }))
-            .filter(item => periodSetupKind(item.segment) === group.key);
+            .filter(item => group.match(item.segment));
         if (!items.length) return '';
         return `
             <section class="tt-segment-group tt-segment-group--${escapeAttr(group.key)}">
                 <div class="tt-segment-group-head">
+                    <span class="tt-segment-group-rule" aria-hidden="true"></span>
                     <strong>${escapeHtml(group.title)}</strong>
                 </div>
                 ${items.map(item => renderSegmentCard(item.segment, item.index, segments.length, activePeriods, saving)).join('')}
@@ -556,8 +616,7 @@ function renderSegmentGroups(segmentConfig = {}, activePeriods = [], saving = fa
 }
 
 export function renderNonTeachingSegmentPreview(segmentConfig = {}) {
-    const segments = Array.isArray(segmentConfig.segments) ? segmentConfig.segments : [];
-    const previewItems = segments
+    const previewItems = expandPeriodTimeSegments(segmentConfig)
         .map(segment => {
             const kind = periodSetupKind(segment);
             const periodCount = Math.max(0, Number.parseInt(segment.periodCount, 10) || 0);
@@ -569,9 +628,9 @@ export function renderNonTeachingSegmentPreview(segmentConfig = {}) {
 
     const projectForPreview = { periodTimeSegments: segmentConfig };
     return `
-        <div class="tt-nonformal-time-preview" aria-label="非正式时段">
+        <div class="tt-nonformal-time-preview" aria-label="附加时段">
             <div class="tt-nonformal-time-preview-head">
-                <strong>非正式时段</strong>
+                <strong>附加时段</strong>
             </div>
             <div class="tt-nonformal-time-list">
                 ${previewItems.map(segment => {
@@ -657,7 +716,7 @@ function gapBetweenPeriodRows(current = {}, next = {}) {
 }
 
 function buildPeriodTimeTimelineRows(activePeriods = [], timeMap = new Map(), segmentConfig = {}) {
-    const segments = Array.isArray(segmentConfig.segments) ? segmentConfig.segments : [];
+    const segments = expandPeriodTimeSegments(segmentConfig);
     if (!segments.length) {
         return activePeriods.map((period, index) => ({
             kind: 'teaching',
@@ -674,10 +733,10 @@ function buildPeriodTimeTimelineRows(activePeriods = [], timeMap = new Map(), se
     segments.forEach((segment, segmentIndex) => {
         const kind = periodSetupKind(segment);
         const periodCount = Math.max(0, Number.parseInt(segment.periodCount, 10) || 0);
-        if (kind === 'duty') {
+        if (kind === 'duty' || kind === 'display') {
             const start = timeToMinutes(segment.startTime);
             rows.push({
-                kind: 'duty',
+                kind,
                 timeBlock: segment,
                 segmentLabel: segment.label || '',
                 sortKey: start ?? ((segmentIndex + 1) * 10000),
@@ -717,18 +776,35 @@ export function renderPeriodTimeTableBody({
     const errorMap = new Map((Array.isArray(errors) ? errors : []).map(item => [Number(item.period), item.message || '时间配置有误']));
     const rows = buildPeriodTimeTimelineRows(activePeriods, timeMap, segmentConfig);
     const projectForPreview = { periodTimeSegments: segmentConfig };
+    const rowIntervals = rows.map(row => {
+        if (row.kind === 'teaching') {
+            const entry = timeMap.get(row.period) || {};
+            return { start: entry.start || '', end: entry.end || '' };
+        }
+        const timeLabel = studyBlockTimeLabel(projectForPreview, row.timeBlock || {});
+        const [start = '', end = ''] = timeLabel ? timeLabel.split('-') : [];
+        return { start, end };
+    });
     let previousTeachingSegmentLabel = '';
 
-    return rows.map(row => {
-        if (row.kind === 'duty') {
+    return rows.map((row, rowIndex) => {
+        if (row.kind !== 'teaching') {
             const segment = row.timeBlock || {};
-            const timeLabel = studyBlockTimeLabel(projectForPreview, segment);
-            const [startTime = '', endTime = ''] = timeLabel ? timeLabel.split('-') : [];
-            return `<tr data-period-time-block-row="${escapeAttr(segment.id || '')}" class="tt-period-time-block-row tt-period-time-block-row--duty">
-                <td class="tt-period-time-label" data-label="节次"><strong>${escapeHtml(segment.label || '自习值班')}</strong></td>
-                <td data-label="开始时间"><span class="tt-period-time-readonly">${escapeHtml(startTime || '时间未配置')}</span></td>
-                <td data-label="结束时间"><span class="tt-period-time-readonly">${escapeHtml(endTime || '--')}</span></td>
-                <td data-label="本节后间隔"><span class="tt-period-time-gap-empty">--</span></td>
+            const { start: startTime = '', end: endTime = '' } = rowIntervals[rowIndex] || {};
+            const nextInterval = rowIntervals[rowIndex + 1] || null;
+            const gapValue = nextInterval ? gapBetweenPeriodRows({ end: endTime }, { start: nextInterval.start }) : '';
+            const kindClass = row.kind === 'duty' ? 'tt-period-time-block-row--duty' : 'tt-period-time-block-row--display';
+            const gapCell = nextInterval
+                ? `<input type="number" class="tt-roster-review-field tt-period-time-gap-input" data-period-time-block-gap-after="${escapeAttr(segment.id || '')}" min="0" max="240" step="1" value="${escapeAttr(gapValue)}" ${saving ? 'disabled' : ''}>`
+                : '<span class="tt-period-time-gap-empty">无课后间隔</span>';
+            const dutyNote = row.kind === 'duty'
+                ? '<span class="tt-period-time-label-note">值班教师</span>'
+                : '';
+            return `<tr data-period-time-block-row="${escapeAttr(segment.id || '')}" class="tt-period-time-block-row ${kindClass}">
+                <td class="tt-period-time-label" data-label="节次"><strong>${escapeHtml(segment.label || '附加时段')}</strong>${dutyNote}</td>
+                <td data-label="开始时间"><input type="time" class="tt-roster-review-field tt-period-time-input" data-period-time-block-start="${escapeAttr(segment.id || '')}" value="${escapeAttr(startTime || '')}" ${saving ? 'disabled' : ''}></td>
+                <td data-label="结束时间"><input type="time" class="tt-roster-review-field tt-period-time-input" data-period-time-block-end="${escapeAttr(segment.id || '')}" value="${escapeAttr(endTime || '')}" ${saving ? 'disabled' : ''}></td>
+                <td data-label="本节后间隔">${gapCell}</td>
             </tr>`;
         }
         const period = row.period;
@@ -816,7 +892,6 @@ function renderPeriodTimeDialog(state) {
                     <div class="tt-segment-list">
                         ${renderSegmentGroups(segmentConfig, activePeriods, saving)}
                     </div>
-                    <div data-nonformal-time-preview-slot>${renderNonTeachingSegmentPreview(segmentConfig)}</div>
                     <div class="tt-segment-actions">
                         <button type="button" class="tt-btn" id="tt-add-segment" data-add-segment ${saving ? 'disabled' : ''}>
                             <i data-lucide="plus"></i>
@@ -826,7 +901,7 @@ function renderPeriodTimeDialog(state) {
                 </div>
                 <div class="tt-period-time-preview-head">
                     <strong>节次时间轴</strong>
-                    <span>正式课可微调；附加时段随上方配置同步。</span>
+                    <span>正式节次可微调；附加时段随上方配置同步。</span>
                 </div>
                 ${errorSummary ? `<div class="tt-period-time-error-summary" role="alert">${escapeHtml(errorSummary)}</div>` : ''}
                 <div class="tt-period-time-review">
@@ -863,6 +938,7 @@ function renderProjectSection(state) {
     const { project } = state;
     const { activeWeekdays, activePeriods } = getRangeDraft(state);
     const periodsFromSegments = Array.isArray(project.periodTimeSegments?.segments) && project.periodTimeSegments.segments.length > 0;
+    const formalSummary = summarizeFormalTimeSegmentParts(project, activePeriods);
 
     return `
         <div class="tt-setup-card tt-range-setup-card" data-workflow-step="data">
@@ -890,9 +966,8 @@ function renderProjectSection(state) {
                     ${periodsFromSegments ? `
                         <div class="tt-range-summary-card tt-range-summary-card--readonly">
                             <div class="tt-range-summary-trigger" data-range-label="可用节次">
-                                <strong>${summarizeFormalTimeSegments(project) || summarizePeriods(activePeriods)}</strong>
-                                <small>由时段配置自动生成，共 ${activePeriods.length} 节正式课</small>
-                                <span class="tt-range-summary-icon"><i data-lucide="lock-keyhole"></i></span>
+                                <strong>${escapeHtml(formalSummary.totalLabel || summarizePeriods(activePeriods))}</strong>
+                                ${formalSummary.segmentLabel ? `<small class="tt-range-summary-detail">${escapeHtml(formalSummary.segmentLabel)}</small>` : ''}
                             </div>
                         </div>
                     ` : renderMultiSelect({
@@ -1195,11 +1270,11 @@ function renderDutyAssignmentDialog(state) {
             <section class="tt-duty-assignment-dialog" id="tt-duty-assignment-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-duty-assignment-title">
                 <div class="tt-dialog-header">
                     <div>
-                        <span class="tt-eyebrow">自习值班</span>
-                        <h3 id="tt-duty-assignment-title">编辑自习值班</h3>
-                        <p>周${dayName(day)} · ${escapeHtml(segment.label || '自习值班')}${timeLabel ? ` · ${escapeHtml(timeLabel)}` : ''}</p>
+                        <span class="tt-eyebrow">值班老师</span>
+                        <h3 id="tt-duty-assignment-title">编辑值班老师</h3>
+                        <p>周${dayName(day)} · ${escapeHtml(segment.label || '附加时段')}${timeLabel ? ` · ${escapeHtml(timeLabel)}` : ''}</p>
                     </div>
-                    <button class="tt-icon-btn" type="button" data-action="close-duty-assignment" title="关闭" aria-label="关闭自习值班编辑"><i data-lucide="x"></i></button>
+                    <button class="tt-icon-btn" type="button" data-action="close-duty-assignment" title="关闭" aria-label="关闭值班老师编辑"><i data-lucide="x"></i></button>
                 </div>
                 <div class="tt-duty-assignment-form">
                     <label class="tt-duty-field">
@@ -1216,7 +1291,7 @@ function renderDutyAssignmentDialog(state) {
                     </label>
                     <div class="tt-duty-readonly">
                         <span>时段</span>
-                        <strong>${escapeHtml(segment.label || timeBlockId || '自习值班')}</strong>
+                        <strong>${escapeHtml(segment.label || timeBlockId || '附加时段')}</strong>
                         ${timeLabel ? `<small>${escapeHtml(timeLabel)}</small>` : ''}
                     </div>
                     ${dialog.error ? `<div class="tt-duty-error" role="alert">${escapeHtml(dialog.error)}</div>` : ''}
@@ -1235,40 +1310,64 @@ function summarizeTimeBlockKinds(project = {}) {
     const segments = Array.isArray(project.periodTimeSegments?.segments) ? project.periodTimeSegments.segments : [];
     if (!segments.length) return '';
     const formalSummary = summarizeFormalTimeSegments(project);
-    const dutyParts = [];
-    let displayCount = 0;
+    const additionalGroups = new Map();
     for (const segment of segments) {
         const kind = periodSetupKind(segment);
         const count = Math.max(0, Number.parseInt(segment.periodCount, 10) || 0);
-        if (kind === 'duty' && count > 0) dutyParts.push(`${segment.label || '附加自习'}${count}`);
-        if (kind === 'display' && count > 0) displayCount += 1;
+        if (kind !== 'teaching' && count > 0) {
+            const key = String(segment.id || segment.label || 'additional').replace(/__p\d+$/, '');
+            const label = String(segment.label || '附加时段').replace(/\d+$/, '') || '附加时段';
+            const current = additionalGroups.get(key) || { label, count: 0 };
+            current.count += count;
+            additionalGroups.set(key, current);
+        }
     }
+    const additionalParts = [...additionalGroups.values()].map(item => `${item.label}${item.count}`);
     return [
         formalSummary,
-        dutyParts.length ? `附加：${dutyParts.join(' · ')}` : '',
-        displayCount ? `仅展示 ${displayCount} 段` : '',
+        additionalParts.length ? `附加：${additionalParts.join(' · ')}` : '',
     ].filter(Boolean).join(' · ');
 }
 
 function summarizeFormalTimeSegments(project = {}) {
+    const summary = summarizeFormalTimeSegmentParts(project);
+    return [summary.totalLabel, summary.segmentLabel].filter(Boolean).join(' · ');
+}
+
+function compactTimeSegmentLabel(label = '', fallback = '正式节次') {
+    const text = String(label || fallback).trim();
+    return text.replace(/时段$/, '').trim() || fallback;
+}
+
+function summarizeFormalTimeSegmentParts(project = {}, fallbackPeriods = []) {
     const segments = Array.isArray(project.periodTimeSegments?.segments) ? project.periodTimeSegments.segments : [];
     const formalSegments = segments
         .map(segment => ({
-            label: segment.label || '',
+            label: compactTimeSegmentLabel(segment.label || '', '正式节次'),
             kind: periodSetupKind(segment),
             count: Math.max(0, Number.parseInt(segment.periodCount, 10) || 0),
         }))
         .filter(segment => segment.kind === 'teaching' && segment.count > 0);
-    if (!formalSegments.length) return '';
+    if (!formalSegments.length) {
+        const total = Array.isArray(fallbackPeriods) ? fallbackPeriods.length : 0;
+        return {
+            total,
+            totalLabel: total ? `${total}节` : '',
+            segmentLabel: '',
+        };
+    }
     const total = formalSegments.reduce((sum, segment) => sum + segment.count, 0);
-    const parts = formalSegments.map(segment => `${segment.label || '正式课'}${segment.count}`);
-    return `${total}节 · ${parts.join(' · ')}`;
+    const parts = formalSegments.map(segment => `${segment.label}${segment.count}`);
+    return {
+        total,
+        totalLabel: `${total}节`,
+        segmentLabel: parts.join(' · '),
+    };
 }
 
 function timeBlockKindLabel(kind = 'teaching') {
-    if (kind === 'duty') return '自习值班';
-    if (kind === 'display') return '仅展示';
-    return '正式课';
+    if (kind === 'teaching') return '正式节次';
+    return '附加时段';
 }
 
 function smartHelperSidebarChip(state = {}, savedTotal = 0) {
@@ -2787,33 +2886,55 @@ function renderEmptyScheduleGrid(state) {
 
 function getTimetableRows(project = {}) {
     const activePeriods = getActivePeriods(project);
-    const segments = Array.isArray(project.periodTimeSegments?.segments) ? project.periodTimeSegments.segments : [];
+    const segments = expandPeriodTimeSegments(project.periodTimeSegments || {});
     if (!segments.length) return activePeriods.map(period => ({ kind: 'teaching', period }));
 
     const rows = [];
+    const periodTimeMap = new Map(completeProjectPeriodTimes(project).map(item => [Number(item.period), item]));
     let periodIndex = 0;
     segments.forEach((segment, segmentIndex) => {
         const kind = periodSetupKind(segment);
         const periodCount = Math.max(0, Number.parseInt(segment.periodCount, 10) || 0);
         if (kind === 'duty') {
-            rows.push({ kind, timeBlock: segment });
+            rows.push({
+                kind,
+                timeBlock: segment,
+                sortKey: timeToMinutes(segment.startTime) ?? ((segmentIndex + 1) * 10000),
+                order: rows.length,
+            });
         } else if (kind === 'teaching') {
+            const segmentStartMinutes = timeToMinutes(segment.startTime);
+            const { classMinutes, breakMinutes } = segmentDurationMinutes(project, segment);
             for (let index = 0; index < periodCount && periodIndex < activePeriods.length; index += 1) {
+                const period = activePeriods[periodIndex];
+                const periodTime = periodTimeMap.get(Number(period)) || {};
+                const calculatedStart = segmentStartMinutes === null
+                    ? null
+                    : segmentStartMinutes + (index * (classMinutes + breakMinutes));
                 rows.push({
                     kind: 'teaching',
-                    period: activePeriods[periodIndex],
+                    period,
                     segmentId: segment.id || '',
                     segmentLabel: segment.label || '',
                     segmentIndex,
                     segmentStart: index === 0,
+                    sortKey: timeToMinutes(periodTime.start) ?? calculatedStart ?? ((segmentIndex + 1) * 10000 + index),
+                    order: rows.length,
                 });
                 periodIndex += 1;
             }
         } else if (periodCount > 0) {
-            rows.push({ kind, timeBlock: segment });
+            rows.push({
+                kind,
+                timeBlock: segment,
+                sortKey: timeToMinutes(segment.startTime) ?? ((segmentIndex + 1) * 10000),
+                order: rows.length,
+            });
         }
     });
-    return rows.length ? rows : activePeriods.map(period => ({ kind: 'teaching', period }));
+    return rows.length
+        ? rows.sort((left, right) => (left.sortKey - right.sortKey) || (left.order - right.order))
+        : activePeriods.map(period => ({ kind: 'teaching', period }));
 }
 
 function renderTimetableRowLabel(project = {}, row = {}) {
@@ -2894,9 +3015,9 @@ function studyBlockTimeLabel(project = {}, segment = {}) {
 }
 
 function renderStudyBlockLabel(project = {}, segment = {}, kind = 'duty') {
-    const label = segment.label || (kind === 'duty' ? '自习值班' : '展示时段');
+    const label = segment.label || '附加时段';
     const timeLabel = studyBlockTimeLabel(project, segment);
-    const meta = kind === 'duty' ? '不占节次' : '仅展示';
+    const meta = kind === 'duty' ? '值班' : '附加时段';
     return `
         <div class="tt-period tt-study-period tt-study-period--${escapeAttr(kind)}" data-time-block-id="${escapeAttr(segment.id)}" title="${escapeAttr(timeLabel ? `${label} ${timeLabel}` : label)}">
             <strong>${escapeHtml(label)}</strong>
@@ -2932,7 +3053,7 @@ function renderDutyTimeBlockCell(state, day, segment = {}) {
                     ? className
                     : teacherName;
         }).join('、')
-        : '未安排值班';
+        : '未排值班';
     return `
         <button class="tt-cell tt-study-cell tt-duty-cell ${assignments.length ? 'is-assigned' : 'is-missing'}" type="button" data-action="edit-duty-assignment" data-day="${day}" data-time-block-id="${escapeAttr(segment.id)}">
             <span>${escapeHtml(content)}</span>
@@ -2943,7 +3064,7 @@ function renderDutyTimeBlockCell(state, day, segment = {}) {
 function renderDisplayTimeBlockCell(day, segment = {}) {
     return `
         <div class="tt-study-cell tt-display-cell" data-day="${day}" data-time-block-id="${escapeAttr(segment.id)}">
-            <span>展示</span>
+            <span>作息</span>
         </div>
     `;
 }

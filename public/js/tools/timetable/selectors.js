@@ -17,8 +17,14 @@ export function getActiveWeekdays(project = {}) {
     return numberList(project.activeWeekdays, project.weekdays || 5, 1, 7);
 }
 
+function isDefaultNonFormalLabel(label = '') {
+    return /早自习|早读|早修|晨读|晚自习|晚修/.test(String(label || ''));
+}
+
 function timeBlockKind(segment = {}) {
-    return ['teaching', 'duty', 'display'].includes(segment.kind) ? segment.kind : 'teaching';
+    return ['teaching', 'duty', 'display'].includes(segment.kind)
+        ? segment.kind
+        : (isDefaultNonFormalLabel(segment.label) ? 'duty' : 'teaching');
 }
 
 function segmentPeriodCount(segment = {}) {
