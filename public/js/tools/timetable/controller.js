@@ -14,7 +14,12 @@ import {
     readRulesForm,
     sampleRosterText,
 } from './forms.js';
-import { bindGridInteractions, bindRuleReviewInteractions, handleTimetableEscape } from './grid-interactions.js';
+import {
+    bindGridInteractions,
+    bindRuleReviewInteractions,
+    handleTimetableEscape,
+    loadInspectorPosition,
+} from './grid-interactions.js';
 import {
     ensureOwnerSelection,
     getActivePeriods,
@@ -127,6 +132,7 @@ export class TimetablePlannerController {
 
     async init(container) {
         this.state.container = container;
+        this.state.inspectorPosition = loadInspectorPosition();
         this.timetableToolHost = container?.closest?.('.tool-container') || null;
         this.timetableToolHost?.classList?.add('tool-container--timetable');
         await this.load();

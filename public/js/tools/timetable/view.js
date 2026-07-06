@@ -297,6 +297,16 @@ export function renderWorkbench(state) {
     state.selectedOwnerId = ensureOwnerSelection(state);
     const inspectorOpen = Boolean(state.inspectorOpen || state.selectedSlotId || state.lastFailure || state.solverJob);
     const constraintOpen = Boolean(state.constraintDialog?.open);
+    const inspectorPosition = state.inspectorPosition || null;
+    const hasInspectorPosition = Number.isFinite(inspectorPosition?.x) && Number.isFinite(inspectorPosition?.y);
+    const inspectorClass = [
+        'tt-inspector',
+        inspectorOpen ? 'is-open' : 'is-collapsed',
+        hasInspectorPosition ? 'is-positioned' : '',
+    ].filter(Boolean).join(' ');
+    const inspectorStyle = hasInspectorPosition
+        ? ` style="--tt-inspector-x:${Math.round(inspectorPosition.x)}px;--tt-inspector-y:${Math.round(inspectorPosition.y)}px"`
+        : '';
     return `
         <div class="tt-workbench ${constraintOpen ? 'is-constraint-dialog-open' : ''}">
             ${renderTopbar(state)}
@@ -306,11 +316,14 @@ export function renderWorkbench(state) {
             <section class="tt-schedule-panel">
                 ${renderSchedulePanel(state)}
             </section>
-            <aside class="tt-inspector">
+            <aside class="${inspectorClass}" data-inspector-floating-window${inspectorStyle}>
                 <details class="tt-inspector-drawer" id="tt-inspector-drawer" ${inspectorOpen ? 'open' : ''}>
-                    <summary class="tt-inspector-summary">
-                        <span><i data-lucide="panel-right-open"></i><strong>排课审查</strong></span>
+                    <summary class="tt-inspector-summary" data-inspector-drag-handle>
+                        <span class="tt-inspector-summary-main"><i data-lucide="panel-right-open"></i><strong>排课审查</strong></span>
                         <em>诊断 / 质量 / 发布</em>
+                        <span class="tt-inspector-summary-action" data-inspector-toggle-icon aria-hidden="true">
+                            <i data-lucide="${inspectorOpen ? 'chevron-up' : 'chevron-down'}"></i>
+                        </span>
                     </summary>
                     <div class="tt-inspector-body">
                         ${renderInspector(state)}

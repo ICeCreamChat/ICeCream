@@ -7,6 +7,8 @@ export function createTimetablePlannerState(overrides = {}) {
         selectedOwnerId: '',
         selectedSlotId: '',
         inspectorOpen: false,
+        inspectorPosition: null,
+        inspectorDragging: false,
         dragSlotId: '',
         dragBlockId: '',
         loading: false,

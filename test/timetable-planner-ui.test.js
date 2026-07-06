@@ -21,7 +21,13 @@ import {
   renderInspector,
   renderSchedulePanel,
 } from '../public/js/tools/timetable/view.js';
-import { handleTimetableEscape } from '../public/js/tools/timetable/grid-interactions.js';
+import {
+  bindGridInteractions,
+  clampInspectorPosition,
+  handleTimetableEscape,
+  loadInspectorPosition,
+  saveInspectorPosition,
+} from '../public/js/tools/timetable/grid-interactions.js';
 import { PRESET_TEMPLATES } from '../public/js/tools/timetable/preset-templates.js';
 
 const sourcePath = new URL('../public/js/tools/timetable-planner.js', import.meta.url);
@@ -1820,9 +1826,13 @@ test('timetable planner uses the seating-style control panel and board layout', 
   assert.match(viewSource, /class="tt-topbar"/);
   assert.match(viewSource, /class="tt-sidebar"/);
   assert.match(viewSource, /class="tt-schedule-panel"/);
-  assert.match(viewSource, /class="tt-inspector"/);
+  assert.match(viewSource, /const inspectorClass/);
+  assert.match(viewSource, /class="\$\{inspectorClass\}"/);
   assert.match(viewSource, /id="tt-inspector-drawer"/);
   assert.match(viewSource, /class="tt-inspector-summary"/);
+  assert.match(viewSource, /data-inspector-floating-window/);
+  assert.match(viewSource, /data-inspector-drag-handle/);
+  assert.match(viewSource, /data-inspector-toggle-icon/);
   assert.match(viewSource, /data-workflow-step="data"/);
   assert.match(viewSource, /data-workflow-step="rules"/);
   assert.match(viewSource, /data-workflow-step="solve"/);
@@ -1840,10 +1850,167 @@ test('timetable planner uses the seating-style control panel and board layout', 
   assert.doesNotMatch(styles, /\.tt-workbench\s*{[^}]*"sidebar schedule inspector"/s);
   assert.match(styles, /\.tt-sidebar\s*{[^}]*overflow:\s*auto/s);
   assert.match(styles, /\.tt-schedule-scroll\s*{[^}]*overflow:\s*auto/s);
-  assert.match(styles, /\.tt-inspector\s*{[^}]*position:\s*absolute/s);
+  assert.match(styles, /\.tt-inspector\s*{[^}]*position:\s*fixed/s);
+  assert.match(styles, /\.tt-inspector\s*{[^}]*top:\s*88px/s);
+  assert.match(styles, /\.tt-inspector\s*{[^}]*right:\s*24px/s);
+  assert.match(styles, /\.tt-inspector\.is-positioned\s*{[^}]*left:\s*var\(--tt-inspector-x\)/s);
   assert.match(styles, /\.tt-inspector-drawer\s*{[^}]*border-radius:\s*var\(--tt-radius-lg\)/s);
   assert.match(styles, /--tt-bg-base:\s*#0f172a/);
   assert.match(styles, /@media \(max-width:\s*980px\)[\s\S]*\.tt-workbench\s*{[^}]*grid-template-areas:\s*"topbar"\s*"sidebar"\s*"schedule"\s*"inspector"/s);
+  assert.match(styles, /@media \(max-width:\s*980px\)[\s\S]*\.tt-inspector[\s\S]*position:\s*static/s);
+});
+
+test('timetable inspector supports draggable floating window persistence', async () => {
+  const stateSource = await readFile(new URL('state.js', moduleRoot), 'utf8');
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(stateSource, /inspectorPosition:\s*null/);
+  assert.match(controllerSource, /loadInspectorPosition\(/);
+  assert.match(interactionSource, /timetable\.inspector\.position\.v1/);
+  assert.match(interactionSource, /data-inspector-drag-handle/);
+  assert.match(interactionSource, /pointerdown/);
+  assert.match(interactionSource, /saveInspectorPosition\(/);
+  assert.match(interactionSource, /clampInspectorPosition\(/);
+  assert.match(styles, /\.tt-inspector\.is-collapsed\s*{[^}]*width:\s*min\(184px,\s*calc\(100vw - 48px\)\)/s);
+  assert.match(styles, /\.tt-inspector-body\s*{[^}]*max-height:\s*calc\(100vh - 150px\)/s);
+});
+
+test('timetable inspector clamps and persists floating position safely', () => {
+  const storage = new Map();
+  const localStorageLike = {
+    getItem(key) {
+      return storage.has(key) ? storage.get(key) : null;
+    },
+    setItem(key, value) {
+      storage.set(key, value);
+    },
+  };
+
+  const clamped = clampInspectorPosition(
+    { x: -20, y: 900 },
+    { width: 800, height: 600 },
+    { width: 360, height: 420 },
+  );
+  assert.deepEqual(clamped, { x: 12, y: 168 });
+
+  saveInspectorPosition({ x: 123.4, y: 88.9 }, localStorageLike);
+  assert.deepEqual(loadInspectorPosition(localStorageLike), { x: 123, y: 89 });
+
+  storage.set('timetable.inspector.position.v1', '{"x":"bad","y":20}');
+  assert.equal(loadInspectorPosition(localStorageLike), null);
+});
+
+test('timetable inspector drag updates state and localStorage', () => {
+  const previousWindow = globalThis.window;
+  const previousStorage = globalThis.localStorage;
+  const stored = new Map();
+  globalThis.window = {
+    innerWidth: 1200,
+    innerHeight: 800,
+    matchMedia() {
+      return { matches: true };
+    },
+  };
+  globalThis.localStorage = {
+    getItem(key) {
+      return stored.get(key) || null;
+    },
+    setItem(key, value) {
+      stored.set(key, value);
+    },
+  };
+
+  const listeners = {};
+  const ownerDocument = {
+    addEventListener(type, listener) {
+      listeners[type] = listener;
+    },
+    removeEventListener(type, listener) {
+      if (listeners[type] === listener) delete listeners[type];
+    },
+  };
+  const classNames = new Set();
+  const inspector = {
+    classList: {
+      add(name) {
+        classNames.add(name);
+      },
+      remove(name) {
+        classNames.delete(name);
+      },
+      toggle(name, force) {
+        if (force) classNames.add(name);
+        else classNames.delete(name);
+      },
+      contains(name) {
+        return classNames.has(name);
+      },
+    },
+    style: {
+      values: new Map(),
+      setProperty(name, value) {
+        this.values.set(name, value);
+      },
+    },
+    getBoundingClientRect() {
+      return { left: 820, top: 88, width: 360, height: 420 };
+    },
+  };
+  const drawer = {
+    open: true,
+    addEventListener(type, listener) {
+      listeners[`drawer:${type}`] = listener;
+    },
+  };
+  const handleListeners = {};
+  const handle = {
+    dataset: {},
+    ownerDocument,
+    addEventListener(type, listener) {
+      handleListeners[type] = listener;
+    },
+  };
+  const container = {
+    addEventListener() {},
+    querySelector(selector) {
+      if (selector === '[data-inspector-floating-window]') return inspector;
+      if (selector === '#tt-inspector-drawer') return drawer;
+      if (selector === '[data-inspector-drag-handle]') return handle;
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const state = { inspectorOpen: true, inspectorPosition: null };
+
+  try {
+    bindGridInteractions(container, {}, state);
+    handleListeners.pointerdown({
+      button: 0,
+      clientX: 900,
+      clientY: 120,
+      target: { closest: () => null },
+    });
+    listeners.pointermove({
+      clientX: 760,
+      clientY: 220,
+      preventDefault() {},
+    });
+    listeners.pointerup({});
+
+    assert.deepEqual(state.inspectorPosition, { x: 680, y: 188 });
+    assert.equal(inspector.style.values.get('--tt-inspector-x'), '680px');
+    assert.equal(inspector.style.values.get('--tt-inspector-y'), '188px');
+    assert.equal(stored.get('timetable.inspector.position.v1'), '{"x":680,"y":188}');
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+    if (previousStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = previousStorage;
+  }
 });
 
 test('timetable planner no longer renders the legacy floating smart agent', async () => {

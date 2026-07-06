@@ -110,19 +110,38 @@ body.light-mode .tt-workbench {
 }
 
 .tt-inspector {
-    position: absolute;
-    top: calc(56px + var(--tt-space-md));
-    right: 0;
-    z-index: 25;
-    width: min(340px, calc(100vw - 48px));
-    max-width: calc(100% - 320px);
+    position: fixed;
+    top: 88px;
+    right: 24px;
+    z-index: 45;
+    width: min(360px, calc(100vw - 48px));
+    max-width: none;
     min-height: 0;
     pointer-events: none;
+}
+
+.tt-inspector.is-positioned {
+    top: var(--tt-inspector-y);
+    right: auto;
+    left: var(--tt-inspector-x);
+}
+
+.tt-inspector.is-open {
+    width: min(360px, calc(100vw - 48px));
+}
+
+.tt-inspector.is-collapsed {
+    width: min(184px, calc(100vw - 48px));
+}
+
+.tt-inspector.is-dragging {
+    user-select: none;
 }
 
 .tt-inspector-drawer {
     margin-left: auto;
     overflow: hidden;
+    width: 100%;
     background: var(--tt-bg-panel);
     border: 1px solid var(--tt-border);
     border-radius: var(--tt-radius-lg);
@@ -132,11 +151,11 @@ body.light-mode .tt-workbench {
 }
 
 .tt-inspector-drawer:not([open]) {
-    width: min(184px, calc(100vw - 48px));
+    width: 100%;
 }
 
 .tt-inspector-drawer[open] {
-    width: min(340px, calc(100vw - 48px));
+    width: 100%;
 }
 
 .tt-inspector-summary {
@@ -147,15 +166,20 @@ body.light-mode .tt-workbench {
     min-height: 42px;
     padding: 9px 11px;
     color: var(--tt-text);
-    cursor: pointer;
+    cursor: grab;
     list-style: none;
+    touch-action: none;
 }
 
 .tt-inspector-summary::-webkit-details-marker {
     display: none;
 }
 
-.tt-inspector-summary span {
+.tt-inspector-summary:active {
+    cursor: grabbing;
+}
+
+.tt-inspector-summary-main {
     display: inline-flex;
     align-items: center;
     gap: 7px;
@@ -179,10 +203,32 @@ body.light-mode .tt-workbench {
     font-style: normal;
 }
 
+.tt-inspector.is-collapsed .tt-inspector-summary em {
+    display: none;
+}
+
+.tt-inspector-summary-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-muted);
+}
+
 .tt-inspector-summary .lucide {
     width: 16px;
     height: 16px;
     color: var(--tt-primary);
+}
+
+.tt-inspector-summary-action .lucide {
+    width: 14px;
+    height: 14px;
+    color: currentColor;
 }
 
 .tt-inspector-body {
@@ -4740,9 +4786,15 @@ button.tt-duty-cell:focus-visible span {
         max-height: none;
     }
 
-    .tt-inspector {
+    .tt-inspector,
+    .tt-inspector.is-open,
+    .tt-inspector.is-collapsed,
+    .tt-inspector.is-positioned {
         position: static;
         grid-area: inspector;
+        top: auto;
+        right: auto;
+        left: auto;
         width: 100%;
         max-width: none;
         pointer-events: auto;

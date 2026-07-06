@@ -4,6 +4,177 @@ function resizeConstraintChatInput(textarea) {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
 }
 
+export const INSPECTOR_POSITION_STORAGE_KEY = 'timetable.inspector.position.v1';
+const INSPECTOR_FLOATING_BREAKPOINT = 980;
+const INSPECTOR_POSITION_MARGIN = 12;
+const INSPECTOR_DRAG_THRESHOLD = 4;
+
+function roundedFiniteNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.round(number) : null;
+}
+
+export function clampInspectorPosition(position = {}, viewport = {}, size = {}, margin = INSPECTOR_POSITION_MARGIN) {
+    const viewportWidth = Math.max(0, Number(viewport.width) || 0);
+    const viewportHeight = Math.max(0, Number(viewport.height) || 0);
+    const width = Math.max(0, Number(size.width) || 0);
+    const height = Math.max(0, Number(size.height) || 0);
+    const safeMargin = Math.max(0, Number(margin) || 0);
+    const maxX = Math.max(safeMargin, viewportWidth - width - safeMargin);
+    const maxY = Math.max(safeMargin, viewportHeight - height - safeMargin);
+    const x = roundedFiniteNumber(position.x);
+    const y = roundedFiniteNumber(position.y);
+    return {
+        x: Math.min(Math.max(x ?? safeMargin, safeMargin), maxX),
+        y: Math.min(Math.max(y ?? safeMargin, safeMargin), maxY),
+    };
+}
+
+export function loadInspectorPosition(storage = globalThis?.localStorage) {
+    try {
+        const raw = storage?.getItem?.(INSPECTOR_POSITION_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        const x = roundedFiniteNumber(parsed?.x);
+        const y = roundedFiniteNumber(parsed?.y);
+        if (x === null || y === null) return null;
+        return { x, y };
+    } catch {
+        return null;
+    }
+}
+
+export function saveInspectorPosition(position = {}, storage = globalThis?.localStorage) {
+    try {
+        const x = roundedFiniteNumber(position.x);
+        const y = roundedFiniteNumber(position.y);
+        if (x === null || y === null) return false;
+        storage?.setItem?.(INSPECTOR_POSITION_STORAGE_KEY, JSON.stringify({ x, y }));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function isInspectorFloatingViewport() {
+    if (typeof window === 'undefined') return false;
+    if (typeof window.matchMedia === 'function') {
+        return window.matchMedia(`(min-width: ${INSPECTOR_FLOATING_BREAKPOINT + 1}px)`).matches;
+    }
+    return Number(window.innerWidth || 0) > INSPECTOR_FLOATING_BREAKPOINT;
+}
+
+function inspectorViewportSize() {
+    const win = typeof window !== 'undefined' ? window : null;
+    const doc = typeof document !== 'undefined' ? document.documentElement : null;
+    return {
+        width: Number(win?.innerWidth || doc?.clientWidth || 0),
+        height: Number(win?.innerHeight || doc?.clientHeight || 0),
+    };
+}
+
+function applyInspectorPosition(inspector, position) {
+    if (!inspector || !Number.isFinite(position?.x) || !Number.isFinite(position?.y)) return;
+    inspector.classList.add('is-positioned');
+    inspector.style.setProperty('--tt-inspector-x', `${Math.round(position.x)}px`);
+    inspector.style.setProperty('--tt-inspector-y', `${Math.round(position.y)}px`);
+}
+
+function syncInspectorOpenClass(inspector, open) {
+    if (!inspector) return;
+    inspector.classList.toggle('is-open', Boolean(open));
+    inspector.classList.toggle('is-collapsed', !open);
+}
+
+function bindInspectorFloatingWindow(container, state) {
+    const inspector = container.querySelector?.('[data-inspector-floating-window]');
+    const drawer = container.querySelector?.('#tt-inspector-drawer');
+    const handle = container.querySelector?.('[data-inspector-drag-handle]');
+    if (!inspector || !drawer || !handle) return;
+
+    syncInspectorOpenClass(inspector, drawer.open);
+    if (state.inspectorPosition) {
+        const rect = inspector.getBoundingClientRect();
+        const clamped = clampInspectorPosition(
+            state.inspectorPosition,
+            inspectorViewportSize(),
+            { width: rect.width, height: rect.height },
+        );
+        state.inspectorPosition = clamped;
+        applyInspectorPosition(inspector, clamped);
+    }
+
+    drawer.addEventListener('toggle', event => {
+        const open = Boolean(event.target.open);
+        state.inspectorOpen = open;
+        syncInspectorOpenClass(inspector, open);
+    });
+
+    handle.addEventListener('click', event => {
+        if (handle.dataset.inspectorSuppressToggle !== 'true') return;
+        event.preventDefault();
+        event.stopPropagation();
+        delete handle.dataset.inspectorSuppressToggle;
+    }, true);
+
+    handle.addEventListener('pointerdown', event => {
+        if (event.button !== undefined && event.button !== 0) return;
+        if (!isInspectorFloatingViewport()) return;
+        if (event.target?.closest?.('button, input, textarea, select, a')) return;
+
+        const ownerDocument = handle.ownerDocument || (typeof document !== 'undefined' ? document : null);
+        if (!ownerDocument) return;
+        const startX = Number(event.clientX || 0);
+        const startY = Number(event.clientY || 0);
+        const rect = inspector.getBoundingClientRect();
+        const offsetX = startX - rect.left;
+        const offsetY = startY - rect.top;
+        let moved = false;
+
+        const cleanup = () => {
+            ownerDocument.removeEventListener('pointermove', onPointerMove);
+            ownerDocument.removeEventListener('pointerup', onPointerUp);
+            ownerDocument.removeEventListener('pointercancel', onPointerUp);
+            inspector.classList.remove('is-dragging');
+            state.inspectorDragging = false;
+        };
+
+        const onPointerMove = moveEvent => {
+            const nextX = Number(moveEvent.clientX || 0);
+            const nextY = Number(moveEvent.clientY || 0);
+            const distance = Math.hypot(nextX - startX, nextY - startY);
+            if (!moved && distance < INSPECTOR_DRAG_THRESHOLD) return;
+            moved = true;
+            moveEvent.preventDefault?.();
+            state.inspectorDragging = true;
+            inspector.classList.add('is-dragging');
+            const clamped = clampInspectorPosition(
+                { x: nextX - offsetX, y: nextY - offsetY },
+                inspectorViewportSize(),
+                { width: rect.width, height: rect.height },
+            );
+            state.inspectorPosition = clamped;
+            applyInspectorPosition(inspector, clamped);
+        };
+
+        const onPointerUp = () => {
+            cleanup();
+            if (!moved) return;
+            handle.dataset.inspectorSuppressToggle = 'true';
+            saveInspectorPosition(state.inspectorPosition);
+            setTimeout(() => {
+                if (handle.dataset.inspectorSuppressToggle === 'true') {
+                    delete handle.dataset.inspectorSuppressToggle;
+                }
+            }, 0);
+        };
+
+        ownerDocument.addEventListener('pointermove', onPointerMove);
+        ownerDocument.addEventListener('pointerup', onPointerUp, { once: true });
+        ownerDocument.addEventListener('pointercancel', onPointerUp, { once: true });
+    });
+}
+
 export function handleTimetableEscape(event, container, controller, state) {
     if (event?.key !== 'Escape') return false;
 
@@ -441,12 +612,10 @@ export function bindGridInteractions(container, controller, state) {
     container.__ttController = controller;
     container.__ttState = state;
     bindDelegatedInteractions(container);
+    bindInspectorFloatingWindow(container, state);
 
     container.querySelectorAll('[data-tt-section-toggle]').forEach(button => {
         button.addEventListener('click', () => controller.toggleWorkflowSection(button.dataset.ttSectionToggle));
-    });
-    container.querySelector('#tt-inspector-drawer')?.addEventListener('toggle', event => {
-        state.inspectorOpen = Boolean(event.target.open);
     });
     container.querySelector('#tt-save-project')?.addEventListener('click', () => controller.saveProject());
     container.querySelectorAll('[data-active-weekday], [data-active-period]').forEach(input => {
