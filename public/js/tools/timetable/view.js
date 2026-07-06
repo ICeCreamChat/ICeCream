@@ -398,13 +398,19 @@ function renderWorkflow(state) {
 function renderPeriodTimesConfig(state) {
     const activePeriods = getActivePeriods(state.project);
     const periodTimes = state.rangeDraft?.periodTimes || state.project?.periodTimes || [];
-    const validTimes = completeProjectPeriodTimes(state.project, periodTimes)
-        .filter(item => activePeriods.includes(Number(item.period)) && (item.start || item.end));
-    const configuredCount = validTimes.length;
-    const firstStart = validTimes.find(item => item.start)?.start || '';
-    const lastEnd = [...validTimes].reverse().find(item => item.end)?.end || '';
-    const rangeLabel = configuredCount && firstStart && lastEnd ? `${firstStart}-${lastEnd}` : '';
-    const statusLabel = configuredCount ? `${configuredCount}节 · 已配置` : '未配置';
+    const hasSegmentConfig = Array.isArray(state.project?.periodTimeSegments?.segments) && state.project.periodTimeSegments.segments.length > 0;
+    const configuredPeriods = completeProjectPeriodTimes(state.project, periodTimes)
+        .filter(item => activePeriods.includes(Number(item.period)) && (item.start || item.end))
+        .map(item => Number(item.period));
+    const summary = summarizeRangeTimeBlocks(state.project, hasSegmentConfig ? activePeriods : configuredPeriods);
+    const timeRange = summarizeFullPeriodTimeRange(state.project, periodTimes);
+    const rangeLabel = timeRange.rangeLabel;
+    const statusParts = [];
+    if (summary.formalTotal) statusParts.push(summary.formalTotalLabel);
+    if (summary.additionalTotal) statusParts.push(summary.additionalTotalLabel);
+    const statusLabel = timeRange.configured && statusParts.length
+        ? `${statusParts.join(' · ')} · 已配置`
+        : '未配置';
     return `
         <button class="tt-period-time-entry" id="tt-open-period-time-dialog" type="button">
             <span class="tt-period-time-entry-icon">
@@ -938,7 +944,7 @@ function renderProjectSection(state) {
     const { project } = state;
     const { activeWeekdays, activePeriods } = getRangeDraft(state);
     const periodsFromSegments = Array.isArray(project.periodTimeSegments?.segments) && project.periodTimeSegments.segments.length > 0;
-    const formalSummary = summarizeFormalTimeSegmentParts(project, activePeriods);
+    const rangeSummary = summarizeRangeTimeBlocks(project, activePeriods);
 
     return `
         <div class="tt-setup-card tt-range-setup-card" data-workflow-step="data">
@@ -966,8 +972,9 @@ function renderProjectSection(state) {
                     ${periodsFromSegments ? `
                         <div class="tt-range-summary-card tt-range-summary-card--readonly">
                             <div class="tt-range-summary-trigger" data-range-label="可用节次">
-                                <strong>${escapeHtml(formalSummary.totalLabel || summarizePeriods(activePeriods))}</strong>
-                                ${formalSummary.segmentLabel ? `<small class="tt-range-summary-detail">${escapeHtml(formalSummary.segmentLabel)}</small>` : ''}
+                                <strong>${escapeHtml(rangeSummary.totalLabel || summarizePeriods(activePeriods))}</strong>
+                                ${rangeSummary.formalSegmentLabel ? `<small class="tt-range-summary-detail">${escapeHtml(rangeSummary.formalSegmentLabel)}</small>` : ''}
+                                ${rangeSummary.additionalSegmentLabel ? `<small class="tt-range-summary-extra">${escapeHtml(rangeSummary.additionalSegmentLabel)}</small>` : ''}
                             </div>
                         </div>
                     ` : renderMultiSelect({
@@ -1103,6 +1110,19 @@ function renderRosterReview(dialog) {
         ` : ''}
         <div class="tt-roster-review-wrap">
             <table class="tt-roster-review-table" id="tt-roster-review-table">
+                <colgroup class="tt-roster-review-cols">
+                    <col class="tt-roster-col-grade">
+                    <col class="tt-roster-col-class">
+                    <col class="tt-roster-col-subject">
+                    <col class="tt-roster-col-category">
+                    <col class="tt-roster-col-tags">
+                    <col class="tt-roster-col-teacher">
+                    <col class="tt-roster-col-hours">
+                    <col class="tt-roster-col-block">
+                    <col class="tt-roster-col-room">
+                    <col class="tt-roster-col-issue">
+                    <col class="tt-roster-col-action">
+                </colgroup>
                 <thead>
                     <tr>
                         <th>年级</th>
@@ -1141,8 +1161,7 @@ function renderRosterImportReport(report) {
     if (!report || !report.summary) return '';
     const summary = report.summary || {};
     const entries = Array.isArray(report.entries) ? report.entries : [];
-    const focusEntries = entries.filter(item => item.category !== 'kept').slice(0, 4);
-    const visibleEntries = focusEntries.length ? focusEntries : entries.slice(0, 3);
+    const visibleEntries = entries.filter(item => item.category !== 'kept').slice(0, 4);
     const categoryIcon = category => (
         category === 'dropped' ? 'alert-triangle'
             : category === 'review' ? 'circle-help'
@@ -1307,26 +1326,8 @@ function renderDutyAssignmentDialog(state) {
 }
 
 function summarizeTimeBlockKinds(project = {}) {
-    const segments = Array.isArray(project.periodTimeSegments?.segments) ? project.periodTimeSegments.segments : [];
-    if (!segments.length) return '';
-    const formalSummary = summarizeFormalTimeSegments(project);
-    const additionalGroups = new Map();
-    for (const segment of segments) {
-        const kind = periodSetupKind(segment);
-        const count = Math.max(0, Number.parseInt(segment.periodCount, 10) || 0);
-        if (kind !== 'teaching' && count > 0) {
-            const key = String(segment.id || segment.label || 'additional').replace(/__p\d+$/, '');
-            const label = String(segment.label || '附加时段').replace(/\d+$/, '') || '附加时段';
-            const current = additionalGroups.get(key) || { label, count: 0 };
-            current.count += count;
-            additionalGroups.set(key, current);
-        }
-    }
-    const additionalParts = [...additionalGroups.values()].map(item => `${item.label}${item.count}`);
-    return [
-        formalSummary,
-        additionalParts.length ? `附加：${additionalParts.join(' · ')}` : '',
-    ].filter(Boolean).join(' · ');
+    const summary = summarizeRangeTimeBlocks(project);
+    return [summary.formalSummaryLabel, summary.additionalSegmentLabel].filter(Boolean).join(' · ');
 }
 
 function summarizeFormalTimeSegments(project = {}) {
@@ -1337,6 +1338,10 @@ function summarizeFormalTimeSegments(project = {}) {
 function compactTimeSegmentLabel(label = '', fallback = '正式节次') {
     const text = String(label || fallback).trim();
     return text.replace(/时段$/, '').trim() || fallback;
+}
+
+function baseAdditionalSegmentLabel(label = '') {
+    return compactTimeSegmentLabel(label || '', '附加时段').replace(/\d+$/, '').trim() || '附加时段';
 }
 
 function summarizeFormalTimeSegmentParts(project = {}, fallbackPeriods = []) {
@@ -1362,6 +1367,76 @@ function summarizeFormalTimeSegmentParts(project = {}, fallbackPeriods = []) {
         total,
         totalLabel: `${total}节`,
         segmentLabel: parts.join(' · '),
+    };
+}
+
+function summarizeAdditionalTimeSegmentParts(project = {}) {
+    const segments = expandPeriodTimeSegments(project.periodTimeSegments || {});
+    const additionalGroups = new Map();
+    segments.forEach((segment, index) => {
+        const kind = periodSetupKind(segment);
+        const count = Math.max(0, Number.parseInt(segment.periodCount, 10) || 0);
+        if (kind === 'teaching' || count <= 0) return;
+        const key = String(segment.id || `${segment.label || 'additional'}-${index}`).replace(/__p\d+$/, '');
+        const label = baseAdditionalSegmentLabel(segment.label || '附加时段');
+        const current = additionalGroups.get(key) || { label, count: 0 };
+        current.count += count;
+        additionalGroups.set(key, current);
+    });
+    const parts = [...additionalGroups.values()].map(item => `${item.label}${item.count}`);
+    const total = [...additionalGroups.values()].reduce((sum, item) => sum + item.count, 0);
+    return {
+        total,
+        totalLabel: total ? `附加${total}段` : '',
+        segmentLabel: parts.join(' · '),
+    };
+}
+
+function summarizeRangeTimeBlocks(project = {}, fallbackPeriods = []) {
+    const formal = summarizeFormalTimeSegmentParts(project, fallbackPeriods);
+    const additional = summarizeAdditionalTimeSegmentParts(project);
+    const totalParts = [];
+    if (formal.totalLabel) totalParts.push(formal.totalLabel);
+    if (additional.totalLabel) totalParts.push(additional.totalLabel);
+    return {
+        formalTotal: formal.total,
+        additionalTotal: additional.total,
+        formalTotalLabel: formal.totalLabel,
+        additionalTotalLabel: additional.totalLabel,
+        totalLabel: totalParts.join(' · '),
+        formalSegmentLabel: formal.segmentLabel,
+        additionalSegmentLabel: additional.segmentLabel,
+        formalSummaryLabel: [formal.totalLabel, formal.segmentLabel].filter(Boolean).join(' · '),
+    };
+}
+
+function summarizeFullPeriodTimeRange(project = {}, periodTimes = project.periodTimes || []) {
+    const activePeriods = getActivePeriods(project);
+    const intervals = completeProjectPeriodTimes(project, periodTimes)
+        .filter(item => activePeriods.includes(Number(item.period)) && item.start && item.end)
+        .map(item => ({ start: item.start, end: item.end }));
+    const segments = expandPeriodTimeSegments(project.periodTimeSegments || {});
+    const projectForPreview = { periodTimeSegments: project.periodTimeSegments || {} };
+    segments.forEach(segment => {
+        if (periodSetupKind(segment) === 'teaching') return;
+        const timeLabel = studyBlockTimeLabel(projectForPreview, segment);
+        const [start = '', end = ''] = timeLabel ? timeLabel.split('-') : [];
+        if (start && end) intervals.push({ start, end });
+    });
+    const normalized = intervals
+        .map(interval => ({
+            start: interval.start,
+            end: interval.end,
+            startMinutes: timeToMinutes(interval.start),
+            endMinutes: timeToMinutes(interval.end),
+        }))
+        .filter(interval => interval.startMinutes !== null && interval.endMinutes !== null);
+    if (!normalized.length) return { configured: false, rangeLabel: '' };
+    const first = normalized.reduce((min, item) => (item.startMinutes < min.startMinutes ? item : min), normalized[0]);
+    const last = normalized.reduce((max, item) => (item.endMinutes > max.endMinutes ? item : max), normalized[0]);
+    return {
+        configured: true,
+        rangeLabel: `${first.start}-${last.end}`,
     };
 }
 

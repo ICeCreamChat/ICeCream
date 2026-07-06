@@ -5885,6 +5885,10 @@ test('timetable roster import is opened from a data card instead of permanent si
   assert.match(review, /data-roster-field="blockPreference"/);
   assert.match(review, /data-roster-field="roomName"/);
   assert.match(review, /data-roster-delete-row="draft_1"/);
+  assert.match(review, /<colgroup class="tt-roster-review-cols">/);
+  assert.match(review, /class="tt-roster-col-grade"/);
+  assert.match(review, /class="tt-roster-col-issue"/);
+  assert.match(review, /class="tt-roster-col-action"/);
   assert.match(review, /id="tt-add-roster-review-row"/);
   assert.match(review, /id="tt-roster-bulk-text"/);
   assert.match(review, /id="tt-append-roster-rows"/);
@@ -5947,6 +5951,39 @@ test('timetable roster import review renders the import report summary and entri
   assert.match(html, /待审<\/b>1/);
   assert.match(html, /无法识别“三连堂”，已按单节处理。/);
   assert.match(html, /存在重复任课，请确认是否需要合并。/);
+});
+
+test('timetable roster import report hides kept-only detail rows', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    rosterImport: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      fileName: '',
+      text: '',
+      draftRows: [],
+      stats: { classCount: 30, teacherCount: 62, subjectCount: 14, planCount: 360, totalLessons: 900, blockLessons: 160, fixedRoomCount: 0, issueCount: 0 },
+      issues: [],
+      importReport: {
+        sourceKind: 'roster',
+        summary: { total: 360, kept: 360, degraded: 0, dropped: 0, review: 0 },
+        entries: [
+          { category: 'kept', source: { row: 2 }, field: 'row', reason: '任课行已保留。' },
+          { category: 'kept', source: { row: 3 }, field: 'row', reason: '任课行已保留。' },
+          { category: 'kept', source: { row: 4 }, field: 'row', reason: '任课行已保留。' },
+        ],
+        hasIssues: false,
+      },
+    },
+  }));
+
+  assert.match(html, /导入报告/);
+  assert.match(html, /保留<\/b>360/);
+  assert.match(html, /降级<\/b>0/);
+  assert.match(html, /丢弃<\/b>0/);
+  assert.match(html, /待审<\/b>0/);
+  assert.doesNotMatch(html, /任课行已保留。/);
+  assert.doesNotMatch(html, /tt-rule-warning-list/);
 });
 
 test('timetable roster import shows a loading state while parsing before review', () => {
@@ -6013,8 +6050,11 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-dialog-overlay/);
   assert.match(styles, /\.tt-roster-import-dialog/);
   assert.match(styles, /\.tt-import-dropzone/);
-  assert.match(styles, /\.tt-roster-review-table/);
+  assert.match(styles, /\.tt-roster-review-table\s*{[\s\S]*table-layout:\s*fixed;/);
+  assert.match(styles, /\.tt-roster-col-issue\s*{/);
+  assert.match(styles, /\.tt-roster-col-action\s*{/);
   assert.match(styles, /\.tt-roster-review-row--error/);
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-review-table colgroup,[\s\S]*\.tt-rule-review-table colgroup/);
   // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 constraint dialog 替代）
   assert.match(styles, /\.tt-roster-import-dialog/);
   assert.match(styles, /\.tt-period-time-dialog/);
@@ -7968,6 +8008,7 @@ test('timetable left sidebar range workflow applies only from the range popover 
   assert.match(styles, /\.tt-multi-select/);
   assert.match(styles, /\.tt-multi-select-popover/);
   assert.match(styles, /\.tt-range-summary-detail\s*{/);
+  assert.match(styles, /\.tt-range-summary-extra\s*{/);
   assert.match(styles, /\.tt-period-time-entry-action\s*{/);
   assert.match(styles, /\.tt-period-time-entry-range\s*{/);
   assert.match(styles, /\.tt-period-time-entry-status\s*{/);
@@ -8178,10 +8219,10 @@ test('timetable period time entry summarizes non-formal study blocks and exclude
   const closed = renderWorkbench(state);
   const sidebar = closed.slice(closed.indexOf('<aside class="tt-sidebar"'), closed.indexOf('<section class="tt-schedule-panel"'));
 
-  assert.match(sidebar, /data-range-label="可用节次"[\s\S]*<strong>3节<\/strong>[\s\S]*<small class="tt-range-summary-detail">上午3<\/small>/);
-  assert.match(sidebar, /tt-period-time-entry-range">08:00-10:20</);
-  assert.match(sidebar, /tt-period-time-entry-status">3节 · 已配置</);
-  assert.doesNotMatch(sidebar, /附加：早自习1|晚自习1/);
+  assert.match(sidebar, /data-range-label="可用节次"[\s\S]*<strong>3节 · 附加2段<\/strong>[\s\S]*<small class="tt-range-summary-detail">上午3<\/small>[\s\S]*<small class="tt-range-summary-extra">早自习1 · 晚自习1<\/small>/);
+  assert.match(sidebar, /tt-period-time-entry-range">07:20-19:45</);
+  assert.match(sidebar, /tt-period-time-entry-status">3节 · 附加2段 · 已配置</);
+  assert.doesNotMatch(sidebar, /附加：早自习1|附加：晚自习1/);
 });
 
 test('timetable range summary names formal time segments from configured blocks', () => {
@@ -8205,10 +8246,11 @@ test('timetable range summary names formal time segments from configured blocks'
   const rangeCard = html.match(/data-range-label="可用节次"[\s\S]*?<\/div>\s*<\/div>/)?.[0] || '';
   const sidebar = html.slice(html.indexOf('<aside class="tt-sidebar"'), html.indexOf('<section class="tt-schedule-panel"'));
 
-  assert.match(rangeCard, /<strong>5节<\/strong>/);
+  assert.match(rangeCard, /<strong>5节 · 附加2段<\/strong>/);
   assert.match(rangeCard, /<small class="tt-range-summary-detail">上午2 · 下午1 · 晚自习2<\/small>/);
-  assert.doesNotMatch(rangeCard, /早读1/);
-  assert.doesNotMatch(rangeCard, /离校提醒/);
+  assert.match(rangeCard, /<small class="tt-range-summary-extra">早读1 · 离校提醒1<\/small>/);
+  assert.match(sidebar, /tt-period-time-entry-range">07:20-21:10</);
+  assert.match(sidebar, /tt-period-time-entry-status">5节 · 附加2段 · 已配置</);
   assert.doesNotMatch(sidebar, /由时段配置自动生成/);
   assert.doesNotMatch(sidebar, /tt-range-summary-icon|lock-keyhole/);
 });
