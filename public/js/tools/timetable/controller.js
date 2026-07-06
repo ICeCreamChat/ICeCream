@@ -84,6 +84,14 @@ function recoverSmartWorkbench(current = {}) {
     return transitionSmartWorkbench(current, current.recoveryStage || 'ready_for_constraints', { error: '' });
 }
 
+function isEarlyStudySegmentLabel(label = '') {
+    return /早自习|早读|早修|晨读/.test(String(label || ''));
+}
+
+function isEveningStudySegmentLabel(label = '') {
+    return /晚自习|晚修/.test(String(label || ''));
+}
+
 function buildRuleChangePreview({ currentItems = [], nextItems = [], draftRows = [] } = {}) {
     const currentIds = new Set(currentItems.map(item => item.id));
     const nextIds = new Set(nextItems.map(item => item.id));
@@ -716,7 +724,18 @@ export class TimetablePlannerController {
             const minutes = this.timeToMinutes(value);
             return minutes === null ? fallback : this.minutesToTime(minutes);
         };
-        const normalizeKind = value => value === 'display' ? 'display' : 'teaching';
+        const normalizeKind = (value, id, label) => {
+            let kind = ['teaching', 'duty', 'display'].includes(value) ? value : (isEarlyStudySegmentLabel(label) ? 'duty' : 'teaching');
+            if (kind !== 'display' && isEarlyStudySegmentLabel(label)) {
+                kind = 'duty';
+            }
+            const hasDutyAssignment = (this.state.project?.dutyAssignments || [])
+                .some(item => item?.timeBlockId === id);
+            if (kind === 'duty' && isEveningStudySegmentLabel(label) && !hasDutyAssignment) {
+                kind = 'teaching';
+            }
+            return kind;
+        };
         const globalDefaults = {
             classMinutes: toInteger(config.globalDefaults?.classMinutes, defaults.globalDefaults.classMinutes, 1, 180),
             breakMinutes: toInteger(config.globalDefaults?.breakMinutes, defaults.globalDefaults.breakMinutes, 0, 120),
@@ -733,7 +752,7 @@ export class TimetablePlannerController {
                 const breakMinutes = seg.breakMinutes === null || seg.breakMinutes === undefined
                     ? null
                     : toInteger(seg.breakMinutes, globalDefaults.breakMinutes, 0, 120);
-                return { id, label, startTime, periodCount, classMinutes, breakMinutes, kind: normalizeKind(seg.kind) };
+                return { id, label, startTime, periodCount, classMinutes, breakMinutes, kind: normalizeKind(seg.kind, id, label) };
             })
             .slice(0, 10);
         return { globalDefaults, segments: segments.length ? segments : defaults.segments };
@@ -741,8 +760,23 @@ export class TimetablePlannerController {
 
     deriveTeachingPeriodsFromSegmentConfig(config = {}) {
         const segments = Array.isArray(config?.segments) ? config.segments : [];
+        const resolveKind = segment => {
+            const label = String(segment?.label || '');
+            let kind = ['teaching', 'duty', 'display'].includes(segment?.kind)
+                ? segment.kind
+                : (isEarlyStudySegmentLabel(label) ? 'duty' : 'teaching');
+            if (kind !== 'display' && isEarlyStudySegmentLabel(label)) {
+                kind = 'duty';
+            }
+            const hasDutyAssignment = (this.state.project?.dutyAssignments || [])
+                .some(item => item?.timeBlockId === segment?.id);
+            if (kind === 'duty' && isEveningStudySegmentLabel(label) && !hasDutyAssignment) {
+                kind = 'teaching';
+            }
+            return kind;
+        };
         const count = segments
-            .filter(segment => !segment.kind || segment.kind !== 'display')
+            .filter(segment => resolveKind(segment) === 'teaching')
             .reduce((sum, segment) => sum + (Math.max(0, Number.parseInt(segment.periodCount, 10) || 0)), 0);
         return Array.from({ length: Math.min(12, count) }, (_, index) => index + 1);
     }
@@ -759,8 +793,12 @@ export class TimetablePlannerController {
         const segments = Array.isArray(config?.segments) ? config.segments : [];
         const previewSegments = segments
             .map(segment => {
-                const kind = segment.kind === 'display' ? 'display' : 'teaching';
-                if (kind !== 'display') return null;
+                const label = String(segment.label || '');
+                let kind = ['teaching', 'duty', 'display'].includes(segment.kind)
+                    ? segment.kind
+                    : (isEarlyStudySegmentLabel(label) ? 'duty' : 'teaching');
+                if (kind !== 'display' && isEarlyStudySegmentLabel(label)) kind = 'duty';
+                if (kind === 'teaching') return null;
                 return {
                     id: segment.id || '',
                     label: segment.label || '',
@@ -801,7 +839,7 @@ export class TimetablePlannerController {
         let periodIndex = 0;
 
         for (const segment of safeConfig.segments) {
-            if (segment.kind === 'display') continue;
+            if (segment.kind !== 'teaching') continue;
             const classMinutes = segment.classMinutes ?? safeConfig.globalDefaults.classMinutes;
             const breakMinutes = segment.breakMinutes ?? safeConfig.globalDefaults.breakMinutes;
             let currentMinutes = this.timeToMinutes(segment.startTime) ?? this.timeToMinutes('08:00');
@@ -848,7 +886,7 @@ export class TimetablePlannerController {
         const labels = new Map();
         let periodIndex = 0;
         for (const segment of safeConfig.segments) {
-            if (segment.kind === 'display') continue;
+            if (segment.kind !== 'teaching') continue;
             for (let index = 0; index < segment.periodCount && periodIndex < activePeriods.length; index += 1) {
                 labels.set(activePeriods[periodIndex], segment.label);
                 periodIndex += 1;
@@ -1374,7 +1412,7 @@ export class TimetablePlannerController {
         if (!this.state.container) return null;
         const globalClassMinutes = this.state.container.querySelector('#tt-segment-global-class-minutes')?.value;
         const globalBreakMinutes = this.state.container.querySelector('#tt-segment-global-break-minutes')?.value;
-        const segmentCards = [...this.state.container.querySelectorAll('[data-segment-id]')];
+        const segmentCards = [...this.state.container.querySelectorAll('.tt-segment-card[data-segment-id]')];
         const segments = segmentCards.map(card => {
             const id = card.dataset.segmentId;
             const classMinutesValue = card.querySelector(`[data-segment-field="${id}-classMinutes"]`)?.value;
@@ -1845,7 +1883,7 @@ export class TimetablePlannerController {
         };
         this.render();
         try {
-            const teachingSegments = normalizedSegmentConfig.segments.filter(segment => !segment.kind || segment.kind !== 'display');
+            const teachingSegments = normalizedSegmentConfig.segments.filter(segment => segment.kind === 'teaching');
             let periodOffset = 0;
             let afternoonBoundary = null;
             let eveningBoundary = null;

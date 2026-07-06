@@ -33,12 +33,12 @@ const studyBlockProjectInput = {
     ],
 };
 
-test('time block kinds derive active periods from all non-display blocks and preserve duty assignments separately', () => {
+test('time block kinds derive active periods from formal teaching blocks and preserve duty assignments separately', () => {
     const project = normalizeTimetableProject(studyBlockProjectInput);
 
-    assert.deepEqual(project.activePeriods, [1, 2, 3, 4, 5, 6, 7, 8]);
-    assert.equal(project.periodsPerDay, 8);
-    assert.deepEqual(getModelActivePeriods(project), [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.deepEqual(project.activePeriods, [1, 2, 3, 4, 5, 6, 7]);
+    assert.equal(project.periodsPerDay, 7);
+    assert.deepEqual(getModelActivePeriods(project), [1, 2, 3, 4, 5, 6, 7]);
     assert.equal(project.periodTimeSegments.segments[0].kind, 'duty');
     assert.equal(project.periodTimeSegments.segments[1].kind, 'teaching');
     assert.equal(project.periodTimeSegments.segments[3].kind, 'display');
@@ -55,7 +55,7 @@ test('time block kinds derive active periods from all non-display blocks and pre
     assert.equal(project.lessonPlans[0].weeklyHours, 4);
 });
 
-test('legacy time segments without kind remain formal teaching periods', () => {
+test('legacy early-study labels become duty while ordinary blocks remain formal periods', () => {
     const project = normalizeTimetableProject({
         periodsPerDay: 3,
         periodTimeSegments: {
@@ -66,20 +66,20 @@ test('legacy time segments without kind remain formal teaching periods', () => {
         },
     });
 
-    assert.deepEqual(project.activePeriods, [1, 2, 3]);
-    assert.equal(project.periodsPerDay, 3);
-    assert.deepEqual(project.periodTimeSegments.segments.map(segment => segment.kind), ['teaching', 'teaching']);
+    assert.deepEqual(project.activePeriods, [1, 2]);
+    assert.equal(project.periodsPerDay, 2);
+    assert.deepEqual(project.periodTimeSegments.segments.map(segment => segment.kind), ['duty', 'teaching']);
     assert.equal(suggestTimeBlockKind(project.periodTimeSegments.segments[0]), 'duty');
 });
 
-test('frontend selectors count non-display blocks as active formal periods', () => {
+test('frontend selectors count teaching blocks as active formal periods', () => {
     const project = normalizeTimetableProject(studyBlockProjectInput);
 
     assert.equal(getUiTotalPeriods(project), 10);
-    assert.deepEqual(getUiActivePeriods(project), [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.deepEqual(getUiActivePeriods(project), [1, 2, 3, 4, 5, 6, 7]);
 });
 
-test('projects with only duty and display blocks keep duty as an active period', () => {
+test('projects with only duty and display blocks have no active formal period', () => {
     const project = normalizeTimetableProject({
         periodsPerDay: 2,
         periodTimeSegments: {
@@ -90,9 +90,23 @@ test('projects with only duty and display blocks keep duty as an active period',
         },
     });
 
-    assert.deepEqual(project.activePeriods, [1]);
-    assert.deepEqual(getModelActivePeriods(project), [1]);
-    assert.deepEqual(getUiActivePeriods(project), [1]);
+    assert.deepEqual(project.activePeriods, []);
+    assert.deepEqual(getModelActivePeriods(project), []);
+    assert.deepEqual(getUiActivePeriods(project), []);
+});
+
+test('legacy evening duty without assignments normalizes to formal evening study', () => {
+    const project = normalizeTimetableProject({
+        periodsPerDay: 2,
+        periodTimeSegments: {
+            segments: [
+                { id: 'evening-study', label: '晚自习', startTime: '19:00', periodCount: 2, kind: 'duty' },
+            ],
+        },
+    });
+
+    assert.deepEqual(project.activePeriods, [1, 2]);
+    assert.deepEqual(project.periodTimeSegments.segments.map(segment => segment.kind), ['teaching']);
 });
 
 test('duty assignment validation rejects non-duty or unknown time blocks before save', () => {

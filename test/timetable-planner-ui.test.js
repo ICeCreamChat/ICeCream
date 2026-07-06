@@ -1535,6 +1535,7 @@ function createPeriodTimeDom(rows, settings = {}, segments = {}) {
   ]);
   const segmentCards = Object.entries(segments).map(([id, seg]) => ({
     dataset: { segmentId: id, segmentKind: seg.kind || '' },
+    className: 'tt-segment-card',
     querySelector(selector) {
       if (selector.includes(`${id}-label`)) return { value: seg.label || '时段' };
       if (selector.includes(`${id}-startTime`)) return { value: seg.startTime || '08:00' };
@@ -1542,6 +1543,13 @@ function createPeriodTimeDom(rows, settings = {}, segments = {}) {
       if (selector.includes(`${id}-classMinutes`)) return { value: seg.classMinutes === null ? '' : String(seg.classMinutes || '') };
       if (selector.includes(`${id}-breakMinutes`)) return { value: seg.breakMinutes === null ? '' : String(seg.breakMinutes || '') };
       if (selector.includes(`${id}-kind`)) return { value: seg.kind || 'teaching' };
+      return null;
+    },
+  }));
+  const backgroundSegmentNodes = (settings.backgroundSegmentIds || []).map(id => ({
+    dataset: { segmentId: id },
+    className: 'tt-period',
+    querySelector() {
       return null;
     },
   }));
@@ -1641,7 +1649,8 @@ function createPeriodTimeDom(rows, settings = {}, segments = {}) {
     },
     querySelectorAll(selector) {
       if (selector === '[data-period-time-row]') return rowNodes;
-      if (selector === '[data-segment-id]') return segmentCards;
+      if (selector === '.tt-segment-card[data-segment-id]' || selector === '[data-period-time-segment-card]') return segmentCards;
+      if (selector === '[data-segment-id]') return [...segmentCards, ...backgroundSegmentNodes];
       return [];
     },
   };
@@ -2066,6 +2075,51 @@ test('timetable schedule grid shows configured period times beside period labels
   assert.match(panel, /08:00-08:40/);
   assert.match(panel, /第2节/);
   assert.match(panel, /08:55-09:35/);
+});
+
+test('timetable schedule grid labels formal rows by configured time segment', async () => {
+  const styles = await readFile(stylePath, 'utf8');
+  const state = sampleWorkbenchState();
+  state.project = createDefaultTimetableProject({
+    activeWeekdays: [1, 2],
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    periodTimeSegments: {
+      globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+      segments: [
+        { id: 'early-study', label: '早读', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+        { id: 'morning', label: '上午', startTime: '08:00', periodCount: 2, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+        { id: 'afternoon', label: '下午', startTime: '14:00', periodCount: 1, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+        { id: 'evening-study', label: '晚自习', startTime: '19:00', periodCount: 2, classMinutes: 45, breakMinutes: 10, kind: 'teaching' },
+        { id: 'campus-display', label: '离校提醒', startTime: '20:50', periodCount: 1, classMinutes: 20, breakMinutes: 0, kind: 'display' },
+      ],
+    },
+    periodTimes: [
+      { period: 1, start: '08:00', end: '08:40' },
+      { period: 2, start: '08:50', end: '09:30' },
+      { period: 3, start: '14:00', end: '14:40' },
+      { period: 4, start: '19:00', end: '19:45' },
+      { period: 5, start: '19:55', end: '20:40' },
+    ],
+    schedule: {
+      source: 'fast_constructed',
+      slots: [{ id: 'slot_1', classId: 'c1', subjectId: 'math', teacherId: 't_math', day: 1, period: 2 }],
+    },
+  });
+
+  const panel = renderSchedulePanel(state);
+
+  assert.match(panel, /data-time-block-id="early-study"[\s\S]*早读[\s\S]*07:20-07:50[\s\S]*不占节次/);
+  assert.doesNotMatch(panel, /data-time-block-id="early-study"[\s\S]{0,180}第1节/);
+  assert.match(panel, /data-period-segment-id="morning"[\s\S]*tt-period-segment-chip[\s\S]*上午[\s\S]*第1节[\s\S]*08:00-08:40/);
+  assert.match(panel, /data-period-segment-id="afternoon"[\s\S]*tt-period-segment-chip[\s\S]*下午[\s\S]*第3节[\s\S]*14:00-14:40/);
+  assert.match(panel, /data-period-segment-id="evening-study"[\s\S]*tt-period-segment-chip[\s\S]*晚自习[\s\S]*第4节[\s\S]*19:00-19:45/);
+  assert.match(panel, /data-time-block-id="campus-display"[\s\S]*离校提醒[\s\S]*20:50-21:10/);
+  assert.doesNotMatch(panel, /data-period-segment-id="campus-display"[\s\S]*第6节/);
+  assert.match(styles, /\.tt-period-segment-chip\s*{/);
+  assert.match(styles, /\.tt-period--segment-start\s*{/);
 });
 
 test('timetable manual adjustment success clears stale solve failure state', async () => {
@@ -7932,16 +7986,17 @@ test('timetable period time setup uses a compact entry and modal editor', async 
   assert.match(interactionSource, /#tt-save-period-times/);
 });
 
-test('timetable period time dialog treats duty blocks as editable formal timeline periods', () => {
+test('timetable period time dialog shows early study as an additional non-numbered row', () => {
   const state = sampleWorkbenchState({
     project: createDefaultTimetableProject({
       activeWeekdays: [1, 2],
       periodTimeSegments: {
         globalDefaults: { classMinutes: 40, breakMinutes: 10 },
         segments: [
+          { id: 'early-study', label: '早读', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
           { id: 'morning', label: '上午', startTime: '08:00', periodCount: 4, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
           { id: 'afternoon', label: '下午', startTime: '14:00', periodCount: 3, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
-          { id: 'evening-study', label: '晚自习', startTime: '19:00', periodCount: 2, classMinutes: 45, breakMinutes: 10, kind: 'duty' },
+          { id: 'evening-study', label: '晚自习', startTime: '19:00', periodCount: 2, classMinutes: 45, breakMinutes: 10, kind: 'teaching' },
           { id: 'campus-display', label: '离校提醒', startTime: '20:50', periodCount: 1, classMinutes: 20, breakMinutes: 0, kind: 'display' },
         ],
       },
@@ -7973,9 +8028,10 @@ test('timetable period time dialog treats duty blocks as editable formal timelin
       segmentConfig: {
         globalDefaults: { classMinutes: 40, breakMinutes: 10 },
         segments: [
+          { id: 'early-study', label: '早读', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
           { id: 'morning', label: '上午', startTime: '08:00', periodCount: 4, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
           { id: 'afternoon', label: '下午', startTime: '14:00', periodCount: 3, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
-          { id: 'evening-study', label: '晚自习', startTime: '19:00', periodCount: 2, classMinutes: 45, breakMinutes: 10, kind: 'duty' },
+          { id: 'evening-study', label: '晚自习', startTime: '19:00', periodCount: 2, classMinutes: 45, breakMinutes: 10, kind: 'teaching' },
           { id: 'campus-display', label: '离校提醒', startTime: '20:50', periodCount: 1, classMinutes: 20, breakMinutes: 0, kind: 'display' },
         ],
       },
@@ -7986,7 +8042,16 @@ test('timetable period time dialog treats duty blocks as editable formal timelin
 
   assert.match(open, /节次时间轴/);
   assert.doesNotMatch(open, /正式课节次时间轴/);
-  assert.doesNotMatch(open, /tt-period-time-duty-card/);
+  assert.match(open, /配置作息时段，系统生成节次时间轴。/);
+  assert.match(open, /正式课可微调；附加时段随上方配置同步。/);
+  assert.match(open, /tt-segment-index">时段1 · 自习值班/);
+  assert.match(open, /tt-segment-index">时段2 · 正式课 · 4节/);
+  assert.doesNotMatch(open, /早读等附加时段显示时间/);
+  assert.doesNotMatch(open, /上午、下午、晚自习等正式时段/);
+  assert.doesNotMatch(open, /将生成/);
+  assert.doesNotMatch(open, /不占正式节次/);
+  assert.match(open, /data-period-time-block-row="early-study"[\s\S]*早读[\s\S]*data-label="开始时间"[\s\S]*07:20[\s\S]*data-label="结束时间"[\s\S]*07:50/);
+  assert.doesNotMatch(open, /data-period-time-block-row="early-study"[\s\S]{0,200}第1节/);
   assert.doesNotMatch(open, /data-period-time-block-row="evening-study"/);
   assert.match(open, /第1节[\s\S]*08:00[\s\S]*08:40/);
   assert.match(open, /tt-period-time-segment-header[\s\S]*晚自习/);
@@ -7995,11 +8060,12 @@ test('timetable period time dialog treats duty blocks as editable formal timelin
   assert.match(open, /data-period-time-draft-start="8"/);
   assert.match(open, /data-period-time-draft-end="9"/);
   assert.match(open, /非正式时段/);
-  assert.match(open, /离校提醒[\s\S]*仅展示[\s\S]*20:50-21:10[\s\S]*不占正式节次/);
-  assert.doesNotMatch(open, /晚自习[\s\S]{0,120}不占正式节次/);
+  assert.match(open, /离校提醒[\s\S]*仅展示[\s\S]*20:50-21:10/);
+  assert.doesNotMatch(open, /tt-nonformal-time-item[\s\S]{0,200}早读/);
+  assert.doesNotMatch(open, /tt-nonformal-time-item[\s\S]{0,200}晚自习/);
 });
 
-test('timetable period time entry summarizes duty blocks as formal time periods', () => {
+test('timetable period time entry summarizes early duty as additional and excludes it from formal periods', () => {
   const state = sampleWorkbenchState({
     project: createDefaultTimetableProject({
       activeWeekdays: [1, 2],
@@ -8022,11 +8088,38 @@ test('timetable period time entry summarizes duty blocks as formal time periods'
   const closed = renderWorkbench(state);
   const sidebar = closed.slice(closed.indexOf('<aside class="tt-sidebar"'), closed.indexOf('<section class="tt-schedule-panel"'));
 
-  assert.match(sidebar, /正式 4 节 · 仅展示 1 段/);
+  assert.match(sidebar, /3节 · 上午3 · 附加：早自习1 · 仅展示 1 段/);
   assert.match(sidebar, /08:00-10:20/);
 });
 
-test('timetable period time presets treat early and evening study as formal blocks', () => {
+test('timetable range summary names formal time segments from configured blocks', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      activeWeekdays: [1, 2],
+      periodTimeSegments: {
+        globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+        segments: [
+          { id: 'early-study', label: '早读', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+          { id: 'morning', label: '上午', startTime: '08:00', periodCount: 2, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+          { id: 'afternoon', label: '下午', startTime: '14:00', periodCount: 1, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+          { id: 'evening-study', label: '晚自习', startTime: '19:00', periodCount: 2, classMinutes: 45, breakMinutes: 10, kind: 'teaching' },
+          { id: 'campus-display', label: '离校提醒', startTime: '20:50', periodCount: 1, classMinutes: 20, breakMinutes: 0, kind: 'display' },
+        ],
+      },
+    }),
+  });
+
+  const html = renderWorkbench(state);
+  const rangeCard = html.match(/data-range-label="可用节次"[\s\S]*?<\/div>\s*<\/div>/)?.[0] || '';
+  const sidebar = html.slice(html.indexOf('<aside class="tt-sidebar"'), html.indexOf('<section class="tt-schedule-panel"'));
+
+  assert.match(rangeCard, /5节 · 上午2 · 下午1 · 晚自习2/);
+  assert.doesNotMatch(rangeCard, /早读1/);
+  assert.doesNotMatch(rangeCard, /离校提醒/);
+  assert.match(sidebar, /5节 · 上午2 · 下午1 · 晚自习2 · 附加：早读1 · 仅展示 1 段/);
+});
+
+test('timetable period time presets treat early study as additional and evening study as formal', () => {
   const controller = new TimetablePlannerController();
   controller.render = () => {};
   controller.setMessage = () => {};
@@ -8035,30 +8128,29 @@ test('timetable period time presets treat early and evening study as formal bloc
 
   controller.applySegmentTemplate('withMorningEvening');
   assert.deepEqual(controller.state.periodTimeDialog.segmentConfig.segments.map(segment => segment.kind), [
-    'teaching',
+    'duty',
     'teaching',
     'teaching',
     'teaching',
   ]);
   assert.deepEqual(controller.state.periodTimeDialog.draftTimes.map(item => `${item.period}:${item.segmentLabel}`), [
-    '1:早读',
+    '1:上午时段',
     '2:上午时段',
     '3:上午时段',
     '4:上午时段',
-    '5:上午时段',
+    '5:下午时段',
     '6:下午时段',
     '7:下午时段',
-    '8:下午时段',
+    '8:晚自习',
     '9:晚自习',
-    '10:晚自习',
   ]);
 
   controller.applySegmentTemplate('seniorHigh');
-  assert.equal(controller.state.periodTimeDialog.segmentConfig.segments[0].kind, 'teaching');
+  assert.equal(controller.state.periodTimeDialog.segmentConfig.segments[0].kind, 'duty');
   assert.equal(controller.state.periodTimeDialog.segmentConfig.segments[3].kind, 'teaching');
 });
 
-test('timetable schedule grid renders legacy duty blocks as formal periods and fills missing tail times', () => {
+test('timetable schedule grid renders early duty as additional row and fills formal tail times', () => {
   const state = sampleWorkbenchState();
   state.project = createDefaultTimetableProject({
     activeWeekdays: [1, 2],
@@ -8074,12 +8166,12 @@ test('timetable schedule grid renders legacy duty blocks as formal periods and f
       segments: [
         { id: 'early-study', label: '早自习', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
         { id: 'morning', label: '上午', startTime: '08:00', periodCount: 2, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
-        { id: 'evening-study', label: '晚自习', startTime: '19:00', periodCount: 1, classMinutes: 45, breakMinutes: 10, kind: 'display' },
+        { id: 'evening-study', label: '晚自习', startTime: '19:00', periodCount: 1, classMinutes: 45, breakMinutes: 10, kind: 'teaching' },
       ],
     },
     periodTimes: [
-      { period: 1, start: '07:20', end: '07:50' },
-      { period: 2, start: '08:00', end: '08:40' },
+      { period: 1, start: '08:00', end: '08:40' },
+      { period: 2, start: '08:50', end: '09:30' },
     ],
     dutyAssignments: [{ id: 'duty-1', day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: 't_duty' }],
     schedule: {
@@ -8090,20 +8182,16 @@ test('timetable schedule grid renders legacy duty blocks as formal periods and f
 
   const panel = renderSchedulePanel(state);
 
-  assert.doesNotMatch(panel, /data-time-block-id="early-study"/);
-  assert.doesNotMatch(panel, /tt-duty-cell/);
-  assert.doesNotMatch(panel, /Duty Teacher/);
-  assert.doesNotMatch(panel, /未安排值班/);
-  assert.match(panel, /data-time-block-id="evening-study"/);
-  assert.match(panel, /晚自习[\s\S]*19:00-19:45/);
-  assert.match(panel, /第1节[\s\S]*07:20-07:50/);
-  assert.match(panel, /第2节[\s\S]*08:00-08:40/);
-  assert.match(panel, /第3节[\s\S]*08:50-09:30/);
-  assert.doesNotMatch(panel, /第3节[\s\S]{0,120}<strong>第3节<\/strong>\s*<\/div>/);
-  assert.doesNotMatch(panel, /tt-display-cell[\s\S]{0,80}待排/);
+  assert.match(panel, /data-time-block-id="early-study"[\s\S]*早自习[\s\S]*07:20-07:50[\s\S]*不占节次/);
+  assert.match(panel, /data-action="edit-duty-assignment"[\s\S]*Duty Teacher/);
+  assert.match(panel, /tt-duty-cell/);
+  assert.match(panel, /data-period-segment-id="morning"[\s\S]*第1节[\s\S]*08:00-08:40/);
+  assert.match(panel, /data-period-segment-id="morning"[\s\S]*第2节[\s\S]*08:50-09:30/);
+  assert.match(panel, /data-period-segment-id="evening-study"[\s\S]*第3节[\s\S]*19:00-19:45/);
+  assert.doesNotMatch(panel, /第1节[\s\S]{0,120}07:20-07:50/);
 });
 
-test('timetable legacy duty blocks no longer create schedule duty cells but can still render the editor dialog', () => {
+test('timetable legacy duty blocks create additional duty cells and render the editor dialog', () => {
   const state = sampleWorkbenchState();
   state.project = createDefaultTimetableProject({
     activeWeekdays: [1],
@@ -8125,9 +8213,10 @@ test('timetable legacy duty blocks no longer create schedule duty cells but can 
   });
 
   const panel = renderSchedulePanel(state);
-  assert.doesNotMatch(panel, /data-action="edit-duty-assignment"/);
-  assert.doesNotMatch(panel, /tt-duty-cell/);
-  assert.match(panel, /第1节[\s\S]*07:20-07:50/);
+  assert.match(panel, /data-action="edit-duty-assignment"/);
+  assert.match(panel, /tt-duty-cell/);
+  assert.match(panel, /早自习[\s\S]*07:20-07:50[\s\S]*不占节次/);
+  assert.match(panel, /第1节[\s\S]*08:00-08:40/);
 
   const html = renderWorkbench({
     ...state,
@@ -8382,7 +8471,26 @@ test('timetable period time segment kind changes still rerender when teaching co
   assert.equal(renderCount, 1);
 });
 
-test('timetable period time segment edits normalize duty blocks into formal teaching blocks', () => {
+test('timetable period time config ignores background schedule segment chips when reading the dialog', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.applyProject(createDefaultTimetableProject({ activePeriods: [1, 2, 3] }));
+  controller.state.container = createPeriodTimeDom([], {
+    classMinutes: 40,
+    breakMinutes: 10,
+    backgroundSegmentIds: ['schedule-morning', 'schedule-evening'],
+  }, {
+    'early-study': { label: '早读', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+    morning: { label: '上午', startTime: '08:00', periodCount: 3, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+  });
+
+  const config = controller.readSegmentConfigFromDom();
+
+  assert.deepEqual(config.segments.map(segment => segment.id), ['early-study', 'morning']);
+  assert.deepEqual(config.segments.map(segment => segment.startTime), ['07:20', '08:00']);
+});
+
+test('timetable period time segment edits keep early duty outside formal periods', () => {
   const controller = new TimetablePlannerController();
   controller.render = () => {};
   controller.applyProject(createDefaultTimetableProject({
@@ -8403,15 +8511,14 @@ test('timetable period time segment edits normalize duty blocks into formal teac
   });
 
   const config = controller.readSegmentConfigFromDom();
-  const normalized = controller.normalizeSegmentConfig(config, [1, 2, 3, 4]);
-  const generatedTimes = controller.buildPeriodTimesFromSegments(normalized, [1, 2, 3, 4]);
+  const normalized = controller.normalizeSegmentConfig(config, [1, 2, 3]);
+  const generatedTimes = controller.buildPeriodTimesFromSegments(normalized, [1, 2, 3]);
 
-  assert.deepEqual(normalized.segments.map(segment => segment.kind), ['teaching', 'teaching', 'display']);
+  assert.deepEqual(normalized.segments.map(segment => segment.kind), ['duty', 'teaching', 'display']);
   assert.deepEqual(generatedTimes.map(item => `${item.period}:${item.start}-${item.end}:${item.segmentLabel}`), [
-    '1:07:20-07:50:早自习',
-    '2:08:00-08:40:上午',
-    '3:08:50-09:30:上午',
-    '4:09:40-10:20:上午',
+    '1:08:00-08:40:上午',
+    '2:08:50-09:30:上午',
+    '3:09:40-10:20:上午',
   ]);
 });
 
@@ -8460,15 +8567,15 @@ test('timetable period time save preserves formal periods derived from study-blo
 
     await controller.savePeriodTimes();
 
-    assert.deepEqual(calls[0].body.periodTimes.map(item => item.period), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert.deepEqual(calls[0].body.periodTimes.map(item => item.period), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
     assert.deepEqual(calls[0].body.periodTimeSegments.segments.map(segment => segment.kind), [
-      'teaching',
+      'duty',
       'teaching',
       'teaching',
       'teaching',
     ]);
-    assert.equal(calls[0].body.dayPartBoundaries.afternoonStartPeriod, 6);
-    assert.equal(calls[0].body.dayPartBoundaries.eveningStartPeriod, 9);
+    assert.equal(calls[0].body.dayPartBoundaries.afternoonStartPeriod, 5);
+    assert.equal(calls[0].body.dayPartBoundaries.eveningStartPeriod, 8);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -8530,31 +8637,37 @@ test('timetable period time save reopens with the saved segment timeline instead
       '下午时段',
       '晚自习',
     ]);
-    assert.deepEqual(controller.state.periodTimeDialog.draftTimes.map(item => item.period), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    assert.equal(controller.state.periodTimeDialog.draftTimes[0].start, '07:20');
-    assert.equal(controller.state.periodTimeDialog.draftTimes[9].end, '20:40');
-    assert.deepEqual(controller.state.rangeDraft.periodTimes.map(item => item.period), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert.deepEqual(controller.state.periodTimeDialog.segmentConfig.segments.map(segment => segment.kind), [
+      'duty',
+      'teaching',
+      'teaching',
+      'teaching',
+    ]);
+    assert.deepEqual(controller.state.periodTimeDialog.draftTimes.map(item => item.period), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert.equal(controller.state.periodTimeDialog.segmentConfig.segments[0].startTime, '07:20');
+    assert.equal(controller.state.periodTimeDialog.draftTimes[0].start, '08:00');
+    assert.equal(controller.state.periodTimeDialog.draftTimes[8].end, '20:40');
+    assert.deepEqual(controller.state.rangeDraft.periodTimes.map(item => item.period), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test('timetable period time save validates formalized study blocks while excluding display-only blocks', async () => {
+test('timetable period time save excludes early duty while preserving formal evening study', async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
   const project = createDefaultTimetableProject({
     activePeriods: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
     periodTimes: [
-      { period: 1, start: '07:20', end: '07:50' },
-      { period: 2, start: '08:00', end: '08:40' },
-      { period: 3, start: '08:50', end: '09:30' },
-      { period: 4, start: '09:40', end: '10:20' },
-      { period: 5, start: '10:30', end: '11:10' },
-      { period: 6, start: '14:00', end: '14:40' },
-      { period: 7, start: '14:50', end: '15:30' },
-      { period: 8, start: '15:40', end: '16:20' },
-      { period: 9, start: '19:00', end: '19:45' },
-      { period: 10, start: '19:55', end: '20:40' },
+      { period: 1, start: '08:00', end: '08:40' },
+      { period: 2, start: '08:50', end: '09:30' },
+      { period: 3, start: '09:40', end: '10:20' },
+      { period: 4, start: '10:30', end: '11:10' },
+      { period: 5, start: '14:00', end: '14:40' },
+      { period: 6, start: '14:50', end: '15:30' },
+      { period: 7, start: '15:40', end: '16:20' },
+      { period: 8, start: '19:00', end: '19:45' },
+      { period: 9, start: '19:55', end: '20:40' },
     ],
   });
 
@@ -8585,14 +8698,15 @@ test('timetable period time save validates formalized study blocks while excludi
     controller.state.periodTimeDialog = {
       open: true,
       draftTimes: [
-        { period: 1, start: '07:20', end: '07:50' },
-        { period: 2, start: '08:00', end: '08:40' },
-        { period: 3, start: '08:50', end: '09:30' },
-        { period: 4, start: '09:40', end: '10:20' },
-        { period: 5, start: '10:30', end: '11:10' },
-        { period: 6, start: '14:00', end: '14:40' },
-        { period: 7, start: '14:50', end: '15:30' },
-        { period: 8, start: '15:40', end: '16:20' },
+        { period: 1, start: '08:00', end: '08:40' },
+        { period: 2, start: '08:50', end: '09:30' },
+        { period: 3, start: '09:40', end: '10:20' },
+        { period: 4, start: '10:30', end: '11:10' },
+        { period: 5, start: '14:00', end: '14:40' },
+        { period: 6, start: '14:50', end: '15:30' },
+        { period: 7, start: '15:40', end: '16:20' },
+        { period: 8, start: '19:00', end: '19:45' },
+        { period: 9, start: '19:55', end: '20:40' },
       ],
       segmentConfig: {
         globalDefaults: { classMinutes: 40, breakMinutes: 10 },
@@ -8600,36 +8714,37 @@ test('timetable period time save validates formalized study blocks while excludi
           { id: 'early-study', label: '早读', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
           { id: 'morning', label: '上午', startTime: '08:00', periodCount: 4, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
           { id: 'afternoon', label: '下午', startTime: '14:00', periodCount: 3, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
-          { id: 'evening-study', label: '晚自习', startTime: '19:00', periodCount: 2, classMinutes: 45, breakMinutes: 10, kind: 'display' },
+          { id: 'evening-study', label: '晚自习', startTime: '19:00', periodCount: 2, classMinutes: 45, breakMinutes: 10, kind: 'teaching' },
         ],
       },
-      errors: [{ period: 9, message: '请补齐开始和结束时间' }],
+      errors: [{ period: 10, message: '请补齐开始和结束时间' }],
     };
     controller.state.container = createPeriodTimeDom([
-      { period: 1, start: '07:20', end: '07:50', gapAfter: 10 },
-      { period: 2, start: '08:00', end: '08:40', gapAfter: 10 },
-      { period: 3, start: '08:50', end: '09:30', gapAfter: 10 },
-      { period: 4, start: '09:40', end: '10:20', gapAfter: 10 },
-      { period: 5, start: '10:30', end: '11:10', gapAfter: 170 },
-      { period: 6, start: '14:00', end: '14:40', gapAfter: 10 },
-      { period: 7, start: '14:50', end: '15:30', gapAfter: 10 },
-      { period: 8, start: '15:40', end: '16:20' },
+      { period: 1, start: '08:00', end: '08:40', gapAfter: 10 },
+      { period: 2, start: '08:50', end: '09:30', gapAfter: 10 },
+      { period: 3, start: '09:40', end: '10:20', gapAfter: 10 },
+      { period: 4, start: '10:30', end: '11:10', gapAfter: 170 },
+      { period: 5, start: '14:00', end: '14:40', gapAfter: 10 },
+      { period: 6, start: '14:50', end: '15:30', gapAfter: 10 },
+      { period: 7, start: '15:40', end: '16:20', gapAfter: 160 },
+      { period: 8, start: '19:00', end: '19:45', gapAfter: 10 },
+      { period: 9, start: '19:55', end: '20:40' },
     ], { classMinutes: 40, breakMinutes: 10 }, {
       'early-study': { label: '早读', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
       morning: { label: '上午', startTime: '08:00', periodCount: 4, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
       afternoon: { label: '下午', startTime: '14:00', periodCount: 3, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
-      'evening-study': { label: '晚自习', startTime: '19:00', periodCount: 2, classMinutes: 45, breakMinutes: 10, kind: 'display' },
+      'evening-study': { label: '晚自习', startTime: '19:00', periodCount: 2, classMinutes: 45, breakMinutes: 10, kind: 'teaching' },
     });
 
     await controller.savePeriodTimes();
 
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].body.periodTimes.map(item => item.period), [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.deepEqual(calls[0].body.periodTimes.map(item => item.period), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
     assert.deepEqual(calls[0].body.periodTimeSegments.segments.map(segment => segment.kind), [
+      'duty',
       'teaching',
       'teaching',
       'teaching',
-      'display',
     ]);
     assert.deepEqual(controller.state.periodTimeDialog.errors || [], []);
   } finally {

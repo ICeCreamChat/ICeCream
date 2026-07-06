@@ -35,12 +35,12 @@ export function getTeachingPeriodCount(project = {}) {
     const segmentConfig = project?.periodTimeSegments;
     if (!segmentConfig || !Array.isArray(segmentConfig.segments)) return 0;
     return segmentConfig.segments
-        .filter(seg => timeBlockKind(seg) !== 'display')
+        .filter(seg => timeBlockKind(seg) === 'teaching')
         .reduce((sum, seg) => sum + segmentPeriodCount(seg), 0);
 }
 
 export function getActivePeriods(project = {}) {
-    // 从 periodTimeSegments 派生正式节次；兼容 duty 旧数据，只有仅展示时段不占第 N 节。
+    // 从 periodTimeSegments 派生正式节次；只有 teaching 时段占第 N 节。
     const segmentConfig = project?.periodTimeSegments;
 
     // 兼容旧数据：如果没有 periodTimeSegments，fallback 到 activePeriods

@@ -289,9 +289,17 @@ export function getTimeBlockKind(segment = {}) {
     return normalizeTimeBlockKind(segment.kind, 'teaching');
 }
 
+function isEarlyStudyLabel(label = '') {
+    return /早自习|早读|早修|晨读/.test(cleanText(label, 40));
+}
+
+function isEveningStudyLabel(label = '') {
+    return /晚自习|晚修/.test(cleanText(label, 40));
+}
+
 export function suggestTimeBlockKind(segment = {}) {
     const label = cleanText(segment.label, 40);
-    if (/早自习|早读|早修|晨读|晚自习|晚修/.test(label)) return 'duty';
+    if (isEarlyStudyLabel(label)) return 'duty';
     return 'teaching';
 }
 
@@ -307,7 +315,7 @@ export function getTotalPeriodsFromSegments(periodTimeSegments = null) {
 export function getTeachingPeriodCount(periodTimeSegments = null) {
     const segments = Array.isArray(periodTimeSegments?.segments) ? periodTimeSegments.segments : [];
     return segments
-        .filter(segment => getTimeBlockKind(segment) !== 'display')
+        .filter(segment => getTimeBlockKind(segment) === 'teaching')
         .reduce((sum, segment) => sum + segmentPeriodCount(segment), 0);
 }
 
@@ -422,7 +430,7 @@ export function normalizePeriodTimes(raw, activePeriods = []) {
         .sort((a, b) => a.period - b.period);
 }
 
-export function normalizePeriodTimeSegment(raw = {}, index = 0) {
+export function normalizePeriodTimeSegment(raw = {}, index = 0, options = {}) {
     const id = cleanText(raw.id, 40) || `seg-${index + 1}`;
     const label = cleanText(raw.label, 40) || `时段${index + 1}`;
     const startTime = TIME_RE.test(String(raw.startTime || '')) ? String(raw.startTime) : '08:00';
@@ -433,6 +441,18 @@ export function normalizePeriodTimeSegment(raw = {}, index = 0) {
     const breakMinutes = raw.breakMinutes === null || raw.breakMinutes === undefined
         ? null
         : Math.max(0, Math.min(120, Number.parseInt(raw.breakMinutes, 10) || 10));
+    const rawKindText = cleanText(raw.kind, 20);
+    const rawKind = TIME_BLOCK_KINDS.has(rawKindText) ? rawKindText : '';
+    const dutyAssignmentTimeBlockIds = options.dutyAssignmentTimeBlockIds instanceof Set
+        ? options.dutyAssignmentTimeBlockIds
+        : new Set(options.dutyAssignmentTimeBlockIds || []);
+    let kind = rawKind || suggestTimeBlockKind({ label });
+    if (kind !== 'display' && isEarlyStudyLabel(label)) {
+        kind = 'duty';
+    }
+    if (kind === 'duty' && isEveningStudyLabel(label) && !dutyAssignmentTimeBlockIds.has(id)) {
+        kind = 'teaching';
+    }
     return {
         id,
         label,
@@ -440,18 +460,18 @@ export function normalizePeriodTimeSegment(raw = {}, index = 0) {
         periodCount,
         classMinutes,
         breakMinutes,
-        kind: normalizeTimeBlockKind(raw.kind, 'teaching'),
+        kind: normalizeTimeBlockKind(kind, 'teaching'),
     };
 }
 
-export function normalizePeriodTimeSegments(raw = null) {
+export function normalizePeriodTimeSegments(raw = null, options = {}) {
     if (!raw || typeof raw !== 'object') return null;
     const globalDefaults = {
         classMinutes: Math.max(1, Math.min(180, Number.parseInt(raw.globalDefaults?.classMinutes, 10) || 45)),
         breakMinutes: Math.max(0, Math.min(120, Number.parseInt(raw.globalDefaults?.breakMinutes, 10) || 10)),
     };
     const segments = Array.isArray(raw.segments)
-        ? raw.segments.map((seg, index) => normalizePeriodTimeSegment(seg, index)).slice(0, 10)
+        ? raw.segments.map((seg, index) => normalizePeriodTimeSegment(seg, index, options)).slice(0, 10)
         : [];
     if (!segments.length) return null;
     return { globalDefaults, segments };
@@ -1044,7 +1064,10 @@ export function normalizeTimetableProject(raw = {}) {
     const legacyPeriodsPerDay = intInRange(base.periodsPerDay, DEFAULT_PROJECT.periodsPerDay, 1, 12);
     const hasActiveWeekdays = Object.prototype.hasOwnProperty.call(raw, 'activeWeekdays');
     const hasActivePeriods = Object.prototype.hasOwnProperty.call(raw, 'activePeriods');
-    const periodTimeSegments = normalizePeriodTimeSegments(base.periodTimeSegments);
+    const dutyAssignmentTimeBlockIds = new Set((Array.isArray(base.dutyAssignments) ? base.dutyAssignments : [])
+        .map(item => cleanText(item?.timeBlockId || item?.segmentId, 80))
+        .filter(Boolean));
+    const periodTimeSegments = normalizePeriodTimeSegments(base.periodTimeSegments, { dutyAssignmentTimeBlockIds });
     const segmentActivePeriods = deriveActivePeriodsFromTimeBlocks(periodTimeSegments);
     const activeWeekdays = normalizeNumberList(hasActiveWeekdays ? raw.activeWeekdays : [], rangeList(legacyWeekdays), 1, 7);
     const activePeriods = periodTimeSegments

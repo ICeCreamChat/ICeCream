@@ -3225,7 +3225,7 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 
 .tt-nonformal-time-item {
     display: grid;
-    grid-template-columns: minmax(120px, 1fr) auto auto auto;
+    grid-template-columns: minmax(120px, 1fr) auto auto;
     align-items: center;
     gap: var(--tt-space-xs);
     min-width: 0;
@@ -3374,6 +3374,28 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 .tt-period-time-gap-input {
     height: 36px;
     min-height: 36px;
+}
+
+.tt-period-time-readonly {
+    display: inline-flex;
+    align-items: center;
+    width: 100%;
+    min-height: 36px;
+    padding: 0 10px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-input);
+    color: var(--tt-text-secondary);
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.tt-period-time-block-row--duty .tt-period-time-label strong {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .tt-period-time-gap-empty {
@@ -4049,6 +4071,35 @@ body.light-mode .tt-export-setup-card .tt-publication-actions--published {
     text-align: center;
 }
 
+.tt-period--segmented {
+    gap: 3px;
+    padding-inline: 5px;
+}
+
+.tt-period--segment-start {
+    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--tt-accent) 62%, transparent);
+}
+
+.tt-period-segment-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    max-width: 100%;
+    min-width: 42px;
+    padding: 2px 6px;
+    border: 1px solid color-mix(in srgb, var(--tt-accent) 22%, var(--tt-border));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--tt-accent) 10%, var(--tt-bg-base));
+    color: var(--tt-accent-strong);
+    font-size: 0.62rem;
+    font-style: normal;
+    font-weight: 900;
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .tt-period strong {
     color: var(--tt-text-secondary);
     font-size: 0.76rem;
@@ -4088,6 +4139,18 @@ body.light-mode .tt-export-setup-card .tt-publication-actions--published {
 
 .tt-study-period strong {
     color: var(--tt-text);
+}
+
+.tt-study-period em {
+    max-width: 100%;
+    color: var(--tt-accent-strong);
+    font-size: 0.61rem;
+    font-style: normal;
+    font-weight: 900;
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .tt-study-cell {
