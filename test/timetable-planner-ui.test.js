@@ -8058,7 +8058,7 @@ test('timetable period time presets treat early and evening study as formal bloc
   assert.equal(controller.state.periodTimeDialog.segmentConfig.segments[3].kind, 'teaching');
 });
 
-test('timetable schedule grid renders duty and display study rows outside formal periods', () => {
+test('timetable schedule grid renders legacy duty blocks as formal periods and fills missing tail times', () => {
   const state = sampleWorkbenchState();
   state.project = createDefaultTimetableProject({
     activeWeekdays: [1, 2],
@@ -8078,8 +8078,8 @@ test('timetable schedule grid renders duty and display study rows outside formal
       ],
     },
     periodTimes: [
-      { period: 1, start: '08:00', end: '08:40' },
-      { period: 2, start: '08:50', end: '09:30' },
+      { period: 1, start: '07:20', end: '07:50' },
+      { period: 2, start: '08:00', end: '08:40' },
     ],
     dutyAssignments: [{ id: 'duty-1', day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: 't_duty' }],
     schedule: {
@@ -8090,19 +8090,20 @@ test('timetable schedule grid renders duty and display study rows outside formal
 
   const panel = renderSchedulePanel(state);
 
-  assert.match(panel, /data-time-block-id="early-study"/);
-  assert.match(panel, /早自习[\s\S]*07:20-07:50/);
-  assert.match(panel, /Duty Teacher/);
-  assert.match(panel, /未安排值班/);
+  assert.doesNotMatch(panel, /data-time-block-id="early-study"/);
+  assert.doesNotMatch(panel, /tt-duty-cell/);
+  assert.doesNotMatch(panel, /Duty Teacher/);
+  assert.doesNotMatch(panel, /未安排值班/);
   assert.match(panel, /data-time-block-id="evening-study"/);
   assert.match(panel, /晚自习[\s\S]*19:00-19:45/);
-  assert.match(panel, /第1节[\s\S]*08:00-08:40/);
-  assert.doesNotMatch(panel, /早自习[\s\S]{0,80}第1节/);
-  assert.doesNotMatch(panel, /tt-duty-cell[\s\S]{0,80}待排/);
+  assert.match(panel, /第1节[\s\S]*07:20-07:50/);
+  assert.match(panel, /第2节[\s\S]*08:00-08:40/);
+  assert.match(panel, /第3节[\s\S]*08:50-09:30/);
+  assert.doesNotMatch(panel, /第3节[\s\S]{0,120}<strong>第3节<\/strong>\s*<\/div>/);
   assert.doesNotMatch(panel, /tt-display-cell[\s\S]{0,80}待排/);
 });
 
-test('timetable duty cells open a manual duty assignment editor', () => {
+test('timetable legacy duty blocks no longer create schedule duty cells but can still render the editor dialog', () => {
   const state = sampleWorkbenchState();
   state.project = createDefaultTimetableProject({
     activeWeekdays: [1],
@@ -8124,9 +8125,9 @@ test('timetable duty cells open a manual duty assignment editor', () => {
   });
 
   const panel = renderSchedulePanel(state);
-  assert.match(panel, /data-action="edit-duty-assignment"/);
-  assert.match(panel, /data-day="1"/);
-  assert.match(panel, /data-time-block-id="early-study"/);
+  assert.doesNotMatch(panel, /data-action="edit-duty-assignment"/);
+  assert.doesNotMatch(panel, /tt-duty-cell/);
+  assert.match(panel, /第1节[\s\S]*07:20-07:50/);
 
   const html = renderWorkbench({
     ...state,
@@ -8468,6 +8469,71 @@ test('timetable period time save preserves formal periods derived from study-blo
     ]);
     assert.equal(calls[0].body.dayPartBoundaries.afternoonStartPeriod, 6);
     assert.equal(calls[0].body.dayPartBoundaries.eveningStartPeriod, 9);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('timetable period time save reopens with the saved segment timeline instead of stale range draft', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const project = createDefaultTimetableProject({
+    activePeriods: [1, 2, 3],
+    periodTimes: [
+      { period: 1, start: '08:00', end: '08:40' },
+      { period: 2, start: '08:50', end: '09:30' },
+      { period: 3, start: '09:40', end: '10:20' },
+    ],
+  });
+
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), body });
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          success: true,
+          data: {
+            project: createDefaultTimetableProject({
+              ...project,
+              ...body,
+            }),
+          },
+        };
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.setMessage = () => {};
+    controller.applyProject(project);
+
+    controller.openPeriodTimeDialog();
+    controller.applySegmentTemplate('withMorningEvening');
+    controller.state.container = createPeriodTimeDom(
+      controller.state.periodTimeDialog.draftTimes,
+      { classMinutes: 45, breakMinutes: 10 },
+      Object.fromEntries(controller.state.periodTimeDialog.segmentConfig.segments.map(segment => [segment.id, segment])),
+    );
+
+    await controller.savePeriodTimes();
+    controller.openPeriodTimeDialog();
+
+    assert.equal(controller.state.periodTimeDialog.open, true);
+    assert.deepEqual(controller.state.periodTimeDialog.segmentConfig.segments.map(segment => segment.label), [
+      '早读',
+      '上午时段',
+      '下午时段',
+      '晚自习',
+    ]);
+    assert.deepEqual(controller.state.periodTimeDialog.draftTimes.map(item => item.period), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    assert.equal(controller.state.periodTimeDialog.draftTimes[0].start, '07:20');
+    assert.equal(controller.state.periodTimeDialog.draftTimes[9].end, '20:40');
+    assert.deepEqual(controller.state.rangeDraft.periodTimes.map(item => item.period), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   } finally {
     globalThis.fetch = originalFetch;
   }

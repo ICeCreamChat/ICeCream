@@ -2830,6 +2830,88 @@ test('timetable project API rejects duty assignments outside duty time blocks', 
     }
 });
 
+test('timetable project API saves formalized study blocks without stale duty assignments resetting period times', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-formalized-study-'));
+    const timetableStore = createTimetableStore({ dataDir: process.env.TIMETABLE_DATA_DIR });
+    await timetableStore.saveProject(sampleProject({
+        activePeriods: [1, 2, 3, 4, 5],
+        periodTimes: [
+            { period: 1, start: '07:20', end: '07:50' },
+            { period: 2, start: '08:00', end: '08:40' },
+            { period: 3, start: '08:50', end: '09:30' },
+            { period: 4, start: '09:40', end: '10:20' },
+            { period: 5, start: '10:30', end: '11:10' },
+        ],
+        periodTimeSegments: {
+            globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+            segments: [
+                { id: 'early-study', label: '早读', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+                { id: 'morning', label: '上午', startTime: '08:00', periodCount: 4, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+            ],
+        },
+        dutyAssignments: [
+            { day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: 't_cn' },
+        ],
+    }));
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const periodTimes = [
+            { period: 1, start: '07:30', end: '08:00' },
+            { period: 2, start: '08:10', end: '08:50' },
+            { period: 3, start: '09:00', end: '09:40' },
+            { period: 4, start: '09:50', end: '10:30' },
+            { period: 5, start: '10:40', end: '11:20' },
+        ];
+        const periodTimeSegments = {
+            globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+            segments: [
+                { id: 'early-study', label: '早读', startTime: '07:30', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'teaching' },
+                { id: 'morning', label: '上午', startTime: '08:10', periodCount: 4, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+            ],
+        };
+        const response = await fetch(`${baseUrl}/api/tools/timetable/project`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                periodTimes,
+                periodTimeSegments,
+                dayPartBoundaries: {
+                    afternoonStartPeriod: null,
+                    eveningStartPeriod: null,
+                },
+            }),
+        });
+        const payload = await response.json();
+
+        assert.equal(response.status, 200);
+        assert.equal(payload.success, true);
+        assert.deepEqual(payload.data.project.periodTimes, periodTimes);
+        assert.deepEqual(payload.data.project.dutyAssignments, []);
+        assert.deepEqual(payload.data.project.periodTimeSegments.segments.map(segment => segment.kind), ['teaching', 'teaching']);
+
+        const persisted = await timetableStore.loadProject();
+        assert.deepEqual(persisted.periodTimes, periodTimes);
+        assert.deepEqual(persisted.dutyAssignments, []);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
 test('timetable project API saves period times without clearing schedule and marks published draft changed', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-period-times-'));

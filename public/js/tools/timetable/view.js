@@ -398,7 +398,8 @@ function renderWorkflow(state) {
 function renderPeriodTimesConfig(state) {
     const activePeriods = getActivePeriods(state.project);
     const periodTimes = state.rangeDraft?.periodTimes || state.project?.periodTimes || [];
-    const validTimes = periodTimes.filter(item => activePeriods.includes(Number(item.period)) && (item.start || item.end));
+    const validTimes = completeProjectPeriodTimes(state.project, periodTimes)
+        .filter(item => activePeriods.includes(Number(item.period)) && (item.start || item.end));
     const configuredCount = validTimes.length;
     const firstStart = validTimes.find(item => item.start)?.start || '';
     const lastEnd = [...validTimes].reverse().find(item => item.end)?.end || '';
@@ -555,6 +556,65 @@ export function renderNonTeachingSegmentPreview(segmentConfig = {}) {
             </div>
         </div>
     `;
+}
+
+function buildPeriodTimesFromProjectSegments(project = {}, activePeriods = getActivePeriods(project)) {
+    const segments = Array.isArray(project.periodTimeSegments?.segments) ? project.periodTimeSegments.segments : [];
+    if (!segments.length) return [];
+    const times = [];
+    let periodIndex = 0;
+
+    for (const segment of segments) {
+        const kind = periodSetupKind(segment);
+        if (kind === 'display') continue;
+        const periodCount = Math.max(0, Number.parseInt(segment.periodCount, 10) || 0);
+        const startMinutes = timeToMinutes(segment.startTime);
+        if (startMinutes === null) continue;
+        const { classMinutes, breakMinutes } = segmentDurationMinutes(project, segment);
+        let currentMinutes = startMinutes;
+
+        for (let index = 0; index < periodCount && periodIndex < activePeriods.length; index += 1) {
+            const period = Number(activePeriods[periodIndex]);
+            const start = minutesToTime(currentMinutes);
+            const end = minutesToTime(currentMinutes + classMinutes);
+            times.push({ period, start, end, segmentLabel: segment.label || '' });
+            currentMinutes += classMinutes;
+            if (index < periodCount - 1) currentMinutes += breakMinutes;
+            periodIndex += 1;
+        }
+    }
+
+    return times;
+}
+
+function completeProjectPeriodTimes(project = {}, times = project.periodTimes || []) {
+    const activePeriods = getActivePeriods(project).map(Number);
+    const activeSet = new Set(activePeriods);
+    const generated = new Map(buildPeriodTimesFromProjectSegments(project, activePeriods)
+        .map(item => [Number(item.period), item]));
+    const existing = new Map((Array.isArray(times) ? times : [])
+        .map(item => ({
+            period: Number(item.period),
+            start: item.start || '',
+            end: item.end || '',
+        }))
+        .filter(item => activeSet.has(item.period) && (item.start || item.end))
+        .map(item => [item.period, item]));
+
+    return activePeriods
+        .map(period => {
+            const current = existing.get(period);
+            const fallback = generated.get(period);
+            if (!current) return fallback || { period, start: '', end: '' };
+            if (!fallback) return current;
+            return {
+                ...fallback,
+                ...current,
+                start: current.start || fallback.start,
+                end: current.end || fallback.end,
+            };
+        })
+        .filter(item => item.start || item.end);
 }
 
 function gapBetweenPeriodRows(current = {}, next = {}) {
@@ -2661,9 +2721,9 @@ function getTimetableRows(project = {}) {
     const rows = [];
     let periodIndex = 0;
     for (const segment of segments) {
-        const kind = ['teaching', 'duty', 'display'].includes(segment.kind) ? segment.kind : 'teaching';
+        const kind = periodSetupKind(segment);
         const periodCount = Math.max(0, Number.parseInt(segment.periodCount, 10) || 0);
-        if (kind === 'teaching') {
+        if (kind !== 'display') {
             for (let index = 0; index < periodCount && periodIndex < activePeriods.length; index += 1) {
                 rows.push({ kind: 'teaching', period: activePeriods[periodIndex] });
                 periodIndex += 1;
@@ -2696,7 +2756,7 @@ function renderTimetableRowCell(state, context, day, row, emptySchedule = false)
 }
 
 function renderPeriodGridLabel(project = {}, period) {
-    const periodTime = (project.periodTimes || []).find(item => Number(item.period) === Number(period));
+    const periodTime = completeProjectPeriodTimes(project).find(item => Number(item.period) === Number(period));
     const timeLabel = periodTime?.start && periodTime?.end ? `${periodTime.start}-${periodTime.end}` : '';
     return `
         <div class="tt-period" title="${escapeAttr(timeLabel ? `第${period}节 ${timeLabel}` : `第${period}节`)}">

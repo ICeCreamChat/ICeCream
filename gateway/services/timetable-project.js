@@ -307,7 +307,7 @@ export function getTotalPeriodsFromSegments(periodTimeSegments = null) {
 export function getTeachingPeriodCount(periodTimeSegments = null) {
     const segments = Array.isArray(periodTimeSegments?.segments) ? periodTimeSegments.segments : [];
     return segments
-        .filter(segment => getTimeBlockKind(segment) === 'teaching')
+        .filter(segment => getTimeBlockKind(segment) !== 'display')
         .reduce((sum, segment) => sum + segmentPeriodCount(segment), 0);
 }
 

@@ -1885,6 +1885,7 @@ export class TimetablePlannerController {
                 errors: [],
                 cleared: draftTimes.length === 0,
                 draftTimes: this.state.project?.periodTimes || draftTimes,
+                segmentConfig: this.state.project?.periodTimeSegments || normalizedSegmentConfig,
             };
             this.setMessage('节次时间已保存。');
         } catch (error) {

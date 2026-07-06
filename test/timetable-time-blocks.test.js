@@ -33,12 +33,12 @@ const studyBlockProjectInput = {
     ],
 };
 
-test('time block kinds derive formal periods and preserve duty assignments separately', () => {
+test('time block kinds derive active periods from all non-display blocks and preserve duty assignments separately', () => {
     const project = normalizeTimetableProject(studyBlockProjectInput);
 
-    assert.deepEqual(project.activePeriods, [1, 2, 3, 4, 5, 6, 7]);
-    assert.equal(project.periodsPerDay, 7);
-    assert.deepEqual(getModelActivePeriods(project), [1, 2, 3, 4, 5, 6, 7]);
+    assert.deepEqual(project.activePeriods, [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.equal(project.periodsPerDay, 8);
+    assert.deepEqual(getModelActivePeriods(project), [1, 2, 3, 4, 5, 6, 7, 8]);
     assert.equal(project.periodTimeSegments.segments[0].kind, 'duty');
     assert.equal(project.periodTimeSegments.segments[1].kind, 'teaching');
     assert.equal(project.periodTimeSegments.segments[3].kind, 'display');
@@ -72,14 +72,14 @@ test('legacy time segments without kind remain formal teaching periods', () => {
     assert.equal(suggestTimeBlockKind(project.periodTimeSegments.segments[0]), 'duty');
 });
 
-test('frontend selectors count only teaching blocks as active formal periods', () => {
+test('frontend selectors count non-display blocks as active formal periods', () => {
     const project = normalizeTimetableProject(studyBlockProjectInput);
 
     assert.equal(getUiTotalPeriods(project), 10);
-    assert.deepEqual(getUiActivePeriods(project), [1, 2, 3, 4, 5, 6, 7]);
+    assert.deepEqual(getUiActivePeriods(project), [1, 2, 3, 4, 5, 6, 7, 8]);
 });
 
-test('projects with only non-teaching time blocks have no formal active periods', () => {
+test('projects with only duty and display blocks keep duty as an active period', () => {
     const project = normalizeTimetableProject({
         periodsPerDay: 2,
         periodTimeSegments: {
@@ -90,9 +90,9 @@ test('projects with only non-teaching time blocks have no formal active periods'
         },
     });
 
-    assert.deepEqual(project.activePeriods, []);
-    assert.deepEqual(getModelActivePeriods(project), []);
-    assert.deepEqual(getUiActivePeriods(project), []);
+    assert.deepEqual(project.activePeriods, [1]);
+    assert.deepEqual(getModelActivePeriods(project), [1]);
+    assert.deepEqual(getUiActivePeriods(project), [1]);
 });
 
 test('duty assignment validation rejects non-duty or unknown time blocks before save', () => {

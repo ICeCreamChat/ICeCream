@@ -442,15 +442,16 @@ router.post('/project', async (req, res) => {
             schedule: req.body.schedule === undefined ? current.schedule : req.body.schedule,
             version: Date.now(), // 生成新版本号
         });
-        if (
-            Object.prototype.hasOwnProperty.call(req.body || {}, 'dutyAssignments')
-            || Object.prototype.hasOwnProperty.call(req.body || {}, 'periodTimeSegments')
+        const hasDutyAssignmentsPayload = Object.prototype.hasOwnProperty.call(req.body || {}, 'dutyAssignments');
+        const hasPeriodTimeSegmentsPayload = Object.prototype.hasOwnProperty.call(req.body || {}, 'periodTimeSegments');
+        const shouldValidateDutyAssignments = hasDutyAssignmentsPayload
+            || hasPeriodTimeSegmentsPayload
             || Object.prototype.hasOwnProperty.call(req.body || {}, 'classes')
-            || Object.prototype.hasOwnProperty.call(req.body || {}, 'teachers')
-        ) {
-            const rawDutyAssignments = Object.prototype.hasOwnProperty.call(req.body || {}, 'dutyAssignments')
+            || Object.prototype.hasOwnProperty.call(req.body || {}, 'teachers');
+        if (shouldValidateDutyAssignments) {
+            const rawDutyAssignments = hasDutyAssignmentsPayload
                 ? req.body.dutyAssignments
-                : current.dutyAssignments;
+                : (hasPeriodTimeSegmentsPayload ? project.dutyAssignments : current.dutyAssignments);
             const dutyValidation = validateDutyAssignments(rawDutyAssignments || [], project.periodTimeSegments, {
                 classes: project.classes,
                 teachers: project.teachers,
