@@ -8,6 +8,7 @@
     --tt-bg-page: transparent;
     --tt-bg-base: #0f172a;
     --tt-bg-panel: rgba(30, 41, 59, 0.85);
+    --tt-bg-inspector: #0f172a;
     --tt-bg-soft: rgba(51, 65, 85, 0.9);
     --tt-bg-input: rgba(15, 23, 42, 0.6);
     --tt-border: rgba(148, 163, 184, 0.15);
@@ -48,6 +49,7 @@
 body.light-mode .tt-workbench {
     --tt-bg-base: #f8fafc;
     --tt-bg-panel: rgba(255, 255, 255, 0.9);
+    --tt-bg-inspector: #ffffff;
     --tt-bg-soft: rgba(241, 245, 249, 0.9);
     --tt-bg-input: rgba(241, 245, 249, 0.8);
     --tt-border: rgba(15, 23, 42, 0.1);
@@ -142,7 +144,7 @@ body.light-mode .tt-workbench {
     margin-left: auto;
     overflow: hidden;
     width: 100%;
-    background: var(--tt-bg-panel);
+    background: var(--tt-bg-inspector);
     border: 1px solid var(--tt-border);
     border-radius: var(--tt-radius-lg);
     box-shadow: 0 18px 44px rgba(2, 6, 23, 0.28);
@@ -500,6 +502,108 @@ button.tt-section-title {
     width: 16px;
     height: 16px;
     flex: 0 0 auto;
+}
+
+.tt-inspector .tt-inspector-stack {
+    grid-template-columns: 1fr;
+}
+
+.tt-inspector-verdict {
+    padding: 12px;
+    background: rgba(8, 145, 178, 0.08);
+    border: 1px solid rgba(8, 145, 178, 0.2);
+    border-radius: var(--tt-radius-lg);
+}
+
+.tt-inspector-verdict.is-danger {
+    background: rgba(239, 68, 68, 0.08);
+    border-color: rgba(239, 68, 68, 0.24);
+}
+
+.tt-inspector-verdict.is-warn {
+    background: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.24);
+}
+
+.tt-inspector-verdict p {
+    margin: 0;
+    color: var(--tt-text-secondary);
+    font-size: 0.8rem;
+    line-height: 1.45;
+}
+
+.tt-inspector-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.tt-inspector-metrics span {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    min-width: 0;
+    padding: 7px 8px;
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+}
+
+.tt-inspector-metrics b {
+    color: var(--tt-text);
+}
+
+.tt-inspector-review-section {
+    gap: 10px;
+}
+
+.tt-inspector-review-section--danger .tt-section-title h3 {
+    color: var(--tt-error);
+}
+
+.tt-inspector-review-section--warn .tt-section-title h3 {
+    color: var(--tt-warning);
+}
+
+.tt-inspector-collapsible {
+    display: grid;
+    gap: var(--tt-space-sm);
+    min-width: 0;
+}
+
+.tt-inspector-collapsible > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+.tt-inspector-collapsible > summary::-webkit-details-marker {
+    display: none;
+}
+
+.tt-inspector-collapsible:not([open]) > summary {
+    padding-bottom: 0;
+    border-bottom: 0;
+}
+
+.tt-inspector-system-section {
+    padding-bottom: 0;
+}
+
+.tt-inspector-system-stack,
+.tt-inspector-system-block {
+    display: grid;
+    gap: var(--tt-space-sm);
+    min-width: 0;
+}
+
+.tt-inspector-system-block {
+    padding: 10px;
+    background: rgba(148, 163, 184, 0.06);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
 }
 
 .tt-form-grid {
@@ -2299,6 +2403,37 @@ body.light-mode .tt-import-setup-card .tt-stat-card {
     background: rgba(239, 68, 68, 0.08);
 }
 
+.tt-inspector-issue-item--locatable {
+    appearance: none;
+    width: 100%;
+    border-style: solid;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    position: relative;
+}
+
+.tt-inspector-issue-item--locatable:hover,
+.tt-inspector-issue-item--locatable:focus-visible {
+    border-color: rgba(37, 99, 235, 0.42);
+    background: rgba(37, 99, 235, 0.08);
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+    outline: none;
+}
+
+.tt-inspector-issue-item--locatable.is-inspector-located-source {
+    border-color: rgba(37, 99, 235, 0.46);
+    background: rgba(37, 99, 235, 0.1);
+    box-shadow: inset 3px 0 0 rgba(37, 99, 235, 0.62);
+}
+
+.tt-inspector-locate-hint {
+    justify-self: start;
+    color: var(--tt-primary);
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
 .tt-inspector-issue-item em,
 .tt-publication-issue-item em,
 .tt-schedule-diagnostic-item em {
@@ -2306,6 +2441,36 @@ body.light-mode .tt-import-setup-card .tt-stat-card {
     overflow: visible;
     text-overflow: clip;
     line-height: 1.45;
+}
+
+.tt-inspector-list-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    margin-top: 6px;
+    color: var(--tt-muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.tt-inspector-list-action {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--tt-primary);
+    font: inherit;
+    font-weight: 700;
+    line-height: 1.5;
+    padding: 2px 0;
+    cursor: pointer;
+}
+
+.tt-inspector-list-action:hover,
+.tt-inspector-list-action:focus-visible {
+    color: var(--tt-primary-hover);
+    text-decoration: underline;
+    text-underline-offset: 3px;
 }
 
 .tt-rule-file-entry {
@@ -4244,6 +4409,13 @@ body.light-mode .tt-export-setup-card .tt-publication-actions--published {
     background: rgba(8, 145, 178, 0.12);
 }
 
+.tt-cell.is-inspector-locate-pulse {
+    outline: 2px solid rgba(37, 99, 235, 0.42);
+    outline-offset: -2px;
+    box-shadow: inset 0 0 0 999px rgba(37, 99, 235, 0.06);
+    animation: tt-inspector-locate-pulse 1.6s ease-out;
+}
+
 .tt-study-period {
     background: color-mix(in srgb, var(--tt-bg-input) 82%, transparent);
 }
@@ -4474,6 +4646,28 @@ button.tt-duty-cell:focus-visible span {
 .tt-slot.is-selected {
     border-color: var(--tt-primary);
     box-shadow: var(--tt-primary-glow);
+}
+
+.tt-slot.is-inspector-locate-pulse {
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.38), var(--tt-primary-glow);
+    animation: tt-inspector-locate-pulse 1.6s ease-out;
+}
+
+.tt-schedule-scroll.is-inspector-locate-pulse {
+    box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.2);
+    animation: tt-inspector-locate-pulse 1.6s ease-out;
+}
+
+@keyframes tt-inspector-locate-pulse {
+    0% {
+        filter: saturate(1.08);
+    }
+    70% {
+        filter: saturate(1);
+    }
+    100% {
+        filter: none;
+    }
 }
 
 .tt-slot.has-conflict {

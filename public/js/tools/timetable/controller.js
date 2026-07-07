@@ -26,6 +26,8 @@ import {
     getActiveWeekdays,
     getPublishedScheduleDiff,
     getSavedRuleItems,
+    getSlotById,
+    getSlotsAt,
     getVisibleSlots,
     removeSavedRuleById,
     getTotalPeriods,
@@ -44,6 +46,7 @@ import {
     renderNonTeachingSegmentPreview,
     renderPeriodTimeTableBody,
     renderWorkbench,
+    resolveInspectorIssueLocateTarget,
 } from './view.js';
 import { PRESET_TEMPLATES } from './preset-templates.js';
 
@@ -108,6 +111,54 @@ function defaultSegmentKindForLabel(label = '') {
         : 'teaching';
 }
 
+function positiveLocateInteger(value) {
+    const number = Number.parseInt(value, 10);
+    return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+function finiteLocateNumber(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function normalizeInspectorLocatePayload(payload = {}) {
+    const day = positiveLocateInteger(payload.day ?? payload.inspectorDay);
+    const period = positiveLocateInteger(payload.period ?? payload.inspectorPeriod);
+    return {
+        targetKind: String(payload.targetKind || payload.inspectorTargetKind || '').trim(),
+        targetId: String(payload.targetId || payload.inspectorTargetId || '').trim(),
+        targetName: String(payload.targetName || payload.inspectorTargetName || '').trim(),
+        planId: String(payload.planId || payload.inspectorPlanId || '').trim(),
+        slot: String(payload.slot || payload.inspectorSlot || (day && period ? `${day}-${period}` : '')).trim(),
+        day,
+        period,
+        inspectorIssueKey: String(payload.inspectorIssueKey || '').trim(),
+        inspectorAnchorScrollTop: finiteLocateNumber(payload.inspectorAnchorScrollTop),
+        inspectorAnchorOffsetTop: finiteLocateNumber(payload.inspectorAnchorOffsetTop),
+    };
+}
+
+function selectorAttributeValue(value = '') {
+    return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function findInspectorLocateSlot(project = {}, target = {}) {
+    if (target.slotId) {
+        const slot = getSlotById(project, target.slotId);
+        if (slot) return slot;
+    }
+    const visibleSlots = getVisibleSlots(project, target.viewMode, target.ownerId);
+    if (target.planId) {
+        const planSlot = visibleSlots.find(slot => slot.lessonPlanId === target.planId);
+        if (planSlot) return planSlot;
+    }
+    if (target.day && target.period) {
+        return getSlotsAt(project, target.viewMode, target.ownerId, target.day, target.period)[0] || null;
+    }
+    return null;
+}
+
 function buildRuleChangePreview({ currentItems = [], nextItems = [], draftRows = [] } = {}) {
     const currentIds = new Set(currentItems.map(item => item.id));
     const nextIds = new Set(nextItems.map(item => item.id));
@@ -126,6 +177,7 @@ export class TimetablePlannerController {
         this.rosterImportFile = null;
         this.ruleReviewFile = null;
         this.constraintDialogFile = null;
+        this.inspectorLocatePulseTimer = null;
         this.rosterDraftCounter = 0;
         this.ruleDraftCounter = 0;
     }
@@ -139,6 +191,10 @@ export class TimetablePlannerController {
     }
 
     destroy() {
+        if (this.inspectorLocatePulseTimer) {
+            clearTimeout(this.inspectorLocatePulseTimer);
+            this.inspectorLocatePulseTimer = null;
+        }
         this.clearOptimizationPolling();
         this.timetableToolHost?.classList?.remove('tool-container--timetable');
         this.timetableToolHost = null;
@@ -233,6 +289,49 @@ export class TimetablePlannerController {
         }
     }
 
+    captureInspectorScrollAnchor(issueKey = '') {
+        const body = this.state.container?.querySelector?.('.tt-inspector-body');
+        if (!body) return null;
+        const scrollTop = finiteLocateNumber(body.scrollTop) ?? 0;
+        const anchor = {
+            issueKey: String(issueKey || this.state.inspectorLocatedIssueKey || '').trim(),
+            scrollTop,
+            offsetTop: null,
+        };
+        if (!anchor.issueKey || typeof body.querySelector !== 'function') return anchor;
+        const issue = body.querySelector(`[data-inspector-issue-key="${selectorAttributeValue(anchor.issueKey)}"]`);
+        if (!issue || typeof issue.getBoundingClientRect !== 'function' || typeof body.getBoundingClientRect !== 'function') {
+            return anchor;
+        }
+        const issueRect = issue.getBoundingClientRect();
+        const bodyRect = body.getBoundingClientRect();
+        const offsetTop = finiteLocateNumber(Number(issueRect.top) - Number(bodyRect.top));
+        if (offsetTop !== null) anchor.offsetTop = offsetTop;
+        return anchor;
+    }
+
+    restoreInspectorScrollAnchor(anchor = null) {
+        if (!anchor) return;
+        const body = this.state.container?.querySelector?.('.tt-inspector-body');
+        if (!body) return;
+        const offsetTop = finiteLocateNumber(anchor.offsetTop);
+        if (anchor.issueKey && offsetTop !== null && typeof body.querySelector === 'function') {
+            const issue = body.querySelector(`[data-inspector-issue-key="${selectorAttributeValue(anchor.issueKey)}"]`);
+            if (issue && typeof issue.getBoundingClientRect === 'function' && typeof body.getBoundingClientRect === 'function') {
+                const issueRect = issue.getBoundingClientRect();
+                const bodyRect = body.getBoundingClientRect();
+                const currentOffset = finiteLocateNumber(Number(issueRect.top) - Number(bodyRect.top));
+                if (currentOffset !== null) {
+                    const currentScrollTop = finiteLocateNumber(body.scrollTop) ?? 0;
+                    body.scrollTop = Math.max(0, currentScrollTop + currentOffset - offsetTop);
+                    return;
+                }
+            }
+        }
+        const scrollTop = finiteLocateNumber(anchor.scrollTop);
+        if (scrollTop !== null) body.scrollTop = Math.max(0, scrollTop);
+    }
+
     setMessage(message, failure = null) {
         this.state.message = message || '';
         this.state.lastFailure = failure;
@@ -243,6 +342,99 @@ export class TimetablePlannerController {
         } else {
             this.render();
         }
+    }
+
+    locateInspectorIssue(rawPayload = {}) {
+        const payload = normalizeInspectorLocatePayload(rawPayload);
+        const inspectorAnchor = {
+            issueKey: payload.inspectorIssueKey,
+            scrollTop: payload.inspectorAnchorScrollTop,
+            offsetTop: payload.inspectorAnchorOffsetTop,
+        };
+        const project = this.state.project || {};
+        const target = resolveInspectorIssueLocateTarget(project, {
+            targetKind: payload.targetKind,
+            targetId: payload.targetId || payload.planId,
+            targetName: payload.targetName,
+            slot: payload.slot || {
+                day: payload.day,
+                period: payload.period,
+            },
+        });
+        if (!target) {
+            this.state.message = '暂时无法定位该项';
+            this.state.inspectorLocatePulse = null;
+            this.state.inspectorLocatedIssueKey = '';
+            this.render();
+            return false;
+        }
+
+        this.state.viewMode = target.viewMode;
+        this.state.selectedOwnerId = target.ownerId || ensureOwnerSelection(this.state);
+        const slot = findInspectorLocateSlot(project, {
+            ...target,
+            planId: target.planId || payload.planId,
+        });
+        this.state.selectedSlotId = slot?.id || '';
+        const day = positiveLocateInteger(slot?.day ?? target.day);
+        const period = positiveLocateInteger(slot?.period ?? target.period);
+        const pulse = {
+            kind: slot?.id ? 'slot' : day && period ? 'cell' : 'owner',
+            slotId: slot?.id || '',
+            day,
+            period,
+            ownerId: target.ownerId || '',
+            viewMode: target.viewMode || this.state.viewMode,
+            sourceIssueKey: payload.inspectorIssueKey,
+            token: Date.now(),
+        };
+        this.state.inspectorLocatePulse = pulse;
+        this.state.inspectorLocatedIssueKey = payload.inspectorIssueKey || '';
+        this.state.message = `已定位到 ${target.label || target.targetName || '对应位置'}`;
+        this.render();
+        this.restoreInspectorScrollAnchor(inspectorAnchor);
+        this.scrollToInspectorLocateTarget(pulse);
+        this.scheduleInspectorLocatePulseClear(pulse);
+        return true;
+    }
+
+    scrollToInspectorLocateTarget(pulse = {}) {
+        const { container } = this.state;
+        if (!container) return;
+        const run = () => {
+            const slotSelector = pulse.slotId
+                ? `.tt-slot[data-slot-id="${selectorAttributeValue(pulse.slotId)}"]`
+                : '';
+            const cellSelector = pulse.day && pulse.period
+                ? `.tt-cell[data-day="${selectorAttributeValue(pulse.day)}"][data-period="${selectorAttributeValue(pulse.period)}"]`
+                : '';
+            const target = (slotSelector ? container.querySelector?.(slotSelector) : null)
+                || (cellSelector ? container.querySelector?.(cellSelector) : null)
+                || container.querySelector?.('.tt-schedule-scroll');
+            target?.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'smooth' });
+            if (target?.classList?.contains?.('tt-slot') && typeof target.focus === 'function') {
+                target.focus({ preventScroll: true });
+            }
+        };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+        else if (typeof setTimeout === 'function') setTimeout(run, 0);
+        else run();
+    }
+
+    scheduleInspectorLocatePulseClear(pulse = {}) {
+        if (!this.state.container || typeof setTimeout !== 'function') return;
+        if (this.inspectorLocatePulseTimer) clearTimeout(this.inspectorLocatePulseTimer);
+        this.inspectorLocatePulseTimer = setTimeout(() => {
+            if (this.state.inspectorLocatePulse?.token !== pulse.token) return;
+            const inspectorAnchor = this.captureInspectorScrollAnchor(pulse.sourceIssueKey || this.state.inspectorLocatedIssueKey);
+            this.state.inspectorLocatePulse = null;
+            if (!pulse.sourceIssueKey || this.state.inspectorLocatedIssueKey === pulse.sourceIssueKey) {
+                this.state.inspectorLocatedIssueKey = '';
+            }
+            this.inspectorLocatePulseTimer = null;
+            this.render();
+            this.restoreInspectorScrollAnchor(inspectorAnchor);
+        }, 1600);
     }
 
     applyAgentResponse(response = {}, userMessage = '') {

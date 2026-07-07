@@ -1712,7 +1712,7 @@ function publicationIssueEntriesForView(publication = null) {
     const seen = new Set();
     return combined.filter(item => {
         if (!item) return false;
-        const slot = item.slot?.day && item.slot?.period ? `${item.slot.day}-${item.slot.period}` : (item.slot || '');
+        const slot = inspectorSlotLabel(item.slot);
         const key = [
             item.type || '',
             item.severity || '',
@@ -2340,7 +2340,7 @@ function normalizeInspectorIssueEntries(items = [], options = {}) {
         const severity = normalizeInspectorIssueSeverity(item, fallbackSeverity);
         const title = (titleOf ? titleOf(item) : '') || item.title || item.targetName || labelOf(item.type);
         const message = item.message || item.reason || labelOf(item.type);
-        const slot = item.slot?.day && item.slot?.period ? `${item.slot.day}-${item.slot.period}` : (item.slot || '');
+        const slot = inspectorSlotLabel(item.slot);
         const key = [
             severity,
             item.category || '',
@@ -2393,6 +2393,134 @@ function inspectorIssueTargetKindLabel(targetKind = '') {
     })[targetKind] || '';
 }
 
+function inspectorSlotLabel(slot = '') {
+    if (slot === null || slot === undefined || slot === '') return '';
+    if (typeof slot === 'string' || typeof slot === 'number') return String(slot);
+    if (typeof slot === 'object') {
+        const day = slot.day ?? slot.weekday ?? slot.dayIndex;
+        const period = slot.period ?? slot.periodIndex;
+        if (day !== null && day !== undefined && day !== '' && period !== null && period !== undefined && period !== '') {
+            return `${day}-${period}`;
+        }
+        if (slot.label) return String(slot.label);
+        if (slot.name) return String(slot.name);
+    }
+    return '';
+}
+
+function comparableText(value = '') {
+    return String(value || '').trim().replace(/\s+/g, '');
+}
+
+function parseInspectorSlotParts(slot = '') {
+    const label = inspectorSlotLabel(slot);
+    const match = String(label || '').match(/^(\d+)\s*[-/]\s*(\d+)$/);
+    if (!match) return { day: null, period: null };
+    const day = Number.parseInt(match[1], 10);
+    const period = Number.parseInt(match[2], 10);
+    return Number.isInteger(day) && day > 0 && Number.isInteger(period) && period > 0
+        ? { day, period }
+        : { day: null, period: null };
+}
+
+function findClassByLocateName(project = {}, targetName = '') {
+    const needle = comparableText(targetName);
+    if (!needle) return null;
+    return (project.classes || []).find(item => {
+        const labels = [
+            item.id,
+            item.name,
+            ownerLabel(item),
+            item.grade && item.name ? `${item.grade} ${item.name}` : '',
+        ];
+        return labels.some(label => comparableText(label) === needle);
+    }) || null;
+}
+
+function findTeacherByLocateName(project = {}, targetName = '') {
+    const needle = comparableText(targetName);
+    if (!needle) return null;
+    return (project.teachers || []).find(item => (
+        comparableText(item.id) === needle || comparableText(item.name) === needle
+    )) || null;
+}
+
+export function resolveInspectorIssueLocateTarget(project = {}, item = {}) {
+    const targetKind = String(item.targetKind || item.inspectorTargetKind || '').trim();
+    const targetId = String(item.targetId || item.inspectorTargetId || '').trim();
+    const targetName = String(item.targetName || item.inspectorTargetName || '').trim();
+    const slotParts = parseInspectorSlotParts(item.slot || item.inspectorSlot || {
+        day: item.day || item.inspectorDay,
+        period: item.period || item.inspectorPeriod,
+    });
+    const maps = entityMaps(project);
+
+    if (targetKind === 'class') {
+        const klass = maps.classes.get(targetId) || findClassByLocateName(project, targetName);
+        if (!klass?.id) return null;
+        const label = ownerLabel(klass);
+        return {
+            viewMode: 'class',
+            ownerId: klass.id,
+            targetKind: 'class',
+            targetId: klass.id,
+            targetName: label,
+            label,
+            day: slotParts.day,
+            period: slotParts.period,
+        };
+    }
+
+    if (targetKind === 'teacher') {
+        const teacher = maps.teachers.get(targetId) || findTeacherByLocateName(project, targetName);
+        if (!teacher?.id) return null;
+        const label = teacher.name || teacher.id;
+        return {
+            viewMode: 'teacher',
+            ownerId: teacher.id,
+            targetKind: 'teacher',
+            targetId: teacher.id,
+            targetName: label,
+            label,
+            day: slotParts.day,
+            period: slotParts.period,
+        };
+    }
+
+    if (targetKind === 'plan') {
+        const plan = maps.plans.get(targetId);
+        const klass = plan?.classId ? maps.classes.get(plan.classId) : null;
+        if (!plan?.id || !klass?.id) return null;
+        const label = ownerLabel(klass);
+        return {
+            viewMode: 'class',
+            ownerId: klass.id,
+            targetKind: 'plan',
+            targetId: plan.id,
+            targetName: label,
+            label,
+            planId: plan.id,
+            day: slotParts.day,
+            period: slotParts.period,
+        };
+    }
+
+    if (slotParts.day && slotParts.period) {
+        return {
+            viewMode: 'master',
+            ownerId: 'master',
+            targetKind: targetKind || 'schedule',
+            targetId: targetId || 'master',
+            targetName: targetName || `第${slotParts.period}节`,
+            label: `周${dayName(slotParts.day)} 第${slotParts.period}节`,
+            day: slotParts.day,
+            period: slotParts.period,
+        };
+    }
+
+    return null;
+}
+
 function inspectorIssueMeta(entry = {}) {
     const parts = [];
     const kindLabel = inspectorIssueTargetKindLabel(entry.targetKind);
@@ -2401,7 +2529,8 @@ function inspectorIssueMeta(entry = {}) {
     } else if (!kindLabel && entry.targetName && entry.targetName !== entry.title && entry.targetName !== '课表') {
         parts.push(entry.targetName);
     }
-    if (entry.slot) parts.push(`课节 ${entry.slot}`);
+    const slotLabel = inspectorSlotLabel(entry.slot);
+    if (slotLabel) parts.push(`课节 ${slotLabel}`);
     return parts.join(' · ');
 }
 
@@ -2484,7 +2613,7 @@ function normalizeAuditFallbackIssue(item = {}, fallbackSeverity = 'warning') {
         targetKind,
         targetId,
         targetName: item.targetName || item.name || targetId || '',
-        slot: item.slot?.day && item.slot?.period ? `${item.slot.day}-${item.slot.period}` : (item.slot || ''),
+        slot: inspectorSlotLabel(item.slot),
     };
 }
 
@@ -2606,6 +2735,265 @@ function getSolverDetail(state = {}) {
         hasPinnedCount,
         pinnedCount: Number(stats.pinnedCount || 0),
         staleRejected: Boolean(stats.staleRejected),
+    };
+}
+
+function inspectorModelItemKey(item = {}) {
+    return [
+        item.id || '',
+        item.title || '',
+        item.message || '',
+        item.targetKind || '',
+        item.targetId || '',
+        item.slot || '',
+    ].join('|');
+}
+
+function pushUniqueInspectorModelItem(target, seen, item) {
+    if (!item?.title && !item?.message) return;
+    const normalized = {
+        id: item.id || '',
+        source: item.source || 'unknown',
+        severity: item.severity || 'info',
+        title: item.title || item.targetName || timetableReviewLabel(item.type) || '审查项',
+        message: item.message || item.title || '需要复核。',
+        targetKind: item.targetKind || '',
+        targetId: item.targetId || '',
+        targetName: item.targetName || '',
+        slot: inspectorSlotLabel(item.slot),
+    };
+    const key = inspectorModelItemKey(normalized);
+    if (seen.has(key)) return;
+    seen.add(key);
+    target.push(normalized);
+}
+
+function issueEntryToInspectorModelItem(entry = {}, source = 'diagnostic') {
+    return {
+        ...entry,
+        id: entry.id || '',
+        source,
+        severity: entry.severity === 'error' || entry.severity === 'hard'
+            ? 'error'
+            : entry.severity === 'warning'
+                ? 'warning'
+                : 'info',
+        title: entry.title || entry.targetName || timetableReviewLabel(entry.type) || '审查项',
+        message: entry.message || entry.title || timetableReviewLabel(entry.type) || '需要复核。',
+    };
+}
+
+function conflictToInspectorModelItem(conflict = {}, index = 0) {
+    const severity = conflict.severity === 'hard' || conflict.severity === 'error' ? 'error' : 'warning';
+    return {
+        id: conflict.id || `conflict-${index}`,
+        source: 'conflict',
+        severity,
+        title: conflict.title || conflict.targetName || timetableReviewLabel(conflict.type) || '冲突',
+        message: conflict.message || conflict.reason || conflict.type || '存在课表冲突。',
+        targetKind: conflict.targetKind || 'schedule',
+        targetId: conflict.targetId || '',
+        targetName: conflict.targetName || '',
+        slot: inspectorSlotLabel(conflict.slot),
+    };
+}
+
+function qualityIssueToInspectorModelItem(issue = {}, index = 0) {
+    return {
+        id: issue.id || `quality-${index}`,
+        source: 'quality',
+        severity: issue.severity === 'error' ? 'error' : issue.severity === 'warning' ? 'warning' : 'info',
+        title: issue.title || issue.targetName || timetableReviewLabel(issue.type) || '质量建议',
+        message: issue.message || issue.title || timetableReviewLabel(issue.type) || '建议复核课表质量。',
+        targetKind: issue.targetKind || 'schedule',
+        targetId: issue.targetId || '',
+        targetName: issue.targetName || '',
+        slot: inspectorSlotLabel(issue.slot),
+    };
+}
+
+function diagnosticSuggestionToInspectorModelItem(suggestion = {}, index = 0) {
+    return {
+        id: suggestion.id || `suggestion-${index}`,
+        source: 'suggestion',
+        severity: 'info',
+        title: suggestion.title || '建议',
+        message: suggestion.message || suggestion.description || suggestion.title || '建议复核。',
+        targetKind: suggestion.targetKind || '',
+        targetId: suggestion.targetId || '',
+        targetName: suggestion.targetName || '',
+        slot: inspectorSlotLabel(suggestion.slot),
+    };
+}
+
+function buildInspectorSystemDetails(state = {}, metrics = {}) {
+    const project = state.project || {};
+    const stats = getRosterStats(project);
+    const rules = getRuleSummary(project);
+    const status = getSolveStatus(project, state.lastFailure);
+    const solverDetail = getSolverDetail(state);
+    const details = [
+        {
+            group: 'data',
+            title: '数据摘要',
+            items: [
+                { label: '班级', value: stats.classCount },
+                { label: '教师', value: stats.teacherCount },
+                { label: '课程', value: stats.subjectCount },
+                { label: '总课时', value: stats.totalLessons },
+                { label: '规则', value: rules.total },
+                { label: '数据问题', value: stats.issueCount },
+            ],
+        },
+        {
+            group: 'solver',
+            title: '求解详情',
+            items: [
+                { label: '来源', value: status.sourceLabel },
+                { label: '完成率', value: status.completeness },
+                { label: '硬冲突', value: metrics.hardConflicts },
+                { label: '未排课时', value: metrics.unplaced },
+                solverDetail.reasonLabel
+                    ? { label: solverDetail.isManualReview ? '教务复核' : '优化原因', value: solverDetail.reasonLabel }
+                    : null,
+                solverDetail.hasInitialSolutionInfo
+                    ? { label: '初始解', value: solverDetail.initialSolutionText }
+                    : null,
+                solverDetail.hasPinnedCount
+                    ? { label: '锁定课节', value: solverDetail.pinnedCount }
+                    : null,
+            ].filter(Boolean),
+        },
+    ];
+    const published = project.schedule?.published || null;
+    const publication = project.schedule?.publication || state.lastFailure?.publication || null;
+    if (published || publication) {
+        details.push({
+            group: 'publication',
+            title: '发布详情',
+            items: [
+                published ? { label: '发布状态', value: publishedDraftChanged(project) ? '草稿已变化' : `已发布 V${published.version || 1}` } : { label: '发布状态', value: '未发布' },
+                publication ? { label: '发布校验', value: publication.ok ? '可发布' : '不可发布' } : null,
+                published?.fingerprint ? { label: '发布指纹', value: shortPublicationFingerprint(published.fingerprint) } : null,
+            ].filter(Boolean),
+        });
+    }
+    return details;
+}
+
+export function buildInspectorViewModel(state = {}) {
+    const project = state.project || {};
+    const schedule = project.schedule || null;
+    const score = schedule?.score || {};
+    const plannedTotal = totalPlannedLessons(project);
+    const total = Number(score.totalLessons ?? plannedTotal ?? 0);
+    const placed = Number(score.placedLessons ?? (schedule?.slots || []).length ?? 0);
+    const hardConflicts = Number(score.hardConflicts ?? (schedule?.conflicts || []).filter(item => item.severity === 'hard' || item.severity === 'error').length ?? 0);
+    const unplaced = Number(score.unplacedLessons ?? (schedule?.unplaced || []).length ?? Math.max(0, total - placed));
+    const hasGeneratedSchedule = Boolean(schedule && (schedule.id || schedule.source || (schedule.slots || []).length || schedule.score));
+    const blockingItems = [];
+    const reviewItems = [];
+    const blockingSeen = new Set();
+    const reviewSeen = new Set();
+
+    if (hasGeneratedSchedule && unplaced > 0) {
+        pushUniqueInspectorModelItem(blockingItems, blockingSeen, {
+            id: 'summary-unplaced',
+            source: 'score',
+            severity: 'error',
+            title: '未排课时',
+            message: `还有 ${unplaced} 节未排。`,
+            targetKind: 'schedule',
+        });
+    }
+
+    (schedule?.conflicts || []).forEach((conflict, index) => {
+        const item = conflictToInspectorModelItem(conflict, index);
+        if (item.severity === 'error') pushUniqueInspectorModelItem(blockingItems, blockingSeen, item);
+        else pushUniqueInspectorModelItem(reviewItems, reviewSeen, item);
+    });
+
+    normalizePublicationPanelIssues(state).forEach(entry => {
+        const item = issueEntryToInspectorModelItem(entry, 'publication');
+        if (item.severity === 'error') pushUniqueInspectorModelItem(blockingItems, blockingSeen, item);
+        else pushUniqueInspectorModelItem(reviewItems, reviewSeen, item);
+    });
+
+    const publication = schedule?.publication || state.lastFailure?.publication || null;
+    if (hasGeneratedSchedule && publication && publication.ok === false && !blockingItems.some(item => item.source === 'publication')) {
+        pushUniqueInspectorModelItem(blockingItems, blockingSeen, {
+            id: 'publication-not-ok',
+            source: 'publication',
+            severity: 'error',
+            title: '发布前校验',
+            message: '发布前校验未通过。',
+            targetKind: 'schedule',
+        });
+    }
+
+    normalizeScheduleDiagnosticIssues(state).forEach(entry => {
+        const item = issueEntryToInspectorModelItem(entry, 'diagnostic');
+        if (item.severity === 'error') pushUniqueInspectorModelItem(blockingItems, blockingSeen, item);
+        else pushUniqueInspectorModelItem(reviewItems, reviewSeen, item);
+    });
+
+    (schedule?.qualityIssues || []).forEach((issue, index) => {
+        const item = qualityIssueToInspectorModelItem(issue, index);
+        if (item.severity === 'error') pushUniqueInspectorModelItem(blockingItems, blockingSeen, item);
+        else pushUniqueInspectorModelItem(reviewItems, reviewSeen, item);
+    });
+
+    (schedule?.diagnostics?.suggestions || state.lastFailure?.diagnostics?.suggestions || []).forEach((suggestion, index) => {
+        pushUniqueInspectorModelItem(reviewItems, reviewSeen, diagnosticSuggestionToInspectorModelItem(suggestion, index));
+    });
+
+    const metrics = {
+        placed,
+        total,
+        hardConflicts,
+        unplaced,
+        warnings: reviewItems.length,
+    };
+    const systemDetails = buildInspectorSystemDetails(state, metrics);
+    let verdict;
+    if (!hasGeneratedSchedule) {
+        verdict = {
+            status: 'not_generated',
+            title: '未生成',
+            tone: 'warn',
+            message: '当前还没有生成课表。',
+        };
+        metrics.placed = 0;
+        metrics.unplaced = total;
+    } else if (blockingItems.length) {
+        verdict = {
+            status: 'blocked',
+            title: '不可发布',
+            tone: 'danger',
+            message: `有 ${blockingItems.length} 项必须处理的问题。`,
+        };
+    } else if (publishedDraftChanged(project)) {
+        verdict = {
+            status: 'changed_draft',
+            title: '草稿已变化',
+            tone: 'warn',
+            message: '当前课表改动后需要重新发布。',
+        };
+    } else {
+        verdict = {
+            status: 'publishable',
+            title: '可发布',
+            tone: 'ok',
+            message: '当前课表无阻断问题，可进入发布复核。',
+        };
+    }
+
+    return {
+        verdict,
+        metrics,
+        blockingItems,
+        reviewItems,
+        systemDetails,
     };
 }
 
@@ -2905,7 +3293,7 @@ export function renderSchedulePanel(state) {
                 </button>
             </div>
         </div>
-        <div class="tt-schedule-scroll">
+        <div class="tt-schedule-scroll ${state.inspectorLocatePulse?.kind === 'owner' ? 'is-inspector-locate-pulse' : ''}">
             ${renderScheduleGrid(state)}
         </div>
     `;
@@ -2965,7 +3353,7 @@ function renderEmptyScheduleGrid(state) {
                 ${days.map(day => `<div class="tt-grid-head">周${dayName(day)}</div>`).join('')}
                 ${rows.map(row => `
                     ${renderTimetableRowLabel(state.project, row)}
-                    ${days.map(day => renderTimetableRowCell(state, null, day, row, true)).join('')}
+        ${days.map(day => renderTimetableRowCell(state, null, day, row, true)).join('')}
                 `).join('')}
             </div>
         </div>
@@ -3037,7 +3425,7 @@ function renderTimetableRowCell(state, context, day, row, emptySchedule = false)
     if (row.kind === 'display') return renderDisplayTimeBlockCell(day, row.timeBlock);
     if (emptySchedule) {
         return `
-            <div class="tt-cell tt-main-empty-cell" data-day="${day}" data-period="${row.period}">
+            <div class="tt-cell tt-main-empty-cell ${inspectorPulseMatchesCell(state, day, row.period) ? 'is-inspector-locate-pulse' : ''}" data-day="${day}" data-period="${row.period}">
                 <span>待排</span>
             </div>
         `;
@@ -3161,6 +3549,20 @@ function scheduleCellKey(day, period) {
     return `${day}-${period}`;
 }
 
+function inspectorPulseMatchesCell(state = {}, day, period) {
+    const pulse = state.inspectorLocatePulse || null;
+    return Boolean(pulse
+        && Number(pulse.day) === Number(day)
+        && Number(pulse.period) === Number(period));
+}
+
+function inspectorPulseMatchesSlot(state = {}, slot = {}) {
+    const pulse = state.inspectorLocatePulse || null;
+    if (!pulse) return false;
+    if (pulse.slotId && slot.id && pulse.slotId === slot.id) return true;
+    return inspectorPulseMatchesCell(state, slot.day, slot.period);
+}
+
 function renderSlotTeacherIds(slot = {}) {
     const ids = Array.isArray(slot.teacherIds) ? [...slot.teacherIds] : [];
     if (slot.teacherId && !ids.includes(slot.teacherId)) ids.unshift(slot.teacherId);
@@ -3235,7 +3637,7 @@ function renderUnscheduledPlanQueue(state) {
 function renderScheduleCell(state, context, day, period) {
     const slots = context.slotsByCell.get(scheduleCellKey(day, period)) || [];
     return `
-        <div class="tt-cell" data-day="${day}" data-period="${period}">
+        <div class="tt-cell ${inspectorPulseMatchesCell(state, day, period) ? 'is-inspector-locate-pulse' : ''}" data-day="${day}" data-period="${period}">
             ${slots.map(slot => renderSlot(state, context, slot)).join('')}
         </div>
     `;
@@ -3259,8 +3661,15 @@ function renderSlot(state, context, slot) {
     const secondary = state.viewMode === 'master'
         ? teacherNames || slot.teacherId
         : `周${dayName(slot.day)} 第${slot.period}节`;
+    const slotClass = [
+        'tt-slot',
+        slot.locked ? 'is-locked' : '',
+        conflict ? 'has-conflict' : '',
+        state.selectedSlotId === slot.id ? 'is-selected' : '',
+        inspectorPulseMatchesSlot(state, slot) ? 'is-inspector-locate-pulse' : '',
+    ].filter(Boolean).join(' ');
     return `
-        <button class="tt-slot ${slot.locked ? 'is-locked' : ''} ${conflict ? 'has-conflict' : ''} ${state.selectedSlotId === slot.id ? 'is-selected' : ''}"
+        <button class="${slotClass}"
             draggable="true"
             data-slot-id="${escapeAttr(slot.id)}"
             data-block-id="${escapeAttr(blockId)}"
@@ -3273,39 +3682,429 @@ function renderSlot(state, context, slot) {
     `;
 }
 
-export function renderInspector(state) {
+function inspectorVerdictToneClass(tone = 'warn') {
+    return tone === 'ok' ? 'is-ok' : tone === 'danger' ? 'is-danger' : 'is-warn';
+}
+
+function renderInspectorVerdict(model) {
+    const metrics = model.metrics || {};
+    const verdict = model.verdict || {};
+    return `
+        <section class="tt-inspector-section tt-inspector-verdict ${inspectorVerdictToneClass(verdict.tone)}">
+            <div class="tt-section-title">
+                <h3><i data-lucide="badge-check"></i><span>当前结论</span></h3>
+                <span class="tt-chip ${verdict.tone === 'ok' ? 'tt-chip--ok' : 'tt-chip--warn'}">${escapeHtml(verdict.title || '待审查')}</span>
+            </div>
+            <p>${escapeHtml(verdict.message || '请检查当前课表。')}</p>
+            <div class="tt-inspector-metrics">
+                <span aria-label="${escapeAttr(`已排 ${metrics.placed ?? 0}/${metrics.total ?? 0}`)}"><b>已排</b>${escapeHtml(`${metrics.placed ?? 0}/${metrics.total ?? 0}`)}</span>
+                <span aria-label="${escapeAttr(`硬冲突 ${metrics.hardConflicts ?? 0}`)}"><b>硬冲突</b>${escapeHtml(metrics.hardConflicts ?? 0)}</span>
+                <span aria-label="${escapeAttr(`未排 ${metrics.unplaced ?? 0}`)}"><b>未排</b>${escapeHtml(metrics.unplaced ?? 0)}</span>
+                <span aria-label="${escapeAttr(`警告 ${metrics.warnings ?? 0}`)}"><b>警告</b>${escapeHtml(metrics.warnings ?? 0)}</span>
+            </div>
+        </section>
+    `;
+}
+
+function inspectorIssueSourceLabel(source = '') {
+    return ({
+        publication: '发布问题',
+        diagnostic: '诊断问题',
+        quality: '质量建议',
+        conflict: '冲突',
+        score: '未排课时',
+        suggestion: '建议',
+    })[source] || '审查项';
+}
+
+const INSPECTOR_ISSUE_DEFAULT_LIMIT = 5;
+const INSPECTOR_ISSUE_LIMIT_STEP = 20;
+
+function inspectorIssueLimitKey(sectionKey = 'inspector', groupKey = 'items') {
+    return `${sectionKey || 'inspector'}:${groupKey || 'items'}`;
+}
+
+function inspectorIssueVisibleLimit(state = {}, limitKey = '', total = 0) {
+    const savedLimit = Number(state.inspectorIssueLimits?.[limitKey]);
+    const requestedLimit = Number.isFinite(savedLimit) && savedLimit > INSPECTOR_ISSUE_DEFAULT_LIMIT
+        ? savedLimit
+        : INSPECTOR_ISSUE_DEFAULT_LIMIT;
+    return Math.min(Math.max(0, Number(total) || 0), requestedLimit);
+}
+
+function renderInspectorListActions({ limitKey = '', shown = 0, total = 0 } = {}) {
+    if ((Number(total) || 0) <= INSPECTOR_ISSUE_DEFAULT_LIMIT) return '';
+    const safeShown = Math.min(Number(total) || 0, Math.max(0, Number(shown) || 0));
+    const safeTotal = Math.max(0, Number(total) || 0);
+    const remaining = Math.max(0, safeTotal - safeShown);
+    const expandLabel = remaining > INSPECTOR_ISSUE_LIMIT_STEP
+        ? `展开更多 ${INSPECTOR_ISSUE_LIMIT_STEP}`
+        : `展开剩余 ${remaining}`;
+    return `
+        <div class="tt-inspector-list-actions">
+            <span>${escapeHtml(`已显示 ${safeShown}/${safeTotal}`)}</span>
+            ${remaining ? `
+                <button class="tt-inspector-list-action" type="button"
+                    data-action="expand-inspector-issue-group"
+                    data-inspector-issue-limit-key="${escapeAttr(limitKey)}"
+                    data-inspector-issue-shown="${escapeAttr(safeShown)}"
+                    data-inspector-issue-total="${escapeAttr(safeTotal)}">${escapeHtml(expandLabel)}</button>
+            ` : ''}
+            ${safeShown > INSPECTOR_ISSUE_DEFAULT_LIMIT ? `
+                <button class="tt-inspector-list-action" type="button"
+                    data-action="collapse-inspector-issue-group"
+                    data-inspector-issue-limit-key="${escapeAttr(limitKey)}"
+                    data-inspector-issue-shown="${escapeAttr(safeShown)}"
+                    data-inspector-issue-total="${escapeAttr(safeTotal)}">收起</button>
+            ` : ''}
+        </div>
+    `;
+}
+
+function inspectorLimitedItems(state = {}, sectionKey = '', groupKey = '', items = []) {
+    const limitKey = inspectorIssueLimitKey(sectionKey, groupKey);
+    const shown = inspectorIssueVisibleLimit(state, limitKey, items.length);
+    return {
+        limitKey,
+        shown,
+        visibleItems: items.slice(0, shown),
+        actions: renderInspectorListActions({ limitKey, shown, total: items.length }),
+    };
+}
+
+function inspectorIssueItemClass(item = {}) {
+    const sourceClass = item.source === 'publication'
+        ? 'tt-publication-issue-item'
+        : item.source === 'diagnostic'
+            ? 'tt-schedule-diagnostic-item'
+            : '';
+    return `tt-rule-preview-item tt-inspector-issue-item ${sourceClass} ${inspectorIssueSeverityClass(item.severity)}`.trim();
+}
+
+function inspectorIssueStableKey(item = {}) {
+    return [
+        item.source || 'inspector',
+        item.id || item.issueId || item.key || '',
+        item.severity || '',
+        item.category || '',
+        item.type || '',
+        item.targetKind || '',
+        item.targetId || '',
+        item.targetName || '',
+        inspectorSlotLabel(item.slot),
+        item.title || '',
+        item.message || '',
+    ].map(part => String(part ?? '').trim()).join('|');
+}
+
+function renderInspectorIssueLocateAttrs(target = {}, issueKey = '') {
+    return [
+        'data-action="locate-inspector-issue"',
+        issueKey ? `data-inspector-issue-key="${escapeAttr(issueKey)}"` : '',
+        `data-inspector-target-kind="${escapeAttr(target.targetKind || '')}"`,
+        `data-inspector-target-id="${escapeAttr(target.targetId || '')}"`,
+        `data-inspector-target-name="${escapeAttr(target.targetName || target.label || '')}"`,
+        `data-inspector-view-mode="${escapeAttr(target.viewMode || '')}"`,
+        `data-inspector-owner-id="${escapeAttr(target.ownerId || '')}"`,
+        target.planId ? `data-inspector-plan-id="${escapeAttr(target.planId)}"` : '',
+        target.day ? `data-inspector-day="${escapeAttr(target.day)}"` : '',
+        target.period ? `data-inspector-period="${escapeAttr(target.period)}"` : '',
+    ].filter(Boolean).join(' ');
+}
+
+function renderInspectorIssueItem(item = {}, state = {}) {
+    const panel = item.source === 'publication' ? 'publication' : 'diagnostic';
+    const severityLabel = inspectorIssueSectionLabel(panel, item.severity || 'warning');
+    const meta = [severityLabel, inspectorIssueMeta(item)].filter(Boolean).join(' · ');
+    const locateTarget = resolveInspectorIssueLocateTarget(state.project || {}, item);
+    const issueKey = locateTarget ? inspectorIssueStableKey(item) : '';
+    const itemClass = [
+        inspectorIssueItemClass(item),
+        locateTarget ? 'tt-inspector-issue-item--locatable' : '',
+        issueKey && state.inspectorLocatedIssueKey === issueKey ? 'is-inspector-located-source' : '',
+    ].filter(Boolean).join(' ');
+    const content = `
+        <strong>${escapeHtml(item.title || inspectorIssueSourceLabel(item.source))}</strong>
+        <span>${escapeHtml(item.message || '需要复核。')}</span>
+        ${meta ? `<em>${escapeHtml(meta)}</em>` : ''}
+        ${locateTarget ? '<span class="tt-inspector-locate-hint">定位</span>' : ''}
+    `;
+    if (locateTarget) {
+        return `
+            <button type="button" class="${itemClass}" ${renderInspectorIssueLocateAttrs(locateTarget, issueKey)} aria-label="${escapeAttr(`定位：${locateTarget.label || item.title || '审查项'}`)}">
+                ${content}
+            </button>
+        `;
+    }
+    return `
+        <div class="${itemClass}">
+            ${content}
+        </div>
+    `;
+}
+
+function renderInspectorIssueSection({ title, icon, items = [], emptyText = '暂无问题', tone = 'warn', sectionKey = '', open = false, state = {} }) {
+    const grouped = items.reduce((groups, item) => {
+        const key = item.source || 'unknown';
+        const label = inspectorIssueSourceLabel(item.source);
+        if (!groups.has(key)) groups.set(key, { key, label, items: [] });
+        groups.get(key).items.push(item);
+        return groups;
+    }, new Map());
+    return `
+        <section class="tt-inspector-section tt-inspector-review-section tt-inspector-review-section--${escapeAttr(tone)}">
+            <details class="tt-inspector-collapsible" data-inspector-section="${escapeAttr(sectionKey || title)}"${open ? ' open' : ''}>
+                <summary class="tt-section-title">
+                    <h3><i data-lucide="${escapeAttr(icon)}"></i><span>${escapeHtml(title)}</span></h3>
+                    <span class="tt-chip ${items.length ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(items.length)}</span>
+                </summary>
+                ${items.length ? `
+                    <div class="tt-inspector-issue-groups">
+                        ${Array.from(grouped.values()).map(group => {
+                            const limited = inspectorLimitedItems(state, sectionKey || title, group.key, group.items);
+                            return `
+                                <div class="tt-diagnostics-group">
+                                    <div class="tt-rule-report-title">
+                                        <strong>${escapeHtml(group.label)}</strong>
+                                        <span>${escapeHtml(group.items.length)}</span>
+                                    </div>
+                                    <div class="tt-rule-preview tt-rule-preview--compact">
+                                        ${limited.visibleItems.map(item => renderInspectorIssueItem(item, state)).join('')}
+                                    </div>
+                                    ${limited.actions}
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                ` : `<span class="tt-muted">${escapeHtml(emptyText)}</span>`}
+            </details>
+        </section>
+    `;
+}
+
+function renderInspectorDiagnosticsSystemSummary(state) {
+    const diagnostics = state.project?.schedule?.diagnostics || state.lastFailure?.diagnostics || null;
+    if (!diagnostics || !Array.isArray(diagnostics.items)) return '';
+    const summary = diagnostics.summary || {};
+    const items = diagnostics.items || [];
+    const suggestions = diagnostics.suggestions || [];
+    const byObject = diagnostics.byObject || {};
+    if (!items.length && !suggestions.length) return '';
+    const maps = entityMaps(state.project || {});
+    const severityIcon = severity => (severity === 'error' ? 'alert-circle' : severity === 'warning' ? 'triangle-alert' : 'info');
+    const objectSections = [
+        { key: 'classes', label: '班级', icon: 'users', nameOf: id => ownerLabel(maps.classes.get(id) || { id }) },
+        { key: 'teachers', label: '教师', icon: 'badge-check', nameOf: id => maps.teachers.get(id)?.name || id },
+        { key: 'subjects', label: '课程', icon: 'book-open', nameOf: id => maps.subjects.get(id)?.name || id },
+        { key: 'rooms', label: '教室', icon: 'school', nameOf: id => id },
+        { key: 'plans', label: '计划', icon: 'notebook-pen', nameOf: id => maps.plans.get(id)?.id || id },
+    ].map(section => {
+        const bucket = byObject[section.key] || {};
+        const entries = Object.entries(bucket)
+            .map(([id, itemIds]) => {
+                const linkedItems = (Array.isArray(itemIds) ? itemIds : [])
+                    .map(itemId => items.find(item => item.id === itemId))
+                    .filter(Boolean);
+                return {
+                    id,
+                    name: section.nameOf(id),
+                    count: linkedItems.length,
+                    topSeverity: linkedItems.some(item => item.severity === 'error')
+                        ? 'error'
+                        : linkedItems.some(item => item.severity === 'warning')
+                            ? 'warning'
+                            : 'info',
+                    labels: linkedItems.slice(0, 2).map(item => item.message || timetableReviewLabel(item.type)),
+                };
+            })
+            .filter(entry => entry.count > 0)
+            .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, 'zh-Hans-CN'));
+        return { ...section, entries };
+    }).filter(section => section.entries.length);
+    const itemList = inspectorLimitedItems(state, 'system-diagnostics', 'items', items);
+    const suggestionList = inspectorLimitedItems(state, 'system-diagnostics', 'suggestions', suggestions);
+    return `
+        <div class="tt-inspector-system-block">
+            <div class="tt-subsection-title">
+                <h4><i data-lucide="stethoscope"></i>诊断报告</h4>
+                <span class="tt-chip ${summary.error || summary.warning ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(summary.total ?? items.length)}</span>
+            </div>
+            <div class="tt-audit-grid tt-audit-grid--quality">
+                <span><b>错误</b>${escapeHtml(summary.error || 0)}</span>
+                <span><b>警告</b>${escapeHtml(summary.warning || 0)}</span>
+                <span><b>提示</b>${escapeHtml(summary.info || 0)}</span>
+                <span><b>建议</b>${escapeHtml(summary.suggestions ?? suggestions.length)}</span>
+            </div>
+            <div class="tt-conflict-list">
+                ${itemList.visibleItems.map(item => `
+                    <div class="tt-conflict ${item.severity === 'error' || item.severity === 'warning' ? 'is-warning' : ''}">
+                        <i data-lucide="${severityIcon(item.severity)}"></i>
+                        <span><b>${escapeHtml(item.targetName || timetableReviewLabel(item.type))}</b>${escapeHtml(item.message || timetableReviewLabel(item.type))}</span>
+                    </div>
+                `).join('')}
+            </div>
+            ${itemList.actions}
+            ${objectSections.length ? `
+                <div class="tt-diagnostics-groups">
+                    ${objectSections.map(section => {
+                        const entryList = inspectorLimitedItems(state, 'system-diagnostics', `object-${section.key}`, section.entries);
+                        return `
+                            <div class="tt-diagnostics-group">
+                                <div class="tt-rule-report-title">
+                                    <strong><i data-lucide="${section.icon}"></i>${escapeHtml(section.label)}</strong>
+                                    <span>${escapeHtml(section.entries.length)}</span>
+                                </div>
+                                <div class="tt-rule-preview tt-rule-preview--compact">
+                                    ${entryList.visibleItems.map(entry => `
+                                        <div class="tt-rule-preview-item tt-diagnostics-group-item ${entry.topSeverity === 'error' ? 'is-error' : entry.topSeverity === 'warning' ? 'is-warning' : ''}">
+                                            <strong>${escapeHtml(entry.name)}</strong>
+                                            <span>${escapeHtml(`关联 ${entry.count} 项诊断`)}</span>
+                                            ${entry.labels[0] ? `<em>${escapeHtml(entry.labels.join('；'))}</em>` : ''}
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                ${entryList.actions}
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            ` : ''}
+            ${suggestions.length ? `
+                <div class="tt-rule-warning-list">
+                    ${suggestionList.visibleItems.map(item => `
+                        <div class="tt-rule-warning">
+                            <i data-lucide="lightbulb"></i>
+                            <span>${escapeHtml(item.message || '建议草稿')}</span>
+                        </div>
+                    `).join('')}
+                </div>
+                ${suggestionList.actions}
+            ` : ''}
+        </div>
+    `;
+}
+
+function renderInspectorQualitySystemSummary(state) {
+    const schedule = state.project?.schedule || {};
+    const issues = schedule.qualityIssues || [];
+    const breakdown = schedule.score?.softBreakdown || {};
+    if (!issues.length && !Object.keys(breakdown).length) return '';
+    return `
+        <div class="tt-inspector-system-block">
+            <div class="tt-subsection-title">
+                <h4><i data-lucide="line-chart"></i>质量建议</h4>
+                <span class="tt-chip ${issues.length ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(issues.length)}</span>
+            </div>
+            ${Object.keys(breakdown).length ? `
+                <div class="tt-audit-grid tt-audit-grid--quality">
+                    ${Object.entries(breakdown).slice(0, 6).map(([key, value]) => `<span><b>${escapeHtml(timetableReviewLabel(key))}</b>${escapeHtml(value)}</span>`).join('')}
+                </div>
+            ` : ''}
+        </div>
+    `;
+}
+
+function renderInspectorSystemDetailGroups(model) {
+    const groups = model.systemDetails || [];
+    if (!groups.length) return '';
+    return `
+        <div class="tt-inspector-system-block">
+            ${groups.map(group => `
+                <div class="tt-diagnostics-group">
+                    <div class="tt-rule-report-title">
+                        <strong>${escapeHtml(group.title || '系统详情')}</strong>
+                    </div>
+                    <div class="tt-detail-list">
+                        ${(group.items || []).map(item => `<span><b>${escapeHtml(item.label)}</b>${escapeHtml(item.value ?? '-')}</span>`).join('')}
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function renderInspectorSolverSystemDetails(state) {
     const status = getSolveStatus(state.project, state.lastFailure);
-    const selectedDetail = getSlotDetails(state.project, state.selectedSlotId);
     const solverDetail = getSolverDetail(state);
     return `
+        <div class="tt-inspector-system-block">
+            <div class="tt-subsection-title">
+                <h4><i data-lucide="activity"></i>求解详情</h4>
+            </div>
+            <div class="tt-detail-list">
+                <span><b>来源</b>${escapeHtml(status.sourceLabel)}</span>
+                <span><b>完成率</b>${escapeHtml(status.completeness)}</span>
+                <span><b>硬冲突</b>${escapeHtml(status.hardConflicts)}</span>
+                <span><b>未排课时</b>${escapeHtml(status.unplaced)}</span>
+                ${solverDetail.hasInitialSolutionInfo ? `<span><b>初始解</b>${escapeHtml(solverDetail.initialSolutionText)}</span>` : ''}
+                ${solverDetail.hasPinnedCount ? `<span><b>锁定课节</b>${escapeHtml(solverDetail.pinnedCount)}</span>` : ''}
+                ${solverDetail.reasonLabel ? `<span class="${solverDetail.kept || solverDetail.isManualReview ? 'is-warning' : ''}"><b>${solverDetail.isManualReview ? '教务复核' : '优化原因'}</b>${escapeHtml(solverDetail.reasonLabel)}</span>` : ''}
+                ${solverDetail.kept ? `<span class="is-warning"><b>优化处理</b>已保留当前课表${solverDetail.reasonLabel ? `：${escapeHtml(solverDetail.reasonLabel)}。` : ''}</span>` : ''}
+                ${state.lastFailure?.solverStats?.lessonCount ? `<span><b>课时数</b>${escapeHtml(state.lastFailure.solverStats.lessonCount)}</span>` : ''}
+                ${state.lastFailure?.solverStats?.timeoutSeconds ? `<span><b>超时上限</b>${escapeHtml(state.lastFailure.solverStats.timeoutSeconds)} 秒</span>` : ''}
+                ${state.lastFailure?.message ? `<span class="is-warning"><b>失败原因</b>${escapeHtml(state.lastFailure.message)}</span>` : ''}
+                ${state.lastFailure ? `<span class="is-warning"><b>失败处理</b>旧课表已保留</span>` : ''}
+            </div>
+        </div>
+    `;
+}
+
+function renderInspectorSystemDetails(state, model, selectedDetail) {
+    const detailBlocks = [
+        selectedDetail ? '' : renderUnscheduledPlanQueue(state),
+        renderAuditPanel(state),
+        renderPublicationPanel(state),
+        renderInspectorDiagnosticsSystemSummary(state),
+        renderInspectorQualitySystemSummary(state),
+        renderOptimizationPanel(state),
+        renderInspectorSystemDetailGroups(model),
+        renderInspectorSolverSystemDetails(state),
+    ].filter(Boolean).join('');
+    return `
+        <section class="tt-inspector-section tt-inspector-system-section">
+            <details class="tt-inspector-collapsible" data-inspector-section="system">
+                <summary class="tt-section-title">
+                    <h3><i data-lucide="layers-3"></i><span>系统详情</span></h3>
+                    <span class="tt-chip">展开</span>
+                </summary>
+                <div class="tt-inspector-system-stack">
+                    ${detailBlocks}
+                </div>
+            </details>
+        </section>
+    `;
+}
+
+export function renderInspector(state) {
+    const model = buildInspectorViewModel(state);
+    const selectedDetail = getSlotDetails(state.project, state.selectedSlotId);
+    const hasBlocking = model.blockingItems.length > 0;
+    const hasReview = model.reviewItems.length > 0;
+    return `
         <div class="tt-inspector-stack">
-            ${selectedDetail ? renderSlotInspector(state) : renderPlanningInspector(state)}
-            ${selectedDetail ? '' : renderUnscheduledPlanQueue(state)}
-            ${renderAuditPanel(state)}
-            ${renderUnifiedDiagnosticsPanel(state)}
-            ${renderScheduleDiagnosticsPanel(state)}
-            ${renderPublicationPanel(state)}
-            ${renderQualityPanel(state)}
-            ${renderConflictPanel(state)}
-            ${renderOptimizationPanel(state)}
-            <section class="tt-inspector-section">
-                <div class="tt-section-title">
-                    <h3><i data-lucide="activity"></i><span>求解详情</span></h3>
-                </div>
-                <div class="tt-detail-list">
-                    <span><b>来源</b>${escapeHtml(status.sourceLabel)}</span>
-                    <span><b>完成率</b>${escapeHtml(status.completeness)}</span>
-                    <span><b>硬冲突</b>${escapeHtml(status.hardConflicts)}</span>
-                    <span><b>未排课时</b>${escapeHtml(status.unplaced)}</span>
-                    ${solverDetail.hasInitialSolutionInfo ? `<span><b>\u521d\u59cb\u89e3</b>${escapeHtml(solverDetail.initialSolutionText)}</span>` : ''}
-                    ${solverDetail.hasPinnedCount ? `<span><b>\u9501\u5b9a\u8bfe\u8282</b>${escapeHtml(solverDetail.pinnedCount)}</span>` : ''}
-                    ${solverDetail.reasonLabel ? `<span class="${solverDetail.kept || solverDetail.isManualReview ? 'is-warning' : ''}"><b>${solverDetail.isManualReview ? '教务复核' : '\u4f18\u5316\u539f\u56e0'}</b>${escapeHtml(solverDetail.reasonLabel)}</span>` : ''}
-                    ${solverDetail.kept ? `<span class="is-warning"><b>\u4f18\u5316\u5904\u7406</b>\u5df2\u4fdd\u7559\u5f53\u524d\u8bfe\u8868${solverDetail.reasonLabel ? `：${escapeHtml(solverDetail.reasonLabel)}。` : ''}</span>` : ''}
-                    ${state.lastFailure?.solverStats?.lessonCount ? `<span><b>课时数</b>${escapeHtml(state.lastFailure.solverStats.lessonCount)}</span>` : ''}
-                    ${state.lastFailure?.solverStats?.timeoutSeconds ? `<span><b>超时上限</b>${escapeHtml(state.lastFailure.solverStats.timeoutSeconds)} 秒</span>` : ''}
-                    ${state.lastFailure ? `<span class="is-warning"><b>失败处理</b>旧课表已保留</span>` : ''}
-                </div>
-            </section>
+            ${renderInspectorVerdict(model)}
+            ${selectedDetail ? renderSlotInspector(state) : ''}
+            ${renderInspectorIssueSection({
+                title: '必须处理',
+                icon: 'octagon-alert',
+                items: model.blockingItems,
+                emptyText: '无阻断问题',
+                tone: 'danger',
+                sectionKey: 'blocking',
+                open: hasBlocking,
+                state,
+            })}
+            ${renderInspectorIssueSection({
+                title: '建议复核',
+                icon: 'list-checks',
+                items: model.reviewItems,
+                emptyText: '暂无建议复核项',
+                tone: 'warn',
+                sectionKey: 'review',
+                open: !hasBlocking && hasReview,
+                state,
+            })}
+            ${renderInspectorSystemDetails(state, model, selectedDetail)}
         </div>
     `;
 }
@@ -3350,6 +4149,8 @@ function renderUnifiedDiagnosticsPanel(state) {
             .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, 'zh-Hans-CN'));
         return { ...section, entries };
     }).filter(section => section.entries.length);
+    const itemList = inspectorLimitedItems(state, 'diagnostics', 'items', items);
+    const suggestionList = inspectorLimitedItems(state, 'diagnostics', 'suggestions', suggestions);
     return `
         <section class="tt-inspector-section">
             <div class="tt-section-title">
@@ -3363,44 +4164,49 @@ function renderUnifiedDiagnosticsPanel(state) {
                 <span><b>建议</b>${escapeHtml(summary.suggestions ?? suggestions.length)}</span>
             </div>
             <div class="tt-conflict-list">
-                ${items.slice(0, 5).map(item => `
+                ${itemList.visibleItems.map(item => `
                     <div class="tt-conflict ${item.severity === 'error' || item.severity === 'warning' ? 'is-warning' : ''}">
                         <i data-lucide="${severityIcon(item.severity)}"></i>
                         <span><b>${escapeHtml(item.targetName || timetableReviewLabel(item.type))}</b>${escapeHtml(item.message || timetableReviewLabel(item.type))}</span>
                     </div>
                 `).join('')}
-                ${items.length > 5 ? `<span class="tt-muted">还有 ${escapeHtml(items.length - 5)} 项诊断未展开。</span>` : ''}
             </div>
+            ${itemList.actions}
             ${objectSections.length ? `
                 <div class="tt-diagnostics-groups">
-                    ${objectSections.map(section => `
-                        <div class="tt-diagnostics-group">
-                            <div class="tt-rule-report-title">
-                                <span><i data-lucide="${section.icon}"></i>${escapeHtml(section.label)}</span>
-                                <span>${escapeHtml(section.entries.length)}</span>
+                    ${objectSections.map(section => {
+                        const entryList = inspectorLimitedItems(state, 'diagnostics', `object-${section.key}`, section.entries);
+                        return `
+                            <div class="tt-diagnostics-group">
+                                <div class="tt-rule-report-title">
+                                    <span><i data-lucide="${section.icon}"></i>${escapeHtml(section.label)}</span>
+                                    <span>${escapeHtml(section.entries.length)}</span>
+                                </div>
+                                <div class="tt-rule-preview tt-rule-preview--compact">
+                                    ${entryList.visibleItems.map(entry => `
+                                        <div class="tt-rule-preview-item tt-diagnostics-group-item ${entry.topSeverity === 'error' ? 'is-error' : entry.topSeverity === 'warning' ? 'is-warning' : ''}">
+                                            <strong>${escapeHtml(entry.name)}</strong>
+                                            <span>${escapeHtml(`关联 ${entry.count} 项诊断`)}</span>
+                                            ${entry.labels[0] ? `<em>${escapeHtml(entry.labels.join('；'))}</em>` : ''}
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                ${entryList.actions}
                             </div>
-                            <div class="tt-rule-preview tt-rule-preview--compact">
-                                ${section.entries.slice(0, 3).map(entry => `
-                                    <div class="tt-rule-preview-item tt-diagnostics-group-item ${entry.topSeverity === 'error' ? 'is-error' : entry.topSeverity === 'warning' ? 'is-warning' : ''}">
-                                        <strong>${escapeHtml(entry.name)}</strong>
-                                        <span>${escapeHtml(`关联 ${entry.count} 项诊断`)}</span>
-                                        ${entry.labels[0] ? `<em>${escapeHtml(entry.labels.join('；'))}</em>` : ''}
-                                    </div>
-                                `).join('')}
-                            </div>
-                        </div>
-                    `).join('')}
+                        `;
+                    }).join('')}
                 </div>
             ` : ''}
             ${suggestions.length ? `
                 <div class="tt-rule-warning-list">
-                    ${suggestions.slice(0, 3).map(item => `
+                    ${suggestionList.visibleItems.map(item => `
                         <div class="tt-rule-warning">
                             <i data-lucide="lightbulb"></i>
                             <span>${escapeHtml(item.message || '建议草稿')}</span>
                         </div>
                     `).join('')}
                 </div>
+                ${suggestionList.actions}
             ` : ''}
         </section>
     `;
@@ -3594,23 +4400,26 @@ function renderSlotInspector(state) {
 
     return `
         <section class="tt-inspector-section">
-            <div class="tt-section-title">
-                <h3><i data-lucide="panel-right"></i><span>课节检查</span></h3>
-            </div>
-            <div class="tt-slot-detail">
-                <strong>${escapeHtml(detail.subject?.name || detail.slot.subjectId)}</strong>
-                <span>${escapeHtml(detail.classLabel)} · ${escapeHtml(detail.teacherNames)} · ${escapeHtml(detail.timeLabel)}</span>
-                <span>${escapeHtml(detail.blockLabel)} · ${detail.slot.locked ? '已锁定' : '可调整'} · ${detail.hasConflict ? '有冲突' : '无冲突'}</span>
-                ${detail.slot.roomId ? `<span>教室：${escapeHtml(detail.slot.roomId)}</span>` : ''}
-            </div>
-            <div class="tt-action-row">
-                <button class="tt-btn" id="tt-lock-selected" type="button">
-                    <i data-lucide="${detail.slot.locked ? 'unlock' : 'lock'}"></i><span>${detail.slot.locked ? '解锁整段' : '锁定整段'}</span>
-                </button>
-                <button class="tt-btn tt-btn--danger" id="tt-clear-selected" type="button">
-                    <i data-lucide="trash-2"></i><span>清空整段</span>
-                </button>
-            </div>
+            <details class="tt-inspector-collapsible" data-inspector-section="current-slot" open>
+                <summary class="tt-section-title">
+                    <h3><i data-lucide="panel-right"></i><span>当前课节</span></h3>
+                    <span class="tt-chip ${detail.hasConflict ? 'tt-chip--warn' : 'tt-chip--ok'}">${detail.hasConflict ? '有冲突' : '已选中'}</span>
+                </summary>
+                <div class="tt-slot-detail">
+                    <strong>${escapeHtml(detail.subject?.name || detail.slot.subjectId)}</strong>
+                    <span>${escapeHtml(detail.classLabel)} · ${escapeHtml(detail.teacherNames)} · ${escapeHtml(detail.timeLabel)}</span>
+                    <span>${escapeHtml(detail.blockLabel)} · ${detail.slot.locked ? '已锁定' : '可调整'} · ${detail.hasConflict ? '有冲突' : '无冲突'}</span>
+                    ${detail.slot.roomId ? `<span>教室：${escapeHtml(detail.slot.roomId)}</span>` : ''}
+                </div>
+                <div class="tt-action-row">
+                    <button class="tt-btn" id="tt-lock-selected" type="button">
+                        <i data-lucide="${detail.slot.locked ? 'unlock' : 'lock'}"></i><span>${detail.slot.locked ? '解锁整段' : '锁定整段'}</span>
+                    </button>
+                    <button class="tt-btn tt-btn--danger" id="tt-clear-selected" type="button">
+                        <i data-lucide="trash-2"></i><span>清空整段</span>
+                    </button>
+                </div>
+            </details>
         </section>
     `;
 }

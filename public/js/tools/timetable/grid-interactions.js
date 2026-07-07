@@ -8,6 +8,8 @@ export const INSPECTOR_POSITION_STORAGE_KEY = 'timetable.inspector.position.v1';
 const INSPECTOR_FLOATING_BREAKPOINT = 980;
 const INSPECTOR_POSITION_MARGIN = 12;
 const INSPECTOR_DRAG_THRESHOLD = 4;
+const INSPECTOR_ISSUE_DEFAULT_LIMIT = 5;
+const INSPECTOR_ISSUE_LIMIT_STEP = 20;
 
 function roundedFiniteNumber(value) {
     const number = Number(value);
@@ -84,6 +86,50 @@ function syncInspectorOpenClass(inspector, open) {
     if (!inspector) return;
     inspector.classList.toggle('is-open', Boolean(open));
     inspector.classList.toggle('is-collapsed', !open);
+}
+
+function positiveInteger(value, fallback = 0) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
+}
+
+function updateInspectorIssueLimit(action, target, controller, state) {
+    const node = target?.closest?.('[data-inspector-issue-limit-key]');
+    const limitKey = node?.dataset?.inspectorIssueLimitKey || '';
+    if (!limitKey) return false;
+    const total = positiveInteger(node.dataset.inspectorIssueTotal, 0);
+    const shown = positiveInteger(node.dataset.inspectorIssueShown, INSPECTOR_ISSUE_DEFAULT_LIMIT);
+    state.inspectorIssueLimits = state.inspectorIssueLimits && typeof state.inspectorIssueLimits === 'object'
+        ? { ...state.inspectorIssueLimits }
+        : {};
+    if (action === 'collapse-inspector-issue-group') {
+        delete state.inspectorIssueLimits[limitKey];
+    } else {
+        state.inspectorIssueLimits[limitKey] = total
+            ? Math.min(total, shown + INSPECTOR_ISSUE_LIMIT_STEP)
+            : shown + INSPECTOR_ISSUE_LIMIT_STEP;
+    }
+    controller.render?.();
+    return true;
+}
+
+function captureInspectorLocateAnchor(actionNode) {
+    const inspectorBody = actionNode?.closest?.('.tt-inspector-body') || null;
+    if (!inspectorBody) return {};
+    const scrollTop = Number(inspectorBody.scrollTop);
+    const bodyRect = typeof inspectorBody.getBoundingClientRect === 'function'
+        ? inspectorBody.getBoundingClientRect()
+        : null;
+    const issueRect = typeof actionNode.getBoundingClientRect === 'function'
+        ? actionNode.getBoundingClientRect()
+        : null;
+    const offsetTop = bodyRect && issueRect
+        ? Number(issueRect.top) - Number(bodyRect.top)
+        : null;
+    return {
+        ...(Number.isFinite(scrollTop) ? { inspectorAnchorScrollTop: scrollTop } : {}),
+        ...(Number.isFinite(offsetTop) ? { inspectorAnchorOffsetTop: offsetTop } : {}),
+    };
 }
 
 function bindInspectorFloatingWindow(container, state) {
@@ -288,7 +334,8 @@ function bindDelegatedInteractions(container) {
             controller.closeDutyAssignmentDialog?.();
             return;
         }
-        const action = event.target.closest('[data-action]')?.dataset.action || '';
+        const actionNode = event.target.closest('[data-action]');
+        const action = actionNode?.dataset.action || '';
 
         // 移动端抽屉actions
         if (action === 'open-mobile-drawer') {
@@ -300,6 +347,20 @@ function bindDelegatedInteractions(container) {
         else if (action === 'apply-fix') {
             const problemId = event.target.closest('[data-problem-id]')?.dataset.problemId;
             controller.applySingleFix(problemId);
+        } else if (action === 'expand-inspector-issue-group' || action === 'collapse-inspector-issue-group') {
+            if (updateInspectorIssueLimit(action, event.target, controller, state)) {
+                event.preventDefault?.();
+                event.stopPropagation?.();
+            }
+        } else if (action === 'locate-inspector-issue') {
+            const locatePayload = {
+                ...(actionNode?.dataset || {}),
+                ...captureInspectorLocateAnchor(actionNode),
+            };
+            if (controller.locateInspectorIssue?.(locatePayload)) {
+                event.preventDefault?.();
+                event.stopPropagation?.();
+            }
         } else if (action === 'apply-all-fixes') {
             controller.applyAllFixes();
         } else if (action === 'view-problem-details') {
