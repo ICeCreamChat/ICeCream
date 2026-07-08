@@ -91,6 +91,86 @@ test('timetable diagnostics prefers publication issueEntries over legacy reviewI
     assert.ok(!diagnostics.items.some(item => item.category === 'publication' && item.message === '这是旧 reviewItems。'));
 });
 
+test('timetable diagnostics filters legacy non-actionable review noise before suggestions', () => {
+    const project = createDefaultTimetableProject({
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+        rules: { hardRules: {}, softRules: {} },
+        schedule: {
+            id: 'legacy-noise-diagnostics',
+            slots: [{ id: 'slot-1', day: 1, period: 5, classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+            audit: {
+                blockingIssues: [],
+                warnings: [{ type: 'class_load', classId: 'c1', message: '班级课表接近满载。' }],
+            },
+            qualityIssues: [
+                { type: 'subject_spread', severity: 'warning', classId: 'c1', subjectId: 'math', message: 'Math 同一天过于集中。' },
+                { type: 'morning_subject_late', severity: 'info', classId: 'c1', subjectId: 'math', message: 'Math 未排在上午优先时段。' },
+                { type: 'teacher_consecutive', severity: 'warning', teacherId: 't_math', message: 'Math Teacher 连续授课偏多。' },
+            ],
+            publication: {
+                issueEntries: [
+                    { type: 'class_load', severity: 'warning', targetKind: 'class', targetId: 'c1', targetName: 'G71', message: '班级课表接近满载。' },
+                    { type: 'subject_spread', severity: 'warning', targetKind: 'class', targetId: 'c1', targetName: 'G71', message: 'Math 同一天过于集中。' },
+                    { type: 'morning_subject_late', severity: 'info', targetKind: 'class', targetId: 'c1', targetName: 'G71', message: 'Math 未排在上午优先时段。' },
+                    { type: 'teacher_consecutive', severity: 'warning', targetKind: 'teacher', targetId: 't_math', targetName: 'Math Teacher', message: 'Math Teacher 连续授课偏多。' },
+                ],
+            },
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1 },
+        },
+    });
+
+    const diagnostics = buildTimetableDiagnostics(project);
+
+    assert.equal(diagnostics.items.some(item => item.type === 'class_load'), false);
+    assert.equal(diagnostics.items.some(item => item.type === 'subject_spread'), false);
+    assert.equal(diagnostics.items.some(item => item.type === 'morning_subject_late'), false);
+    assert.equal(diagnostics.items.some(item => item.type === 'teacher_consecutive'), false);
+    assert.equal(diagnostics.suggestions.length, 0);
+});
+
+test('timetable diagnostics keeps actionable suggestions and deduplicates them across sources', () => {
+    const project = createDefaultTimetableProject({
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+        rules: { hardRules: {}, softRules: { teacherLimits: { t_math: { consecutive: 2 } } } },
+        schedule: {
+            id: 'actionable-diagnostics',
+            slots: [{ id: 'slot-1', day: 1, period: 5, classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+            audit: {
+                blockingIssues: [{ type: 'class_capacity', severity: 'error', classId: 'c1', message: '班级课时超过可用节次。' }],
+                warnings: [],
+            },
+            qualityIssues: [
+                { type: 'teacher_consecutive', severity: 'warning', teacherId: 't_math', message: 'Math Teacher 连续授课偏多。' },
+                { type: 'subject_avoid_period', severity: 'warning', classId: 'c1', subjectId: 'math', message: 'Math 排在了避开节次。', slot: { day: 1, period: 5 } },
+            ],
+            publication: {
+                issueEntries: [
+                    { type: 'teacher_consecutive', severity: 'warning', targetKind: 'teacher', targetId: 't_math', targetName: 'Math Teacher', message: 'Math Teacher 连续授课偏多。' },
+                    { type: 'manual_adjusted', severity: 'warning', targetKind: 'schedule', targetId: '', targetName: '课表', message: '课表包含手动调整，发布前建议复核锁定课节。' },
+                ],
+            },
+            score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1 },
+        },
+    });
+
+    const diagnostics = buildTimetableDiagnostics(project);
+    const teacherConsecutiveSuggestions = diagnostics.suggestions.filter(item => (
+        item.targetKind === 'teacher' && item.targetId === 't_math'
+    ));
+
+    assert.ok(diagnostics.items.some(item => item.type === 'class_capacity'));
+    assert.ok(diagnostics.items.some(item => item.type === 'subject_avoid_period'));
+    assert.ok(diagnostics.items.some(item => item.type === 'manual_adjusted'));
+    assert.ok(diagnostics.items.some(item => item.type === 'teacher_consecutive'));
+    assert.equal(teacherConsecutiveSuggestions.length, 1);
+});
+
 test('timetable schedule run API persists diagnostics with the legacy response fields', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-diagnostics-'));

@@ -151,9 +151,30 @@ const TIMETABLE_REVIEW_LABELS = {
     teacher_load: '教师负载',
 };
 
-const LEGACY_NON_ACTIONABLE_REVIEW_TYPES = new Set(['class_load']);
+const LEGACY_NON_ACTIONABLE_REVIEW_TYPES = new Set(['class_load', 'subject_spread', 'morning_subject_late']);
 
-function isActionableTimetableReviewItem(item = {}) {
+function timetableProjectFromActionContext(context = {}) {
+    return context?.project || context || {};
+}
+
+function hasExplicitTeacherConsecutiveLimit(context = {}, item = {}) {
+    const project = timetableProjectFromActionContext(context);
+    const teacherId = item.teacherId
+        || item.raw?.teacherId
+        || (item.targetKind === 'teacher' ? item.targetId : '')
+        || '';
+    const limit = project.rules?.softRules?.teacherLimits?.[teacherId]?.consecutive;
+    return Boolean(teacherId)
+        && limit !== undefined
+        && limit !== null
+        && limit !== ''
+        && Number.isInteger(Number(limit));
+}
+
+function isActionableTimetableReviewItem(item = {}, context = {}) {
+    if (item.type === 'teacher_consecutive') {
+        return hasExplicitTeacherConsecutiveLimit(context, item);
+    }
     return !LEGACY_NON_ACTIONABLE_REVIEW_TYPES.has(item.type);
 }
 
@@ -1725,7 +1746,7 @@ function renderPublishDialog(state) {
     const publication = schedule.publication || {};
     const summary = publication.summary || schedule.score || {};
     const isBusy = Boolean(dialog.loading);
-    const reviewEntries = publishReviewEntries(publication);
+    const reviewEntries = publishReviewEntries(publication, state);
     return `
         <div class="tt-dialog-overlay" data-publish-dialog-overlay>
             <section class="tt-publish-dialog" id="tt-publish-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-publish-title">
@@ -1774,12 +1795,12 @@ function renderPublishDialog(state) {
     `;
 }
 
-function publishReviewEntries(publication = {}, limit = 5) {
+function publishReviewEntries(publication = {}, state = {}, limit = 5) {
     const entries = [];
     const seen = new Set();
-    const issueSource = publicationIssueEntriesForView(publication);
+    const issueSource = publicationIssueEntriesForView(publication, state);
     const add = item => {
-        if (!item || item.type === 'quality_review' || !isActionableTimetableReviewItem(item)) return;
+        if (!item || item.type === 'quality_review' || !isActionableTimetableReviewItem(item, state)) return;
         const title = publicationItemTitle(item);
         const message = item.message || publicationIssueLabel(item.type);
         const key = `${title}|${message}`;
@@ -1796,7 +1817,7 @@ function publishReviewEntries(publication = {}, limit = 5) {
     return entries.slice(0, limit);
 }
 
-function publicationIssueEntriesForView(publication = null) {
+function publicationIssueEntriesForView(publication = null, state = {}) {
     if (!publication || typeof publication !== 'object') return [];
     const combined = (Array.isArray(publication.issueEntries) && publication.issueEntries.length)
         ? [...publication.issueEntries]
@@ -1809,7 +1830,7 @@ function publicationIssueEntriesForView(publication = null) {
     const seen = new Set();
     return combined.filter(item => {
         if (!item) return false;
-        if (!isActionableTimetableReviewItem(item)) return false;
+        if (!isActionableTimetableReviewItem(item, state)) return false;
         const slot = inspectorSlotLabel(item.slot);
         const key = [
             item.type || '',
@@ -2669,14 +2690,14 @@ function normalizePublicationPanelIssues(state) {
     if (publicationDiagnostics.length) {
         return normalizeInspectorIssueEntries(publicationDiagnostics, {
             fallbackSeverity: 'warning',
-            filter: item => item.type !== 'quality_review' && isActionableTimetableReviewItem(item),
+            filter: item => item.type !== 'quality_review' && isActionableTimetableReviewItem(item, state),
             labelOf: publicationIssueLabel,
             titleOf: publicationItemTitle,
         });
     }
-    return normalizeInspectorIssueEntries(publicationIssueEntriesForView(publication), {
+    return normalizeInspectorIssueEntries(publicationIssueEntriesForView(publication, state), {
         fallbackSeverity: 'warning',
-        filter: item => item.type !== 'quality_review' && isActionableTimetableReviewItem(item),
+        filter: item => item.type !== 'quality_review' && isActionableTimetableReviewItem(item, state),
         labelOf: publicationIssueLabel,
         titleOf: publicationItemTitle,
     });
@@ -2706,7 +2727,7 @@ function normalizeScheduleDiagnosticIssues(state) {
     if (scheduleDiagnostics.length) {
         return normalizeInspectorIssueEntries(scheduleDiagnostics, {
             fallbackSeverity: 'warning',
-            filter: isActionableTimetableReviewItem,
+            filter: item => isActionableTimetableReviewItem(item, state),
             labelOf: timetableReviewLabel,
             titleOf: item => item.targetName || timetableReviewLabel(item.type) || item.type || '排课问题',
         });
@@ -2717,7 +2738,7 @@ function normalizeScheduleDiagnosticIssues(state) {
         ...(audit?.warnings || []).map(item => normalizeAuditFallbackIssue(item, 'warning')),
     ], {
         fallbackSeverity: 'warning',
-        filter: isActionableTimetableReviewItem,
+        filter: item => isActionableTimetableReviewItem(item, state),
         labelOf: timetableReviewLabel,
         titleOf: item => item.targetName || item.name || timetableReviewLabel(item.type) || item.type || '排课问题',
     });
@@ -2747,6 +2768,34 @@ function shortPublicationFingerprint(value = '') {
     const text = String(value || '').trim();
     if (!text) return '';
     return text.length > 12 ? `${text.slice(0, 12)}...` : text;
+}
+
+function publicationStatusInspectorItem(project = {}) {
+    if (archiveOnlyDraftState(project)) {
+        return {
+            id: 'publication-archive-only',
+            source: 'publication',
+            severity: 'warning',
+            type: 'published_archive',
+            title: '发布归档',
+            message: '当前工作草稿已清空，仍可恢复或导出已发布版本。',
+            targetKind: 'schedule',
+        };
+    }
+    if (!publishedDraftChanged(project)) return null;
+    const diff = getPublishedScheduleDiff(project);
+    const diffText = diff.total
+        ? `发布差异：移动 ${diff.moved || 0} · 新增 ${diff.added || 0} · 移除 ${diff.removed || 0}。`
+        : '发布差异：当前草稿已变化。';
+    return {
+        id: 'publication-draft-changed',
+        source: 'publication',
+        severity: 'warning',
+        type: 'publication_draft_changed',
+        title: '发布差异',
+        message: `${diffText}请重新发布后导出正式课表。`,
+        targetKind: 'schedule',
+    };
 }
 
 function hasPublishedArchive(project = {}) {
@@ -2823,7 +2872,47 @@ function getSolverDetail(state = {}) {
     };
 }
 
+function optimizationScheduleSourceLabel(schedule = {}, persistedStats = null) {
+    const restoredPublishedDraft = schedule?.source === 'published_history_restored'
+        || persistedStats?.phase === 'published_history_restore'
+        || Boolean(persistedStats?.restoredPublishedDraft);
+    if (restoredPublishedDraft) return '恢复发布版';
+    if (schedule?.source === 'fast_constructed') return '快速课表';
+    if (schedule?.source === 'timefold_solver') return 'Timefold';
+    if (schedule?.source === 'manual_adjusted') return '手动调整';
+    if (schedule?.source === 'published' || schedule?.source === 'published_snapshot' || schedule?.source === 'published_history_snapshot') return '已发布';
+    return '未生成';
+}
+
+function optimizationDetailForSummary(state = {}) {
+    const job = state.solverJob || null;
+    const schedule = state.project?.schedule || null;
+    const persistedStats = schedule?.solverStats || null;
+    if (schedule?.published?.status === 'published' && !job) return null;
+    const detail = job || persistedStats;
+    if (!detail && schedule?.source !== 'fast_constructed') return null;
+    if (!job && schedule?.source !== 'fast_constructed' && persistedStats?.phase !== 'timefold_optimization') return null;
+    const label = optimizationStatusLabel(detail);
+    return {
+        detail,
+        sourceText: optimizationScheduleSourceLabel(schedule, persistedStats),
+        statusText: job ? label : (label || '等待下一次 Timefold 优化'),
+        reasonLabel: solverReasonLabel(job?.reason || job?.solverStats?.reason || persistedStats?.reason || ''),
+        lessonCount: job?.solverStats?.lessonCount || persistedStats?.lessonCount || null,
+    };
+}
+
 function inspectorModelItemKey(item = {}) {
+    if (item.type) {
+        return [
+            item.type || '',
+            item.severity || '',
+            item.targetKind || '',
+            item.targetId || item.targetName || '',
+            item.slot || '',
+            item.message || '',
+        ].join('|');
+    }
     return [
         item.id || '',
         item.title || '',
@@ -2919,12 +3008,34 @@ function diagnosticSuggestionToInspectorModelItem(suggestion = {}, index = 0) {
     };
 }
 
+function diagnosticsItemMap(diagnostics = {}) {
+    const map = new Map();
+    (diagnostics.items || []).forEach(item => {
+        if (item?.id) map.set(item.id, item);
+    });
+    return map;
+}
+
+function isActionableDiagnosticSuggestion(suggestion = {}, diagnostics = {}, context = {}) {
+    const targetIds = Array.isArray(suggestion.targetDiagnostics)
+        ? suggestion.targetDiagnostics.filter(Boolean)
+        : [];
+    if (!targetIds.length) return true;
+    const itemById = diagnosticsItemMap(diagnostics);
+    const targetItems = targetIds.map(id => itemById.get(id)).filter(Boolean);
+    if (!targetItems.length) return true;
+    return targetItems.some(item => isActionableTimetableReviewItem(item, context));
+}
+
 function buildInspectorSystemDetails(state = {}, metrics = {}) {
     const project = state.project || {};
     const stats = getRosterStats(project);
     const rules = getRuleSummary(project);
     const status = getSolveStatus(project, state.lastFailure);
     const solverDetail = getSolverDetail(state);
+    const optimizationDetail = optimizationDetailForSummary(state);
+    const solverStats = state.lastFailure?.solverStats || solverDetail.stats || {};
+    const optimizationLessonCount = optimizationDetail?.lessonCount || solverStats.lessonCount || null;
     const details = [
         {
             group: 'data',
@@ -2940,12 +3051,16 @@ function buildInspectorSystemDetails(state = {}, metrics = {}) {
         },
         {
             group: 'solver',
-            title: '求解详情',
+            title: '生成详情',
             items: [
                 { label: '来源', value: status.sourceLabel },
                 { label: '完成率', value: status.completeness },
                 { label: '硬冲突', value: metrics.hardConflicts },
                 { label: '未排课时', value: metrics.unplaced },
+                optimizationDetail ? { label: '当前课表', value: optimizationDetail.sourceText } : null,
+                optimizationDetail ? { label: '后台优化', value: optimizationDetail.statusText } : null,
+                optimizationDetail ? { label: '优化状态', value: optimizationDetail.statusText } : null,
+                optimizationDetail?.reasonLabel ? { label: '处理结果', value: optimizationDetail.reasonLabel, tone: 'warning' } : null,
                 solverDetail.reasonLabel
                     ? { label: solverDetail.isManualReview ? '教务复核' : '优化原因', value: solverDetail.reasonLabel }
                     : null,
@@ -2955,6 +3070,15 @@ function buildInspectorSystemDetails(state = {}, metrics = {}) {
                 solverDetail.hasPinnedCount
                     ? { label: '锁定课节', value: solverDetail.pinnedCount }
                     : null,
+                solverDetail.kept ? {
+                    label: '优化处理',
+                    value: `已保留当前课表${solverDetail.reasonLabel ? `：${solverDetail.reasonLabel}。` : ''}`,
+                    tone: 'warning',
+                } : null,
+                optimizationLessonCount ? { label: '课时数', value: optimizationLessonCount } : null,
+                solverStats.timeoutSeconds ? { label: '超时上限', value: `${solverStats.timeoutSeconds} 秒` } : null,
+                state.lastFailure?.message ? { label: '失败原因', value: state.lastFailure.message, tone: 'warning' } : null,
+                state.lastFailure ? { label: '失败处理', value: '旧课表已保留', tone: 'warning' } : null,
             ].filter(Boolean),
         },
     ];
@@ -3012,6 +3136,11 @@ export function buildInspectorViewModel(state = {}) {
         else pushUniqueInspectorModelItem(reviewItems, reviewSeen, item);
     });
 
+    const publicationStatusItem = publicationStatusInspectorItem(project);
+    if (publicationStatusItem) {
+        pushUniqueInspectorModelItem(reviewItems, reviewSeen, publicationStatusItem);
+    }
+
     const publication = schedule?.publication || state.lastFailure?.publication || null;
     if (hasGeneratedSchedule && publication && publication.ok === false && !blockingItems.some(item => item.source === 'publication')) {
         pushUniqueInspectorModelItem(blockingItems, blockingSeen, {
@@ -3030,14 +3159,10 @@ export function buildInspectorViewModel(state = {}) {
         else pushUniqueInspectorModelItem(reviewItems, reviewSeen, item);
     });
 
-    (schedule?.qualityIssues || []).filter(isActionableTimetableReviewItem).forEach((issue, index) => {
+    (schedule?.qualityIssues || []).filter(issue => isActionableTimetableReviewItem(issue, state)).forEach((issue, index) => {
         const item = qualityIssueToInspectorModelItem(issue, index);
         if (item.severity === 'error') pushUniqueInspectorModelItem(blockingItems, blockingSeen, item);
         else pushUniqueInspectorModelItem(reviewItems, reviewSeen, item);
-    });
-
-    (schedule?.diagnostics?.suggestions || state.lastFailure?.diagnostics?.suggestions || []).forEach((suggestion, index) => {
-        pushUniqueInspectorModelItem(reviewItems, reviewSeen, diagnosticSuggestionToInspectorModelItem(suggestion, index));
     });
 
     const metrics = {
@@ -3937,11 +4062,13 @@ function inspectorIssueGroupKey(item = {}) {
         || item.source === 'suggestion'
         || (groupTitle && groupTitle !== item.message && groupTitle !== item.targetName)
     );
+    const sourceKey = hasStableProblemShape ? '' : item.source || 'unknown';
+    const categoryKey = item.type ? '' : item.category || '';
     const messageKey = hasStableProblemShape ? '' : item.message || '';
     return opaqueInspectorKey('group', [
-        item.source || 'unknown',
+        sourceKey,
         item.severity || 'info',
-        item.category || '',
+        categoryKey,
         item.type || '',
         groupTitle || inspectorIssueSourceLabel(item.source),
         messageKey,
@@ -4117,30 +4244,271 @@ function renderInspectorIssueSection({ title, icon, items = [], emptyText = '暂
     `;
 }
 
+const CONSTRAINT_FULFILLMENT_STATUS_LABELS = {
+    satisfied: '已满足',
+    partial: '部分满足',
+    unmet: '未满足',
+    not_applicable: '未参与',
+};
+
+const CONSTRAINT_FULFILLMENT_FILTERS = [
+    { key: 'attention', label: '需关注' },
+    { key: 'all', label: '全部' },
+    { key: 'unmet', label: '未满足' },
+    { key: 'partial', label: '部分满足' },
+    { key: 'satisfied', label: '已满足' },
+    { key: 'not_applicable', label: '未参与' },
+];
+
+function fallbackConstraintFulfillment(project = {}) {
+    const rules = getSavedRuleItems(project);
+    if (!rules.length) return null;
+    return {
+        evaluated: false,
+        summary: {
+            total: rules.length,
+            satisfied: 0,
+            partial: 0,
+            unmet: 0,
+            notApplicable: rules.length,
+        },
+        items: rules.map(rule => ({
+            id: rule.id,
+            type: rule.type,
+            source: rule.source,
+            priority: rule.priority,
+            targetKind: rule.targetKind,
+            targetId: rule.targetId,
+            targetName: rule.targetName,
+            slots: rule.slots || [],
+            title: `${rule.targetName || ''}${rule.description ? ` ${rule.description}` : ''}`.trim() || ruleTypeLabel(rule.type),
+            description: rule.description,
+            status: 'not_applicable',
+            statusLabel: '未参与',
+            evidence: '等待生成课表后评估。',
+            locateTargets: [],
+        })),
+    };
+}
+
+function getConstraintFulfillment(state = {}) {
+    return state.constraintFulfillment || fallbackConstraintFulfillment(state.project || {});
+}
+
+function constraintFulfillmentSummaryText(summary = {}) {
+    const total = Number(summary.total || 0);
+    const satisfied = Number(summary.satisfied || 0);
+    const partial = Number(summary.partial || 0);
+    const unmet = Number(summary.unmet || 0);
+    const notApplicable = Number(summary.notApplicable || 0);
+    return `约束 ${total}：满足 ${satisfied} / 部分 ${partial} / 未满足 ${unmet} / 未参与 ${notApplicable}`;
+}
+
+function normalizeConstraintFulfillmentFilter(state = {}, fulfillment = {}) {
+    const requested = state.constraintFulfillmentFilter || '';
+    if (CONSTRAINT_FULFILLMENT_FILTERS.some(item => item.key === requested)) return requested;
+    const summary = fulfillment.summary || {};
+    return Number(summary.unmet || 0) || Number(summary.partial || 0) ? 'attention' : 'all';
+}
+
+function constraintFulfillmentFilterCount(filter, items = []) {
+    if (filter === 'all') return items.length;
+    if (filter === 'attention') return items.filter(item => item.status === 'unmet' || item.status === 'partial').length;
+    return items.filter(item => item.status === filter).length;
+}
+
+function filterConstraintFulfillmentItems(items = [], filter = 'attention') {
+    if (filter === 'all') return items;
+    if (filter === 'attention') return items.filter(item => item.status === 'unmet' || item.status === 'partial');
+    return items.filter(item => item.status === filter);
+}
+
+function constraintFulfillmentTone(status = '') {
+    if (status === 'satisfied') return 'ok';
+    if (status === 'partial') return 'warn';
+    if (status === 'unmet') return 'danger';
+    return 'muted';
+}
+
+function constraintFulfillmentIssueTypes(item = {}) {
+    const related = {
+        teacher_consecutive_limit: ['teacher_consecutive'],
+        subject_avoid_periods: ['subject_avoid_period'],
+        subject_preferred_periods: ['preferredPeriods'],
+        subject_morning: ['morningSubjects', 'morning_subject_late'],
+    };
+    return new Set([item.type, ...(related[item.type] || [])].filter(Boolean));
+}
+
+function issueTargetMatchesConstraint(issue = {}, item = {}) {
+    const itemTargetId = item.targetId || '';
+    if (!itemTargetId) return true;
+    const issueIds = [
+        issue.targetId,
+        issue.teacherId,
+        issue.classId,
+        issue.subjectId,
+        issue.planId,
+        issue.lessonPlanId,
+        issue.raw?.targetId,
+        issue.raw?.teacherId,
+        issue.raw?.classId,
+        issue.raw?.subjectId,
+    ].filter(Boolean).map(String);
+    return issueIds.includes(String(itemTargetId));
+}
+
+function constraintFulfillmentRelation(item = {}, model = {}) {
+    const types = constraintFulfillmentIssueTypes(item);
+    const matches = issue => types.has(issue.type) && issueTargetMatchesConstraint(issue, item);
+    if ((model.blockingItems || []).some(matches)) return '必须处理';
+    if ((model.reviewItems || []).some(matches)) return '建议复核';
+    return '';
+}
+
+function constraintFulfillmentStableKey(item = {}) {
+    return opaqueInspectorKey('constraint', [
+        item.id,
+        item.type,
+        item.targetKind,
+        item.targetId,
+        item.status,
+        item.title,
+    ]);
+}
+
+function renderConstraintFulfillmentFilters(activeFilter = 'attention', items = []) {
+    return `
+        <div class="tt-constraint-fulfillment-filters" role="tablist" aria-label="约束达成度筛选">
+            ${CONSTRAINT_FULFILLMENT_FILTERS.map(filter => {
+                const active = filter.key === activeFilter;
+                const count = constraintFulfillmentFilterCount(filter.key, items);
+                return `
+                    <button class="tt-constraint-fulfillment-filter ${active ? 'is-active' : ''}" type="button"
+                        data-action="filter-constraint-fulfillment"
+                        data-constraint-fulfillment-filter="${escapeAttr(filter.key)}"
+                        role="tab"
+                        aria-pressed="${active ? 'true' : 'false'}">
+                        <span>${escapeHtml(filter.label)}</span>
+                        <em>${escapeHtml(count)}</em>
+                    </button>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+function renderConstraintFulfillmentRow(item = {}, state = {}, model = {}) {
+    const relation = constraintFulfillmentRelation(item, model);
+    const locateTarget = (item.locateTargets || [])[0] || null;
+    const issueKey = locateTarget ? constraintFulfillmentStableKey(item) : '';
+    const tone = constraintFulfillmentTone(item.status);
+    const statusLabel = item.statusLabel || CONSTRAINT_FULFILLMENT_STATUS_LABELS[item.status] || item.status || '待评估';
+    const rowClass = [
+        'tt-constraint-fulfillment-row',
+        `tt-constraint-fulfillment-row--${tone}`,
+        locateTarget ? 'tt-inspector-issue-item--locatable' : '',
+        issueKey && state.inspectorLocatedIssueKey === issueKey ? 'is-inspector-located-source' : '',
+    ].filter(Boolean).join(' ');
+    const content = `
+        <span class="tt-constraint-fulfillment-status">${escapeHtml(statusLabel)}</span>
+        <span class="tt-constraint-fulfillment-main">
+            <strong>${escapeHtml(item.title || ruleTypeLabel(item.type))}</strong>
+            <em>${escapeHtml(item.evidence || '暂无评估证据。')}</em>
+        </span>
+        <span class="tt-constraint-fulfillment-meta">
+            ${item.priority === 'hard' ? '<b>硬约束</b>' : '<b>软约束</b>'}
+            ${relation ? `<b>已列入${escapeHtml(relation)}</b>` : ''}
+            ${locateTarget ? '<span class="tt-inspector-locate-hint">定位</span>' : ''}
+        </span>
+    `;
+    if (locateTarget) {
+        return `
+            <button type="button" class="${rowClass}"
+                data-constraint-fulfillment-row="${escapeAttr(item.id || '')}"
+                ${renderInspectorIssueLocateAttrs(locateTarget, issueKey)}
+                aria-label="${escapeAttr(`定位：${item.title || statusLabel}`)}">
+                ${content}
+            </button>
+        `;
+    }
+    return `
+        <div class="${rowClass}" data-constraint-fulfillment-row="${escapeAttr(item.id || '')}">
+            ${content}
+        </div>
+    `;
+}
+
+function renderConstraintFulfillmentSection(state = {}, model = {}) {
+    const fulfillment = getConstraintFulfillment(state);
+    if (!fulfillment?.summary?.total) return '';
+    const items = Array.isArray(fulfillment.items) ? fulfillment.items : [];
+    const activeFilter = normalizeConstraintFulfillmentFilter(state, fulfillment);
+    const visibleItems = filterConstraintFulfillmentItems(items, activeFilter);
+    const hasAttention = Number(fulfillment.summary?.unmet || 0) || Number(fulfillment.summary?.partial || 0);
+    const open = Boolean(hasAttention || state.constraintFulfillmentOpen);
+    const loading = Boolean(state.constraintFulfillmentLoading);
+    const error = state.constraintFulfillmentError || '';
+    return `
+        <section class="tt-inspector-section tt-constraint-fulfillment-section">
+            <details class="tt-inspector-collapsible" data-inspector-section="constraint-fulfillment"${open ? ' open' : ''}>
+                <summary class="tt-section-title">
+                    <h3><i data-lucide="check-check"></i><span>约束达成度</span></h3>
+                    <span class="tt-chip ${hasAttention ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(fulfillment.summary.total)}</span>
+                </summary>
+                <div class="tt-constraint-fulfillment-panel">
+                    <div class="tt-constraint-fulfillment-summary">
+                        <strong>${escapeHtml(constraintFulfillmentSummaryText(fulfillment.summary))}</strong>
+                        <span>${escapeHtml(fulfillment.evaluated ? '基于当前课表评估' : '等待生成课表后评估')}</span>
+                    </div>
+                    ${loading ? '<span class="tt-muted">正在刷新约束达成度...</span>' : ''}
+                    ${error ? `<span class="tt-muted">${escapeHtml(error)}</span>` : ''}
+                    ${renderConstraintFulfillmentFilters(activeFilter, items)}
+                    <div class="tt-constraint-fulfillment-list">
+                        ${visibleItems.length
+                            ? visibleItems.map(item => renderConstraintFulfillmentRow(item, state, model)).join('')
+                            : '<span class="tt-muted">当前筛选下没有约束。</span>'}
+                    </div>
+                </div>
+            </details>
+        </section>
+    `;
+}
+
 function renderInspectorDiagnosticsSystemSummary(state) {
     const diagnostics = state.project?.schedule?.diagnostics || state.lastFailure?.diagnostics || null;
     if (!diagnostics || !Array.isArray(diagnostics.items)) return '';
-    const summary = diagnostics.summary || {};
     const items = diagnostics.items || [];
     const suggestions = diagnostics.suggestions || [];
     if (!items.length && !suggestions.length) return '';
     const issueEntries = normalizeInspectorIssueEntries(items, {
         fallbackSeverity: 'warning',
+        filter: item => isActionableTimetableReviewItem(item, state),
         labelOf: timetableReviewLabel,
         titleOf: item => item.targetName || timetableReviewLabel(item.type) || '诊断问题',
     });
-    const suggestionEntries = suggestions.map((item, index) => diagnosticSuggestionToInspectorModelItem(item, index));
+    const suggestionEntries = suggestions
+        .filter(item => isActionableDiagnosticSuggestion(item, diagnostics, state))
+        .map((item, index) => diagnosticSuggestionToInspectorModelItem(item, index));
+    if (!issueEntries.length && !suggestionEntries.length) return '';
+    const visibleSummary = issueEntries.reduce((acc, item) => {
+        const severity = ['error', 'warning', 'info'].includes(item.severity) ? item.severity : 'info';
+        acc[severity] += 1;
+        return acc;
+    }, { error: 0, warning: 0, info: 0 });
+    visibleSummary.total = issueEntries.length;
+    visibleSummary.suggestions = suggestionEntries.length;
     return `
         <div class="tt-inspector-system-block">
             <div class="tt-subsection-title">
                 <h4><i data-lucide="stethoscope"></i>诊断报告</h4>
-                <span class="tt-chip ${summary.error || summary.warning ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(summary.total ?? items.length)}</span>
+                <span class="tt-chip ${visibleSummary.error || visibleSummary.warning ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(visibleSummary.total)}</span>
             </div>
             <div class="tt-audit-grid tt-audit-grid--quality">
-                <span><b>错误</b>${escapeHtml(summary.error || 0)}</span>
-                <span><b>警告</b>${escapeHtml(summary.warning || 0)}</span>
-                <span><b>提示</b>${escapeHtml(summary.info || 0)}</span>
-                <span><b>建议</b>${escapeHtml(summary.suggestions ?? suggestions.length)}</span>
+                <span><b>错误</b>${escapeHtml(visibleSummary.error)}</span>
+                <span><b>警告</b>${escapeHtml(visibleSummary.warning)}</span>
+                <span><b>提示</b>${escapeHtml(visibleSummary.info)}</span>
+                <span><b>建议</b>${escapeHtml(visibleSummary.suggestions)}</span>
             </div>
             ${renderInspectorIssueGroups({
                 title: '诊断明细',
@@ -4162,7 +4530,7 @@ function renderInspectorDiagnosticsSystemSummary(state) {
 
 function renderInspectorQualitySystemSummary(state) {
     const schedule = state.project?.schedule || {};
-    const issues = schedule.qualityIssues || [];
+    const issues = (schedule.qualityIssues || []).filter(item => isActionableTimetableReviewItem(item, state));
     const breakdown = schedule.score?.softBreakdown || {};
     if (!issues.length && !Object.keys(breakdown).length) return '';
     return `
@@ -4191,7 +4559,7 @@ function renderInspectorSystemDetailGroups(model) {
                         <strong>${escapeHtml(group.title || '系统详情')}</strong>
                     </div>
                     <div class="tt-detail-list">
-                        ${(group.items || []).map(item => `<span><b>${escapeHtml(item.label)}</b>${escapeHtml(item.value ?? '-')}</span>`).join('')}
+                        ${(group.items || []).map(item => `<span class="${item.tone === 'warning' ? 'is-warning' : ''}"><b>${escapeHtml(item.label)}</b>${escapeHtml(item.value ?? '-')}</span>`).join('')}
                     </div>
                 </div>
             `).join('')}
@@ -4227,15 +4595,7 @@ function renderInspectorSolverSystemDetails(state) {
 
 function renderInspectorSystemDetails(state, model, selectedDetail) {
     const detailBlocks = [
-        selectedDetail ? '' : renderUnscheduledPlanQueue(state),
-        renderAuditPanel(state),
-        renderPublicationPanel(state),
-        renderScheduleDiagnosticsPanel(state),
-        renderInspectorDiagnosticsSystemSummary(state),
-        renderInspectorQualitySystemSummary(state),
-        renderOptimizationPanel(state),
         renderInspectorSystemDetailGroups(model),
-        renderInspectorSolverSystemDetails(state),
     ].filter(Boolean).join('');
     return `
         <section class="tt-inspector-section tt-inspector-system-section">
@@ -4279,6 +4639,7 @@ export function renderInspector(state, model = buildInspectorViewModel(state)) {
                 open: hasReview,
                 state,
             })}
+            ${renderConstraintFulfillmentSection(state, model)}
             ${renderInspectorSystemDetails(state, model, selectedDetail)}
             ${selectedDetail ? renderSlotInspector(state) : ''}
         </div>
@@ -4478,7 +4839,7 @@ function renderScheduleDiagnosticsPanel(state) {
 
 function renderQualityPanel(state) {
     const schedule = state.project?.schedule || {};
-    const issues = schedule.qualityIssues || [];
+    const issues = (schedule.qualityIssues || []).filter(item => isActionableTimetableReviewItem(item, state));
     const breakdown = schedule.score?.softBreakdown || {};
     if (!issues.length && !Object.keys(breakdown).length) return '';
     return `

@@ -90,6 +90,13 @@ function inspectorSummaryMarkup(html = '') {
   return html.match(/<summary class="tt-inspector-summary"[\s\S]*?<\/summary>/)?.[0] || '';
 }
 
+function inspectorSystemMarkup(html = '') {
+  const start = html.indexOf('data-inspector-section="system"');
+  if (start < 0) return '';
+  const slotStart = html.indexOf('class="tt-slot-inspector"', start);
+  return slotStart > start ? html.slice(start, slotStart) : html.slice(start);
+}
+
 function dutyDialogMarkup(html = '') {
   return html.match(/<section class="tt-duty-assignment-dialog"[\s\S]*?<\/section>/)?.[0] || '';
 }
@@ -2245,7 +2252,7 @@ test('timetable controller clears stale optimization jobs after saved data chang
   }
 });
 
-test('timetable workbench keeps solving in the board and pending plans in the inspector', async () => {
+test('timetable workbench keeps solving in the board and failure summaries in the inspector', async () => {
   const viewSource = await readFile(new URL('view.js', moduleRoot), 'utf8');
   const styles = await readFile(stylePath, 'utf8');
   const state = sampleWorkbenchState({
@@ -2266,8 +2273,8 @@ test('timetable workbench keeps solving in the board and pending plans in the in
   assert.match(schedulePanel, /class="tt-schedule-grid"/);
   assert.match(schedulePanel, /data-period="1"/);
   assert.match(schedulePanel, /data-period="7"/);
-  assert.match(inspector, /class="tt-plan-queue"/);
-  assert.match(inspector, /Math Teacher/);
+  assert.doesNotMatch(inspector, /class="tt-plan-queue"/);
+  assert.match(inspector, /生成详情/);
   assert.match(inspector, /Timefold 求解超时/);
 
   assert.match(styles, /\.tt-schedule-body\s*{/);
@@ -3222,7 +3229,7 @@ test('timetable inspector renders scheduling audit and quality suggestions', () 
       classes: [{ id: 'c1', grade: 'G7', name: '1' }],
       subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
       lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
-      rules: { hardRules: {}, softRules: {} },
+      rules: { hardRules: {}, softRules: { teacherLimits: { t_math: { consecutive: 2 } } } },
       schedule: {
         id: 'audit-schedule',
         generatedAt: '2026-01-01T00:00:00.000Z',
@@ -3238,7 +3245,7 @@ test('timetable inspector renders scheduling audit and quality suggestions', () 
           capacity: { totalLessons: 3, availableSlots: 35 },
         },
         qualityIssues: [
-          { type: 'teacher_consecutive', severity: 'warning', message: 'Math Teacher has too many consecutive lessons' },
+          { type: 'teacher_consecutive', severity: 'warning', teacherId: 't_math', message: 'Math Teacher has too many consecutive lessons' },
         ],
         score: {
           hardConflicts: 0,
@@ -3254,16 +3261,20 @@ test('timetable inspector renders scheduling audit and quality suggestions', () 
   });
 
   const inspector = renderInspector(state);
+  const systemMarkup = inspectorSystemMarkup(inspector);
 
   assert.match(inspector, /Math Teacher load is high/);
   assert.match(inspector, /教师负载/);
   assert.match(inspector, /Math Teacher has too many consecutive lessons/);
   assert.match(inspector, /教师连续课/);
-  assert.match(inspector, /班级日负载/);
-  assert.match(inspector, /排课诊断/);
-  assert.match(inspector, /诊断问题/);
   assert.match(inspector, /tt-inspector-problem-group is-warning/);
   assert.match(inspector, /tt-inspector-target-row/);
+  assert.match(systemMarkup, /数据摘要/);
+  assert.match(systemMarkup, /生成详情/);
+  assert.doesNotMatch(systemMarkup, /排课诊断/);
+  assert.doesNotMatch(systemMarkup, /诊断问题/);
+  assert.doesNotMatch(systemMarkup, /质量建议/);
+  assert.doesNotMatch(systemMarkup, /班级日负载/);
   assert.doesNotMatch(inspector, /teacher_load/);
   assert.doesNotMatch(inspector, /teacherConsecutive/);
   assert.doesNotMatch(inspector, /classDailyBalance/);
@@ -3297,7 +3308,7 @@ test('timetable inspector view model separates blocking issues from review sugge
         { id: 'conflict-teacher', severity: 'hard', type: 'teacher_conflict', message: 'Math Teacher 同时上课。' },
       ],
       qualityIssues: [
-        { id: 'quality-spread', severity: 'warning', type: 'subject_spread', message: 'Math 过于集中。', slot: { day: 2, period: 3 } },
+        { id: 'quality-manual', severity: 'warning', type: 'manual_review', message: '请教务复核排课质量。', slot: { day: 2, period: 3 } },
       ],
       diagnostics: {
         items: [
@@ -3347,14 +3358,14 @@ test('timetable inspector view model separates blocking issues from review sugge
   assert.equal(model.metrics.total, 2);
   assert.equal(model.metrics.hardConflicts, 1);
   assert.equal(model.metrics.unplaced, 1);
-  assert.equal(model.metrics.warnings, 3);
+  assert.equal(model.metrics.warnings, 2);
   assert.match(model.verdict.message, /必须处理/);
   assert.ok(model.blockingItems.some(item => item.message.includes('同时上课')));
   assert.ok(model.blockingItems.some(item => item.message.includes('未排')));
   assert.ok(model.blockingItems.some(item => item.title.includes('G7 1')));
-  assert.ok(model.reviewItems.some(item => item.message.includes('过于集中')));
+  assert.ok(model.reviewItems.some(item => item.message.includes('教务复核排课质量')));
   assert.ok(model.reviewItems.some(item => item.message.includes('负载接近满载')));
-  assert.ok(model.reviewItems.some(item => item.message.includes('建议复核教师负载')));
+  assert.equal(model.reviewItems.some(item => item.message.includes('建议复核教师负载')), false);
   assert.ok(model.systemDetails.some(item => item.group === 'solver'));
 });
 
@@ -3422,7 +3433,7 @@ test('timetable inspector renders grouped review workbench sections', () => {
         { id: 'conflict-teacher', severity: 'hard', type: 'teacher_conflict', message: 'Math Teacher 同时上课。' },
       ],
       qualityIssues: [
-        { id: 'quality-spread', severity: 'warning', type: 'subject_spread', message: 'Math 过于集中。', slot: { day: 2, period: 3 } },
+        { id: 'quality-manual', severity: 'warning', type: 'manual_review', message: '请教务复核排课质量。', slot: { day: 2, period: 3 } },
       ],
       diagnostics: {
         items: [
@@ -3457,7 +3468,7 @@ test('timetable inspector renders grouped review workbench sections', () => {
   assert.match(inspector, /必须处理/);
   assert.match(inspector, /Math Teacher 同时上课。/);
   assert.match(inspector, /建议复核/);
-  assert.match(inspector, /Math 过于集中。/);
+  assert.match(inspector, /请教务复核排课质量。/);
   assert.match(inspector, /课节 2-3/);
   assert.doesNotMatch(inspector, /\[object Object\]/);
   assert.match(inspector, /系统详情/);
@@ -3471,7 +3482,7 @@ test('timetable inspector renders clickable progressive controls for truncated i
   const qualityIssues = Array.from({ length: 12 }, (_, index) => ({
     id: `quality-${index + 1}`,
     severity: 'warning',
-    type: 'subject_spread',
+    type: 'manual_review',
     message: `质量建议 ${index + 1}`,
   }));
   const state = sampleWorkbenchState({
@@ -3511,12 +3522,15 @@ test('timetable inspector applies independent expanded limits per issue group', 
   const qualityIssues = Array.from({ length: 8 }, (_, index) => ({
     id: `quality-${index + 1}`,
     severity: 'warning',
-    type: 'subject_spread',
+    type: 'manual_review',
     message: `质量建议 ${index + 1}`,
   }));
-  const suggestions = Array.from({ length: 8 }, (_, index) => ({
-    id: `suggestion-${index + 1}`,
-    message: `诊断建议 ${index + 1}`,
+  const teacherLoadIssues = Array.from({ length: 8 }, (_, index) => ({
+    id: `teacher-load-${index + 1}`,
+    severity: 'warning',
+    type: 'teacher_load',
+    teacherId: 't_math',
+    message: `教师负载建议 ${index + 1}`,
   }));
   const baseState = {
     schedule: {
@@ -3527,8 +3541,8 @@ test('timetable inspector applies independent expanded limits per issue group', 
       lockedSlots: [],
       unplaced: [],
       conflicts: [],
-      qualityIssues,
-      diagnostics: { items: [], suggestions },
+      qualityIssues: [...qualityIssues, ...teacherLoadIssues],
+      diagnostics: { items: [], suggestions: [] },
       score: {
         hardConflicts: 0,
         unplacedLessons: 0,
@@ -3540,23 +3554,23 @@ test('timetable inspector applies independent expanded limits per issue group', 
   };
 
   const collapsedInspector = renderInspector(sampleWorkbenchState(baseState));
-  const qualityLimitKey = collapsedInspector.match(/<strong>同科分散<\/strong>[\s\S]*?data-inspector-issue-limit-key="([^"]+)"/)?.[1] || '';
-  const suggestionLimitKey = collapsedInspector.match(/<strong>建议<\/strong>[\s\S]*?data-inspector-issue-limit-key="([^"]+)"/)?.[1] || '';
+  const qualityLimitKey = collapsedInspector.match(/<strong>教务复核<\/strong>[\s\S]*?data-inspector-issue-limit-key="([^"]+)"/)?.[1] || '';
+  const teacherLoadLimitKey = collapsedInspector.match(/<strong>教师负载<\/strong>[\s\S]*?data-inspector-issue-limit-key="([^"]+)"/)?.[1] || '';
   assert.match(qualityLimitKey, /^review:group-/);
-  assert.match(suggestionLimitKey, /^review:group-/);
-  assert.notEqual(qualityLimitKey, suggestionLimitKey);
+  assert.match(teacherLoadLimitKey, /^review:group-/);
+  assert.notEqual(qualityLimitKey, teacherLoadLimitKey);
 
   const inspector = renderInspector(sampleWorkbenchState({
     ...baseState,
     inspectorIssueLimits: { [qualityLimitKey]: 25 },
   }));
 
-  assert.match(inspector, /<strong>同科分散<\/strong>[\s\S]*<span>8<\/span>/);
+  assert.match(inspector, /<strong>教务复核<\/strong>[\s\S]*<span>8<\/span>/);
   assert.match(inspector, /已显示\s*8\/8/);
   assert.match(inspector, /收起/);
-  assert.match(inspector, /诊断建议 5/);
-  assert.doesNotMatch(inspector, /诊断建议 6/);
-  assert.match(inspector, new RegExp(`data-inspector-issue-limit-key="${suggestionLimitKey}"`));
+  assert.match(inspector, /教师负载建议 5/);
+  assert.doesNotMatch(inspector, /教师负载建议 6/);
+  assert.match(inspector, new RegExp(`data-inspector-issue-limit-key="${teacherLoadLimitKey}"`));
 });
 
 test('timetable inspector renders locatable issue cards with target data', () => {
@@ -3643,6 +3657,200 @@ test('timetable inspector marks the just-located source issue without changing t
 
   assert.match(locatedRender, /tt-inspector-issue-item--locatable[^"]*is-inspector-located-source/);
   assert.match(locatedRender, new RegExp(`data-inspector-issue-key="${issueKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+});
+
+function sampleConstraintFulfillment(overrides = {}) {
+  return {
+    evaluated: true,
+    summary: { total: 144, satisfied: 128, partial: 11, unmet: 5, notApplicable: 0 },
+    items: [
+      {
+        id: 'rule-unmet',
+        type: 'teacher_daily_limit',
+        priority: 'soft',
+        status: 'unmet',
+        title: 'Math Teacher 每天最多 1 节',
+        evidence: '周一实际 2 节，超过上限 1 节。',
+        targetKind: 'teacher',
+        targetId: 't_math',
+        targetName: 'Math Teacher',
+        locateTargets: [{ targetKind: 'teacher', targetId: 't_math', day: 1, period: 1, slotId: 'slot-1' }],
+      },
+      {
+        id: 'rule-partial',
+        type: 'subject_morning',
+        priority: 'soft',
+        status: 'partial',
+        title: 'Math 上午优先',
+        evidence: '1/2 节在上午。',
+        targetKind: 'subject',
+        targetId: 'math',
+        targetName: 'Math',
+        locateTargets: [{ targetKind: 'class', targetId: 'c1', day: 1, period: 4, slotId: 'slot-2' }],
+      },
+      {
+        id: 'rule-satisfied',
+        type: 'class_unavailable',
+        priority: 'hard',
+        status: 'satisfied',
+        title: 'G71 周二第5节不可排',
+        evidence: '没有课程排入该禁排时段。',
+        targetKind: 'class',
+        targetId: 'c1',
+        targetName: 'G71',
+        locateTargets: [],
+      },
+      {
+        id: 'rule-not-applicable',
+        type: 'subject_spread',
+        priority: 'soft',
+        status: 'not_applicable',
+        title: 'PE 分散排布',
+        evidence: '当前课表没有 PE 课节。',
+        targetKind: 'subject',
+        targetId: 'pe',
+        targetName: 'PE',
+        locateTargets: [],
+      },
+    ],
+    ...overrides,
+  };
+}
+
+test('timetable inspector renders constraint fulfillment between review and system details', () => {
+  const state = sampleWorkbenchState({
+    schedule: {
+      id: 'schedule-constraint-fulfillment-ui',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [
+        { id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+        { id: 'slot-2', day: 1, period: 4, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+      ],
+      lockedSlots: [],
+      unplaced: [],
+      conflicts: [],
+      qualityIssues: [],
+      diagnostics: { items: [], suggestions: [] },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 2, totalLessons: 2, completeness: 100 },
+    },
+    constraintFulfillment: sampleConstraintFulfillment(),
+  });
+
+  const inspector = renderInspector(state);
+  const reviewIndex = inspector.indexOf('data-inspector-section="review"');
+  const fulfillmentIndex = inspector.indexOf('data-inspector-section="constraint-fulfillment"');
+  const systemIndex = inspector.indexOf('data-inspector-section="system"');
+
+  assert.ok(reviewIndex >= 0);
+  assert.ok(fulfillmentIndex > reviewIndex);
+  assert.ok(systemIndex > fulfillmentIndex);
+  assert.match(inspector, /约束达成度/);
+  assert.match(inspector, /约束 144/);
+  assert.match(inspector, /满足 128/);
+  assert.match(inspector, /部分 11/);
+  assert.match(inspector, /未满足 5/);
+  assert.match(inspector, /data-constraint-fulfillment-filter="attention"[\s\S]*aria-pressed="true"/);
+  assert.match(inspector, /Math Teacher 每天最多 1 节/);
+  assert.match(inspector, /Math 上午优先/);
+  assert.doesNotMatch(inspector, /G71 周二第5节不可排/);
+  assert.match(inspector, /data-constraint-fulfillment-row="rule-unmet"/);
+  assert.match(inspector, /data-action="locate-inspector-issue"/);
+});
+
+test('timetable inspector constraint fulfillment filter can show satisfied and not-applicable rows', () => {
+  const allInspector = renderInspector(sampleWorkbenchState({
+    schedule: {
+      id: 'schedule-constraint-fulfillment-all',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [{ id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+      lockedSlots: [],
+      unplaced: [],
+      conflicts: [],
+      qualityIssues: [],
+      diagnostics: { items: [], suggestions: [] },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+    },
+    constraintFulfillment: sampleConstraintFulfillment(),
+    constraintFulfillmentFilter: 'all',
+  }));
+  const notApplicableInspector = renderInspector(sampleWorkbenchState({
+    schedule: {
+      id: 'schedule-constraint-fulfillment-na',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [{ id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+      lockedSlots: [],
+      unplaced: [],
+      conflicts: [],
+      qualityIssues: [],
+      diagnostics: { items: [], suggestions: [] },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+    },
+    constraintFulfillment: sampleConstraintFulfillment(),
+    constraintFulfillmentFilter: 'not_applicable',
+  }));
+
+  assert.match(allInspector, /data-constraint-fulfillment-filter="all"[\s\S]*aria-pressed="true"/);
+  assert.match(allInspector, /G71 周二第5节不可排/);
+  assert.match(allInspector, /PE 分散排布/);
+  assert.match(notApplicableInspector, /PE 分散排布/);
+  assert.doesNotMatch(notApplicableInspector, /Math Teacher 每天最多 1 节/);
+});
+
+test('timetable inspector constraint fulfillment does not affect header review counts and marks related review items', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 }],
+    rules: { hardRules: {}, softRules: { teacherLimits: { t_math: { daily: 1 } } } },
+    schedule: {
+      id: 'schedule-constraint-fulfillment-related',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [
+        { id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+        { id: 'slot-2', day: 1, period: 2, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+      ],
+      lockedSlots: [],
+      unplaced: [],
+      conflicts: [],
+      qualityIssues: [{
+        id: 'daily-limit-review',
+        type: 'teacher_daily_limit',
+        severity: 'warning',
+        teacherId: 't_math',
+        targetKind: 'teacher',
+        targetId: 't_math',
+        targetName: 'Math Teacher',
+        message: 'Math Teacher 当天课时超过上限。',
+        slot: { day: 1, period: 1 },
+      }],
+      diagnostics: { items: [], suggestions: [] },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 2, totalLessons: 2, completeness: 100 },
+    },
+  });
+  const state = sampleWorkbenchState({
+    project,
+    constraintFulfillment: sampleConstraintFulfillment({ summary: { total: 144, satisfied: 143, partial: 0, unmet: 1, notApplicable: 0 } }),
+  });
+
+  const workbench = renderWorkbench(state);
+  const inspector = renderInspector(state);
+  const summary = inspectorSummaryMarkup(workbench);
+
+  assert.match(summary, /复核 1/);
+  assert.doesNotMatch(summary, /复核 144/);
+  assert.match(inspector, /已列入建议复核/);
+  const fulfillmentMarkup = inspector.match(/data-inspector-section="constraint-fulfillment"[\s\S]*?data-inspector-section="system"/)?.[0] || '';
+  assert.doesNotMatch(fulfillmentMarkup, /tt-inspector-problem-group/);
+  assert.doesNotMatch(fulfillmentMarkup, /Math Teacher 当天课时超过上限。/);
 });
 
 test('timetable inspector leaves non-locatable system issues as plain cards', () => {
@@ -3757,6 +3965,54 @@ test('timetable inspector issue expand actions update only the clicked group lim
   assert.match(interactionSource, /collapse-inspector-issue-group/);
   assert.match(styles, /\.tt-inspector-list-actions\s*{/);
   assert.match(styles, /\.tt-inspector-list-action\s*{/);
+});
+
+test('timetable inspector constraint fulfillment filter action updates state only', async () => {
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+  const listeners = {};
+  const container = {
+    addEventListener(type, listener) {
+      listeners[type] = listener;
+    },
+    querySelector() {
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const state = { constraintFulfillmentFilter: 'attention' };
+  let renderCount = 0;
+  const controller = {
+    render() {
+      renderCount += 1;
+    },
+  };
+  const filterButton = {
+    dataset: {
+      action: 'filter-constraint-fulfillment',
+      constraintFulfillmentFilter: 'all',
+    },
+  };
+
+  bindGridInteractions(container, controller, state);
+  listeners.click({
+    target: {
+      matches() {
+        return false;
+      },
+      closest(selector) {
+        if (selector === '[data-action]') return filterButton;
+        return null;
+      },
+    },
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  assert.equal(state.constraintFulfillmentFilter, 'all');
+  assert.equal(renderCount, 1);
+  assert.match(interactionSource, /filter-constraint-fulfillment/);
 });
 
 test('timetable inspector locate action delegates target data to the controller', () => {
@@ -4115,7 +4371,7 @@ test('timetable inspector applies default section expansion rules', () => {
       lockedSlots: [],
       unplaced: [{ lessonPlanId: 'lp_math', reason: 'No slot' }],
       conflicts: [],
-      qualityIssues: [{ id: 'quality-1', severity: 'warning', type: 'subject_spread', message: 'Math 过于集中。' }],
+      qualityIssues: [{ id: 'quality-1', severity: 'warning', type: 'manual_review', message: '请教务复核排课质量。' }],
       diagnostics: { items: [], suggestions: [] },
       score: {
         hardConflicts: 0,
@@ -4147,7 +4403,7 @@ test('timetable inspector applies default section expansion rules', () => {
       lockedSlots: [],
       unplaced: [],
       conflicts: [],
-      qualityIssues: [{ id: 'quality-1', severity: 'warning', type: 'subject_spread', message: 'Math 过于集中。' }],
+      qualityIssues: [{ id: 'quality-1', severity: 'warning', type: 'manual_review', message: '请教务复核排课质量。' }],
       diagnostics: { items: [], suggestions: [] },
       score: {
         hardConflicts: 0,
@@ -4201,6 +4457,86 @@ test('timetable inspector applies default section expansion rules', () => {
   assert.match(selectedTag, /open/);
 });
 
+test('timetable inspector system details render summaries without duplicate issue lists', () => {
+  const inspector = renderInspector(sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      schoolName: 'UI School',
+      term: '2026',
+      weekdays: 5,
+      periodsPerDay: 7,
+      teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+      classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+      subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+      lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+      rules: { hardRules: {}, softRules: { teacherLimits: { t_math: { consecutive: 2 } } } },
+      schedule: {
+        id: 'schedule-system-summary-only',
+        generatedAt: '2026-01-02T00:00:00.000Z',
+        source: 'fast_constructed',
+        slots: [{ id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+        lockedSlots: [],
+        unplaced: [],
+        conflicts: [],
+        audit: {
+          blockingIssues: [],
+          warnings: [{ type: 'teacher_load', teacherId: 't_math', message: 'Math Teacher 负载接近满载。' }],
+        },
+        publication: {
+          ok: true,
+          reason: 'ready',
+          issueEntries: [{ type: 'manual_adjusted', severity: 'warning', targetKind: 'schedule', targetName: '课表', message: '课表包含手动调整，发布前建议复核锁定课节。' }],
+          reviewItems: [{ type: 'manual_adjusted', severity: 'warning', targetKind: 'schedule', targetName: '课表', message: '课表包含手动调整，发布前建议复核锁定课节。' }],
+          summary: { totalLessons: 3, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+        },
+        qualityIssues: [
+          { id: 'teacher-consecutive', severity: 'warning', type: 'teacher_consecutive', teacherId: 't_math', message: 'Math Teacher 连续授课偏多。' },
+        ],
+        diagnostics: {
+          diagnosticsVersion: 1,
+          summary: { error: 0, warning: 1, info: 0, total: 1, suggestions: 1 },
+          items: [{
+            id: 'diag-teacher-load',
+            category: 'quality',
+            type: 'teacher_load',
+            severity: 'warning',
+            targetKind: 'teacher',
+            targetId: 't_math',
+            targetName: 'Math Teacher',
+            message: 'Math Teacher 负载接近满载。',
+          }],
+          suggestions: [{
+            id: 'sug-teacher-load',
+            kind: 'quality',
+            targetDiagnostics: ['diag-teacher-load'],
+            targetKind: 'teacher',
+            targetId: 't_math',
+            targetName: 'Math Teacher',
+            message: '复核 Math Teacher 的软规则表现，必要时调整偏好或接受当前结果。',
+          }],
+        },
+        score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 3, completeness: 33 },
+      },
+    }),
+  }));
+  const systemMarkup = inspectorSystemMarkup(inspector);
+
+  assert.match(inspector, /Math Teacher 负载接近满载。/);
+  assert.match(inspector, /课表包含手动调整，发布前建议复核锁定课节。/);
+  assert.match(inspector, /Math Teacher 连续授课偏多。/);
+  assert.match(systemMarkup, /数据摘要/);
+  assert.match(systemMarkup, /生成详情/);
+  assert.match(systemMarkup, /发布详情/);
+  assert.doesNotMatch(systemMarkup, /发布问题/);
+  assert.doesNotMatch(systemMarkup, /排课诊断/);
+  assert.doesNotMatch(systemMarkup, /诊断报告/);
+  assert.doesNotMatch(systemMarkup, /质量建议/);
+  assert.doesNotMatch(systemMarkup, /诊断明细/);
+  assert.doesNotMatch(systemMarkup, /诊断建议/);
+  assert.doesNotMatch(systemMarkup, /tt-inspector-problem-group/);
+  assert.doesNotMatch(systemMarkup, /data-action="locate-inspector-issue"/);
+  assert.doesNotMatch(systemMarkup, /复核 Math Teacher 的软规则表现/);
+});
+
 test('timetable inspector summary reports actionable counts in the floating header', () => {
   const blockingHtml = renderWorkbench(sampleWorkbenchState({
     schedule: {
@@ -4212,7 +4548,7 @@ test('timetable inspector summary reports actionable counts in the floating head
       unplaced: [{ lessonPlanId: 'lp_math', reason: 'No slot' }],
       conflicts: [],
       qualityIssues: [
-        { id: 'quality-1', severity: 'warning', type: 'subject_spread', message: 'Math 过于集中。' },
+        { id: 'quality-1', severity: 'warning', type: 'manual_review', message: '请教务复核排课质量。' },
         { id: 'quality-2', severity: 'warning', type: 'teacher_load', message: 'Math Teacher 负载偏高。' },
       ],
       diagnostics: { items: [], suggestions: [] },
@@ -4336,6 +4672,411 @@ test('timetable inspector ignores legacy full-class load warnings', () => {
   assert.doesNotMatch(mixedInspector, /班级课表接近满载。/);
 });
 
+test('timetable inspector ignores legacy subject spread review noise', () => {
+  const subjectSpreadOnlySchedule = {
+    id: 'schedule-legacy-subject-spread',
+    generatedAt: '2026-01-02T00:00:00.000Z',
+    source: 'fast_constructed',
+    slots: [
+      { id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+      { id: 'slot-2', day: 1, period: 2, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+    ],
+    lockedSlots: [],
+    unplaced: [],
+    conflicts: [],
+    audit: { blockingIssues: [], warnings: [], bottlenecks: {}, capacity: { totalLessons: 2, availableSlots: 35 } },
+    publication: {
+      ok: true,
+      reason: 'ready',
+      issueEntries: [
+        { type: 'subject_spread', severity: 'warning', targetKind: 'class', targetId: 'c1', targetName: 'G71', message: 'Math 同一天过于集中。' },
+      ],
+      reviewItems: [
+        { type: 'subject_spread', severity: 'warning', targetKind: 'class', targetId: 'c1', targetName: 'G71', message: 'Math 同一天过于集中。' },
+      ],
+      blockingIssues: [],
+      warnings: [],
+      summary: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0 },
+    },
+    qualityIssues: [
+      { id: 'quality-spread', severity: 'warning', type: 'subject_spread', message: 'Math 同一天过于集中。', slot: { day: 1, period: 1 } },
+    ],
+    diagnostics: { items: [], suggestions: [] },
+    score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 2, totalLessons: 2, completeness: 100 },
+  };
+
+  const model = buildInspectorViewModel(sampleWorkbenchState({ schedule: subjectSpreadOnlySchedule }));
+  const workbench = renderWorkbench(sampleWorkbenchState({ schedule: subjectSpreadOnlySchedule }));
+  const inspector = renderInspector(sampleWorkbenchState({ schedule: subjectSpreadOnlySchedule }));
+
+  assert.equal(model.reviewItems.length, 0);
+  assert.match(inspectorSummaryMarkup(workbench), /可发布/);
+  assert.doesNotMatch(inspector, /同科分散/);
+  assert.doesNotMatch(inspector, /同一天过于集中/);
+
+  const mixedInspector = renderInspector(sampleWorkbenchState({
+    schedule: {
+      ...subjectSpreadOnlySchedule,
+      id: 'schedule-legacy-subject-spread-with-teacher',
+      qualityIssues: [
+        ...subjectSpreadOnlySchedule.qualityIssues,
+        { id: 'manual-review', severity: 'warning', type: 'manual_review', message: '请教务复核排课质量。' },
+      ],
+      publication: {
+        ...subjectSpreadOnlySchedule.publication,
+        issueEntries: [
+          ...subjectSpreadOnlySchedule.publication.issueEntries,
+          { type: 'manual_review', severity: 'warning', targetKind: 'schedule', targetName: '课表', message: '请教务复核排课质量。' },
+        ],
+        reviewItems: [
+          ...subjectSpreadOnlySchedule.publication.reviewItems,
+          { type: 'manual_review', severity: 'warning', targetKind: 'schedule', targetName: '课表', message: '请教务复核排课质量。' },
+        ],
+      },
+    },
+  }));
+
+  assert.match(mixedInspector, /请教务复核排课质量。/);
+  assert.match(mixedInspector, /教务复核/);
+  assert.doesNotMatch(mixedInspector, /同一天过于集中/);
+});
+
+test('timetable inspector ignores legacy default teacher consecutive review noise', () => {
+  const legacySchedule = {
+    id: 'schedule-legacy-teacher-consecutive',
+    generatedAt: '2026-01-02T00:00:00.000Z',
+    source: 'fast_constructed',
+    slots: [
+      { id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+      { id: 'slot-2', day: 1, period: 2, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+      { id: 'slot-3', day: 1, period: 3, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+      { id: 'slot-4', day: 1, period: 4, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+    ],
+    lockedSlots: [],
+    unplaced: [],
+    conflicts: [],
+    publication: {
+      ok: true,
+      reason: 'ready',
+      issueEntries: [
+        { type: 'teacher_consecutive', severity: 'warning', targetKind: 'teacher', targetId: 't_math', targetName: 'Math Teacher', message: 'Math Teacher 连续授课偏多。' },
+      ],
+      reviewItems: [
+        { type: 'teacher_consecutive', severity: 'warning', targetKind: 'teacher', targetId: 't_math', targetName: 'Math Teacher', message: 'Math Teacher 连续授课偏多。' },
+      ],
+      blockingIssues: [],
+      warnings: [],
+      summary: { totalLessons: 4, placedLessons: 4, unplacedLessons: 0, hardConflicts: 0 },
+    },
+    qualityIssues: [
+      { id: 'teacher-consecutive', severity: 'warning', type: 'teacher_consecutive', teacherId: 't_math', message: 'Math Teacher 连续授课偏多。' },
+    ],
+    diagnostics: { items: [], suggestions: [] },
+    score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 4, totalLessons: 4, completeness: 100 },
+  };
+
+  const state = sampleWorkbenchState({ schedule: legacySchedule });
+  const model = buildInspectorViewModel(state);
+  const workbench = renderWorkbench(state);
+  const inspector = renderInspector(state);
+
+  assert.equal(model.reviewItems.length, 0);
+  assert.match(inspectorSummaryMarkup(workbench), /可发布/);
+  assert.doesNotMatch(inspector, /教师连续课/);
+  assert.doesNotMatch(inspector, /连续授课偏多/);
+});
+
+test('timetable inspector keeps teacher consecutive review for explicit limit', () => {
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 7,
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 4 }],
+    rules: { hardRules: {}, softRules: { teacherLimits: { t_math: { consecutive: 2 } } } },
+    schedule: {
+      id: 'schedule-explicit-teacher-consecutive',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [
+        { id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+        { id: 'slot-2', day: 1, period: 2, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+        { id: 'slot-3', day: 1, period: 3, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+        { id: 'slot-4', day: 1, period: 4, classId: 'c1', subjectId: 'math', teacherId: 't_math' },
+      ],
+      lockedSlots: [],
+      unplaced: [],
+      conflicts: [],
+      publication: {
+        ok: true,
+        reason: 'ready',
+        issueEntries: [
+          { type: 'teacher_consecutive', severity: 'warning', targetKind: 'teacher', targetId: 't_math', targetName: 'Math Teacher', message: 'Math Teacher 连续授课偏多。' },
+        ],
+        reviewItems: [
+          { type: 'teacher_consecutive', severity: 'warning', targetKind: 'teacher', targetId: 't_math', targetName: 'Math Teacher', message: 'Math Teacher 连续授课偏多。' },
+        ],
+        blockingIssues: [],
+        warnings: [],
+        summary: { totalLessons: 4, placedLessons: 4, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      qualityIssues: [
+        { id: 'teacher-consecutive', severity: 'warning', type: 'teacher_consecutive', teacherId: 't_math', message: 'Math Teacher 连续授课偏多。' },
+      ],
+      diagnostics: { items: [], suggestions: [] },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 4, totalLessons: 4, completeness: 100 },
+    },
+  });
+
+  const inspector = renderInspector(sampleWorkbenchState({ project }));
+
+  assert.match(inspector, /Math Teacher 连续授课偏多。/);
+  assert.match(inspector, /教师连续课/);
+});
+
+test('timetable inspector deduplicates the same review across publication diagnostics and quality sources', () => {
+  const duplicatedReview = {
+    severity: 'warning',
+    type: 'manual_review',
+    targetKind: 'class',
+    targetId: 'c1',
+    targetName: '八年级G8-10班',
+    message: '发布前请人工复核。',
+    slot: '2-3',
+  };
+  const schedule = {
+    id: 'schedule-duplicated-review-sources',
+    generatedAt: '2026-01-02T00:00:00.000Z',
+    source: 'fast_constructed',
+    slots: [{ id: 'slot-1', day: 2, period: 3, classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+    lockedSlots: [],
+    unplaced: [],
+    conflicts: [],
+    publication: {
+      ok: true,
+      reason: 'ready',
+      issueEntries: [{ ...duplicatedReview, id: 'publication-review' }],
+      reviewItems: [{ ...duplicatedReview, id: 'publication-review' }],
+      blockingIssues: [],
+      warnings: [],
+      summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+    },
+    diagnostics: {
+      items: [{ ...duplicatedReview, id: 'diagnostic-review', category: 'quality' }],
+      suggestions: [],
+    },
+    qualityIssues: [{ ...duplicatedReview, id: 'quality-review', slot: { day: 2, period: 3 } }],
+    score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+  };
+
+  const state = sampleWorkbenchState({ schedule });
+  const model = buildInspectorViewModel(state);
+  const inspector = renderInspector(state);
+  const reviewStart = inspector.indexOf('data-inspector-section="review"');
+  const systemStart = inspector.indexOf('data-inspector-section="system"', reviewStart);
+  const reviewMarkup = inspector.slice(reviewStart, systemStart);
+  const groupCount = (reviewMarkup.match(/tt-inspector-problem-group/g) || []).length;
+
+  assert.equal(model.reviewItems.length, 1);
+  assert.equal(groupCount, 1);
+  assert.match(inspector, /发布前请人工复核。/);
+});
+
+test('timetable inspector ignores legacy morning subject review noise', () => {
+  const morningIssue = {
+    severity: 'info',
+    type: 'morning_subject_late',
+    targetKind: 'class',
+    targetId: 'c1',
+    targetName: '八年级G8-10班',
+    message: '物理 未排在上午优先时段。',
+    slot: '1-5',
+  };
+  const schedule = {
+    id: 'schedule-legacy-morning-subject',
+    generatedAt: '2026-01-02T00:00:00.000Z',
+    source: 'fast_constructed',
+    slots: [{ id: 'slot-1', day: 1, period: 5, classId: 'c1', subjectId: 'physics', teacherId: 't_math' }],
+    lockedSlots: [],
+    unplaced: [],
+    conflicts: [],
+    publication: {
+      ok: true,
+      reason: 'ready',
+      issueEntries: [{ ...morningIssue, id: 'publication-morning' }],
+      reviewItems: [{ ...morningIssue, id: 'publication-morning' }],
+      blockingIssues: [],
+      warnings: [],
+      summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+    },
+    diagnostics: {
+      items: [{ ...morningIssue, id: 'diagnostic-morning', category: 'quality' }],
+      suggestions: [],
+    },
+    qualityIssues: [{ ...morningIssue, id: 'quality-morning', classId: 'c1', subjectId: 'physics', slot: { day: 1, period: 5 } }],
+    score: {
+      hardConflicts: 0,
+      unplacedLessons: 0,
+      placedLessons: 1,
+      totalLessons: 1,
+      completeness: 100,
+    },
+  };
+
+  const state = sampleWorkbenchState({ schedule });
+  const model = buildInspectorViewModel(state);
+  const workbench = renderWorkbench(state);
+  const inspector = renderInspector(state);
+
+  assert.equal(model.reviewItems.length, 0);
+  assert.match(inspectorSummaryMarkup(workbench), /可发布/);
+  assert.doesNotMatch(inspector, /主科时段/);
+  assert.doesNotMatch(inspector, /未排在上午优先时段/);
+});
+
+test('timetable inspector ignores legacy diagnostics suggestions noise', () => {
+  const legacyDiagnostics = {
+    diagnosticsVersion: 1,
+    summary: { error: 0, warning: 4, info: 0, total: 4, suggestions: 4 },
+    items: [
+      {
+        id: 'diag-class-load',
+        category: 'audit',
+        source: 'schedule.audit.warnings',
+        type: 'class_load',
+        severity: 'warning',
+        targetKind: 'class',
+        targetId: 'c1',
+        targetName: 'G71',
+        message: '班级课表接近满载。',
+      },
+      {
+        id: 'diag-subject-spread',
+        category: 'quality',
+        source: 'schedule.qualityIssues',
+        type: 'subject_spread',
+        severity: 'warning',
+        targetKind: 'class',
+        targetId: 'c1',
+        targetName: 'G71',
+        message: 'Math 同一天过于集中。',
+      },
+      {
+        id: 'diag-morning',
+        category: 'quality',
+        source: 'schedule.qualityIssues',
+        type: 'morning_subject_late',
+        severity: 'info',
+        targetKind: 'class',
+        targetId: 'c1',
+        targetName: 'G71',
+        message: 'Math 未排在上午优先时段。',
+      },
+      {
+        id: 'diag-teacher-consecutive',
+        category: 'quality',
+        source: 'schedule.qualityIssues',
+        type: 'teacher_consecutive',
+        severity: 'warning',
+        targetKind: 'teacher',
+        targetId: 't_math',
+        targetName: 'Math Teacher',
+        message: 'Math Teacher 连续授课偏多。',
+      },
+    ],
+    suggestions: [
+      { id: 'sug-class-load', kind: 'audit', targetDiagnostics: ['diag-class-load'], targetKind: 'class', targetId: 'c1', targetName: 'G71', message: '复核 G71 的相关数据。' },
+      { id: 'sug-subject-spread', kind: 'quality', targetDiagnostics: ['diag-subject-spread'], targetKind: 'class', targetId: 'c1', targetName: 'G71', message: '复核 G71 的软规则表现，必要时调整偏好或接受当前结果。' },
+      { id: 'sug-morning', kind: 'quality', targetDiagnostics: ['diag-morning'], targetKind: 'class', targetId: 'c1', targetName: 'G71', message: '发布前先处理 G71 的阻断项，再重新检查课表。' },
+      { id: 'sug-teacher-consecutive', kind: 'quality', targetDiagnostics: ['diag-teacher-consecutive'], targetKind: 'teacher', targetId: 't_math', targetName: 'Math Teacher', message: '复核 Math Teacher 的软规则表现，必要时调整偏好或接受当前结果。' },
+    ],
+  };
+  const schedule = {
+    id: 'schedule-legacy-diagnostics-suggestions',
+    generatedAt: '2026-01-02T00:00:00.000Z',
+    source: 'fast_constructed',
+    slots: [{ id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+    lockedSlots: [],
+    unplaced: [],
+    conflicts: [],
+    audit: { blockingIssues: [], warnings: [] },
+    publication: { ok: true, reason: 'ready', issueEntries: [], reviewItems: [], summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 } },
+    qualityIssues: [],
+    diagnostics: legacyDiagnostics,
+    score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+  };
+
+  const state = sampleWorkbenchState({ schedule });
+  const model = buildInspectorViewModel(state);
+  const workbench = renderWorkbench(state);
+  const inspector = renderInspector(state);
+
+  assert.equal(model.reviewItems.length, 0);
+  assert.match(inspectorSummaryMarkup(workbench), /可发布/);
+  assert.doesNotMatch(inspector, /tt-inspector-problem-group[\s\S]*<strong>建议<\/strong>/);
+  assert.doesNotMatch(inspector, /班级课表接近满载/);
+  assert.doesNotMatch(inspector, /同一天过于集中/);
+  assert.doesNotMatch(inspector, /未排在上午优先时段/);
+  assert.doesNotMatch(inspector, /连续授课偏多/);
+  assert.doesNotMatch(inspector, /发布前先处理 G71/);
+});
+
+test('timetable inspector keeps actionable diagnostics issues in review without repeating suggestions', () => {
+  const schedule = {
+    id: 'schedule-actionable-diagnostics-suggestion',
+    generatedAt: '2026-01-02T00:00:00.000Z',
+    source: 'fast_constructed',
+    slots: [{ id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+    lockedSlots: [],
+    unplaced: [],
+    conflicts: [],
+    audit: { blockingIssues: [], warnings: [] },
+    publication: { ok: true, reason: 'ready', issueEntries: [], reviewItems: [], summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 } },
+    qualityIssues: [],
+    diagnostics: {
+      diagnosticsVersion: 1,
+      summary: { error: 0, warning: 1, info: 0, total: 1, suggestions: 1 },
+      items: [{
+        id: 'diag-avoid',
+        category: 'quality',
+        source: 'schedule.qualityIssues',
+        type: 'subject_avoid_period',
+        severity: 'warning',
+        targetKind: 'class',
+        targetId: 'c1',
+        targetName: 'G71',
+        message: 'Math 排在了避开节次。',
+      }],
+      suggestions: [{
+        id: 'sug-avoid',
+        kind: 'quality',
+        targetDiagnostics: ['diag-avoid'],
+        targetKind: 'class',
+        targetId: 'c1',
+        targetName: 'G71',
+        message: '检查避开节次规则后重新生成。',
+      }],
+    },
+    score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+  };
+
+  const state = sampleWorkbenchState({ schedule });
+  const model = buildInspectorViewModel(state);
+  const inspector = renderInspector(state);
+  const reviewStart = inspector.indexOf('data-inspector-section="review"');
+  const systemStart = inspector.indexOf('data-inspector-section="system"', reviewStart);
+  const reviewMarkup = inspector.slice(reviewStart, systemStart);
+
+  assert.equal(model.reviewItems.length, 1);
+  assert.ok(model.reviewItems.some(item => item.message === 'Math 排在了避开节次。'));
+  assert.doesNotMatch(reviewMarkup, /检查避开节次规则后重新生成。/);
+  assert.doesNotMatch(inspectorSystemMarkup(inspector), /检查避开节次规则后重新生成。/);
+  assert.doesNotMatch(inspector, /诊断建议/);
+});
+
 test('timetable inspector shows publication readiness before export', () => {
   const state = sampleWorkbenchState({
     project: createDefaultTimetableProject({
@@ -4382,8 +5123,10 @@ test('timetable inspector shows publication readiness before export', () => {
   });
 
   const inspector = renderInspector(state);
+  const systemMarkup = inspectorSystemMarkup(inspector);
 
-  assert.match(inspector, /发布前校验/);
+  assert.match(systemMarkup, /发布详情/);
+  assert.match(systemMarkup, /发布校验/);
   assert.match(inspector, /不可发布/);
   assert.match(inspector, /未排课时/);
   assert.match(inspector, /教务复核/);
@@ -4391,7 +5134,7 @@ test('timetable inspector shows publication readiness before export', () => {
   assert.doesNotMatch(inspector, /manual_review/);
   assert.match(inspector, /Math Teacher 负载接近满载/);
   assert.match(inspector, /G7 1 还有 2 节未排/);
-  assert.match(inspector, /发布问题/);
+  assert.doesNotMatch(systemMarkup, /发布问题/);
   assert.match(inspector, /必须先处理/);
   assert.match(inspector, /建议发布前复核/);
   assert.match(inspector, /tt-inspector-problem-group is-error/);
@@ -4780,7 +5523,7 @@ test('timetable restore published actions use a confirmation dialog with overwri
   assert.match(open, /恢复发布版/);
   assert.match(open, /发布版 V2/);
   assert.match(open, /当前草稿将被覆盖/);
-  assert.match(open, /移动 1/);
+  assert.match(open, /<b>移动<\/b>1/);
   assert.match(open, /id="tt-confirm-restore"/);
   assert.match(controllerSource, /openRestoreDialog\(/);
   assert.match(controllerSource, /confirmRestoreSchedule\(/);
@@ -5416,7 +6159,7 @@ test('timetable workflow disables published snapshot export and restore when fin
   assert.match(buttonTag(html, 'data-export-type="published_class"'), /disabled/);
   assert.match(buttonTag(html, 'data-export-type="published_teacher"'), /disabled/);
   assert.match(buttonTag(html, 'data-export-type="published_master"'), /disabled/);
-  assert.match(buttonTag(html, 'id="tt-restore-published-snapshot"'), /disabled/);
+  assert.match(buttonTag(html, 'data-restore-published-snapshot="latest"'), /disabled/);
   assert.match(html, /发布快照校验失败，请重新发布后再导出或恢复。/);
   assert.match(buttonTag(html, 'id="tt-publish-schedule"'), /data-publish-schedule/);
   assert.doesNotMatch(buttonTag(html, 'id="tt-publish-schedule"'), /disabled/);
@@ -5529,22 +6272,22 @@ test('timetable inspector explains published and changed draft states', () => {
     },
   }));
 
-  assert.match(publishedInspector, /发布状态/);
-  assert.match(publishedInspector, /发布归档/);
+  const publishedSystemMarkup = inspectorSystemMarkup(publishedInspector);
+  const changedSystemMarkup = inspectorSystemMarkup(changedInspector);
+
+  assert.match(publishedSystemMarkup, /发布详情/);
+  assert.match(publishedSystemMarkup, /发布状态/);
   assert.match(publishedInspector, /已发布/);
   assert.match(publishedInspector, /已发布 V1/);
   assert.match(publishedInspector, /来源<\/b>已发布/);
-  assert.match(publishedInspector, /教务处确认发布/);
   assert.match(publishedInspector, /发布指纹/);
   assert.match(publishedInspector, /1234567890ab/);
-  assert.match(publishedInspector, /发布快照/);
-  assert.match(publishedInspector, /12 节/);
-  assert.match(publishedInspector, /发布历史/);
-  assert.match(publishedInspector, /V1/);
-  assert.match(publishedInspector, /第一次发布/);
-  assert.match(publishedInspector, /10 节/);
+  assert.doesNotMatch(publishedSystemMarkup, /发布历史/);
+  assert.doesNotMatch(publishedSystemMarkup, /教务处确认发布/);
   assert.match(changedInspector, /草稿已变化/);
-  assert.match(changedInspector, /发布已失效/);
+  assert.match(changedInspector, /发布归档/);
+  assert.match(changedInspector, /当前工作草稿已清空/);
+  assert.match(changedSystemMarkup, /发布状态<\/b>草稿已变化/);
   assert.match(restoredInspector, /恢复发布版/);
   assert.match(restoredInspector, /重新发布前建议教务复核/);
   assert.doesNotMatch(restoredInspector, /restored_published_draft/);
@@ -5705,7 +6448,6 @@ test('timetable publication history opens a detail dialog for snapshot review', 
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
   const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
 
-  assert.match(html, /data-publication-history-version="1"/);
   assert.match(html, /id="tt-publication-history-dialog"/);
   assert.match(html, /V1/);
   assert.match(html, /published-v1/);
@@ -5978,12 +6720,9 @@ test('timetable inspector compares current draft against the published snapshot'
   assert.match(inspector, /移动 1/);
   assert.match(inspector, /新增 1/);
   assert.match(inspector, /移除 1/);
-  assert.match(inspector, /Math/);
-  assert.match(inspector, /周一 第1节/);
-  assert.match(inspector, /周二 第3节/);
-  assert.match(inspector, /id="tt-restore-published-snapshot"/);
-  assert.match(inspector, /data-restore-published-version="1"/);
-  assert.match(inspector, /恢复发布版/);
+  assert.match(inspector, /请重新发布后导出正式课表/);
+  assert.doesNotMatch(inspectorSystemMarkup(inspector), /id="tt-restore-published-snapshot"/);
+  assert.doesNotMatch(inspectorSystemMarkup(inspector), /周一 第1节/);
 });
 
 test('timetable archive-only draft uses published snapshot context for diff labels and restore wiring', async () => {
@@ -11454,7 +12193,7 @@ test('timetable project route only clears schedule when active range changes', a
   assert.doesNotMatch(routeSource, /dayPartBoundaries[\s\S]{0,200}preservePublishedArchive\(null,\s*current\.schedule\)/);
 });
 
-test('timetable inspector surfaces data and 智能 rule audit summaries', () => {
+test('timetable inspector keeps data and 智能 rule audit details out of system summaries', () => {
   const state = sampleWorkbenchState({
     ruleDraftPreview: [{
       id: 'draft-1',
@@ -11481,15 +12220,18 @@ test('timetable inspector surfaces data and 智能 rule audit summaries', () => 
   });
 
   const inspector = renderInspector(state);
+  const systemMarkup = inspectorSystemMarkup(inspector);
 
-  assert.match(inspector, /class="tt-audit-grid"/);
-  assert.match(inspector, /tt-rule-preview-item/);
-  assert.match(inspector, /Unknown class ignored/);
-  assert.match(inspector, /All teachers/);
-  assert.match(inspector, /teacher_load_balance/);
+  assert.match(systemMarkup, /数据摘要/);
+  assert.match(systemMarkup, /生成详情/);
+  assert.doesNotMatch(inspector, /class="tt-audit-grid"/);
+  assert.doesNotMatch(inspector, /tt-rule-preview-item/);
+  assert.doesNotMatch(inspector, /Unknown class ignored/);
+  assert.doesNotMatch(inspector, /All teachers/);
+  assert.doesNotMatch(inspector, /teacher_load_balance/);
 });
 
-test('timetable inspector renders unified diagnostics summary and items', () => {
+test('timetable inspector keeps diagnostics issues in main review and system details as summaries', () => {
   const state = sampleWorkbenchState({
     project: createDefaultTimetableProject({
       teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
@@ -11521,12 +12263,12 @@ test('timetable inspector renders unified diagnostics summary and items', () => 
           }, {
             id: 'diag_2',
             category: 'quality',
-            type: 'subject_spread',
+            type: 'subject_avoid_period',
             severity: 'warning',
             targetKind: 'subject',
             targetId: 'math',
             targetName: 'Math',
-            message: '同科过于集中。',
+            message: 'Math 排在了避开节次。',
           }],
           byObject: { teachers: {}, classes: { c1: ['diag_1'] }, subjects: { math: ['diag_2'] }, rooms: {}, plans: {} },
           suggestions: [{
@@ -11543,22 +12285,21 @@ test('timetable inspector renders unified diagnostics summary and items', () => 
   });
 
   const inspector = renderInspector(state);
+  const systemMarkup = inspectorSystemMarkup(inspector);
 
-  assert.match(inspector, /诊断报告/);
-  assert.match(inspector, /错误<\/b>1/);
-  assert.match(inspector, /警告<\/b>1/);
-  assert.match(inspector, /建议<\/b>1/);
-  assert.match(inspector, /班级/);
-  assert.match(inspector, /课程/);
-  assert.match(inspector, /G71/);
   assert.match(inspector, /tt-inspector-problem-group is-error/);
   assert.match(inspector, /tt-inspector-problem-group is-warning/);
   assert.match(inspector, /Math 还有 2 节未排。/);
-  assert.match(inspector, /同科过于集中。/);
-  assert.match(inspector, /检查班级容量后重新生成。/);
+  assert.match(inspector, /Math 排在了避开节次。/);
+  assert.match(systemMarkup, /数据摘要/);
+  assert.match(systemMarkup, /生成详情/);
+  assert.doesNotMatch(systemMarkup, /诊断报告/);
+  assert.doesNotMatch(systemMarkup, /诊断明细/);
+  assert.doesNotMatch(systemMarkup, /诊断建议/);
+  assert.doesNotMatch(systemMarkup, /检查班级容量后重新生成。/);
 });
 
-test('timetable publication panel prefers unified publication diagnostics when present', () => {
+test('timetable inspector prefers unified publication diagnostics in main review without system duplication', () => {
   const state = sampleWorkbenchState({
     project: createDefaultTimetableProject({
       schoolName: 'UI School',
@@ -11629,13 +12370,18 @@ test('timetable publication panel prefers unified publication diagnostics when p
   });
 
   const inspector = renderInspector(state);
+  const systemMarkup = inspectorSystemMarkup(inspector);
 
-  assert.match(inspector, /发布问题/);
   assert.match(inspector, /G71 还有 2 节未排。/);
   assert.match(inspector, /Math Teacher 负载接近满载。/);
   assert.match(inspector, /tt-inspector-problem-group is-error/);
   assert.match(inspector, /tt-inspector-problem-group is-warning/);
   assert.match(inspector, /tt-inspector-target-row/);
+  assert.match(systemMarkup, /发布详情/);
+  assert.match(systemMarkup, /发布校验/);
+  assert.doesNotMatch(systemMarkup, /发布问题/);
+  assert.doesNotMatch(systemMarkup, /G71 还有 2 节未排。/);
+  assert.doesNotMatch(systemMarkup, /Math Teacher 负载接近满载。/);
 });
 
 test('timetable publication panel can fall back to publication issueEntries without diagnostics', () => {

@@ -23,10 +23,23 @@ function result(ok, reason, message, details = {}) {
     return { ok, reason, message, details };
 }
 
-const LEGACY_NON_ACTIONABLE_AUDIT_TYPES = new Set(['class_load']);
+const LEGACY_NON_ACTIONABLE_REVIEW_TYPES = new Set(['class_load', 'subject_spread', 'morning_subject_late']);
 
-function isActionableAuditIssue(item = {}) {
-    return !LEGACY_NON_ACTIONABLE_AUDIT_TYPES.has(item.type);
+function hasExplicitTeacherConsecutiveLimit(project = {}, item = {}) {
+    const teacherId = item.teacherId || (item.targetKind === 'teacher' ? item.targetId : '') || '';
+    const limit = project.rules?.softRules?.teacherLimits?.[teacherId]?.consecutive;
+    return teacherId
+        && limit !== undefined
+        && limit !== null
+        && limit !== ''
+        && Number.isInteger(Number(limit));
+}
+
+export function isActionablePublicationIssue(item = {}, project = {}) {
+    if (item.type === 'teacher_consecutive') {
+        return hasExplicitTeacherConsecutiveLimit(project, item);
+    }
+    return !LEGACY_NON_ACTIONABLE_REVIEW_TYPES.has(item.type);
 }
 
 export function validateTimetableProjectForSolve(input = {}) {
@@ -185,7 +198,7 @@ function buildPublicationIssueEntries({ project, maps, blockingIssues, warnings,
     const auditWarnings = [
         ...(audit?.warnings || []),
         ...(audit?.blockingIssues || []).filter(item => item.type !== 'invalid_lesson_plan_refs'),
-    ].filter(isActionableAuditIssue);
+    ].filter(item => isActionablePublicationIssue(item, project));
     for (const item of auditWarnings) {
         const targetKind = item.teacherId ? 'teacher' : item.classId ? 'class' : item.roomId || item.rooms ? 'room' : 'schedule';
         const targetId = item.teacherId || item.classId || item.roomId || '';
@@ -203,7 +216,7 @@ function buildPublicationIssueEntries({ project, maps, blockingIssues, warnings,
         }));
     }
 
-    for (const issue of qualityIssues || []) {
+    for (const issue of (qualityIssues || []).filter(item => isActionablePublicationIssue(item, project))) {
         const targetKind = issue.teacherId ? 'teacher' : issue.classId ? 'class' : issue.subjectId ? 'subject' : 'schedule';
         const targetId = issue.teacherId || issue.classId || issue.subjectId || '';
         const targetName = targetKind === 'teacher'
@@ -295,7 +308,7 @@ export function validateTimetablePublication(input = {}) {
         }));
     }
 
-    const qualityIssues = schedule?.qualityIssues || [];
+    const qualityIssues = (schedule?.qualityIssues || []).filter(item => isActionablePublicationIssue(item, project));
     if (qualityIssues.length) {
         warnings.push(publicationIssue('quality_review', '存在软规则或质量建议，发布前建议复核。', {
             count: qualityIssues.length,

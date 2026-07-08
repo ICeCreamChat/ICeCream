@@ -20,6 +20,7 @@ import {
     resetTimetableOptimizationJobs,
 } from '../gateway/services/timetable-optimization-jobs.js';
 import { buildPublishedSnapshot } from '../gateway/services/timetable-publication.js';
+import { evaluateTimetableConstraintFulfillment } from '../gateway/services/timetable-constraint-fulfillment.js';
 import { buildTimetableProblem } from '../gateway/services/timetable-solver-bridge.js';
 import { buildTimetableExportXlsx } from '../gateway/services/timetable-export.js';
 import {
@@ -862,6 +863,389 @@ test('timetable publication omits full-class legacy load review while keeping te
     assert.ok(publication.issueEntries.some(issue => issue.type === 'teacher_load'));
 });
 
+function constraintFulfillmentProject(overrides = {}) {
+    return createDefaultTimetableProject({
+        weekdays: 2,
+        periodsPerDay: 5,
+        activeWeekdays: [1, 2],
+        activePeriods: [1, 2, 3, 4, 5],
+        dayPartBoundaries: { afternoonStartPeriod: 4 },
+        teachers: [
+            { id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_cn', name: 'Chinese Teacher', subjects: ['chinese'], unavailableSlots: [] },
+            { id: 't_pe', name: 'PE Teacher', subjects: ['pe'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [
+            { id: 'math', name: 'Math', priority: 90, color: '#2563eb' },
+            { id: 'chinese', name: 'Chinese', priority: 80, color: '#dc2626' },
+            { id: 'pe', name: 'PE', priority: 30, color: '#16a34a' },
+        ],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 },
+            { id: 'lp_cn', classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', weeklyHours: 2 },
+            { id: 'lp_pe', classId: 'c1', subjectId: 'pe', teacherId: 't_pe', weeklyHours: 1 },
+        ],
+        rules: {
+            hardRules: {
+                teacherUnavailable: { t_math: ['1-1'] },
+                classUnavailable: { c1: ['2-5'] },
+                lockedSlots: [
+                    { day: 1, period: 2, classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', lessonPlanId: 'lp_cn' },
+                ],
+            },
+            softRules: {
+                morningSubjects: ['math'],
+                subjectPreferredPeriods: {
+                    pe: { prefer: ['2-2'], weight: 20 },
+                    chinese: { avoid: ['1-3'], weight: 20 },
+                },
+                teacherLimits: {
+                    t_math: { daily: 1 },
+                    t_cn: { consecutive: 1 },
+                },
+                spreadSubjects: ['math'],
+            },
+        },
+        schedule: {
+            id: 'constraint-fulfillment-schedule',
+            generatedAt: '2026-01-02T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [
+                { id: 'slot-math-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+                { id: 'slot-math-2', day: 1, period: 4, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+                { id: 'slot-cn-1', day: 1, period: 3, classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', lessonPlanId: 'lp_cn' },
+                { id: 'slot-cn-2', day: 1, period: 4, classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', lessonPlanId: 'lp_cn' },
+                { id: 'slot-pe-1', day: 2, period: 2, classId: 'c1', subjectId: 'pe', teacherId: 't_pe', lessonPlanId: 'lp_pe' },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            qualityIssues: [],
+            score: { totalLessons: 5, placedLessons: 5, unplacedLessons: 0, hardConflicts: 0, completeness: 100 },
+        },
+        ...overrides,
+    });
+}
+
+test('timetable constraint fulfillment evaluates saved rules without changing review noise', () => {
+    const project = constraintFulfillmentProject();
+    const result = evaluateTimetableConstraintFulfillment(project);
+    const byType = new Map(result.items.map(item => [item.type, item]));
+    const bySource = new Map(result.items.map(item => [item.source, item]));
+
+    assert.equal(result.evaluated, true);
+    assert.deepEqual(result.summary, { total: 9, satisfied: 2, partial: 1, unmet: 6, notApplicable: 0 });
+    assert.equal(byType.get('teacher_unavailable').status, 'unmet');
+    assert.equal(byType.get('class_unavailable').status, 'satisfied');
+    assert.equal(byType.get('locked_slot').status, 'unmet');
+    assert.equal(byType.get('subject_morning').status, 'partial');
+    assert.equal(bySource.get('softRules.subjectPreferredPeriods.prefer').status, 'satisfied');
+    assert.equal(bySource.get('softRules.subjectPreferredPeriods.avoid').status, 'unmet');
+    assert.equal(byType.get('teacher_daily_limit').status, 'unmet');
+    assert.equal(byType.get('teacher_consecutive_limit').status, 'unmet');
+    assert.equal(byType.get('subject_spread').status, 'unmet');
+    assert.ok(byType.get('teacher_unavailable').locateTargets.some(target => target.slotId === 'slot-math-1'));
+    assert.match(byType.get('subject_morning').evidence, /1\/2/);
+});
+
+test('timetable constraint fulfillment keeps saved rule total before schedule generation', () => {
+    const result = evaluateTimetableConstraintFulfillment(constraintFulfillmentProject({ schedule: null }));
+
+    assert.equal(result.evaluated, false);
+    assert.equal(result.summary.total, 9);
+    assert.equal(result.summary.notApplicable, 9);
+    assert.equal(result.items.length, 9);
+    assert.ok(result.items.every(item => item.status === 'not_applicable'));
+});
+
+test('timetable publication ignores legacy subject spread quality-only review', () => {
+    const project = sampleProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 },
+        ],
+        rules: { hardRules: {}, softRules: { spreadSubjects: ['math'] } },
+        schedule: {
+            id: 'legacy-subject-spread-only',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [
+                { id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+                { id: 'slot-2', day: 1, period: 2, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            qualityIssues: [
+                { id: 'legacy-spread', type: 'subject_spread', severity: 'warning', classId: 'c1', subjectId: 'math', message: 'Math 同一天过于集中。' },
+            ],
+            score: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0, completeness: 100 },
+        },
+    });
+
+    const publication = validateTimetablePublication(project);
+
+    assert.equal(publication.ok, true);
+    assert.equal(publication.warnings.some(issue => issue.type === 'quality_review'), false);
+    assert.equal(publication.issueEntries.some(issue => issue.type === 'subject_spread'), false);
+});
+
+test('timetable publication keeps actionable quality review after ignoring subject spread', () => {
+    const project = sampleProject({
+        weekdays: 5,
+        periodsPerDay: 7,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7],
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+        schedule: {
+            id: 'mixed-quality-review',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [
+                { id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+                { id: 'slot-2', day: 1, period: 2, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            qualityIssues: [
+                { id: 'legacy-spread', type: 'subject_spread', severity: 'warning', classId: 'c1', subjectId: 'math', message: 'Math 同一天过于集中。' },
+                { id: 'avoid-period', type: 'subject_avoid_period', severity: 'warning', classId: 'c1', subjectId: 'math', message: 'Math 排在了避开节次。' },
+            ],
+            score: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0, completeness: 100 },
+        },
+    });
+
+    const publication = validateTimetablePublication(project);
+
+    assert.equal(publication.ok, true);
+    assert.ok(publication.warnings.some(issue => issue.type === 'quality_review'));
+    assert.equal(publication.issueEntries.some(issue => issue.type === 'subject_spread'), false);
+    assert.ok(publication.issueEntries.some(issue => issue.type === 'subject_avoid_period'));
+});
+
+test('fast scheduler keeps default teacher consecutive load as soft score only', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 4,
+        activeWeekdays: [1],
+        activePeriods: [1, 2, 3, 4],
+        teachers: [{ id: 't_cn', name: 'Chinese Teacher', subjects: ['chinese'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'chinese', name: 'Chinese', priority: 90, color: '#2563eb', category: 'main' }],
+        lessonPlans: [
+            { id: 'lp_cn', classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', weeklyHours: 4 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const result = runTimetableScheduler(project);
+
+    assert.equal(result.success, true);
+    assert.ok(Number.isInteger(result.schedule.score.softBreakdown.teacherConsecutive));
+    assert.equal(result.schedule.qualityIssues.some(issue => issue.type === 'teacher_consecutive'), false);
+});
+
+test('timetable publication ignores legacy teacher consecutive review without explicit limit', () => {
+    const project = sampleProject({
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        lessonPlans: [
+            { id: 'lp1', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 4 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+        schedule: {
+            id: 'legacy-teacher-consecutive-only',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [
+                { id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp1' },
+                { id: 'slot-2', day: 1, period: 2, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp1' },
+                { id: 'slot-3', day: 1, period: 3, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp1' },
+                { id: 'slot-4', day: 1, period: 4, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp1' },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            qualityIssues: [
+                { id: 'teacher-consecutive', type: 'teacher_consecutive', severity: 'warning', teacherId: 't_math', message: 'Math Teacher 连续授课偏多。' },
+            ],
+            score: { totalLessons: 4, placedLessons: 4, unplacedLessons: 0, hardConflicts: 0, completeness: 100 },
+        },
+    });
+
+    const publication = validateTimetablePublication(project);
+
+    assert.equal(publication.ok, true);
+    assert.equal(publication.warnings.some(issue => issue.type === 'quality_review'), false);
+    assert.equal(publication.issueEntries.some(issue => issue.type === 'teacher_consecutive'), false);
+});
+
+test('timetable publication keeps other quality review after ignoring default teacher consecutive', () => {
+    const project = sampleProject({
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        lessonPlans: [
+            { id: 'lp1', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+        schedule: {
+            id: 'mixed-default-consecutive-quality',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [
+                { id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp1' },
+                { id: 'slot-2', day: 1, period: 2, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp1' },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            qualityIssues: [
+                { id: 'teacher-consecutive', type: 'teacher_consecutive', severity: 'warning', teacherId: 't_math', message: 'Math Teacher 连续授课偏多。' },
+                { id: 'avoid-period', type: 'subject_avoid_period', severity: 'warning', classId: 'c1', subjectId: 'math', message: 'Math 排在了避开节次。' },
+            ],
+            score: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0, completeness: 100 },
+        },
+    });
+
+    const publication = validateTimetablePublication(project);
+
+    assert.equal(publication.ok, true);
+    assert.ok(publication.warnings.some(issue => issue.type === 'quality_review'));
+    assert.equal(publication.issueEntries.some(issue => issue.type === 'teacher_consecutive'), false);
+    assert.ok(publication.issueEntries.some(issue => issue.type === 'subject_avoid_period'));
+});
+
+test('timetable publication keeps teacher consecutive review for explicit limit', () => {
+    const project = sampleProject({
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        lessonPlans: [
+            { id: 'lp1', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 },
+        ],
+        rules: { hardRules: {}, softRules: { teacherLimits: { t_math: { consecutive: 2 } } } },
+        schedule: {
+            id: 'explicit-teacher-consecutive',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [
+                { id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp1' },
+                { id: 'slot-2', day: 1, period: 2, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp1' },
+                { id: 'slot-3', day: 1, period: 3, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp1' },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            qualityIssues: [
+                { id: 'teacher-consecutive', type: 'teacher_consecutive', severity: 'warning', teacherId: 't_math', message: 'Math Teacher 连续授课偏多。' },
+            ],
+            score: { totalLessons: 3, placedLessons: 3, unplacedLessons: 0, hardConflicts: 0, completeness: 100 },
+        },
+    });
+
+    const publication = validateTimetablePublication(project);
+
+    assert.equal(publication.ok, true);
+    assert.ok(publication.warnings.some(issue => issue.type === 'quality_review'));
+    assert.ok(publication.issueEntries.some(issue => issue.type === 'teacher_consecutive'));
+});
+
+test('fast scheduler keeps default morning subject preference as soft score only', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 4,
+        activeWeekdays: [1],
+        activePeriods: [1, 2, 3, 4],
+        teachers: [{ id: 't_cn', name: 'Chinese Teacher', subjects: ['chinese'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'chinese', name: 'Chinese', priority: 90, color: '#2563eb', category: 'main' }],
+        lessonPlans: [
+            { id: 'lp_cn', classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', weeklyHours: 4 },
+        ],
+        rules: { hardRules: {}, softRules: { morningSubjects: ['chinese'] } },
+    });
+
+    const result = runTimetableScheduler(project);
+
+    assert.equal(result.success, true);
+    assert.ok(Number.isInteger(result.schedule.score.softBreakdown.morningSubjects));
+    assert.equal(result.schedule.qualityIssues.some(issue => issue.type === 'morning_subject_late'), false);
+});
+
+test('timetable publication ignores legacy morning subject review noise', () => {
+    const project = sampleProject({
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        lessonPlans: [
+            { id: 'lp1', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+        ],
+        rules: { hardRules: {}, softRules: { morningSubjects: ['math'] } },
+        schedule: {
+            id: 'legacy-morning-subject-only',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [
+                { id: 'slot-1', day: 1, period: 4, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp1' },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            qualityIssues: [
+                { id: 'morning-late', type: 'morning_subject_late', severity: 'info', classId: 'c1', subjectId: 'math', message: 'Math 未排在上午优先时段。' },
+            ],
+            score: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0, completeness: 100 },
+        },
+    });
+
+    const publication = validateTimetablePublication(project);
+
+    assert.equal(publication.ok, true);
+    assert.equal(publication.warnings.some(issue => issue.type === 'quality_review'), false);
+    assert.equal(publication.issueEntries.some(issue => issue.type === 'morning_subject_late'), false);
+});
+
+test('timetable publication keeps actionable quality review after ignoring morning subject noise', () => {
+    const project = sampleProject({
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        lessonPlans: [
+            { id: 'lp1', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+        ],
+        rules: { hardRules: {}, softRules: { morningSubjects: ['math'] } },
+        schedule: {
+            id: 'mixed-morning-subject-quality',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [
+                { id: 'slot-1', day: 1, period: 4, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp1' },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            qualityIssues: [
+                { id: 'morning-late', type: 'morning_subject_late', severity: 'info', classId: 'c1', subjectId: 'math', message: 'Math 未排在上午优先时段。' },
+                { id: 'avoid-period', type: 'subject_avoid_period', severity: 'warning', classId: 'c1', subjectId: 'math', message: 'Math 排在了避开节次。' },
+            ],
+            score: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0, completeness: 100 },
+        },
+    });
+
+    const publication = validateTimetablePublication(project);
+
+    assert.equal(publication.ok, true);
+    assert.ok(publication.warnings.some(issue => issue.type === 'quality_review'));
+    assert.equal(publication.issueEntries.some(issue => issue.type === 'morning_subject_late'), false);
+    assert.ok(publication.issueEntries.some(issue => issue.type === 'subject_avoid_period'));
+});
+
 test('fast scheduler emits explainable quality issues and richer soft breakdown', () => {
     const project = createDefaultTimetableProject({
         weekdays: 1,
@@ -890,11 +1274,12 @@ test('fast scheduler emits explainable quality issues and richer soft breakdown'
     assert.equal(result.success, true);
     assert.equal(result.schedule.score.hardConflicts, 0);
     assert.ok(Number.isInteger(result.schedule.score.softBreakdown.classDailyBalance));
+    assert.ok(Number.isInteger(result.schedule.score.softBreakdown.subjectSpread));
     assert.ok(Number.isInteger(result.schedule.score.softBreakdown.teacherConsecutive));
     assert.ok(Number.isInteger(result.schedule.score.softBreakdown.roomUsage));
     assert.ok(result.schedule.qualityIssues.some(issue => issue.type === 'teacher_consecutive'));
     assert.ok(result.schedule.qualityIssues.some(issue => issue.type === 'subject_avoid_period'));
-    assert.ok(result.schedule.qualityIssues.some(issue => issue.type === 'subject_spread'));
+    assert.equal(result.schedule.qualityIssues.some(issue => issue.type === 'subject_spread'), false);
 });
 
 test('fast scheduler reports real soft-rule satisfaction breakdown', () => {
@@ -7078,6 +7463,52 @@ test('timetable rules normalize API converts review rows without saving rules', 
 
         const stored = await store.loadProject();
         assert.deepEqual(stored.rules.hardRules.teacherUnavailable, {});
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
+test('timetable rules fulfillment API evaluates request project without saving it', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-rules-fulfillment-'));
+
+    const store = createTimetableStore();
+    const storedProject = sampleProject({
+        rules: { hardRules: {}, softRules: {} },
+        schedule: null,
+    });
+    await store.saveProject(storedProject);
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const response = await fetch(`${baseUrl}/api/tools/timetable/rules/fulfillment`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project: constraintFulfillmentProject() }),
+        });
+        const payload = await response.json();
+
+        assert.equal(response.status, 200);
+        assert.equal(payload.success, true);
+        assert.equal(payload.data.fulfillment.summary.total, 9);
+        assert.equal(payload.data.fulfillment.summary.unmet, 6);
+
+        const storedAfter = await store.loadProject();
+        assert.deepEqual(storedAfter.rules, storedProject.rules);
+        assert.equal(storedAfter.schedule, null);
     } finally {
         await new Promise(resolve => server.close(resolve));
         if (previousDataDir === undefined) {

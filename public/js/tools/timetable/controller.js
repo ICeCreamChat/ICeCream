@@ -79,8 +79,26 @@ function buildSmartDataAudit(project = {}) {
     };
 }
 
-function isActionableTimetableSuggestion(item = {}) {
-    return item.type !== 'class_load';
+function hasExplicitTeacherConsecutiveLimit(project = {}, item = {}) {
+    const teacherId = item.teacherId
+        || item.raw?.teacherId
+        || (item.targetKind === 'teacher' ? item.targetId : '')
+        || '';
+    const limit = project.rules?.softRules?.teacherLimits?.[teacherId]?.consecutive;
+    return Boolean(teacherId)
+        && limit !== undefined
+        && limit !== null
+        && limit !== ''
+        && Number.isInteger(Number(limit));
+}
+
+function isActionableTimetableSuggestion(item = {}, project = {}) {
+    if (item.type === 'teacher_consecutive') {
+        return hasExplicitTeacherConsecutiveLimit(project, item);
+    }
+    return item.type !== 'class_load'
+        && item.type !== 'subject_spread'
+        && item.type !== 'morning_subject_late';
 }
 
 function deriveSmartWorkbenchStage(state = {}) {
@@ -183,6 +201,7 @@ export class TimetablePlannerController {
         this.ruleReviewFile = null;
         this.constraintDialogFile = null;
         this.inspectorLocatePulseTimer = null;
+        this.constraintFulfillmentRequestSeq = 0;
         this.rosterDraftCounter = 0;
         this.ruleDraftCounter = 0;
     }
@@ -700,6 +719,51 @@ export class TimetablePlannerController {
             const candidate = this.smartCandidateFromProject();
             if (candidate) this.mergeSmartWorkbenchCandidate(candidate);
         }
+        this.refreshConstraintFulfillmentAfterProjectChange(project);
+    }
+
+    shouldRefreshConstraintFulfillment() {
+        return Boolean(
+            this.state.container
+            && typeof window !== 'undefined'
+            && typeof fetch === 'function'
+        );
+    }
+
+    refreshConstraintFulfillmentAfterProjectChange(project) {
+        if (!this.shouldRefreshConstraintFulfillment()) return;
+        this.refreshConstraintFulfillment(project).catch(() => {});
+    }
+
+    async refreshConstraintFulfillment(project = this.state.project) {
+        const requestSeq = ++this.constraintFulfillmentRequestSeq;
+        if (!project) {
+            this.state.constraintFulfillment = null;
+            this.state.constraintFulfillmentLoading = false;
+            this.state.constraintFulfillmentError = '';
+            return null;
+        }
+        this.state.constraintFulfillmentLoading = true;
+        this.state.constraintFulfillmentError = '';
+        try {
+            const result = await requestTimetable('/rules/fulfillment', {
+                method: 'POST',
+                body: JSON.stringify({ project }),
+            });
+            if (requestSeq !== this.constraintFulfillmentRequestSeq) return null;
+            this.state.constraintFulfillment = result.fulfillment || null;
+            this.state.constraintFulfillmentLoading = false;
+            this.state.constraintFulfillmentError = '';
+            this.render();
+            return this.state.constraintFulfillment;
+        } catch (error) {
+            if (requestSeq !== this.constraintFulfillmentRequestSeq) return null;
+            const normalized = normalizeApiError(error);
+            this.state.constraintFulfillmentLoading = false;
+            this.state.constraintFulfillmentError = normalized.message || '约束达成度暂时无法评估。';
+            this.render();
+            return null;
+        }
     }
 
     resetPublishDialog() {
@@ -746,7 +810,7 @@ export class TimetablePlannerController {
             ...(schedule.audit?.blockingIssues || []),
             ...(schedule.audit?.warnings || []),
             ...(schedule.qualityIssues || []).filter(item => item.severity === 'high').slice(0, 3),
-        ].filter(isActionableTimetableSuggestion);
+        ].filter(item => isActionableTimetableSuggestion(item, this.state.project));
         const suggestions = rawSuggestions.map(item => ({
             label: item.label || item.message || item.type || String(item),
             message: item.message || item.label || String(item),
@@ -4277,7 +4341,7 @@ export class TimetablePlannerController {
         const hardCount = items.filter(item => item.priority === 'hard').length;
         const softCount = items.length - hardCount;
         const audit = this.state.project?.schedule?.audit || null;
-        const auditWarnings = (audit?.warnings || []).filter(isActionableTimetableSuggestion);
+        const auditWarnings = (audit?.warnings || []).filter(item => isActionableTimetableSuggestion(item, this.state.project));
         const fallbackPlan = {
             hardCount,
             softCount,

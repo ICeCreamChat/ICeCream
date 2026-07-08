@@ -1,7 +1,6 @@
 import {
     getActivePeriods,
     getActiveWeekdays,
-    isMorningPeriod,
     getTimetableEntityMaps,
     normalizeTimetableProject,
     slotKey,
@@ -11,14 +10,6 @@ import {
     classUnavailable,
     teacherUnavailable,
 } from './timetable-conflicts.js';
-
-function isMainSubject(subject = {}, subjectId = '') {
-    const tags = [subject.category, ...(subject.tags || []), subject.type, subjectId, subject.name]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-    return /\b(main|core|chinese|math|english|language)\b|语文|数学|英语|外语|主科/.test(tags);
-}
 
 function issue(type, message, extra = {}) {
     return { type, message, ...extra };
@@ -230,8 +221,6 @@ export function buildTimetableQualityIssues(input = {}, slots = []) {
     const issues = [];
     const soft = project.rules?.softRules || {};
     const preferred = soft.subjectPreferredPeriods || {};
-    const spreadSubjects = new Set(soft.spreadSubjects || []);
-    const morningSubjects = new Set(soft.morningSubjects || []);
 
     for (const slot of slots) {
         const subject = maps.subjects.get(slot.subjectId) || {};
@@ -244,35 +233,6 @@ export function buildTimetableQualityIssues(input = {}, slots = []) {
                 classId: slot.classId,
                 subjectId: slot.subjectId,
                 slot,
-            }));
-        }
-        if ((morningSubjects.has(slot.subjectId) || isMainSubject(subject, slot.subjectId)) && !isMorningPeriod(project, slot.period)) {
-            issues.push(issue('morning_subject_late', `${subjectName} 未排在上午优先时段。`, {
-                severity: 'info',
-                classId: slot.classId,
-                subjectId: slot.subjectId,
-                slot,
-            }));
-        }
-    }
-
-    const classSubjectDay = new Map();
-    for (const slot of slots) {
-        const key = `${slot.classId}:${slot.subjectId}:${slot.day}`;
-        if (!classSubjectDay.has(key)) classSubjectDay.set(key, []);
-        classSubjectDay.get(key).push(slot);
-    }
-    for (const [key, daySlots] of classSubjectDay) {
-        const [, subjectId] = key.split(':');
-        const limit = spreadSubjects.has(subjectId) ? 1 : 2;
-        if (daySlots.length > limit) {
-            const first = daySlots[0];
-            const subject = maps.subjects.get(subjectId);
-            issues.push(issue('subject_spread', `${subject?.name || subjectId} 同一天过于集中。`, {
-                severity: 'warning',
-                classId: first.classId,
-                subjectId,
-                slot: first,
             }));
         }
     }
@@ -296,8 +256,12 @@ export function buildTimetableQualityIssues(input = {}, slots = []) {
             maxRun = Math.max(maxRun, run);
             prev = slot.period;
         }
-        const consecutiveLimit = Number.isInteger(Number(limits.consecutive)) ? Number(limits.consecutive) : 3;
-        if (maxRun > consecutiveLimit) {
+        const hasExplicitConsecutiveLimit = limits.consecutive !== undefined
+            && limits.consecutive !== null
+            && limits.consecutive !== ''
+            && Number.isInteger(Number(limits.consecutive));
+        const consecutiveLimit = Number(limits.consecutive);
+        if (hasExplicitConsecutiveLimit && maxRun > consecutiveLimit) {
             issues.push(issue('teacher_consecutive', `${maps.teachers.get(teacherId)?.name || teacherId} 连续授课偏多。`, {
                 severity: 'warning',
                 teacherId,

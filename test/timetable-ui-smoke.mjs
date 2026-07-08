@@ -66,7 +66,19 @@ function createInspectorSmokeProject() {
                 { id: 'morning', label: '上午', startTime: '08:00', periodCount: 7, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
             ],
         },
-        rules: { hardRules: {}, softRules: {} },
+        rules: {
+            hardRules: {
+                classUnavailable: Object.fromEntries(classes.map(klass => [klass.id, ['5-7']])),
+                teacherUnavailable: Object.fromEntries(dutyTeachers.map(teacher => [teacher.id, ['1-1']])),
+                lockedSlots: [],
+            },
+            softRules: {
+                morningSubjects: ['math'],
+                subjectPreferredPeriods: {
+                    math: { avoid: [`${slots[0].day}-${slots[0].period}`], weight: 20 },
+                },
+            },
+        },
         schedule: {
             id: 'smoke-inspector-heavy-review',
             generatedAt: '2026-01-02T00:00:00.000Z',
@@ -76,16 +88,31 @@ function createInspectorSmokeProject() {
             unplaced: [],
             conflicts: [],
             qualityIssues: classes.map((klass, index) => ({
-                id: `subject-spread-${klass.id}`,
+                id: `manual-review-${klass.id}`,
                 severity: 'warning',
-                type: 'subject_spread',
-                message: '同科课程建议分散。',
+                type: 'manual_review',
+                message: '发布前请人工复核。',
                 targetKind: 'class',
                 targetId: klass.id,
                 targetName: `${klass.grade}${klass.name}`,
                 slot: { day: slots[index].day, period: slots[index].period },
             })),
-            diagnostics: { items: [], suggestions: [] },
+            diagnostics: {
+                diagnosticsVersion: 1,
+                summary: { error: 0, warning: 4, info: 0, total: 4, suggestions: 4 },
+                items: [
+                    { id: 'diag-class-load', category: 'audit', source: 'schedule.audit.warnings', type: 'class_load', severity: 'warning', targetKind: 'class', targetId: classes[0].id, targetName: `${classes[0].grade}${classes[0].name}`, message: '班级课表接近满载。' },
+                    { id: 'diag-subject-spread', category: 'quality', source: 'schedule.qualityIssues', type: 'subject_spread', severity: 'warning', targetKind: 'class', targetId: classes[1].id, targetName: `${classes[1].grade}${classes[1].name}`, message: 'Math 同一天过于集中。' },
+                    { id: 'diag-morning', category: 'quality', source: 'schedule.qualityIssues', type: 'morning_subject_late', severity: 'info', targetKind: 'class', targetId: classes[2].id, targetName: `${classes[2].grade}${classes[2].name}`, message: 'Math 未排在上午优先时段。' },
+                    { id: 'diag-teacher-consecutive', category: 'quality', source: 'schedule.qualityIssues', type: 'teacher_consecutive', severity: 'warning', targetKind: 'teacher', targetId: 't_math', targetName: 'Math Teacher', message: 'Math Teacher 连续授课偏多。' },
+                ],
+                suggestions: [
+                    { id: 'sug-class-load', kind: 'audit', targetDiagnostics: ['diag-class-load'], targetKind: 'class', targetId: classes[0].id, targetName: `${classes[0].grade}${classes[0].name}`, message: `复核 ${classes[0].grade}${classes[0].name} 的相关数据。` },
+                    { id: 'sug-subject-spread', kind: 'quality', targetDiagnostics: ['diag-subject-spread'], targetKind: 'class', targetId: classes[1].id, targetName: `${classes[1].grade}${classes[1].name}`, message: `复核 ${classes[1].grade}${classes[1].name} 的软规则表现，必要时调整偏好或接受当前结果。` },
+                    { id: 'sug-morning', kind: 'publication', targetDiagnostics: ['diag-morning'], targetKind: 'class', targetId: classes[2].id, targetName: `${classes[2].grade}${classes[2].name}`, message: `发布前先处理 ${classes[2].grade}${classes[2].name} 的阻断项，再重新检查课表。` },
+                    { id: 'sug-teacher-consecutive', kind: 'quality', targetDiagnostics: ['diag-teacher-consecutive'], targetKind: 'teacher', targetId: 't_math', targetName: 'Math Teacher', message: '复核 Math Teacher 的软规则表现，必要时调整偏好或接受当前结果。' },
+                ],
+            },
             score: {
                 hardConflicts: 0,
                 unplacedLessons: 0,
@@ -109,21 +136,37 @@ async function main() {
         await inspectorSummary.click();
         await page.locator('#tt-inspector-drawer[open]').waitFor({ timeout: 10000 });
 
-        const subjectSpreadGroup = page.locator('.tt-inspector-problem-group', { hasText: '同科分散' }).first();
-        await subjectSpreadGroup.waitFor({ timeout: 10000 });
-        assert.equal((await subjectSpreadGroup.locator('.tt-inspector-problem-head > span').textContent())?.trim(), '24');
+        const manualReviewGroup = page.locator('.tt-inspector-problem-group', { hasText: '教务复核' }).first();
+        await manualReviewGroup.waitFor({ timeout: 10000 });
+        assert.equal((await manualReviewGroup.locator('.tt-inspector-problem-head > span').textContent())?.trim(), '24');
         assert.doesNotMatch(await page.locator('#tt-inspector-drawer').textContent(), /班级课表接近满载/);
+        assert.doesNotMatch(await page.locator('#tt-inspector-drawer').textContent(), /同科分散|同一天过于集中/);
+        assert.doesNotMatch(await page.locator('#tt-inspector-drawer').textContent(), /教师连续课|连续授课偏多/);
+        assert.doesNotMatch(await page.locator('#tt-inspector-drawer').textContent(), /主科时段|未排在上午优先时段/);
+        assert.doesNotMatch(await page.locator('#tt-inspector-drawer').textContent(), /发布前先处理|软规则表现|相关数据/);
 
-        const targetRows = subjectSpreadGroup.locator('.tt-inspector-target-row');
+        const fulfillmentSection = page.locator('[data-inspector-section="constraint-fulfillment"]');
+        await fulfillmentSection.waitFor({ timeout: 10000 });
+        await page.waitForFunction(() => document.body.innerText.includes('约束 108') && document.body.innerText.includes('基于当前课表评估'));
+        const fulfillmentText = await fulfillmentSection.textContent();
+        assert.match(fulfillmentText || '', /约束 108/);
+        assert.match(fulfillmentText || '', /未满足|部分满足/);
+        assert.match(fulfillmentText || '', /Math/);
+        assert.equal(await fulfillmentSection.locator('.tt-inspector-problem-group').count(), 0);
+        await fulfillmentSection.locator('[data-constraint-fulfillment-filter="all"]').click();
+        await page.waitForFunction(() => document.body.innerText.includes('值班老师80 教师不可排'));
+        assert.ok(await fulfillmentSection.locator('[data-constraint-fulfillment-row]').count() > 20);
+
+        const targetRows = manualReviewGroup.locator('.tt-inspector-target-row');
         assert.equal(await targetRows.count(), 5);
-        assert.ok(await subjectSpreadGroup.getByText('八年级G8-10班').isVisible());
-        assert.equal(await subjectSpreadGroup.getByText('八年级G8-15班').count(), 0);
+        assert.ok(await manualReviewGroup.getByText('八年级G8-10班').isVisible());
+        assert.equal(await manualReviewGroup.getByText('八年级G8-15班').count(), 0);
 
-        await subjectSpreadGroup.getByRole('button', { name: /展开更多 20|展开剩余 19/ }).click();
+        await manualReviewGroup.getByRole('button', { name: /展开更多 20|展开剩余 19/ }).click();
         await page.waitForFunction(() => document.body.innerText.includes('八年级G8-33班'));
         assert.equal(await targetRows.count(), 24);
 
-        const expandedTarget = subjectSpreadGroup.getByRole('button', { name: /定位：八年级G8-33班/ });
+        const expandedTarget = manualReviewGroup.getByRole('button', { name: /定位：八年级G8-33班/ });
         await expandedTarget.scrollIntoViewIfNeeded();
         const scrollBeforeLocate = await page.locator('.tt-inspector-body').evaluate(node => node.scrollTop);
         assert.ok(scrollBeforeLocate > 0, `expected inspector body to be scrolled before locate, got ${scrollBeforeLocate}`);
@@ -133,6 +176,16 @@ async function main() {
         const scrollAfterLocate = await page.locator('.tt-inspector-body').evaluate(node => node.scrollTop);
         assert.ok(scrollAfterLocate > 0, `expected inspector body not to jump to top after locate, got ${scrollAfterLocate}`);
         await page.locator('.is-inspector-locate-pulse').first().waitFor({ timeout: 10000 });
+
+        const systemDetails = page.locator('[data-inspector-section="system"]');
+        await systemDetails.scrollIntoViewIfNeeded();
+        await systemDetails.locator('summary').click();
+        const systemText = await systemDetails.textContent();
+        assert.match(systemText || '', /数据摘要/);
+        assert.match(systemText || '', /生成详情/);
+        assert.doesNotMatch(systemText || '', /发布问题|排课诊断|诊断报告|质量建议|诊断明细|诊断建议/);
+        assert.equal(await systemDetails.locator('.tt-inspector-problem-group').count(), 0);
+        assert.equal(await systemDetails.locator('[data-action="locate-inspector-issue"]').count(), 0);
 
         await page.locator('#tt-inspector-drawer[open] .tt-inspector-summary').click();
         await page.getByRole('button', { name: /未排值班/ }).first().click();

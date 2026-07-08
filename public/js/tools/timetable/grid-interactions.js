@@ -355,6 +355,12 @@ function bindDelegatedInteractions(container) {
                 event.preventDefault?.();
                 event.stopPropagation?.();
             }
+        } else if (action === 'filter-constraint-fulfillment') {
+            const filter = actionNode?.dataset.constraintFulfillmentFilter || 'attention';
+            state.constraintFulfillmentFilter = filter;
+            controller.render?.();
+            event.preventDefault?.();
+            event.stopPropagation?.();
         } else if (action === 'locate-inspector-issue') {
             const locatePayload = {
                 ...(actionNode?.dataset || {}),

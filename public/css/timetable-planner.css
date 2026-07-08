@@ -2622,6 +2622,183 @@ body.light-mode .tt-inspector-problem-group {
     text-underline-offset: 3px;
 }
 
+.tt-constraint-fulfillment-section .tt-section-title h3 {
+    color: var(--tt-text);
+}
+
+.tt-constraint-fulfillment-panel {
+    display: grid;
+    gap: 8px;
+}
+
+.tt-constraint-fulfillment-summary {
+    display: grid;
+    gap: 2px;
+    padding: 8px 9px;
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.tt-constraint-fulfillment-summary strong {
+    color: var(--tt-text);
+    font-size: 0.78rem;
+    font-weight: 650;
+    line-height: 1.4;
+}
+
+.tt-constraint-fulfillment-summary span {
+    color: var(--tt-muted);
+    font-size: 0.7rem;
+    line-height: 1.4;
+}
+
+.tt-constraint-fulfillment-filters {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 9px;
+}
+
+.tt-constraint-fulfillment-filter {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 26px;
+    padding: 3px 7px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--tt-text-secondary);
+    font: inherit;
+    font-size: 0.72rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.tt-constraint-fulfillment-filter em {
+    color: var(--tt-muted);
+    font-style: normal;
+    font-weight: 650;
+}
+
+.tt-constraint-fulfillment-filter.is-active {
+    border-color: rgba(37, 99, 235, 0.36);
+    background: rgba(37, 99, 235, 0.08);
+    color: var(--tt-primary);
+}
+
+.tt-constraint-fulfillment-list {
+    display: grid;
+    max-height: 300px;
+    overflow: auto;
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.tt-constraint-fulfillment-row {
+    appearance: none;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    min-height: 42px;
+    position: relative;
+    width: 100%;
+    padding: 7px 10px;
+    border: 0;
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    background: transparent;
+    color: var(--tt-text-secondary);
+    font: inherit;
+    text-align: left;
+}
+
+.tt-constraint-fulfillment-row:first-child {
+    border-top: 0;
+}
+
+.tt-constraint-fulfillment-status {
+    min-width: 48px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1.35;
+    text-align: center;
+}
+
+.tt-constraint-fulfillment-row--ok .tt-constraint-fulfillment-status {
+    background: rgba(22, 163, 74, 0.1);
+    color: #15803d;
+}
+
+.tt-constraint-fulfillment-row--warn .tt-constraint-fulfillment-status {
+    background: rgba(245, 158, 11, 0.12);
+    color: #b45309;
+}
+
+.tt-constraint-fulfillment-row--danger .tt-constraint-fulfillment-status {
+    background: rgba(239, 68, 68, 0.1);
+    color: #b91c1c;
+}
+
+.tt-constraint-fulfillment-main {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.tt-constraint-fulfillment-main strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-text);
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-constraint-fulfillment-main em {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-size: 0.69rem;
+    font-style: normal;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-constraint-fulfillment-meta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 5px;
+    min-width: 0;
+    padding-right: 28px;
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+.tt-constraint-fulfillment-meta b {
+    padding: 1px 5px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.12);
+    color: var(--tt-text-secondary);
+    font-weight: 650;
+}
+
+.tt-constraint-fulfillment-row:hover,
+.tt-constraint-fulfillment-row:focus-visible {
+    background: rgba(37, 99, 235, 0.06);
+    outline: none;
+}
+
 .tt-rule-file-entry {
     display: flex;
     align-items: center;

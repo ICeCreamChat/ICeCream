@@ -2,6 +2,7 @@ import express from 'express';
 import multer from 'multer';
 
 import { buildTimetableExportXlsx, TIMETABLE_XLSX_MIME } from '../services/timetable-export.js';
+import { evaluateTimetableConstraintFulfillment } from '../services/timetable-constraint-fulfillment.js';
 import {
     canUseTimefoldForTimetable,
     timefoldTimetableUnsupportedReason,
@@ -704,6 +705,20 @@ router.post('/rules/diagnose', async (req, res) => {
         fail(res, error, 400, {
             project: current,
             reason: 'rules_diagnose_failed',
+        });
+    }
+});
+
+router.post('/rules/fulfillment', async (req, res) => {
+    let current = null;
+    try {
+        current = await store().loadProject();
+        const fulfillment = evaluateTimetableConstraintFulfillment(req.body?.project || current);
+        ok(res, { fulfillment });
+    } catch (error) {
+        fail(res, error, 400, {
+            project: current,
+            reason: 'rules_fulfillment_failed',
         });
     }
 });

@@ -5,6 +5,9 @@ import {
     slotKey,
     slotTeacherIds,
 } from './timetable-project.js';
+import {
+    isActionablePublicationIssue,
+} from './timetable-validation.js';
 
 const SEVERITY_ORDER = { error: 0, warning: 1, info: 2 };
 
@@ -192,7 +195,14 @@ function buildSuggestions(items = []) {
     const suggestions = [];
     for (const item of items) {
         if (item.severity === 'info') continue;
-        const key = `${item.category}:${item.type}:${item.targetKind}:${item.targetId}`;
+        const key = [
+            item.type,
+            item.severity,
+            item.targetKind,
+            item.targetId,
+            item.slot,
+            item.message,
+        ].join('|');
         if (seen.has(key)) continue;
         seen.add(key);
         suggestions.push({
@@ -214,6 +224,7 @@ function collectAuditItems(project, maps, add) {
     const audit = project.schedule?.audit || null;
     if (!audit) return;
     for (const item of audit.blockingIssues || []) {
+        if (!isActionablePublicationIssue(item, project)) continue;
         add(makeItem({
             category: 'audit',
             source: 'schedule.audit.blockingIssues',
@@ -225,6 +236,7 @@ function collectAuditItems(project, maps, add) {
         }, maps));
     }
     for (const item of audit.warnings || []) {
+        if (!isActionablePublicationIssue(item, project)) continue;
         add(makeItem({
             category: 'audit',
             source: 'schedule.audit.warnings',
@@ -270,6 +282,7 @@ function collectConflictItems(project, maps, add) {
 
 function collectQualityItems(project, maps, add) {
     for (const item of project.schedule?.qualityIssues || []) {
+        if (!isActionablePublicationIssue(item, project)) continue;
         const slot = item.slot || {};
         add(makeItem({
             category: 'quality',
@@ -292,6 +305,7 @@ function collectPublicationItems(project, maps, add, publication) {
         ? 'schedule.publication.issueEntries'
         : 'schedule.publication.reviewItems';
     for (const item of issueEntries) {
+        if (!isActionablePublicationIssue(item, project)) continue;
         add(makeItem({
             category: 'publication',
             source: sourcePath,
