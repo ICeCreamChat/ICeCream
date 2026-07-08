@@ -28,6 +28,7 @@ import {
     getActionableRequirementCount,
     getRequirementGroupKey,
 } from './constraint-dialog-review-model.js';
+import { buildDutyTeacherSearchModel } from './duty-teacher-search.js';
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -149,6 +150,12 @@ const TIMETABLE_REVIEW_LABELS = {
     teacher_daily_limit: '教师日课时',
     teacher_load: '教师负载',
 };
+
+const LEGACY_NON_ACTIONABLE_REVIEW_TYPES = new Set(['class_load']);
+
+function isActionableTimetableReviewItem(item = {}) {
+    return !LEGACY_NON_ACTIONABLE_REVIEW_TYPES.has(item.type);
+}
 
 function ruleTypeLabel(type) {
     return RULE_TYPE_LABELS[type] || type;
@@ -295,6 +302,8 @@ export function renderWorkbench(state) {
     }
 
     state.selectedOwnerId = ensureOwnerSelection(state);
+    const inspectorModel = buildInspectorViewModel(state);
+    const inspectorSummary = inspectorHeaderSummary(inspectorModel);
     const inspectorOpen = Boolean(state.inspectorOpen || state.selectedSlotId || state.lastFailure || state.solverJob);
     const constraintOpen = Boolean(state.constraintDialog?.open);
     const inspectorPosition = state.inspectorPosition || null;
@@ -320,13 +329,13 @@ export function renderWorkbench(state) {
                 <details class="tt-inspector-drawer" id="tt-inspector-drawer" ${inspectorOpen ? 'open' : ''}>
                     <summary class="tt-inspector-summary" data-inspector-drag-handle>
                         <span class="tt-inspector-summary-main"><i data-lucide="panel-right-open"></i><strong>排课审查</strong></span>
-                        <em>诊断 / 质量 / 发布</em>
+                        <em>${escapeHtml(inspectorSummary)}</em>
                         <span class="tt-inspector-summary-action" data-inspector-toggle-icon aria-hidden="true">
                             <i data-lucide="${inspectorOpen ? 'chevron-up' : 'chevron-down'}"></i>
                         </span>
                     </summary>
                     <div class="tt-inspector-body">
-                        ${renderInspector(state)}
+                        ${renderInspector(state, inspectorModel)}
                     </div>
                 </details>
             </aside>
@@ -1270,6 +1279,75 @@ function renderRosterStats(stats) {
     `;
 }
 
+function renderDutyTeacherOption(option = {}, index = 0, saving = false) {
+    const classes = [
+        'tt-duty-teacher-option',
+        option.selected ? 'is-selected' : '',
+        option.recommended ? 'is-recommended' : '',
+        option.disabled ? 'is-disabled' : '',
+    ].filter(Boolean).join(' ');
+    const badges = [
+        option.selected ? '<span>已选</span>' : '',
+        option.recommended ? '<span>本班任课</span>' : '',
+        option.conflictReason ? `<span class="is-warning">${escapeHtml(option.conflictReason)}</span>` : '',
+    ].filter(Boolean).join('');
+    const disabled = saving || option.disabled;
+    return `
+        <button
+            class="${classes}"
+            id="tt-duty-teacher-option-${escapeAttr(index)}"
+            type="button"
+            role="option"
+            data-action="select-duty-teacher"
+            data-duty-teacher-option="${escapeAttr(option.id)}"
+            data-duty-teacher-label="${escapeAttr(option.label)}"
+            data-duty-teacher-search-text="${escapeAttr(option.searchText)}"
+            aria-selected="${option.selected ? 'true' : 'false'}"
+            ${disabled ? 'disabled' : ''}
+        >
+            <span class="tt-duty-teacher-option-main">
+                <strong>${escapeHtml(option.label)}</strong>
+                ${option.meta ? `<small>${escapeHtml(option.meta)}</small>` : ''}
+            </span>
+            ${badges ? `<span class="tt-duty-teacher-option-badges">${badges}</span>` : ''}
+        </button>
+    `;
+}
+
+function renderDutyTeacherPicker(project = {}, context = {}, saving = false) {
+    const model = buildDutyTeacherSearchModel(project, context);
+    const selectedLabel = model.selectedTeacher?.label || '未安排';
+    return `
+        <div class="tt-duty-teacher-picker" data-duty-teacher-picker>
+            <div class="tt-duty-teacher-search-row">
+                <i data-lucide="search"></i>
+                <input
+                    id="tt-duty-teacher-search"
+                    type="search"
+                    data-duty-teacher-search
+                    class="tt-duty-teacher-search"
+                    placeholder="搜索老师姓名、拼音或学科"
+                    autocomplete="off"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded="true"
+                    aria-controls="tt-duty-teacher-list"
+                    ${saving ? 'disabled' : ''}
+                >
+            </div>
+            <input id="tt-duty-assignment-teacher" type="hidden" value="${escapeAttr(context.teacherId || '')}">
+            <div class="tt-duty-teacher-current" data-duty-teacher-current>
+                <span>当前</span>
+                <strong>${escapeHtml(selectedLabel)}</strong>
+            </div>
+            <div class="tt-duty-teacher-list" id="tt-duty-teacher-list" role="listbox" data-duty-teacher-list aria-label="值班老师候选">
+                ${model.visibleOptions.map((option, index) => renderDutyTeacherOption(option, index, saving)).join('')}
+                <div class="tt-duty-teacher-empty" data-duty-teacher-empty-message hidden>没有匹配的老师</div>
+            </div>
+        </div>
+    `;
+}
+
 function renderDutyAssignmentDialog(state) {
     const dialog = state.dutyDialog || {};
     if (!dialog.open) return '';
@@ -1278,6 +1356,9 @@ function renderDutyAssignmentDialog(state) {
     const timeBlockId = dialog.timeBlockId || '';
     const segment = (project.periodTimeSegments?.segments || []).find(item => item.id === timeBlockId) || {};
     const classId = dialog.classId || project.classes?.[0]?.id || '';
+    const classLocked = Boolean(dialog.classLocked && classId);
+    const selectedClass = (project.classes || []).find(klass => klass.id === classId);
+    const classLabel = ownerLabel(selectedClass || { id: classId });
     const existing = (project.dutyAssignments || []).find(item => (
         Number(item.day) === day
         && item.classId === classId
@@ -1286,52 +1367,68 @@ function renderDutyAssignmentDialog(state) {
     ));
     const teacherId = dialog.teacherId || existing?.teacherId || '';
     const timeLabel = studyBlockTimeLabel(project, segment);
+    const segmentLabel = segment.label || timeBlockId || '附加时段';
     const saving = Boolean(dialog.saving);
     const classOptions = (project.classes || []).map(klass => `
         <option value="${escapeAttr(klass.id)}" ${klass.id === classId ? 'selected' : ''}>${escapeHtml(ownerLabel(klass))}</option>
     `).join('');
-    const teacherOptions = [
-        '<option value="">不安排值班老师</option>',
-        ...(project.teachers || []).map(teacher => `
-            <option value="${escapeAttr(teacher.id)}" ${teacher.id === teacherId ? 'selected' : ''}>${escapeHtml(teacher.name || teacher.id)}</option>
-        `),
-    ].join('');
-
-    return `
-        <div class="tt-dialog-overlay" data-duty-assignment-overlay>
-            <section class="tt-duty-assignment-dialog" id="tt-duty-assignment-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-duty-assignment-title">
-                <div class="tt-dialog-header">
-                    <div>
-                        <span class="tt-eyebrow">值班老师</span>
-                        <h3 id="tt-duty-assignment-title">编辑值班老师</h3>
-                        <p>周${dayName(day)} · ${escapeHtml(segment.label || '附加时段')}${timeLabel ? ` · ${escapeHtml(timeLabel)}` : ''}</p>
-                    </div>
-                    <button class="tt-icon-btn" type="button" data-action="close-duty-assignment" title="关闭" aria-label="关闭值班老师编辑"><i data-lucide="x"></i></button>
-                </div>
-                <div class="tt-duty-assignment-form">
+    const classField = classLocked ? '' : `
                     <label class="tt-duty-field">
                         <span>班级</span>
                         <select id="tt-duty-assignment-class" class="tt-roster-review-field" ${saving ? 'disabled' : ''}>
                             ${classOptions}
                         </select>
                     </label>
-                    <label class="tt-duty-field">
-                        <span>值班老师</span>
-                        <select id="tt-duty-assignment-teacher" class="tt-roster-review-field" ${saving ? 'disabled' : ''}>
-                            ${teacherOptions}
-                        </select>
-                    </label>
-                    <div class="tt-duty-readonly">
+        `;
+    const contextItems = [
+        classLocked ? `
+                    <div class="tt-duty-context-item" data-duty-assignment-class-readonly>
+                        <span>班级</span>
+                        <strong>${escapeHtml(classLabel || '当前班级')}</strong>
+                    </div>
+        ` : '',
+        `
+                    <div class="tt-duty-context-item">
                         <span>时段</span>
-                        <strong>${escapeHtml(segment.label || timeBlockId || '附加时段')}</strong>
+                        <strong>周${dayName(day)} · ${escapeHtml(segmentLabel)}</strong>
                         ${timeLabel ? `<small>${escapeHtml(timeLabel)}</small>` : ''}
+                    </div>
+        `,
+    ].filter(Boolean).join('');
+    const teacherPicker = renderDutyTeacherPicker(project, {
+        day,
+        classId,
+        timeBlockId,
+        teacherId,
+    }, saving);
+
+    return `
+        <div class="tt-dialog-overlay" data-duty-assignment-overlay>
+            <section class="tt-duty-assignment-dialog" id="tt-duty-assignment-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-duty-assignment-title">
+                <div class="tt-dialog-header">
+                    <div>
+                        <span class="tt-eyebrow">值班安排</span>
+                        <h3 id="tt-duty-assignment-title">编辑值班老师</h3>
+                    </div>
+                    <button class="tt-icon-btn" type="button" data-action="close-duty-assignment" title="关闭" aria-label="关闭值班老师编辑"><i data-lucide="x"></i></button>
+                </div>
+                <div class="tt-duty-assignment-form">
+                    <div class="tt-duty-context-grid">
+                        ${contextItems}
+                    </div>
+                    ${classField}
+                    <div class="tt-duty-field">
+                        <span>值班老师</span>
+                        ${teacherPicker}
                     </div>
                     ${dialog.error ? `<div class="tt-duty-error" role="alert">${escapeHtml(dialog.error)}</div>` : ''}
                 </div>
-                <div class="tt-dialog-actions">
+                <div class="tt-dialog-actions tt-duty-actions">
                     <button class="tt-btn tt-btn--ghost" id="tt-clear-duty-assignment" type="button" data-action="clear-duty-assignment" ${saving ? 'disabled' : ''}><i data-lucide="eraser"></i><span>清除值班</span></button>
-                    <button class="tt-btn tt-btn--ghost" type="button" data-action="close-duty-assignment" ${saving ? 'disabled' : ''}><i data-lucide="x"></i><span>取消</span></button>
-                    <button class="tt-btn tt-btn--primary" id="tt-save-duty-assignment" type="button" data-action="save-duty-assignment" ${saving ? 'disabled' : ''}><i data-lucide="${saving ? 'loader-2' : 'save'}" class="${saving ? 'tt-spin' : ''}"></i><span>${saving ? '保存中' : '保存值班'}</span></button>
+                    <div class="tt-duty-actions-main">
+                        <button class="tt-btn tt-btn--ghost" type="button" data-action="close-duty-assignment" ${saving ? 'disabled' : ''}><i data-lucide="x"></i><span>取消</span></button>
+                        <button class="tt-btn tt-btn--primary" id="tt-save-duty-assignment" type="button" data-action="save-duty-assignment" ${saving ? 'disabled' : ''}><i data-lucide="${saving ? 'loader-2' : 'save'}" class="${saving ? 'tt-spin' : ''}"></i><span>${saving ? '保存中' : '保存值班'}</span></button>
+                    </div>
                 </div>
             </section>
         </div>
@@ -1682,7 +1779,7 @@ function publishReviewEntries(publication = {}, limit = 5) {
     const seen = new Set();
     const issueSource = publicationIssueEntriesForView(publication);
     const add = item => {
-        if (!item || item.type === 'quality_review') return;
+        if (!item || item.type === 'quality_review' || !isActionableTimetableReviewItem(item)) return;
         const title = publicationItemTitle(item);
         const message = item.message || publicationIssueLabel(item.type);
         const key = `${title}|${message}`;
@@ -1712,6 +1809,7 @@ function publicationIssueEntriesForView(publication = null) {
     const seen = new Set();
     return combined.filter(item => {
         if (!item) return false;
+        if (!isActionableTimetableReviewItem(item)) return false;
         const slot = inspectorSlotLabel(item.slot);
         const key = [
             item.type || '',
@@ -2545,11 +2643,12 @@ function buildInspectorIssueSections(entries = [], panel = 'diagnostic') {
         .filter(section => section.entries.length);
 }
 
-function renderInspectorIssueGroups({ title, entries, panel = 'diagnostic', legacyItemClass = '' }) {
+function renderInspectorIssueGroups({ title, entries, panel = 'diagnostic', sectionKey = '', state = {} }) {
     if (!entries.length) return '';
-    const sections = buildInspectorIssueSections(entries, panel);
     const summary = summarizeInspectorIssueEntries(entries);
-    const chipTone = summary.error ? 'tt-chip--warn' : 'tt-chip--ok';
+    const chipTone = summary.error || summary.warning ? 'tt-chip--warn' : 'tt-chip--ok';
+    const normalizedEntries = entries.map(item => ({ ...item, source: item.source || panel }));
+    const grouped = groupInspectorIssuesByProblem(normalizedEntries);
     return `
         <div class="tt-inspector-issues">
             <div class="tt-subsection-title">
@@ -2557,23 +2656,7 @@ function renderInspectorIssueGroups({ title, entries, panel = 'diagnostic', lega
                 <span class="tt-chip ${chipTone}">${escapeHtml(entries.length)} 条</span>
             </div>
             <div class="tt-inspector-issue-groups">
-                ${sections.map(section => `
-                    <div class="tt-diagnostics-group">
-                        <div class="tt-rule-report-title">
-                            <span><i data-lucide="${section.icon}"></i>${escapeHtml(section.label)}</span>
-                            <span>${escapeHtml(section.entries.length)}</span>
-                        </div>
-                        <div class="tt-rule-preview tt-rule-preview--compact">
-                            ${section.entries.slice(0, 4).map(item => `
-                                <div class="tt-rule-preview-item tt-inspector-issue-item ${legacyItemClass} ${inspectorIssueSeverityClass(item.severity)}">
-                                    <strong>${escapeHtml(item.title)}</strong>
-                                    <span>${escapeHtml(item.message)}</span>
-                                    ${inspectorIssueMeta(item) ? `<em>${escapeHtml(inspectorIssueMeta(item))}</em>` : ''}
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                `).join('')}
+                ${grouped.map(group => renderInspectorProblemGroup(group, state, sectionKey || `system-${panel}`)).join('')}
             </div>
         </div>
     `;
@@ -2586,14 +2669,14 @@ function normalizePublicationPanelIssues(state) {
     if (publicationDiagnostics.length) {
         return normalizeInspectorIssueEntries(publicationDiagnostics, {
             fallbackSeverity: 'warning',
-            filter: item => item.type !== 'quality_review',
+            filter: item => item.type !== 'quality_review' && isActionableTimetableReviewItem(item),
             labelOf: publicationIssueLabel,
             titleOf: publicationItemTitle,
         });
     }
     return normalizeInspectorIssueEntries(publicationIssueEntriesForView(publication), {
         fallbackSeverity: 'warning',
-        filter: item => item.type !== 'quality_review',
+        filter: item => item.type !== 'quality_review' && isActionableTimetableReviewItem(item),
         labelOf: publicationIssueLabel,
         titleOf: publicationItemTitle,
     });
@@ -2623,6 +2706,7 @@ function normalizeScheduleDiagnosticIssues(state) {
     if (scheduleDiagnostics.length) {
         return normalizeInspectorIssueEntries(scheduleDiagnostics, {
             fallbackSeverity: 'warning',
+            filter: isActionableTimetableReviewItem,
             labelOf: timetableReviewLabel,
             titleOf: item => item.targetName || timetableReviewLabel(item.type) || item.type || '排课问题',
         });
@@ -2633,6 +2717,7 @@ function normalizeScheduleDiagnosticIssues(state) {
         ...(audit?.warnings || []).map(item => normalizeAuditFallbackIssue(item, 'warning')),
     ], {
         fallbackSeverity: 'warning',
+        filter: isActionableTimetableReviewItem,
         labelOf: timetableReviewLabel,
         titleOf: item => item.targetName || item.name || timetableReviewLabel(item.type) || item.type || '排课问题',
     });
@@ -2755,6 +2840,8 @@ function pushUniqueInspectorModelItem(target, seen, item) {
         id: item.id || '',
         source: item.source || 'unknown',
         severity: item.severity || 'info',
+        category: item.category || '',
+        type: item.type || '',
         title: item.title || item.targetName || timetableReviewLabel(item.type) || '审查项',
         message: item.message || item.title || '需要复核。',
         targetKind: item.targetKind || '',
@@ -2789,6 +2876,8 @@ function conflictToInspectorModelItem(conflict = {}, index = 0) {
         id: conflict.id || `conflict-${index}`,
         source: 'conflict',
         severity,
+        category: conflict.category || '',
+        type: conflict.type || '',
         title: conflict.title || conflict.targetName || timetableReviewLabel(conflict.type) || '冲突',
         message: conflict.message || conflict.reason || conflict.type || '存在课表冲突。',
         targetKind: conflict.targetKind || 'schedule',
@@ -2803,6 +2892,8 @@ function qualityIssueToInspectorModelItem(issue = {}, index = 0) {
         id: issue.id || `quality-${index}`,
         source: 'quality',
         severity: issue.severity === 'error' ? 'error' : issue.severity === 'warning' ? 'warning' : 'info',
+        category: issue.category || '',
+        type: issue.type || '',
         title: issue.title || issue.targetName || timetableReviewLabel(issue.type) || '质量建议',
         message: issue.message || issue.title || timetableReviewLabel(issue.type) || '建议复核课表质量。',
         targetKind: issue.targetKind || 'schedule',
@@ -2817,6 +2908,8 @@ function diagnosticSuggestionToInspectorModelItem(suggestion = {}, index = 0) {
         id: suggestion.id || `suggestion-${index}`,
         source: 'suggestion',
         severity: 'info',
+        category: suggestion.category || suggestion.kind || '',
+        type: suggestion.type || suggestion.kind || '',
         title: suggestion.title || '建议',
         message: suggestion.message || suggestion.description || suggestion.title || '建议复核。',
         targetKind: suggestion.targetKind || '',
@@ -2937,7 +3030,7 @@ export function buildInspectorViewModel(state = {}) {
         else pushUniqueInspectorModelItem(reviewItems, reviewSeen, item);
     });
 
-    (schedule?.qualityIssues || []).forEach((issue, index) => {
+    (schedule?.qualityIssues || []).filter(isActionableTimetableReviewItem).forEach((issue, index) => {
         const item = qualityIssueToInspectorModelItem(issue, index);
         if (item.severity === 'error') pushUniqueInspectorModelItem(blockingItems, blockingSeen, item);
         else pushUniqueInspectorModelItem(reviewItems, reviewSeen, item);
@@ -2997,6 +3090,15 @@ export function buildInspectorViewModel(state = {}) {
     };
 }
 
+function inspectorHeaderSummary(model = {}) {
+    const blockingCount = Number(model.blockingItems?.length || 0);
+    const reviewCount = Number(model.reviewItems?.length || 0);
+    if (blockingCount && reviewCount) return `需处理 ${blockingCount} · 复核 ${reviewCount}`;
+    if (blockingCount) return `需处理 ${blockingCount}`;
+    if (reviewCount) return `复核 ${reviewCount}`;
+    return model.verdict?.title || '排课审查';
+}
+
 function renderPublicationPanel(state) {
     const project = state.project || {};
     const publication = state.project?.schedule?.publication || state.lastFailure?.publication || null;
@@ -3044,7 +3146,8 @@ function renderPublicationPanel(state) {
                 title: '发布问题',
                 entries: issueEntries,
                 panel: 'publication',
-                legacyItemClass: 'tt-publication-issue-item',
+                sectionKey: 'system-publication',
+                state,
             })}
             ${draftChanged && snapshot?.slots?.length ? `
                 <div class="tt-publication-actions tt-publication-actions--published">
@@ -3724,6 +3827,16 @@ function inspectorIssueLimitKey(sectionKey = 'inspector', groupKey = 'items') {
     return `${sectionKey || 'inspector'}:${groupKey || 'items'}`;
 }
 
+function opaqueInspectorKey(prefix = 'item', parts = []) {
+    const text = parts.map(part => String(part ?? '').trim()).join('|');
+    let hash = 2166136261;
+    for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `${prefix}-${(hash >>> 0).toString(36)}`;
+}
+
 function inspectorIssueVisibleLimit(state = {}, limitKey = '', total = 0) {
     const savedLimit = Number(state.inspectorIssueLimits?.[limitKey]);
     const requestedLimit = Number.isFinite(savedLimit) && savedLimit > INSPECTOR_ISSUE_DEFAULT_LIMIT
@@ -3781,8 +3894,12 @@ function inspectorIssueItemClass(item = {}) {
     return `tt-rule-preview-item tt-inspector-issue-item ${sourceClass} ${inspectorIssueSeverityClass(item.severity)}`.trim();
 }
 
+function inspectorIssueToneClass(severity = 'warning') {
+    return severity === 'error' ? 'is-error' : severity === 'info' ? 'is-info' : 'is-warning';
+}
+
 function inspectorIssueStableKey(item = {}) {
-    return [
+    return opaqueInspectorKey('issue', [
         item.source || 'inspector',
         item.id || item.issueId || item.key || '',
         item.severity || '',
@@ -3794,7 +3911,7 @@ function inspectorIssueStableKey(item = {}) {
         inspectorSlotLabel(item.slot),
         item.title || '',
         item.message || '',
-    ].map(part => String(part ?? '').trim()).join('|');
+    ]);
 }
 
 function renderInspectorIssueLocateAttrs(target = {}, issueKey = '') {
@@ -3810,6 +3927,144 @@ function renderInspectorIssueLocateAttrs(target = {}, issueKey = '') {
         target.day ? `data-inspector-day="${escapeAttr(target.day)}"` : '',
         target.period ? `data-inspector-period="${escapeAttr(target.period)}"` : '',
     ].filter(Boolean).join(' ');
+}
+
+function inspectorIssueGroupKey(item = {}) {
+    const groupTitle = inspectorIssueGroupTitle(item);
+    const hasStableProblemShape = Boolean(
+        item.type
+        || item.category
+        || item.source === 'suggestion'
+        || (groupTitle && groupTitle !== item.message && groupTitle !== item.targetName)
+    );
+    const messageKey = hasStableProblemShape ? '' : item.message || '';
+    return opaqueInspectorKey('group', [
+        item.source || 'unknown',
+        item.severity || 'info',
+        item.category || '',
+        item.type || '',
+        groupTitle || inspectorIssueSourceLabel(item.source),
+        messageKey,
+    ]);
+}
+
+function inspectorIssueGroupTitle(item = {}) {
+    const title = String(item.title || '').trim();
+    const message = String(item.message || '').trim();
+    const typeLabel = timetableReviewLabel(item.type);
+    if (item.type && typeLabel && typeLabel !== '审查项') return typeLabel;
+    if (item.source === 'suggestion' && title) return title;
+    if (title && title !== item.targetName && title !== inspectorIssueSourceLabel(item.source)) return title;
+    return message || title || inspectorIssueSourceLabel(item.source);
+}
+
+function inspectorIssueGroupDescription(group = {}) {
+    const first = group.items?.[0] || {};
+    const message = String(first.message || '').trim();
+    const title = String(first.title || '').trim();
+    if (!message || message === title || message === group.title) return '';
+    if (group.source === 'publication') {
+        return first.severity === 'error' ? '必须先处理' : '建议发布前复核';
+    }
+    if ((group.items || []).length > 1 && (first.type || group.source === 'suggestion')) {
+        return inspectorIssueSectionLabel(group.source, first.severity || group.severity);
+    }
+    return message;
+}
+
+function inspectorIssueTargetLabel(item = {}, target = null) {
+    const groupTitle = inspectorIssueGroupTitle(item);
+    const title = String(item.title || '').trim();
+    const message = String(item.message || '').trim();
+    return target?.label
+        || target?.targetName
+        || item.targetName
+        || (title && title !== groupTitle ? title : '')
+        || (message && message !== groupTitle ? message : '')
+        || inspectorIssueMeta(item)
+        || title
+        || message
+        || '审查项';
+}
+
+function inspectorIssueCompactMeta(item = {}, label = '') {
+    const parts = [];
+    const kindLabel = inspectorIssueTargetKindLabel(item.targetKind);
+    if (kindLabel && item.targetName && item.targetName !== label && item.targetName !== item.title) {
+        parts.push(`${kindLabel} · ${item.targetName}`);
+    }
+    const message = String(item.message || '').trim();
+    const groupTitle = inspectorIssueGroupTitle(item);
+    if (message && message !== label && message !== item.title && message !== groupTitle) {
+        parts.push(message);
+    }
+    const slotLabel = inspectorSlotLabel(item.slot);
+    if (slotLabel) parts.push(`课节 ${slotLabel}`);
+    return parts.join(' · ');
+}
+
+function groupInspectorIssuesByProblem(items = []) {
+    const groups = new Map();
+    items.forEach(item => {
+        const key = inspectorIssueGroupKey(item);
+        if (!groups.has(key)) {
+            groups.set(key, {
+                key,
+                source: item.source || 'unknown',
+                severity: item.severity || 'info',
+                title: inspectorIssueGroupTitle(item),
+                items: [],
+            });
+        }
+        groups.get(key).items.push(item);
+    });
+    return Array.from(groups.values());
+}
+
+function renderInspectorIssueCompactRow(item = {}, state = {}) {
+    const locateTarget = resolveInspectorIssueLocateTarget(state.project || {}, item);
+    const issueKey = locateTarget ? inspectorIssueStableKey(item) : '';
+    const label = inspectorIssueTargetLabel(item, locateTarget);
+    const meta = inspectorIssueCompactMeta(item, label);
+    const rowClass = [
+        'tt-inspector-target-row',
+        locateTarget ? 'tt-inspector-target-row--locatable tt-inspector-issue-item--locatable' : '',
+        issueKey && state.inspectorLocatedIssueKey === issueKey ? 'is-inspector-located-source' : '',
+    ].filter(Boolean).join(' ');
+    const content = `
+        <span class="tt-inspector-target-main">${escapeHtml(label)}</span>
+        ${meta ? `<span class="tt-inspector-target-meta">${escapeHtml(meta)}</span>` : ''}
+        ${locateTarget ? '<span class="tt-inspector-locate-hint" aria-hidden="true">定位</span>' : ''}
+    `;
+    if (locateTarget) {
+        return `
+            <button type="button" class="${rowClass}" ${renderInspectorIssueLocateAttrs(locateTarget, issueKey)} aria-label="${escapeAttr(`定位：${label}`)}">
+                ${content}
+            </button>
+        `;
+    }
+    return `<div class="${rowClass}">${content}</div>`;
+}
+
+function renderInspectorProblemGroup(group = {}, state = {}, sectionKey = '') {
+    const limited = inspectorLimitedItems(state, sectionKey, group.key, group.items || []);
+    const description = inspectorIssueGroupDescription(group);
+    const sourceLabel = inspectorIssueSourceLabel(group.source);
+    return `
+        <div class="tt-inspector-problem-group ${inspectorIssueToneClass(group.severity)}">
+            <div class="tt-inspector-problem-head">
+                <div>
+                    <strong>${escapeHtml(group.title || sourceLabel)}</strong>
+                    ${description ? `<span>${escapeHtml(description)}</span>` : ''}
+                </div>
+                <span>${escapeHtml(group.items?.length || 0)}</span>
+            </div>
+            <div class="tt-inspector-target-list">
+                ${limited.visibleItems.map(item => renderInspectorIssueCompactRow(item, state)).join('')}
+            </div>
+            ${limited.actions}
+        </div>
+    `;
 }
 
 function renderInspectorIssueItem(item = {}, state = {}) {
@@ -3844,13 +4099,7 @@ function renderInspectorIssueItem(item = {}, state = {}) {
 }
 
 function renderInspectorIssueSection({ title, icon, items = [], emptyText = '暂无问题', tone = 'warn', sectionKey = '', open = false, state = {} }) {
-    const grouped = items.reduce((groups, item) => {
-        const key = item.source || 'unknown';
-        const label = inspectorIssueSourceLabel(item.source);
-        if (!groups.has(key)) groups.set(key, { key, label, items: [] });
-        groups.get(key).items.push(item);
-        return groups;
-    }, new Map());
+    const grouped = groupInspectorIssuesByProblem(items);
     return `
         <section class="tt-inspector-section tt-inspector-review-section tt-inspector-review-section--${escapeAttr(tone)}">
             <details class="tt-inspector-collapsible" data-inspector-section="${escapeAttr(sectionKey || title)}"${open ? ' open' : ''}>
@@ -3860,21 +4109,7 @@ function renderInspectorIssueSection({ title, icon, items = [], emptyText = '暂
                 </summary>
                 ${items.length ? `
                     <div class="tt-inspector-issue-groups">
-                        ${Array.from(grouped.values()).map(group => {
-                            const limited = inspectorLimitedItems(state, sectionKey || title, group.key, group.items);
-                            return `
-                                <div class="tt-diagnostics-group">
-                                    <div class="tt-rule-report-title">
-                                        <strong>${escapeHtml(group.label)}</strong>
-                                        <span>${escapeHtml(group.items.length)}</span>
-                                    </div>
-                                    <div class="tt-rule-preview tt-rule-preview--compact">
-                                        ${limited.visibleItems.map(item => renderInspectorIssueItem(item, state)).join('')}
-                                    </div>
-                                    ${limited.actions}
-                                </div>
-                            `;
-                        }).join('')}
+                        ${grouped.map(group => renderInspectorProblemGroup(group, state, sectionKey || title)).join('')}
                     </div>
                 ` : `<span class="tt-muted">${escapeHtml(emptyText)}</span>`}
             </details>
@@ -3888,41 +4123,13 @@ function renderInspectorDiagnosticsSystemSummary(state) {
     const summary = diagnostics.summary || {};
     const items = diagnostics.items || [];
     const suggestions = diagnostics.suggestions || [];
-    const byObject = diagnostics.byObject || {};
     if (!items.length && !suggestions.length) return '';
-    const maps = entityMaps(state.project || {});
-    const severityIcon = severity => (severity === 'error' ? 'alert-circle' : severity === 'warning' ? 'triangle-alert' : 'info');
-    const objectSections = [
-        { key: 'classes', label: '班级', icon: 'users', nameOf: id => ownerLabel(maps.classes.get(id) || { id }) },
-        { key: 'teachers', label: '教师', icon: 'badge-check', nameOf: id => maps.teachers.get(id)?.name || id },
-        { key: 'subjects', label: '课程', icon: 'book-open', nameOf: id => maps.subjects.get(id)?.name || id },
-        { key: 'rooms', label: '教室', icon: 'school', nameOf: id => id },
-        { key: 'plans', label: '计划', icon: 'notebook-pen', nameOf: id => maps.plans.get(id)?.id || id },
-    ].map(section => {
-        const bucket = byObject[section.key] || {};
-        const entries = Object.entries(bucket)
-            .map(([id, itemIds]) => {
-                const linkedItems = (Array.isArray(itemIds) ? itemIds : [])
-                    .map(itemId => items.find(item => item.id === itemId))
-                    .filter(Boolean);
-                return {
-                    id,
-                    name: section.nameOf(id),
-                    count: linkedItems.length,
-                    topSeverity: linkedItems.some(item => item.severity === 'error')
-                        ? 'error'
-                        : linkedItems.some(item => item.severity === 'warning')
-                            ? 'warning'
-                            : 'info',
-                    labels: linkedItems.slice(0, 2).map(item => item.message || timetableReviewLabel(item.type)),
-                };
-            })
-            .filter(entry => entry.count > 0)
-            .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name, 'zh-Hans-CN'));
-        return { ...section, entries };
-    }).filter(section => section.entries.length);
-    const itemList = inspectorLimitedItems(state, 'system-diagnostics', 'items', items);
-    const suggestionList = inspectorLimitedItems(state, 'system-diagnostics', 'suggestions', suggestions);
+    const issueEntries = normalizeInspectorIssueEntries(items, {
+        fallbackSeverity: 'warning',
+        labelOf: timetableReviewLabel,
+        titleOf: item => item.targetName || timetableReviewLabel(item.type) || '诊断问题',
+    });
+    const suggestionEntries = suggestions.map((item, index) => diagnosticSuggestionToInspectorModelItem(item, index));
     return `
         <div class="tt-inspector-system-block">
             <div class="tt-subsection-title">
@@ -3935,51 +4142,20 @@ function renderInspectorDiagnosticsSystemSummary(state) {
                 <span><b>提示</b>${escapeHtml(summary.info || 0)}</span>
                 <span><b>建议</b>${escapeHtml(summary.suggestions ?? suggestions.length)}</span>
             </div>
-            <div class="tt-conflict-list">
-                ${itemList.visibleItems.map(item => `
-                    <div class="tt-conflict ${item.severity === 'error' || item.severity === 'warning' ? 'is-warning' : ''}">
-                        <i data-lucide="${severityIcon(item.severity)}"></i>
-                        <span><b>${escapeHtml(item.targetName || timetableReviewLabel(item.type))}</b>${escapeHtml(item.message || timetableReviewLabel(item.type))}</span>
-                    </div>
-                `).join('')}
-            </div>
-            ${itemList.actions}
-            ${objectSections.length ? `
-                <div class="tt-diagnostics-groups">
-                    ${objectSections.map(section => {
-                        const entryList = inspectorLimitedItems(state, 'system-diagnostics', `object-${section.key}`, section.entries);
-                        return `
-                            <div class="tt-diagnostics-group">
-                                <div class="tt-rule-report-title">
-                                    <strong><i data-lucide="${section.icon}"></i>${escapeHtml(section.label)}</strong>
-                                    <span>${escapeHtml(section.entries.length)}</span>
-                                </div>
-                                <div class="tt-rule-preview tt-rule-preview--compact">
-                                    ${entryList.visibleItems.map(entry => `
-                                        <div class="tt-rule-preview-item tt-diagnostics-group-item ${entry.topSeverity === 'error' ? 'is-error' : entry.topSeverity === 'warning' ? 'is-warning' : ''}">
-                                            <strong>${escapeHtml(entry.name)}</strong>
-                                            <span>${escapeHtml(`关联 ${entry.count} 项诊断`)}</span>
-                                            ${entry.labels[0] ? `<em>${escapeHtml(entry.labels.join('；'))}</em>` : ''}
-                                        </div>
-                                    `).join('')}
-                                </div>
-                                ${entryList.actions}
-                            </div>
-                        `;
-                    }).join('')}
-                </div>
-            ` : ''}
-            ${suggestions.length ? `
-                <div class="tt-rule-warning-list">
-                    ${suggestionList.visibleItems.map(item => `
-                        <div class="tt-rule-warning">
-                            <i data-lucide="lightbulb"></i>
-                            <span>${escapeHtml(item.message || '建议草稿')}</span>
-                        </div>
-                    `).join('')}
-                </div>
-                ${suggestionList.actions}
-            ` : ''}
+            ${renderInspectorIssueGroups({
+                title: '诊断明细',
+                entries: issueEntries,
+                panel: 'diagnostic',
+                sectionKey: 'system-diagnostics-items',
+                state,
+            })}
+            ${renderInspectorIssueGroups({
+                title: '诊断建议',
+                entries: suggestionEntries,
+                panel: 'suggestion',
+                sectionKey: 'system-diagnostics-suggestions',
+                state,
+            })}
         </div>
     `;
 }
@@ -4054,6 +4230,7 @@ function renderInspectorSystemDetails(state, model, selectedDetail) {
         selectedDetail ? '' : renderUnscheduledPlanQueue(state),
         renderAuditPanel(state),
         renderPublicationPanel(state),
+        renderScheduleDiagnosticsPanel(state),
         renderInspectorDiagnosticsSystemSummary(state),
         renderInspectorQualitySystemSummary(state),
         renderOptimizationPanel(state),
@@ -4075,15 +4252,13 @@ function renderInspectorSystemDetails(state, model, selectedDetail) {
     `;
 }
 
-export function renderInspector(state) {
-    const model = buildInspectorViewModel(state);
+export function renderInspector(state, model = buildInspectorViewModel(state)) {
     const selectedDetail = getSlotDetails(state.project, state.selectedSlotId);
     const hasBlocking = model.blockingItems.length > 0;
     const hasReview = model.reviewItems.length > 0;
     return `
         <div class="tt-inspector-stack">
             ${renderInspectorVerdict(model)}
-            ${selectedDetail ? renderSlotInspector(state) : ''}
             ${renderInspectorIssueSection({
                 title: '必须处理',
                 icon: 'octagon-alert',
@@ -4101,10 +4276,11 @@ export function renderInspector(state) {
                 emptyText: '暂无建议复核项',
                 tone: 'warn',
                 sectionKey: 'review',
-                open: !hasBlocking && hasReview,
+                open: hasReview,
                 state,
             })}
             ${renderInspectorSystemDetails(state, model, selectedDetail)}
+            ${selectedDetail ? renderSlotInspector(state) : ''}
         </div>
     `;
 }
@@ -4262,6 +4438,8 @@ function renderAuditPanel(state) {
 
 function renderScheduleDiagnosticsPanel(state) {
     const audit = state.project?.schedule?.audit || state.lastFailure?.audit || null;
+    const diagnosticsItems = state.project?.schedule?.diagnostics?.items || state.lastFailure?.diagnostics?.items || [];
+    if (diagnosticsItems.some(item => item.category !== 'publication')) return '';
     const issueEntries = normalizeScheduleDiagnosticIssues(state);
     if (!audit && !issueEntries.length) return '';
     const teachers = audit?.bottlenecks?.teachers || [];
@@ -4291,7 +4469,8 @@ function renderScheduleDiagnosticsPanel(state) {
                 title: '诊断问题',
                 entries: issueEntries,
                 panel: 'diagnostic',
-                legacyItemClass: 'tt-schedule-diagnostic-item',
+                sectionKey: 'system-schedule-diagnostics',
+                state,
             })}
         </section>
     `;

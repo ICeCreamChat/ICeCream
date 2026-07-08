@@ -334,6 +334,9 @@ function bindDelegatedInteractions(container) {
             controller.closeDutyAssignmentDialog?.();
             return;
         }
+        if (event.target.matches('[data-duty-teacher-search]')) {
+            controller.openDutyTeacherOptions?.();
+        }
         const actionNode = event.target.closest('[data-action]');
         const action = actionNode?.dataset.action || '';
 
@@ -455,6 +458,11 @@ function bindDelegatedInteractions(container) {
         else if (action === 'edit-duty-assignment') {
             const node = event.target.closest('[data-time-block-id]');
             controller.openDutyAssignmentDialog?.(node?.dataset.day, node?.dataset.timeBlockId);
+        } else if (action === 'select-duty-teacher') {
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            const option = event.target.closest('[data-duty-teacher-option]');
+            controller.selectDutyTeacherOption?.(option?.dataset.dutyTeacherOption || '', option);
         } else if (action === 'save-duty-assignment') {
             controller.saveDutyAssignmentDialog?.();
         } else if (action === 'clear-duty-assignment') {
@@ -567,11 +575,37 @@ function bindDelegatedInteractions(container) {
         } else if (event.target.matches('[data-constraint-chat-input]')) {
             controller.updateConstraintChatInput(event.target.value);
             resizeConstraintChatInput(event.target);
+        } else if (event.target.matches('[data-duty-teacher-search]')) {
+            controller.filterDutyTeacherOptions?.(event.target.value);
         }
     });
 
     container.addEventListener('keydown', event => {
         const controller = container.__ttController;
+
+        if (controller && event.target.matches('[data-duty-teacher-search]')) {
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                controller.moveDutyTeacherActive?.(1);
+                return;
+            }
+            if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                controller.moveDutyTeacherActive?.(-1);
+                return;
+            }
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                controller.confirmDutyTeacherActive?.();
+                return;
+            }
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                controller.closeDutyTeacherOptions?.();
+                return;
+            }
+        }
 
         // Handle Enter in constraint chat
         if (

@@ -23,6 +23,12 @@ function result(ok, reason, message, details = {}) {
     return { ok, reason, message, details };
 }
 
+const LEGACY_NON_ACTIONABLE_AUDIT_TYPES = new Set(['class_load']);
+
+function isActionableAuditIssue(item = {}) {
+    return !LEGACY_NON_ACTIONABLE_AUDIT_TYPES.has(item.type);
+}
+
 export function validateTimetableProjectForSolve(input = {}) {
     const project = normalizeTimetableProject(input);
     const maps = getTimetableEntityMaps(project);
@@ -179,7 +185,7 @@ function buildPublicationIssueEntries({ project, maps, blockingIssues, warnings,
     const auditWarnings = [
         ...(audit?.warnings || []),
         ...(audit?.blockingIssues || []).filter(item => item.type !== 'invalid_lesson_plan_refs'),
-    ];
+    ].filter(isActionableAuditIssue);
     for (const item of auditWarnings) {
         const targetKind = item.teacherId ? 'teacher' : item.classId ? 'class' : item.roomId || item.rooms ? 'room' : 'schedule';
         const targetId = item.teacherId || item.classId || item.roomId || '';

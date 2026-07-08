@@ -10,6 +10,15 @@
         "public/js/core/geogebra-*",
         "GeoGebra Studio offline courseware export"
       ]
+    },
+    {
+      "name": "pinyin-pro",
+      "path": "public/vendor/pinyin-pro",
+      "source": "https://www.npmjs.com/package/pinyin-pro/v/3.28.1",
+      "license": "MIT; see public/vendor/pinyin-pro/LICENSE",
+      "usedBy": [
+        "Timetable duty teacher search"
+      ]
     }
   ],
   "generatedBundles": []

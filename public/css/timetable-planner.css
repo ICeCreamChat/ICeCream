@@ -2379,8 +2379,141 @@ body.light-mode .tt-import-setup-card .tt-stat-card {
 .tt-publication-issues,
 .tt-publication-issue-groups {
     display: grid;
-    gap: var(--tt-space-sm);
+    gap: 8px;
     margin-top: var(--tt-space-sm);
+}
+
+.tt-inspector-problem-group {
+    display: grid;
+    gap: 0;
+    overflow: hidden;
+    background: var(--tt-bg-input);
+    border: 1px solid var(--tt-border);
+    border-left-width: 2px;
+    border-radius: var(--tt-radius-md);
+}
+
+body.light-mode .tt-inspector-problem-group {
+    background: var(--tt-bg-panel);
+}
+
+.tt-inspector-problem-group.is-warning {
+    border-left-color: color-mix(in srgb, var(--tt-warning) 58%, var(--tt-border));
+}
+
+.tt-inspector-problem-group.is-error {
+    border-left-color: color-mix(in srgb, var(--tt-danger) 68%, var(--tt-border));
+    background: color-mix(in srgb, var(--tt-danger) 6%, var(--tt-bg-input));
+}
+
+.tt-inspector-problem-group.is-info {
+    border-left-color: color-mix(in srgb, var(--tt-primary) 48%, var(--tt-border));
+}
+
+.tt-inspector-problem-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+    align-items: start;
+    padding: 7px 9px 6px;
+}
+
+.tt-inspector-problem-head > div {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.tt-inspector-problem-head strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-text);
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-inspector-problem-head span {
+    color: var(--tt-muted);
+    font-size: 0.7rem;
+    line-height: 1.35;
+}
+
+.tt-inspector-problem-head > span {
+    min-width: 20px;
+    padding: 1px 5px;
+    background: rgba(148, 163, 184, 0.12);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 6px;
+    color: var(--tt-text-secondary);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-align: center;
+}
+
+.tt-inspector-target-list {
+    display: grid;
+    border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.tt-inspector-target-row {
+    appearance: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    align-items: center;
+    min-height: 32px;
+    position: relative;
+    width: 100%;
+    padding: 6px 34px 6px 9px;
+    background: transparent;
+    border: 0;
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    color: var(--tt-text-secondary);
+    font: inherit;
+    text-align: left;
+}
+
+.tt-inspector-target-row:first-child {
+    border-top: 0;
+}
+
+.tt-inspector-target-row--locatable {
+    cursor: pointer;
+}
+
+.tt-inspector-target-main {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-text);
+    font-size: 0.78rem;
+    font-weight: 500;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-inspector-target-meta {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-size: 0.69rem;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-inspector-target-row:hover,
+.tt-inspector-target-row:focus-visible {
+    background: rgba(37, 99, 235, 0.07);
+    outline: none;
+}
+
+.tt-inspector-target-row.is-inspector-located-source {
+    background: rgba(37, 99, 235, 0.1);
+    box-shadow: inset 2px 0 0 rgba(37, 99, 235, 0.62);
 }
 
 .tt-inspector-issue-item,
@@ -2393,7 +2526,7 @@ body.light-mode .tt-import-setup-card .tt-stat-card {
 .tt-publication-issue-item.is-warning,
 .tt-schedule-diagnostic-item.is-warning {
     border-color: rgba(245, 158, 11, 0.28);
-    background: rgba(245, 158, 11, 0.08);
+    background: rgba(245, 158, 11, 0.04);
 }
 
 .tt-inspector-issue-item.is-error,
@@ -2428,10 +2561,24 @@ body.light-mode .tt-import-setup-card .tt-stat-card {
 }
 
 .tt-inspector-locate-hint {
-    justify-self: start;
+    position: absolute;
+    top: 50%;
+    right: 9px;
+    transform: translateY(-50%);
+    opacity: 0;
     color: var(--tt-primary);
-    font-size: 0.72rem;
-    font-weight: 700;
+    font-size: 0.68rem;
+    font-weight: 600;
+    line-height: 1;
+    transition: opacity 0.16s ease;
+}
+
+.tt-inspector-target-row--locatable:hover .tt-inspector-locate-hint,
+.tt-inspector-target-row--locatable:focus-visible .tt-inspector-locate-hint,
+.tt-inspector-issue-item--locatable:hover .tt-inspector-locate-hint,
+.tt-inspector-issue-item--locatable:focus-visible .tt-inspector-locate-hint,
+.is-inspector-located-source .tt-inspector-locate-hint {
+    opacity: 1;
 }
 
 .tt-inspector-issue-item em,
@@ -2448,9 +2595,11 @@ body.light-mode .tt-import-setup-card .tt-stat-card {
     align-items: center;
     flex-wrap: wrap;
     gap: 4px 8px;
-    margin-top: 6px;
+    margin-top: 0;
+    padding: 6px 9px 7px;
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
     color: var(--tt-muted);
-    font-size: 12px;
+    font-size: 0.7rem;
     line-height: 1.5;
 }
 
@@ -2460,7 +2609,7 @@ body.light-mode .tt-import-setup-card .tt-stat-card {
     background: transparent;
     color: var(--tt-primary);
     font: inherit;
-    font-weight: 700;
+    font-weight: 600;
     line-height: 1.5;
     padding: 2px 0;
     cursor: pointer;
@@ -2863,8 +3012,10 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 }
 
 .tt-duty-assignment-dialog {
-    --tt-dialog-width: 520px;
-    --tt-dialog-max-height: 680px;
+    --tt-dialog-width: 500px;
+    --tt-dialog-max-height: 640px;
+    gap: 14px;
+    padding: 18px;
 }
 
 .tt-publish-dialog {
@@ -4500,7 +4651,7 @@ button.tt-duty-cell:focus-visible span {
 
 .tt-duty-assignment-form {
     display: grid;
-    gap: var(--tt-space-sm);
+    gap: 12px;
 }
 
 .tt-duty-field {
@@ -4511,19 +4662,270 @@ button.tt-duty-cell:focus-visible span {
     font-weight: 700;
 }
 
-.tt-duty-readonly {
+.tt-duty-assignment-dialog .tt-dialog-header {
+    align-items: center;
+    padding-bottom: 12px;
+}
+
+.tt-duty-assignment-dialog .tt-dialog-header h3 {
+    font-size: 1.06rem;
+}
+
+.tt-duty-assignment-dialog .tt-icon-btn {
+    flex: 0 0 auto;
+}
+
+.tt-duty-assignment-dialog .tt-roster-review-field {
+    min-height: 40px;
+}
+
+.tt-duty-teacher-picker {
     display: grid;
-    gap: 4px;
-    padding: 10px 12px;
+    gap: 8px;
+    min-width: 0;
+}
+
+.tt-duty-teacher-search-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    min-height: 40px;
     border: 1px solid var(--tt-border);
     border-radius: var(--tt-radius-sm);
     background: var(--tt-bg-input);
 }
 
-.tt-duty-readonly span,
-.tt-duty-readonly small {
+.tt-duty-teacher-search-row:focus-within {
+    border-color: var(--tt-border);
+    box-shadow: none;
+}
+
+.tt-duty-teacher-search-row i,
+.tt-duty-teacher-search-row .lucide,
+.tt-duty-teacher-search-row svg {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    margin-left: 14px;
+    color: var(--tt-muted);
+}
+
+.tt-duty-teacher-search {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    min-width: 0;
+    border: 0 !important;
+    outline: none !important;
+    padding: 9px 11px 9px 8px;
+    background: transparent;
+    box-shadow: none !important;
+    color: var(--tt-text);
+    font: inherit;
+    font-size: 0.86rem;
+}
+
+.tt-duty-teacher-search:focus,
+.tt-duty-teacher-search:focus-visible {
+    border: 0 !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+.tt-duty-teacher-search::-webkit-search-decoration,
+.tt-duty-teacher-search::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+}
+
+.tt-duty-teacher-search::placeholder {
+    color: var(--tt-muted);
+}
+
+.tt-duty-teacher-current {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid color-mix(in srgb, var(--tt-primary) 18%, var(--tt-border));
+    border-radius: var(--tt-radius-sm);
+    background: color-mix(in srgb, var(--tt-primary) 7%, transparent);
+}
+
+.tt-duty-teacher-current span {
+    flex: 0 0 auto;
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
+.tt-duty-teacher-current strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-text);
+    font-size: 0.82rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-duty-teacher-list {
+    display: grid;
+    max-height: 250px;
+    overflow: auto;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-panel);
+}
+
+.tt-duty-teacher-picker.is-closed .tt-duty-teacher-list {
+    display: none;
+}
+
+.tt-duty-teacher-option {
+    appearance: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 8px 10px;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--tt-border) 76%, transparent);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.tt-duty-teacher-option:last-child {
+    border-bottom: 0;
+}
+
+.tt-duty-teacher-option:hover,
+.tt-duty-teacher-option:focus-visible,
+.tt-duty-teacher-option.is-active {
+    background: color-mix(in srgb, var(--tt-primary) 8%, transparent);
+    outline: none;
+}
+
+.tt-duty-teacher-option.is-selected {
+    background: color-mix(in srgb, var(--tt-primary) 12%, transparent);
+    box-shadow: inset 3px 0 0 var(--tt-primary);
+}
+
+.tt-duty-teacher-option.is-recommended:not(.is-selected) {
+    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--tt-primary) 48%, var(--tt-border));
+}
+
+.tt-duty-teacher-option:disabled {
+    cursor: not-allowed;
+    opacity: 0.66;
+}
+
+.tt-duty-teacher-option-main {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.tt-duty-teacher-option-main strong,
+.tt-duty-teacher-option-main small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-duty-teacher-option-main strong {
+    color: var(--tt-text);
+    font-size: 0.84rem;
+}
+
+.tt-duty-teacher-option-main small {
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.tt-duty-teacher-option-badges {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-width: 0;
+}
+
+.tt-duty-teacher-option-badges span {
+    max-width: 120px;
+    overflow: hidden;
+    padding: 2px 6px;
+    border: 1px solid color-mix(in srgb, var(--tt-primary) 20%, var(--tt-border));
+    border-radius: 999px;
+    color: var(--tt-primary);
+    font-size: 0.68rem;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-duty-teacher-option-badges span.is-warning {
+    border-color: color-mix(in srgb, var(--tt-warning) 38%, var(--tt-border));
+    color: var(--tt-warning);
+}
+
+.tt-duty-teacher-empty {
+    padding: 12px;
     color: var(--tt-muted);
     font-size: 0.78rem;
+    text-align: center;
+}
+
+.tt-duty-context-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+}
+
+.tt-duty-context-item {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: color-mix(in srgb, var(--tt-bg-soft) 82%, var(--tt-bg-panel));
+}
+
+.tt-duty-context-item span,
+.tt-duty-context-item small {
+    color: var(--tt-muted);
+    font-size: 0.78rem;
+}
+
+.tt-duty-context-item strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--tt-text);
+    font-size: 0.9rem;
+    line-height: 1.35;
+}
+
+.tt-duty-actions {
+    align-items: center;
+    justify-content: space-between;
+}
+
+.tt-duty-actions-main {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--tt-space-sm);
+    margin-left: auto;
 }
 
 .tt-duty-error {
@@ -5038,6 +5440,7 @@ button.tt-duty-cell:focus-visible span {
     .tt-roster-import-dialog,
     /* 已删除 .tt-rule-review-dialog 响应式样式（旧弹窗已废弃） */
     .tt-period-time-dialog,
+    .tt-duty-assignment-dialog,
     .tt-publish-dialog,
     .tt-publication-history-dialog {
         width: 100%;
@@ -5057,6 +5460,13 @@ button.tt-duty-cell:focus-visible span {
 
     .tt-dialog-actions .tt-btn {
         flex: 1 1 120px;
+    }
+
+    .tt-duty-actions,
+    .tt-duty-actions-main {
+        display: flex;
+        width: 100%;
+        margin-left: 0;
     }
 
     .tt-rule-workbench {

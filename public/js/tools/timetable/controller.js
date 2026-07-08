@@ -41,6 +41,7 @@ import { buildRuleReviewTasks } from './rule-review-tasks.js';
 import smartHelperMethods from './controller-smart-helper.js';
 import * as constraintDialogMethods from './controller-constraint-dialog.js';
 import * as constraintDialogAdvancedMethods from './controller-constraint-dialog-advanced.js';
+import { dutyTeacherSearchQuery } from './duty-teacher-search.js';
 import {
     formatPeriodTimeSegmentMeta,
     renderNonTeachingSegmentPreview,
@@ -76,6 +77,10 @@ function buildSmartDataAudit(project = {}) {
             invalidHourCount: invalidPlans.filter(plan => Number(plan.weeklyHours || 0) <= 0).length,
         },
     };
+}
+
+function isActionableTimetableSuggestion(item = {}) {
+    return item.type !== 'class_load';
 }
 
 function deriveSmartWorkbenchStage(state = {}) {
@@ -741,7 +746,7 @@ export class TimetablePlannerController {
             ...(schedule.audit?.blockingIssues || []),
             ...(schedule.audit?.warnings || []),
             ...(schedule.qualityIssues || []).filter(item => item.severity === 'high').slice(0, 3),
-        ];
+        ].filter(isActionableTimetableSuggestion);
         const suggestions = rawSuggestions.map(item => ({
             label: item.label || item.message || item.type || String(item),
             message: item.message || item.label || String(item),
@@ -1558,6 +1563,7 @@ export class TimetablePlannerController {
 
     openDutyAssignmentDialog(day, timeBlockId, classId = '') {
         const project = this.state.project || {};
+        const explicitClassId = classId || (this.state.viewMode === 'class' ? this.state.selectedOwnerId : '');
         const selectedClassId = classId
             || (this.state.viewMode === 'class' ? this.state.selectedOwnerId : '')
             || project.classes?.[0]?.id
@@ -1572,6 +1578,7 @@ export class TimetablePlannerController {
             open: true,
             day: Number(day),
             classId: selectedClassId,
+            classLocked: this.state.viewMode === 'class' && Boolean(explicitClassId),
             timeBlockId,
             teacherId: existing?.teacherId || '',
             saving: false,
@@ -1588,6 +1595,115 @@ export class TimetablePlannerController {
             error: '',
         };
         this.render();
+    }
+
+    dutyTeacherPicker() {
+        return this.state.container?.querySelector?.('[data-duty-teacher-picker]') || null;
+    }
+
+    dutyTeacherOptions() {
+        return Array.from(this.dutyTeacherPicker()?.querySelectorAll?.('[data-duty-teacher-option]') || []);
+    }
+
+    openDutyTeacherOptions() {
+        const picker = this.dutyTeacherPicker();
+        if (!picker) return;
+        picker.classList.remove('is-closed');
+        picker.querySelector('[data-duty-teacher-search]')?.setAttribute('aria-expanded', 'true');
+    }
+
+    closeDutyTeacherOptions() {
+        const picker = this.dutyTeacherPicker();
+        if (!picker) return;
+        picker.classList.add('is-closed');
+        picker.querySelector('[data-duty-teacher-search]')?.setAttribute('aria-expanded', 'false');
+    }
+
+    setDutyTeacherActiveOption(option = null) {
+        const picker = this.dutyTeacherPicker();
+        if (!picker) return;
+        this.dutyTeacherOptions().forEach(item => {
+            const active = item === option;
+            item.classList.toggle('is-active', active);
+            if (active) item.setAttribute('data-duty-teacher-active', 'true');
+            else item.removeAttribute('data-duty-teacher-active');
+        });
+        const search = picker.querySelector('[data-duty-teacher-search]');
+        if (search) {
+            if (option?.id) search.setAttribute('aria-activedescendant', option.id);
+            else search.removeAttribute('aria-activedescendant');
+        }
+        option?.scrollIntoView?.({ block: 'nearest' });
+    }
+
+    visibleDutyTeacherOptions() {
+        return this.dutyTeacherOptions().filter(option => {
+            if (option.hidden || option.disabled) return false;
+            return true;
+        });
+    }
+
+    filterDutyTeacherOptions(query = '') {
+        const picker = this.dutyTeacherPicker();
+        if (!picker) return;
+        const normalizedQuery = dutyTeacherSearchQuery(query);
+        let teacherMatchCount = 0;
+        this.dutyTeacherOptions().forEach(option => {
+            const searchText = dutyTeacherSearchQuery(option.dataset.dutyTeacherSearchText || '');
+            const visible = !normalizedQuery || searchText.includes(normalizedQuery);
+            option.hidden = !visible;
+            if (visible) teacherMatchCount += 1;
+        });
+        picker.querySelector('[data-duty-teacher-empty-message]')?.toggleAttribute('hidden', teacherMatchCount > 0 || !normalizedQuery);
+        this.openDutyTeacherOptions();
+        this.setDutyTeacherActiveOption(this.visibleDutyTeacherOptions()[0] || null);
+    }
+
+    moveDutyTeacherActive(delta = 1) {
+        this.openDutyTeacherOptions();
+        const options = this.visibleDutyTeacherOptions();
+        if (!options.length) return;
+        const current = options.findIndex(option => option.dataset.dutyTeacherActive === 'true');
+        const nextIndex = current >= 0
+            ? (current + delta + options.length) % options.length
+            : (delta < 0 ? options.length - 1 : 0);
+        this.setDutyTeacherActiveOption(options[nextIndex]);
+    }
+
+    confirmDutyTeacherActive() {
+        const active = this.dutyTeacherOptions().find(option => option.dataset.dutyTeacherActive === 'true' && !option.hidden && !option.disabled)
+            || this.visibleDutyTeacherOptions()[0];
+        if (!active) return false;
+        return this.selectDutyTeacherOption(active.dataset.dutyTeacherOption || '', active);
+    }
+
+    selectDutyTeacherOption(teacherId = '', optionNode = null) {
+        const picker = this.dutyTeacherPicker();
+        if (!picker) return false;
+        const option = optionNode || this.dutyTeacherOptions()
+            .find(item => (item.dataset.dutyTeacherOption || '') === String(teacherId || ''));
+        if (!option || option.disabled) return false;
+        const value = option.dataset.dutyTeacherOption || '';
+        const label = option.dataset.dutyTeacherLabel || '未安排';
+        picker.querySelector('#tt-duty-assignment-teacher')?.setAttribute('value', value);
+        const hidden = picker.querySelector('#tt-duty-assignment-teacher');
+        if (hidden) hidden.value = value;
+        const current = picker.querySelector('[data-duty-teacher-current] strong');
+        if (current) current.textContent = label || '未安排';
+        const search = picker.querySelector('[data-duty-teacher-search]');
+        if (search) search.value = '';
+        this.state.dutyDialog = {
+            ...(this.state.dutyDialog || {}),
+            teacherId: value,
+        };
+        this.dutyTeacherOptions().forEach(item => {
+            const selected = item === option;
+            item.classList.toggle('is-selected', selected);
+            item.setAttribute('aria-selected', selected ? 'true' : 'false');
+        });
+        this.filterDutyTeacherOptions('');
+        this.closeDutyTeacherOptions();
+        return true;
     }
 
     readDutyAssignmentDialogValues() {
@@ -1635,7 +1751,7 @@ export class TimetablePlannerController {
         this.state.dutyDialog = { ...(this.state.dutyDialog || {}), saving: true, error: '' };
         this.render();
         await this.saveProject({ dutyAssignments });
-        this.state.dutyDialog = { open: false, day: null, classId: '', timeBlockId: '', teacherId: '', saving: false, error: '' };
+        this.state.dutyDialog = { open: false, day: null, classId: '', classLocked: false, timeBlockId: '', teacherId: '', saving: false, error: '' };
         this.render();
     }
 
@@ -1647,7 +1763,7 @@ export class TimetablePlannerController {
         this.state.dutyDialog = { ...(this.state.dutyDialog || {}), saving: true, error: '' };
         this.render();
         await this.saveProject({ dutyAssignments });
-        this.state.dutyDialog = { open: false, day: null, classId: '', timeBlockId: '', teacherId: '', saving: false, error: '' };
+        this.state.dutyDialog = { open: false, day: null, classId: '', classLocked: false, timeBlockId: '', teacherId: '', saving: false, error: '' };
         this.render();
     }
 
@@ -4161,6 +4277,7 @@ export class TimetablePlannerController {
         const hardCount = items.filter(item => item.priority === 'hard').length;
         const softCount = items.length - hardCount;
         const audit = this.state.project?.schedule?.audit || null;
+        const auditWarnings = (audit?.warnings || []).filter(isActionableTimetableSuggestion);
         const fallbackPlan = {
             hardCount,
             softCount,
@@ -4171,8 +4288,8 @@ export class TimetablePlannerController {
                 ? `在可行课表上继续优化 ${softCount} 条偏好`
                 : '继续优化课程分散、教师负载和班级日课时均衡',
             strategySummary: '先用本地算法快速生成可用课表，再由 Timefold 在后台寻找更优结果',
-            riskSummary: (audit?.warnings || []).length
-                ? `当前有 ${(audit.warnings || []).length} 项风险，生成后会再次校验`
+            riskSummary: auditWarnings.length
+                ? `当前有 ${auditWarnings.length} 项风险，生成后会再次校验`
                 : '当前没有发现阻断风险，生成后仍会再次校验',
         };
         this.state.smartWorkbench = {

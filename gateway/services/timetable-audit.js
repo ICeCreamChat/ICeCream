@@ -143,8 +143,6 @@ export function auditTimetableProject(input = {}) {
                 load,
                 capacity,
             }));
-        } else if (utilization >= 85) {
-            warnings.push(issue('class_load', '班级课表接近满载。', { classId: klass.id, name: `${klass.grade || ''}${klass.name || klass.id}`, utilization }));
         }
     }
 

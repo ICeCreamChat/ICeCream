@@ -30,6 +30,7 @@ import {
 import { createTimetableStore } from '../gateway/services/timetable-store.js';
 import { validateTimetableProjectForSolve } from '../gateway/services/timetable-validation.js';
 import {
+    auditTimetableProject,
     applyScheduleAdjustment,
     createDefaultTimetableProject,
     normalizeTimetableProject,
@@ -800,6 +801,65 @@ test('timetable scheduler attaches preflight audit for impossible capacity', () 
     assert.ok(result.schedule.audit.blockingIssues.some(issue => issue.type === 'teacher_capacity'));
     assert.equal(result.schedule.audit.capacity.totalLessons, 2);
     assert.equal(result.schedule.solverStats.reason, 'preflight_blocking_issues');
+});
+
+test('timetable audit treats a full class timetable as normal load', () => {
+    const project = sampleProject({
+        weekdays: 1,
+        periodsPerDay: 2,
+        activeWeekdays: [1],
+        activePeriods: [1, 2],
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const audit = auditTimetableProject(project);
+
+    assert.equal(audit.blockingIssues.some(issue => issue.type === 'class_capacity'), false);
+    assert.equal(audit.warnings.some(issue => issue.type === 'class_load'), false);
+    assert.ok(audit.warnings.some(issue => issue.type === 'teacher_load'));
+    assert.equal(audit.bottlenecks.classes[0].utilization, 100);
+});
+
+test('timetable publication omits full-class legacy load review while keeping teacher load', () => {
+    const project = sampleProject({
+        weekdays: 1,
+        periodsPerDay: 2,
+        activeWeekdays: [1],
+        activePeriods: [1, 2],
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 },
+        ],
+        rules: { hardRules: {}, softRules: {} },
+        schedule: {
+            id: 'full-class-ready',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [
+                { id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+                { id: 'slot-2', day: 1, period: 2, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            qualityIssues: [],
+            score: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0, completeness: 100 },
+        },
+    });
+
+    const publication = validateTimetablePublication(project);
+
+    assert.equal(publication.ok, true);
+    assert.equal(publication.issueEntries.some(issue => issue.type === 'class_load'), false);
+    assert.ok(publication.issueEntries.some(issue => issue.type === 'teacher_load'));
 });
 
 test('fast scheduler emits explainable quality issues and richer soft breakdown', () => {

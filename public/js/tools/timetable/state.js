@@ -104,6 +104,7 @@ export function createTimetablePlannerState(overrides = {}) {
             open: false,
             day: null,
             classId: '',
+            classLocked: false,
             timeBlockId: '',
             teacherId: '',
             saving: false,

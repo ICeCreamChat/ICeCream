@@ -29,6 +29,10 @@ import {
   loadInspectorPosition,
   saveInspectorPosition,
 } from '../public/js/tools/timetable/grid-interactions.js';
+import {
+  buildDutyTeacherSearchModel,
+  dutyTeacherSearchQuery,
+} from '../public/js/tools/timetable/duty-teacher-search.js';
 import { PRESET_TEMPLATES } from '../public/js/tools/timetable/preset-templates.js';
 
 const sourcePath = new URL('../public/js/tools/timetable-planner.js', import.meta.url);
@@ -80,6 +84,14 @@ function sampleWorkbenchState(overrides = {}) {
     smartWorkbench: { open: false },
     constraintDialog: mappedConstraintDialog,
   };
+}
+
+function inspectorSummaryMarkup(html = '') {
+  return html.match(/<summary class="tt-inspector-summary"[\s\S]*?<\/summary>/)?.[0] || '';
+}
+
+function dutyDialogMarkup(html = '') {
+  return html.match(/<section class="tt-duty-assignment-dialog"[\s\S]*?<\/section>/)?.[0] || '';
 }
 
 test('timetable opens smart constraints in the constraint dialog instead of the removed workbench', () => {
@@ -3248,10 +3260,10 @@ test('timetable inspector renders scheduling audit and quality suggestions', () 
   assert.match(inspector, /Math Teacher has too many consecutive lessons/);
   assert.match(inspector, /教师连续课/);
   assert.match(inspector, /班级日负载/);
+  assert.match(inspector, /排课诊断/);
   assert.match(inspector, /诊断问题/);
-  assert.match(inspector, /持续关注/);
-  assert.match(inspector, /tt-inspector-issue-item/);
-  assert.match(inspector, /tt-schedule-diagnostic-item is-warning/);
+  assert.match(inspector, /tt-inspector-problem-group is-warning/);
+  assert.match(inspector, /tt-inspector-target-row/);
   assert.doesNotMatch(inspector, /teacher_load/);
   assert.doesNotMatch(inspector, /teacherConsecutive/);
   assert.doesNotMatch(inspector, /classDailyBalance/);
@@ -3490,7 +3502,8 @@ test('timetable inspector renders clickable progressive controls for truncated i
   assert.match(inspector, /已显示\s*5\/12/);
   assert.match(inspector, /展开剩余\s*7/);
   assert.match(inspector, /data-action="expand-inspector-issue-group"/);
-  assert.match(inspector, /data-inspector-issue-limit-key="review:quality"/);
+  assert.match(inspector, /data-inspector-issue-limit-key="review:group-[^"]+"/);
+  assert.doesNotMatch(inspector, /data-inspector-issue-limit-key="review:quality"/);
   assert.doesNotMatch(inspector, /还有\s*7\s*项未展开/);
 });
 
@@ -3526,17 +3539,24 @@ test('timetable inspector applies independent expanded limits per issue group', 
     },
   };
 
+  const collapsedInspector = renderInspector(sampleWorkbenchState(baseState));
+  const qualityLimitKey = collapsedInspector.match(/<strong>同科分散<\/strong>[\s\S]*?data-inspector-issue-limit-key="([^"]+)"/)?.[1] || '';
+  const suggestionLimitKey = collapsedInspector.match(/<strong>建议<\/strong>[\s\S]*?data-inspector-issue-limit-key="([^"]+)"/)?.[1] || '';
+  assert.match(qualityLimitKey, /^review:group-/);
+  assert.match(suggestionLimitKey, /^review:group-/);
+  assert.notEqual(qualityLimitKey, suggestionLimitKey);
+
   const inspector = renderInspector(sampleWorkbenchState({
     ...baseState,
-    inspectorIssueLimits: { 'review:quality': 25 },
+    inspectorIssueLimits: { [qualityLimitKey]: 25 },
   }));
 
-  assert.match(inspector, /<strong>质量建议<\/strong>[\s\S]*<span>8<\/span>/);
+  assert.match(inspector, /<strong>同科分散<\/strong>[\s\S]*<span>8<\/span>/);
   assert.match(inspector, /已显示\s*8\/8/);
   assert.match(inspector, /收起/);
   assert.match(inspector, /诊断建议 5/);
   assert.doesNotMatch(inspector, /诊断建议 6/);
-  assert.match(inspector, /data-inspector-issue-limit-key="review:suggestion"/);
+  assert.match(inspector, new RegExp(`data-inspector-issue-limit-key="${suggestionLimitKey}"`));
 });
 
 test('timetable inspector renders locatable issue cards with target data', () => {
@@ -4111,7 +4131,7 @@ test('timetable inspector applies default section expansion rules', () => {
   const blockingSystemTag = blockingInspector.match(/<details[^>]+data-inspector-section="system"[^>]*>/)?.[0] || '';
 
   assert.match(blockingTag, /open/);
-  assert.doesNotMatch(blockingReviewTag, /open/);
+  assert.match(blockingReviewTag, /open/);
   assert.doesNotMatch(blockingSystemTag, /open/);
 
   const reviewInspector = renderInspector(sampleWorkbenchState({
@@ -4181,6 +4201,141 @@ test('timetable inspector applies default section expansion rules', () => {
   assert.match(selectedTag, /open/);
 });
 
+test('timetable inspector summary reports actionable counts in the floating header', () => {
+  const blockingHtml = renderWorkbench(sampleWorkbenchState({
+    schedule: {
+      id: 'schedule-inspector-header-counts',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [{ id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+      lockedSlots: [],
+      unplaced: [{ lessonPlanId: 'lp_math', reason: 'No slot' }],
+      conflicts: [],
+      qualityIssues: [
+        { id: 'quality-1', severity: 'warning', type: 'subject_spread', message: 'Math 过于集中。' },
+        { id: 'quality-2', severity: 'warning', type: 'teacher_load', message: 'Math Teacher 负载偏高。' },
+      ],
+      diagnostics: { items: [], suggestions: [] },
+      score: {
+        hardConflicts: 0,
+        unplacedLessons: 1,
+        placedLessons: 1,
+        totalLessons: 2,
+        completeness: 50,
+      },
+    },
+  }));
+  const blockingSummary = inspectorSummaryMarkup(blockingHtml);
+
+  assert.match(blockingSummary, /需处理 1 · 复核 2/);
+  assert.doesNotMatch(blockingSummary, /诊断 \/ 质量 \/ 发布/);
+
+  const publishableHtml = renderWorkbench(sampleWorkbenchState({
+    schedule: {
+      id: 'schedule-inspector-header-publishable',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'fast_constructed',
+      slots: [{ id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+      lockedSlots: [],
+      unplaced: [],
+      conflicts: [],
+      qualityIssues: [],
+      diagnostics: { items: [], suggestions: [] },
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [],
+        reviewItems: [],
+        summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      score: {
+        hardConflicts: 0,
+        unplacedLessons: 0,
+        placedLessons: 1,
+        totalLessons: 1,
+        completeness: 100,
+      },
+    },
+  }));
+  assert.match(inspectorSummaryMarkup(publishableHtml), /可发布/);
+
+  const notGeneratedHtml = renderWorkbench(sampleWorkbenchState({ schedule: null }));
+  assert.match(inspectorSummaryMarkup(notGeneratedHtml), /未生成/);
+});
+
+test('timetable inspector ignores legacy full-class load warnings', () => {
+  const fullClassOnlySchedule = {
+    id: 'schedule-legacy-class-load',
+    generatedAt: '2026-01-02T00:00:00.000Z',
+    source: 'fast_constructed',
+    slots: [{ id: 'slot-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+    lockedSlots: [],
+    unplaced: [],
+    conflicts: [],
+    audit: {
+      blockingIssues: [],
+      warnings: [{ type: 'class_load', message: '班级课表接近满载。', classId: 'c1', name: 'G71', utilization: 100 }],
+      bottlenecks: { classes: [{ id: 'c1', name: 'G71', utilization: 100 }] },
+      capacity: { totalLessons: 1, availableSlots: 1, classCapacity: 1, utilization: 100 },
+    },
+    publication: {
+      ok: true,
+      reason: 'ready',
+      issueEntries: [
+        { type: 'class_load', severity: 'warning', targetKind: 'class', targetId: 'c1', targetName: 'G71', message: '班级课表接近满载。' },
+      ],
+      reviewItems: [
+        { type: 'class_load', severity: 'warning', targetKind: 'class', targetId: 'c1', targetName: 'G71', message: '班级课表接近满载。' },
+      ],
+      blockingIssues: [],
+      warnings: [],
+      summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+    },
+    qualityIssues: [],
+    diagnostics: { items: [], suggestions: [] },
+    score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+  };
+
+  const model = buildInspectorViewModel(sampleWorkbenchState({ schedule: fullClassOnlySchedule }));
+  const workbench = renderWorkbench(sampleWorkbenchState({ schedule: fullClassOnlySchedule }));
+  const inspector = renderInspector(sampleWorkbenchState({ schedule: fullClassOnlySchedule }));
+
+  assert.equal(model.reviewItems.length, 0);
+  assert.match(inspectorSummaryMarkup(workbench), /可发布/);
+  assert.doesNotMatch(inspector, /班级课表接近满载。/);
+  assert.doesNotMatch(inspector, /班级负载/);
+
+  const mixedInspector = renderInspector(sampleWorkbenchState({
+    schedule: {
+      ...fullClassOnlySchedule,
+      id: 'schedule-legacy-class-load-with-teacher',
+      audit: {
+        ...fullClassOnlySchedule.audit,
+        warnings: [
+          ...fullClassOnlySchedule.audit.warnings,
+          { type: 'teacher_load', message: 'Math Teacher 负载较高。', teacherId: 't_math', name: 'Math Teacher', utilization: 100 },
+        ],
+      },
+      publication: {
+        ...fullClassOnlySchedule.publication,
+        issueEntries: [
+          ...fullClassOnlySchedule.publication.issueEntries,
+          { type: 'teacher_load', severity: 'warning', targetKind: 'teacher', targetId: 't_math', targetName: 'Math Teacher', message: 'Math Teacher 负载较高。' },
+        ],
+        reviewItems: [
+          ...fullClassOnlySchedule.publication.reviewItems,
+          { type: 'teacher_load', severity: 'warning', targetKind: 'teacher', targetId: 't_math', targetName: 'Math Teacher', message: 'Math Teacher 负载较高。' },
+        ],
+      },
+    },
+  }));
+
+  assert.match(mixedInspector, /Math Teacher 负载较高。/);
+  assert.match(mixedInspector, /教师负载/);
+  assert.doesNotMatch(mixedInspector, /班级课表接近满载。/);
+});
+
 test('timetable inspector shows publication readiness before export', () => {
   const state = sampleWorkbenchState({
     project: createDefaultTimetableProject({
@@ -4239,9 +4394,9 @@ test('timetable inspector shows publication readiness before export', () => {
   assert.match(inspector, /发布问题/);
   assert.match(inspector, /必须先处理/);
   assert.match(inspector, /建议发布前复核/);
-  assert.match(inspector, /tt-inspector-issue-item/);
-  assert.match(inspector, /tt-publication-issue-item is-error/);
-  assert.match(inspector, /tt-publication-issue-item is-warning/);
+  assert.match(inspector, /tt-inspector-problem-group is-error/);
+  assert.match(inspector, /tt-inspector-problem-group is-warning/);
+  assert.match(inspector, /tt-inspector-target-row/);
   assert.match(inspector, /1\/3/);
 });
 
@@ -9493,6 +9648,348 @@ test('timetable legacy duty blocks create additional duty cells and render the e
   assert.match(html, /id="tt-clear-duty-assignment"/);
 });
 
+test('timetable class duty editor locks current class and renders read-only context', () => {
+  const project = createDefaultTimetableProject({
+    activeWeekdays: [1],
+    teachers: [
+      { id: 't_duty', name: 'Duty Teacher', subjects: [], unavailableSlots: [] },
+      { id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] },
+    ],
+    classes: [
+      { id: 'c1', grade: '七年级', name: '1班' },
+      { id: 'c2', grade: '七年级', name: '2班' },
+    ],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [
+      { id: 'lp_math_c1', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+      { id: 'lp_math_c2', classId: 'c2', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+    ],
+    periodTimeSegments: {
+      globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+      segments: [
+        { id: 'early-study', label: '早自习', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+        { id: 'morning', label: '上午', startTime: '08:00', periodCount: 1, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+      ],
+    },
+  });
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.viewMode = 'class';
+  controller.state.selectedOwnerId = 'c1';
+  controller.applyProject(project);
+
+  controller.openDutyAssignmentDialog(1, 'early-study');
+
+  assert.equal(controller.state.dutyDialog.classId, 'c1');
+  assert.equal(controller.state.dutyDialog.classLocked, true);
+
+  const html = renderWorkbench(sampleWorkbenchState({
+    project,
+    viewMode: 'class',
+    selectedOwnerId: 'c1',
+    dutyDialog: controller.state.dutyDialog,
+  }));
+  const dialog = dutyDialogMarkup(html);
+
+  assert.match(dialog, /data-duty-assignment-class-readonly/);
+  assert.match(dialog, /七年级1班/);
+  assert.doesNotMatch(dialog, /id="tt-duty-assignment-class"/);
+  assert.doesNotMatch(dialog, /<option value="c1"/);
+  assert.doesNotMatch(dialog, /<option value="c2"/);
+  assert.match(dialog, /id="tt-duty-assignment-teacher" type="hidden"/);
+  assert.match(dialog, /data-duty-teacher-search/);
+  assert.match(dialog, /data-duty-teacher-option/);
+  assert.doesNotMatch(dialog, /<select id="tt-duty-assignment-teacher"/);
+});
+
+test('timetable duty editor keeps class selector outside locked class context', () => {
+  const project = createDefaultTimetableProject({
+    activeWeekdays: [1],
+    teachers: [
+      { id: 't_duty', name: 'Duty Teacher', subjects: [], unavailableSlots: [] },
+      { id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] },
+    ],
+    classes: [
+      { id: 'c1', grade: '七年级', name: '1班' },
+      { id: 'c2', grade: '七年级', name: '2班' },
+    ],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    periodTimeSegments: {
+      globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+      segments: [
+        { id: 'early-study', label: '早自习', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+      ],
+    },
+  });
+  const html = renderWorkbench(sampleWorkbenchState({
+    project,
+    viewMode: 'teacher',
+    selectedOwnerId: 't_duty',
+    dutyDialog: {
+      open: true,
+      day: 1,
+      classId: 'c1',
+      classLocked: false,
+      timeBlockId: 'early-study',
+      teacherId: '',
+    },
+  }));
+  const dialog = dutyDialogMarkup(html);
+
+  assert.match(dialog, /id="tt-duty-assignment-class"/);
+  assert.match(dialog, /<option value="c1" selected>七年级1班<\/option>/);
+  assert.match(dialog, /<option value="c2" >七年级2班<\/option>/);
+  assert.doesNotMatch(dialog, /data-duty-assignment-class-readonly/);
+});
+
+test('timetable duty teacher search model supports pinyin recommendations and conflict states', () => {
+  const project = createDefaultTimetableProject({
+    activeWeekdays: [1],
+    teachers: [
+      { id: 't_math', name: '数学老师', subjects: ['math'], unavailableSlots: [] },
+      { id: 't_zhang', name: '张三', subjects: ['duty'], unavailableSlots: [] },
+      { id: 't_busy', name: '忙碌老师', subjects: ['duty'], unavailableSlots: [] },
+      { id: 't_other_duty', name: '跨班值班老师', subjects: ['duty'], unavailableSlots: [] },
+      { id: 't_unavailable', name: '不可排老师', subjects: ['duty'], unavailableSlots: ['1-1'] },
+    ],
+    classes: [
+      { id: 'c1', grade: '七年级', name: '1班' },
+      { id: 'c2', grade: '七年级', name: '2班' },
+    ],
+    subjects: [
+      { id: 'math', name: '数学', priority: 90, color: '#2563eb' },
+      { id: 'duty', name: '值班', priority: 10, color: '#0891b2' },
+    ],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 }],
+    periodTimes: [{ period: 1, start: '07:30', end: '08:10' }],
+    periodTimeSegments: {
+      globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+      segments: [
+        { id: 'early-study', label: '早自习', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+        { id: 'morning', label: '上午', startTime: '08:00', periodCount: 1, classMinutes: 40, breakMinutes: 10, kind: 'teaching' },
+      ],
+    },
+    schedule: {
+      source: 'fast_constructed',
+      slots: [{ id: 'slot-busy', day: 1, period: 1, classId: 'c2', subjectId: 'duty', teacherId: 't_busy' }],
+    },
+    dutyAssignments: [
+      { id: 'duty-c2', day: 1, classId: 'c2', timeBlockId: 'early-study', teacherId: 't_other_duty', source: 'manual', status: 'active' },
+    ],
+  });
+  const context = { day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: '' };
+
+  assert.equal(dutyTeacherSearchQuery('zhang san'), 'zhangsan');
+  assert.deepEqual(buildDutyTeacherSearchModel(project, { ...context, query: 'zhangsan' }).visibleOptions.map(item => item.id), ['t_zhang']);
+  assert.deepEqual(buildDutyTeacherSearchModel(project, { ...context, query: 'zhang san' }).visibleOptions.map(item => item.id), ['t_zhang']);
+  assert.deepEqual(buildDutyTeacherSearchModel(project, { ...context, query: 'zs' }).visibleOptions.map(item => item.id), ['t_zhang']);
+  assert.deepEqual(buildDutyTeacherSearchModel(project, { ...context, query: 't_zhang' }).visibleOptions.map(item => item.id), ['t_zhang']);
+  assert.equal(buildDutyTeacherSearchModel(project, { ...context, query: '数学' }).visibleOptions[0].id, 't_math');
+
+  const model = buildDutyTeacherSearchModel(project, context);
+  assert.equal(model.visibleOptions[0].id, 't_math');
+  assert.equal(model.visibleOptions[0].recommended, true);
+
+  const optionsById = new Map(model.options.map(item => [item.id, item]));
+  assert.equal(optionsById.get('t_math').meta, '数学');
+  assert.doesNotMatch(optionsById.get('t_math').meta, /t_|math/);
+  assert.equal(optionsById.get('t_busy').disabled, true);
+  assert.equal(optionsById.get('t_busy').conflictReason, '该时段已有正式课');
+  assert.equal(optionsById.get('t_other_duty').disabled, true);
+  assert.equal(optionsById.get('t_other_duty').conflictReason, '该时段已在其他班值班');
+  assert.equal(optionsById.get('t_unavailable').disabled, true);
+  assert.equal(optionsById.get('t_unavailable').conflictReason, '教师不可排');
+
+  const selectedConflict = buildDutyTeacherSearchModel(project, { ...context, teacherId: 't_busy' });
+  assert.equal(selectedConflict.options.find(item => item.id === 't_busy').selected, true);
+  assert.equal(selectedConflict.options.find(item => item.id === 't_busy').disabled, false);
+});
+
+test('timetable duty editor renders a searchable teacher picker for large teacher lists', () => {
+  const teachers = [
+    { id: 't_zhang', name: '张三', subjects: ['math'], unavailableSlots: [] },
+    ...Array.from({ length: 80 }, (_, index) => ({
+      id: `t_extra_${index + 1}`,
+      name: `值班老师${index + 1}`,
+      subjects: ['duty'],
+      unavailableSlots: [],
+    })),
+  ];
+  const project = createDefaultTimetableProject({
+    activeWeekdays: [1],
+    teachers,
+    classes: [{ id: 'c1', grade: '七年级', name: '1班' }],
+    subjects: [
+      { id: 'math', name: '数学', priority: 90, color: '#2563eb' },
+      { id: 'duty', name: '值班', priority: 10, color: '#0891b2' },
+    ],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_zhang', weeklyHours: 1 }],
+    periodTimeSegments: {
+      globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+      segments: [
+        { id: 'early-study', label: '早自习', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+      ],
+    },
+  });
+  const html = renderWorkbench(sampleWorkbenchState({
+    project,
+    dutyDialog: {
+      open: true,
+      day: 1,
+      classId: 'c1',
+      classLocked: true,
+      timeBlockId: 'early-study',
+      teacherId: '',
+    },
+  }));
+  const dialog = dutyDialogMarkup(html);
+
+  assert.match(dialog, /data-duty-teacher-search/);
+  assert.match(dialog, /tt-duty-teacher-list/);
+  assert.match(dialog, /清除值班/);
+  assert.doesNotMatch(dialog, /tt-duty-teacher-option--empty/);
+  assert.doesNotMatch(dialog, /data-duty-teacher-empty=/);
+  assert.doesNotMatch(dialog, /<strong>不安排值班老师<\/strong>/);
+  assert.match(dialog, /placeholder="搜索老师姓名、拼音或学科"/);
+  assert.doesNotMatch(dialog, /placeholder="[^"]*ID/);
+  assert.match(dialog, /张三/);
+  assert.match(dialog, /<small>数学<\/small>/);
+  assert.doesNotMatch(dialog, /<small>[^<]*(?:t_|s_)/);
+  assert.match(dialog, /data-duty-teacher-search-text="[^"]*zhangsan/);
+  assert.match(dialog, /id="tt-duty-assignment-teacher" type="hidden" value=""/);
+  assert.doesNotMatch(dialog, /<select id="tt-duty-assignment-teacher"/);
+  assert.equal((dialog.match(/data-duty-teacher-option=/g) || []).length, 81);
+});
+
+test('timetable duty teacher picker wires click and keyboard interactions', async () => {
+  const interactionSource = await readFile(new URL('../public/js/tools/timetable/grid-interactions.js', import.meta.url), 'utf8');
+  const controllerSource = await readFile(new URL('../public/js/tools/timetable/controller.js', import.meta.url), 'utf8');
+  const styles = await readFile(stylePath, 'utf8');
+
+  assert.match(interactionSource, /select-duty-teacher/);
+  assert.match(interactionSource, /data-duty-teacher-search[\s\S]*ArrowDown/);
+  assert.match(interactionSource, /data-duty-teacher-search[\s\S]*ArrowUp/);
+  assert.match(interactionSource, /data-duty-teacher-search[\s\S]*Enter/);
+  assert.match(interactionSource, /data-duty-teacher-search[\s\S]*Escape/);
+  assert.match(controllerSource, /filterDutyTeacherOptions/);
+  assert.match(controllerSource, /selectDutyTeacherOption/);
+  assert.match(styles, /\.tt-duty-teacher-search-row \.lucide/);
+  assert.match(styles, /\.tt-duty-teacher-search:focus,\s*\.tt-duty-teacher-search:focus-visible\s*{[^}]*outline:\s*none !important;[^}]*box-shadow:\s*none !important;/s);
+});
+
+test('timetable duty teacher picker navigates multiple filtered candidates', () => {
+  const controller = new TimetablePlannerController();
+  controller.state.dutyDialog = { open: true, day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: '' };
+
+  const makeOption = (id, label, searchText, { disabled = false } = {}) => {
+    const option = {
+      id: `option-${id}`,
+      hidden: false,
+      disabled,
+      dataset: {
+        dutyTeacherOption: id,
+        dutyTeacherLabel: label,
+        dutyTeacherSearchText: searchText,
+      },
+      classes: {},
+      attrs: {},
+      classList: null,
+      setAttribute(name, value) {
+        this.attrs[name] = String(value);
+        if (name === 'data-duty-teacher-active') this.dataset.dutyTeacherActive = String(value);
+      },
+      removeAttribute(name) {
+        delete this.attrs[name];
+        if (name === 'data-duty-teacher-active') delete this.dataset.dutyTeacherActive;
+      },
+      scrollIntoView() {
+        this.scrolled = true;
+      },
+    };
+    option.classList = {
+      toggle(name, active) {
+        option.classes[name] = Boolean(active);
+      },
+    };
+    return option;
+  };
+
+  const options = [
+    makeOption('t_zhang_san', '张三', '张三 zhang san zhangsan zs t_zhang_san'),
+    makeOption('t_busy', '张三忙', '张三忙 zhang san mang zhangsanmang zhangsan zsm t_busy', { disabled: true }),
+    makeOption('t_zhang_san_feng', '张三丰', '张三丰 zhang san feng zhangsanfeng zsf t_zhang_san_feng'),
+    makeOption('t_li', '李老师', '李老师 li lao shi lilaoshi lls t_li'),
+  ];
+  const hiddenInput = {
+    value: '',
+    setAttribute(name, value) {
+      if (name === 'value') this.value = String(value);
+    },
+  };
+  const searchInput = {
+    value: 'zhangsan',
+    attrs: {},
+    setAttribute(name, value) {
+      this.attrs[name] = String(value);
+    },
+    removeAttribute(name) {
+      delete this.attrs[name];
+    },
+  };
+  const currentLabel = { textContent: '' };
+  const emptyMessage = {
+    hidden: false,
+    toggleAttribute(name, force) {
+      if (name === 'hidden') this.hidden = Boolean(force);
+    },
+  };
+  const picker = {
+    closed: false,
+    classList: {
+      add(name) {
+        if (name === 'is-closed') picker.closed = true;
+      },
+      remove(name) {
+        if (name === 'is-closed') picker.closed = false;
+      },
+    },
+    querySelector(selector) {
+      if (selector === '[data-duty-teacher-search]') return searchInput;
+      if (selector === '[data-duty-teacher-empty-message]') return emptyMessage;
+      if (selector === '#tt-duty-assignment-teacher') return hiddenInput;
+      if (selector === '[data-duty-teacher-current] strong') return currentLabel;
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector === '[data-duty-teacher-option]') return options;
+      return [];
+    },
+  };
+  controller.state.container = {
+    querySelector(selector) {
+      if (selector === '[data-duty-teacher-picker]') return picker;
+      return null;
+    },
+  };
+
+  controller.filterDutyTeacherOptions('zhangsan');
+  assert.equal(options[0].hidden, false);
+  assert.equal(options[1].hidden, false);
+  assert.equal(options[2].hidden, false);
+  assert.equal(options[3].hidden, true);
+  assert.equal(options[0].dataset.dutyTeacherActive, 'true');
+
+  controller.moveDutyTeacherActive(1);
+  assert.equal(options[2].dataset.dutyTeacherActive, 'true');
+  assert.equal(options[2].scrolled, true);
+
+  assert.equal(controller.confirmDutyTeacherActive(), true);
+  assert.equal(hiddenInput.value, 't_zhang_san_feng');
+  assert.equal(currentLabel.textContent, '张三丰');
+  assert.equal(controller.state.dutyDialog.teacherId, 't_zhang_san_feng');
+});
+
 test('timetable duty editor saves and clears duty assignments without touching lesson plans', async () => {
   const calls = [];
   const originalFetch = globalThis.fetch;
@@ -9557,6 +10054,117 @@ test('timetable duty editor saves and clears duty assignments without touching l
     controller.state.dutyDialog = { open: true, day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: 't_math' };
     await controller.clearDutyAssignmentDialog();
     assert.deepEqual(calls[1].body.dutyAssignments, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('timetable locked duty editor saves and clears only the current class without a class selector', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const c2Duty = {
+    id: 'duty-c2',
+    day: 1,
+    classId: 'c2',
+    timeBlockId: 'early-study',
+    teacherId: 't_other',
+    source: 'manual',
+    status: 'active',
+  };
+  const project = createDefaultTimetableProject({
+    activeWeekdays: [1],
+    teachers: [
+      { id: 't_duty', name: 'Duty Teacher', subjects: [], unavailableSlots: [] },
+      { id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] },
+      { id: 't_other', name: 'Other Teacher', subjects: [], unavailableSlots: [] },
+    ],
+    classes: [
+      { id: 'c1', grade: '七年级', name: '1班' },
+      { id: 'c2', grade: '七年级', name: '2班' },
+    ],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [
+      { id: 'lp_math_c1', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+      { id: 'lp_math_c2', classId: 'c2', subjectId: 'math', teacherId: 't_math', weeklyHours: 1 },
+    ],
+    periodTimeSegments: {
+      globalDefaults: { classMinutes: 40, breakMinutes: 10 },
+      segments: [
+        { id: 'early-study', label: '早自习', startTime: '07:20', periodCount: 1, classMinutes: 30, breakMinutes: 10, kind: 'duty' },
+      ],
+    },
+    dutyAssignments: [
+      { id: 'duty-c1', day: 1, classId: 'c1', timeBlockId: 'early-study', teacherId: 't_duty', source: 'manual', status: 'active' },
+      c2Duty,
+    ],
+  });
+
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), body });
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          success: true,
+          data: {
+            project: createDefaultTimetableProject({
+              ...project,
+              ...body,
+            }),
+          },
+        };
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.setMessage = () => {};
+    controller.applyProject(project);
+    controller.state.container = {
+      querySelector(selector) {
+        if (selector === '#tt-duty-assignment-teacher') return { value: 't_math' };
+        return null;
+      },
+    };
+    controller.state.dutyDialog = {
+      open: true,
+      day: 1,
+      classId: 'c1',
+      classLocked: true,
+      timeBlockId: 'early-study',
+      teacherId: 't_duty',
+    };
+
+    await controller.saveDutyAssignmentDialog();
+
+    assert.deepEqual(calls[0].body.dutyAssignments, [
+      c2Duty,
+      {
+        id: 'duty-c1',
+        day: 1,
+        classId: 'c1',
+        timeBlockId: 'early-study',
+        teacherId: 't_math',
+        source: 'manual',
+        status: 'active',
+      },
+    ]);
+
+    controller.state.dutyDialog = {
+      open: true,
+      day: 1,
+      classId: 'c1',
+      classLocked: true,
+      timeBlockId: 'early-study',
+      teacherId: 't_math',
+    };
+    await controller.clearDutyAssignmentDialog();
+
+    assert.deepEqual(calls[1].body.dutyAssignments, [c2Duty]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -10943,7 +11551,8 @@ test('timetable inspector renders unified diagnostics summary and items', () => 
   assert.match(inspector, /班级/);
   assert.match(inspector, /课程/);
   assert.match(inspector, /G71/);
-  assert.match(inspector, /关联 1 项诊断/);
+  assert.match(inspector, /tt-inspector-problem-group is-error/);
+  assert.match(inspector, /tt-inspector-problem-group is-warning/);
   assert.match(inspector, /Math 还有 2 节未排。/);
   assert.match(inspector, /同科过于集中。/);
   assert.match(inspector, /检查班级容量后重新生成。/);
@@ -11024,8 +11633,9 @@ test('timetable publication panel prefers unified publication diagnostics when p
   assert.match(inspector, /发布问题/);
   assert.match(inspector, /G71 还有 2 节未排。/);
   assert.match(inspector, /Math Teacher 负载接近满载。/);
-  assert.match(inspector, /tt-inspector-issue-item tt-publication-issue-item is-error/);
-  assert.match(inspector, /tt-inspector-issue-item tt-publication-issue-item is-warning/);
+  assert.match(inspector, /tt-inspector-problem-group is-error/);
+  assert.match(inspector, /tt-inspector-problem-group is-warning/);
+  assert.match(inspector, /tt-inspector-target-row/);
 });
 
 test('timetable publication panel can fall back to publication issueEntries without diagnostics', () => {
@@ -11136,6 +11746,6 @@ test('timetable publication panel can bridge legacy blockingIssues and warnings 
 
   assert.match(inspector, /G7 1 还有 2 节未排。/);
   assert.match(inspector, /请教务复核。/);
-  assert.match(inspector, /tt-publication-issue-item is-error/);
-  assert.match(inspector, /tt-publication-issue-item is-warning/);
+  assert.match(inspector, /tt-inspector-problem-group is-error/);
+  assert.match(inspector, /tt-inspector-problem-group is-warning/);
 });

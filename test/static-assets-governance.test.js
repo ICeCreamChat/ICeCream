@@ -20,6 +20,10 @@ test('vendor manifest tracks offline assets and licenses', async () => {
             const licenseInfo = await stat(path.join(vendor.path, 'LICENSE-GEOGEBRA.txt'));
             assert.equal(licenseInfo.isFile(), true);
         }
+        if (vendor.path === 'public/vendor/pinyin-pro') {
+            const licenseInfo = await stat(path.join(vendor.path, 'LICENSE'));
+            assert.equal(licenseInfo.isFile(), true);
+        }
     }
 });
 

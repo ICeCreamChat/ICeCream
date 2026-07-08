@@ -27,7 +27,7 @@ function restoreEnv(snapshot) {
     }
 }
 
-export async function withOpenedTimetablePage({ port }, callback) {
+export async function withOpenedTimetablePage({ port, seedProject = null }, callback) {
     const host = '127.0.0.1';
     const baseUrl = `http://${host}:${port}`;
     const tempDir = await mkdtemp(path.join(os.tmpdir(), 'tt-ui-smoke-'));
@@ -60,6 +60,23 @@ export async function withOpenedTimetablePage({ port }, callback) {
             isDev: true,
             logger: QUIET_LOGGER,
         }));
+
+        if (seedProject) {
+            const projectPayload = { ...seedProject };
+            delete projectPayload.version;
+            const response = await fetch(`${baseUrl}/api/tools/timetable/project`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(projectPayload),
+            });
+            const payload = await response.json().catch(() => null);
+            assert.equal(
+                response.ok,
+                true,
+                `failed to seed timetable project: ${response.status} ${JSON.stringify(payload)}`,
+            );
+            assert.ok(payload?.data?.project, 'seeded timetable project should be returned');
+        }
 
         browser = await chromium.launch({ headless: true });
         page = await browser.newPage();
