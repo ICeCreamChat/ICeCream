@@ -234,6 +234,13 @@ export function handleTimetableEscape(event, container, controller, state) {
     // Check if we're in an input field that's being edited
     const target = event.target;
     if (target && (target.matches('input[type="text"], input[type="time"], input[type="number"], textarea, select') || target.isContentEditable)) {
+        if (state?.rosterImport?.issueEditor && target.closest?.('#tt-roster-issue-editor-dialog')) {
+            target.blur();
+            event.preventDefault();
+            event.stopPropagation();
+            controller?.closeRosterIssueEditor?.();
+            return true;
+        }
         // Allow Escape to blur the input without closing dialogs
         target.blur();
         event.preventDefault();
@@ -264,6 +271,10 @@ export function handleTimetableEscape(event, container, controller, state) {
     }
     if (state.dutyDialog?.open) {
         controller.closeDutyAssignmentDialog?.();
+        return true;
+    }
+    if (state.rosterImport?.issueEditor) {
+        controller.closeRosterIssueEditor?.();
         return true;
     }
     if (state.rosterImport?.open) {
@@ -334,6 +345,10 @@ function bindDelegatedInteractions(container) {
             controller.closeDutyAssignmentDialog?.();
             return;
         }
+        if (event.target.matches('[data-roster-issue-editor-overlay]')) {
+            controller.closeRosterIssueEditor?.();
+            return;
+        }
         if (event.target.matches('[data-duty-teacher-search]')) {
             controller.openDutyTeacherOptions?.();
         }
@@ -359,6 +374,17 @@ function bindDelegatedInteractions(container) {
             const filter = actionNode?.dataset.constraintFulfillmentFilter || 'attention';
             state.constraintFulfillmentFilter = filter;
             controller.render?.();
+            event.preventDefault?.();
+            event.stopPropagation?.();
+        } else if (action === 'rerun-constraint-fulfillment') {
+            controller.runSchedule?.();
+            event.preventDefault?.();
+            event.stopPropagation?.();
+        } else if (action === 'constraint-fulfillment-suggestion') {
+            controller.handleConstraintFulfillmentSuggestion?.(
+                actionNode?.dataset.constraintFulfillmentRow || '',
+                actionNode?.dataset.constraintFulfillmentSuggestion || '',
+            );
             event.preventDefault?.();
             event.stopPropagation?.();
         } else if (action === 'locate-inspector-issue') {
@@ -446,9 +472,12 @@ function bindDelegatedInteractions(container) {
         } else if (action === 'select-requirement') {
             const requirementId = event.target.closest('[data-requirement-id]')?.dataset.requirementId;
             controller.selectRequirement(requirementId);
+        } else if (action === 'toggle-system-group') {
+            controller.toggleSystemRequirementGroup();
         } else if (action === 'submit-requirement-clarification') {
             const requirementId = event.target.closest('[data-requirement-id]')?.dataset.requirementId;
-            controller.submitRequirementClarification(requirementId);
+            const clarifyValue = event.target.closest('[data-clarify-value]')?.dataset.clarifyValue;
+            controller.submitRequirementClarification(requirementId, clarifyValue);
         } else if (action === 'toggle-constraint-apply-item') {
             const applyItemKey = event.target.closest('[data-apply-item-key]')?.dataset.applyItemKey;
             controller.toggleConstraintApplyItem(applyItemKey);
@@ -516,6 +545,16 @@ function bindDelegatedInteractions(container) {
             controller.resetTimetableAgentSession();
         } else if (action === 'timetable-agent-quick') {
             controller.sendTimetableAgentMessage(event.target.closest('[data-agent-prompt]')?.dataset.agentPrompt || '');
+        } else if (action === 'constraint-agent-start') {
+            controller.startConstraintIntakeAgentSession();
+        } else if (action === 'constraint-agent-send') {
+            controller.sendConstraintIntakeAgentMessage();
+        } else if (action === 'constraint-agent-confirm') {
+            controller.confirmConstraintIntakeAgent();
+        } else if (action === 'constraint-agent-apply') {
+            controller.applyConstraintIntakeAgent();
+        } else if (action === 'constraint-agent-solve') {
+            controller.solveConstraintIntakeAgent();
         } else if (action === 'generate-period-times') {
             controller.updateSegmentConfigFromForm();
         } else if (action === 'auto-fill-period-times' || action === 'reset-period-time-settings') {
@@ -581,6 +620,11 @@ function bindDelegatedInteractions(container) {
         } else if (event.target.matches('[data-constraint-chat-input]')) {
             controller.updateConstraintChatInput(event.target.value);
             resizeConstraintChatInput(event.target);
+        } else if (event.target.matches('#tt-constraint-agent-message')) {
+            controller.state.constraintAgent = {
+                ...(controller.state.constraintAgent || {}),
+                input: event.target.value,
+            };
         } else if (event.target.matches('[data-duty-teacher-search]')) {
             controller.filterDutyTeacherOptions?.(event.target.value);
         }
@@ -622,6 +666,17 @@ function bindDelegatedInteractions(container) {
         ) {
             event.preventDefault();
             controller.sendConstraintChatMessage(event.target.value);
+            return;
+        }
+
+        if (
+            controller
+            && event.target.matches('#tt-constraint-agent-message')
+            && event.key === 'Enter'
+            && !event.shiftKey
+        ) {
+            event.preventDefault();
+            controller.sendConstraintIntakeAgentMessage(event.target.value);
             return;
         }
 
@@ -757,7 +812,9 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-reopen-roster-import')?.addEventListener('click', () => controller.openRosterImport('file'));
     container.querySelector('#tt-edit-roster')?.addEventListener('click', () => controller.openRosterEditor());
     container.querySelector('#tt-fill-roster-sample')?.addEventListener('click', () => controller.fillSample());
-    container.querySelector('#tt-preview-roster-import')?.addEventListener('click', () => controller.previewRosterImport());
+    container.querySelectorAll('[data-roster-import-submit]').forEach(button => {
+        button.addEventListener('click', () => controller.previewRosterImport(button.dataset.rosterImportSubmit));
+    });
     container.querySelector('#tt-start-empty-roster-review')?.addEventListener('click', () => controller.startEmptyRosterReview());
     container.querySelector('#tt-confirm-roster-import')?.addEventListener('click', () => controller.confirmRosterImport());
     container.querySelector('#tt-cancel-roster-import')?.addEventListener('click', () => controller.closeRosterImport());
@@ -765,14 +822,37 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-roster-import-file')?.addEventListener('change', event => {
         controller.selectRosterImportFile(event.target.files?.[0] || null);
     });
-    container.querySelectorAll('[data-roster-import-mode]').forEach(button => {
-        button.addEventListener('click', () => controller.setRosterImportMode(button.dataset.rosterImportMode));
-    });
     container.querySelectorAll('[data-roster-field]').forEach(input => {
         input.addEventListener('change', () => controller.updateRosterReviewField());
     });
     container.querySelectorAll('[data-roster-delete-row]').forEach(button => {
         button.addEventListener('click', () => controller.deleteRosterReviewRow(button.dataset.rosterDeleteRow));
+    });
+    container.querySelectorAll('[data-roster-toggle-issues]').forEach(button => {
+        button.addEventListener('click', () => controller.toggleRosterIssueList());
+    });
+    container.querySelectorAll('[data-roster-edit-issue-row]').forEach(button => {
+        button.addEventListener('click', () => controller.openRosterIssueEditor(
+            button.dataset.rosterEditIssueRow || '',
+            button.dataset.rosterEditIssueField || '',
+        ));
+    });
+    container.querySelector('#tt-close-roster-issue-editor')?.addEventListener('click', () => controller.closeRosterIssueEditor());
+    container.querySelector('#tt-cancel-roster-issue-editor')?.addEventListener('click', () => controller.closeRosterIssueEditor());
+    container.querySelector('#tt-roster-issue-prev')?.addEventListener('click', () => controller.openAdjacentRosterIssue('previous'));
+    container.querySelector('#tt-roster-issue-next')?.addEventListener('click', () => controller.openAdjacentRosterIssue('next'));
+    container.querySelector('#tt-save-roster-issue-editor')?.addEventListener('click', button => controller.applyRosterIssueEditor({
+        advance: button.currentTarget?.dataset?.rosterIssueSaveMode === 'next',
+    }));
+    container.querySelector('#tt-roster-issue-locate-original')?.addEventListener('click', () => controller.locateRosterIssueFromEditor());
+    container.querySelectorAll('[data-roster-issue-quick-fix]').forEach(button => {
+        button.addEventListener('click', () => controller.applyRosterIssueQuickFix(button.dataset.rosterIssueQuickFix || ''));
+    });
+    container.querySelectorAll('[data-roster-jump-row]:not(#tt-roster-issue-locate-original)').forEach(button => {
+        button.addEventListener('click', () => controller.locateRosterIssue(
+            button.dataset.rosterJumpRow || '',
+            button.dataset.rosterJumpField || '',
+        ));
     });
     container.querySelector('#tt-add-roster-review-row')?.addEventListener('click', () => controller.addRosterReviewRow());
     container.querySelector('#tt-append-roster-rows')?.addEventListener('click', () => controller.appendRosterReviewRows());

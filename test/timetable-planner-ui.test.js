@@ -34,6 +34,10 @@ import {
   dutyTeacherSearchQuery,
 } from '../public/js/tools/timetable/duty-teacher-search.js';
 import { PRESET_TEMPLATES } from '../public/js/tools/timetable/preset-templates.js';
+import {
+  RULE_TYPE_LABELS,
+  plannerRuleTypeLabel,
+} from '../public/js/tools/timetable/constraint-status-dict.js';
 
 const sourcePath = new URL('../public/js/tools/timetable-planner.js', import.meta.url);
 const stylePath = new URL('../public/css/timetable-planner.css', import.meta.url);
@@ -545,6 +549,110 @@ test('constraint dialog renders requirement clarification and submits structured
   }
 });
 
+test('constraint dialog renders choice clarification chips and keeps review state after submit', async () => {
+  const ruleReview = {
+    open: true,
+    mode: 'text',
+    inputMode: 'text',
+    draftRows: [],
+    warnings: [],
+    conflicts: [],
+    unsupportedItems: [],
+    requirementItems: [{
+      id: 'req_high_load',
+      object: { kind: 'derived_group', name: '高负载教师', matchedIds: ['t_math'], scope: 'derived' },
+      intent: 'teacher_load_protection',
+      status: 'needs_review',
+      applyTo: 'optimization',
+      parameters: { balancedTeacherLoad: true, maxConsecutive: 2 },
+      source: { rawText: '老师别太密' },
+      clarificationHistory: [{
+        question: '连续超过几节算太密？',
+        field: 'maxConsecutive',
+        kind: 'number',
+        answer: 2,
+        answerLabel: '2',
+      }],
+      clarification: {
+        id: 'clarify_req_high_load_daily_limit',
+        kind: 'choice',
+        field: 'dailyLimit',
+        question: '还要限制每天最多几节吗？',
+        options: [
+          { label: '不限制每日上限', value: 'none' },
+          { label: '每天最多 4 节', value: '4' },
+        ],
+      },
+    }],
+    semanticActions: [],
+  };
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview,
+    constraintDialog: { open: true, selectedRequirementId: 'req_high_load', requirementFilter: 'review' },
+  }));
+
+  assert.match(html, /tt-requirement-clarification-history/);
+  assert.match(html, /连续超过几节算太密/);
+  assert.match(html, /还要限制每天最多几节吗/);
+  assert.match(html, /data-clarify-value="4"/);
+  assert.match(html, /每天最多 4 节/);
+
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), body });
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          success: true,
+          data: {
+            draftRows: [],
+            requirementItems: [{
+              ...ruleReview.requirementItems[0],
+              status: 'actionable',
+              parameters: { balancedTeacherLoad: true, maxConsecutive: 2, dailyLimit: '4', maxDaily: 4 },
+              clarification: null,
+              clarificationHistory: [
+                ...ruleReview.requirementItems[0].clarificationHistory,
+                { question: '还要限制每天最多几节吗？', field: 'dailyLimit', kind: 'choice', answer: '4', answerLabel: '每天最多 4 节' },
+              ],
+            }],
+            semanticActions: [{
+              id: 'act_high_load',
+              requirementId: 'req_high_load',
+              kind: 'soft_rules_patch',
+              status: 'ready',
+              patch: { teacherLimits: { consecutive: 2, daily: 4 }, balancedTeacherLoad: true },
+            }],
+          },
+        });
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.project = createDefaultTimetableProject();
+    controller.state.ruleReview = JSON.parse(JSON.stringify(ruleReview));
+    controller.state.constraintDialog = { open: true, selectedRequirementId: 'req_high_load', requirementFilter: 'review' };
+    controller.state.container = { querySelector: () => null };
+
+    await controller.submitRequirementClarification('req_high_load', '4');
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].body.answers, [{ requirementId: 'req_high_load', field: 'dailyLimit', value: '4' }]);
+    assert.equal(controller.state.constraintDialog.requirementFilter, 'review');
+    assert.equal(controller.state.constraintDialog.selectedRequirementId, 'req_high_load');
+    assert.equal(controller.state.ruleReview.requirementItems[0].status, 'actionable');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('constraint dialog shows unsupported complex model support in requirement detail', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
@@ -844,7 +952,7 @@ test('timetable constraint dialog applies only the current filtered requirements
     assert.deepEqual(controller.state.ruleReview.draftRows.map(row => row.id), ['rule-row']);
     assert.deepEqual(controller.state.ruleReview.semanticActions.map(action => action.id), []);
     assert.ok(confirmations.some(message => /当前分类的 1 条需求/.test(message)));
-    assert.ok(alerts.some(message => /成功应用 1 条需求/.test(message)));
+    assert.ok(alerts.some(message => /已写入 0 条硬规则、0 条软规则，更新 1 个任课计划。共 1 条已生效。/.test(message)));
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.confirm = originalConfirm;
@@ -915,6 +1023,290 @@ test('timetable constraint dialog can remove and restore one apply item without 
   }));
   assert.match(restoredHtml, /暂停应用/);
   assert.match(restoredHtml, /应用当前分类 \(1\)/);
+});
+
+test('timetable renders constraint intake agent as an embedded rules workflow panel', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: false,
+      step: 'review',
+      mode: 'text',
+      draftRows: [{
+        id: 'rule-row',
+        requirementId: 'req_rule',
+        type: 'subject_preferred_periods',
+        targetName: '语文',
+        priority: 'soft',
+        status: 'effective',
+        rawText: '语文尽量上午',
+      }],
+      requirementItems: [{
+        id: 'req_rule',
+        object: { kind: 'subject', name: '语文', matchedIds: ['s1'], scope: 'explicit' },
+        intent: 'preferred_periods',
+        status: 'actionable',
+        applyTo: 'rule',
+        source: { rawText: '语文尽量上午' },
+      }],
+      semanticActions: [],
+      excludedApplyItemKeys: [],
+    },
+    constraintAgent: {
+      sessionId: 'agent-session',
+      stage: 'CONFIRM',
+      messages: [{ role: 'assistant', content: '我已生成可复核的需求卡。' }],
+      statusLine: '[已理解 1 · 待澄清 0 · 待确认 1]',
+      confirmationToken: 'confirm_apply_1',
+      loading: false,
+      error: '',
+      input: '',
+    },
+  }));
+
+  assert.match(html, /tt-constraint-agent-panel/);
+  assert.match(html, /data-constraint-agent-stage="CONFIRM"/);
+  assert.match(html, /对话排课/);
+  assert.match(html, /\[已理解 1 · 待澄清 0 · 待确认 1\]/);
+  assert.match(html, /data-action="constraint-agent-start"/);
+  assert.match(html, /data-action="constraint-agent-send"/);
+  assert.match(html, /data-action="constraint-agent-confirm"/);
+  assert.match(html, /data-action="constraint-agent-apply"/);
+  assert.match(html, /data-action="constraint-agent-solve"/);
+  assert.match(html, /data-apply-item-key="rule:rule-row"/);
+  assert.doesNotMatch(html, /id="tt-agent-floating"/);
+  assert.doesNotMatch(html, /class="tt-agent-toggle"/);
+  assert.doesNotMatch(html, /class="tt-agent-floating-panel"/);
+  assert.doesNotMatch(html, /id="tt-timetable-agent-panel"/);
+});
+
+test('constraint intake mini cards share excluded apply state with rule review table', () => {
+  const ruleReview = {
+    open: true,
+    step: 'review',
+    mode: 'text',
+    draftRows: [{
+      id: 'rule-row',
+      requirementId: 'req_rule',
+      type: 'subject_preferred_periods',
+      targetName: '语文',
+      priority: 'soft',
+      status: 'effective',
+      rawText: '语文尽量上午',
+    }],
+    requirementItems: [{
+      id: 'req_rule',
+      object: { kind: 'subject', name: '语文', matchedIds: ['s1'], scope: 'explicit' },
+      intent: 'preferred_periods',
+      status: 'actionable',
+      applyTo: 'rule',
+      source: { rawText: '语文尽量上午' },
+    }],
+    semanticActions: [],
+    excludedApplyItemKeys: [],
+  };
+
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.ruleReview = JSON.parse(JSON.stringify(ruleReview));
+  controller.toggleConstraintApplyItem('rule:rule-row');
+
+  assert.deepEqual(controller.state.ruleReview.excludedApplyItemKeys, ['rule:rule-row']);
+
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: controller.state.ruleReview,
+    constraintDialog: { open: true, requirementFilter: 'rule', selectedRequirementId: 'req_rule' },
+    constraintAgent: {
+      sessionId: 'agent-session',
+      stage: 'CONFIRM',
+      messages: [],
+      statusLine: '[已理解 1 · 待澄清 0 · 待确认 1]',
+      confirmationToken: 'confirm_apply_1',
+      loading: false,
+      error: '',
+    },
+  }));
+
+  assert.match(html, /tt-constraint-agent-mini-card is-excluded/);
+  assert.match(html, /恢复/);
+  assert.match(html, /tt-constraint-card--excluded/);
+});
+
+test('constraint intake controller calls dedicated agent API endpoints', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const project = createDefaultTimetableProject({
+    schoolName: 'UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 4,
+    activeWeekdays: [1, 2, 3, 4, 5],
+    activePeriods: [1, 2, 3, 4],
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 }],
+    rules: { hardRules: {}, softRules: {} },
+  });
+  const review = {
+    draftRows: [{
+      id: 'rule-row',
+      requirementId: 'req_rule',
+      type: 'subject_preferred_periods',
+      targetName: 'Math',
+      priority: 'soft',
+      status: 'effective',
+      rawText: 'Math 尽量上午',
+    }],
+    requirementItems: [{
+      id: 'req_rule',
+      object: { kind: 'subject', name: 'Math', matchedIds: ['math'], scope: 'explicit' },
+      intent: 'preferred_periods',
+      status: 'actionable',
+      applyTo: 'rule',
+      source: { rawText: 'Math 尽量上午' },
+    }],
+    semanticActions: [],
+    warnings: [],
+    conflicts: [],
+  };
+
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : {};
+    calls.push({ url: String(url), body });
+    const path = String(url);
+    let data = {};
+    if (path.endsWith('/constraint-intake/session')) {
+      data = {
+        sessionId: 'agent-session',
+        state: {
+          sessionId: 'agent-session',
+          stage: 'INTAKE',
+          statusLine: '[已理解 0 · 待澄清 0 · 待确认 0]',
+          messages: [],
+        },
+      };
+    } else if (path.endsWith('/constraint-intake/message')) {
+      data = {
+        sessionId: 'agent-session',
+        stage: 'CONFIRM',
+        reply: '已生成需求卡。',
+        statusLine: '[已理解 1 · 待澄清 0 · 待确认 1]',
+        review,
+        confirmationToken: 'confirm_apply_1',
+        confirmed: false,
+      };
+    } else if (path.endsWith('/constraint-intake/confirm')) {
+      data = {
+        sessionId: 'agent-session',
+        stage: 'CONFIRM',
+        reply: '已确认。',
+        statusLine: '[已理解 1 · 待澄清 0 · 待确认 0]',
+        review,
+        confirmationToken: 'confirm_apply_1',
+        confirmed: true,
+        excludedApplyItemKeys: body.excludedApplyItemKeys || [],
+      };
+    } else if (path.endsWith('/constraint-intake/apply')) {
+      data = {
+        sessionId: 'agent-session',
+        stage: 'APPLY',
+        reply: '已应用。',
+        statusLine: '[已理解 1 · 待澄清 0 · 待确认 0]',
+        review,
+        confirmationToken: 'confirm_apply_1',
+        confirmed: false,
+        project,
+        appliedSummary: { appliedRuleCount: 1, appliedSemanticActionCount: 0, skippedCount: body.excludedApplyItemKeys?.length || 0 },
+      };
+    } else if (path.endsWith('/constraint-intake/solve')) {
+      data = {
+        sessionId: 'agent-session',
+        stage: 'REPORT',
+        reply: '已完成求解并生成约束满足度报告。',
+        statusLine: '[已理解 1 · 待澄清 0 · 待确认 0]',
+        review,
+        project,
+        solveResult: { success: true, schedule: { slots: [] } },
+        fulfillment: { summary: { total: 1, violated: 0 }, items: [] },
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({ success: true, data });
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.applyProject(project);
+
+    await controller.sendConstraintIntakeAgentMessage('Math 尽量上午');
+    controller.state.ruleReview.excludedApplyItemKeys = ['rule:rule-row'];
+    await controller.confirmConstraintIntakeAgent();
+    await controller.applyConstraintIntakeAgent();
+    await controller.solveConstraintIntakeAgent();
+
+    assert.deepEqual(
+      calls.map(call => call.url.replace('/api/tools/timetable/agent', '')),
+      [
+        '/constraint-intake/session',
+        '/constraint-intake/message',
+        '/constraint-intake/confirm',
+        '/constraint-intake/apply',
+        '/constraint-intake/solve',
+      ],
+    );
+    assert.equal(calls[1].body.message, 'Math 尽量上午');
+    assert.deepEqual(calls[2].body.excludedApplyItemKeys, ['rule:rule-row']);
+    assert.deepEqual(calls[3].body.excludedApplyItemKeys, ['rule:rule-row']);
+    assert.equal(controller.state.constraintAgent.stage, 'REPORT');
+    assert.equal(controller.state.constraintFulfillment.summary.total, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('timetable solve UI shows large-project estimate and current timeout', () => {
+  const largeProject = createDefaultTimetableProject({
+    schoolName: 'Large UI School',
+    term: '2026',
+    weekdays: 5,
+    periodsPerDay: 6,
+    activeWeekdays: [1, 2, 3, 4, 5],
+    activePeriods: [1, 2, 3, 4, 5, 6],
+    teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+    classes: Array.from({ length: 30 }, (_, index) => ({ id: `c${index + 1}`, grade: 'G7', name: `${index + 1}` })),
+    subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+    lessonPlans: Array.from({ length: 30 }, (_, index) => ({
+      id: `lp_math_${index + 1}`,
+      classId: `c${index + 1}`,
+      subjectId: 'math',
+      teacherId: 't_math',
+      weeklyHours: 3,
+    })),
+    rules: { hardRules: {}, softRules: {} },
+  });
+
+  const html = renderWorkbench(sampleWorkbenchState({
+    project: largeProject,
+    loading: true,
+    solvePhaseText: '局部优化中 · 30 个班，预计需要数分钟；当前 Timefold 超时上限 420 秒。',
+    solveScaleHint: {
+      largeProject: true,
+      classCount: 30,
+      lessonCount: 90,
+      timeoutSeconds: 420,
+      message: '30 个班，预计需要数分钟；当前 Timefold 超时上限 420 秒。',
+    },
+  }));
+
+  assert.match(html, /30 个班，预计需要数分钟/);
+  assert.match(html, /当前 Timefold 超时上限 420 秒/);
+  assert.match(html, /局部优化中/);
 });
 
 test('timetable constraint edit opens a compact machine-rule modal', () => {
@@ -1234,7 +1626,8 @@ test('timetable constraint dialog reserves semantic review height before legacy 
   }));
 
   assert.match(html, /tt-requirement-workbench/);
-  assert.match(html, /已理解需求 \(1\)/);
+  assert.match(html, /解析结果/);
+  assert.match(html, /来自你的输入 1 条 · 系统补充 0 条/);
   assert.match(html, /落地结果/);
   assert.match(html, /data-constraint-id="legacy-draft-1"/);
   assert.match(html, /data-action="edit-constraint"/);
@@ -1283,7 +1676,8 @@ test('timetable constraint dialog folds draft-only constraints into understood r
   }));
 
   assert.match(html, /tt-requirement-workbench/);
-  assert.match(html, /已理解需求 \(2\)/);
+  assert.match(html, /解析结果/);
+  assert.match(html, /来自你的输入 2 条 · 系统补充 0 条/);
   assert.match(html, /王老师/);
   assert.match(html, /教师不可排/);
   assert.match(html, /落地结果/);
@@ -3662,55 +4056,91 @@ test('timetable inspector marks the just-located source issue without changing t
 function sampleConstraintFulfillment(overrides = {}) {
   return {
     evaluated: true,
-    summary: { total: 144, satisfied: 128, partial: 11, unmet: 5, notApplicable: 0 },
+    version: 2,
+    summary: {
+      total: 144,
+      satisfied: 128,
+      partiallySatisfied: 11,
+      violated: 5,
+      notEvaluable: 0,
+      partial: 11,
+      unmet: 5,
+      notApplicable: 0,
+    },
     items: [
       {
         id: 'rule-unmet',
+        ruleId: 'rule-unmet',
         type: 'teacher_daily_limit',
+        typeLabel: '教师每日上限',
+        origin: 'softRules.teacherLimits',
         priority: 'soft',
-        status: 'unmet',
+        strength: 'soft',
+        status: 'violated',
+        legacyStatus: 'unmet',
         title: 'Math Teacher 每天最多 1 节',
         evidence: '周一实际 2 节，超过上限 1 节。',
+        detail: '周一实际 2 节，超过上限 1 节。',
         targetKind: 'teacher',
         targetId: 't_math',
         targetName: 'Math Teacher',
-        locateTargets: [{ targetKind: 'teacher', targetId: 't_math', day: 1, period: 1, slotId: 'slot-1' }],
+        evidenceSlots: [{ day: 1, period: 1, teacherId: 't_math', slotId: 'slot-1' }],
+        suggestions: [{ kind: 'delete_rule', label: '删除规则' }],
       },
       {
         id: 'rule-partial',
+        ruleId: 'rule-partial',
         type: 'subject_morning',
+        typeLabel: '课程上午优先',
+        origin: 'softRules.morningSubjects',
         priority: 'soft',
+        strength: 'soft',
         status: 'partial',
         title: 'Math 上午优先',
         evidence: '1/2 节在上午。',
+        detail: '1/2 节在上午。',
         targetKind: 'subject',
         targetId: 'math',
         targetName: 'Math',
-        locateTargets: [{ targetKind: 'class', targetId: 'c1', day: 1, period: 4, slotId: 'slot-2' }],
+        evidenceSlots: [{ day: 1, period: 4, classId: 'c1', slotId: 'slot-2' }],
+        suggestions: [{ kind: 'manual', label: '人工处理' }],
       },
       {
         id: 'rule-satisfied',
+        ruleId: 'rule-satisfied',
         type: 'class_unavailable',
+        typeLabel: '班级不可排',
+        origin: 'hardRules.classUnavailable',
         priority: 'hard',
+        strength: 'hard',
         status: 'satisfied',
         title: 'G71 周二第5节不可排',
         evidence: '没有课程排入该禁排时段。',
+        detail: '没有课程排入该禁排时段。',
         targetKind: 'class',
         targetId: 'c1',
         targetName: 'G71',
-        locateTargets: [],
+        evidenceSlots: [],
+        suggestions: [],
       },
       {
         id: 'rule-not-applicable',
+        ruleId: 'rule-not-applicable',
         type: 'subject_spread',
+        typeLabel: '同科分散',
+        origin: 'softRules.spreadSubjects',
         priority: 'soft',
-        status: 'not_applicable',
+        strength: 'soft',
+        status: 'not_evaluable',
+        legacyStatus: 'not_applicable',
         title: 'PE 分散排布',
         evidence: '当前课表没有 PE 课节。',
+        detail: '当前课表没有 PE 课节。',
         targetKind: 'subject',
         targetId: 'pe',
         targetName: 'PE',
-        locateTargets: [],
+        evidenceSlots: [],
+        suggestions: [{ kind: 'manual', label: '补齐数据' }],
       },
     ],
     ...overrides,
@@ -3745,7 +4175,7 @@ test('timetable inspector renders constraint fulfillment between review and syst
   assert.ok(reviewIndex >= 0);
   assert.ok(fulfillmentIndex > reviewIndex);
   assert.ok(systemIndex > fulfillmentIndex);
-  assert.match(inspector, /约束达成度/);
+  assert.match(inspector, /约束满足度报告/);
   assert.match(inspector, /约束 144/);
   assert.match(inspector, /满足 128/);
   assert.match(inspector, /部分 11/);
@@ -3755,10 +4185,12 @@ test('timetable inspector renders constraint fulfillment between review and syst
   assert.match(inspector, /Math 上午优先/);
   assert.doesNotMatch(inspector, /G71 周二第5节不可排/);
   assert.match(inspector, /data-constraint-fulfillment-row="rule-unmet"/);
+  assert.match(inspector, /data-constraint-fulfillment-suggestion="delete_rule"/);
+  assert.match(inspector, /data-inspector-target-kind="teacher"/);
   assert.match(inspector, /data-action="locate-inspector-issue"/);
 });
 
-test('timetable inspector constraint fulfillment filter can show satisfied and not-applicable rows', () => {
+test('timetable inspector constraint fulfillment filter can show satisfied and not-evaluable rows', () => {
   const allInspector = renderInspector(sampleWorkbenchState({
     schedule: {
       id: 'schedule-constraint-fulfillment-all',
@@ -3789,7 +4221,7 @@ test('timetable inspector constraint fulfillment filter can show satisfied and n
       score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
     },
     constraintFulfillment: sampleConstraintFulfillment(),
-    constraintFulfillmentFilter: 'not_applicable',
+    constraintFulfillmentFilter: 'not_evaluable',
   }));
 
   assert.match(allInspector, /data-constraint-fulfillment-filter="all"[\s\S]*aria-pressed="true"/);
@@ -3838,7 +4270,18 @@ test('timetable inspector constraint fulfillment does not affect header review c
   });
   const state = sampleWorkbenchState({
     project,
-    constraintFulfillment: sampleConstraintFulfillment({ summary: { total: 144, satisfied: 143, partial: 0, unmet: 1, notApplicable: 0 } }),
+    constraintFulfillment: sampleConstraintFulfillment({
+      summary: {
+        total: 144,
+        satisfied: 143,
+        partiallySatisfied: 0,
+        violated: 1,
+        notEvaluable: 0,
+        partial: 0,
+        unmet: 1,
+        notApplicable: 0,
+      },
+    }),
   });
 
   const workbench = renderWorkbench(state);
@@ -4013,6 +4456,76 @@ test('timetable inspector constraint fulfillment filter action updates state onl
   assert.equal(state.constraintFulfillmentFilter, 'all');
   assert.equal(renderCount, 1);
   assert.match(interactionSource, /filter-constraint-fulfillment/);
+});
+
+test('timetable inspector constraint fulfillment actions delegate rerun and suggestions', async () => {
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
+  const listeners = {};
+  const container = {
+    addEventListener(type, listener) {
+      listeners[type] = listener;
+    },
+    querySelector() {
+      return null;
+    },
+    querySelectorAll() {
+      return [];
+    },
+  };
+  const state = {};
+  let rerunCount = 0;
+  let suggestionPayload = null;
+  const controller = {
+    runSchedule() {
+      rerunCount += 1;
+    },
+    handleConstraintFulfillmentSuggestion(ruleId, kind) {
+      suggestionPayload = { ruleId, kind };
+    },
+  };
+  const rerunButton = {
+    dataset: { action: 'rerun-constraint-fulfillment' },
+  };
+  const suggestionButton = {
+    dataset: {
+      action: 'constraint-fulfillment-suggestion',
+      constraintFulfillmentRow: 'rule-unmet',
+      constraintFulfillmentSuggestion: 'delete_rule',
+    },
+  };
+
+  bindGridInteractions(container, controller, state);
+  listeners.click({
+    target: {
+      matches() {
+        return false;
+      },
+      closest(selector) {
+        if (selector === '[data-action]') return rerunButton;
+        return null;
+      },
+    },
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  listeners.click({
+    target: {
+      matches() {
+        return false;
+      },
+      closest(selector) {
+        if (selector === '[data-action]') return suggestionButton;
+        return null;
+      },
+    },
+    preventDefault() {},
+    stopPropagation() {},
+  });
+
+  assert.equal(rerunCount, 1);
+  assert.deepEqual(suggestionPayload, { ruleId: 'rule-unmet', kind: 'delete_rule' });
+  assert.match(interactionSource, /rerun-constraint-fulfillment/);
+  assert.match(interactionSource, /constraint-fulfillment-suggestion/);
 });
 
 test('timetable inspector locate action delegates target data to the controller', () => {
@@ -7740,12 +8253,30 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.match(html, /id="tt-range-periods-trigger"/);
   const weekdayTrigger = html.match(/<summary class="[^"]*" id="tt-range-weekdays-trigger">[\s\S]*?<\/summary>/)?.[0] || '';
   const periodTrigger = html.match(/<summary class="[^"]*" id="tt-range-periods-trigger">[\s\S]*?<\/summary>/)?.[0] || '';
+  const renderWeekdayTrigger = activeWeekdays => {
+    const weekdayHtml = renderWorkbench(sampleWorkbenchState({
+      project: {
+        ...state.project,
+        weekdays: Math.max(...activeWeekdays),
+        activeWeekdays,
+      },
+    }));
+    return weekdayHtml.match(/<summary class="[^"]*" id="tt-range-weekdays-trigger">[\s\S]*?<\/summary>/)?.[0] || '';
+  };
+  const workdayTrigger = renderWeekdayTrigger([1, 2, 3, 4, 5]);
+  const midweekTrigger = renderWeekdayTrigger([2, 3, 4]);
+  const allWeekTrigger = renderWeekdayTrigger([1, 2, 3, 4, 5, 6, 7]);
   assert.match(weekdayTrigger, /tt-multi-select-trigger--summary-only/);
   assert.match(periodTrigger, /tt-multi-select-trigger--summary-only/);
   assert.doesNotMatch(weekdayTrigger, /<span>可用周几<\/span>/);
   assert.doesNotMatch(periodTrigger, /<span>可用节次<\/span>/);
   assert.match(weekdayTrigger, /<strong>/);
   assert.match(periodTrigger, /<strong>/);
+  assert.match(weekdayTrigger, /周一、周三、周五/);
+  assert.match(workdayTrigger, /周一至周五/);
+  assert.doesNotMatch(workdayTrigger, /周一-周五/);
+  assert.match(midweekTrigger, /周二至周四/);
+  assert.match(allWeekTrigger, /全周/);
   assert.doesNotMatch(html, /id="tt-apply-range"/);
   assert.doesNotMatch(html, /id="tt-reset-range"/);
   assert.match(html, /data-range-apply/);
@@ -7823,15 +8354,26 @@ test('timetable roster import is opened from a data card instead of permanent si
     },
   });
   assert.match(open, /id="tt-roster-import-dialog"/);
+  assert.match(open, /<section class="tt-roster-import-dialog" id="tt-roster-import-dialog"/);
+  assert.doesNotMatch(open, /tt-roster-import-dialog--review/);
+  assert.match(open, /class="tt-roster-import-options"/);
+  assert.match(open, /<h4 id="tt-roster-import-file-title">上传文件<\/h4>[\s\S]*智能 CSV \/ TXT \/ Excel 文件导入/);
+  assert.match(open, /<h4 id="tt-roster-import-text-title">粘贴文本<\/h4>[\s\S]*智能识别自然语言的文本/);
+  assert.match(open, /<h4 id="tt-roster-import-manual-title">手动新增<\/h4>[\s\S]*列好空白任课表，让用户自己手动新增/);
   assert.match(open, /id="tt-roster-import-file"/);
+  assert.match(open, /\.csv \/ \.txt \/ \.xlsx \/ \.xls/);
   assert.match(open, /id="tt-roster-import-text"/);
+  assert.match(open, /placeholder="例如：年级,班级,课程,教师,周课时,连堂；七年级,1班,语文,林老师,5,混合"/);
   assert.match(open, /id="tt-fill-roster-sample"/);
   assert.match(open, /id="tt-start-empty-roster-review"/);
   assert.match(open, /id="tt-cancel-roster-import"/);
-  assert.match(open, /id="tt-preview-roster-import"/);
+  assert.match(open, /data-roster-import-submit="file"/);
+  assert.match(open, /data-roster-import-submit="text"/);
+  assert.match(open, /打开空白表/);
   assert.doesNotMatch(open, /id="tt-roster-review-table"/);
-  assert.match(open, /data-roster-import-mode="file"/);
-  assert.match(open, /data-roster-import-mode="text"/);
+  assert.doesNotMatch(open, /tt-import-mode-tabs/);
+  assert.doesNotMatch(open, /data-roster-import-mode="file"/);
+  assert.doesNotMatch(open, /data-roster-import-mode="text"/);
 
   const review = renderWorkbench({
     ...state,
@@ -7843,6 +8385,8 @@ test('timetable roster import is opened from a data card instead of permanent si
       text: '',
       draftRows: [{
         id: 'draft_1',
+        sourceRow: 257,
+        sourceSheet: '任课数据',
         grade: 'G7',
         className: '1',
         subjectName: 'Math',
@@ -7853,32 +8397,257 @@ test('timetable roster import is opened from a data card instead of permanent si
         blockPreference: 'double',
         roomName: 'Lab A/Lab B',
         issues: [],
+      }, {
+        id: 'draft_2',
+        grade: 'G8',
+        className: '2',
+        subjectName: 'Physics',
+        subjectCategory: 'normal',
+        subjectTags: [],
+        teacherName: 'Carol',
+        weeklyHours: 3,
+        blockPreference: 'single',
+        roomName: '',
+        issues: [],
       }],
-      stats: { classCount: 1, teacherCount: 2, subjectCount: 1, planCount: 1, totalLessons: 4, blockLessons: 4, fixedRoomCount: 2, issueCount: 0 },
+      stats: { classCount: 2, teacherCount: 3, subjectCount: 2, planCount: 2, totalLessons: 7, blockLessons: 4, fixedRoomCount: 2, issueCount: 0 },
       issues: [],
       warnings: [],
     },
   });
   assert.match(review, /id="tt-roster-review-table"/);
+  assert.match(review, /<section class="tt-roster-import-dialog tt-roster-import-dialog--review" id="tt-roster-import-dialog"/);
   assert.match(review, /data-roster-review-row="draft_1"/);
+  assert.match(review, /data-roster-source-row="257"/);
+  assert.match(review, /data-roster-source-sheet="任课数据"/);
   assert.match(review, /data-roster-field="grade"/);
   assert.match(review, /data-roster-field="className"/);
   assert.match(review, /data-roster-field="subjectName"/);
-  assert.match(review, /data-roster-field="subjectCategory"/);
+  assert.match(review, /data-roster-field="subjectCategory"[^>]*aria-label="课程类型"[^>]*title="普通：常规课程，按普通课程安排；主科：语文、数学、英语等核心课程；素质：体育、音乐、美术、劳动等课程；实验：需要实验室或实验安排的课程。不确定时选“普通”；核心考试科目选“主科”；实验课选“实验”。"/);
   assert.match(review, /data-roster-field="subjectTags"/);
   assert.match(review, /data-roster-field="teacherName"/);
-  assert.match(review, /data-roster-field="weeklyHours"/);
-  assert.match(review, /data-roster-field="blockPreference"/);
+  assert.match(review, /data-roster-field="weeklyHours"[^>]*aria-label="周课时"[^>]*title="表示这个班级这门课每周要排几节；填 5，就是每周排 5 节这门课。"/);
+  assert.match(review, /data-roster-field="blockPreference"[^>]*aria-label="连堂方式"[^>]*title="单节：每次只排 1 节课；双连堂：每次连续排 2 节课，周课时建议为偶数；混合：单节和连堂都可。不确定时选“混合”；明确不要连堂选“单节”；需要连续时间选“双连堂”。"/);
   assert.match(review, /data-roster-field="roomName"/);
   assert.match(review, /data-roster-delete-row="draft_1"/);
   assert.match(review, /<colgroup class="tt-roster-review-cols">/);
+  assert.match(review, /class="tt-roster-col-row-number"/);
+  assert.match(review, /<th>行号<\/th>/);
+  assert.match(review, /class="tt-roster-block-help"[\s\S]*<span>类型<\/span>[\s\S]*class="tt-roster-block-help-trigger"[^>]*aria-label="查看类型说明"[^>]*>\?<\/button>/);
+  assert.match(review, /class="tt-roster-block-help"[\s\S]*<span>周课时<\/span>[\s\S]*class="tt-roster-block-help-trigger"[^>]*aria-label="查看周课时说明"[^>]*>\?<\/button>/);
+  assert.match(review, /class="tt-roster-block-help"[\s\S]*<span>连堂<\/span>[\s\S]*class="tt-roster-block-help-trigger"[^>]*aria-label="查看连堂说明"[^>]*>\?<\/button>/);
+  const categoryHelp = review.match(/id="tt-roster-category-help-text" role="tooltip">([\s\S]*?)<\/span>/)?.[1] || '';
+  assert.match(categoryHelp, /<b>普通：<\/b>常规课程，按普通课程安排。[\s\S]*<b>主科：<\/b>语文、数学、英语等核心课程。[\s\S]*<b>素质：<\/b>体育、音乐、美术、劳动等课程。[\s\S]*<b>实验：<\/b>需要实验室或实验安排的课程。[\s\S]*<em>不确定时选“普通”；核心考试科目选“主科”；实验课选“实验”。<\/em>/);
+  assert.doesNotMatch(categoryHelp, /功能教室/);
+  const weeklyHoursHelp = review.match(/id="tt-roster-weekly-hours-help-text" role="tooltip">([\s\S]*?)<\/span>/)?.[1] || '';
+  assert.match(weeklyHoursHelp, /表示这个班级这门课每周要排几节。[\s\S]*填 5，就是每周排 5 节这门课。/);
+  assert.doesNotMatch(weeklyHoursHelp, /双连堂|教学计划/);
+  assert.match(review, /id="tt-roster-block-help-text" role="tooltip"[\s\S]*<b>单节：<\/b>每次只排 1 节课。[\s\S]*<b>双连堂：<\/b>每次连续排 2 节课，周课时建议为偶数。[\s\S]*<b>混合：<\/b>单节和连堂都可。[\s\S]*<em>不确定时选“混合”；明确不要连堂选“单节”；需要连续时间选“双连堂”。<\/em>/);
   assert.match(review, /class="tt-roster-col-grade"/);
   assert.match(review, /class="tt-roster-col-issue"/);
   assert.match(review, /class="tt-roster-col-action"/);
+  assert.match(review, /data-label="行号"><span class="tt-roster-review-row-number" title="源表第 257 行">257<\/span>/);
+  assert.match(review, /data-roster-review-row="draft_2"[\s\S]*data-label="行号"><span class="tt-roster-review-row-number" title="当前第 2 行">2<\/span>/);
+  assert.match(review, /class="tt-roster-review-issue" title="无">无<\/span>/);
   assert.match(review, /id="tt-add-roster-review-row"/);
   assert.match(review, /id="tt-roster-bulk-text"/);
   assert.match(review, /id="tt-append-roster-rows"/);
   assert.match(review, /id="tt-confirm-roster-import"/);
+});
+
+test('timetable roster import review renders editable issue summaries', () => {
+  const rows = Array.from({ length: 20 }, (_, index) => ({
+    id: `draft_${index + 1}`,
+    sourceRow: index === 0 ? 37 : 38 + index,
+    sourceSheet: '任课数据',
+    grade: '八年级',
+    className: `G8-${index + 1}班`,
+    subjectName: index === 0 ? '物理' : '数学',
+    subjectCategory: 'main',
+    subjectTags: [],
+    teacherName: index === 0 ? '程远航' : `教师${index + 1}`,
+    weeklyHours: index === 0 ? 3 : 5,
+    blockPreference: 'double',
+    roomName: '',
+    issues: [{
+      rowId: `draft_${index + 1}`,
+      sourceRow: index === 0 ? 37 : 38 + index,
+      sourceSheet: '任课数据',
+      severity: 'warning',
+      field: 'blockPreference',
+      message: '双连堂课时建议使用偶数。',
+    }],
+  }));
+  const issues = rows.map(row => row.issues[0]);
+  const baseRosterImport = {
+    open: true,
+    step: 'review',
+    mode: 'file',
+    fileName: 'roster.xlsx',
+    text: '',
+    draftRows: rows,
+    stats: { classCount: 20, teacherCount: 20, subjectCount: 2, planCount: 20, totalLessons: 100, blockLessons: 100, fixedRoomCount: 0, issueCount: 20 },
+    issues,
+    warnings: ['双连堂课时建议使用偶数。'],
+  };
+
+  const collapsed = renderWorkbench(sampleWorkbenchState({ rosterImport: baseRosterImport }));
+  assert.match(collapsed, /共 20 条，显示前 4 条/);
+  assert.match(collapsed, /显示全部 16/);
+  assert.equal((collapsed.match(/data-roster-edit-issue-row=/g) || []).length, 4);
+  assert.match(collapsed, /data-roster-edit-issue-row="draft_1"/);
+  assert.match(collapsed, /data-roster-edit-issue-field="blockPreference"/);
+  assert.match(collapsed, /第 37 行 · G8-1班 · 物理 · 程远航 · 周课时 3 · 双连堂课时建议使用偶数。/);
+  assert.match(collapsed, /data-roster-source-row="37"/);
+  assert.match(collapsed, /data-roster-source-sheet="任课数据"/);
+  assert.match(collapsed, /class="tt-roster-review-issue" title="双连堂课时建议使用偶数。">双连堂课时建议使用偶数。<\/span>/);
+  assert.doesNotMatch(collapsed, /data-roster-edit-issue-row="draft_20"/);
+  assert.doesNotMatch(collapsed, /data-roster-jump-row="draft_1"/);
+
+  const expanded = renderWorkbench(sampleWorkbenchState({
+    rosterImport: { ...baseRosterImport, issueListExpanded: true },
+  }));
+  assert.match(expanded, /共 20 条/);
+  assert.match(expanded, /收起/);
+  assert.equal((expanded.match(/data-roster-edit-issue-row=/g) || []).length, 20);
+  assert.match(expanded, /data-roster-edit-issue-row="draft_20"/);
+});
+
+test('timetable roster issue editor renders row context and quick fixes', () => {
+  const row = {
+    id: 'draft_chem',
+    sourceRow: 257,
+    sourceSheet: '任课数据',
+    grade: '九年级',
+    className: 'G9-1班',
+    subjectName: '化学',
+    subjectCategory: 'lab',
+    subjectTags: [],
+    teacherName: '丁子航',
+    weeklyHours: 3,
+    blockPreference: 'double',
+    roomName: '化学实验室',
+    issues: [{
+      rowId: 'draft_chem',
+      sourceRow: 257,
+      sourceSheet: '任课数据',
+      severity: 'warning',
+      field: 'blockPreference',
+      message: '双连堂课时建议使用偶数。',
+    }],
+  };
+  const issue = row.issues[0];
+  const html = renderWorkbench(sampleWorkbenchState({
+    rosterImport: {
+      open: true,
+      step: 'review',
+      mode: 'file',
+      fileName: 'roster.xlsx',
+      text: '',
+      draftRows: [row],
+      stats: { classCount: 1, teacherCount: 1, subjectCount: 1, planCount: 1, totalLessons: 3, blockLessons: 3, fixedRoomCount: 1, issueCount: 1 },
+      issues: [issue],
+      warnings: ['双连堂课时建议使用偶数。'],
+      issueEditor: {
+        rowId: 'draft_chem',
+        field: 'blockPreference',
+        issue,
+        draft: row,
+      },
+    },
+  }));
+
+  assert.match(html, /id="tt-roster-issue-editor-dialog"/);
+  assert.match(html, /修正任课问题/);
+  assert.match(html, /表格第 257 行 · G9-1班 · 化学 · 丁子航/);
+  assert.match(html, /双连堂课时建议使用偶数。/);
+  assert.match(html, /周课时 3 · 双连堂/);
+  assert.match(html, /data-roster-issue-field="grade"[^>]*value="九年级"/);
+  assert.match(html, /data-roster-issue-field="className"[^>]*value="G9-1班"/);
+  assert.match(html, /data-roster-issue-field="subjectName"[^>]*value="化学"/);
+  assert.match(html, /data-roster-issue-field="teacherName"[^>]*value="丁子航"/);
+  assert.match(html, /data-roster-issue-field="weeklyHours"[^>]*type="number"[^>]*value="3"[^>]*aria-label="周课时"[^>]*title="表示这个班级这门课每周要排几节；填 5，就是每周排 5 节这门课。"/);
+  assert.match(html, /data-roster-issue-field="blockPreference"[^>]*aria-label="连堂方式"[^>]*title="单节：每次只排 1 节课；双连堂：每次连续排 2 节课，周课时建议为偶数；混合：单节和连堂都可。不确定时选“混合”；明确不要连堂选“单节”；需要连续时间选“双连堂”。"/);
+  assert.match(html, /data-roster-issue-field="roomName"[^>]*value="化学实验室"/);
+  assert.match(html, /data-roster-issue-quick-fix="mixed"[^>]*>改为混合/);
+  assert.match(html, /data-roster-issue-quick-fix="single"[^>]*>改为单节/);
+  assert.match(html, /data-roster-issue-quick-fix="nextEven"[^>]*>周课时改为下一个偶数/);
+  assert.match(html, /id="tt-roster-issue-locate-original"/);
+  assert.match(html, /data-roster-jump-row="draft_chem"/);
+  assert.match(html, /data-roster-jump-field="blockPreference"/);
+  assert.match(html, /class="tt-roster-issue-editor-progress"[^>]*>第 1 \/ 1 条<\/span>/);
+  assert.match(html, /id="tt-roster-issue-prev"[^>]*disabled/);
+  assert.match(html, /id="tt-roster-issue-next"[^>]*disabled/);
+  assert.match(html, /id="tt-save-roster-issue-editor"[^>]*data-roster-issue-save-mode="close"[\s\S]*保存修改/);
+});
+
+test('timetable roster issue editor renders navigation progress and save mode', () => {
+  const rows = ['物理', '化学'].map((subjectName, index) => ({
+    id: `draft_${index + 1}`,
+    sourceRow: 30 + index,
+    sourceSheet: '任课数据',
+    grade: '九年级',
+    className: `G9-${index + 1}班`,
+    subjectName,
+    subjectCategory: 'main',
+    subjectTags: [],
+    teacherName: `教师${index + 1}`,
+    weeklyHours: 3,
+    blockPreference: 'double',
+    roomName: '',
+    issues: [{
+      rowId: `draft_${index + 1}`,
+      sourceRow: 30 + index,
+      sourceSheet: '任课数据',
+      severity: 'warning',
+      field: 'blockPreference',
+      message: '双连堂课时建议使用偶数。',
+    }],
+  }));
+  const issues = rows.map(row => row.issues[0]);
+  const baseRosterImport = {
+    open: true,
+    step: 'review',
+    mode: 'file',
+    fileName: 'roster.xlsx',
+    text: '',
+    draftRows: rows,
+    stats: { classCount: 2, teacherCount: 2, subjectCount: 2, planCount: 2, totalLessons: 6, blockLessons: 6, fixedRoomCount: 0, issueCount: 2 },
+    issues,
+    warnings: ['双连堂课时建议使用偶数。'],
+  };
+
+  const firstHtml = renderWorkbench(sampleWorkbenchState({
+    rosterImport: {
+      ...baseRosterImport,
+      issueEditor: {
+        rowId: 'draft_1',
+        field: 'blockPreference',
+        issue: issues[0],
+        draft: rows[0],
+      },
+    },
+  }));
+  assert.match(firstHtml, /class="tt-roster-issue-editor-progress"[^>]*>第 1 \/ 2 条<\/span>/);
+  assert.match(firstHtml, /id="tt-roster-issue-prev"[^>]*disabled/);
+  assert.match(firstHtml, /id="tt-roster-issue-next"(?![^>]*disabled)/);
+  assert.match(firstHtml, /id="tt-save-roster-issue-editor"[^>]*data-roster-issue-save-mode="next"[\s\S]*保存并下一条/);
+
+  const secondHtml = renderWorkbench(sampleWorkbenchState({
+    rosterImport: {
+      ...baseRosterImport,
+      issueEditor: {
+        rowId: 'draft_2',
+        field: 'blockPreference',
+        issue: issues[1],
+        draft: rows[1],
+      },
+    },
+  }));
+  assert.match(secondHtml, /class="tt-roster-issue-editor-progress"[^>]*>第 2 \/ 2 条<\/span>/);
+  assert.match(secondHtml, /id="tt-roster-issue-prev"(?![^>]*disabled)/);
+  assert.match(secondHtml, /id="tt-roster-issue-next"[^>]*disabled/);
+  assert.match(secondHtml, /id="tt-save-roster-issue-editor"[^>]*data-roster-issue-save-mode="close"[\s\S]*保存修改/);
 });
 
 test('timetable roster import review renders the import report summary and entries', () => {
@@ -7988,15 +8757,31 @@ test('timetable roster import shows a loading state while parsing before review'
 
   assert.match(html, /id="tt-roster-import-dialog"/);
   assert.match(html, /data-lucide="loader-2" class="tt-spin"/);
-  assert.match(html, /id="tt-preview-roster-import"[^>]*disabled/);
+  assert.match(html, /data-roster-import-submit="file" disabled/);
+  assert.match(html, /data-roster-import-submit="text" disabled/);
   assert.match(html, />解析中<\/span>/);
   assert.match(html, /tt-roster-import-process/);
   assert.match(html, /读取并解析任课文件中/);
   assert.match(html, /id="tt-roster-import-file"[^>]*disabled/);
   assert.match(html, /id="tt-roster-import-text"[^>]*disabled/);
-  assert.match(html, /data-roster-import-mode="file" disabled/);
   assert.match(html, /id="tt-fill-roster-sample"[^>]*disabled/);
   assert.match(html, /id="tt-start-empty-roster-review"[^>]*disabled/);
+  assert.doesNotMatch(html, /data-roster-import-mode="file"/);
+
+  const textHtml = renderWorkbench(sampleWorkbenchState({
+    rosterImport: {
+      open: true,
+      step: 'input',
+      mode: 'text',
+      fileName: '',
+      text: '八年级2班体育钱老师每周3节',
+      loading: true,
+      phaseText: '解析任课文本中...',
+      phaseTone: '',
+    },
+  }));
+  assert.match(textHtml, /解析任课文本中/);
+  assert.match(textHtml, /data-roster-import-submit="text" disabled/);
 });
 
 test('timetable roster import controller exposes modal workflow methods and bindings', async () => {
@@ -8011,40 +8796,258 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(controllerSource, /setRosterImportMode\(/);
   assert.match(controllerSource, /selectRosterImportFile\(/);
   assert.match(controllerSource, /previewRosterImport\(/);
-  assert.match(controllerSource, /phaseText:\s*hasFile\s*\?\s*'读取并解析任课文件中\.\.\.'/);
+  assert.match(controllerSource, /phaseText:\s*mode\s*===\s*'file'\s*\?\s*'读取并解析任课文件中\.\.\.'/);
   assert.match(controllerSource, /startEmptyRosterReview\(/);
   assert.match(controllerSource, /openRosterEditor\(/);
   assert.match(controllerSource, /updateRosterReviewField\(/);
   assert.match(controllerSource, /appendRosterReviewRows\(/);
   assert.match(controllerSource, /deleteRosterReviewRow\(/);
+  assert.match(controllerSource, /toggleRosterIssueList\(/);
+  assert.match(controllerSource, /locateRosterIssue\(/);
+  assert.match(controllerSource, /openRosterIssueEditor\(/);
+  assert.match(controllerSource, /closeRosterIssueEditor\(/);
+  assert.match(controllerSource, /getRosterIssueEditorNavigation\(/);
+  assert.match(controllerSource, /openAdjacentRosterIssue\(/);
+  assert.match(controllerSource, /applyRosterIssueEditor\(/);
+  assert.match(controllerSource, /applyRosterIssueQuickFix\(/);
   assert.match(controllerSource, /confirmRosterImport\(/);
   assert.match(controllerSource, /new FormData\(\)/);
   assert.match(controllerSource, /#tt-roster-import-text/);
+  assert.match(stateSource, /issueEditor:\s*null/);
   assert.match(interactionSource, /data-roster-import-trigger/);
   assert.match(interactionSource, /#tt-reopen-roster-import/);
   assert.match(interactionSource, /#tt-edit-roster/);
-  assert.match(interactionSource, /#tt-preview-roster-import/);
+  assert.match(interactionSource, /\[data-roster-import-submit\]/);
   assert.match(interactionSource, /#tt-start-empty-roster-review/);
   assert.match(interactionSource, /#tt-confirm-roster-import/);
   assert.match(interactionSource, /#tt-cancel-roster-import/);
   assert.match(interactionSource, /#tt-roster-import-file/);
   assert.match(interactionSource, /\[data-roster-field\]/);
   assert.match(interactionSource, /\[data-roster-delete-row\]/);
+  assert.match(interactionSource, /\[data-roster-toggle-issues\]/);
+  assert.match(interactionSource, /\[data-roster-edit-issue-row\]/);
+  assert.match(interactionSource, /#tt-save-roster-issue-editor/);
+  assert.match(interactionSource, /#tt-roster-issue-prev/);
+  assert.match(interactionSource, /#tt-roster-issue-next/);
+  assert.match(interactionSource, /rosterIssueSaveMode/);
+  assert.match(interactionSource, /#tt-roster-issue-locate-original/);
+  assert.match(interactionSource, /\[data-roster-issue-quick-fix\]/);
+  assert.match(interactionSource, /\[data-roster-jump-row\]/);
   assert.match(interactionSource, /#tt-add-roster-review-row/);
   assert.match(interactionSource, /#tt-append-roster-rows/);
-  assert.match(interactionSource, /\[data-roster-import-mode\]/);
   assert.match(styles, /\.tt-dialog-overlay/);
   assert.match(styles, /\.tt-roster-import-dialog/);
+  assert.match(styles, /\.tt-roster-issue-editor-dialog/);
+  assert.match(styles, /\.tt-roster-import-options\s*{[\s\S]*grid-template-columns:\s*minmax\(0,\s*0\.95fr\)\s*minmax\(0,\s*1\.25fr\)\s*minmax\(0,\s*0\.9fr\);/);
+  assert.match(styles, /\.tt-roster-import-option\s*{[\s\S]*display:\s*grid;[\s\S]*background:\s*var\(--tt-bg-elevated\);/);
+  assert.match(styles, /\.tt-roster-import-option-actions\s*{[\s\S]*display:\s*flex;/);
+  assert.match(styles, /\.tt-roster-import-manual-preview\s*{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/);
   assert.match(styles, /\.tt-import-dropzone/);
-  assert.match(styles, /\.tt-roster-review-table\s*{[\s\S]*table-layout:\s*fixed;/);
-  assert.match(styles, /\.tt-roster-col-issue\s*{/);
-  assert.match(styles, /\.tt-roster-col-action\s*{/);
+  assert.doesNotMatch(styles, /\.tt-import-mode-tabs\s*{/);
+  assert.match(styles, /\.tt-roster-import-dialog--review\s*{[\s\S]*--tt-dialog-width:\s*1220px;[\s\S]*width:\s*min\(var\(--tt-dialog-width\),\s*calc\(100vw - 72px\)\);[\s\S]*max-width:\s*calc\(100vw - 72px\);/);
+  assert.match(styles, /\.tt-roster-review-table\s*{[\s\S]*min-width:\s*1124px;[\s\S]*table-layout:\s*fixed;/);
+  assert.match(styles, /\.tt-roster-col-row-number\s*{[\s\S]*width:\s*52px;/);
+  assert.match(styles, /\.tt-roster-col-issue\s*{[\s\S]*width:\s*52px;/);
+  assert.match(styles, /\.tt-roster-col-action\s*{[\s\S]*width:\s*52px;/);
+  assert.match(styles, /\.tt-roster-review-table th,[\s\S]*\.tt-roster-review-table td\s*{[\s\S]*text-align:\s*center;/);
+  assert.match(styles, /\.tt-roster-review-table \.tt-roster-review-field\s*{[\s\S]*text-align:\s*center;[\s\S]*text-align-last:\s*center;/);
+  assert.match(styles, /\.tt-roster-review-table th:first-child,[\s\S]*\.tt-roster-review-table td\[data-label="行号"\],[\s\S]*\.tt-roster-review-table td\[data-label="周课时"\],[\s\S]*\.tt-roster-review-table td\[data-label="连堂"\],[\s\S]*\.tt-roster-review-table td\[data-label="问题"\],[\s\S]*\.tt-roster-review-table td\[data-label="操作"\]\s*{[\s\S]*text-align:\s*center;/);
+  assert.match(styles, /\.tt-roster-review-issue\s*{[\s\S]*text-align:\s*center;/);
+  assert.match(styles, /\.tt-roster-review-table th:first-child,[\s\S]*\.tt-roster-review-table td\[data-label="行号"\]\s*{[\s\S]*position:\s*sticky;[\s\S]*left:\s*0;/);
+  assert.match(styles, /\.tt-roster-review-table th:nth-child\(11\),[\s\S]*\.tt-roster-review-table td\[data-label="问题"\]\s*{[\s\S]*position:\s*sticky;[\s\S]*right:\s*52px;/);
+  assert.match(styles, /\.tt-roster-review-table th:nth-child\(12\),[\s\S]*\.tt-roster-review-table td\[data-label="操作"\]\s*{[\s\S]*position:\s*sticky;[\s\S]*right:\s*0;/);
+  assert.match(styles, /\.tt-roster-review-table th:first-child,[\s\S]*\.tt-roster-review-table th:nth-child\(11\),[\s\S]*\.tt-roster-review-table th:nth-child\(12\)\s*{[\s\S]*z-index:\s*4;[\s\S]*background:\s*var\(--tt-bg-elevated\);/);
+  assert.match(styles, /\.tt-roster-block-help\s*{[\s\S]*position:\s*relative;[\s\S]*display:\s*inline-flex;/);
+  assert.match(styles, /\.tt-roster-block-help-trigger\s*{[\s\S]*cursor:\s*help;/);
+  assert.match(styles, /\.tt-roster-block-help-popover\s*{[\s\S]*position:\s*absolute;[\s\S]*background:\s*#0f172a;[\s\S]*color:\s*var\(--tt-text-secondary\);[\s\S]*font-size:\s*0\.74rem;[\s\S]*font-weight:\s*600;[\s\S]*opacity:\s*0;[\s\S]*visibility:\s*hidden;/);
+  assert.match(styles, /\.tt-roster-block-help-popover b\s*{[\s\S]*color:\s*var\(--tt-text\);[\s\S]*font-weight:\s*700;/);
+  assert.match(styles, /\.tt-roster-block-help-popover em\s*{[\s\S]*display:\s*block;[\s\S]*color:\s*var\(--tt-text-secondary\);[\s\S]*font-style:\s*normal;[\s\S]*font-weight:\s*600;/);
+  assert.match(styles, /body\.light-mode \.tt-roster-block-help-popover\s*{[\s\S]*background:\s*#ffffff;/);
+  assert.match(styles, /\.tt-roster-block-help:hover \.tt-roster-block-help-popover,[\s\S]*\.tt-roster-block-help:focus-within \.tt-roster-block-help-popover\s*{[\s\S]*opacity:\s*1;[\s\S]*visibility:\s*visible;/);
   assert.match(styles, /\.tt-roster-review-row--error/);
+  assert.match(styles, /\.tt-roster-review-row--focused/);
+  assert.match(styles, /\.tt-roster-issue-edit/);
+  assert.match(styles, /\.tt-roster-issue-editor-progress/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-review-table colgroup,[\s\S]*\.tt-rule-review-table colgroup/);
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-review-table td\[data-label="行号"\],[\s\S]*\.tt-roster-review-table td\[data-label="问题"\],[\s\S]*\.tt-roster-review-table td\[data-label="操作"\]\s*{[\s\S]*position:\s*static;/);
   // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 constraint dialog 替代）
   assert.match(styles, /\.tt-roster-import-dialog/);
+  assert.match(styles, /\.tt-roster-issue-editor-dialog/);
   assert.match(styles, /\.tt-period-time-dialog/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
+});
+
+test('timetable roster issue locator scrolls to row and focuses the field', () => {
+  const controller = new TimetablePlannerController();
+  const calls = [];
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  globalThis.setTimeout = () => 1;
+  globalThis.clearTimeout = () => {};
+  const field = {
+    focus(options) {
+      calls.push(['focus', options]);
+    },
+  };
+  const row = {
+    classList: {
+      add(name) { calls.push(['add', name]); },
+      remove(name) { calls.push(['remove', name]); },
+    },
+    scrollIntoView(options) {
+      calls.push(['scroll', options]);
+    },
+    querySelector(selector) {
+      calls.push(['fieldSelector', selector]);
+      return selector === '[data-roster-field="blockPreference"]' ? field : null;
+    },
+  };
+  controller.state.container = {
+    querySelector(selector) {
+      calls.push(['rowSelector', selector]);
+      return selector === '[data-roster-review-row="draft_1"]' ? row : null;
+    },
+  };
+
+  try {
+    assert.equal(controller.locateRosterIssue('draft_1', 'blockPreference'), true);
+    assert.deepEqual(calls.find(call => call[0] === 'scroll')?.[1], { block: 'center', inline: 'nearest', behavior: 'smooth' });
+    assert.deepEqual(calls.find(call => call[0] === 'focus')?.[1], { preventScroll: true });
+    assert.ok(calls.some(call => call[0] === 'add' && call[1] === 'tt-roster-review-row--focused'));
+    assert.equal(controller.locateRosterIssue('missing', 'blockPreference'), false);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
+test('timetable roster issue editor quick fix saves a row and recalculates issues', () => {
+  const controller = new TimetablePlannerController();
+  let renderCount = 0;
+  controller.render = () => {
+    renderCount += 1;
+  };
+  const analyzed = controller.analyzeRosterDraftRows([{
+    id: 'draft_odd_double',
+    sourceRow: 12,
+    sourceSheet: '任课数据',
+    grade: '八年级',
+    className: 'G8-2班',
+    subjectName: '物理',
+    subjectCategory: 'main',
+    subjectTags: '',
+    teacherName: '程远航',
+    weeklyHours: '3',
+    blockPreference: 'double',
+    roomName: '',
+  }]);
+  controller.state.rosterImport = {
+    ...controller.state.rosterImport,
+    open: true,
+    step: 'review',
+    draftRows: analyzed.draftRows,
+    stats: analyzed.stats,
+    warnings: analyzed.warnings,
+    issues: analyzed.issues,
+    hasBlockingIssues: analyzed.hasBlockingIssues,
+    issueListExpanded: true,
+  };
+
+  assert.equal(analyzed.stats.issueCount, 1);
+  assert.equal(controller.openRosterIssueEditor('draft_odd_double', 'blockPreference'), true);
+  assert.equal(controller.state.rosterImport.issueEditor.rowId, 'draft_odd_double');
+  assert.equal(controller.closeRosterIssueEditor(), true);
+  assert.equal(controller.state.rosterImport.draftRows.length, 1);
+  assert.equal(controller.openRosterIssueEditor('draft_odd_double', 'blockPreference'), true);
+  assert.equal(controller.applyRosterIssueQuickFix('mixed'), true);
+  assert.equal(controller.state.rosterImport.issueEditor.draft.blockPreference, 'mixed');
+  assert.equal(controller.applyRosterIssueEditor(), true);
+
+  const saved = controller.state.rosterImport.draftRows.find(row => row.id === 'draft_odd_double');
+  assert.equal(saved.blockPreference, 'mixed');
+  assert.equal(saved.weeklyHours, '3');
+  assert.equal(controller.state.rosterImport.issueEditor, null);
+  assert.equal(controller.state.rosterImport.stats.issueCount, 0);
+  assert.equal(controller.state.rosterImport.issues.length, 0);
+  assert.ok(renderCount >= 4);
+});
+
+test('timetable roster issue editor navigates issues and saves into the next issue', () => {
+  const controller = new TimetablePlannerController();
+  let renderCount = 0;
+  controller.render = () => {
+    renderCount += 1;
+  };
+  const analyzed = controller.analyzeRosterDraftRows([{
+    id: 'draft_physics',
+    sourceRow: 12,
+    sourceSheet: '任课数据',
+    grade: '八年级',
+    className: 'G8-2班',
+    subjectName: '物理',
+    subjectCategory: 'main',
+    subjectTags: '',
+    teacherName: '程远航',
+    weeklyHours: '3',
+    blockPreference: 'double',
+    roomName: '',
+  }, {
+    id: 'draft_chem',
+    sourceRow: 13,
+    sourceSheet: '任课数据',
+    grade: '九年级',
+    className: 'G9-1班',
+    subjectName: '化学',
+    subjectCategory: 'lab',
+    subjectTags: '',
+    teacherName: '丁子航',
+    weeklyHours: '5',
+    blockPreference: 'double',
+    roomName: '化学实验室',
+  }]);
+  controller.state.rosterImport = {
+    ...controller.state.rosterImport,
+    open: true,
+    step: 'review',
+    draftRows: analyzed.draftRows,
+    stats: analyzed.stats,
+    warnings: analyzed.warnings,
+    issues: analyzed.issues,
+    hasBlockingIssues: analyzed.hasBlockingIssues,
+    issueListExpanded: true,
+  };
+
+  assert.equal(analyzed.stats.issueCount, 2);
+  assert.equal(controller.openRosterIssueEditor('draft_physics', 'blockPreference'), true);
+  assert.deepEqual(controller.getRosterIssueEditorNavigation(), {
+    index: 0,
+    total: 2,
+    previous: null,
+    next: analyzed.issues[1],
+  });
+  assert.equal(controller.applyRosterIssueQuickFix('mixed'), true);
+  assert.equal(controller.openAdjacentRosterIssue('next'), true);
+  assert.equal(controller.state.rosterImport.issueEditor.rowId, 'draft_chem');
+  assert.equal(controller.state.rosterImport.draftRows.find(row => row.id === 'draft_physics').blockPreference, 'double');
+  assert.equal(controller.openAdjacentRosterIssue('previous'), true);
+  assert.equal(controller.state.rosterImport.issueEditor.rowId, 'draft_physics');
+
+  assert.equal(controller.applyRosterIssueQuickFix('mixed'), true);
+  assert.equal(controller.applyRosterIssueEditor({ advance: true }), true);
+  assert.equal(controller.state.rosterImport.draftRows.find(row => row.id === 'draft_physics').blockPreference, 'mixed');
+  assert.equal(controller.state.rosterImport.stats.issueCount, 1);
+  assert.equal(controller.state.rosterImport.issueEditor.rowId, 'draft_chem');
+
+  assert.equal(controller.applyRosterIssueEditor({ advance: true }), true);
+  assert.equal(controller.state.rosterImport.stats.issueCount, 1);
+  assert.equal(controller.state.rosterImport.issueEditor.rowId, 'draft_chem');
+
+  assert.equal(controller.applyRosterIssueQuickFix('single'), true);
+  assert.equal(controller.applyRosterIssueEditor({ advance: true }), true);
+  assert.equal(controller.state.rosterImport.issueEditor, null);
+  assert.equal(controller.state.rosterImport.stats.issueCount, 0);
+  assert.equal(controller.state.rosterImport.issues.length, 0);
+  assert.ok(renderCount >= 8);
 });
 
 test('timetable dialogs expand to review content on desktop and stay constrained on mobile', async () => {
@@ -8053,6 +9056,7 @@ test('timetable dialogs expand to review content on desktop and stay constrained
   // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 constraint dialog 替代）
   assert.match(styles, /\.tt-roster-import-dialog,\s*[\s\S]*\.tt-period-time-dialog,\s*[\s\S]*\.tt-publish-dialog,\s*[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*min\(var\(--tt-dialog-width,\s*720px\),\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);[\s\S]*max-height:\s*min\(var\(--tt-dialog-max-height,\s*860px\),\s*calc\(100vh - 48px\)\);[\s\S]*overflow:\s*auto;[\s\S]*box-shadow:\s*0 24px 60px rgba\(2,\s*6,\s*23,\s*0\.38\);/);
   assert.match(styles, /\.tt-roster-import-dialog\s*{[\s\S]*--tt-dialog-width:\s*1120px;/);
+  assert.match(styles, /\.tt-roster-import-dialog--review\s*{[\s\S]*--tt-dialog-width:\s*1220px;[\s\S]*width:\s*min\(var\(--tt-dialog-width\),\s*calc\(100vw - 72px\)\);[\s\S]*max-width:\s*calc\(100vw - 72px\);/);
   assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*--tt-dialog-width:\s*960px;[\s\S]*--tt-dialog-max-height:\s*820px;/);
   assert.match(styles, /\.tt-publish-dialog\s*{[\s\S]*--tt-dialog-width:\s*640px;[\s\S]*--tt-dialog-max-height:\s*760px;/);
   assert.match(styles, /\.tt-publication-history-dialog\s*{[\s\S]*--tt-dialog-width:\s*920px;[\s\S]*--tt-dialog-max-height:\s*820px;/);
@@ -8256,7 +9260,8 @@ test('timetable constraint dialog keeps parsed drafts in the current review flow
   assert.match(html, /data-constraint-dialog-overlay/);
   assert.match(html, /tt-constraint-dialog/);
   assert.match(html, /tt-requirement-workbench/);
-  assert.match(html, /已理解需求 \(2\)/);
+  assert.match(html, /解析结果/);
+  assert.match(html, /来自你的输入 2 条 · 系统补充 0 条/);
   assert.match(html, /落地结果/);
   assert.match(html, /All teachers should be balanced/);
   assert.match(html, /Math should prefer Monday period 2/);
@@ -8403,6 +9408,21 @@ test('timetable smart rules no longer keep the old inline sidebar renderer', asy
   assert.doesNotMatch(styles, /(?:^|\n)\.tt-rule-input-area\s*\{/);
   assert.doesNotMatch(styles, /(?:^|\n)\.tt-pending-rules\s*\{/);
   assert.doesNotMatch(styles, /(?:^|\n)\.tt-saved-rules\s*\{/);
+});
+
+test('timetable rule type labels are centralized while preserving planner wording', async () => {
+  const viewSource = await readFile(new URL('view.js', moduleRoot), 'utf8');
+  const dialogControllerSource = await readFile(new URL('controller-constraint-dialog-advanced.js', moduleRoot), 'utf8');
+
+  assert.equal(RULE_TYPE_LABELS.subject_morning, '上午优先');
+  assert.equal(plannerRuleTypeLabel('subject_morning'), '课程上午优先');
+  assert.equal(plannerRuleTypeLabel('locked_slot'), '锁定课节');
+  assert.equal(plannerRuleTypeLabel('teacher_load_balance'), '教师负载均衡（仅建议）');
+  assert.equal(plannerRuleTypeLabel('unknown_rule'), 'unknown_rule');
+  assert.doesNotMatch(viewSource, /const RULE_TYPE_LABELS/);
+  assert.match(viewSource, /plannerRuleTypeLabel\s+as\s+ruleTypeLabel/);
+  assert.doesNotMatch(dialogControllerSource, /const RULE_TYPE_LABELS/);
+  assert.match(dialogControllerSource, /RULE_TYPE_LABELS/);
 });
 
 test('timetable constraint dialog shows parse progress feedback', async () => {
@@ -8806,7 +9826,8 @@ test('timetable constraint dialog explains card warnings and source text separat
 
   assert.match(html, /data-constraint-dialog-overlay/);
   assert.match(html, /tt-requirement-workbench/);
-  assert.match(html, /已理解需求 \(2\)/);
+  assert.match(html, /解析结果/);
+  assert.match(html, /来自你的输入 2 条 · 系统补充 0 条/);
   assert.match(html, /落地结果/);
   assert.doesNotMatch(html, /tt-constraint-preview/);
   assert.doesNotMatch(html, /已识别约束/);
@@ -9327,7 +10348,8 @@ test('timetable rule review renders a beginner task workbench instead of raw que
   assert.match(html, /data-constraint-dialog-overlay/);
   assert.match(html, /tt-constraint-dialog/);
   assert.match(html, /tt-requirement-workbench/);
-  assert.match(html, /已理解需求 \(2\)/);
+  assert.match(html, /解析结果/);
+  assert.match(html, /来自你的输入 2 条 · 系统补充 0 条/);
   assert.match(html, /落地结果/);
   assert.doesNotMatch(html, /已识别约束/);
   assert.match(html, /数学尽量上午/);
@@ -9448,7 +10470,8 @@ test('timetable constraint dialog renders recognized rule cards instead of the r
 
   assert.match(html, /data-constraint-dialog-overlay/);
   assert.match(html, /tt-requirement-workbench/);
-  assert.match(html, /已理解需求 \(1\)/);
+  assert.match(html, /解析结果/);
+  assert.match(html, /来自你的输入 1 条 · 系统补充 0 条/);
   assert.match(html, /落地结果/);
   assert.doesNotMatch(html, /已识别约束/);
   assert.match(html, /数学尽量上午/);
@@ -9877,6 +10900,10 @@ test('timetable Escape steps back inside the workbench instead of bubbling to th
     closeRosterImport() {
       closed.push('roster');
     },
+    closeRosterIssueEditor() {
+      closed.push('issue-editor');
+      state.rosterImport.issueEditor = null;
+    },
     closeConstraintChat() {
       closed.push('chat');
     },
@@ -9898,7 +10925,7 @@ test('timetable Escape steps back inside the workbench instead of bubbling to th
     publicationHistoryDialog: { open: true },
     publishDialog: { open: true },
     periodTimeDialog: { open: true },
-    rosterImport: { open: true },
+    rosterImport: { open: true, issueEditor: { rowId: 'draft_1', field: 'blockPreference' } },
     constraintChat: { open: true },
     problemDetailDialog: { open: true, problem: { id: 'p1' } },
     smartWorkbench: { open: true },
@@ -9930,29 +10957,32 @@ test('timetable Escape steps back inside the workbench instead of bubbling to th
 
   state.periodTimeDialog.open = false;
   assert.equal(handleTimetableEscape(event, container, controller, state), true);
-  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'roster']);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor']);
+
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster']);
 
   state.rosterImport.open = false;
   assert.equal(handleTimetableEscape(event, container, controller, state), true);
-  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'roster', 'chat']);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster', 'chat']);
 
   state.constraintChat.open = false;
   assert.equal(handleTimetableEscape(event, container, controller, state), true);
-  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'roster', 'chat', 'problem']);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster', 'chat', 'problem']);
 
   state.problemDetailDialog.open = false;
   assert.equal(handleTimetableEscape(event, container, controller, state), true);
-  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'roster', 'chat', 'problem']);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster', 'chat', 'problem']);
   assert.equal(removedDetails, 1);
   assert.equal(state.selectedSlotId, 'slot-1');
 
   openDetails = [];
   assert.equal(handleTimetableEscape(event, container, controller, state), true);
-  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'roster', 'chat', 'problem', 'smart']);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster', 'chat', 'problem', 'smart']);
   assert.equal(state.selectedSlotId, 'slot-1');
 
   assert.equal(handleTimetableEscape(event, container, controller, state), true);
-  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'roster', 'chat', 'problem', 'smart', 'render']);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster', 'chat', 'problem', 'smart', 'render']);
   assert.equal(state.selectedSlotId, '');
   assert.equal(state.inspectorOpen, false);
 
@@ -9992,14 +11022,15 @@ test('timetable left sidebar range workflow applies only from the range popover 
   assert.match(styles, /\.tt-workflow-panel/);
   assert.match(styles, /\.tt-range-summary-grid/);
   assert.match(styles, /\.tt-multi-select/);
-  assert.match(styles, /\.tt-multi-select-popover/);
+  assert.match(styles, /\.tt-multi-select\[open\]\s*{\s*z-index:\s*120;\s*}/);
+  assert.match(styles, /\.tt-multi-select-popover\s*{[\s\S]*z-index:\s*130;/);
   assert.match(styles, /\.tt-range-summary-detail\s*{/);
-  assert.match(styles, /\.tt-range-summary-extra\s*{/);
+  assert.doesNotMatch(styles, /\.tt-range-summary-extra\s*{/);
   assert.match(styles, /\.tt-period-time-entry-action\s*{/);
   assert.match(styles, /\.tt-period-time-entry-range\s*{/);
   assert.match(styles, /\.tt-period-time-entry-status\s*{/);
   assert.doesNotMatch(styles, /\.tt-range-setup-card\s+\.tt-range-summary-icon\s*{/);
-  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-multi-select-popover/);
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-multi-select\[open\]\s*{\s*z-index:\s*auto;\s*}[\s\S]*\.tt-multi-select-popover/);
 });
 
 test('timetable period time setup uses a compact entry and modal editor', async () => {
@@ -10205,7 +11236,9 @@ test('timetable period time entry summarizes non-formal study blocks and exclude
   const closed = renderWorkbench(state);
   const sidebar = closed.slice(closed.indexOf('<aside class="tt-sidebar"'), closed.indexOf('<section class="tt-schedule-panel"'));
 
-  assert.match(sidebar, /data-range-label="可用节次"[\s\S]*<strong>3节 · 附加2段<\/strong>[\s\S]*<small class="tt-range-summary-detail">上午3<\/small>[\s\S]*<small class="tt-range-summary-extra">早自习1 · 晚自习1<\/small>/);
+  assert.match(sidebar, /data-range-label="可用节次"[\s\S]*<strong>3节 · 附加2段<\/strong>[\s\S]*<small class="tt-range-summary-detail" title="上午3 · 早自习1 · 晚自习1">上午3 · 早自习1 · 晚自习1<\/small>/);
+  assert.equal((sidebar.match(/tt-range-summary-detail/g) || []).length, 1);
+  assert.doesNotMatch(sidebar, /tt-range-summary-extra/);
   assert.match(sidebar, /tt-period-time-entry-range">07:20-19:45</);
   assert.match(sidebar, /tt-period-time-entry-status">3节 · 附加2段 · 已配置</);
   assert.doesNotMatch(sidebar, /附加：早自习1|附加：晚自习1/);
@@ -10233,8 +11266,9 @@ test('timetable range summary names formal time segments from configured blocks'
   const sidebar = html.slice(html.indexOf('<aside class="tt-sidebar"'), html.indexOf('<section class="tt-schedule-panel"'));
 
   assert.match(rangeCard, /<strong>5节 · 附加2段<\/strong>/);
-  assert.match(rangeCard, /<small class="tt-range-summary-detail">上午2 · 下午1 · 晚自习2<\/small>/);
-  assert.match(rangeCard, /<small class="tt-range-summary-extra">早读1 · 离校提醒1<\/small>/);
+  assert.match(rangeCard, /<small class="tt-range-summary-detail" title="上午2 · 下午1 · 晚自习2 · 早读1 · 离校提醒1">上午2 · 下午1 · 晚自习2 · 早读1 · 离校提醒1<\/small>/);
+  assert.equal((rangeCard.match(/tt-range-summary-detail/g) || []).length, 1);
+  assert.doesNotMatch(rangeCard, /tt-range-summary-extra/);
   assert.match(sidebar, /tt-period-time-entry-range">07:20-21:10</);
   assert.match(sidebar, /tt-period-time-entry-status">5节 · 附加2段 · 已配置</);
   assert.doesNotMatch(sidebar, /由时段配置自动生成/);

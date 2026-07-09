@@ -10,8 +10,80 @@ import {
 const STATUS_LABELS = {
     satisfied: '已满足',
     partial: '部分满足',
+    violated: '未满足',
+    not_evaluable: '暂不可评估',
     unmet: '未满足',
     not_applicable: '未参与',
+};
+
+const TYPE_LABELS = {
+    teacher_unavailable: '教师不可排',
+    class_unavailable: '班级不可排',
+    global_unavailable: '全校不可排',
+    locked_slot: '锁定课节',
+    subject_morning: '课程上午优先',
+    subject_afternoon: '课程下午优先',
+    subject_preferred_periods: '课程偏好节次',
+    subject_avoid_periods: '课程避开节次',
+    subject_daily_limit: '课程每日上限',
+    teacher_daily_limit: '教师每日上限',
+    teacher_consecutive_limit: '教师连续上限',
+    teacher_weekly_limit: '教师每周上限',
+    teacher_max_days_per_week: '教师每周授课天数',
+    teacher_mutual_exclusion: '教师互斥',
+    subject_not_same_day: '课程不同天',
+    room_requirement: '教室要求',
+    subject_spread: '同科分散',
+    course_interval: '课程间隔',
+    class_daily_subject_balance: '班级每日科目均衡',
+    class_daily_balance: '班级每日科目均衡',
+    teacher_gap_preference: '教师少空堂',
+    teacher_load_balance: '教师负载均衡',
+    subject_sequence: '课程顺序',
+};
+
+const FULFILLMENT_PRIMITIVES = [
+    'teacher_unavailable',
+    'class_unavailable',
+    'locked_slot',
+    'subject_morning',
+    'subject_preferred_periods',
+    'subject_avoid_periods',
+    'teacher_daily_limit',
+    'teacher_consecutive_limit',
+    'subject_spread',
+    'subject_afternoon',
+    'room_requirement',
+    'class_daily_subject_balance',
+    'teacher_gap_preference',
+    'teacher_load_balance',
+    'global_unavailable',
+    'subject_daily_limit',
+    'teacher_weekly_limit',
+    'teacher_max_days_per_week',
+    'teacher_mutual_exclusion',
+    'subject_not_same_day',
+    'subject_sequence',
+    'course_interval',
+];
+
+const PRIMITIVE_ALIASES = {
+    class_daily_subject_balance: 'class_daily_balance',
+    class_daily_balance: 'class_daily_subject_balance',
+};
+
+const EVALUABLE_PRIMITIVES = new Set([
+    ...FULFILLMENT_PRIMITIVES,
+    'class_daily_balance',
+]);
+
+const LEGACY_STATUS_TO_V2 = {
+    satisfied: 'satisfied',
+    partial: 'partial',
+    unmet: 'violated',
+    violated: 'violated',
+    not_applicable: 'not_evaluable',
+    not_evaluable: 'not_evaluable',
 };
 
 function cleanRuleId(...parts) {
@@ -70,22 +142,81 @@ function locateExpectedCell(project, rule = {}) {
     };
 }
 
+function evidenceSlotFromLocate(target = {}) {
+    const slot = target.slot || {};
+    const day = Number(target.day ?? slot.day);
+    const period = Number(target.period ?? slot.period);
+    if (!Number.isFinite(day) || !Number.isFinite(period)) return null;
+    return {
+        day,
+        period,
+        classId: target.targetKind === 'class' ? target.targetId || slot.classId || '' : slot.classId || '',
+        subjectId: slot.subjectId || '',
+        teacherId: target.targetKind === 'teacher' ? target.targetId || slot.teacherId || '' : slot.teacherId || '',
+        ...(slot.roomId ? { roomId: slot.roomId } : {}),
+        ...(slot.id ? { slotId: slot.id } : {}),
+    };
+}
+
+function suggestion(kind, label) {
+    return { kind, label };
+}
+
+function suggestionsForResult(rule = {}, status = '') {
+    if (status === 'satisfied') return [];
+    if (status === 'not_evaluable') {
+        return [
+            suggestion('manual', '补齐项目数据或生成课表后再评估'),
+        ];
+    }
+
+    const isHard = rule.priority === 'hard';
+    const slotLike = (rule.slots || []).length > 0 || [
+        'teacher_unavailable',
+        'class_unavailable',
+        'global_unavailable',
+        'locked_slot',
+        'subject_preferred_periods',
+        'subject_avoid_periods',
+    ].includes(rule.type);
+    const actions = [];
+    if (isHard) actions.push(suggestion('relax_to_soft', '改为软约束再重新排课'));
+    if (slotLike) actions.push(suggestion('shrink_slots', '缩小或调整约束时段'));
+    actions.push(suggestion('delete_rule', isHard ? '确认后删除这条硬约束' : '确认后删除这条偏好'));
+    actions.push(suggestion('manual', '人工调整相关课节后重新评估'));
+    return actions.slice(0, 3);
+}
+
 function makeResult(rule, status, evidence, locateTargets = []) {
+    const v2Status = LEGACY_STATUS_TO_V2[status] || status;
+    const normalizedLocateTargets = locateTargets.filter(Boolean);
+    const evidenceSlots = normalizedLocateTargets
+        .map(evidenceSlotFromLocate)
+        .filter(Boolean);
     return {
         id: rule.id,
+        ruleId: rule.id,
         type: rule.type,
+        primitive: PRIMITIVE_ALIASES[rule.type] || rule.type,
+        typeLabel: TYPE_LABELS[rule.type] || rule.description || rule.type,
         source: rule.source,
+        origin: rule.source || 'project.rules',
         priority: rule.priority,
+        strength: rule.priority === 'hard' ? 'hard' : 'soft',
         targetKind: rule.targetKind,
         targetId: rule.targetId,
         targetName: rule.targetName,
         slots: rule.slots || [],
         title: rule.title || `${rule.targetName || ''}${rule.description ? ` ${rule.description}` : ''}`.trim(),
         description: rule.description,
-        status,
-        statusLabel: STATUS_LABELS[status] || status,
+        status: v2Status,
+        legacyStatus: status,
+        statusLabel: STATUS_LABELS[v2Status] || STATUS_LABELS[status] || status,
         evidence,
-        locateTargets: locateTargets.filter(Boolean),
+        detail: evidence,
+        evidenceSlots,
+        suggestions: suggestionsForResult(rule, v2Status),
+        locateTargets: normalizedLocateTargets,
     };
 }
 
@@ -131,6 +262,20 @@ function savedConstraintItems(project) {
         priority: 'hard',
         description: '班级不可排',
     });
+    (hard.globalUnavailable || []).forEach(slot => {
+        items.push({
+            id: cleanRuleId('global_unavailable', slot),
+            type: 'global_unavailable',
+            source: 'hardRules.globalUnavailable',
+            targetKind: 'global',
+            targetId: '__global__',
+            targetName: '全校',
+            slots: [slot],
+            priority: 'hard',
+            description: '全校不可排',
+            title: `全校 ${slot} 不排常规课`,
+        });
+    });
 
     (hard.lockedSlots || []).forEach((slot, index) => {
         const targetName = [
@@ -165,6 +310,21 @@ function savedConstraintItems(project) {
             priority: 'soft',
             description: '课程上午优先',
             title: `${entityName(project, 'subject', subjectId)} 上午优先`,
+        });
+    }
+
+    for (const subjectId of soft.afternoonSubjects || []) {
+        items.push({
+            id: cleanRuleId('subject_afternoon', subjectId),
+            type: 'subject_afternoon',
+            source: 'softRules.afternoonSubjects',
+            targetKind: 'subject',
+            targetId: subjectId,
+            targetName: entityName(project, 'subject', subjectId),
+            slots: [],
+            priority: 'soft',
+            description: '课程下午优先',
+            title: `${entityName(project, 'subject', subjectId)} 下午优先`,
         });
     }
 
@@ -232,6 +392,107 @@ function savedConstraintItems(project) {
         }
     }
 
+    for (const [subjectId, limit] of Object.entries(hard.subjectDailyLimit || {})) {
+        items.push({
+            id: cleanRuleId('subject_daily_limit', subjectId),
+            type: 'subject_daily_limit',
+            source: 'hardRules.subjectDailyLimit',
+            targetKind: 'subject',
+            targetId: subjectId,
+            targetName: entityName(project, 'subject', subjectId),
+            slots: [],
+            priority: 'hard',
+            limit: Number(limit),
+            description: `每天最多 ${Number(limit)} 节`,
+            title: `${entityName(project, 'subject', subjectId)} 每天最多 ${Number(limit)} 节`,
+        });
+    }
+
+    for (const [teacherId, limit] of Object.entries(hard.teacherWeeklyLimit || {})) {
+        items.push({
+            id: cleanRuleId('teacher_weekly_limit', teacherId),
+            type: 'teacher_weekly_limit',
+            source: 'hardRules.teacherWeeklyLimit',
+            targetKind: 'teacher',
+            targetId: teacherId,
+            targetName: entityName(project, 'teacher', teacherId),
+            slots: [],
+            priority: 'hard',
+            limit: Number(limit),
+            description: `每周最多 ${Number(limit)} 节`,
+            title: `${entityName(project, 'teacher', teacherId)} 每周最多 ${Number(limit)} 节`,
+        });
+    }
+
+    for (const [teacherId, limit] of Object.entries(hard.teacherMaxDaysPerWeek || {})) {
+        items.push({
+            id: cleanRuleId('teacher_max_days_per_week', teacherId),
+            type: 'teacher_max_days_per_week',
+            source: 'hardRules.teacherMaxDaysPerWeek',
+            targetKind: 'teacher',
+            targetId: teacherId,
+            targetName: entityName(project, 'teacher', teacherId),
+            slots: [],
+            priority: 'hard',
+            limit: Number(limit),
+            description: `每周最多 ${Number(limit)} 天`,
+            title: `${entityName(project, 'teacher', teacherId)} 每周最多 ${Number(limit)} 天上课`,
+        });
+    }
+
+    (hard.teacherMutualExclusion || []).forEach((group, index) => {
+        const teacherIds = group.teacherIds || [];
+        items.push({
+            id: cleanRuleId('teacher_mutual_exclusion', index),
+            type: 'teacher_mutual_exclusion',
+            source: 'hardRules.teacherMutualExclusion',
+            targetKind: 'teacher_group',
+            targetId: teacherIds.join('|'),
+            targetName: teacherIds.map(id => entityName(project, 'teacher', id)).join('、'),
+            teacherIds,
+            slots: [],
+            priority: 'hard',
+            description: '教师互斥',
+            title: `${teacherIds.map(id => entityName(project, 'teacher', id)).join('、')} 不能同节上课`,
+        });
+    });
+
+    (hard.subjectNotSameDay || []).forEach((pair, index) => {
+        const subjectIds = pair.subjectIds || [];
+        const classIds = pair.classIds || [];
+        items.push({
+            id: cleanRuleId('subject_not_same_day', index),
+            type: 'subject_not_same_day',
+            source: 'hardRules.subjectNotSameDay',
+            targetKind: 'subject',
+            targetId: subjectIds.join('|'),
+            targetName: subjectIds.map(id => entityName(project, 'subject', id)).join('、'),
+            subjectIds,
+            classIds,
+            slots: [],
+            priority: 'hard',
+            description: '课程不同天',
+            title: `${subjectIds.map(id => entityName(project, 'subject', id)).join('、')} 不排同一天`,
+        });
+    });
+
+    for (const [subjectId, requirement] of Object.entries(hard.roomRequirements || {})) {
+        items.push({
+            id: cleanRuleId('room_requirement', subjectId),
+            type: 'room_requirement',
+            source: 'hardRules.roomRequirements',
+            targetKind: 'subject',
+            targetId: subjectId,
+            targetName: entityName(project, 'subject', subjectId),
+            roomIds: requirement.roomIds || [],
+            requiredTags: requirement.requiredTags || [],
+            slots: [],
+            priority: 'hard',
+            description: '教室要求',
+            title: `${entityName(project, 'subject', subjectId)} 教室要求`,
+        });
+    }
+
     for (const subjectId of soft.spreadSubjects || []) {
         items.push({
             id: cleanRuleId('subject_spread', subjectId),
@@ -247,7 +508,225 @@ function savedConstraintItems(project) {
         });
     }
 
+    for (const [subjectId, minGapDays] of Object.entries(soft.spreadSubjectGaps || {})) {
+        items.push({
+            id: cleanRuleId('course_interval', subjectId),
+            type: 'course_interval',
+            source: 'softRules.spreadSubjectGaps',
+            targetKind: 'subject',
+            targetId: subjectId,
+            targetName: entityName(project, 'subject', subjectId),
+            minGapDays: Number(minGapDays),
+            slots: [],
+            priority: 'soft',
+            description: `至少间隔 ${Number(minGapDays)} 天`,
+            title: `${entityName(project, 'subject', subjectId)} 至少间隔 ${Number(minGapDays)} 天`,
+        });
+    }
+
+    if (soft.classDailyBalance?.enabled) {
+        items.push({
+            id: 'class_daily_balance',
+            type: 'class_daily_balance',
+            source: 'softRules.classDailyBalance',
+            targetKind: 'global',
+            targetId: '__all_classes',
+            targetName: '全部班级',
+            slots: [],
+            priority: 'soft',
+            limit: Number(soft.classDailyBalance.mainSubjectDailyMax) || 0,
+            description: '班级每日均衡',
+            title: '班级每日课时尽量均衡',
+        });
+    }
+
+    if (Number(soft.teacherGapWeight) > 0) {
+        items.push({
+            id: 'teacher_gap_preference',
+            type: 'teacher_gap_preference',
+            source: 'softRules.teacherGapWeight',
+            targetKind: 'global',
+            targetId: '__all_teachers',
+            targetName: '全部教师',
+            slots: [],
+            priority: 'soft',
+            weight: Number(soft.teacherGapWeight),
+            description: '教师少空堂',
+            title: '教师尽量少空堂',
+        });
+    }
+
+    if (soft.teacherLoadBalance?.enabled && soft.teacherLoadBalance?.explicit) {
+        items.push({
+            id: 'teacher_load_balance',
+            type: 'teacher_load_balance',
+            source: 'softRules.teacherLoadBalance',
+            targetKind: 'global',
+            targetId: '__all_teachers',
+            targetName: '全部教师',
+            slots: [],
+            priority: 'soft',
+            weight: Number(soft.teacherLoadBalance.weight) || 1,
+            description: '教师负载均衡',
+            title: '教师工作量尽量均衡',
+        });
+    }
+
+    (soft.subjectSequence || []).forEach((item, index) => {
+        items.push({
+            id: cleanRuleId('subject_sequence', index),
+            type: 'subject_sequence',
+            source: 'softRules.subjectSequence',
+            targetKind: 'subject',
+            targetId: `${item.beforeSubjectId}>${item.afterSubjectId}`,
+            targetName: `${entityName(project, 'subject', item.beforeSubjectId)} 先于 ${entityName(project, 'subject', item.afterSubjectId)}`,
+            beforeSubjectId: item.beforeSubjectId,
+            afterSubjectId: item.afterSubjectId,
+            classIds: item.classIds || [],
+            slots: [],
+            priority: 'soft',
+            weight: Number(item.weight) || 1,
+            description: '课程顺序',
+            title: `${entityName(project, 'subject', item.beforeSubjectId)} 先于 ${entityName(project, 'subject', item.afterSubjectId)}`,
+        });
+    });
+
     return items;
+}
+
+function cloneProject(project = {}) {
+    return JSON.parse(JSON.stringify(project || {}));
+}
+
+function removeValue(values = [], value) {
+    return (Array.isArray(values) ? values : []).filter(item => String(item) !== String(value));
+}
+
+function deleteIndexed(items = [], ruleId = '', prefix = '') {
+    const index = Number(String(ruleId).slice(prefix.length));
+    if (!Number.isInteger(index) || index < 0) return items;
+    return (Array.isArray(items) ? items : []).filter((_, itemIndex) => itemIndex !== index);
+}
+
+function removeSlotRule(map = {}, targetId = '', slot = '') {
+    const next = { ...(map || {}) };
+    next[targetId] = removeValue(next[targetId], slot);
+    if (!next[targetId]?.length) delete next[targetId];
+    return next;
+}
+
+function removeSubjectPeriodRule(preferences = {}, subjectId = '', kind = '', slot = '') {
+    const next = { ...(preferences || {}) };
+    const current = { ...(next[subjectId] || {}) };
+    current[kind] = removeValue(current[kind], slot);
+    if (!current.prefer?.length && !current.avoid?.length) delete next[subjectId];
+    else next[subjectId] = current;
+    return next;
+}
+
+function deleteRuleFromProject(project = {}, rule = {}) {
+    const nextProject = cloneProject(project);
+    const rules = nextProject.rules || {};
+    const hard = { ...(rules.hardRules || {}) };
+    const soft = { ...(rules.softRules || {}) };
+    const firstSlot = rule.slots?.[0] || '';
+
+    switch (rule.type) {
+        case 'teacher_unavailable':
+            hard.teacherUnavailable = removeSlotRule(hard.teacherUnavailable, rule.targetId, firstSlot);
+            break;
+        case 'class_unavailable':
+            hard.classUnavailable = removeSlotRule(hard.classUnavailable, rule.targetId, firstSlot);
+            break;
+        case 'global_unavailable':
+            hard.globalUnavailable = removeValue(hard.globalUnavailable, firstSlot);
+            break;
+        case 'locked_slot':
+            hard.lockedSlots = deleteIndexed(hard.lockedSlots, rule.id, 'locked_slot:');
+            break;
+        case 'subject_morning':
+            soft.morningSubjects = removeValue(soft.morningSubjects, rule.targetId);
+            break;
+        case 'subject_afternoon':
+            soft.afternoonSubjects = removeValue(soft.afternoonSubjects, rule.targetId);
+            break;
+        case 'subject_preferred_periods':
+            soft.subjectPreferredPeriods = removeSubjectPeriodRule(soft.subjectPreferredPeriods, rule.targetId, 'prefer', firstSlot);
+            break;
+        case 'subject_avoid_periods':
+            soft.subjectPreferredPeriods = removeSubjectPeriodRule(soft.subjectPreferredPeriods, rule.targetId, 'avoid', firstSlot);
+            break;
+        case 'teacher_daily_limit': {
+            const limits = { ...(soft.teacherLimits || {}) };
+            if (limits[rule.targetId]) {
+                delete limits[rule.targetId].daily;
+                if (!Object.keys(limits[rule.targetId]).length) delete limits[rule.targetId];
+            }
+            soft.teacherLimits = limits;
+            break;
+        }
+        case 'teacher_consecutive_limit': {
+            const limits = { ...(soft.teacherLimits || {}) };
+            if (limits[rule.targetId]) {
+                delete limits[rule.targetId].consecutive;
+                if (!Object.keys(limits[rule.targetId]).length) delete limits[rule.targetId];
+            }
+            soft.teacherLimits = limits;
+            break;
+        }
+        case 'subject_spread':
+            soft.spreadSubjects = removeValue(soft.spreadSubjects, rule.targetId);
+            break;
+        case 'course_interval': {
+            const gaps = { ...(soft.spreadSubjectGaps || {}) };
+            delete gaps[rule.targetId];
+            soft.spreadSubjectGaps = gaps;
+            break;
+        }
+        case 'subject_daily_limit':
+            hard.subjectDailyLimit = { ...(hard.subjectDailyLimit || {}) };
+            delete hard.subjectDailyLimit[rule.targetId];
+            break;
+        case 'teacher_weekly_limit':
+            hard.teacherWeeklyLimit = { ...(hard.teacherWeeklyLimit || {}) };
+            delete hard.teacherWeeklyLimit[rule.targetId];
+            break;
+        case 'teacher_max_days_per_week':
+            hard.teacherMaxDaysPerWeek = { ...(hard.teacherMaxDaysPerWeek || {}) };
+            delete hard.teacherMaxDaysPerWeek[rule.targetId];
+            break;
+        case 'teacher_mutual_exclusion':
+            hard.teacherMutualExclusion = deleteIndexed(hard.teacherMutualExclusion, rule.id, 'teacher_mutual_exclusion:');
+            break;
+        case 'subject_not_same_day':
+            hard.subjectNotSameDay = deleteIndexed(hard.subjectNotSameDay, rule.id, 'subject_not_same_day:');
+            break;
+        case 'room_requirement':
+            hard.roomRequirements = { ...(hard.roomRequirements || {}) };
+            delete hard.roomRequirements[rule.targetId];
+            break;
+        case 'class_daily_balance':
+            soft.classDailyBalance = { ...(soft.classDailyBalance || {}), enabled: false, explicit: false };
+            break;
+        case 'teacher_gap_preference':
+            soft.teacherGapWeight = 0;
+            break;
+        case 'teacher_load_balance':
+            soft.teacherLoadBalance = { ...(soft.teacherLoadBalance || {}), enabled: false, explicit: false };
+            break;
+        case 'subject_sequence':
+            soft.subjectSequence = deleteIndexed(soft.subjectSequence, rule.id, 'subject_sequence:');
+            break;
+        default: {
+            const error = new Error('当前约束类型暂不支持自动删除。');
+            error.reason = 'unsupported_fulfillment_action';
+            error.status = 400;
+            throw error;
+        }
+    }
+
+    nextProject.rules = { ...rules, hardRules: hard, softRules: soft };
+    return normalizeTimetableProject(nextProject);
 }
 
 function slotsForTeacher(slots, teacherId) {
@@ -287,6 +766,18 @@ function evaluateClassUnavailable(project, rule, slots) {
         'unmet',
         `${violations.length} 节排入班级禁排时段。`,
         violations.map(slot => locateFromSlot(project, slot, 'class', rule.targetId)),
+    );
+}
+
+function evaluateGlobalUnavailable(project, rule, slots) {
+    const blocked = new Set(rule.slots || []);
+    const violations = slots.filter(slot => blocked.has(slotKey(slot.day, slot.period)));
+    if (!violations.length) return makeResult(rule, 'satisfied', '没有课程排入全校不可排时段。');
+    return makeResult(
+        rule,
+        'unmet',
+        `${violations.length} 节排入全校不可排时段。`,
+        violations.map(slot => locateFromSlot(project, slot, 'class', slot.classId)),
     );
 }
 
@@ -343,6 +834,24 @@ function evaluateSubjectMorning(project, rule, slots) {
     );
 }
 
+function evaluateSubjectAfternoon(project, rule, slots) {
+    const subjectSlots = slots.filter(slot => slot.subjectId === rule.targetId);
+    if (!subjectSlots.length) return makeResult(rule, 'not_applicable', '当前课表没有该课程课节。');
+    const morning = new Set(getDayPartPeriods(project, 'morning'));
+    const matched = subjectSlots.filter(slot => !morning.has(Number(slot.period)));
+    const evidence = `${matched.length}/${subjectSlots.length} 节在下午或非上午时段。`;
+    if (matched.length === subjectSlots.length) return makeResult(rule, 'satisfied', evidence);
+    if (matched.length > 0) {
+        return makeResult(
+            rule,
+            'partial',
+            evidence,
+            subjectSlots.filter(slot => morning.has(Number(slot.period))).map(slot => locateFromSlot(project, slot, 'class', slot.classId)),
+        );
+    }
+    return makeResult(rule, 'unmet', evidence, subjectSlots.map(slot => locateFromSlot(project, slot, 'class', slot.classId)));
+}
+
 function evaluateSubjectPreferred(project, rule, slots) {
     const subjectSlots = slots.filter(slot => slot.subjectId === rule.targetId);
     if (!subjectSlots.length) return makeResult(rule, 'not_applicable', '当前课表没有该课程课节。');
@@ -368,6 +877,26 @@ function evaluateSubjectAvoid(project, rule, slots) {
     );
 }
 
+function evaluateSubjectDailyLimit(project, rule, slots) {
+    const subjectSlots = slots.filter(slot => slot.subjectId === rule.targetId);
+    if (!subjectSlots.length) return makeResult(rule, 'not_applicable', '当前课表没有该课程课节。');
+    const limit = Number(rule.limit);
+    const grouped = new Map();
+    for (const slot of subjectSlots) {
+        const key = `${slot.classId}:${slot.day}`;
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(slot);
+    }
+    const violations = [...grouped.values()].filter(daySlots => daySlots.length > limit).flat();
+    if (!violations.length) return makeResult(rule, 'satisfied', `各班每天该课程均未超过 ${limit} 节。`);
+    return makeResult(
+        rule,
+        'unmet',
+        `${violations.length} 节所在日期超过每日 ${limit} 节。`,
+        violations.map(slot => locateFromSlot(project, slot, 'class', slot.classId)),
+    );
+}
+
 function evaluateTeacherDaily(project, rule, slots) {
     const teacherSlots = slotsForTeacher(slots, rule.targetId);
     if (!teacherSlots.length) return makeResult(rule, 'not_applicable', '当前课表没有该教师课节。');
@@ -386,6 +915,33 @@ function evaluateTeacherDaily(project, rule, slots) {
         'unmet',
         `${overDays.join('、')}，超过每天最多 ${limit} 节。`,
         overSlots.map(slot => locateFromSlot(project, slot, 'teacher', rule.targetId)),
+    );
+}
+
+function evaluateTeacherWeekly(project, rule, slots) {
+    const teacherSlots = slotsForTeacher(slots, rule.targetId);
+    if (!teacherSlots.length) return makeResult(rule, 'not_applicable', '当前课表没有该教师课节。');
+    const limit = Number(rule.limit);
+    if (teacherSlots.length <= limit) return makeResult(rule, 'satisfied', `每周 ${teacherSlots.length}/${limit} 节。`);
+    return makeResult(
+        rule,
+        'unmet',
+        `每周 ${teacherSlots.length} 节，超过上限 ${limit} 节。`,
+        teacherSlots.slice(limit).map(slot => locateFromSlot(project, slot, 'teacher', rule.targetId)),
+    );
+}
+
+function evaluateTeacherMaxDays(project, rule, slots) {
+    const teacherSlots = slotsForTeacher(slots, rule.targetId);
+    if (!teacherSlots.length) return makeResult(rule, 'not_applicable', '当前课表没有该教师课节。');
+    const limit = Number(rule.limit);
+    const days = new Set(teacherSlots.map(slot => Number(slot.day)));
+    if (days.size <= limit) return makeResult(rule, 'satisfied', `每周上课 ${days.size}/${limit} 天。`);
+    return makeResult(
+        rule,
+        'unmet',
+        `每周上课 ${days.size} 天，超过上限 ${limit} 天。`,
+        teacherSlots.filter(slot => days.has(Number(slot.day))).map(slot => locateFromSlot(project, slot, 'teacher', rule.targetId)),
     );
 }
 
@@ -423,6 +979,63 @@ function evaluateTeacherConsecutive(project, rule, slots) {
     );
 }
 
+function evaluateTeacherMutualExclusion(project, rule, slots) {
+    const teacherIds = new Set(rule.teacherIds || []);
+    if (teacherIds.size < 2) return makeResult(rule, 'not_applicable', '互斥教师不足两位。');
+    const bySlot = new Map();
+    for (const slot of slots) {
+        const matched = slotTeacherIds(slot).filter(teacherId => teacherIds.has(teacherId));
+        if (!matched.length) continue;
+        const key = slotKey(slot.day, slot.period);
+        if (!bySlot.has(key)) bySlot.set(key, []);
+        bySlot.get(key).push(slot);
+    }
+    const violations = [...bySlot.values()].filter(items => new Set(items.flatMap(slot => slotTeacherIds(slot)).filter(id => teacherIds.has(id))).size >= 2).flat();
+    if (!violations.length) return makeResult(rule, 'satisfied', '互斥教师没有同节上课。');
+    return makeResult(rule, 'unmet', `${violations.length} 节涉及互斥教师同节上课。`, violations.map(slot => locateFromSlot(project, slot, 'teacher', slot.teacherId)));
+}
+
+function evaluateSubjectNotSameDay(project, rule, slots) {
+    const subjectIds = rule.subjectIds || [];
+    if (subjectIds.length < 2) return makeResult(rule, 'not_applicable', '课程配对不足。');
+    const classScope = new Set(rule.classIds || []);
+    const violations = [];
+    const byClassDay = new Map();
+    for (const slot of slots) {
+        if (!subjectIds.includes(slot.subjectId)) continue;
+        if (classScope.size && !classScope.has(slot.classId)) continue;
+        const key = `${slot.classId}:${slot.day}`;
+        if (!byClassDay.has(key)) byClassDay.set(key, []);
+        byClassDay.get(key).push(slot);
+    }
+    for (const items of byClassDay.values()) {
+        if (new Set(items.map(slot => slot.subjectId)).size >= 2) violations.push(...items);
+    }
+    if (!violations.length) return makeResult(rule, 'satisfied', '配对课程没有排在同一天。');
+    return makeResult(rule, 'unmet', `${violations.length} 节涉及配对课程同日。`, violations.map(slot => locateFromSlot(project, slot, 'class', slot.classId)));
+}
+
+function evaluateRoomRequirement(project, rule, slots) {
+    const subjectSlots = slots.filter(slot => slot.subjectId === rule.targetId);
+    if (!subjectSlots.length) return makeResult(rule, 'not_applicable', '当前课表没有该课程课节。');
+    const allowed = new Set(rule.roomIds || []);
+    const requiredTags = new Set(rule.requiredTags || []);
+    const roomMap = new Map((project.rooms || []).map(room => [room.id, room]));
+    const hasRequirement = allowed.size || requiredTags.size;
+    if (!hasRequirement) return makeResult(rule, 'not_applicable', '没有可评估的教室或标签要求。');
+    const violations = subjectSlots.filter(slot => {
+        if (!slot.roomId) return true;
+        if (allowed.size && allowed.has(slot.roomId)) return false;
+        if (requiredTags.size) {
+            const roomTags = new Set(roomMap.get(slot.roomId)?.tags || []);
+            return ![...requiredTags].every(tag => roomTags.has(tag));
+        }
+        return allowed.size > 0;
+    });
+    if (!violations.length) return makeResult(rule, 'satisfied', '课程均安排在符合要求的教室。');
+    return makeResult(rule, 'unmet', `${violations.length} 节未安排到符合要求的教室。`, violations.map(slot => locateFromSlot(project, slot, 'class', slot.classId)));
+}
+
 function evaluateSubjectSpread(project, rule, slots) {
     const subjectSlots = slots.filter(slot => slot.subjectId === rule.targetId);
     if (!subjectSlots.length) return makeResult(rule, 'not_applicable', '当前课表没有该课程课节。');
@@ -437,27 +1050,167 @@ function evaluateSubjectSpread(project, rule, slots) {
     return makeResult(rule, 'unmet', evidence, subjectSlots.map(slot => locateFromSlot(project, slot, 'class', slot.classId)));
 }
 
+function evaluateCourseInterval(project, rule, slots) {
+    const subjectSlots = slots.filter(slot => slot.subjectId === rule.targetId);
+    if (subjectSlots.length <= 1) return makeResult(rule, 'not_applicable', '该课程课节不足 2 节，不需要评估间隔。');
+    const minGapDays = Number(rule.minGapDays) || 1;
+    const violations = [];
+    const byClass = new Map();
+    for (const slot of subjectSlots) {
+        if (!byClass.has(slot.classId)) byClass.set(slot.classId, []);
+        byClass.get(slot.classId).push(slot);
+    }
+    for (const classSlots of byClass.values()) {
+        const sorted = [...classSlots].sort((left, right) => Number(left.day) - Number(right.day));
+        for (let index = 1; index < sorted.length; index += 1) {
+            if (Math.abs(Number(sorted[index].day) - Number(sorted[index - 1].day)) < minGapDays) {
+                violations.push(sorted[index - 1], sorted[index]);
+            }
+        }
+    }
+    if (!violations.length) return makeResult(rule, 'satisfied', `同班同课至少间隔 ${minGapDays} 天。`);
+    return makeResult(rule, 'unmet', `${violations.length} 节间隔小于 ${minGapDays} 天。`, violations.map(slot => locateFromSlot(project, slot, 'class', slot.classId)));
+}
+
+function evaluateClassDailyBalance(project, rule, slots) {
+    if (!slots.length) return makeResult(rule, 'not_applicable', '当前课表没有课节。');
+    const byClass = new Map();
+    for (const slot of slots) {
+        if (!byClass.has(slot.classId)) byClass.set(slot.classId, new Map());
+        const dayMap = byClass.get(slot.classId);
+        dayMap.set(Number(slot.day), (dayMap.get(Number(slot.day)) || 0) + 1);
+    }
+    let worstDelta = 0;
+    for (const dayMap of byClass.values()) {
+        const counts = getActiveWeekdays(project).map(day => dayMap.get(day) || 0);
+        worstDelta = Math.max(worstDelta, Math.max(...counts) - Math.min(...counts));
+    }
+    if (worstDelta <= 1) return makeResult(rule, 'satisfied', '各班每日课时差距不超过 1 节。');
+    if (worstDelta <= 2) return makeResult(rule, 'partial', `最大日课时差为 ${worstDelta} 节。`);
+    return makeResult(rule, 'unmet', `最大日课时差为 ${worstDelta} 节。`);
+}
+
+function evaluateTeacherGapPreference(project, rule, slots) {
+    const teacherDay = new Map();
+    for (const slot of slots) {
+        for (const teacherId of slotTeacherIds(slot)) {
+            const key = `${teacherId}:${slot.day}`;
+            if (!teacherDay.has(key)) teacherDay.set(key, []);
+            teacherDay.get(key).push(Number(slot.period));
+        }
+    }
+    let checks = 0;
+    let adjacent = 0;
+    for (const periods of teacherDay.values()) {
+        const sorted = [...periods].sort((left, right) => left - right);
+        for (let index = 1; index < sorted.length; index += 1) {
+            checks += 1;
+            if (sorted[index] - sorted[index - 1] <= 1) adjacent += 1;
+        }
+    }
+    if (!checks) return makeResult(rule, 'not_applicable', '没有可评估的教师同日多节课。');
+    const ratio = adjacent / checks;
+    if (ratio >= 0.75) return makeResult(rule, 'satisfied', `相邻或连续比例 ${Math.round(ratio * 100)}%。`);
+    if (ratio >= 0.45) return makeResult(rule, 'partial', `相邻或连续比例 ${Math.round(ratio * 100)}%。`);
+    return makeResult(rule, 'unmet', `相邻或连续比例 ${Math.round(ratio * 100)}%。`);
+}
+
+function evaluateTeacherLoadBalance(project, rule, slots) {
+    const activeDays = getActiveWeekdays(project);
+    const teacherDay = new Map();
+    for (const slot of slots) {
+        for (const teacherId of slotTeacherIds(slot)) {
+            if (!teacherDay.has(teacherId)) teacherDay.set(teacherId, new Map());
+            const dayMap = teacherDay.get(teacherId);
+            dayMap.set(Number(slot.day), (dayMap.get(Number(slot.day)) || 0) + 1);
+        }
+    }
+    let worstDelta = 0;
+    for (const dayMap of teacherDay.values()) {
+        const counts = activeDays.map(day => dayMap.get(day) || 0);
+        worstDelta = Math.max(worstDelta, Math.max(...counts) - Math.min(...counts));
+    }
+    if (!teacherDay.size) return makeResult(rule, 'not_applicable', '当前课表没有教师课节。');
+    if (worstDelta <= 1) return makeResult(rule, 'satisfied', '教师每日负载差距不超过 1 节。');
+    if (worstDelta <= 2) return makeResult(rule, 'partial', `最大教师日负载差为 ${worstDelta} 节。`);
+    return makeResult(rule, 'unmet', `最大教师日负载差为 ${worstDelta} 节。`);
+}
+
+function evaluateSubjectSequence(project, rule, slots) {
+    const classScope = new Set(rule.classIds || []);
+    const violations = [];
+    for (const [day, daySlots] of slotsByDay(slots)) {
+        const byClass = new Map();
+        for (const slot of daySlots) {
+            if (classScope.size && !classScope.has(slot.classId)) continue;
+            if (!byClass.has(slot.classId)) byClass.set(slot.classId, []);
+            byClass.get(slot.classId).push(slot);
+        }
+        for (const classSlots of byClass.values()) {
+            const before = classSlots.filter(slot => slot.subjectId === rule.beforeSubjectId);
+            const after = classSlots.filter(slot => slot.subjectId === rule.afterSubjectId);
+            for (const left of before) {
+                for (const right of after) {
+                    if (Number(left.period) > Number(right.period)) violations.push(left, right);
+                }
+            }
+        }
+    }
+    if (!violations.length) return makeResult(rule, 'satisfied', '课程顺序未发现违反。');
+    return makeResult(rule, 'unmet', `${violations.length} 节涉及顺序违反。`, violations.map(slot => locateFromSlot(project, slot, 'class', slot.classId)));
+}
+
 function evaluateRule(project, rule, slots, evaluated) {
     if (!evaluated) return makeResult(rule, 'not_applicable', '当前还没有生成课表。');
+    if (!EVALUABLE_PRIMITIVES.has(rule.type)) {
+        return makeResult(rule, 'not_applicable', '当前版本暂不支持评估该约束。');
+    }
     switch (rule.type) {
         case 'teacher_unavailable':
             return evaluateTeacherUnavailable(project, rule, slots);
         case 'class_unavailable':
             return evaluateClassUnavailable(project, rule, slots);
+        case 'global_unavailable':
+            return evaluateGlobalUnavailable(project, rule, slots);
         case 'locked_slot':
             return evaluateLockedSlot(project, rule, slots);
         case 'subject_morning':
             return evaluateSubjectMorning(project, rule, slots);
+        case 'subject_afternoon':
+            return evaluateSubjectAfternoon(project, rule, slots);
         case 'subject_preferred_periods':
             return evaluateSubjectPreferred(project, rule, slots);
         case 'subject_avoid_periods':
             return evaluateSubjectAvoid(project, rule, slots);
+        case 'subject_daily_limit':
+            return evaluateSubjectDailyLimit(project, rule, slots);
         case 'teacher_daily_limit':
             return evaluateTeacherDaily(project, rule, slots);
         case 'teacher_consecutive_limit':
             return evaluateTeacherConsecutive(project, rule, slots);
+        case 'teacher_weekly_limit':
+            return evaluateTeacherWeekly(project, rule, slots);
+        case 'teacher_max_days_per_week':
+            return evaluateTeacherMaxDays(project, rule, slots);
+        case 'teacher_mutual_exclusion':
+            return evaluateTeacherMutualExclusion(project, rule, slots);
+        case 'subject_not_same_day':
+            return evaluateSubjectNotSameDay(project, rule, slots);
+        case 'room_requirement':
+            return evaluateRoomRequirement(project, rule, slots);
         case 'subject_spread':
             return evaluateSubjectSpread(project, rule, slots);
+        case 'course_interval':
+            return evaluateCourseInterval(project, rule, slots);
+        case 'class_daily_subject_balance':
+        case 'class_daily_balance':
+            return evaluateClassDailyBalance(project, rule, slots);
+        case 'teacher_gap_preference':
+            return evaluateTeacherGapPreference(project, rule, slots);
+        case 'teacher_load_balance':
+            return evaluateTeacherLoadBalance(project, rule, slots);
+        case 'subject_sequence':
+            return evaluateSubjectSequence(project, rule, slots);
         default:
             return makeResult(rule, 'not_applicable', '当前版本暂不支持评估该约束。');
     }
@@ -467,11 +1220,27 @@ function summarize(items = []) {
     return items.reduce((summary, item) => {
         summary.total += 1;
         if (item.status === 'satisfied') summary.satisfied += 1;
-        else if (item.status === 'partial') summary.partial += 1;
-        else if (item.status === 'unmet') summary.unmet += 1;
-        else summary.notApplicable += 1;
+        else if (item.status === 'partial') {
+            summary.partial += 1;
+            summary.partiallySatisfied += 1;
+        } else if (item.status === 'violated') {
+            summary.unmet += 1;
+            summary.violated += 1;
+        } else {
+            summary.notApplicable += 1;
+            summary.notEvaluable += 1;
+        }
         return summary;
-    }, { total: 0, satisfied: 0, partial: 0, unmet: 0, notApplicable: 0 });
+    }, {
+        total: 0,
+        satisfied: 0,
+        partiallySatisfied: 0,
+        violated: 0,
+        notEvaluable: 0,
+        partial: 0,
+        unmet: 0,
+        notApplicable: 0,
+    });
 }
 
 export function evaluateTimetableConstraintFulfillment(input = {}) {
@@ -482,7 +1251,50 @@ export function evaluateTimetableConstraintFulfillment(input = {}) {
     const items = rules.map(rule => evaluateRule(project, rule, slots, evaluated));
     return {
         evaluated,
+        version: 2,
+        coverage: {
+            primitiveCount: FULFILLMENT_PRIMITIVES.length,
+            primitives: FULFILLMENT_PRIMITIVES,
+            primitiveAliases: PRIMITIVE_ALIASES,
+        },
         summary: summarize(items),
         items,
+    };
+}
+
+export function applyTimetableConstraintFulfillmentAction(input = {}, action = {}) {
+    const project = normalizeTimetableProject(input || {});
+    const kind = String(action.kind || '').trim();
+    const ruleId = String(action.ruleId || action.id || '').trim();
+    if (!ruleId) {
+        const error = new Error('缺少要处理的约束。');
+        error.reason = 'missing_fulfillment_rule_id';
+        error.status = 400;
+        throw error;
+    }
+    const rule = savedConstraintItems(project).find(item => item.id === ruleId);
+    if (!rule) {
+        const error = new Error('没有找到要处理的约束。');
+        error.reason = 'fulfillment_rule_not_found';
+        error.status = 404;
+        throw error;
+    }
+    if (kind !== 'delete_rule') {
+        const error = new Error('当前建议动作需要人工处理，尚不能自动执行。');
+        error.reason = 'manual_fulfillment_action';
+        error.status = 400;
+        throw error;
+    }
+    const nextProject = deleteRuleFromProject(project, rule);
+    return {
+        project: nextProject,
+        action: {
+            kind,
+            ruleId,
+            type: rule.type,
+            strength: rule.priority === 'hard' ? 'hard' : 'soft',
+            label: rule.title || TYPE_LABELS[rule.type] || rule.type,
+        },
+        fulfillment: evaluateTimetableConstraintFulfillment(nextProject),
     };
 }

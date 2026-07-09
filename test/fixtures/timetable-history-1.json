@@ -1,0 +1,30 @@
+{
+  "schoolName": "History A",
+  "term": "2026",
+  "weekdays": 5,
+  "periodsPerDay": 6,
+  "activeWeekdays": [1, 2, 3, 4, 5],
+  "activePeriods": [1, 2, 3, 4, 5, 6],
+  "teachers": [
+    { "id": "t_math", "name": "数学老师", "subjects": ["math"], "unavailableSlots": [] },
+    { "id": "t_cn", "name": "语文老师", "subjects": ["chinese"], "unavailableSlots": [] }
+  ],
+  "classes": [
+    { "id": "c1", "grade": "G7", "name": "1" },
+    { "id": "c2", "grade": "G7", "name": "2" },
+    { "id": "c3", "grade": "G7", "name": "3" }
+  ],
+  "subjects": [
+    { "id": "math", "name": "数学", "priority": 90, "color": "#2563eb" },
+    { "id": "chinese", "name": "语文", "priority": 90, "color": "#dc2626" }
+  ],
+  "lessonPlans": [
+    { "id": "lp_c1_math", "classId": "c1", "subjectId": "math", "teacherId": "t_math", "weeklyHours": 2 },
+    { "id": "lp_c1_cn", "classId": "c1", "subjectId": "chinese", "teacherId": "t_cn", "weeklyHours": 2 },
+    { "id": "lp_c2_math", "classId": "c2", "subjectId": "math", "teacherId": "t_math", "weeklyHours": 2 },
+    { "id": "lp_c2_cn", "classId": "c2", "subjectId": "chinese", "teacherId": "t_cn", "weeklyHours": 2 },
+    { "id": "lp_c3_math", "classId": "c3", "subjectId": "math", "teacherId": "t_math", "weeklyHours": 2 },
+    { "id": "lp_c3_cn", "classId": "c3", "subjectId": "chinese", "teacherId": "t_cn", "weeklyHours": 2 }
+  ],
+  "rules": { "hardRules": {}, "softRules": {} }
+}

@@ -17,6 +17,18 @@ import {
     buildTimetableRosterFromRows,
     previewTimetableRosterFile,
 } from './timetable-import.js';
+import {
+    compileRequirementToRows,
+} from './timetable-intent-compiler.js';
+import {
+    AI_REQUIREMENT_PROMPT_VERSION,
+} from './timetable-ai-prompts.js';
+import {
+    extractRequirementsWithAI,
+} from './timetable-ai-extractor.js';
+import {
+    applyClarificationPolicy,
+} from './timetable-clarify-policies.js';
 
 const MAX_RULE_FILE_BYTES = 5 * 1024 * 1024;
 const PARSER_VERSION = 'timetable_rule_parser_xlsx_stable_v1';
@@ -29,19 +41,30 @@ const SUPPORTED_EFFECTIVE_TYPES = new Set([
     'teacher_unavailable',
     'class_unavailable',
     'locked_slot',
+    'global_unavailable',
     'subject_morning',
+    'subject_afternoon',
     'subject_preferred_periods',
     'subject_avoid_periods',
+    'subject_daily_limit',
     'teacher_daily_limit',
     'teacher_consecutive_limit',
+    'teacher_weekly_limit',
+    'teacher_max_days_per_week',
+    'teacher_mutual_exclusion',
     'subject_spread',
+    'course_interval',
+    'room_requirement',
+    'class_daily_balance',
+    'teacher_gap_preference',
+    'teacher_load_balance',
+    'subject_not_same_day',
+    'subject_sequence',
 ]);
 
 const SUGGESTION_ONLY_TYPES = new Set([
-    'teacher_load_balance',
     'quality_subject_later',
     'block_protection',
-    'class_daily_balance',
     'class_subject_spread',
 ]);
 
@@ -126,13 +149,15 @@ function aiReviewTimeoutMs(env = {}) {
 }
 
 function aiReviewCachePart(env = {}) {
-    if (aiReviewDisabled(env)) return 'ai_review_disabled';
+    const aiExtractEnabled = ['1', 'true', 'yes', 'on'].includes(String(env.TIMETABLE_RULE_AI_EXTRACT || '').trim().toLowerCase());
+    const extractPart = aiExtractEnabled ? `:ai_extract:${AI_REQUIREMENT_PROMPT_VERSION}` : '';
+    if (aiReviewDisabled(env)) return `ai_review_disabled${extractPart}`;
     if (!hasConfiguredAi(env)) return 'ai_review_unavailable';
     try {
         const { model } = resolveAiConfig(env);
-        return `ai_review:${AI_REVIEW_PROMPT_VERSION}:${model || 'unknown'}`;
+        return `ai_review:${AI_REVIEW_PROMPT_VERSION}${extractPart}:${model || 'unknown'}`;
     } catch {
-        return `ai_review:${AI_REVIEW_PROMPT_VERSION}:unresolved`;
+        return `ai_review:${AI_REVIEW_PROMPT_VERSION}${extractPart}:unresolved`;
     }
 }
 
@@ -483,13 +508,25 @@ function normalizeConstraintType(value) {
     const compact = text.replace(/\s+/g, '');
     if (['teacherunavailable', '教师不可排', '教师不排', '教师时间不可用', 'teacher_not_available'].includes(compact)) return 'teacher_unavailable';
     if (['classunavailable', '班级不可排', '班级不排', 'class_not_available'].includes(compact)) return 'class_unavailable';
+    if (['globalunavailable', '全校不可排', '公共不可排', '全局不可排', 'school_unavailable'].includes(compact)) return 'global_unavailable';
     if (['subjectmorning', '课程上午优先', '主科上午', '上午优先', 'morning_subject', 'subject_prefer_morning'].includes(compact)) return 'subject_morning';
+    if (['subjectafternoon', '课程下午优先', '下午优先', 'afternoon_subject', 'subject_prefer_afternoon'].includes(compact)) return 'subject_afternoon';
     if (['subjectpreferperiods', 'subjectpreferredperiods', '课程偏好节次', '课程优先节次', 'subject_prefer_periods', 'subject_preferred_slots'].includes(compact)) return 'subject_preferred_periods';
     if (['subjectavoidperiods', '课程避开节次', 'subject_avoid_slots'].includes(compact)) return 'subject_avoid_periods';
+    if (/课程.*每[天日].*(最多|上限|不超过)|subject.*dail?y?.*(limit|max)/.test(text)) return 'subject_daily_limit';
     if (/教师.*每[天日].*(最多|上限|不超过)|teacher.*dail?y?.*(limit|max)/.test(text)) return 'teacher_daily_limit';
     if (/教师.*(连续|连堂|连排).*(最多|上限|不超过|限制)|teacher.*consecutive/.test(text)) return 'teacher_consecutive_limit';
+    if (/教师.*每周.*(最多|上限|不超过)|teacher.*week.*(limit|max)/.test(text)) return 'teacher_weekly_limit';
+    if (/教师.*(每周)?(最多|上限|不超过).*([天日])|teacher.*max.*days/.test(text)) return 'teacher_max_days_per_week';
+    if (/教师.*(互斥|不能同时|错开)|mutual.*exclusion/.test(text)) return 'teacher_mutual_exclusion';
     if (/(同科|同一?门?课|同学科).*(分散|不要?连?排?在?同一?天|错开)|subject.*spread/.test(text)) return 'subject_spread';
+    if (/课程.*间隔|course.*interval/.test(text)) return 'course_interval';
+    if (/教室|场地|实验室|机房|room/.test(text)) return 'room_requirement';
+    if (/班级.*(每天|每日).*(均衡|平衡)|class.*daily.*balance/.test(text)) return 'class_daily_balance';
+    if (/教师.*空堂|少空堂|teacher.*gap/.test(text)) return 'teacher_gap_preference';
     if (/教师.*(均衡|负载)|teacher.*load/.test(text)) return 'teacher_load_balance';
+    if (/课程.*(不同天|不要同天|不能同天)|subject.*not.*same.*day/.test(text)) return 'subject_not_same_day';
+    if (/课程.*顺序|先.*后|subject.*sequence/.test(text)) return 'subject_sequence';
     if (/连堂.*(保护|不可拆)|block/.test(text)) return 'block_protection';
     return text;
 }
@@ -498,7 +535,11 @@ function normalizePriority(value, type) {
     const text = String(value || '').toLowerCase();
     if (/软|soft|建议/.test(text)) return 'soft';
     if (/硬|hard|必须|不可|不能/.test(text)) return 'hard';
-    return String(type || '').startsWith('subject_') || SUGGESTION_ONLY_TYPES.has(type) ? 'soft' : 'hard';
+    return String(type || '').startsWith('subject_')
+        || ['class_daily_balance', 'teacher_gap_preference', 'teacher_load_balance', 'course_interval'].includes(type)
+        || SUGGESTION_ONLY_TYPES.has(type)
+        ? 'soft'
+        : 'hard';
 }
 
 function dayNumber(value) {
@@ -833,9 +874,11 @@ function findEntity(items = [], { targetId = '', targetName = '', target = '', a
 function targetTypeFor(type, row = {}) {
     if (row.targetType) return row.targetType;
     if (type === 'teacher_unavailable') return 'teacher';
-    if (type === 'teacher_daily_limit' || type === 'teacher_consecutive_limit') return 'teacher';
+    if (type === 'teacher_daily_limit' || type === 'teacher_consecutive_limit' || type === 'teacher_weekly_limit' || type === 'teacher_max_days_per_week') return 'teacher';
     if (type === 'class_unavailable') return 'class';
     if (type === 'locked_slot') return 'locked_slot';
+    if (type === 'global_unavailable' || type === 'class_daily_balance' || type === 'teacher_gap_preference' || type === 'teacher_load_balance' || type === 'teacher_mutual_exclusion' || type === 'subject_not_same_day' || type === 'subject_sequence') return 'global';
+    if (type === 'room_requirement' || type === 'course_interval') return 'subject';
     if (type.startsWith('subject_')) return 'subject';
     return 'global';
 }
@@ -848,6 +891,21 @@ function findTarget(project, row, type) {
     return null;
 }
 
+function resolveEntityList(items = [], values = []) {
+    const result = [];
+    const seen = new Set();
+    for (const value of Array.isArray(values) ? values : [values]) {
+        const text = asText(value, 160);
+        if (!text) continue;
+        const match = findEntity(items, { targetId: text, targetName: text });
+        if (match && !seen.has(match.id)) {
+            seen.add(match.id);
+            result.push(match);
+        }
+    }
+    return result;
+}
+
 function addSlots(map, id, slots) {
     if (!id || !slots.length) return;
     map[id] = [...new Set([...(map[id] || []), ...slots])].sort();
@@ -858,6 +916,13 @@ function addMorningSubject(rules, subjectId) {
     const current = rules.softRules.morningSubjects || [];
     if (!current.includes(subjectId)) current.push(subjectId);
     rules.softRules.morningSubjects = current;
+}
+
+function addAfternoonSubject(rules, subjectId) {
+    if (!subjectId) return;
+    const current = rules.softRules.afternoonSubjects || [];
+    if (!current.includes(subjectId)) current.push(subjectId);
+    rules.softRules.afternoonSubjects = current;
 }
 
 function addSubjectPeriodPreference(rules, subjectId, { prefer = [], avoid = [], weight = 20, weekPattern = '' } = {}) {
@@ -886,6 +951,121 @@ function addSpreadSubject(rules, subjectId) {
     const current = rules.softRules.spreadSubjects || [];
     if (!current.includes(subjectId)) current.push(subjectId);
     rules.softRules.spreadSubjects = current;
+}
+
+function addCourseInterval(rules, subjectId, minGapDays = 1) {
+    addSpreadSubject(rules, subjectId);
+    rules.softRules.spreadSubjectGaps = { ...(rules.softRules.spreadSubjectGaps || {}) };
+    const gap = Math.max(1, Math.min(7, Number.parseInt(minGapDays, 10) || 1));
+    const current = Number.parseInt(rules.softRules.spreadSubjectGaps[subjectId], 10);
+    rules.softRules.spreadSubjectGaps[subjectId] = Number.isInteger(current) ? Math.max(current, gap) : gap;
+}
+
+function addGlobalUnavailable(rules, slots = []) {
+    rules.hardRules.globalUnavailable = [...new Set([...(rules.hardRules.globalUnavailable || []), ...slots])].sort();
+}
+
+function setIntLimit(map, id, limit, min = 1, max = 40, preferLower = true) {
+    const value = Number.parseInt(limit, 10);
+    if (!id || !Number.isInteger(value) || value <= 0) return;
+    const clamped = Math.max(min, Math.min(max, value));
+    const current = Number.parseInt(map[id], 10);
+    if (Number.isInteger(current)) {
+        map[id] = preferLower ? Math.min(current, clamped) : Math.max(current, clamped);
+    } else {
+        map[id] = clamped;
+    }
+}
+
+function addSubjectDailyLimit(rules, subjectId, limit) {
+    rules.hardRules.subjectDailyLimit = { ...(rules.hardRules.subjectDailyLimit || {}) };
+    setIntLimit(rules.hardRules.subjectDailyLimit, subjectId, limit, 1, 8, true);
+}
+
+function addTeacherWeeklyLimit(rules, teacherId, limit) {
+    rules.hardRules.teacherWeeklyLimit = { ...(rules.hardRules.teacherWeeklyLimit || {}) };
+    setIntLimit(rules.hardRules.teacherWeeklyLimit, teacherId, limit, 1, 40, true);
+}
+
+function addTeacherMaxDaysPerWeek(rules, teacherId, limit) {
+    rules.hardRules.teacherMaxDaysPerWeek = { ...(rules.hardRules.teacherMaxDaysPerWeek || {}) };
+    setIntLimit(rules.hardRules.teacherMaxDaysPerWeek, teacherId, limit, 1, 7, true);
+}
+
+function addTeacherMutualExclusion(rules, teacherIds = []) {
+    const ids = [...new Set(teacherIds.map(id => asText(id, 120)).filter(Boolean))].sort();
+    if (ids.length < 2) return;
+    const key = ids.join('|');
+    const current = rules.hardRules.teacherMutualExclusion || [];
+    if (!current.some(group => [...(group.teacherIds || [])].sort().join('|') === key)) {
+        current.push({ teacherIds: ids });
+    }
+    rules.hardRules.teacherMutualExclusion = current;
+}
+
+function addSubjectNotSameDay(rules, subjectIds = [], classIds = []) {
+    const subjects = [...new Set(subjectIds.map(id => asText(id, 120)).filter(Boolean))].slice(0, 2);
+    if (subjects.length < 2) return;
+    const classes = [...new Set(classIds.map(id => asText(id, 120)).filter(Boolean))].sort();
+    const key = `${subjects.slice().sort().join('|')}::${classes.join('|')}`;
+    const current = rules.hardRules.subjectNotSameDay || [];
+    if (!current.some(item => `${[...(item.subjectIds || [])].sort().join('|')}::${[...(item.classIds || [])].sort().join('|')}` === key)) {
+        current.push({ subjectIds: subjects, classIds: classes });
+    }
+    rules.hardRules.subjectNotSameDay = current;
+}
+
+function addRoomRequirement(rules, subjectId, { roomIds = [], requiredTags = [] } = {}) {
+    if (!subjectId) return;
+    const rooms = [...new Set(roomIds.map(id => asText(id, 120)).filter(Boolean))];
+    const tags = [...new Set(requiredTags.map(id => asText(id, 120)).filter(Boolean))];
+    if (!rooms.length && !tags.length) return;
+    rules.hardRules.roomRequirements = { ...(rules.hardRules.roomRequirements || {}) };
+    const current = rules.hardRules.roomRequirements[subjectId] || { roomIds: [], requiredTags: [] };
+    rules.hardRules.roomRequirements[subjectId] = {
+        roomIds: [...new Set([...(current.roomIds || []), ...rooms])],
+        requiredTags: [...new Set([...(current.requiredTags || []), ...tags])],
+    };
+}
+
+function setClassDailyBalance(rules, { mainSubjectDailyMax = 0 } = {}) {
+    const current = rules.softRules.classDailyBalance || {};
+    rules.softRules.classDailyBalance = {
+        enabled: true,
+        mainSubjectDailyMax: Math.max(
+            Number.parseInt(current.mainSubjectDailyMax, 10) || 0,
+            Math.max(0, Math.min(8, Number.parseInt(mainSubjectDailyMax, 10) || 0)),
+        ),
+    };
+}
+
+function setTeacherLoadBalance(rules, weight = 1) {
+    rules.softRules.teacherLoadBalance = {
+        enabled: true,
+        weight: Math.max(1, Math.min(10, Number.parseInt(weight, 10) || 1)),
+        explicit: true,
+    };
+    rules.softRules.balancedTeacherLoad = true;
+}
+
+function setTeacherGapWeight(rules, weight = 1) {
+    rules.softRules.teacherGapWeight = Math.max(1, Math.min(10, Number.parseInt(weight, 10) || 1));
+}
+
+function addSubjectSequence(rules, { beforeSubjectId, afterSubjectId, classIds = [], weight = 1 } = {}) {
+    if (!beforeSubjectId || !afterSubjectId || beforeSubjectId === afterSubjectId) return;
+    const classes = [...new Set(classIds.map(id => asText(id, 120)).filter(Boolean))].sort();
+    const key = `${beforeSubjectId}|${afterSubjectId}|${classes.join('|')}`;
+    const current = rules.softRules.subjectSequence || [];
+    if (!current.some(item => `${item.beforeSubjectId}|${item.afterSubjectId}|${[...(item.classIds || [])].sort().join('|')}` === key)) {
+        current.push({
+            beforeSubjectId,
+            afterSubjectId,
+            classIds: classes,
+            weight: Math.max(1, Math.min(10, Number.parseInt(weight, 10) || 1)),
+        });
+    }
+    rules.softRules.subjectSequence = current;
 }
 
 function ensureComplexModel(project = {}) {
@@ -1093,8 +1273,12 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
     const slots = slotsFromConstraint(row, project);
     const rawText = asText(row.rawText || row.constraintText || row.text || row.description || row.reason || '', 2000);
     const status = STATUS_LABELS.has(row.status) ? row.status : SUPPORTED_EFFECTIVE_TYPES.has(type) ? 'effective' : 'suggestion';
+    const idList = values => [...new Set((Array.isArray(values) ? values : [values])
+        .map(value => asText(value, 120))
+        .filter(Boolean))];
     return {
         id: asText(row.id, 120) || `rule_draft_${index + 1}`,
+        requirementId: asText(row.requirementId || '', 120),
         stableKey: asText(row.stableKey || '', 240),
         parseSource: asText(row.parseSource || row.source || '', 80),
         source: asText(row.source || row.sourceSheet || '', 120),
@@ -1111,6 +1295,14 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
         subjectName: asText(row.subjectName || row.subject || '', 200),
         teacherId: asText(row.teacherId || '', 120),
         teacherName: asText(row.teacherName || row.teacher || '', 200),
+        teacherIds: idList(row.teacherIds || row.teachers || []),
+        subjectIds: idList(row.subjectIds || row.subjects || []),
+        classIds: idList(row.classIds || row.classes || []),
+        roomIds: idList(row.roomIds || row.allowedRoomIds || row.rooms || []),
+        roomName: asText(row.roomName || row.room || '', 200),
+        requiredTags: idList(row.requiredTags || row.roomTags || []),
+        beforeSubjectId: asText(row.beforeSubjectId || row.before || '', 120),
+        afterSubjectId: asText(row.afterSubjectId || row.after || row.nextSubjectId || '', 120),
         slots,
         days: parseDays(row.days || row.weekdays || '', project, []),
         periods: parsePeriods(row.periods || row.lessonIndexes || '', project, []),
@@ -1136,6 +1328,7 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
         weekPattern: asText(row.weekPattern || row.week || '', 60) || weekPatternFromText(rawText),
         weight: Number.parseInt(row.weight, 10) || undefined,
         limit: Number.parseInt(row.limit ?? row.value ?? row.max ?? row.count, 10) || undefined,
+        minGapDays: Number.parseInt(row.minGapDays ?? row.gapDays ?? row.limit ?? row.value, 10) || undefined,
     };
 }
 
@@ -1239,7 +1432,7 @@ function statusWithConfidence(row = {}, confidence = null) {
 }
 
 function rowNeedsSlots(type) {
-    return ['teacher_unavailable', 'class_unavailable', 'locked_slot', 'subject_preferred_periods', 'subject_avoid_periods'].includes(type);
+    return ['teacher_unavailable', 'class_unavailable', 'locked_slot', 'global_unavailable', 'subject_preferred_periods', 'subject_avoid_periods'].includes(type);
 }
 
 function applySingleTarget(row, project, targetType) {
@@ -1345,6 +1538,9 @@ function classifyDraftRow(row = {}, project = {}) {
                 : next.warnings,
         };
     }
+    if (next.status === 'suggestion') {
+        next.status = 'effective';
+    }
 
     if (time.invalidSlots.length) {
         next.status = 'invalid';
@@ -1395,11 +1591,11 @@ function classifyDraftRow(row = {}, project = {}) {
         return next;
     }
 
-    if ((type === 'teacher_daily_limit' || type === 'teacher_consecutive_limit') && isAllTeachersTarget(next)) {
+    if ((type === 'teacher_daily_limit' || type === 'teacher_consecutive_limit' || type === 'teacher_weekly_limit' || type === 'teacher_max_days_per_week') && isAllTeachersTarget(next)) {
         next.targetType = 'all_teachers';
         next.targetId = '__all_teachers';
         next.targetName = '全部教师';
-        next.priority = 'soft';
+        next.priority = type === 'teacher_weekly_limit' || type === 'teacher_max_days_per_week' ? 'hard' : 'soft';
         next.confidence = next.confidence !== null && next.confidence !== undefined && Number.isFinite(Number(next.confidence))
             ? Number(next.confidence)
             : 0.9;
@@ -1411,9 +1607,36 @@ function classifyDraftRow(row = {}, project = {}) {
         next = applySingleTarget(next, project, targetType);
     }
 
-    if ((type === 'teacher_daily_limit' || type === 'teacher_consecutive_limit') && (!Number.isInteger(next.limit) || next.limit <= 0)) {
+    if (['teacher_daily_limit', 'teacher_consecutive_limit', 'teacher_weekly_limit', 'teacher_max_days_per_week', 'subject_daily_limit'].includes(type)
+        && (!Number.isInteger(Number(next.limit)) || Number(next.limit) <= 0)) {
         next.status = 'needs_review';
         next.warnings.push('缺少有效的节数上限。');
+    }
+    if (type === 'course_interval' && (!Number.isInteger(Number(next.minGapDays)) || Number(next.minGapDays) <= 0)) {
+        next.status = 'needs_review';
+        next.warnings.push('缺少有效的间隔天数。');
+    }
+    if (type === 'room_requirement') {
+        if (!(project.rooms || []).length) {
+            next.status = 'needs_review';
+            next.warnings.push('项目还没录入教室，先去基础数据添加教室后才能应用教室要求。');
+        }
+        if (!((next.roomIds || []).length || (next.requiredTags || []).length || next.roomName)) {
+            next.status = 'needs_review';
+            next.warnings.push('缺少教室、场地或教室标签。');
+        }
+    }
+    if (type === 'teacher_mutual_exclusion' && (next.teacherIds || []).filter(Boolean).length < 2) {
+        next.status = 'needs_review';
+        next.warnings.push('教师互斥至少需要两位教师。');
+    }
+    if (type === 'subject_not_same_day' && (next.subjectIds || []).filter(Boolean).length < 2) {
+        next.status = 'needs_review';
+        next.warnings.push('课程不同天至少需要两门课程。');
+    }
+    if (type === 'subject_sequence' && !(next.beforeSubjectId && next.afterSubjectId)) {
+        next.status = 'needs_review';
+        next.warnings.push('课程顺序需要明确先上和后上的课程。');
     }
 
     if (next.confidence === null || next.confidence === undefined || !Number.isFinite(Number(next.confidence))) {
@@ -1458,11 +1681,25 @@ function emptyRulesFrom(project) {
     rules.hardRules.teacherUnavailable = { ...(rules.hardRules.teacherUnavailable || {}) };
     rules.hardRules.classUnavailable = { ...(rules.hardRules.classUnavailable || {}) };
     rules.hardRules.lockedSlots = [...(rules.hardRules.lockedSlots || [])];
+    rules.hardRules.globalUnavailable = [...(rules.hardRules.globalUnavailable || [])];
+    rules.hardRules.subjectDailyLimit = { ...(rules.hardRules.subjectDailyLimit || {}) };
+    rules.hardRules.teacherWeeklyLimit = { ...(rules.hardRules.teacherWeeklyLimit || {}) };
+    rules.hardRules.teacherMaxDaysPerWeek = { ...(rules.hardRules.teacherMaxDaysPerWeek || {}) };
+    rules.hardRules.teacherMutualExclusion = [...(rules.hardRules.teacherMutualExclusion || [])];
+    rules.hardRules.subjectNotSameDay = [...(rules.hardRules.subjectNotSameDay || [])];
+    rules.hardRules.roomRequirements = { ...(rules.hardRules.roomRequirements || {}) };
     rules.softRules = rules.softRules || {};
     rules.softRules.morningSubjects = [...(rules.softRules.morningSubjects || [])];
+    rules.softRules.afternoonSubjects = [...(rules.softRules.afternoonSubjects || [])];
     rules.softRules.subjectPreferredPeriods = { ...(rules.softRules.subjectPreferredPeriods || {}) };
     rules.softRules.teacherLimits = { ...(rules.softRules.teacherLimits || {}) };
     rules.softRules.spreadSubjects = [...(rules.softRules.spreadSubjects || [])];
+    rules.softRules.spreadSubjectGaps = { ...(rules.softRules.spreadSubjectGaps || {}) };
+    rules.softRules.subjectDailySoftLimit = { ...(rules.softRules.subjectDailySoftLimit || {}) };
+    rules.softRules.subjectSequence = [...(rules.softRules.subjectSequence || [])];
+    rules.softRules.teacherGapWeight = Number.parseInt(rules.softRules.teacherGapWeight, 10) || 0;
+    rules.softRules.classDailyBalance = { ...(rules.softRules.classDailyBalance || {}) };
+    rules.softRules.teacherLoadBalance = { ...(rules.softRules.teacherLoadBalance || {}) };
     return rules;
 }
 
@@ -1539,18 +1776,29 @@ function intentForRow(row = {}) {
     const map = {
         teacher_unavailable: 'unavailable_periods',
         class_unavailable: 'unavailable_periods',
+        global_unavailable: 'unavailable_periods',
         locked_slot: 'locked_slot',
         subject_morning: 'preferred_day_part',
+        subject_afternoon: 'preferred_day_part',
         subject_preferred_periods: 'preferred_periods',
         subject_avoid_periods: 'avoid_periods',
+        subject_daily_limit: 'subject_daily_limit',
         teacher_daily_limit: 'teacher_daily_limit',
         teacher_consecutive_limit: 'teacher_consecutive_limit',
+        teacher_weekly_limit: 'teacher_weekly_limit',
+        teacher_max_days_per_week: 'teacher_max_days_per_week',
+        teacher_mutual_exclusion: 'teacher_mutual_exclusion',
         subject_spread: 'subject_spread',
-        teacher_load_balance: 'teacher_load_protection',
+        course_interval: 'course_interval',
+        room_requirement: 'room_requirement',
+        teacher_gap_preference: 'teacher_gap_preference',
+        teacher_load_balance: 'teacher_load_balance',
         block_protection: 'block_integrity',
         class_daily_balance: 'class_daily_balance',
         class_subject_spread: 'class_subject_spread',
         quality_subject_later: 'quality_subject_later',
+        subject_not_same_day: 'subject_not_same_day',
+        subject_sequence: 'subject_sequence',
     };
     return map[row.type] || row.type || 'unknown';
 }
@@ -1558,7 +1806,7 @@ function intentForRow(row = {}) {
 function applyToForRow(row = {}, project = {}) {
     if (row.weekPattern && complexModelIsEnabled(project)) return 'model_extension';
     if (SUPPORTED_EFFECTIVE_TYPES.has(row.type)) return 'rule';
-    if (row.type === 'teacher_load_balance' || row.type === 'class_daily_balance' || row.type === 'class_subject_spread') return 'optimization';
+    if (row.type === 'class_subject_spread') return 'optimization';
     if (row.type === 'block_protection') return 'solver_policy';
     return row.status === 'ignored' ? 'solver_policy' : 'review';
 }
@@ -1586,6 +1834,7 @@ function requirementFromRow(row = {}, index = 0, project = {}) {
     return {
         id: `req_${row.id || index + 1}`,
         rowId: row.id || '',
+        origin: 'user_input',
         object: rowRequirementObject(row),
         intent: intentForRow(row),
         condition: {
@@ -1686,9 +1935,13 @@ function textRequirementBase(id, object, intent, sourceText, {
     warnings = [],
     clarification = null,
     modelSupport = null,
+    origin = '',
 } = {}) {
+    const inferredOrigin = origin
+        || (/^req_(system|optimization|complex)_/.test(String(id || '')) ? 'system_supplement' : 'user_input');
     return {
         id,
+        origin: inferredOrigin,
         object,
         intent,
         condition,
@@ -1845,7 +2098,7 @@ function complexRequirementsFromText(project = {}, text = '') {
                     strength: /必须|不能|不要|固定/.test(sourceText) ? 'hard' : 'soft',
                     status: complexModelIsEnabled(project) ? support.status : 'needs_review',
                     applyTo: 'model_extension',
-                    confidence: 0.82,
+                    confidence: 0.88,
                     modelSupport: support.modelSupport,
                     clarification: support.clarification,
                 },
@@ -1994,7 +2247,7 @@ function blockPreferenceRequirementsFromText(project = {}, text = '') {
 function optimizationRequirementsFromText(project = {}, text = '') {
     const sourceText = asText(text, 1200);
     const requirements = [];
-    if (/高负载教师|教师.*负载|负载.*教师|连续.*太多|不要.*连续.*太多/.test(sourceText)) {
+    if (/高负载教师|教师.*负载|负载.*教师|连续.*太多|不要.*连续.*太多|(?:老师|教师).*课?.*太密|课.*太密/.test(sourceText)) {
         const teacherIds = highLoadTeacherIds(project);
         const names = teacherIds.length ? teacherNamesById(project, teacherIds).join('、') : '高负载教师';
         const thresholdMatch = sourceText.match(new RegExp(`(?:连续|连排).*?(?:最多|不超过|不多于|超过)\\s*(${NUMBER_TOKEN_PATTERN})\\s*节`));
@@ -2057,32 +2310,45 @@ function normalizeRequirementIntentAlias(value = '') {
         preferred_slots: 'preferred_periods',
         preferred_day_part: 'preferred_day_part',
         subject_morning: 'preferred_day_part',
+        subject_afternoon: 'preferred_day_part',
         morning_preference: 'preferred_day_part',
+        afternoon_preference: 'preferred_day_part',
         morning: 'preferred_day_part',
+        afternoon: 'preferred_day_part',
         avoid_periods: 'avoid_periods',
         subject_avoid_periods: 'avoid_periods',
         unavailable_periods: 'unavailable_periods',
         teacher_unavailable: 'unavailable_periods',
         class_unavailable: 'unavailable_periods',
+        global_unavailable: 'unavailable_periods',
         locked_slot: 'locked_slot',
+        subject_daily_limit: 'subject_daily_limit',
         teacher_daily_limit: 'teacher_daily_limit',
         teacher_consecutive_limit: 'teacher_consecutive_limit',
+        teacher_weekly_limit: 'teacher_weekly_limit',
+        teacher_max_days_per_week: 'teacher_max_days_per_week',
+        teacher_mutual_exclusion: 'teacher_mutual_exclusion',
         spread: 'subject_spread',
         subject_spread: 'subject_spread',
         course_spread: 'subject_spread',
+        course_interval: 'course_interval',
+        room_requirement: 'room_requirement',
         block: 'block_preference',
         block_preference: 'block_preference',
         double_block: 'block_preference',
         default_block_policy: 'default_block_policy',
         block_integrity: 'block_integrity',
         block_protection: 'block_integrity',
-        teacher_load_balance: 'teacher_load_protection',
+        teacher_gap_preference: 'teacher_gap_preference',
+        teacher_load_balance: 'teacher_load_balance',
         teacher_load_protection: 'teacher_load_protection',
         teacher_time_conflict: 'teacher_time_conflict',
         class_time_conflict: 'class_time_conflict',
         class_daily_balance: 'class_daily_balance',
         class_subject_spread: 'class_subject_spread',
         quality_subject_later: 'quality_subject_later',
+        subject_not_same_day: 'subject_not_same_day',
+        subject_sequence: 'subject_sequence',
     };
     if (aliases[text]) return aliases[text];
     if (compact === 'morningpreference' || compact === 'subjectmorning') return 'preferred_day_part';
@@ -2182,6 +2448,16 @@ function externalRequirementItems(items = []) {
             status: normalizeRequirementStatusAlias(item.status || 'needs_review'),
             applyTo: normalizeRequirementApplyToAlias(item.applyTo || 'review'),
             confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : null,
+            clarificationHistory: Array.isArray(item.clarificationHistory)
+                ? item.clarificationHistory.map(entry => ({
+                    question: asText(entry.question || '', 500),
+                    field: asText(entry.field || '', 80),
+                    kind: asText(entry.kind || '', 40),
+                    answer: entry.answer,
+                    answerLabel: asText(entry.answerLabel || '', 200),
+                    at: asText(entry.at || '', 80),
+                }))
+                : [],
             source: item.source && typeof item.source === 'object' ? item.source : { rawText: asText(item.rawText || item.reason || item.description || '', 1000) },
             warnings: Array.isArray(item.warnings) ? item.warnings.map(value => asText(value, 240)).filter(Boolean) : [],
             aiReviewStatus: asText(item.aiReviewStatus || '', 40),
@@ -2251,6 +2527,9 @@ function actionForRequirement(project = {}, requirement = {}, index = 0) {
         };
     }
     if (requirement.applyTo === 'optimization' && requirement.intent === 'teacher_load_protection') {
+        const teacherLimits = { consecutive: requirement.parameters?.maxConsecutive || 3 };
+        const dailyLimit = Number(requirement.parameters?.maxDaily || requirement.parameters?.dailyLimit);
+        if (Number.isFinite(dailyLimit) && dailyLimit > 0) teacherLimits.daily = dailyLimit;
         return {
             id: `act_${requirement.id || index + 1}`,
             requirementId: requirement.id,
@@ -2258,7 +2537,7 @@ function actionForRequirement(project = {}, requirement = {}, index = 0) {
             target: { teacherIds: requirement.object?.matchedIds || [], derivedGroup: 'high_load_teachers' },
             patch: {
                 balancedTeacherLoad: true,
-                teacherLimits: { consecutive: requirement.parameters?.maxConsecutive || 3 },
+                teacherLimits,
             },
             status: 'ready',
             requiresConfirmation: true,
@@ -2384,7 +2663,7 @@ function buildRequirementSemantics(project = {}, rows = [], {
         ...externalRequirementItems(semanticRequirements),
         ...textRequirements,
         ...rowRequirements,
-    ]);
+    ]).map(item => (item.status === 'needs_review' ? applyClarificationPolicy(project, item) : item));
     const semanticActions = requirementItems
         .map((requirement, index) => actionForRequirement(project, requirement, index))
         .filter(Boolean);
@@ -2636,6 +2915,7 @@ function detectRuleConflicts(project = {}, draftRows = []) {
     const classUnavailable = new Map();
     const subjectAvoid = new Map();
     const teacherLimits = new Map();
+    const teacherWeeklyLimits = new Map();
     const locked = [];
 
     const addMapSlots = (map, id, slots = [], ruleId = '') => {
@@ -2651,6 +2931,9 @@ function detectRuleConflicts(project = {}, draftRows = []) {
     Object.entries(project.rules?.softRules?.teacherLimits || {}).forEach(([teacherId, limits]) => {
         if (Number.isInteger(Number(limits?.daily))) teacherLimits.set(teacherId, { limit: Number(limits.daily), ruleId: 'saved_teacher_daily_limit' });
     });
+    Object.entries(project.rules?.hardRules?.teacherWeeklyLimit || {}).forEach(([teacherId, limit]) => {
+        if (Number.isInteger(Number(limit))) teacherWeeklyLimits.set(teacherId, { limit: Number(limit), ruleId: 'saved_teacher_weekly_limit' });
+    });
     (project.rules?.hardRules?.lockedSlots || []).forEach((slot, index) => locked.push({
         id: `saved_locked_${index + 1}`,
         teacherId: slot.teacherId,
@@ -2663,6 +2946,9 @@ function detectRuleConflicts(project = {}, draftRows = []) {
         if (row.type === 'teacher_unavailable') addMapSlots(teacherUnavailable, row.targetId, row.slots, row.id);
         if (row.type === 'class_unavailable') addMapSlots(classUnavailable, row.targetId, row.slots, row.id);
         if (row.type === 'subject_avoid_periods') addMapSlots(subjectAvoid, row.targetId, row.slots, row.id);
+        if (row.type === 'global_unavailable') {
+            (project.classes || []).forEach(klass => addMapSlots(classUnavailable, klass.id, row.slots, row.id));
+        }
         if (row.type === 'teacher_daily_limit') {
             if (isAllTeachersTarget(row)) {
                 (project.teachers || []).forEach(teacher => {
@@ -2670,6 +2956,15 @@ function detectRuleConflicts(project = {}, draftRows = []) {
                 });
             } else {
                 teacherLimits.set(row.targetId, { limit: row.limit, ruleId: row.id });
+            }
+        }
+        if (row.type === 'teacher_weekly_limit') {
+            if (isAllTeachersTarget(row)) {
+                (project.teachers || []).forEach(teacher => {
+                    teacherWeeklyLimits.set(teacher.id, { limit: row.limit, ruleId: row.id });
+                });
+            } else {
+                teacherWeeklyLimits.set(row.targetId, { limit: row.limit, ruleId: row.id });
             }
         }
         if (row.type === 'locked_slot') {
@@ -2757,6 +3052,23 @@ function detectRuleConflicts(project = {}, draftRows = []) {
                 });
             }
         });
+    });
+
+    teacherWeeklyLimits.forEach(({ limit, ruleId }, teacherId) => {
+        if (!Number.isInteger(Number(limit)) || Number(limit) <= 0) return;
+        const load = (project.lessonPlans || []).reduce((sum, plan) => {
+            const ids = [...new Set([...(plan.teacherIds || []), plan.teacherId].filter(Boolean))];
+            return ids.includes(teacherId) ? sum + (Number.parseInt(plan.weeklyHours, 10) || 0) : sum;
+        }, 0);
+        if (load > Number(limit)) {
+            const teacher = (project.teachers || []).find(item => item.id === teacherId);
+            conflicts.push({
+                level: 'blocking',
+                message: `${teacher?.name || teacherId} 每周上限 ${Number(limit)} 节，但任课计划共 ${load} 节，无解。`,
+                relatedRuleIds: [ruleId].filter(Boolean),
+                suggestion: '请放宽教师每周上限，或调整该教师任课计划课时。',
+            });
+        }
     });
 
     const seen = new Set();
@@ -3077,7 +3389,12 @@ function normalizeClarificationValue(clarification = null, rawValue = null) {
     return rawValue;
 }
 
-function applyRequirementClarifyingAnswers(requirementItems = [], answers = []) {
+function selectedOptionLabel(clarification = {}, value = '') {
+    const option = (clarification.options || []).find(item => String(item.value ?? item.id ?? item.label) === String(value));
+    return asText(option?.label || option?.name || '', 200);
+}
+
+function applyRequirementClarifyingAnswers(requirementItems = [], answers = [], project = {}) {
     const answerMap = new Map((Array.isArray(answers) ? answers : []).map(answer => [
         requirementAnswerKey(answer),
         answer,
@@ -3132,8 +3449,26 @@ function applyRequirementClarifyingAnswers(requirementItems = [], answers = []) 
             ...(next.parameters && typeof next.parameters === 'object' ? next.parameters : {}),
             [clarification.field]: value,
         };
-        next.status = 'actionable';
-        next.clarification = null;
+        next.clarificationHistory = [
+            ...(Array.isArray(next.clarificationHistory) ? next.clarificationHistory : []),
+            {
+                question: clarification.question || '',
+                field: clarification.field || '',
+                kind: clarification.kind || '',
+                answer: value,
+                answerLabel: answer.label || selectedOptionLabel(clarification, value) || String(value),
+                at: new Date().toISOString(),
+            },
+        ];
+        const policyResult = applyClarificationPolicy(project, {
+            ...next,
+            status: 'actionable',
+            clarification: null,
+        });
+        next.parameters = policyResult.parameters || next.parameters;
+        next.status = policyResult.status || 'actionable';
+        next.applyTo = policyResult.applyTo || next.applyTo;
+        next.clarification = policyResult.clarification || null;
         next.confidence = Math.max(Number(next.confidence) || 0, 0.86);
         next.warnings = (next.warnings || []).filter(warning => !/缺少|补充|确认/.test(warning));
         return next;
@@ -3177,6 +3512,7 @@ export function continueTimetableRequirementClarification({
     const requirementItems = applyRequirementClarifyingAnswers(
         externalRequirementItems(previousResult?.requirementItems || []),
         answers,
+        project,
     );
     const semanticActions = requirementItems
         .map((requirement, index) => actionForRequirement(project, requirement, index))
@@ -3318,8 +3654,19 @@ export function normalizeTimetableRuleDraftRows({
     const rules = emptyRulesFrom(project);
     const warnings = [...initialWarnings].map(item => asText(item, 240)).filter(Boolean);
     let unsupportedItems = [];
+    const compiledRows = (Array.isArray(semanticRequirements) ? semanticRequirements : [])
+        .flatMap((requirement, index) => {
+            const rows = compileRequirementToRows(requirement, project);
+            if (!rows) return [];
+            return rows.map((row, rowIndex) => ({
+                ...row,
+                id: row.id || `compiled_${index + 1}_${rowIndex + 1}`,
+                requirementId: requirement.id || row.requirementId || '',
+                origin: requirement.origin || row.origin || 'user_input',
+            }));
+        });
 
-    const filteredDraftRows = (Array.isArray(draftRows) ? draftRows : [])
+    const filteredDraftRows = [...(Array.isArray(draftRows) ? draftRows : []), ...compiledRows]
         .filter(row => !isSystemHandledDraftRow(row));
 
     let rows = filteredDraftRows
@@ -3425,6 +3772,16 @@ export function normalizeTimetableRuleDraftRows({
                 return { ...row, targetType, targetId: target.id, targetName: entityLabel(target), status: 'effective' };
             }
 
+            if (row.type === 'global_unavailable') {
+                if (!slots.length) {
+                    const reason = '全校不可排缺少明确节次，请复核。';
+                    warnings.push(reason);
+                    return { ...row, status: 'needs_review', targetType: 'global', targetName: '全校', warnings: [...row.warnings, reason] };
+                }
+                addGlobalUnavailable(rules, slots);
+                return { ...row, targetType: 'global', targetId: '__global__', targetName: '全校', priority: 'hard', status: 'effective' };
+            }
+
             if (row.type === 'subject_morning') {
                 if (!target) {
                     const reason = `${row.targetName || row.targetId || '课程'} 缺少可匹配课程，请复核。`;
@@ -3433,6 +3790,16 @@ export function normalizeTimetableRuleDraftRows({
                 }
                 addMorningSubject(rules, target.id);
                 return { ...row, targetType, targetId: target.id, targetName: target.name || row.targetName, status: 'effective' };
+            }
+
+            if (row.type === 'subject_afternoon') {
+                if (!target) {
+                    const reason = `${row.targetName || row.targetId || '课程'} 缺少可匹配课程，请复核。`;
+                    warnings.push(reason);
+                    return { ...row, status: 'needs_review', targetType: 'subject', warnings: [...row.warnings, reason] };
+                }
+                addAfternoonSubject(rules, target.id);
+                return { ...row, targetType, targetId: target.id, targetName: target.name || row.targetName, priority: 'soft', status: 'effective' };
             }
 
             if (row.type === 'subject_preferred_periods' || row.type === 'subject_avoid_periods') {
@@ -3449,7 +3816,18 @@ export function normalizeTimetableRuleDraftRows({
                 return { ...row, targetType, targetId: target.id, targetName: target.name || row.targetName, status: 'effective' };
             }
 
-            if (row.type === 'teacher_daily_limit' || row.type === 'teacher_consecutive_limit') {
+            if (row.type === 'subject_daily_limit') {
+                const limit = Number.parseInt(row.limit ?? row.weight ?? row.value, 10);
+                if (!target || !Number.isInteger(limit) || limit <= 0) {
+                    const reason = `${row.targetName || row.targetId || '课程'} 缺少可匹配课程或有效的每日上限，请复核。`;
+                    warnings.push(reason);
+                    return { ...row, status: 'needs_review', targetType: 'subject', warnings: [...row.warnings, reason] };
+                }
+                addSubjectDailyLimit(rules, target.id, limit);
+                return { ...row, targetType: 'subject', targetId: target.id, targetName: target.name || row.targetName, priority: 'hard', status: 'effective' };
+            }
+
+            if (row.type === 'teacher_daily_limit' || row.type === 'teacher_consecutive_limit' || row.type === 'teacher_weekly_limit' || row.type === 'teacher_max_days_per_week') {
                 const limit = Number.parseInt(row.limit ?? row.weight ?? row.value, 10);
                 if (isAllTeachersTarget(row)) {
                     if (!Number.isInteger(limit) || limit <= 0 || !(project.teachers || []).length) {
@@ -3458,9 +3836,12 @@ export function normalizeTimetableRuleDraftRows({
                         return { ...row, status: 'needs_review', targetType: 'all_teachers', targetId: '__all_teachers', targetName: '全部教师', warnings: [...row.warnings, reason] };
                     }
                     (project.teachers || []).forEach(teacher => {
-                        addTeacherLimit(rules, teacher.id, row.type === 'teacher_daily_limit' ? { daily: limit } : { consecutive: limit });
+                        if (row.type === 'teacher_daily_limit') addTeacherLimit(rules, teacher.id, { daily: limit });
+                        else if (row.type === 'teacher_consecutive_limit') addTeacherLimit(rules, teacher.id, { consecutive: limit });
+                        else if (row.type === 'teacher_weekly_limit') addTeacherWeeklyLimit(rules, teacher.id, limit);
+                        else addTeacherMaxDaysPerWeek(rules, teacher.id, limit);
                     });
-                    return { ...row, targetType: 'all_teachers', targetId: '__all_teachers', targetName: '全部教师', priority: 'soft', status: 'effective' };
+                    return { ...row, targetType: 'all_teachers', targetId: '__all_teachers', targetName: '全部教师', priority: ['teacher_weekly_limit', 'teacher_max_days_per_week'].includes(row.type) ? 'hard' : 'soft', status: 'effective' };
                 }
                 const teacher = findEntity(project.teachers, row);
                 if (!teacher || !Number.isInteger(limit) || limit <= 0) {
@@ -3468,8 +3849,11 @@ export function normalizeTimetableRuleDraftRows({
                     warnings.push(reason);
                     return { ...row, status: 'needs_review', targetType: 'teacher', warnings: [...row.warnings, reason] };
                 }
-                addTeacherLimit(rules, teacher.id, row.type === 'teacher_daily_limit' ? { daily: limit } : { consecutive: limit });
-                return { ...row, targetType: 'teacher', targetId: teacher.id, targetName: teacher.name || row.targetName, priority: 'soft', status: 'effective' };
+                if (row.type === 'teacher_daily_limit') addTeacherLimit(rules, teacher.id, { daily: limit });
+                else if (row.type === 'teacher_consecutive_limit') addTeacherLimit(rules, teacher.id, { consecutive: limit });
+                else if (row.type === 'teacher_weekly_limit') addTeacherWeeklyLimit(rules, teacher.id, limit);
+                else addTeacherMaxDaysPerWeek(rules, teacher.id, limit);
+                return { ...row, targetType: 'teacher', targetId: teacher.id, targetName: teacher.name || row.targetName, priority: ['teacher_daily_limit', 'teacher_consecutive_limit'].includes(row.type) ? 'soft' : 'hard', status: 'effective' };
             }
 
             if (row.type === 'subject_spread') {
@@ -3480,6 +3864,86 @@ export function normalizeTimetableRuleDraftRows({
                 }
                 addSpreadSubject(rules, target.id);
                 return { ...row, targetType: 'subject', targetId: target.id, targetName: target.name || row.targetName, priority: 'soft', status: 'effective' };
+            }
+
+            if (row.type === 'course_interval') {
+                const minGapDays = Number.parseInt(row.minGapDays ?? row.limit ?? row.value, 10);
+                if (!target || !Number.isInteger(minGapDays) || minGapDays <= 0) {
+                    const reason = `${row.targetName || row.targetId || '课程'} 缺少可匹配课程或有效间隔天数，请复核。`;
+                    warnings.push(reason);
+                    return { ...row, status: 'needs_review', targetType: 'subject', warnings: [...row.warnings, reason] };
+                }
+                addCourseInterval(rules, target.id, minGapDays);
+                return { ...row, targetType: 'subject', targetId: target.id, targetName: target.name || row.targetName, minGapDays, priority: 'soft', status: 'effective' };
+            }
+
+            if (row.type === 'room_requirement') {
+                if (!target) {
+                    const reason = `${row.targetName || row.targetId || '课程'} 缺少可匹配课程，请复核。`;
+                    warnings.push(reason);
+                    return { ...row, status: 'needs_review', targetType: 'subject', warnings: [...row.warnings, reason] };
+                }
+                const roomMatches = resolveEntityList(project.rooms || [], [...(row.roomIds || []), row.roomName].filter(Boolean));
+                const roomIds = roomMatches.map(room => room.id);
+                const requiredTags = row.requiredTags || roomTagsFromText(row.roomName, row.rawText || row.description || '');
+                if (!roomIds.length && !requiredTags.length) {
+                    const reason = '教室要求缺少可匹配教室或教室标签，请复核。';
+                    warnings.push(reason);
+                    return { ...row, status: 'needs_review', targetType: 'subject', warnings: [...row.warnings, reason] };
+                }
+                addRoomRequirement(rules, target.id, { roomIds, requiredTags });
+                return { ...row, targetType: 'subject', targetId: target.id, targetName: target.name || row.targetName, roomIds, requiredTags, priority: 'hard', status: 'effective' };
+            }
+
+            if (row.type === 'class_daily_balance') {
+                setClassDailyBalance(rules, { mainSubjectDailyMax: row.limit || row.mainSubjectDailyMax || 0 });
+                return { ...row, targetType: 'global', targetId: '__all_classes', targetName: '全部班级', priority: 'soft', status: 'effective' };
+            }
+
+            if (row.type === 'teacher_gap_preference') {
+                setTeacherGapWeight(rules, row.weight || row.limit || 1);
+                return { ...row, targetType: 'global', targetId: '__all_teachers', targetName: '全部教师', priority: 'soft', status: 'effective' };
+            }
+
+            if (row.type === 'teacher_load_balance') {
+                setTeacherLoadBalance(rules, row.weight || row.limit || 1);
+                return { ...row, targetType: 'global', targetId: '__all_teachers', targetName: '全部教师', priority: 'soft', status: 'effective' };
+            }
+
+            if (row.type === 'teacher_mutual_exclusion') {
+                const teachers = resolveEntityList(project.teachers || [], row.teacherIds || []);
+                if (teachers.length < 2) {
+                    const reason = '教师互斥至少需要两位可匹配教师，请复核。';
+                    warnings.push(reason);
+                    return { ...row, status: 'needs_review', targetType: 'global', warnings: [...row.warnings, reason] };
+                }
+                addTeacherMutualExclusion(rules, teachers.map(teacher => teacher.id));
+                return { ...row, teacherIds: teachers.map(teacher => teacher.id), targetType: 'global', targetId: teachers.map(teacher => teacher.id).join('|'), targetName: teachers.map(teacher => teacher.name || teacher.id).join('、'), priority: 'hard', status: 'effective' };
+            }
+
+            if (row.type === 'subject_not_same_day') {
+                const subjects = resolveEntityList(project.subjects || [], row.subjectIds || []);
+                const classes = resolveEntityList(project.classes || [], row.classIds || []);
+                if (subjects.length < 2) {
+                    const reason = '课程不同天至少需要两门可匹配课程，请复核。';
+                    warnings.push(reason);
+                    return { ...row, status: 'needs_review', targetType: 'global', warnings: [...row.warnings, reason] };
+                }
+                addSubjectNotSameDay(rules, subjects.map(subject => subject.id), classes.map(klass => klass.id));
+                return { ...row, subjectIds: subjects.map(subject => subject.id), classIds: classes.map(klass => klass.id), targetType: 'global', targetId: subjects.map(subject => subject.id).join('|'), targetName: subjects.map(subject => subject.name || subject.id).join('、'), priority: 'hard', status: 'effective' };
+            }
+
+            if (row.type === 'subject_sequence') {
+                const [before] = resolveEntityList(project.subjects || [], [row.beforeSubjectId || row.beforeSubjectName || row.subjectIds?.[0]]);
+                const [after] = resolveEntityList(project.subjects || [], [row.afterSubjectId || row.afterSubjectName || row.subjectIds?.[1]]);
+                const classes = resolveEntityList(project.classes || [], row.classIds || []);
+                if (!before || !after || before.id === after.id) {
+                    const reason = '课程顺序需要两门不同的可匹配课程，请复核。';
+                    warnings.push(reason);
+                    return { ...row, status: 'needs_review', targetType: 'global', warnings: [...row.warnings, reason] };
+                }
+                addSubjectSequence(rules, { beforeSubjectId: before.id, afterSubjectId: after.id, classIds: classes.map(klass => klass.id), weight: row.weight || 1 });
+                return { ...row, beforeSubjectId: before.id, afterSubjectId: after.id, classIds: classes.map(klass => klass.id), targetType: 'global', targetId: `${before.id}>${after.id}`, targetName: `${before.name || before.id} 先于 ${after.name || after.id}`, priority: 'soft', status: 'effective' };
             }
 
             return { ...row, status: 'unsupported' };
@@ -3560,14 +4024,27 @@ function buildPrompt({ project, text, inputType = 'text', contextStats = null, c
                 '- teacher_unavailable：某教师在某些时间不能上课。需 targetId/target + slots（或 days+periods）。priority=hard。',
                 '- class_unavailable：某班级在某些时间不排课。需 targetId/target + slots。priority=hard。',
                 '- locked_slot：把某班某课某师固定在某个具体时间。需 class/subject/teacher + 单个 slot。priority=hard。',
+                '- global_unavailable：全校在某些时间不排常规课。需 slots。priority=hard。',
                 '- subject_morning：某课程优先排在上午。需 targetId/target（课程）。priority=soft。',
+                '- subject_afternoon：某课程优先排在下午。需 targetId/target（课程）。priority=soft。',
                 '- subject_preferred_periods：某课程偏好某些节次。需课程 + slots/periods。priority=soft。',
                 '- subject_avoid_periods：某课程避开某些节次。需课程 + slots/periods。priority=soft。',
+                '- subject_daily_limit：某课程同一班每天最多几节。需课程 + limit。priority=hard。',
                 '- teacher_daily_limit：某教师每天最多上几节。需教师 + limit（整数）。priority=soft。',
                 '- teacher_consecutive_limit：某教师最多连续上几节。需教师 + limit（整数）。priority=soft。',
+                '- teacher_weekly_limit：某教师每周最多上几节。需教师 + limit。priority=hard。',
+                '- teacher_max_days_per_week：某教师每周最多上几天。需教师 + limit。priority=hard。',
+                '- teacher_mutual_exclusion：多位教师不能同节上课。需 teacherIds/teachers 至少两个。priority=hard。',
                 '- subject_spread：某课程一周内要分散，不要同一天扎堆。需课程。priority=soft。',
+                '- course_interval：某课程两次课之间至少间隔几天。需课程 + minGapDays。priority=soft。',
+                '- room_requirement：某课程必须使用指定教室/场地。需课程 + roomIds/roomName/requiredTags。priority=hard。',
+                '- class_daily_balance：班级每日课时尽量均衡。priority=soft。',
+                '- teacher_gap_preference：教师尽量少空堂。priority=soft。',
+                '- teacher_load_balance：教师工作量尽量均衡。priority=soft。',
+                '- subject_not_same_day：两门课程不能排同一天。需 subjectIds 至少两个，可带 classIds。priority=hard。',
+                '- subject_sequence：同一天课程前后顺序。需 beforeSubjectId + afterSubjectId。priority=soft。',
                 '',
-                '【仅建议类型】（暂不写入排课，仅供复核展示）：teacher_load_balance, block_protection, class_daily_balance, quality_subject_later。无法确定或属于通用常识（如"教师不能同时在两个班"）时，归到这里或写进 warnings，不要编造硬约束。',
+                '【仅建议类型】（暂不写入排课，仅供复核展示）：block_protection, class_subject_spread, quality_subject_later。无法确定或属于通用常识时，写进 warnings 或 needs_review，不要编造硬约束。',
                 '',
                 '【严禁猜测】',
                 '- 不允许编造老师、班级、课程、节次；只能使用用户原文或下方项目上下文。',
@@ -3850,6 +4327,9 @@ function rowsFromAiConstraints(constraints = [], { inputRows = [], source = 'ai'
     return constraints.map((constraint, index) => {
         const inputRow = inputRows[index] || {};
         const type = normalizeConstraintType(constraint.type || constraint.ruleType);
+        const idList = values => [...new Set((Array.isArray(values) ? values : [values])
+            .map(value => asText(value, 120))
+            .filter(Boolean))];
         return {
             id: asText(constraint.id || inputRow.id, 80) || `rule_draft_${index + 1}`,
             parseSource: source,
@@ -3867,6 +4347,14 @@ function rowsFromAiConstraints(constraints = [], { inputRows = [], source = 'ai'
             subjectName: constraint.subjectName || constraint.subject || '',
             teacherId: constraint.teacherId || '',
             teacherName: constraint.teacherName || constraint.teacher || '',
+            teacherIds: idList(constraint.teacherIds || constraint.teachers || []),
+            subjectIds: idList(constraint.subjectIds || constraint.subjects || []),
+            classIds: idList(constraint.classIds || constraint.classes || []),
+            roomIds: idList(constraint.roomIds || constraint.allowedRoomIds || constraint.rooms || []),
+            roomName: constraint.roomName || constraint.room || '',
+            requiredTags: idList(constraint.requiredTags || constraint.roomTags || []),
+            beforeSubjectId: constraint.beforeSubjectId || constraint.before || '',
+            afterSubjectId: constraint.afterSubjectId || constraint.after || constraint.nextSubjectId || '',
             slots: constraint.slots || constraint.slotKeys || [],
             days: constraint.days || constraint.weekdays || '',
             periods: constraint.periods || constraint.lessonIndexes || '',
@@ -3880,6 +4368,7 @@ function rowsFromAiConstraints(constraints = [], { inputRows = [], source = 'ai'
             weekPattern: constraint.weekPattern || '',
             weight: constraint.weight,
             limit: constraint.limit ?? constraint.value ?? constraint.max ?? constraint.maxPerDay ?? constraint.maxConsecutive,
+            minGapDays: constraint.minGapDays ?? constraint.gapDays,
         };
     });
 }
@@ -4098,6 +4587,19 @@ function textSubjectTargets(sentence = '', project = {}) {
     return uniqueTargets(targets);
 }
 
+function textRoomTargets(sentence = '', project = {}) {
+    const targets = [];
+    (project.rooms || []).forEach(room => {
+        if ((room.name && sentence.includes(room.name)) || (room.id && sentence.includes(room.id))) {
+            targets.push({ id: room.id, name: room.name || room.id });
+        }
+    });
+    for (const match of sentence.matchAll(/(操场|体育馆|实验室|机房|音乐室|美术室|功能室|[\u4e00-\u9fa5A-Za-z0-9_-]{1,12}(?:教室|场地|室|馆))/g)) {
+        targets.push({ id: '', name: match[1] });
+    }
+    return uniqueTargets(targets);
+}
+
 function hasMainSubjectShorthand(sentence = '') {
     return /语数英|语文.*数学.*英语|数学.*语文.*英语|main subjects/i.test(sentence);
 }
@@ -4184,6 +4686,7 @@ function localTextConstraints(project, text, sourceMeta = {}) {
             const continuation = isContinuationClause(sentence);
             const teacherTargets = textTeacherTargets(sentence, project);
             const classTargets = textClassTargets(sentence, project);
+            const roomTargets = textRoomTargets(sentence, project);
             let subjectTargets = continuation ? [] : textSubjectTargets(sentence, project);
             if (hasMainSubjectShorthand(sentence)) subjectTargets = mainSubjectTargets(project);
             const effectiveTeacherTargets = teacherTargets.length ? teacherTargets : continuation ? context.teacherTargets : [];
@@ -4195,6 +4698,93 @@ function localTextConstraints(project, text, sourceMeta = {}) {
             const rawText = continuation && context.rawText ? `${context.rawText}，${sentence}` : sentence;
             const weekPattern = timeSpec.weekPattern || weekPatternFromText(sentence) || (continuation ? context.weekPattern : '');
             const broadDayPartOnly = Boolean(dayPartName(sentence)) && !hasExplicitPeriodExpression(sentence);
+
+            if (slots.length && hasUnavailable && /(全校|全部|所有|统一|升旗|早读|午休|大课间|广播操|全体)/.test(sentence) && !effectiveTeacherTargets.length && !effectiveClassTargets.length) {
+                constraints.push(withSource({
+                    type: 'global_unavailable',
+                    target: '全校',
+                    slots,
+                    priority: 'hard',
+                    reason: rawText,
+                    confidence: 0.86,
+                    weekPattern,
+                }, sourceMeta));
+            }
+
+            if (effectiveTeacherTargets.length >= 2 && /(不能|不可|不要).*(同时|同一节|同节)|互斥|错开/.test(sentence)) {
+                constraints.push(withSource({
+                    type: 'teacher_mutual_exclusion',
+                    teacherIds: effectiveTeacherTargets.map(teacher => teacher.id || teacher.name),
+                    target: effectiveTeacherTargets.map(teacher => teacher.name).join('、'),
+                    priority: 'hard',
+                    reason: rawText,
+                    confidence: 0.88,
+                    weekPattern,
+                }, sourceMeta));
+            }
+
+            if (effectiveSubjectTargets.length >= 2 && /(不要|不能|不可).*(同一天|同日)|不同天|错开/.test(sentence)) {
+                constraints.push(withSource({
+                    type: 'subject_not_same_day',
+                    subjectIds: effectiveSubjectTargets.map(subject => subject.id || subject.name),
+                    classIds: effectiveClassTargets.map(klass => klass.id || klass.name),
+                    target: effectiveSubjectTargets.map(subject => subject.name).join('、'),
+                    priority: 'hard',
+                    reason: rawText,
+                    confidence: 0.88,
+                    weekPattern,
+                }, sourceMeta));
+            }
+
+            if (effectiveSubjectTargets.length >= 2 && /(先.*后|先.*再|之后|后再|顺序)/.test(sentence)) {
+                const [before, after] = effectiveSubjectTargets;
+                constraints.push(withSource({
+                    type: 'subject_sequence',
+                    beforeSubjectId: before.id || before.name,
+                    afterSubjectId: after.id || after.name,
+                    subjectIds: [before.id || before.name, after.id || after.name],
+                    classIds: effectiveClassTargets.map(klass => klass.id || klass.name),
+                    priority: 'soft',
+                    reason: rawText,
+                    confidence: 0.86,
+                    weekPattern,
+                }, sourceMeta));
+            }
+
+            if (/班级.*(每天|每日).*(均衡|平衡)|班级.*(均衡|平衡).*(每天|每日)/.test(sentence)) {
+                const maxMatch = sentence.match(new RegExp(`主科.*?(?:最多|不超过|上限)\\s*(${NUMBER_TOKEN_PATTERN})\\s*节`));
+                constraints.push(withSource({
+                    type: 'class_daily_balance',
+                    target: '全部班级',
+                    limit: maxMatch ? parseLooseNumber(maxMatch[1]) : undefined,
+                    priority: 'soft',
+                    reason: rawText,
+                    confidence: 0.86,
+                    weekPattern,
+                }, sourceMeta));
+            }
+
+            if (/教师.*(均衡|平衡|公平)|负载.*(均衡|平衡|公平)/.test(sentence)) {
+                constraints.push(withSource({
+                    type: 'teacher_load_balance',
+                    target: '全部教师',
+                    priority: 'soft',
+                    reason: rawText,
+                    confidence: 0.86,
+                    weekPattern,
+                }, sourceMeta));
+            }
+
+            if (/少空堂|别有空堂|不要.*空堂|空堂.*少|课.*连着上/.test(sentence)) {
+                constraints.push(withSource({
+                    type: 'teacher_gap_preference',
+                    target: '全部教师',
+                    priority: 'soft',
+                    reason: rawText,
+                    confidence: 0.86,
+                    weekPattern,
+                }, sourceMeta));
+            }
 
             if (/(必须|固定|锁定|指定)/.test(sentence) && slots.length && effectiveTeacherTargets.length && effectiveClassTargets.length && effectiveSubjectTargets.length) {
                 const teacher = effectiveTeacherTargets[0];
@@ -4256,6 +4846,32 @@ function localTextConstraints(project, text, sourceMeta = {}) {
                     weekPattern,
                     }, sourceMeta));
                 }
+                const weeklyMatch = sentence.match(new RegExp(`每周.*?(?:最多|不超过|不多于|上限)\\s*(${NUMBER_TOKEN_PATTERN})\\s*节`));
+                if (weeklyMatch) {
+                    constraints.push(withSource({
+                    type: 'teacher_weekly_limit',
+                    targetId: teacher.id,
+                    target: teacher.name,
+                    limit: parseLooseNumber(weeklyMatch[1]),
+                    priority: 'hard',
+                    reason: rawText,
+                    confidence: teacher.id ? 0.88 : 0.7,
+                    weekPattern,
+                    }, sourceMeta));
+                }
+                const maxDaysMatch = sentence.match(new RegExp(`每周.*?(?:最多|不超过|不多于|上限)\\s*(${NUMBER_TOKEN_PATTERN})\\s*[天日]`));
+                if (maxDaysMatch) {
+                    constraints.push(withSource({
+                    type: 'teacher_max_days_per_week',
+                    targetId: teacher.id,
+                    target: teacher.name,
+                    limit: parseLooseNumber(maxDaysMatch[1]),
+                    priority: 'hard',
+                    reason: rawText,
+                    confidence: teacher.id ? 0.88 : 0.7,
+                    weekPattern,
+                    }, sourceMeta));
+                }
             });
             effectiveClassTargets.forEach(klass => {
                 if (hasUnavailable && slots.length) {
@@ -4308,6 +4924,56 @@ function localTextConstraints(project, text, sourceMeta = {}) {
                     confidence: subject.id ? 0.86 : 0.68,
                     weekPattern,
                     }, sourceMeta));
+                } else if (/(下午|午后)/.test(sentence) && hasPrefer) {
+                    constraints.push(withSource({
+                    type: 'subject_afternoon',
+                    targetId: subject.id,
+                    target: subject.name,
+                    priority: 'soft',
+                    reason: rawText,
+                    confidence: subject.id ? 0.86 : 0.68,
+                    weekPattern,
+                    }, sourceMeta));
+                }
+                const subjectDailyMatch = sentence.match(new RegExp(`(?:每天|每日).*?(?:最多|不超过|不多于|上限)\\s*(${NUMBER_TOKEN_PATTERN})\\s*节`));
+                if (subjectDailyMatch && !/教师|老师/.test(sentence)) {
+                    constraints.push(withSource({
+                    type: 'subject_daily_limit',
+                    targetId: subject.id,
+                    target: subject.name,
+                    limit: parseLooseNumber(subjectDailyMatch[1]),
+                    priority: 'hard',
+                    reason: rawText,
+                    confidence: subject.id ? 0.88 : 0.68,
+                    weekPattern,
+                    }, sourceMeta));
+                }
+                const intervalMatch = sentence.match(new RegExp(`(?:间隔|隔开|至少间隔).*?(${NUMBER_TOKEN_PATTERN})\\s*天|(${NUMBER_TOKEN_PATTERN})\\s*天.*?(?:间隔|隔开)`));
+                if (intervalMatch) {
+                    constraints.push(withSource({
+                    type: 'course_interval',
+                    targetId: subject.id,
+                    target: subject.name,
+                    minGapDays: parseLooseNumber(intervalMatch[1] || intervalMatch[2]),
+                    priority: 'soft',
+                    reason: rawText,
+                    confidence: subject.id ? 0.86 : 0.64,
+                    weekPattern,
+                    }, sourceMeta));
+                }
+                if (roomTargets.length && /(教室|场地|实验室|机房|操场|体育馆|音乐室|美术室|功能室|安排|使用|去|在)/.test(sentence)) {
+                    constraints.push(withSource({
+                    type: 'room_requirement',
+                    targetId: subject.id,
+                    target: subject.name,
+                    roomIds: roomTargets.map(room => room.id || room.name),
+                    roomName: roomTargets[0]?.name || '',
+                    requiredTags: roomTagsFromText(roomTargets[0]?.name || '', sentence),
+                    priority: 'hard',
+                    reason: rawText,
+                    confidence: subject.id ? 0.88 : 0.64,
+                    weekPattern,
+                    }, sourceMeta));
                 }
             });
 
@@ -4353,6 +5019,15 @@ function structuredConstraintFromRow(project, row = {}) {
         priority: row.priority || row.strength,
         weight: row.weight,
         limit: row.limit || row.value || row.max,
+        minGapDays: row.minGapDays || row.gapDays,
+        teacherIds: Array.isArray(row.teacherIds) ? row.teacherIds : [],
+        subjectIds: Array.isArray(row.subjectIds) ? row.subjectIds : [],
+        classIds: Array.isArray(row.classIds) ? row.classIds : [],
+        roomIds: Array.isArray(row.roomIds || row.allowedRoomIds) ? (row.roomIds || row.allowedRoomIds) : [],
+        roomName: row.roomName || row.room || '',
+        requiredTags: Array.isArray(row.requiredTags || row.roomTags) ? (row.requiredTags || row.roomTags) : [],
+        beforeSubjectId: row.beforeSubjectId || row.before || '',
+        afterSubjectId: row.afterSubjectId || row.after || '',
         reason: row.description || rawText,
         confidence: 0.95,
         sourceSheet: row.sourceSheet,
@@ -4433,6 +5108,11 @@ function hasConfiguredAi(env = {}) {
 
 function shouldUseLocalFirst(inputType = '') {
     return ['text', 'txt', 'csv_text', 'xlsx_constraints'].includes(inputType);
+}
+
+function shouldUseAiExtraction(inputType = '', env = {}) {
+    if (!['text', 'txt', 'csv_text'].includes(inputType)) return false;
+    return ['1', 'true', 'yes', 'on'].includes(String(env.TIMETABLE_RULE_AI_EXTRACT || '').trim().toLowerCase());
 }
 
 function localParseSourceForInput(inputType = '') {
@@ -4795,6 +5475,47 @@ async function reviewTimetableParseResult({ project, text, inputType, contextSta
 }
 
 async function parseAiOrLocal({ project, text, inputType, contextStats = null, constraintRows = [], env, fetchImpl }) {
+    const aiExtractWarnings = [];
+    if (shouldUseAiExtraction(inputType, env)) {
+        try {
+            const extracted = await extractRequirementsWithAI({
+                project,
+                text,
+                contextStats,
+                env,
+                fetchImpl,
+            });
+            const normalized = normalizeTimetableRuleDraftRows({
+                project,
+                draftRows: extracted.draftRows,
+                source: 'ai_extract',
+                inputType,
+                contextStats: {
+                    ...(contextStats || {}),
+                    aiExtractModel: extracted.model || '',
+                    aiExtractPromptVersion: extracted.promptVersion || '',
+                    aiExtractRequirementCount: extracted.rawRequirements?.length || 0,
+                },
+                originalText: text,
+                semanticRequirements: extracted.semanticRequirements,
+                initialWarnings: extracted.warnings || [],
+            });
+            return {
+                ...normalized,
+                parseSource: 'ai_extract',
+                aiReview: aiReviewStatusPayload({
+                    status: 'skipped',
+                    reason: 'ai_extract',
+                    model: extracted.model || '',
+                    warnings: [],
+                }),
+            };
+        } catch (error) {
+            const reason = error?.reason || 'ai_extract_failed';
+            const message = error?.message || reason;
+            aiExtractWarnings.push(`AI-first 抽取失败，已降级到本地识别：${message}`);
+        }
+    }
     let localConstraints = [];
     let localResult = null;
     if (shouldUseLocalFirst(inputType)) {
@@ -4810,7 +5531,7 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
                 inputType,
                 contextStats,
                 originalText: text,
-                initialWarnings: hasConfiguredAi(env) ? [] : ['智能解析不可用，已仅提取明确规则：ai_not_configured'],
+                initialWarnings: [...aiExtractWarnings, ...(hasConfiguredAi(env) ? [] : ['智能解析不可用，已仅提取明确规则：ai_not_configured'])],
             });
             if (!hasConfiguredAi(env)) {
                 return reviewTimetableParseResult({ project, text, inputType, contextStats, constraintRows, result: localResult, env, fetchImpl });
@@ -4826,7 +5547,7 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
                 inputType,
                 contextStats,
                 originalText: text,
-                initialWarnings: ['智能解析不可用，已仅提取明确需求：ai_not_configured'],
+                initialWarnings: [...aiExtractWarnings, '智能解析不可用，已仅提取明确需求：ai_not_configured'],
             });
             if ((semanticOnly.requirementItems || []).length) {
                 return reviewTimetableParseResult({ project, text, inputType, contextStats, constraintRows, result: semanticOnly, env, fetchImpl });
@@ -4873,7 +5594,7 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
             contextStats,
             originalText: text,
             semanticRequirements: parsed.requirementItems || [],
-            initialWarnings: warnings,
+            initialWarnings: [...aiExtractWarnings, ...warnings],
         });
         return reviewTimetableParseResult({ project, text, inputType, contextStats, constraintRows, result: normalized, env, fetchImpl });
     } catch (error) {

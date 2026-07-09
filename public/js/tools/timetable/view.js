@@ -25,10 +25,16 @@ import { renderFixPreview, renderSmartHelperDialog } from './view-smart-helper.j
 import { renderConstraintDialog } from './view-constraint-dialog.js';
 import {
     buildUnifiedRequirementItems,
+    draftRowApplyItemKey,
     getActionableRequirementCount,
     getRequirementGroupKey,
+    isApplyItemExcluded,
+    semanticActionApplyItemKey,
 } from './constraint-dialog-review-model.js';
 import { buildDutyTeacherSearchModel } from './duty-teacher-search.js';
+import {
+    plannerRuleTypeLabel as ruleTypeLabel,
+} from './constraint-status-dict.js';
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -91,24 +97,6 @@ function formatSlotSubject(project = {}, slot = null) {
     const className = klass ? `${klass.grade}${klass.name}` : slot.classId;
     return [className, subject?.name || slot.subjectId, teacherNames].filter(Boolean).join(' · ');
 }
-
-// 规则类型 / 状态的中文标签（value 仍是内部枚举，仅展示中文）
-const RULE_TYPE_LABELS = {
-    teacher_unavailable: '教师不可排',
-    class_unavailable: '班级不可排',
-    locked_slot: '锁定课节',
-    subject_morning: '课程上午优先',
-    subject_preferred_periods: '课程偏好节次',
-    subject_avoid_periods: '课程避开节次',
-    teacher_daily_limit: '教师每日上限',
-    teacher_consecutive_limit: '教师连堂上限',
-    subject_spread: '同科分散',
-    teacher_load_balance: '教师负载均衡（仅建议）',
-    block_protection: '连堂保护（仅建议）',
-    class_daily_balance: '班级每日均衡（仅建议）',
-    quality_subject_later: '素质课后置（仅建议）',
-    subject_spread_suggestion: '同科分散（仅建议）',
-};
 
 const RULE_STATUS_LABELS = {
     effective: '已应用',
@@ -178,10 +166,6 @@ function isActionableTimetableReviewItem(item = {}, context = {}) {
     return !LEGACY_NON_ACTIONABLE_REVIEW_TYPES.has(item.type);
 }
 
-function ruleTypeLabel(type) {
-    return RULE_TYPE_LABELS[type] || type;
-}
-
 function ruleStatusLabel(status) {
     return RULE_STATUS_LABELS[status] || status;
 }
@@ -226,9 +210,9 @@ function isContiguous(values) {
 function summarizeWeekdays(values = []) {
     const sorted = [...values].map(Number).sort((left, right) => left - right);
     if (!sorted.length) return '未选择';
-    if (sorted.length === 5 && sorted.every((value, index) => value === index + 1)) return '周一-周五';
+    if (sorted.length === 5 && sorted.every((value, index) => value === index + 1)) return '周一至周五';
     if (sorted.length === 7) return '全周';
-    if (sorted.length > 2 && isContiguous(sorted)) return `周${dayName(sorted[0])}-周${dayName(sorted[sorted.length - 1])}`;
+    if (sorted.length > 2 && isContiguous(sorted)) return `周${dayName(sorted[0])}至周${dayName(sorted[sorted.length - 1])}`;
     if (sorted.length > 4) return `${sorted.length} 天`;
     return sorted.map(value => `周${dayName(value)}`).join('、');
 }
@@ -988,6 +972,10 @@ function renderProjectSection(state) {
     const { activeWeekdays, activePeriods } = getRangeDraft(state);
     const periodsFromSegments = Array.isArray(project.periodTimeSegments?.segments) && project.periodTimeSegments.segments.length > 0;
     const rangeSummary = summarizeRangeTimeBlocks(project, activePeriods);
+    const rangeSegmentDetail = [
+        rangeSummary.formalSegmentLabel,
+        rangeSummary.additionalSegmentLabel,
+    ].filter(Boolean).join(' · ');
 
     return `
         <div class="tt-setup-card tt-range-setup-card" data-workflow-step="data">
@@ -1016,8 +1004,7 @@ function renderProjectSection(state) {
                         <div class="tt-range-summary-card tt-range-summary-card--readonly">
                             <div class="tt-range-summary-trigger" data-range-label="可用节次">
                                 <strong>${escapeHtml(rangeSummary.totalLabel || summarizePeriods(activePeriods))}</strong>
-                                ${rangeSummary.formalSegmentLabel ? `<small class="tt-range-summary-detail">${escapeHtml(rangeSummary.formalSegmentLabel)}</small>` : ''}
-                                ${rangeSummary.additionalSegmentLabel ? `<small class="tt-range-summary-extra">${escapeHtml(rangeSummary.additionalSegmentLabel)}</small>` : ''}
+                                ${rangeSegmentDetail ? `<small class="tt-range-summary-detail" title="${escapeAttr(rangeSegmentDetail)}">${escapeHtml(rangeSegmentDetail)}</small>` : ''}
                             </div>
                         </div>
                     ` : renderMultiSelect({
@@ -1076,9 +1063,10 @@ function renderRosterImportDialog(state) {
     const mode = dialog.mode === 'text' ? 'text' : 'file';
     const fileName = dialog.fileName || '选择 CSV / TXT / Excel 文件';
     const isReview = dialog.step === 'review';
+    const dialogClass = `tt-roster-import-dialog${isReview ? ' tt-roster-import-dialog--review' : ''}`;
     return `
         <div class="tt-dialog-overlay" data-roster-import-close>
-            <section class="tt-roster-import-dialog" id="tt-roster-import-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-roster-import-title">
+            <section class="${dialogClass}" id="tt-roster-import-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-roster-import-title">
                 <div class="tt-dialog-header">
                     <div>
                         <span class="tt-eyebrow">任课数据${isReview && dialog.source ? ` · <span class="tt-badge tt-badge--${dialog.source === 'ai' ? 'success' : 'neutral'}">${dialog.source === 'ai' ? '智能辅助解析' : '本地解析'}</span>` : ''}</span>
@@ -1089,6 +1077,7 @@ function renderRosterImportDialog(state) {
                 </div>
                 ${isReview ? renderRosterReview(dialog) : renderRosterImportInput(dialog, mode, fileName)}
             </section>
+            ${renderRosterIssueEditor(dialog)}
         </div>
     `;
 }
@@ -1096,25 +1085,69 @@ function renderRosterImportDialog(state) {
 function renderRosterImportInput(dialog, mode, fileName) {
     const isBusy = Boolean(dialog.loading);
     const disabled = isBusy ? 'disabled' : '';
-    const previewIcon = isBusy ? 'loader-2' : 'file-search';
-    const previewIconClass = isBusy ? ' class="tt-spin"' : '';
-    const previewText = isBusy ? '解析中' : '解析检查';
+    const fileBusy = isBusy && mode === 'file';
+    const textBusy = isBusy && mode === 'text';
     const phaseText = dialog.phaseText || '解析任课数据中...';
     const phaseTone = dialog.phaseTone === 'warning' ? ' tt-process-chip--warning' : '';
     return `
-        <div class="tt-segment tt-import-mode-tabs" role="group" aria-label="导入方式">
-            <button class="${mode === 'file' ? 'is-active' : ''}" type="button" data-roster-import-mode="file" ${disabled}>上传文件</button>
-            <button class="${mode === 'text' ? 'is-active' : ''}" type="button" data-roster-import-mode="text" ${disabled}>粘贴文本</button>
-        </div>
-        <label class="tt-import-dropzone ${mode === 'file' ? 'is-active' : ''}">
-            <i data-lucide="${isBusy ? 'loader-2' : 'upload-cloud'}" class="${isBusy ? 'tt-spin' : ''}"></i>
-            <strong>${escapeHtml(fileName)}</strong>
-            <span>.csv / .txt / .xlsx / .xls</span>
-            <input id="tt-roster-import-file" type="file" accept=".csv,.txt,.xlsx,.xls" ${disabled}>
-        </label>
-        <div class="tt-rule-block ${mode === 'text' ? 'is-active' : ''}">
-            <span class="tt-rule-title">粘贴任课数据</span>
-            <textarea id="tt-roster-import-text" class="tt-import-text" spellcheck="false" placeholder="年级,班级,课程,教师,周课时,连堂,教室" ${disabled}>${escapeHtml(dialog.text || '')}</textarea>
+        <div class="tt-roster-import-options" role="group" aria-label="选择任课数据导入方式">
+            <section class="tt-roster-import-option tt-roster-import-option--file ${mode === 'file' ? 'is-active' : ''}" aria-labelledby="tt-roster-import-file-title">
+                <div class="tt-roster-import-option-head">
+                    <span class="tt-roster-import-option-icon"><i data-lucide="upload-cloud"></i></span>
+                    <div>
+                        <h4 id="tt-roster-import-file-title">上传文件</h4>
+                        <p>智能 CSV / TXT / Excel 文件导入</p>
+                    </div>
+                </div>
+                <label class="tt-import-dropzone">
+                    <i data-lucide="${fileBusy ? 'loader-2' : 'upload-cloud'}" class="${fileBusy ? 'tt-spin' : ''}"></i>
+                    <strong>${escapeHtml(fileName)}</strong>
+                    <span>.csv / .txt / .xlsx / .xls</span>
+                    <input id="tt-roster-import-file" type="file" accept=".csv,.txt,.xlsx,.xls" ${disabled}>
+                </label>
+                <button class="tt-btn tt-btn--primary" type="button" data-roster-import-submit="file" ${disabled}>
+                    <i data-lucide="${fileBusy ? 'loader-2' : 'file-search'}" class="${fileBusy ? 'tt-spin' : ''}"></i>
+                    <span>${fileBusy ? '解析中' : '解析文件'}</span>
+                </button>
+            </section>
+            <section class="tt-roster-import-option tt-roster-import-option--text ${mode === 'text' ? 'is-active' : ''}" aria-labelledby="tt-roster-import-text-title">
+                <div class="tt-roster-import-option-head">
+                    <span class="tt-roster-import-option-icon"><i data-lucide="file-text"></i></span>
+                    <div>
+                        <h4 id="tt-roster-import-text-title">粘贴文本</h4>
+                        <p>智能识别自然语言的文本</p>
+                    </div>
+                </div>
+                <textarea id="tt-roster-import-text" class="tt-import-text" spellcheck="false" placeholder="例如：年级,班级,课程,教师,周课时,连堂；七年级,1班,语文,林老师,5,混合" ${disabled}>${escapeHtml(dialog.text || '')}</textarea>
+                <div class="tt-roster-import-option-actions">
+                    <button class="tt-btn" id="tt-fill-roster-sample" type="button" ${disabled}><i data-lucide="wand-sparkles"></i><span>示例</span></button>
+                    <button class="tt-btn tt-btn--primary" type="button" data-roster-import-submit="text" ${disabled}>
+                        <i data-lucide="${textBusy ? 'loader-2' : 'file-search'}" class="${textBusy ? 'tt-spin' : ''}"></i>
+                        <span>${textBusy ? '解析中' : '解析文本'}</span>
+                    </button>
+                </div>
+            </section>
+            <section class="tt-roster-import-option tt-roster-import-option--manual" aria-labelledby="tt-roster-import-manual-title">
+                <div class="tt-roster-import-option-head">
+                    <span class="tt-roster-import-option-icon"><i data-lucide="table-2"></i></span>
+                    <div>
+                        <h4 id="tt-roster-import-manual-title">手动新增</h4>
+                        <p>列好空白任课表，让用户自己手动新增</p>
+                    </div>
+                </div>
+                <div class="tt-roster-import-manual-preview" aria-hidden="true">
+                    <span>年级</span>
+                    <span>班级</span>
+                    <span>课程</span>
+                    <span>教师</span>
+                    <span>周课时</span>
+                    <span>连堂</span>
+                </div>
+                <button class="tt-btn tt-btn--primary" id="tt-start-empty-roster-review" type="button" ${disabled}>
+                    <i data-lucide="plus"></i>
+                    <span>打开空白表</span>
+                </button>
+            </section>
         </div>
         ${isBusy || dialog.phaseText ? `
             <div class="tt-process-strip tt-roster-import-process" aria-live="polite">
@@ -1126,11 +1159,284 @@ function renderRosterImportInput(dialog, mode, fileName) {
             </div>
         ` : ''}
         <div class="tt-dialog-actions">
-            <button class="tt-btn" id="tt-fill-roster-sample" type="button" ${disabled}><i data-lucide="wand-sparkles"></i><span>示例</span></button>
-            <button class="tt-btn" id="tt-start-empty-roster-review" type="button" ${disabled}><i data-lucide="plus"></i><span>手动新增</span></button>
             <button class="tt-btn" id="tt-cancel-roster-import-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
-            <button class="tt-btn tt-btn--primary" id="tt-preview-roster-import" type="button" ${disabled}><i data-lucide="${previewIcon}"${previewIconClass}></i><span>${escapeHtml(previewText)}</span></button>
         </div>
+    `;
+}
+
+const ROSTER_ISSUE_PREVIEW_LIMIT = 4;
+
+function rosterIssueRow(rows = [], issue = {}) {
+    const rowId = String(issue.rowId || '').trim();
+    if (rowId) {
+        const match = rows.find(row => String(row.id || '') === rowId);
+        if (match) return match;
+    }
+    const sourceRow = String(issue.sourceRow || '').trim();
+    if (sourceRow) {
+        return rows.find(row => String(row.sourceRow || '').trim() === sourceRow) || null;
+    }
+    return null;
+}
+
+function rosterIssueIdentity(issue = {}) {
+    return [
+        String(issue.rowId || '').trim(),
+        String(issue.field || '').trim(),
+        String(issue.message || '').trim(),
+    ].join('|');
+}
+
+function editableRosterIssues(rows = [], issues = []) {
+    return (issues || []).filter(issue => {
+        const rowId = String(issue?.rowId || '').trim();
+        return rowId && rosterIssueRow(rows, issue);
+    });
+}
+
+function rosterIssueEditorNavigation(dialog = {}, rows = [], editor = {}, issue = {}) {
+    const issues = editableRosterIssues(rows, dialog.issues || []);
+    if (!issues.length) {
+        return { index: editor ? 0 : -1, total: editor ? 1 : 0, previous: null, next: null };
+    }
+    const currentKey = rosterIssueIdentity({
+        ...issue,
+        rowId: editor.rowId || issue.rowId,
+        field: editor.field || issue.field,
+    });
+    let index = issues.findIndex(item => rosterIssueIdentity(item) === currentKey);
+    if (index < 0) {
+        index = issues.findIndex(item => (
+            String(item.rowId || '').trim() === String(editor.rowId || '').trim()
+            && String(item.field || '').trim() === String(editor.field || issue.field || '').trim()
+        ));
+    }
+    if (index < 0) {
+        index = issues.findIndex(item => String(item.rowId || '').trim() === String(editor.rowId || '').trim());
+    }
+    return {
+        index,
+        total: issues.length,
+        previous: index > 0 ? issues[index - 1] : null,
+        next: index >= 0 && index < issues.length - 1 ? issues[index + 1] : null,
+    };
+}
+
+function rosterIssueSourceLabel(row, issue = {}, rowIndex = -1) {
+    const sourceRow = issue.sourceRow || row?.sourceRow;
+    if (sourceRow) return `第 ${sourceRow} 行`;
+    if (rowIndex >= 0) return `表格第 ${rowIndex + 1} 行`;
+    return '全局';
+}
+
+function rosterIssueLabel(rows = [], issue = {}, index = 0) {
+    const row = rosterIssueRow(rows, issue);
+    const rowIndex = row ? rows.findIndex(item => item.id === row.id) : -1;
+    const parts = [
+        rosterIssueSourceLabel(row, issue, rowIndex),
+        row?.className || issue.className || '',
+        row?.subjectName || issue.subjectName || '',
+        row?.teacherName || issue.teacherName || '',
+    ];
+    const hours = row?.weeklyHours || issue.weeklyHours;
+    if (hours && ['weeklyHours', 'blockPreference'].includes(issue.field)) {
+        parts.push(`周课时 ${hours}`);
+    }
+    parts.push(issue.message || `问题 ${index + 1}`);
+    return parts.filter(Boolean).join(' · ');
+}
+
+function renderRosterIssueItem(rows = [], issue = {}, index = 0) {
+    const row = rosterIssueRow(rows, issue);
+    const rowId = issue.rowId || row?.id || '';
+    const field = issue.field || '';
+    const icon = issue.severity === 'error' ? 'alert-triangle' : 'info';
+    const className = `tt-rule-warning tt-roster-issue-item ${issue.severity === 'error' ? 'tt-rule-warning--error' : ''}`;
+    const label = rosterIssueLabel(rows, issue, index);
+    if (!rowId) {
+        return `
+            <div class="${className}">
+                <i data-lucide="${icon}"></i>
+                <span>${escapeHtml(label)}</span>
+            </div>
+        `;
+    }
+    return `
+        <button class="${className} tt-roster-issue-edit" type="button"
+            data-roster-edit-issue-row="${escapeAttr(rowId)}"
+            data-roster-edit-issue-field="${escapeAttr(field)}"
+            aria-label="${escapeAttr(label)}">
+            <i data-lucide="${icon}"></i>
+            <span>${escapeHtml(label)}</span>
+        </button>
+    `;
+}
+
+function rosterBlockPreferenceLabel(value) {
+    if (value === 'double') return '双连堂';
+    if (value === 'mixed') return '混合';
+    return '单节';
+}
+
+function isOddDoubleBlockIssue(issue = {}, draft = {}) {
+    const hours = Number(draft.weeklyHours ?? issue.weeklyHours);
+    return (issue.field === 'blockPreference' || String(issue.message || '').includes('双连堂课时建议'))
+        && draft.blockPreference === 'double'
+        && Number.isInteger(hours)
+        && hours > 0
+        && hours % 2 !== 0;
+}
+
+function renderRosterIssueEditor(dialog = {}) {
+    const editor = dialog.issueEditor;
+    if (!editor) return '';
+    const rows = dialog.draftRows || [];
+    const issue = editor.issue || {};
+    const row = rosterIssueRow(rows, { ...issue, rowId: editor.rowId }) || {};
+    const draft = {
+        ...row,
+        ...(editor.draft || {}),
+        id: editor.rowId || editor.draft?.id || row.id || '',
+    };
+    const rowIndex = rows.findIndex(item => String(item.id || '') === String(draft.id || ''));
+    const sourceRow = issue.sourceRow || draft.sourceRow;
+    const sourceLabel = sourceRow
+        ? `表格第 ${sourceRow} 行`
+        : rowIndex >= 0 ? `表格第 ${rowIndex + 1} 行` : '当前行';
+    const context = [
+        sourceLabel,
+        draft.className,
+        draft.subjectName,
+        draft.teacherName,
+    ].filter(Boolean).join(' · ');
+    const issueMessage = issue.message || draft.issues?.find?.(item => item.field === editor.field)?.message || '请检查这条任课数据。';
+    const currentValue = [
+        `周课时 ${draft.weeklyHours || '-'}`,
+        rosterBlockPreferenceLabel(draft.blockPreference),
+    ].join(' · ');
+    const navigation = rosterIssueEditorNavigation(dialog, rows, editor, issue);
+    const progressTotal = navigation.total || 1;
+    const progressIndex = navigation.index >= 0 ? navigation.index + 1 : 1;
+    const hasPreviousIssue = Boolean(navigation.previous);
+    const hasNextIssue = Boolean(navigation.next);
+    const saveMode = hasNextIssue ? 'next' : 'close';
+    const saveLabel = hasNextIssue ? '保存并下一条' : '保存修改';
+    const input = (field, label, type = 'text', extraAttrs = '') => `
+        <label class="tt-roster-issue-editor-field">
+            <span>${escapeHtml(label)}</span>
+            <input class="tt-roster-review-field" data-roster-issue-field="${escapeAttr(field)}" type="${escapeAttr(type)}" value="${escapeAttr(draft[field] ?? '')}" ${extraAttrs}>
+        </label>
+    `;
+    return `
+        <div class="tt-dialog-overlay tt-roster-issue-editor-overlay" data-roster-issue-editor-overlay>
+            <section class="tt-roster-issue-editor-dialog" id="tt-roster-issue-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-roster-issue-editor-title">
+                <div class="tt-dialog-header">
+                    <div>
+                        <span class="tt-eyebrow">任课数据复核</span>
+                        <h3 id="tt-roster-issue-editor-title">修正任课问题</h3>
+                        <p class="tt-roster-issue-editor-context">${escapeHtml(context)}</p>
+                    </div>
+                    <button class="tt-icon-btn" id="tt-close-roster-issue-editor" type="button" title="关闭修正弹窗" aria-label="关闭修正弹窗"><i data-lucide="x"></i></button>
+                </div>
+                <div class="tt-roster-issue-editor-summary">
+                    <span>${escapeHtml(issueMessage)}</span>
+                    <strong>${escapeHtml(currentValue)}</strong>
+                </div>
+                <div class="tt-roster-issue-editor-fields">
+                    ${input('grade', '年级')}
+                    ${input('className', '班级')}
+                    ${input('subjectName', '课程')}
+                    ${input('teacherName', '教师')}
+                    ${input('weeklyHours', '周课时', 'number', `aria-label="周课时" title="${escapeAttr(ROSTER_WEEKLY_HOURS_TITLE)}"`)}
+                    <label class="tt-roster-issue-editor-field">
+                        <span>连堂</span>
+                        <select class="tt-roster-review-field" data-roster-issue-field="blockPreference" aria-label="连堂方式" title="${escapeAttr(ROSTER_BLOCK_TITLE)}">
+                            <option value="single" ${draft.blockPreference === 'single' ? 'selected' : ''}>单节</option>
+                            <option value="double" ${draft.blockPreference === 'double' ? 'selected' : ''}>双连堂</option>
+                            <option value="mixed" ${draft.blockPreference === 'mixed' ? 'selected' : ''}>混合</option>
+                        </select>
+                    </label>
+                    ${input('roomName', '教室')}
+                </div>
+                ${isOddDoubleBlockIssue(issue, draft) ? `
+                    <div class="tt-roster-issue-editor-quick-fixes" aria-label="快捷修复">
+                        <button class="tt-btn tt-btn--sm" type="button" data-roster-issue-quick-fix="mixed">改为混合</button>
+                        <button class="tt-btn tt-btn--sm" type="button" data-roster-issue-quick-fix="single">改为单节</button>
+                        <button class="tt-btn tt-btn--sm" type="button" data-roster-issue-quick-fix="nextEven">周课时改为下一个偶数</button>
+                    </div>
+                ` : ''}
+                <div class="tt-dialog-actions tt-roster-issue-editor-actions">
+                    <span class="tt-roster-issue-editor-progress" aria-live="polite">${escapeHtml(`第 ${progressIndex} / ${progressTotal} 条`)}</span>
+                    <button class="tt-btn" id="tt-roster-issue-locate-original" type="button"
+                        data-roster-jump-row="${escapeAttr(draft.id || '')}"
+                        data-roster-jump-field="${escapeAttr(editor.field || issue.field || '')}">
+                        <i data-lucide="locate-fixed"></i><span>查看原行</span>
+                    </button>
+                    <button class="tt-btn" id="tt-roster-issue-prev" type="button" ${hasPreviousIssue ? '' : 'disabled'}><i data-lucide="chevron-left"></i><span>上一条</span></button>
+                    <button class="tt-btn" id="tt-roster-issue-next" type="button" ${hasNextIssue ? '' : 'disabled'}><span>下一条</span><i data-lucide="chevron-right"></i></button>
+                    <button class="tt-btn" id="tt-cancel-roster-issue-editor" type="button"><i data-lucide="x"></i><span>取消</span></button>
+                    <button class="tt-btn tt-btn--primary" id="tt-save-roster-issue-editor" data-roster-issue-save-mode="${escapeAttr(saveMode)}" type="button"><i data-lucide="check"></i><span>${escapeHtml(saveLabel)}</span></button>
+                </div>
+            </section>
+        </div>
+    `;
+}
+
+function renderRosterIssueList(dialog = {}, rows = [], issues = []) {
+    if (!issues.length) return '';
+    const expanded = Boolean(dialog.issueListExpanded);
+    const visibleIssues = expanded ? issues : issues.slice(0, ROSTER_ISSUE_PREVIEW_LIMIT);
+    const hiddenCount = Math.max(0, issues.length - visibleIssues.length);
+    const summary = issues.length > ROSTER_ISSUE_PREVIEW_LIMIT
+        ? (expanded ? `共 ${issues.length} 条` : `共 ${issues.length} 条，显示前 ${visibleIssues.length} 条`)
+        : `共 ${issues.length} 条`;
+    return `
+        <section class="tt-roster-review-issues" aria-label="任课数据问题">
+            <div class="tt-roster-issue-heading">
+                <span>${escapeHtml(summary)}</span>
+                ${issues.length > ROSTER_ISSUE_PREVIEW_LIMIT ? `
+                    <button class="tt-roster-issue-toggle" type="button" data-roster-toggle-issues aria-expanded="${expanded ? 'true' : 'false'}">
+                        ${escapeHtml(expanded ? '收起' : `显示全部${hiddenCount ? ` ${hiddenCount}` : ''}`)}
+                    </button>
+                ` : ''}
+            </div>
+            <div class="tt-rule-warning-list tt-roster-issue-list">
+                ${visibleIssues.map((issue, index) => renderRosterIssueItem(rows, issue, index)).join('')}
+            </div>
+        </section>
+    `;
+}
+
+const ROSTER_CATEGORY_HELP_HTML = `
+    <b>普通：</b>常规课程，按普通课程安排。<br>
+    <b>主科：</b>语文、数学、英语等核心课程。<br>
+    <b>素质：</b>体育、音乐、美术、劳动等课程。<br>
+    <b>实验：</b>需要实验室或实验安排的课程。<br>
+    <em>不确定时选“普通”；核心考试科目选“主科”；实验课选“实验”。</em>
+`;
+const ROSTER_CATEGORY_TITLE = '普通：常规课程，按普通课程安排；主科：语文、数学、英语等核心课程；素质：体育、音乐、美术、劳动等课程；实验：需要实验室或实验安排的课程。不确定时选“普通”；核心考试科目选“主科”；实验课选“实验”。';
+const ROSTER_WEEKLY_HOURS_HELP_HTML = `
+    表示这个班级这门课每周要排几节。<br>
+    填 5，就是每周排 5 节这门课。
+`;
+const ROSTER_WEEKLY_HOURS_TITLE = '表示这个班级这门课每周要排几节；填 5，就是每周排 5 节这门课。';
+const ROSTER_BLOCK_HELP_HTML = `
+    <b>单节：</b>每次只排 1 节课。<br>
+    <b>双连堂：</b>每次连续排 2 节课，周课时建议为偶数。<br>
+    <b>混合：</b>单节和连堂都可。<br>
+    <em>不确定时选“混合”；明确不要连堂选“单节”；需要连续时间选“双连堂”。</em>
+`;
+const ROSTER_BLOCK_TITLE = '单节：每次只排 1 节课；双连堂：每次连续排 2 节课，周课时建议为偶数；混合：单节和连堂都可。不确定时选“混合”；明确不要连堂选“单节”；需要连续时间选“双连堂”。';
+
+function renderRosterHeaderHelp(label, id, ariaLabel, contentHtml) {
+    return `
+        <span class="tt-roster-block-help">
+            <span>${escapeHtml(label)}</span>
+            <button class="tt-roster-block-help-trigger" type="button" aria-label="${escapeAttr(ariaLabel)}" aria-describedby="${escapeAttr(id)}">?</button>
+            <span class="tt-roster-block-help-popover" id="${escapeAttr(id)}" role="tooltip">
+                ${contentHtml}
+            </span>
+        </span>
     `;
 }
 
@@ -1141,19 +1447,11 @@ function renderRosterReview(dialog) {
     return `
         ${dialog.stats ? renderRosterStats(dialog.stats) : ''}
         ${renderRosterImportReport(dialog.importReport)}
-        ${issues.length ? `
-            <div class="tt-roster-review-issues">
-                ${issues.slice(0, 4).map(issue => `
-                    <div class="tt-rule-warning ${issue.severity === 'error' ? 'tt-rule-warning--error' : ''}">
-                        <i data-lucide="${issue.severity === 'error' ? 'alert-triangle' : 'info'}"></i>
-                        <span>${escapeHtml(issue.message)}</span>
-                    </div>
-                `).join('')}
-            </div>
-        ` : ''}
+        ${renderRosterIssueList(dialog, rows, issues)}
         <div class="tt-roster-review-wrap">
             <table class="tt-roster-review-table" id="tt-roster-review-table">
                 <colgroup class="tt-roster-review-cols">
+                    <col class="tt-roster-col-row-number">
                     <col class="tt-roster-col-grade">
                     <col class="tt-roster-col-class">
                     <col class="tt-roster-col-subject">
@@ -1168,21 +1466,22 @@ function renderRosterReview(dialog) {
                 </colgroup>
                 <thead>
                     <tr>
+                        <th>行号</th>
                         <th>年级</th>
                         <th>班级</th>
                         <th>课程</th>
-                        <th>类型</th>
+                        <th>${renderRosterHeaderHelp('类型', 'tt-roster-category-help-text', '查看类型说明', ROSTER_CATEGORY_HELP_HTML)}</th>
                         <th>标签</th>
                         <th>教师</th>
-                        <th>周课时</th>
-                        <th>连堂</th>
+                        <th>${renderRosterHeaderHelp('周课时', 'tt-roster-weekly-hours-help-text', '查看周课时说明', ROSTER_WEEKLY_HOURS_HELP_HTML)}</th>
+                        <th>${renderRosterHeaderHelp('连堂', 'tt-roster-block-help-text', '查看连堂说明', ROSTER_BLOCK_HELP_HTML)}</th>
                         <th>教室</th>
                         <th>问题</th>
                         <th>操作</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${rows.map(row => renderRosterReviewRow(row)).join('')}
+                    ${rows.map((row, index) => renderRosterReviewRow(row, index)).join('')}
                 </tbody>
             </table>
         </div>
@@ -1238,20 +1537,26 @@ function renderRosterImportReport(report) {
     `;
 }
 
-function renderRosterReviewRow(row) {
+function renderRosterReviewRow(row, index = 0) {
     const issues = row.issues || [];
     const hasError = issues.some(issue => issue.severity === 'error');
     const issueText = issues.map(issue => issue.message).join('；') || '无';
-    const input = (field, value, type = 'text') => `
-        <input class="tt-roster-review-field" data-roster-field="${escapeAttr(field)}" type="${escapeAttr(type)}" value="${escapeAttr(value ?? '')}">
+    const rowNumber = row.sourceRow || index + 1;
+    const rowNumberTitle = row.sourceRow ? `源表第 ${row.sourceRow} 行` : `当前第 ${index + 1} 行`;
+    const input = (field, value, type = 'text', extraAttrs = '') => `
+        <input class="tt-roster-review-field" data-roster-field="${escapeAttr(field)}" type="${escapeAttr(type)}" value="${escapeAttr(value ?? '')}" ${extraAttrs}>
     `;
     return `
-        <tr class="tt-roster-review-row ${hasError ? 'tt-roster-review-row--error' : ''}" data-roster-review-row="${escapeAttr(row.id)}">
+        <tr class="tt-roster-review-row ${hasError ? 'tt-roster-review-row--error' : ''}"
+            data-roster-review-row="${escapeAttr(row.id)}"
+            data-roster-source-row="${escapeAttr(row.sourceRow || '')}"
+            data-roster-source-sheet="${escapeAttr(row.sourceSheet || '')}">
+            <td data-label="行号"><span class="tt-roster-review-row-number" title="${escapeAttr(rowNumberTitle)}">${escapeHtml(rowNumber)}</span></td>
             <td data-label="年级">${input('grade', row.grade)}</td>
             <td data-label="班级">${input('className', row.className)}</td>
             <td data-label="课程">${input('subjectName', row.subjectName)}</td>
             <td data-label="类型">
-                <select class="tt-roster-review-field" data-roster-field="subjectCategory">
+                <select class="tt-roster-review-field" data-roster-field="subjectCategory" aria-label="课程类型" title="${escapeAttr(ROSTER_CATEGORY_TITLE)}">
                     <option value="normal" ${row.subjectCategory === 'normal' ? 'selected' : ''}>普通</option>
                     <option value="main" ${row.subjectCategory === 'main' ? 'selected' : ''}>主科</option>
                     <option value="quality" ${row.subjectCategory === 'quality' ? 'selected' : ''}>素质</option>
@@ -1260,16 +1565,16 @@ function renderRosterReviewRow(row) {
             </td>
             <td data-label="标签">${input('subjectTags', Array.isArray(row.subjectTags) ? row.subjectTags.join('、') : row.subjectTags)}</td>
             <td data-label="教师">${input('teacherName', row.teacherName)}</td>
-            <td data-label="周课时">${input('weeklyHours', row.weeklyHours, 'number')}</td>
+            <td data-label="周课时">${input('weeklyHours', row.weeklyHours, 'number', `aria-label="周课时" title="${escapeAttr(ROSTER_WEEKLY_HOURS_TITLE)}"`)}</td>
             <td data-label="连堂">
-                <select class="tt-roster-review-field" data-roster-field="blockPreference">
+                <select class="tt-roster-review-field" data-roster-field="blockPreference" aria-label="连堂方式" title="${escapeAttr(ROSTER_BLOCK_TITLE)}">
                     <option value="single" ${row.blockPreference === 'single' ? 'selected' : ''}>单节</option>
                     <option value="double" ${row.blockPreference === 'double' ? 'selected' : ''}>双连堂</option>
                     <option value="mixed" ${row.blockPreference === 'mixed' ? 'selected' : ''}>混合</option>
                 </select>
             </td>
             <td data-label="教室">${input('roomName', row.roomName)}</td>
-            <td data-label="问题"><span class="tt-roster-review-issue">${escapeHtml(issueText)}</span></td>
+            <td data-label="问题"><span class="tt-roster-review-issue" title="${escapeAttr(issueText)}">${escapeHtml(issueText)}</span></td>
             <td data-label="操作">
                 <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-roster-delete-row="${escapeAttr(row.id)}" title="删除此行" aria-label="删除此行"><i data-lucide="trash-2"></i></button>
             </td>
@@ -1671,6 +1976,109 @@ function renderSmartHelperMetrics(stats = {}) {
     `;
 }
 
+function renderConstraintAgentMessage(message = {}, index = 0) {
+    const role = message.role === 'user' ? 'user' : 'assistant';
+    return `
+        <div class="tt-constraint-agent-message tt-constraint-agent-message--${escapeAttr(role)}" data-agent-message-index="${escapeAttr(index)}">
+            <span>${escapeHtml(role === 'user' ? '你' : '助手')}</span>
+            <p>${escapeHtml(message.content || '')}</p>
+        </div>
+    `;
+}
+
+function renderConstraintAgentMiniCard({ title = '', subtitle = '', applyItemKey = '', excluded = false } = {}) {
+    return `
+        <div class="tt-constraint-agent-mini-card ${excluded ? 'is-excluded' : ''}" data-apply-item-key="${escapeAttr(applyItemKey)}">
+            <div>
+                <strong>${escapeHtml(title || '排课需求')}</strong>
+                <span>${escapeHtml(subtitle || (excluded ? '已暂停应用' : '将随确认一起应用'))}</span>
+            </div>
+            <button class="tt-btn tt-btn--sm tt-btn--ghost" data-action="toggle-constraint-apply-item" data-apply-item-key="${escapeAttr(applyItemKey)}" type="button">
+                <i data-lucide="${excluded ? 'rotate-ccw' : 'pause-circle'}"></i>
+                <span>${escapeHtml(excluded ? '恢复' : '暂停')}</span>
+            </button>
+        </div>
+    `;
+}
+
+function renderConstraintAgentMiniCards(state = {}) {
+    const review = state.ruleReview || {};
+    const rows = (review.draftRows || []).slice(0, 4).map(row => {
+        const key = draftRowApplyItemKey(row);
+        return renderConstraintAgentMiniCard({
+            title: row.understanding || row.description || row.rawText || ruleTypeLabel(row.type || row.intent || 'rule'),
+            subtitle: `${ruleTypeLabel(row.type || row.intent || 'rule')} · ${row.priority === 'hard' || row.strength === 'hard' ? '硬约束' : '软约束'}`,
+            applyItemKey: key,
+            excluded: isApplyItemExcluded(review, key),
+        });
+    });
+    const actions = (review.semanticActions || []).slice(0, Math.max(0, 4 - rows.length)).map(action => {
+        const key = semanticActionApplyItemKey(action);
+        return renderConstraintAgentMiniCard({
+            title: action.title || action.description || action.target?.name || action.targetName || '模型动作',
+            subtitle: action.kind || action.type || 'semantic_action',
+            applyItemKey: key,
+            excluded: isApplyItemExcluded(review, key),
+        });
+    });
+    const cards = [...rows, ...actions];
+    if (!cards.length) return '';
+    return `
+        <div class="tt-constraint-agent-mini-cards" aria-label="对话排课需求卡">
+            ${cards.join('')}
+        </div>
+    `;
+}
+
+function renderConstraintAgentPanel(state = {}) {
+    const agent = state.constraintAgent || {};
+    const messages = (agent.messages || []).slice(-4);
+    const loading = Boolean(agent.loading);
+    const stage = agent.stage || 'INTAKE';
+    const canConfirm = stage === 'CONFIRM' && (agent.confirmationToken || agent.highRiskToken) && !(agent.confirmed || agent.highRiskConfirmed);
+    const canApply = stage === 'CONFIRM' && (agent.confirmed || agent.highRiskConfirmed);
+    const canSolve = stage === 'APPLY';
+    const statusLine = agent.statusLine || '[已理解 0 · 待澄清 0 · 待确认 0]';
+    return `
+        <section class="tt-constraint-agent-panel" data-constraint-agent-stage="${escapeAttr(stage)}">
+            <div class="tt-constraint-agent-header">
+                <div>
+                    <strong><i data-lucide="messages-square"></i><span>对话排课</span></strong>
+                    <em>${escapeHtml(statusLine)}</em>
+                </div>
+                <button class="tt-icon-btn tt-icon-btn--sm" data-action="constraint-agent-start" type="button" title="新建对话排课会话" aria-label="新建对话排课会话">
+                    <i data-lucide="refresh-cw"></i>
+                </button>
+            </div>
+            ${messages.length ? `
+                <div class="tt-constraint-agent-thread" aria-live="polite">
+                    ${messages.map(renderConstraintAgentMessage).join('')}
+                </div>
+            ` : ''}
+            ${renderConstraintAgentMiniCards(state)}
+            ${agent.error ? `<p class="tt-constraint-agent-error">${escapeHtml(agent.error)}</p>` : ''}
+            <label class="tt-constraint-agent-input">
+                <span>排课要求</span>
+                <textarea id="tt-constraint-agent-message" rows="3" ${loading ? 'disabled' : ''} placeholder="例如：张老师周三下午不排，数学尽量上午，确认后直接生成课表">${escapeHtml(agent.input || '')}</textarea>
+            </label>
+            <div class="tt-constraint-agent-actions">
+                <button class="tt-btn tt-btn--primary" data-action="constraint-agent-send" type="button" ${loading ? 'disabled' : ''}>
+                    <i data-lucide="${loading ? 'loader-2' : 'send'}" ${loading ? 'class="tt-spin"' : ''}></i><span>发送</span>
+                </button>
+                <button class="tt-btn" data-action="constraint-agent-confirm" type="button" ${!canConfirm || loading ? 'disabled' : ''}>
+                    <i data-lucide="check-circle-2"></i><span>确认</span>
+                </button>
+                <button class="tt-btn" data-action="constraint-agent-apply" type="button" ${!canApply || loading ? 'disabled' : ''}>
+                    <i data-lucide="file-check-2"></i><span>应用</span>
+                </button>
+                <button class="tt-btn" data-action="constraint-agent-solve" type="button" ${!canSolve || loading ? 'disabled' : ''}>
+                    <i data-lucide="play"></i><span>求解</span>
+                </button>
+            </div>
+        </section>
+    `;
+}
+
 function renderRulesSection(state) {
     const { project } = state;
     const savedItems = getSavedRuleItems(project);
@@ -1696,6 +2104,7 @@ function renderRulesSection(state) {
                     <span class="tt-smart-helper-entry-subtitle">自然语言需求理解、复核与落地</span>
                     <span class="tt-smart-helper-entry-status">${escapeHtml(cardDescription)}</span>
                 </button>
+                ${renderConstraintAgentPanel(state)}
                 ${renderSmartHelperFlow(helperStats)}
                 ${renderSmartHelperMetrics(helperStats)}
                 ${(savedCount || draftCount || warningCount) ? `
@@ -2344,7 +2753,7 @@ function renderSolveSection(state) {
     const score = getScore(project);
     const placed = score.placedLessons ?? 0;
     const total = score.totalLessons ?? totalPlannedLessons(project);
-    const scaleMessage = solveScaleMessage(project);
+    const scaleMessage = solveScaleMessage(project, state.solveScaleHint);
     const runLabel = state.loading ? (state.solvePhaseText || '快速生成中') : '';
     return `
         <section class="tt-section tt-section--solve tt-solve-setup-card" data-workflow-step="solve">
@@ -2373,7 +2782,10 @@ function renderSolveSection(state) {
     `;
 }
 
-function solveScaleMessage(project) {
+function solveScaleMessage(project, hint = null) {
+    if (hint?.message) return hint.message;
+    const classCount = (project?.classes || []).length;
+    if (classCount >= 30) return `${classCount} 个班，预计需要数分钟；当前 Timefold 超时上限 300 秒。`;
     const total = totalPlannedLessons(project);
     if (total >= 300) return `${total} 课时，可能需要数分钟。`;
     return '';
@@ -3267,13 +3679,6 @@ function renderPublicationPanel(state) {
                 <span><b>提醒</b>${escapeHtml(reminderCount)}</span>
                 ${!archiveOnly && !snapshot?.slots?.length && draftChanged ? '<span class="is-warning"><b>发布快照</b>上一版发布快照缺失，暂时无法恢复或导出发布版。</span>' : ''}
             </div>
-            ${renderInspectorIssueGroups({
-                title: '发布问题',
-                entries: issueEntries,
-                panel: 'publication',
-                sectionKey: 'system-publication',
-                state,
-            })}
             ${draftChanged && snapshot?.slots?.length ? `
                 <div class="tt-publication-actions tt-publication-actions--published">
                     <button class="tt-btn tt-btn--ghost" id="tt-restore-published-snapshot" type="button" data-restore-published-snapshot="latest" data-restore-published-version="${escapeAttr(published.version || '')}" ${restorePublishedAttrs}>
@@ -3514,7 +3919,7 @@ export function renderSchedulePanel(state) {
                         <strong>${escapeHtml(runLabel)}</strong>
                     </span>
                 ` : ''}
-                ${solveScaleMessage(state.project) ? `<span class="tt-chip tt-chip--warn">${escapeHtml(solveScaleMessage(state.project))}</span>` : ''}
+                ${solveScaleMessage(state.project, state.solveScaleHint) ? `<span class="tt-chip tt-chip--warn">${escapeHtml(solveScaleMessage(state.project, state.solveScaleHint))}</span>` : ''}
                 <span class="tt-chip ${readiness.ready || isArchiveOnlyReadyState(state.project) ? 'tt-chip--ok' : 'tt-chip--warn'}">${readiness.ready ? '可生成' : isArchiveOnlyReadyState(state.project) ? '可恢复' : '待准备'}</span>
                 <button class="tt-run-btn" id="tt-run-schedule" type="button" ${state.loading || !readiness.ready ? 'disabled' : ''}>
                     <i data-lucide="${state.loading ? 'loader-2' : 'play'}" class="${state.loading ? 'tt-spin' : ''}"></i><span>${state.loading ? '快速生成中' : '快速生成'}</span>
@@ -4247,6 +4652,8 @@ function renderInspectorIssueSection({ title, icon, items = [], emptyText = '暂
 const CONSTRAINT_FULFILLMENT_STATUS_LABELS = {
     satisfied: '已满足',
     partial: '部分满足',
+    violated: '未满足',
+    not_evaluable: '暂不可评估',
     unmet: '未满足',
     not_applicable: '未参与',
 };
@@ -4254,11 +4661,17 @@ const CONSTRAINT_FULFILLMENT_STATUS_LABELS = {
 const CONSTRAINT_FULFILLMENT_FILTERS = [
     { key: 'attention', label: '需关注' },
     { key: 'all', label: '全部' },
-    { key: 'unmet', label: '未满足' },
+    { key: 'violated', label: '未满足' },
     { key: 'partial', label: '部分满足' },
     { key: 'satisfied', label: '已满足' },
-    { key: 'not_applicable', label: '未参与' },
+    { key: 'not_evaluable', label: '暂不可评估' },
 ];
+
+function normalizeFulfillmentStatus(status = '') {
+    if (status === 'unmet') return 'violated';
+    if (status === 'not_applicable') return 'not_evaluable';
+    return status || 'not_evaluable';
+}
 
 function fallbackConstraintFulfillment(project = {}) {
     const rules = getSavedRuleItems(project);
@@ -4268,6 +4681,9 @@ function fallbackConstraintFulfillment(project = {}) {
         summary: {
             total: rules.length,
             satisfied: 0,
+            partiallySatisfied: 0,
+            violated: 0,
+            notEvaluable: rules.length,
             partial: 0,
             unmet: 0,
             notApplicable: rules.length,
@@ -4283,9 +4699,13 @@ function fallbackConstraintFulfillment(project = {}) {
             slots: rule.slots || [],
             title: `${rule.targetName || ''}${rule.description ? ` ${rule.description}` : ''}`.trim() || ruleTypeLabel(rule.type),
             description: rule.description,
-            status: 'not_applicable',
-            statusLabel: '未参与',
+            status: 'not_evaluable',
+            legacyStatus: 'not_applicable',
+            statusLabel: '暂不可评估',
             evidence: '等待生成课表后评估。',
+            detail: '等待生成课表后评估。',
+            evidenceSlots: [],
+            suggestions: [],
             locateTargets: [],
         })),
     };
@@ -4298,35 +4718,36 @@ function getConstraintFulfillment(state = {}) {
 function constraintFulfillmentSummaryText(summary = {}) {
     const total = Number(summary.total || 0);
     const satisfied = Number(summary.satisfied || 0);
-    const partial = Number(summary.partial || 0);
-    const unmet = Number(summary.unmet || 0);
-    const notApplicable = Number(summary.notApplicable || 0);
-    return `约束 ${total}：满足 ${satisfied} / 部分 ${partial} / 未满足 ${unmet} / 未参与 ${notApplicable}`;
+    const partial = Number(summary.partiallySatisfied ?? summary.partial ?? 0);
+    const violated = Number(summary.violated ?? summary.unmet ?? 0);
+    const notEvaluable = Number(summary.notEvaluable ?? summary.notApplicable ?? 0);
+    return `约束 ${total}：满足 ${satisfied} / 部分 ${partial} / 未满足 ${violated} / 暂不可评估 ${notEvaluable}`;
 }
 
 function normalizeConstraintFulfillmentFilter(state = {}, fulfillment = {}) {
     const requested = state.constraintFulfillmentFilter || '';
     if (CONSTRAINT_FULFILLMENT_FILTERS.some(item => item.key === requested)) return requested;
     const summary = fulfillment.summary || {};
-    return Number(summary.unmet || 0) || Number(summary.partial || 0) ? 'attention' : 'all';
+    return Number(summary.violated ?? summary.unmet ?? 0) || Number(summary.partiallySatisfied ?? summary.partial ?? 0) ? 'attention' : 'all';
 }
 
 function constraintFulfillmentFilterCount(filter, items = []) {
     if (filter === 'all') return items.length;
-    if (filter === 'attention') return items.filter(item => item.status === 'unmet' || item.status === 'partial').length;
-    return items.filter(item => item.status === filter).length;
+    if (filter === 'attention') return items.filter(item => ['violated', 'partial'].includes(normalizeFulfillmentStatus(item.status))).length;
+    return items.filter(item => normalizeFulfillmentStatus(item.status) === filter).length;
 }
 
 function filterConstraintFulfillmentItems(items = [], filter = 'attention') {
     if (filter === 'all') return items;
-    if (filter === 'attention') return items.filter(item => item.status === 'unmet' || item.status === 'partial');
-    return items.filter(item => item.status === filter);
+    if (filter === 'attention') return items.filter(item => ['violated', 'partial'].includes(normalizeFulfillmentStatus(item.status)));
+    return items.filter(item => normalizeFulfillmentStatus(item.status) === filter);
 }
 
 function constraintFulfillmentTone(status = '') {
-    if (status === 'satisfied') return 'ok';
-    if (status === 'partial') return 'warn';
-    if (status === 'unmet') return 'danger';
+    const normalized = normalizeFulfillmentStatus(status);
+    if (normalized === 'satisfied') return 'ok';
+    if (normalized === 'partial') return 'warn';
+    if (normalized === 'violated') return 'danger';
     return 'muted';
 }
 
@@ -4398,40 +4819,86 @@ function renderConstraintFulfillmentFilters(activeFilter = 'attention', items = 
     `;
 }
 
+function constraintFulfillmentSuggestionLabel(suggestion = {}) {
+    return suggestion.label || ({
+        relax_to_soft: '改为软约束',
+        shrink_slots: '调整时段',
+        delete_rule: '删除规则',
+        manual: '人工处理',
+    })[suggestion.kind] || '处理';
+}
+
+function renderConstraintFulfillmentSuggestions(item = {}) {
+    const suggestions = (item.suggestions || []).slice(0, 3);
+    if (!suggestions.length) return '';
+    return `
+        <span class="tt-constraint-fulfillment-actions">
+            ${suggestions.map(suggestion => {
+                const autoSupported = suggestion.kind === 'delete_rule';
+                return `
+                    <button class="tt-btn tt-btn--sm ${autoSupported ? 'tt-btn--ghost' : 'tt-btn--subtle'}" type="button"
+                        data-action="constraint-fulfillment-suggestion"
+                        data-constraint-fulfillment-row="${escapeAttr(item.ruleId || item.id || '')}"
+                        data-constraint-fulfillment-suggestion="${escapeAttr(suggestion.kind || '')}">
+                        ${escapeHtml(constraintFulfillmentSuggestionLabel(suggestion))}
+                    </button>
+                `;
+            }).join('')}
+        </span>
+    `;
+}
+
+function constraintFulfillmentLocateTargets(item = {}) {
+    const legacyTargets = Array.isArray(item.locateTargets) ? item.locateTargets.filter(Boolean) : [];
+    if (legacyTargets.length) return legacyTargets;
+    const evidenceSlots = Array.isArray(item.evidenceSlots) ? item.evidenceSlots : [];
+    return evidenceSlots.map(slot => {
+        const targetKind = item.targetKind === 'teacher' ? 'teacher' : 'class';
+        const targetId = targetKind === 'teacher'
+            ? item.targetId || slot.teacherId || ''
+            : slot.classId || item.targetId || '';
+        return {
+            targetKind,
+            targetId,
+            targetName: item.targetName || '',
+            day: slot.day,
+            period: slot.period,
+            slotId: slot.slotId || '',
+            slot,
+        };
+    }).filter(target => target.day && target.period);
+}
+
 function renderConstraintFulfillmentRow(item = {}, state = {}, model = {}) {
     const relation = constraintFulfillmentRelation(item, model);
-    const locateTarget = (item.locateTargets || [])[0] || null;
+    const locateTarget = constraintFulfillmentLocateTargets(item)[0] || null;
     const issueKey = locateTarget ? constraintFulfillmentStableKey(item) : '';
-    const tone = constraintFulfillmentTone(item.status);
-    const statusLabel = item.statusLabel || CONSTRAINT_FULFILLMENT_STATUS_LABELS[item.status] || item.status || '待评估';
+    const normalizedStatus = normalizeFulfillmentStatus(item.status);
+    const tone = constraintFulfillmentTone(normalizedStatus);
+    const statusLabel = item.statusLabel || CONSTRAINT_FULFILLMENT_STATUS_LABELS[normalizedStatus] || normalizedStatus || '待评估';
+    const detail = item.detail || item.evidence || '暂无评估证据。';
     const rowClass = [
         'tt-constraint-fulfillment-row',
         `tt-constraint-fulfillment-row--${tone}`,
         locateTarget ? 'tt-inspector-issue-item--locatable' : '',
         issueKey && state.inspectorLocatedIssueKey === issueKey ? 'is-inspector-located-source' : '',
     ].filter(Boolean).join(' ');
+    const locateButton = locateTarget
+        ? `<button type="button" class="tt-inspector-locate-hint" ${renderInspectorIssueLocateAttrs(locateTarget, issueKey)} aria-label="${escapeAttr(`定位：${item.title || statusLabel}`)}">定位</button>`
+        : '';
     const content = `
         <span class="tt-constraint-fulfillment-status">${escapeHtml(statusLabel)}</span>
         <span class="tt-constraint-fulfillment-main">
-            <strong>${escapeHtml(item.title || ruleTypeLabel(item.type))}</strong>
-            <em>${escapeHtml(item.evidence || '暂无评估证据。')}</em>
+            <strong>${escapeHtml(item.title || item.typeLabel || ruleTypeLabel(item.type))}</strong>
+            <em>${escapeHtml(detail)}</em>
         </span>
         <span class="tt-constraint-fulfillment-meta">
-            ${item.priority === 'hard' ? '<b>硬约束</b>' : '<b>软约束</b>'}
+            ${(item.strength || item.priority) === 'hard' ? '<b>硬约束</b>' : '<b>软约束</b>'}
             ${relation ? `<b>已列入${escapeHtml(relation)}</b>` : ''}
-            ${locateTarget ? '<span class="tt-inspector-locate-hint">定位</span>' : ''}
+            ${locateButton}
         </span>
+        ${renderConstraintFulfillmentSuggestions(item)}
     `;
-    if (locateTarget) {
-        return `
-            <button type="button" class="${rowClass}"
-                data-constraint-fulfillment-row="${escapeAttr(item.id || '')}"
-                ${renderInspectorIssueLocateAttrs(locateTarget, issueKey)}
-                aria-label="${escapeAttr(`定位：${item.title || statusLabel}`)}">
-                ${content}
-            </button>
-        `;
-    }
     return `
         <div class="${rowClass}" data-constraint-fulfillment-row="${escapeAttr(item.id || '')}">
             ${content}
@@ -4445,7 +4912,8 @@ function renderConstraintFulfillmentSection(state = {}, model = {}) {
     const items = Array.isArray(fulfillment.items) ? fulfillment.items : [];
     const activeFilter = normalizeConstraintFulfillmentFilter(state, fulfillment);
     const visibleItems = filterConstraintFulfillmentItems(items, activeFilter);
-    const hasAttention = Number(fulfillment.summary?.unmet || 0) || Number(fulfillment.summary?.partial || 0);
+    const hasAttention = Number(fulfillment.summary?.violated ?? fulfillment.summary?.unmet ?? 0)
+        || Number(fulfillment.summary?.partiallySatisfied ?? fulfillment.summary?.partial ?? 0);
     const open = Boolean(hasAttention || state.constraintFulfillmentOpen);
     const loading = Boolean(state.constraintFulfillmentLoading);
     const error = state.constraintFulfillmentError || '';
@@ -4453,13 +4921,17 @@ function renderConstraintFulfillmentSection(state = {}, model = {}) {
         <section class="tt-inspector-section tt-constraint-fulfillment-section">
             <details class="tt-inspector-collapsible" data-inspector-section="constraint-fulfillment"${open ? ' open' : ''}>
                 <summary class="tt-section-title">
-                    <h3><i data-lucide="check-check"></i><span>约束达成度</span></h3>
+                    <h3><i data-lucide="check-check"></i><span>约束满足度报告</span></h3>
                     <span class="tt-chip ${hasAttention ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(fulfillment.summary.total)}</span>
                 </summary>
                 <div class="tt-constraint-fulfillment-panel">
                     <div class="tt-constraint-fulfillment-summary">
                         <strong>${escapeHtml(constraintFulfillmentSummaryText(fulfillment.summary))}</strong>
                         <span>${escapeHtml(fulfillment.evaluated ? '基于当前课表评估' : '等待生成课表后评估')}</span>
+                        <button class="tt-btn tt-btn--sm tt-btn--ghost" data-action="rerun-constraint-fulfillment" type="button">
+                            <i data-lucide="refresh-cw"></i>
+                            <span>重新排课</span>
+                        </button>
                     </div>
                     ${loading ? '<span class="tt-muted">正在刷新约束达成度...</span>' : ''}
                     ${error ? `<span class="tt-muted">${escapeHtml(error)}</span>` : ''}
@@ -4640,6 +5112,7 @@ export function renderInspector(state, model = buildInspectorViewModel(state)) {
                 state,
             })}
             ${renderConstraintFulfillmentSection(state, model)}
+            ${renderPublicationPanel(state)}
             ${renderInspectorSystemDetails(state, model, selectedDetail)}
             ${selectedDetail ? renderSlotInspector(state) : ''}
         </div>
@@ -4909,7 +5382,7 @@ function renderPlanningInspector(state) {
     const owners = getOwners(state.project, state.viewMode);
     const selectedOwner = owners.find(owner => owner.id === state.selectedOwnerId) || owners[0] || {};
     const viewLabel = state.viewMode === 'teacher' ? '教师视图' : state.viewMode === 'master' ? '总表视图' : '班级视图';
-    const scaleMessage = solveScaleMessage(state.project);
+    const scaleMessage = solveScaleMessage(state.project, state.solveScaleHint);
     return `
         <section class="tt-inspector-section tt-inspector-overview">
             <div class="tt-section-title">

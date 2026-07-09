@@ -145,14 +145,21 @@ public class ChineseEducationConstraints {
      */
     public Constraint teacherDailyLoadVarianceMinimization(ConstraintFactory factory) {
         return factory.forEach(LessonAssignment.class)
-                .filter(lesson -> lesson.getTimeSlot() != null && lesson.getTeacherId() != null)
-                .groupBy(LessonAssignment::getTeacherId,
-                        lesson -> lesson.getTimeSlot().getWeekday(),
-                        ConstraintCollectors.count())
-                .filter((teacherId, weekday, dailyCount) -> dailyCount > 4) // 单日超过4节
-                .penalize(HardSoftScore.ONE_SOFT, (teacherId, weekday, dailyCount) ->
-                        (dailyCount.intValue() - 4) * 2) // 超过部分线性扣分
+                .filter(lesson -> lesson.getTimeSlot() != null)
+                .flatten(LessonAssignment::getTeacherConstraintRefs)
+                .filter((lesson, ref) -> hasTeacherRef(ref) && ref.getLoadBalanceWeight() > 0)
+                .groupBy((lesson, ref) -> ref.getTeacherId(),
+                        (lesson, ref) -> lesson.getTimeSlot().getWeekday(),
+                        (lesson, ref) -> ref.getLoadBalanceWeight(),
+                        ConstraintCollectors.countBi())
+                .filter((teacherId, weekday, weight, dailyCount) -> dailyCount > 4) // 单日超过4节
+                .penalize(HardSoftScore.ONE_SOFT, (teacherId, weekday, weight, dailyCount) ->
+                        (dailyCount.longValue() - 4) * 2 * weight) // 超过部分线性扣分
                 .asConstraint("Teacher daily load variance minimization");
+    }
+
+    private static boolean hasTeacherRef(LessonAssignment.TeacherConstraintRef ref) {
+        return ref != null && ref.getTeacherId() != null && !ref.getTeacherId().isBlank();
     }
 
     /**

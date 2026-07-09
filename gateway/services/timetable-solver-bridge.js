@@ -17,6 +17,7 @@ import {
 } from './timetable-validation.js';
 
 const DEFAULT_TIMEOUT_MS = 210000;
+const LARGE_PROJECT_TIMEOUT_MS = 300000;
 const POLL_INTERVAL_MS = 500;
 const NONE_ROOM_ID = '__NONE__';
 
@@ -76,11 +77,34 @@ function normalizeSolverUrl(env = {}) {
     return url ? url.replace(/\/+$/, '') : '';
 }
 
-function timeoutMs(env = {}) {
-    const seconds = Number(env.TIMETABLE_SOLVER_TIMEOUT ?? env.TIMEFOLD_SOLVER_TIMEOUT);
-    return Number.isFinite(seconds) && seconds > 0
-        ? Math.round(seconds * 1000)
-        : DEFAULT_TIMEOUT_MS;
+export function resolveTimetableSolverTimeoutMs(project = {}, env = {}) {
+    const timetableSeconds = Number(env.TIMETABLE_SOLVER_TIMEOUT);
+    if (Number.isFinite(timetableSeconds) && timetableSeconds > 0) return Math.round(timetableSeconds * 1000);
+    const timefoldSeconds = Number(env.TIMEFOLD_SOLVER_TIMEOUT);
+    if (Number.isFinite(timefoldSeconds) && timefoldSeconds > 0) return Math.round(timefoldSeconds * 1000);
+    return (project.classes || []).length >= 30 ? LARGE_PROJECT_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+}
+
+export function buildTimetableSolveScaleHint(project = {}, env = {}) {
+    const classCount = (project.classes || []).length;
+    const lessonCount = totalLessonHours(project);
+    const timeoutMs = resolveTimetableSolverTimeoutMs(project, env);
+    const largeProject = classCount >= 30;
+    return {
+        largeProject,
+        classCount,
+        lessonCount,
+        timeoutMs,
+        timeoutSeconds: Math.round(timeoutMs / 1000),
+        estimatedSeconds: largeProject ? Math.round(timeoutMs / 1000) : null,
+        message: largeProject
+            ? `${classCount} 个班，预计需要数分钟；当前 Timefold 超时上限 ${Math.round(timeoutMs / 1000)} 秒。`
+            : '',
+    };
+}
+
+function timeoutMs(env = {}, project = {}) {
+    return resolveTimetableSolverTimeoutMs(project, env);
 }
 
 function resolveFetch(fetchImpl) {
@@ -172,8 +196,17 @@ function teacherIdsForPlan(plan) {
 
 function collectRooms(project) {
     const rooms = new Map([[NONE_ROOM_ID, { id: NONE_ROOM_ID, name: 'None', none: true }]]);
+    for (const room of project.rooms || []) {
+        const id = asText(room.id || room.name);
+        if (id) rooms.set(id, { id, name: room.name || id, none: false, tags: room.tags || [] });
+    }
     for (const plan of project.lessonPlans) {
         for (const roomId of unique([...(plan.allowedRoomIds || []), plan.roomId])) {
+            rooms.set(roomId, { id: roomId, name: roomId, none: false });
+        }
+    }
+    for (const requirement of Object.values(project.rules?.hardRules?.roomRequirements || {})) {
+        for (const roomId of requirement?.roomIds || []) {
             rooms.set(roomId, { id: roomId, name: roomId, none: false });
         }
     }
@@ -199,12 +232,89 @@ function buildTimeSlots(project) {
 
 function blockedSlotsForPlan(project, plan) {
     const blocked = new Set(project.rules?.hardRules?.classUnavailable?.[plan.classId] || []);
+    for (const key of project.rules?.hardRules?.globalUnavailable || []) blocked.add(key);
     for (const teacherId of teacherIdsForPlan(plan)) {
         const teacher = project.teachers.find(item => item.id === teacherId);
         for (const key of teacher?.unavailableSlots || []) blocked.add(key);
         for (const key of project.rules?.hardRules?.teacherUnavailable?.[teacherId] || []) blocked.add(key);
     }
     return [...blocked].sort();
+}
+
+function roomRequirementIdsForPlan(project, plan) {
+    const requirement = project.rules?.hardRules?.roomRequirements?.[plan.subjectId] || {};
+    const roomIds = unique(requirement.roomIds || []);
+    const requiredTags = unique(requirement.requiredTags || []);
+    if (requiredTags.length) {
+        for (const room of project.rooms || []) {
+            const tags = new Set(room.tags || []);
+            if (requiredTags.every(tag => tags.has(tag))) roomIds.push(room.id);
+        }
+    }
+    return unique(roomIds);
+}
+
+function teacherMutualExclusionGroupsForPlan(project, plan) {
+    const teacherIds = new Set(teacherIdsForPlan(plan));
+    return (project.rules?.hardRules?.teacherMutualExclusion || [])
+        .map((group, index) => ({
+            id: `mutual_${index + 1}`,
+            teacherIds: group.teacherIds || [],
+        }))
+        .filter(group => group.teacherIds.some(teacherId => teacherIds.has(teacherId)))
+        .map(group => group.id);
+}
+
+function notSameDaySubjectIdsForPlan(project, plan) {
+    const result = [];
+    for (const pair of project.rules?.hardRules?.subjectNotSameDay || []) {
+        const subjectIds = pair.subjectIds || [];
+        const classIds = pair.classIds || [];
+        if (!subjectIds.includes(plan.subjectId)) continue;
+        if (classIds.length && !classIds.includes(plan.classId)) continue;
+        subjectIds.filter(subjectId => subjectId !== plan.subjectId).forEach(subjectId => result.push(subjectId));
+    }
+    return unique(result);
+}
+
+function intRuleValue(value) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function teacherRuleLimit(project, ruleName, teacherId) {
+    return intRuleValue(project.rules?.hardRules?.[ruleName]?.[teacherId]);
+}
+
+function teacherLoadBalanceWeightForProject(project) {
+    const soft = project.rules?.softRules || {};
+    if (soft.teacherLoadBalance?.enabled === false) return 0;
+    const explicit = Number.parseInt(soft.teacherLoadBalance?.weight, 10);
+    if (Number.isInteger(explicit) && explicit >= 0) return explicit;
+    return soft.balancedTeacherLoad === false ? 0 : 1;
+}
+
+function teacherConstraintRefsForPlan(project, teacherIds = []) {
+    const loadBalanceWeight = teacherLoadBalanceWeightForProject(project);
+    return unique(teacherIds).map(teacherId => ({
+        teacherId,
+        weeklyMax: teacherRuleLimit(project, 'teacherWeeklyLimit', teacherId),
+        maxDays: teacherRuleLimit(project, 'teacherMaxDaysPerWeek', teacherId),
+        loadBalanceWeight,
+    }));
+}
+
+function sequenceRulesForPlan(project, plan) {
+    return (project.rules?.softRules?.subjectSequence || [])
+        .filter(item => (
+            item.beforeSubjectId === plan.subjectId
+            || item.afterSubjectId === plan.subjectId
+        ) && (!(item.classIds || []).length || item.classIds.includes(plan.classId)))
+        .map(item => ({
+            beforeSubjectId: item.beforeSubjectId,
+            afterSubjectId: item.afterSubjectId,
+            weight: Number.parseInt(item.weight, 10) || 1,
+        }));
 }
 
 function lockedBlockStartPeriod(project, slot, blockSize) {
@@ -354,15 +464,21 @@ function nextLockedBlockSizeForPlan(plan, placedHours = 0) {
 function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pinnedTimeSlotId, initialSlot, project }) {
     const subject = project.subjects.find(item => item.id === plan.subjectId);
     const teacherIds = teacherIdsForPlan(plan);
-    const allowedRoomIds = unique([...(plan.allowedRoomIds || []), plan.roomId]);
+    const primaryTeacherId = teacherIds[0] || plan.teacherId;
+    const teacherConstraintRefs = teacherConstraintRefsForPlan(project, teacherIds);
+    const teacherLoadBalanceWeight = teacherLoadBalanceWeightForProject(project);
+    const ruleRoomIds = roomRequirementIdsForPlan(project, plan);
+    const allowedRoomIds = unique([...(plan.allowedRoomIds || []), plan.roomId, ...ruleRoomIds]);
+    const afternoonSubjects = project.rules?.softRules?.afternoonSubjects || [];
     return {
         id: `${plan.id}_${sequence + 1}`,
         lessonPlanId: plan.id,
         sequence,
         classId: plan.classId,
         subjectId: plan.subjectId,
-        teacherId: teacherIds[0] || plan.teacherId,
+        teacherId: primaryTeacherId,
         teacherIds,
+        teacherConstraintRefs,
         timeSlot: initialSlot ? slotKey(initialSlot.day, initialSlot.period) : null,
         room: initialSlot?.roomId || NONE_ROOM_ID,
         pinnedTimeSlotId: pinnedTimeSlotId || null,
@@ -376,7 +492,20 @@ function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pi
         blockSize,
         subjectPriority: subject?.priority || 50,
         preferMorning: Boolean(project.rules?.softRules?.morningSubjects?.includes(plan.subjectId) || subject?.priority >= 90),
-        preferLater: /pe|music|art|lab|sport|physical/i.test(`${plan.subjectId} ${subject?.name || ''}`),
+        preferLater: Boolean(
+            afternoonSubjects.includes(plan.subjectId)
+            || (!afternoonSubjects.length && /pe|music|art|lab|sport|physical|体育|音乐|美术|实验|劳动|信息/i.test(`${plan.subjectId} ${subject?.name || ''}`))
+        ),
+        subjectDailyMax: project.rules?.hardRules?.subjectDailyLimit?.[plan.subjectId] || 0,
+        teacherWeeklyMax: teacherRuleLimit(project, 'teacherWeeklyLimit', primaryTeacherId),
+        teacherMaxDays: teacherRuleLimit(project, 'teacherMaxDaysPerWeek', primaryTeacherId),
+        mutualExclusionGroups: teacherMutualExclusionGroupsForPlan(project, plan),
+        notSameDaySubjectIds: notSameDaySubjectIdsForPlan(project, plan),
+        sequenceRules: sequenceRulesForPlan(project, plan),
+        spreadMinGapDays: Number.parseInt(project.rules?.softRules?.spreadSubjectGaps?.[plan.subjectId], 10) || 1,
+        classMainDailyMax: project.rules?.softRules?.classDailyBalance?.mainSubjectDailyMax || 0,
+        teacherGapWeight: project.rules?.softRules?.teacherGapWeight || 0,
+        teacherLoadBalanceWeight,
     };
 }
 
@@ -446,6 +575,10 @@ export function buildTimetableProblem(input = {}) {
         timeSlots: buildTimeSlots(project),
         rooms: collectRooms(project),
         lessonAssignments: buildLessonAssignments(project),
+        solverWeights: {
+            teacherGap: project.rules?.softRules?.teacherGapWeight || 0,
+            teacherLoadBalance: teacherLoadBalanceWeightForProject(project),
+        },
     };
 }
 
@@ -646,7 +779,7 @@ export async function solveTimetableWithTimefold({
         );
     }
     const fetchClient = resolveFetch(fetchImpl);
-    const timeout = timeoutMs(env);
+    const timeout = timeoutMs(env, normalizedProject);
     const deadline = Date.now() + timeout;
     const startedAt = Date.now();
     const problem = buildTimetableProblem(normalizedProject);

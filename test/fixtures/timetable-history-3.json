@@ -1,0 +1,40 @@
+{
+  "schoolName": "History C",
+  "term": "2026",
+  "weekdays": 5,
+  "periodsPerDay": 8,
+  "activeWeekdays": [1, 2, 3, 4, 5],
+  "activePeriods": [1, 2, 3, 4, 5, 6, 7, 8],
+  "teachers": [
+    { "id": "t_math_1", "name": "数学一组", "subjects": ["math"], "unavailableSlots": [] },
+    { "id": "t_math_2", "name": "数学二组", "subjects": ["math"], "unavailableSlots": [] },
+    { "id": "t_en", "name": "英语老师", "subjects": ["english"], "unavailableSlots": [] }
+  ],
+  "classes": [
+    { "id": "c1", "grade": "G9", "name": "1" },
+    { "id": "c2", "grade": "G9", "name": "2" },
+    { "id": "c3", "grade": "G9", "name": "3" },
+    { "id": "c4", "grade": "G9", "name": "4" },
+    { "id": "c5", "grade": "G9", "name": "5" }
+  ],
+  "subjects": [
+    { "id": "math", "name": "数学", "priority": 95, "color": "#2563eb" },
+    { "id": "english", "name": "英语", "priority": 90, "color": "#7c3aed" }
+  ],
+  "lessonPlans": [
+    { "id": "lp_c1_math", "classId": "c1", "subjectId": "math", "teacherId": "t_math_1", "weeklyHours": 3 },
+    { "id": "lp_c1_en", "classId": "c1", "subjectId": "english", "teacherId": "t_en", "weeklyHours": 2 },
+    { "id": "lp_c2_math", "classId": "c2", "subjectId": "math", "teacherId": "t_math_2", "weeklyHours": 3 },
+    { "id": "lp_c2_en", "classId": "c2", "subjectId": "english", "teacherId": "t_en", "weeklyHours": 2 },
+    { "id": "lp_c3_math", "classId": "c3", "subjectId": "math", "teacherId": "t_math_1", "weeklyHours": 3 },
+    { "id": "lp_c3_en", "classId": "c3", "subjectId": "english", "teacherId": "t_en", "weeklyHours": 2 },
+    { "id": "lp_c4_math", "classId": "c4", "subjectId": "math", "teacherId": "t_math_2", "weeklyHours": 3 },
+    { "id": "lp_c4_en", "classId": "c4", "subjectId": "english", "teacherId": "t_en", "weeklyHours": 2 },
+    { "id": "lp_c5_math", "classId": "c5", "subjectId": "math", "teacherId": "t_math_1", "weeklyHours": 3 },
+    { "id": "lp_c5_en", "classId": "c5", "subjectId": "english", "teacherId": "t_en", "weeklyHours": 2 }
+  ],
+  "rules": {
+    "hardRules": { "teacherUnavailable": { "t_en": ["5-8"] } },
+    "softRules": { "morningSubjects": ["math", "english"], "balancedTeacherLoad": true }
+  }
+}

@@ -79,6 +79,21 @@ function buildSmartDataAudit(project = {}) {
     };
 }
 
+function buildClientSolveScaleHint(project = {}) {
+    const classCount = (project.classes || []).length;
+    if (classCount < 30) return null;
+    const lessonCount = (project.lessonPlans || [])
+        .reduce((sum, plan) => sum + (Number.parseInt(plan.weeklyHours, 10) || 0), 0);
+    return {
+        largeProject: true,
+        classCount,
+        lessonCount,
+        timeoutSeconds: 300,
+        estimatedSeconds: 300,
+        message: `${classCount} 个班，预计需要数分钟；当前 Timefold 超时上限 300 秒。`,
+    };
+}
+
 function hasExplicitTeacherConsecutiveLimit(project = {}, item = {}) {
     const teacherId = item.teacherId
         || item.raw?.teacherId
@@ -693,6 +708,252 @@ export class TimetablePlannerController {
         }
     }
 
+    syncConstraintAgentReview(response = {}) {
+        const review = response.review || response.state?.review || null;
+        if (!review) return;
+        const current = this.state.ruleReview || {};
+        this.state.ruleReview = {
+            ...current,
+            open: Boolean(current.open),
+            step: 'review',
+            uiStep: (review.draftRows || []).length || (review.requirementItems || []).length ? 'issues' : current.uiStep || 'input',
+            mode: current.mode || 'text',
+            inputMode: current.inputMode || 'text',
+            text: current.text || response.originalText || '',
+            draftRules: review.draftRules || current.draftRules || null,
+            draftRows: review.draftRows || [],
+            previewItems: review.previewItems || [],
+            requirementItems: review.requirementItems || [],
+            semanticActions: review.semanticActions || [],
+            autoAcceptable: review.autoAcceptable || [],
+            needReview: review.needReview || [],
+            clarifyingQuestions: review.clarifyingQuestions || [],
+            missingInfo: review.missingInfo || [],
+            conflicts: review.conflicts || [],
+            warnings: review.warnings || [],
+            unsupportedItems: review.unsupportedItems || [],
+            ruleReport: review.ruleReport || null,
+            confidenceSummary: review.confidenceSummary || { high: 0, medium: 0, low: 0 },
+            nextAction: review.nextAction || '',
+            inputType: review.inputType || current.inputType || 'constraint_intake',
+            contextStats: review.contextStats || current.contextStats || null,
+            excludedApplyItemKeys: response.excludedApplyItemKeys || current.excludedApplyItemKeys || [],
+        };
+    }
+
+    applyConstraintAgentResponse(response = {}, userMessage = '') {
+        const current = this.state.constraintAgent || {};
+        const messages = [...(current.messages || [])];
+        if (userMessage) messages.push({ role: 'user', content: userMessage });
+        if (response.reply) messages.push({ role: 'assistant', content: response.reply });
+        if (response.project) {
+            this.applyProject(response.project);
+        }
+        this.syncConstraintAgentReview(response);
+        this.state.constraintAgent = {
+            ...current,
+            sessionId: response.sessionId || current.sessionId || null,
+            stage: response.stage || current.stage || 'INTAKE',
+            messages,
+            statusLine: response.statusLine || current.statusLine || '[已理解 0 · 待澄清 0 · 待确认 0]',
+            review: response.review || current.review || null,
+            questions: response.questions || [],
+            confirmationToken: response.confirmationToken || current.confirmationToken || '',
+            highRiskToken: response.highRiskToken || current.highRiskToken || '',
+            highRiskAction: response.highRiskAction || current.highRiskAction || null,
+            confirmed: Boolean(response.confirmed),
+            highRiskConfirmed: Boolean(response.highRiskConfirmed),
+            appliedSummary: response.appliedSummary || current.appliedSummary || null,
+            solveResult: response.solveResult || current.solveResult || null,
+            fulfillment: response.fulfillment || current.fulfillment || null,
+            nextAction: response.nextAction || '',
+            input: '',
+            loading: false,
+            error: '',
+        };
+        if (response.fulfillment) {
+            this.state.constraintFulfillment = response.fulfillment;
+            this.state.constraintFulfillmentFilter = 'attention';
+        }
+        this.state.message = response.reply || this.state.message;
+        this.render();
+    }
+
+    async startConstraintIntakeAgentSession() {
+        this.state.constraintAgent = {
+            ...(this.state.constraintAgent || {}),
+            loading: true,
+            error: '',
+        };
+        this.render();
+        try {
+            const result = await requestTimetableAgent('/constraint-intake/session', {
+                method: 'POST',
+                body: JSON.stringify({ project: this.state.project, mode: 'constraint_intake' }),
+            });
+            this.state.constraintAgent = {
+                ...(this.state.constraintAgent || {}),
+                ...(result.state || {}),
+                sessionId: result.sessionId || result.state?.sessionId || null,
+                messages: [{ role: 'assistant', content: '对话排课已准备好。' }],
+                loading: false,
+                error: '',
+            };
+            this.setMessage('对话排课已启动。');
+        } catch (error) {
+            this.state.constraintAgent = {
+                ...(this.state.constraintAgent || {}),
+                loading: false,
+                error: normalizeApiError(error).message,
+            };
+            this.handleError(error);
+        }
+    }
+
+    constraintAgentClarificationAnswers(content = '') {
+        const questions = this.state.constraintAgent?.questions || [];
+        return questions.map(question => ({
+            questionId: question.id || question.questionId || question.field || 'answer',
+            requirementId: question.requirementId || question.source?.requirementId || '',
+            field: question.field || question.param || 'value',
+            value: content,
+            label: content,
+        }));
+    }
+
+    async sendConstraintIntakeAgentMessage(message = '') {
+        const input = message || this.state.container?.querySelector('#tt-constraint-agent-message')?.value || '';
+        const content = String(input || '').trim();
+        if (!content) {
+            this.setMessage('请先输入排课要求。');
+            return;
+        }
+        this.state.constraintAgent = {
+            ...(this.state.constraintAgent || {}),
+            loading: true,
+            error: '',
+            input: content,
+        };
+        this.render();
+        try {
+            let sessionId = this.state.constraintAgent?.sessionId || null;
+            if (!sessionId) {
+                const session = await requestTimetableAgent('/constraint-intake/session', {
+                    method: 'POST',
+                    body: JSON.stringify({ project: this.state.project, mode: 'constraint_intake' }),
+                });
+                sessionId = session.sessionId;
+            }
+            const isClarifying = this.state.constraintAgent?.stage === 'CLARIFY'
+                && (this.state.constraintAgent?.questions || []).length > 0;
+            const response = await requestTimetableAgent(isClarifying ? '/constraint-intake/answer' : '/constraint-intake/message', {
+                method: 'POST',
+                body: JSON.stringify(isClarifying
+                    ? {
+                        sessionId,
+                        answers: this.constraintAgentClarificationAnswers(content),
+                        project: this.state.project,
+                    }
+                    : {
+                        sessionId,
+                        message: content,
+                        project: this.state.project,
+                    }),
+            });
+            this.applyConstraintAgentResponse(response, content);
+        } catch (error) {
+            this.state.constraintAgent = {
+                ...(this.state.constraintAgent || {}),
+                loading: false,
+                error: normalizeApiError(error).message,
+            };
+            this.handleError(error);
+        }
+    }
+
+    async confirmConstraintIntakeAgent() {
+        const agent = this.state.constraintAgent || {};
+        if (!agent.sessionId) return;
+        this.state.constraintAgent = { ...agent, loading: true, error: '' };
+        this.render();
+        try {
+            const response = await requestTimetableAgent('/constraint-intake/confirm', {
+                method: 'POST',
+                body: JSON.stringify({
+                    sessionId: agent.sessionId,
+                    confirmationToken: agent.confirmationToken || '',
+                    highRiskToken: agent.highRiskToken || '',
+                    excludedApplyItemKeys: this.state.ruleReview?.excludedApplyItemKeys || [],
+                }),
+            });
+            this.applyConstraintAgentResponse(response);
+        } catch (error) {
+            this.state.constraintAgent = {
+                ...(this.state.constraintAgent || {}),
+                loading: false,
+                error: normalizeApiError(error).message,
+            };
+            this.handleError(error);
+        }
+    }
+
+    async applyConstraintIntakeAgent() {
+        const agent = this.state.constraintAgent || {};
+        if (!agent.sessionId) return;
+        this.state.constraintAgent = { ...agent, loading: true, error: '' };
+        this.render();
+        try {
+            const response = await requestTimetableAgent('/constraint-intake/apply', {
+                method: 'POST',
+                body: JSON.stringify({
+                    sessionId: agent.sessionId,
+                    confirmationToken: agent.confirmationToken || '',
+                    highRiskToken: agent.highRiskToken || '',
+                    excludedApplyItemKeys: this.state.ruleReview?.excludedApplyItemKeys || [],
+                    project: this.state.project,
+                }),
+            });
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
+            this.state.lastFailure = null;
+            this.applyConstraintAgentResponse(response);
+        } catch (error) {
+            this.state.constraintAgent = {
+                ...(this.state.constraintAgent || {}),
+                loading: false,
+                error: normalizeApiError(error).message,
+            };
+            this.handleError(error);
+        }
+    }
+
+    async solveConstraintIntakeAgent() {
+        const agent = this.state.constraintAgent || {};
+        if (!agent.sessionId) return;
+        this.state.constraintAgent = { ...agent, loading: true, error: '' };
+        this.render();
+        try {
+            const response = await requestTimetableAgent('/constraint-intake/solve', {
+                method: 'POST',
+                body: JSON.stringify({
+                    sessionId: agent.sessionId,
+                    project: this.state.project,
+                }),
+            });
+            this.clearOptimizationPolling();
+            this.state.solverJob = null;
+            this.state.lastFailure = null;
+            this.applyConstraintAgentResponse(response);
+        } catch (error) {
+            this.state.constraintAgent = {
+                ...(this.state.constraintAgent || {}),
+                loading: false,
+                error: normalizeApiError(error).message,
+            };
+            this.handleError(error);
+        }
+    }
+
     applyProject(project) {
         this.state.project = project;
         this.state.selectedOwnerId = ensureOwnerSelection(this.state);
@@ -763,6 +1024,49 @@ export class TimetablePlannerController {
             this.state.constraintFulfillmentError = normalized.message || '约束达成度暂时无法评估。';
             this.render();
             return null;
+        }
+    }
+
+    async handleConstraintFulfillmentSuggestion(ruleId = '', kind = '') {
+        const fulfillment = this.state.constraintFulfillment || {};
+        const item = (fulfillment.items || []).find(entry => (entry.ruleId || entry.id) === ruleId);
+        if (!item) {
+            this.setMessage('没有找到要处理的约束。');
+            return;
+        }
+        if (kind !== 'delete_rule') {
+            this.setMessage('这个建议需要人工处理，系统不会自动修改规则。');
+            return;
+        }
+        const strengthLabel = (item.strength || item.priority) === 'hard' ? '硬约束' : '软约束';
+        const message = [
+            `确定删除这条${strengthLabel}吗？`,
+            item.title || item.typeLabel || item.type || '排课约束',
+            '删除后会保存到项目规则，并建议重新排课查看满足度。',
+        ].join('\n');
+        if (!confirm(message)) return;
+
+        this.state.constraintFulfillmentLoading = true;
+        this.render();
+        try {
+            const result = await requestTimetable('/rules/fulfillment/action', {
+                method: 'POST',
+                body: JSON.stringify({
+                    project: this.state.project,
+                    action: { ruleId, kind },
+                }),
+            });
+            if (result.project) this.applyProject(result.project);
+            this.state.constraintFulfillment = result.fulfillment || null;
+            this.state.constraintFulfillmentFilter = 'attention';
+            this.state.constraintFulfillmentOpen = true;
+            this.setMessage('已删除该约束。请重新排课查看新的满足度报告。');
+        } catch (error) {
+            const normalized = normalizeApiError(error);
+            this.setMessage(normalized.message || '约束处理失败，请稍后重试。');
+        } finally {
+            this.state.constraintFulfillmentLoading = false;
+            this.render();
         }
     }
 
@@ -3466,6 +3770,8 @@ export class TimetablePlannerController {
             issues: [],
             importReport: null,
             hasBlockingIssues: false,
+            issueListExpanded: false,
+            issueEditor: null,
             loading: false,
             phaseText: '',
             phaseTone: '',
@@ -3506,6 +3812,7 @@ export class TimetablePlannerController {
         this.state.rosterImport = {
             ...(this.state.rosterImport || createTimetablePlannerState().rosterImport),
             open: false,
+            issueEditor: null,
         };
         this.render();
     }
@@ -3677,6 +3984,8 @@ export class TimetablePlannerController {
     normalizeRosterDraftRow(row = {}, index = 0) {
         return {
             id: row.id || this.nextRosterDraftId(),
+            sourceRow: String(row.sourceRow ?? row.source?.row ?? '').trim(),
+            sourceSheet: String(row.sourceSheet ?? row.source?.sheet ?? '').trim(),
             grade: String(row.grade ?? '').trim(),
             className: String(row.className ?? '').trim(),
             subjectName: String(row.subjectName ?? '').trim(),
@@ -3704,7 +4013,20 @@ export class TimetablePlannerController {
         const duplicateKeys = new Map();
         const rowIssues = new Map();
         const addIssue = (row, severity, field, message) => {
-            const issue = { rowId: row.id, severity, field, message };
+            const issue = {
+                rowId: row.id,
+                sourceRow: row.sourceRow || null,
+                sourceSheet: row.sourceSheet || '',
+                severity,
+                field,
+                message,
+                grade: row.grade,
+                className: row.className,
+                subjectName: row.subjectName,
+                teacherName: row.teacherName,
+                weeklyHours: row.weeklyHours,
+                blockPreference: row.blockPreference,
+            };
             issues.push(issue);
             if (severity !== 'error') warnings.push(message);
             if (!rowIssues.has(row.id)) rowIssues.set(row.id, []);
@@ -3765,17 +4087,26 @@ export class TimetablePlannerController {
         const analyzed = this.analyzeRosterDraftRows(payload.draftRows || []);
         const issues = Array.isArray(payload.issues) && payload.issues.length ? payload.issues : analyzed.issues;
         const warnings = Array.isArray(payload.warnings) && payload.warnings.length ? payload.warnings : analyzed.warnings;
+        const draftRows = (payload.draftRows || analyzed.draftRows).map((row, index) => this.normalizeRosterDraftRow(row, index));
+        const hasIssueEditor = Object.prototype.hasOwnProperty.call(payload, 'issueEditor');
+        const issueEditor = hasIssueEditor ? payload.issueEditor : this.state.rosterImport?.issueEditor || null;
+        const editorRowId = String(issueEditor?.rowId || '').trim();
+        const visibleIssueEditor = editorRowId && draftRows.some(row => String(row.id || '') === editorRowId)
+            ? issueEditor
+            : null;
         this.state.rosterImport = {
             ...(this.state.rosterImport || {}),
             open: true,
             step: 'review',
             source: payload.source || this.state.rosterImport?.source || null,
-            draftRows: (payload.draftRows || analyzed.draftRows).map((row, index) => this.normalizeRosterDraftRow(row, index)),
+            draftRows,
             stats: payload.stats || analyzed.stats,
             warnings,
             issues,
             importReport: payload.importReport || null,
             hasBlockingIssues: Boolean(payload.hasBlockingIssues) || issues.some(issue => issue.severity === 'error'),
+            issueListExpanded: Boolean(payload.issueListExpanded ?? this.state.rosterImport?.issueListExpanded),
+            issueEditor: visibleIssueEditor,
             loading: false,
             phaseText: '',
             phaseTone: '',
@@ -3787,6 +4118,8 @@ export class TimetablePlannerController {
             const value = field => row.querySelector(`[data-roster-field="${field}"]`)?.value?.trim() || '';
             return {
                 id: row.dataset.rosterReviewRow || this.nextRosterDraftId(),
+                sourceRow: row.dataset.rosterSourceRow || '',
+                sourceSheet: row.dataset.rosterSourceSheet || '',
                 grade: value('grade'),
                 className: value('className'),
                 subjectName: value('subjectName'),
@@ -3798,6 +4131,279 @@ export class TimetablePlannerController {
                 roomName: value('roomName'),
             };
         });
+    }
+
+    toggleRosterIssueList() {
+        this.state.rosterImport = {
+            ...(this.state.rosterImport || createTimetablePlannerState().rosterImport),
+            issueListExpanded: !this.state.rosterImport?.issueListExpanded,
+        };
+        this.render();
+    }
+
+    locateRosterIssue(rowId = '', field = '') {
+        const container = this.state.container;
+        const normalizedRowId = String(rowId || '').trim();
+        if (!container || !normalizedRowId) return false;
+        const row = container.querySelector?.(`[data-roster-review-row="${selectorAttributeValue(normalizedRowId)}"]`);
+        if (!row) return false;
+        const normalizedField = String(field || '').trim();
+        const fieldTarget = normalizedField
+            ? row.querySelector?.(`[data-roster-field="${selectorAttributeValue(normalizedField)}"]`)
+            : null;
+        const run = () => {
+            row.scrollIntoView?.({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+            row.classList?.add?.('tt-roster-review-row--focused');
+            if (typeof fieldTarget?.focus === 'function') {
+                fieldTarget.focus({ preventScroll: true });
+            }
+            if (this.rosterIssueFocusTimer) clearTimeout(this.rosterIssueFocusTimer);
+            if (typeof setTimeout === 'function') {
+                this.rosterIssueFocusTimer = setTimeout(() => {
+                    row.classList?.remove?.('tt-roster-review-row--focused');
+                }, 1800);
+            }
+        };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+        else run();
+        return true;
+    }
+
+    findRosterIssueForEditor(rowId = '', field = '') {
+        const normalizedRowId = String(rowId || '').trim();
+        const normalizedField = String(field || '').trim();
+        if (!normalizedRowId) return null;
+        const matchesRow = issue => String(issue?.rowId || '').trim() === normalizedRowId;
+        const matchesField = issue => !normalizedField || String(issue?.field || '').trim() === normalizedField;
+        const issues = Array.isArray(this.state.rosterImport?.issues) ? this.state.rosterImport.issues : [];
+        const direct = issues.find(issue => matchesRow(issue) && matchesField(issue));
+        if (direct) return direct;
+        const draftRow = (this.state.rosterImport?.draftRows || []).find(row => String(row.id || '') === normalizedRowId);
+        return (draftRow?.issues || []).find(issue => matchesRow(issue) && matchesField(issue))
+            || issues.find(matchesRow)
+            || draftRow?.issues?.[0]
+            || null;
+    }
+
+    rosterIssueIdentity(issue = {}) {
+        return [
+            String(issue.rowId || '').trim(),
+            String(issue.field || '').trim(),
+            String(issue.message || '').trim(),
+        ].join('|');
+    }
+
+    currentRosterReviewRows() {
+        const reviewRows = this.readRosterReviewRows();
+        return reviewRows.length ? reviewRows : this.state.rosterImport?.draftRows || [];
+    }
+
+    editableRosterIssues(issues = this.state.rosterImport?.issues || [], rows = this.currentRosterReviewRows()) {
+        const rowIds = new Set((rows || []).map(row => String(row.id || '').trim()).filter(Boolean));
+        return (issues || []).filter(issue => {
+            const rowId = String(issue?.rowId || '').trim();
+            return rowId && rowIds.has(rowId);
+        });
+    }
+
+    createRosterIssueEditor(issue = {}, rows = this.currentRosterReviewRows()) {
+        const normalizedRowId = String(issue.rowId || '').trim();
+        if (!normalizedRowId) return null;
+        const row = (rows || []).find(item => String(item.id || '') === normalizedRowId);
+        if (!row) return null;
+        const normalizedField = String(issue.field || '').trim();
+        const draft = this.normalizeRosterDraftRow(row, 0);
+        return {
+            rowId: draft.id,
+            field: normalizedField,
+            issue,
+            draft,
+        };
+    }
+
+    getRosterIssueEditorNavigation(issueEditor = this.state.rosterImport?.issueEditor) {
+        const editor = issueEditor || null;
+        const rows = this.currentRosterReviewRows();
+        const issues = this.editableRosterIssues(this.state.rosterImport?.issues || [], rows);
+        if (!issues.length) {
+            return { index: editor ? 0 : -1, total: editor ? 1 : 0, previous: null, next: null };
+        }
+        const currentIssue = {
+            ...(editor?.issue || {}),
+            rowId: editor?.rowId || editor?.issue?.rowId || '',
+            field: editor?.field || editor?.issue?.field || '',
+        };
+        const currentKey = this.rosterIssueIdentity(currentIssue);
+        let index = issues.findIndex(issue => this.rosterIssueIdentity(issue) === currentKey);
+        if (index < 0) {
+            index = issues.findIndex(issue => (
+                String(issue.rowId || '').trim() === String(currentIssue.rowId || '').trim()
+                && String(issue.field || '').trim() === String(currentIssue.field || '').trim()
+            ));
+        }
+        if (index < 0) {
+            index = issues.findIndex(issue => String(issue.rowId || '').trim() === String(currentIssue.rowId || '').trim());
+        }
+        return {
+            index,
+            total: issues.length,
+            previous: index > 0 ? issues[index - 1] : null,
+            next: index >= 0 && index < issues.length - 1 ? issues[index + 1] : null,
+        };
+    }
+
+    focusRosterIssueEditorField(field = '') {
+        const container = this.state.container;
+        if (!container) return;
+        const normalizedField = String(field || '').trim();
+        const run = () => {
+            const target = normalizedField
+                ? container.querySelector?.(`[data-roster-issue-field="${selectorAttributeValue(normalizedField)}"]`)
+                : null;
+            const fallback = container.querySelector?.('[data-roster-issue-field]');
+            const focusTarget = target || fallback;
+            if (typeof focusTarget?.focus === 'function') {
+                focusTarget.focus({ preventScroll: true });
+            }
+        };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+        else run();
+    }
+
+    openRosterIssueEditor(rowId = '', field = '', issueOverride = null) {
+        const normalizedRowId = String(rowId || '').trim();
+        if (!normalizedRowId) return false;
+        const rows = this.currentRosterReviewRows();
+        if (!rows.some(item => String(item.id || '') === normalizedRowId)) return false;
+        const issue = issueOverride || this.findRosterIssueForEditor(normalizedRowId, field) || { rowId: normalizedRowId, field };
+        const normalizedField = String(field || issue.field || '').trim();
+        const editor = this.createRosterIssueEditor({ ...issue, rowId: normalizedRowId, field: normalizedField }, rows);
+        if (!editor) return false;
+        this.state.rosterImport = {
+            ...(this.state.rosterImport || createTimetablePlannerState().rosterImport),
+            issueEditor: editor,
+        };
+        this.render();
+        this.focusRosterIssueEditorField(normalizedField || 'weeklyHours');
+        return true;
+    }
+
+    openAdjacentRosterIssue(direction = 'next') {
+        const navigation = this.getRosterIssueEditorNavigation();
+        const target = direction === 'previous' ? navigation.previous : navigation.next;
+        if (!target) return false;
+        return this.openRosterIssueEditor(target.rowId, target.field, target);
+    }
+
+    closeRosterIssueEditor() {
+        if (!this.state.rosterImport?.issueEditor) return false;
+        this.state.rosterImport = {
+            ...(this.state.rosterImport || createTimetablePlannerState().rosterImport),
+            issueEditor: null,
+        };
+        this.render();
+        return true;
+    }
+
+    readRosterIssueEditorDraft() {
+        const editor = this.state.rosterImport?.issueEditor;
+        if (!editor) return null;
+        const draft = { ...(editor.draft || {}), id: editor.rowId || editor.draft?.id || '' };
+        this.state.container?.querySelectorAll?.('[data-roster-issue-field]')?.forEach(input => {
+            const field = input.dataset?.rosterIssueField;
+            if (field) draft[field] = input.value?.trim?.() ?? input.value ?? '';
+        });
+        return this.normalizeRosterDraftRow(draft, 0);
+    }
+
+    applyRosterIssueQuickFix(kind = '') {
+        const editor = this.state.rosterImport?.issueEditor;
+        if (!editor) return false;
+        const draft = this.readRosterIssueEditorDraft() || { ...(editor.draft || {}) };
+        if (kind === 'mixed') {
+            draft.blockPreference = 'mixed';
+        } else if (kind === 'single') {
+            draft.blockPreference = 'single';
+        } else if (kind === 'nextEven') {
+            const hours = Number(draft.weeklyHours);
+            if (Number.isFinite(hours) && hours > 0) {
+                const wholeHours = Math.ceil(hours);
+                draft.weeklyHours = String(wholeHours % 2 === 0 ? wholeHours : wholeHours + 1);
+            }
+        }
+        this.state.rosterImport = {
+            ...(this.state.rosterImport || createTimetablePlannerState().rosterImport),
+            issueEditor: {
+                ...editor,
+                draft,
+            },
+        };
+        this.render();
+        this.focusRosterIssueEditorField(editor.field || 'weeklyHours');
+        return true;
+    }
+
+    applyRosterIssueEditor(options = {}) {
+        const editor = this.state.rosterImport?.issueEditor;
+        if (!editor) return false;
+        const advance = Boolean(options?.advance);
+        const navigation = this.getRosterIssueEditorNavigation(editor);
+        const cursorIndex = navigation.index >= 0 ? navigation.index : 0;
+        const currentIssueKey = this.rosterIssueIdentity({
+            ...(editor.issue || {}),
+            rowId: editor.rowId || editor.issue?.rowId || '',
+            field: editor.field || editor.issue?.field || '',
+        });
+        const draft = this.readRosterIssueEditorDraft();
+        if (!draft) return false;
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+        const rows = this.currentRosterReviewRows();
+        let replaced = false;
+        const nextRows = rows.map(row => {
+            if (String(row.id || '') !== String(editor.rowId || '')) return row;
+            replaced = true;
+            return {
+                ...row,
+                ...draft,
+                id: row.id || draft.id || editor.rowId,
+                sourceRow: row.sourceRow || draft.sourceRow || '',
+                sourceSheet: row.sourceSheet || draft.sourceSheet || '',
+            };
+        });
+        if (!replaced) return false;
+        const analyzed = this.analyzeRosterDraftRows(nextRows);
+        let nextIssueEditor = null;
+        if (advance) {
+            const remainingIssues = this.editableRosterIssues(analyzed.issues, analyzed.draftRows);
+            const currentStillOpen = remainingIssues.find(issue => this.rosterIssueIdentity(issue) === currentIssueKey);
+            const targetIssue = currentStillOpen || remainingIssues[cursorIndex] || null;
+            nextIssueEditor = targetIssue ? this.createRosterIssueEditor(targetIssue, analyzed.draftRows) : null;
+        }
+        this.setRosterReviewState({
+            ...analyzed,
+            source: current.source,
+            importReport: current.importReport,
+            issueListExpanded: current.issueListExpanded,
+            issueEditor: nextIssueEditor,
+        });
+        this.render();
+        if (nextIssueEditor) {
+            this.focusRosterIssueEditorField(nextIssueEditor.field || 'weeklyHours');
+        }
+        return true;
+    }
+
+    locateRosterIssueFromEditor() {
+        const editor = this.state.rosterImport?.issueEditor;
+        if (!editor) return false;
+        const rowId = editor.rowId;
+        const field = editor.field || editor.issue?.field || '';
+        this.state.rosterImport = {
+            ...(this.state.rosterImport || createTimetablePlannerState().rosterImport),
+            issueEditor: null,
+        };
+        this.render();
+        return this.locateRosterIssue(rowId, field);
     }
 
     refreshRosterReviewFromRows(rows) {
@@ -3839,9 +4445,11 @@ export class TimetablePlannerController {
         }
     }
 
-    async previewRosterImport() {
+    async previewRosterImport(modeOverride = '') {
         const text = this.readRosterImportText();
-        const mode = this.state.rosterImport?.mode === 'text' ? 'text' : 'file';
+        const mode = modeOverride === 'text' || modeOverride === 'file'
+            ? modeOverride
+            : this.state.rosterImport?.mode === 'text' ? 'text' : 'file';
         const hasFile = mode === 'file' && this.rosterImportFile;
         this.state.rosterImport = {
             ...(this.state.rosterImport || createTimetablePlannerState().rosterImport),
@@ -3850,7 +4458,7 @@ export class TimetablePlannerController {
             mode,
             text,
             loading: true,
-            phaseText: hasFile ? '读取并解析任课文件中...' : '解析任课文本中...',
+            phaseText: mode === 'file' ? '读取并解析任课文件中...' : '解析任课文本中...',
             phaseTone: '',
         };
         this.state.loading = true;
@@ -4721,17 +5329,22 @@ export class TimetablePlannerController {
 
     async runSchedule() {
         this.state.loading = true;
-        this.state.solvePhaseText = '检查数据中';
+        this.state.solveScaleHint = buildClientSolveScaleHint(this.state.project);
+        this.state.solvePhaseText = this.state.solveScaleHint?.message || '检查数据中';
         const phaseTimers = [
             setTimeout(() => {
                 if (!this.state.loading) return;
-                this.state.solvePhaseText = '快速生成中';
+                this.state.solvePhaseText = this.state.solveScaleHint?.largeProject
+                    ? `快速生成中 · ${this.state.solveScaleHint.message}`
+                    : '快速生成中';
                 if (this.state.smartWorkbench?.open) this.renderSmartWorkbenchSurface();
                 else this.render();
             }, 80),
             setTimeout(() => {
                 if (!this.state.loading) return;
-                this.state.solvePhaseText = '局部优化中';
+                this.state.solvePhaseText = this.state.solveScaleHint?.largeProject
+                    ? `局部优化中 · ${this.state.solveScaleHint.message}`
+                    : '局部优化中';
                 if (this.state.smartWorkbench?.open) this.renderSmartWorkbenchSurface();
                 else this.render();
             }, 500),
@@ -4745,6 +5358,7 @@ export class TimetablePlannerController {
             this.state.selectedOwnerId = this.state.project.classes[0]?.id || this.state.project.teachers[0]?.id || '';
             this.state.selectedSlotId = '';
             this.state.solverJob = result.solverJob || null;
+            this.state.solveScaleHint = result.solverScaleHint || this.state.solveScaleHint || null;
             this.state.message = result.schedule.score.unplacedLessons
                 ? `快速生成完成，还有 ${result.schedule.score.unplacedLessons} 节未排。`
                 : result.solverJob

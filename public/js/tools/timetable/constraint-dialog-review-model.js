@@ -10,12 +10,25 @@ const BACKEND_RULE_TYPES = new Set([
     'teacher_unavailable',
     'class_unavailable',
     'locked_slot',
+    'global_unavailable',
     'subject_morning',
+    'subject_afternoon',
     'subject_preferred_periods',
     'subject_avoid_periods',
+    'subject_daily_limit',
     'teacher_daily_limit',
     'teacher_consecutive_limit',
+    'teacher_weekly_limit',
+    'teacher_max_days_per_week',
+    'teacher_mutual_exclusion',
     'subject_spread',
+    'course_interval',
+    'room_requirement',
+    'class_daily_balance',
+    'teacher_gap_preference',
+    'teacher_load_balance',
+    'subject_not_same_day',
+    'subject_sequence',
 ]);
 
 const LEGACY_MANUAL_RULE_TYPES = new Set(['forbid', 'prefer', 'avoid']);
@@ -98,6 +111,12 @@ function draftRowParameters(row = {}) {
     else if (row.value !== undefined && row.value !== null && row.value !== '') params.limit = row.value;
     if (row.weekPattern) params.weekPattern = row.weekPattern;
     if (normalizeKey(row.type) === 'subject_morning' && !params.slots) params.dayPart = 'morning';
+    if (normalizeKey(row.type) === 'subject_afternoon' && !params.slots) params.dayPart = 'afternoon';
+    if (Array.isArray(row.roomIds) && row.roomIds.length) params.roomIds = row.roomIds;
+    if (Array.isArray(row.teacherIds) && row.teacherIds.length) params.teacherIds = row.teacherIds;
+    if (Array.isArray(row.subjectIds) && row.subjectIds.length) params.subjectIds = row.subjectIds;
+    if (Array.isArray(row.classIds) && row.classIds.length) params.classIds = row.classIds;
+    if (row.minGapDays !== undefined && row.minGapDays !== null && row.minGapDays !== '') params.minGapDays = row.minGapDays;
     return params;
 }
 
@@ -120,6 +139,12 @@ function draftRowSource(row = {}) {
     };
 }
 
+function itemOriginFromSource(source = {}, fallback = 'user_input') {
+    if (source?.origin) return source.origin;
+    if (source?.sourceRow || source?.row) return 'user_input';
+    return fallback;
+}
+
 function createDraftRequirementItem(row = {}, index = 0) {
     return {
         id: draftRequirementId(row, index),
@@ -130,6 +155,7 @@ function createDraftRequirementItem(row = {}, index = 0) {
         strength: row.priority || row.strength || '',
         status: draftRowStatus(row),
         applyTo: draftRowApplyTo(row),
+        origin: row.origin || itemOriginFromSource(row.source, 'user_input'),
         confidence: row.confidence,
         source: draftRowSource(row),
         warnings: row.warnings || [],
@@ -169,6 +195,7 @@ function createSemanticRequirementItem(action = {}, index = 0) {
         strength: action.strength || '',
         status: actionStatus(action),
         applyTo: actionApplyTo(action),
+        origin: action.origin || itemOriginFromSource(action.source, 'user_input'),
         confidence: action.confidence,
         source: action.source || {},
         warnings: action.warnings || [],
@@ -200,6 +227,7 @@ export function buildUnifiedRequirementItems(review = {}) {
     const items = (review.requirementItems || []).map((item, index) => ({
         ...item,
         id: item.id || `requirement_${index + 1}`,
+        origin: item.origin || itemOriginFromSource(item.source, 'user_input'),
         machineRules: [],
         semanticActions: [],
     }));

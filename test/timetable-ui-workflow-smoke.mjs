@@ -11,7 +11,7 @@ async function main() {
         const rosterText = await page.locator('#tt-roster-import-text').inputValue();
         assert.match(rosterText, /七年级,1班,数学,陈老师,4,单节/);
 
-        await page.click('#tt-preview-roster-import');
+        await page.click('[data-roster-import-submit="text"]');
         await page.waitForFunction(() => {
             const title = document.querySelector('#tt-roster-import-title');
             return title && /检查任课数据/.test(title.textContent || '');

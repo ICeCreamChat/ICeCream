@@ -2,8 +2,12 @@ import express from 'express';
 import multer from 'multer';
 
 import { buildTimetableExportXlsx, TIMETABLE_XLSX_MIME } from '../services/timetable-export.js';
-import { evaluateTimetableConstraintFulfillment } from '../services/timetable-constraint-fulfillment.js';
 import {
+    applyTimetableConstraintFulfillmentAction,
+    evaluateTimetableConstraintFulfillment,
+} from '../services/timetable-constraint-fulfillment.js';
+import {
+    buildTimetableSolveScaleHint,
     canUseTimefoldForTimetable,
     timefoldTimetableUnsupportedReason,
 } from '../services/timetable-solver-bridge.js';
@@ -723,6 +727,26 @@ router.post('/rules/fulfillment', async (req, res) => {
     }
 });
 
+router.post('/rules/fulfillment/action', async (req, res) => {
+    let current = null;
+    try {
+        const timetableStore = store();
+        current = await timetableStore.loadProject();
+        const result = applyTimetableConstraintFulfillmentAction(req.body?.project || current, req.body?.action || {});
+        const saved = await timetableStore.saveProject(result.project);
+        ok(res, {
+            project: saved,
+            action: result.action,
+            fulfillment: evaluateTimetableConstraintFulfillment(saved),
+        });
+    } catch (error) {
+        fail(res, error, error.status || 400, {
+            project: current,
+            reason: error.reason || 'rules_fulfillment_action_failed',
+        });
+    }
+});
+
 router.post('/schedule/run', async (req, res) => {
     try {
         const timetableStore = store();
@@ -766,7 +790,13 @@ router.post('/schedule/run', async (req, res) => {
                 store: timetableStore,
             })
             : null;
-        ok(res, { project: saved, schedule: saved.schedule, solverJob, solverDowngrade });
+        ok(res, {
+            project: saved,
+            schedule: saved.schedule,
+            solverJob,
+            solverDowngrade,
+            solverScaleHint: buildTimetableSolveScaleHint(saved, process.env),
+        });
     } catch (error) {
         fail(res, error, 500);
     }

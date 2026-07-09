@@ -2,6 +2,7 @@ package com.icecream.timetable.solver;
 
 import ai.timefold.solver.core.api.score.HardSoftScore;
 import ai.timefold.solver.core.api.score.stream.Constraint;
+import ai.timefold.solver.core.api.score.stream.ConstraintCollectors;
 import ai.timefold.solver.core.api.score.stream.ConstraintFactory;
 import ai.timefold.solver.core.api.score.stream.ConstraintProvider;
 import ai.timefold.solver.core.api.score.stream.Joiners;
@@ -29,6 +30,11 @@ public class TimetableConstraintProvider implements ConstraintProvider {
                 roomRequirement(factory),
                 roomConflict(factory),
                 consecutiveBlock(factory),
+                subjectDailyLimit(factory),
+                teacherWeeklyLimit(factory),
+                teacherMaxDaysPerWeek(factory),
+                teacherMutualExclusion(factory),
+                subjectNotSameDay(factory),
 
                 // 基础软约束
                 spreadSameCourse(factory),
@@ -37,8 +43,10 @@ public class TimetableConstraintProvider implements ConstraintProvider {
                 practicalSubjectsLater(factory),
                 teacherDailyLoad(factory),
                 classDailyLoad(factory),
+                classMainDailyLimit(factory),
                 teacherLunchBridge(factory),
                 teacherGap(factory),
+                subjectSequence(factory),
                 sameCourseHalfDaySplit(factory),
 
                 // 中国教育场景专用约束
@@ -48,7 +56,7 @@ public class TimetableConstraintProvider implements ConstraintProvider {
                 chineseConstraints.afternoonFatigueAvoidance(factory),
                 chineseConstraints.laboratoryRoomRequirement(factory),
                 chineseConstraints.sameSubjectPreparationTimeGap(factory),
-                chineseConstraints.teacherDailyLoadVarianceMinimization(factory),
+                teacherDailyLoadVariance(factory),
                 chineseConstraints.walkingClassTimeAlignment(factory),
         };
     }
@@ -110,9 +118,61 @@ public class TimetableConstraintProvider implements ConstraintProvider {
 
     Constraint spreadSameCourse(ConstraintFactory factory) {
         return factory.forEachUniquePair(LessonAssignment.class)
-                .filter(LessonAssignment::sameClassSubjectDay)
-                .penalize(HardSoftScore.ONE_SOFT, (left, right) -> 4)
+                .filter((left, right) -> left.spreadSameCoursePenalty(right) > 0)
+                .penalize(HardSoftScore.ONE_SOFT, LessonAssignment::spreadSameCoursePenalty)
                 .asConstraint("Spread same course");
+    }
+
+    Constraint subjectDailyLimit(ConstraintFactory factory) {
+        return factory.forEach(LessonAssignment.class)
+                .filter(lesson -> lesson.getTimeSlot() != null && lesson.getSubjectDailyMax() > 0)
+                .groupBy(LessonAssignment::classSubjectDayKey,
+                        LessonAssignment::getSubjectDailyMax,
+                        ConstraintCollectors.count())
+                .filter((key, max, count) -> key != null && count > max)
+                .penalize(HardSoftScore.ONE_HARD, (key, max, count) -> count - max)
+                .asConstraint("Subject daily limit");
+    }
+
+    Constraint teacherWeeklyLimit(ConstraintFactory factory) {
+        return factory.forEach(LessonAssignment.class)
+                .filter(lesson -> lesson.getTimeSlot() != null)
+                .flatten(LessonAssignment::getTeacherConstraintRefs)
+                .filter((lesson, ref) -> hasTeacherRef(ref) && ref.getWeeklyMax() > 0)
+                .groupBy((lesson, ref) -> ref.getTeacherId(),
+                        (lesson, ref) -> ref.getWeeklyMax(),
+                        ConstraintCollectors.countBi())
+                .filter((teacherId, max, count) -> teacherId != null && count > max)
+                .penalize(HardSoftScore.ONE_HARD, (teacherId, max, count) -> count.longValue() - max)
+                .asConstraint("Teacher weekly limit");
+    }
+
+    Constraint teacherMaxDaysPerWeek(ConstraintFactory factory) {
+        return factory.forEach(LessonAssignment.class)
+                .filter(lesson -> lesson.getTimeSlot() != null)
+                .flatten(LessonAssignment::getTeacherConstraintRefs)
+                .filter((lesson, ref) -> hasTeacherRef(ref) && ref.getMaxDays() > 0)
+                .groupBy((lesson, ref) -> ref.getTeacherId(),
+                        (lesson, ref) -> ref.getMaxDays(),
+                        ConstraintCollectors.countDistinct((lesson, ref) -> lesson.getTimeSlot().getWeekday()))
+                .filter((teacherId, max, count) -> teacherId != null && count > max)
+                .penalize(HardSoftScore.ONE_HARD, (teacherId, max, count) -> count.longValue() - max)
+                .asConstraint("Teacher max days per week");
+    }
+
+    Constraint teacherMutualExclusion(ConstraintFactory factory) {
+        return factory.forEachUniquePair(LessonAssignment.class,
+                        Joiners.equal(LessonAssignment::getTimeSlot))
+                .filter((left, right) -> left.getTimeSlot() != null && left.sharesMutualExclusionGroup(right))
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Teacher mutual exclusion");
+    }
+
+    Constraint subjectNotSameDay(ConstraintFactory factory) {
+        return factory.forEachUniquePair(LessonAssignment.class)
+                .filter((left, right) -> left.violatesNotSameDay(right) || right.violatesNotSameDay(left))
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Subject not same day");
     }
 
     Constraint avoidAdjacentSameCourse(ConstraintFactory factory) {
@@ -138,9 +198,13 @@ public class TimetableConstraintProvider implements ConstraintProvider {
 
     Constraint teacherDailyLoad(ConstraintFactory factory) {
         return factory.forEachUniquePair(LessonAssignment.class)
-                .filter(LessonAssignment::sameTeacherDay)
-                .penalize(HardSoftScore.ONE_SOFT)
+                .filter((left, right) -> left.sameTeacherDay(right) && teacherLoadBalancePairWeight(left, right) > 0)
+                .penalize(HardSoftScore.ONE_SOFT, (left, right) -> teacherLoadBalancePairWeight(left, right))
                 .asConstraint("Teacher daily load");
+    }
+
+    Constraint teacherDailyLoadVariance(ConstraintFactory factory) {
+        return chineseConstraints.teacherDailyLoadVarianceMinimization(factory);
     }
 
     Constraint classDailyLoad(ConstraintFactory factory) {
@@ -153,6 +217,19 @@ public class TimetableConstraintProvider implements ConstraintProvider {
                 .asConstraint("Class daily load");
     }
 
+    Constraint classMainDailyLimit(ConstraintFactory factory) {
+        return factory.forEach(LessonAssignment.class)
+                .filter(lesson -> lesson.getTimeSlot() != null
+                        && lesson.getClassMainDailyMax() > 0
+                        && lesson.getSubjectPriority() >= 80)
+                .groupBy(lesson -> lesson.getClassId() + "|" + lesson.getTimeSlot().getWeekday(),
+                        LessonAssignment::getClassMainDailyMax,
+                        ConstraintCollectors.count())
+                .filter((key, max, count) -> count > max)
+                .penalize(HardSoftScore.ONE_SOFT, (key, max, count) -> count - max)
+                .asConstraint("Class main subject daily limit");
+    }
+
     Constraint teacherLunchBridge(ConstraintFactory factory) {
         return factory.forEachUniquePair(LessonAssignment.class)
                 .filter(TimetableConstraintProvider::isTeacherLunchBridge)
@@ -163,8 +240,19 @@ public class TimetableConstraintProvider implements ConstraintProvider {
     Constraint teacherGap(ConstraintFactory factory) {
         return factory.forEachUniquePair(LessonAssignment.class)
                 .filter((left, right) -> teacherGapPenalty(left, right) > 0)
-                .penalize(HardSoftScore.ONE_SOFT, TimetableConstraintProvider::teacherGapPenalty)
+                .penalize(HardSoftScore.ONE_SOFT, (left, right) -> {
+                    int weight = Math.max(left.getTeacherGapWeight(), right.getTeacherGapWeight());
+                    return teacherGapPenalty(left, right) * Math.max(1, weight);
+                })
                 .asConstraint("Teacher gap");
+    }
+
+    Constraint subjectSequence(ConstraintFactory factory) {
+        return factory.forEachUniquePair(LessonAssignment.class)
+                .filter((left, right) -> left.subjectSequencePenalty(right) + right.subjectSequencePenalty(left) > 0)
+                .penalize(HardSoftScore.ONE_SOFT,
+                        (left, right) -> left.subjectSequencePenalty(right) + right.subjectSequencePenalty(left))
+                .asConstraint("Subject sequence");
     }
 
     Constraint sameCourseHalfDaySplit(ConstraintFactory factory) {
@@ -187,6 +275,14 @@ public class TimetableConstraintProvider implements ConstraintProvider {
         }
         int gap = Math.abs(left.getTimeSlot().getLessonIndex() - right.getTimeSlot().getLessonIndex()) - 1;
         return Math.max(0, gap * 2);
+    }
+
+    private static int teacherLoadBalancePairWeight(LessonAssignment left, LessonAssignment right) {
+        return Math.max(left.getTeacherLoadBalanceWeight(), right.getTeacherLoadBalanceWeight());
+    }
+
+    private static boolean hasTeacherRef(LessonAssignment.TeacherConstraintRef ref) {
+        return ref != null && ref.getTeacherId() != null && !ref.getTeacherId().isBlank();
     }
 
     private static boolean isSameCourseHalfDaySplit(LessonAssignment left, LessonAssignment right) {

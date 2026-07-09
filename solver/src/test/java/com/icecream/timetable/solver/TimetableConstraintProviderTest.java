@@ -130,6 +130,74 @@ class TimetableConstraintProviderTest {
     }
 
     @Test
+    void teacherWeeklyLimitCountsSecondaryTeachersIndependently() {
+        LessonAssignment first = lesson("a", "lp1", "c1", "math", List.of("t_primary", "t_helper"), slot("1-1", 1, 1));
+        LessonAssignment second = lesson("b", "lp2", "c2", "science", List.of("t_primary", "t_helper"), slot("2-1", 2, 1));
+        setTeacherConstraintRefs(first, List.of(
+                teacherRef("t_primary", 99, 5, 1),
+                teacherRef("t_helper", 1, 5, 1)));
+        setTeacherConstraintRefs(second, List.of(
+                teacherRef("t_primary", 99, 5, 1),
+                teacherRef("t_helper", 1, 5, 1)));
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::teacherWeeklyLimit)
+                .given(first, second)
+                .penalizesBy(1);
+    }
+
+    @Test
+    void teacherMaxDaysPerWeekCountsSecondaryTeachersIndependently() {
+        LessonAssignment first = lesson("a", "lp1", "c1", "math", List.of("t_primary", "t_helper"), slot("1-1", 1, 1));
+        LessonAssignment second = lesson("b", "lp2", "c2", "science", List.of("t_primary", "t_helper"), slot("2-1", 2, 1));
+        setTeacherConstraintRefs(first, List.of(
+                teacherRef("t_primary", 99, 5, 1),
+                teacherRef("t_helper", 99, 1, 1)));
+        setTeacherConstraintRefs(second, List.of(
+                teacherRef("t_primary", 99, 5, 1),
+                teacherRef("t_helper", 99, 1, 1)));
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::teacherMaxDaysPerWeek)
+                .given(first, second)
+                .penalizesBy(1);
+    }
+
+    @Test
+    void teacherDailyLoadHonorsBalanceWeight() {
+        LessonAssignment disabledFirst = lesson("a", "lp1", "c1", "math", List.of("t1"), slot("1-1", 1, 1));
+        LessonAssignment disabledSecond = lesson("b", "lp2", "c2", "science", List.of("t1"), slot("1-2", 1, 2));
+        disabledFirst.setTeacherLoadBalanceWeight(0);
+        disabledSecond.setTeacherLoadBalanceWeight(0);
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::teacherDailyLoad)
+                .given(disabledFirst, disabledSecond)
+                .hasNoImpact();
+
+        LessonAssignment weightedFirst = lesson("c", "lp3", "c3", "math", List.of("t1"), slot("1-1", 1, 1));
+        LessonAssignment weightedSecond = lesson("d", "lp4", "c4", "science", List.of("t1"), slot("1-2", 1, 2));
+        weightedFirst.setTeacherLoadBalanceWeight(3);
+        weightedSecond.setTeacherLoadBalanceWeight(3);
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::teacherDailyLoad)
+                .given(weightedFirst, weightedSecond)
+                .penalizesBy(3);
+    }
+
+    @Test
+    void teacherDailyLoadVarianceHonorsBalanceWeight() {
+        List<LessonAssignment> disabled = sameDayTeacherLessons("disabled", "t1", 0);
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::teacherDailyLoadVariance)
+                .given(disabled.toArray())
+                .hasNoImpact();
+
+        List<LessonAssignment> weighted = sameDayTeacherLessons("weighted", "t1", 3);
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::teacherDailyLoadVariance)
+                .given(weighted.toArray())
+                .penalizesBy(6);
+    }
+
+    @Test
     void sameCourseHalfDaySplitPenalizesSameClassSubjectAcrossMorningAndAfternoon() {
         LessonAssignment morning = lesson("a", "lp1", "c1", "math", List.of("t1"), slot("1-2", 1, 2, true));
         LessonAssignment afternoon = lesson("b", "lp1", "c1", "math", List.of("t2"), slot("1-5", 1, 5, false));
@@ -152,6 +220,38 @@ class TimetableConstraintProviderTest {
         assignment.setTimeSlot(timeSlot);
         assignment.setRoom(room("__NONE__", true));
         return assignment;
+    }
+
+    private static List<LessonAssignment> sameDayTeacherLessons(String prefix, String teacherId, int weight) {
+        return List.of(
+                weightedLesson(prefix + "-1", "lp1", "c1", teacherId, slot("1-1", 1, 1), weight),
+                weightedLesson(prefix + "-2", "lp2", "c2", teacherId, slot("1-2", 1, 2), weight),
+                weightedLesson(prefix + "-3", "lp3", "c3", teacherId, slot("1-3", 1, 3), weight),
+                weightedLesson(prefix + "-4", "lp4", "c4", teacherId, slot("1-4", 1, 4), weight),
+                weightedLesson(prefix + "-5", "lp5", "c5", teacherId, slot("1-5", 1, 5), weight));
+    }
+
+    private static LessonAssignment weightedLesson(String id, String planId, String classId, String teacherId,
+                                                   TimeSlot slot, int weight) {
+        LessonAssignment assignment = lesson(id, planId, classId, "math", List.of(teacherId), slot);
+        assignment.setTeacherLoadBalanceWeight(weight);
+        setTeacherConstraintRefs(assignment, List.of(teacherRef(teacherId, 99, 5, weight)));
+        return assignment;
+    }
+
+    private static LessonAssignment.TeacherConstraintRef teacherRef(String teacherId, int weeklyMax,
+                                                                    int maxDays, int loadBalanceWeight) {
+        LessonAssignment.TeacherConstraintRef ref = new LessonAssignment.TeacherConstraintRef();
+        ref.setTeacherId(teacherId);
+        ref.setWeeklyMax(weeklyMax);
+        ref.setMaxDays(maxDays);
+        ref.setLoadBalanceWeight(loadBalanceWeight);
+        return ref;
+    }
+
+    private static void setTeacherConstraintRefs(LessonAssignment assignment,
+                                                 List<LessonAssignment.TeacherConstraintRef> refs) {
+        assignment.setTeacherConstraintRefs(refs);
     }
 
     private static TimeSlot slot(String id, int weekday, int lessonIndex) {

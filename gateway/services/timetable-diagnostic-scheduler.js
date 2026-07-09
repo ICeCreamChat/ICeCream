@@ -119,7 +119,9 @@ function isMainSubject(subject = {}, subjectId = '', morningSubjects = new Set()
     return /\b(main|core|chinese|math|english|language)\b|语文|数学|英语|外语|主科/.test(subjectProfile(subject, subjectId));
 }
 
-function prefersLaterSubject(subject = {}, subjectId = '') {
+function prefersLaterSubject(subject = {}, subjectId = '', afternoonSubjects = new Set()) {
+    if (afternoonSubjects.has(subjectId)) return true;
+    if (afternoonSubjects.size > 0) return false;
     return /\b(pe|sport|physical|music|art|labor|lab|experiment)\b|体育|美术|音乐|劳动|实验|信息/.test(subjectProfile(subject, subjectId));
 }
 
@@ -197,10 +199,23 @@ function getExistingAdjacentPenalty(slots, task, day, period, blockSize) {
     return penalty;
 }
 
+function courseIntervalPenalty(project, slots, task, day) {
+    const gap = Number.parseInt(project.rules?.softRules?.spreadSubjectGaps?.[task.subjectId], 10) || 0;
+    if (gap <= 1) return 0;
+    let penalty = 0;
+    for (const slot of slots) {
+        if (slot.classId !== task.classId || slot.subjectId !== task.subjectId) continue;
+        const dayDistance = Math.abs(Number(slot.day) - Number(day));
+        if (dayDistance < gap) penalty += (gap - dayDistance) * 12;
+    }
+    return penalty;
+}
+
 function candidateScore(project, usage, slots, task, candidate) {
     const subject = project.subjects.find(item => item.id === task.subjectId);
     const subjectName = subject?.name || '';
     const morningSubjects = new Set(project.rules.softRules.morningSubjects || []);
+    const afternoonSubjects = new Set(project.rules.softRules.afternoonSubjects || []);
     const preferredPeriods = project.rules.softRules.subjectPreferredPeriods?.[task.subjectId] || null;
     const candidateKey = `${candidate.day}-${candidate.period}`;
     const preferenceWeight = Math.max(1, Math.min(100, Number.parseInt(preferredPeriods?.weight, 10) || 20));
@@ -209,7 +224,7 @@ function candidateScore(project, usage, slots, task, candidate) {
     if (morningSubjects.has(task.subjectId) || /语文|数学|英语|外语/.test(subjectName)) {
         score += isMorning(project, candidate.period) ? -18 : 14;
     }
-    if (/体育|美术|音乐|劳动|实验/.test(subjectName)) {
+    if (afternoonSubjects.has(task.subjectId) || (!afternoonSubjects.size && /体育|美术|音乐|劳动|实验/.test(subjectName))) {
         score += isMorning(project, candidate.period) ? 8 : -8;
     }
 
@@ -229,6 +244,7 @@ function candidateScore(project, usage, slots, task, candidate) {
     if (preferredPeriods?.prefer?.includes(candidateKey)) score -= preferenceWeight * 2;
     if (preferredPeriods?.avoid?.includes(candidateKey)) score += preferenceWeight * 2;
     score += getExistingAdjacentPenalty(slots, task, candidate.day, candidate.period, task.blockSize);
+    score += courseIntervalPenalty(project, slots, task, candidate.day);
     score -= (subject?.priority || 50) / 100;
 
     return score;
@@ -239,6 +255,17 @@ function teacherAdjacentPenalty(slots, teacherId, day, period, blockSize) {
     for (const slot of slots) {
         if (slot.day !== day || !slotTeacherIds(slot).includes(teacherId)) continue;
         if (Math.abs(Number(slot.period) - Number(period)) <= blockSize) penalty += 6;
+    }
+    return penalty;
+}
+
+function teacherGapPreferenceScore(slots, teacherId, day, period, blockSize) {
+    let penalty = 0;
+    for (const slot of slots) {
+        if (slot.day !== day || !slotTeacherIds(slot).includes(teacherId)) continue;
+        const distance = Math.abs(Number(slot.period) - Number(period));
+        if (distance === 0) continue;
+        penalty += distance <= blockSize ? -4 : Math.min(18, (distance - 1) * 4);
     }
     return penalty;
 }
@@ -259,15 +286,17 @@ function reservedPreferredSlotPenalty(project, task, candidateKey) {
 function candidateScoreV2(project, usage, slots, task, candidate) {
     const subject = project.subjects.find(item => item.id === task.subjectId);
     const morningSubjects = new Set(project.rules.softRules.morningSubjects || []);
+    const afternoonSubjects = new Set(project.rules.softRules.afternoonSubjects || []);
     const preferredPeriods = project.rules.softRules.subjectPreferredPeriods?.[task.subjectId] || null;
     const candidateKey = `${candidate.day}-${candidate.period}`;
     const preferenceWeight = Math.max(1, Math.min(100, Number.parseInt(preferredPeriods?.weight, 10) || 20));
+    const teacherGapWeight = Number.parseInt(project.rules.softRules.teacherGapWeight, 10) || 0;
     let score = candidate.day * 0.2 + candidate.period * 0.1;
 
     if (isMainSubject(subject, task.subjectId, morningSubjects)) {
         score += isMorning(project, candidate.period) ? -18 : 14;
     }
-    if (prefersLaterSubject(subject, task.subjectId)) {
+    if (prefersLaterSubject(subject, task.subjectId, afternoonSubjects)) {
         score += isMorning(project, candidate.period) ? 8 : -8;
     }
 
@@ -277,7 +306,9 @@ function candidateScoreV2(project, usage, slots, task, candidate) {
     }
     for (const teacherId of slotTeacherIds(task)) {
         score += (usage.teacherDay.get(`${teacherId}:${candidate.day}`) || 0) * 2;
-        score += teacherAdjacentPenalty(slots, teacherId, candidate.day, candidate.period, task.blockSize);
+        score += teacherGapWeight > 0
+            ? teacherGapPreferenceScore(slots, teacherId, candidate.day, candidate.period, task.blockSize) * teacherGapWeight
+            : teacherAdjacentPenalty(slots, teacherId, candidate.day, candidate.period, task.blockSize);
         const limit = project.rules.softRules.teacherLimits?.[teacherId]?.daily;
         if (Number.isInteger(limit) && (usage.teacherDay.get(`${teacherId}:${candidate.day}`) || 0) >= limit) {
             score += 60;
@@ -287,6 +318,7 @@ function candidateScoreV2(project, usage, slots, task, candidate) {
     if (preferredPeriods?.avoid?.includes(candidateKey)) score += preferenceWeight * 2;
     score += reservedPreferredSlotPenalty(project, task, candidateKey);
     score += getExistingAdjacentPenalty(slots, task, candidate.day, candidate.period, task.blockSize);
+    score += courseIntervalPenalty(project, slots, task, candidate.day);
     score -= (subject?.priority || 50) / 100;
 
     return score;
@@ -385,6 +417,7 @@ function softRuleChecks(project, usage, task, candidate) {
     const softRules = project.rules?.softRules || {};
     const subject = project.subjects.find(item => item.id === task.subjectId);
     const morningSubjects = new Set(softRules.morningSubjects || []);
+    const afternoonSubjects = new Set(softRules.afternoonSubjects || []);
     const preferredPeriods = softRules.subjectPreferredPeriods?.[task.subjectId] || null;
     const candidateKeys = candidateBlockKeys(task, candidate);
     const checks = [];
@@ -399,11 +432,32 @@ function softRuleChecks(project, usage, task, candidate) {
         });
     }
 
+    if (afternoonSubjects.has(task.subjectId)) {
+        checks.push({
+            code: 'afternoon_subject',
+            weight: 80,
+            violated: candidateKeys.some(key => isMorning(project, Number(key.split('-')[1]))),
+        });
+    }
+
     if ((softRules.spreadSubjects || []).includes(task.subjectId)) {
         checks.push({
             code: 'subject_spread',
             weight: 70,
             violated: (usage.classSubjectDay.get(`${task.classId}:${task.subjectId}:${candidate.day}`) || 0) > 0,
+        });
+    }
+
+    const minGapDays = Number.parseInt(softRules.spreadSubjectGaps?.[task.subjectId], 10) || 0;
+    if (minGapDays > 1) {
+        checks.push({
+            code: 'course_interval',
+            weight: 75,
+            violated: (usage.entries || []).some(slot => (
+                slot.classId === task.classId
+                && slot.subjectId === task.subjectId
+                && Math.abs(Number(slot.day) - Number(candidate.day)) < minGapDays
+            )),
         });
     }
 
@@ -492,6 +546,21 @@ function buildRoomCampusMap(project = {}) {
     return new Map((project.rooms || []).map(room => [room.id, room.campusId || '']));
 }
 
+function roomRequirementForSubject(project = {}, subjectId = '') {
+    const rule = project.rules?.hardRules?.roomRequirements?.[subjectId] || {};
+    const roomIds = [...new Set(rule.roomIds || [])];
+    const requiredTags = [...new Set(rule.requiredTags || [])];
+    if (requiredTags.length) {
+        for (const room of project.rooms || []) {
+            const tags = new Set(room.tags || []);
+            if (requiredTags.every(tag => tags.has(tag)) && room.id && !roomIds.includes(room.id)) {
+                roomIds.push(room.id);
+            }
+        }
+    }
+    return { roomIds, requiredTags };
+}
+
 function taskMetadataForPlan(project = {}, plan = null, overrides = {}) {
     const roomCampus = overrides.roomCampus || buildRoomCampusMap(project);
     const classId = overrides.classId || plan?.classId || null;
@@ -517,11 +586,21 @@ function taskMetadataForPlan(project = {}, plan = null, overrides = {}) {
         || project.classes?.find(item => item.id === classId)?.campusId
         || project.teachers?.find(item => item.id === teacherId)?.campusId
         || '';
+    const ruleRoomRequirement = roomRequirementForSubject(project, plan?.subjectId || '');
+    const allowedRoomIds = [...new Set([
+        ...(plan?.allowedRoomIds || []),
+        ...ruleRoomRequirement.roomIds,
+    ].filter(Boolean))];
+    const planRequirement = plan?.roomRequirement || { preferredRoomIds: [], allowedRoomIds: [], requiredTags: [] };
     return {
         teacherIds,
         roomId,
-        allowedRoomIds: plan?.allowedRoomIds || [],
-        roomRequirement: plan?.roomRequirement || { preferredRoomIds: [], allowedRoomIds: [], requiredTags: [] },
+        allowedRoomIds,
+        roomRequirement: {
+            preferredRoomIds: planRequirement.preferredRoomIds || [],
+            allowedRoomIds: [...new Set([...(planRequirement.allowedRoomIds || []), ...ruleRoomRequirement.roomIds])],
+            requiredTags: [...new Set([...(planRequirement.requiredTags || []), ...ruleRoomRequirement.requiredTags])],
+        },
         weekPattern: overrides.weekPattern || plan?.weekPattern || 'every',
         campusId,
         roomCampus,
@@ -641,6 +720,13 @@ function hasSimpleEdgeColoringShape(project) {
     if ((project.schedule?.slots || []).some(slot => slot.locked || slot.manuallyAdjusted)) return false;
     if (Object.keys(project.rules?.hardRules?.teacherUnavailable || {}).length > 0) return false;
     if (Object.keys(project.rules?.hardRules?.classUnavailable || {}).length > 0) return false;
+    if ((project.rules?.hardRules?.globalUnavailable || []).length > 0) return false;
+    if (Object.keys(project.rules?.hardRules?.subjectDailyLimit || {}).length > 0) return false;
+    if (Object.keys(project.rules?.hardRules?.teacherWeeklyLimit || {}).length > 0) return false;
+    if (Object.keys(project.rules?.hardRules?.teacherMaxDaysPerWeek || {}).length > 0) return false;
+    if ((project.rules?.hardRules?.teacherMutualExclusion || []).length > 0) return false;
+    if ((project.rules?.hardRules?.subjectNotSameDay || []).length > 0) return false;
+    if (Object.keys(project.rules?.hardRules?.roomRequirements || {}).length > 0) return false;
     if ((project.teachers || []).some(teacher => (teacher.unavailableSlots || []).length > 0)) return false;
     if ((project.lessonPlans || []).some(plan => slotTeacherIds(plan).length !== 1)) return false;
     if ((project.lessonPlans || []).some(plan => plan.roomId || (plan.allowedRoomIds || []).length > 0)) return false;
@@ -656,6 +742,7 @@ function hasSimpleEdgeColoringShape(project) {
 function taskSlotAffinity(project, task, day, period) {
     const subject = project.subjects.find(item => item.id === task.subjectId);
     const morningSubjects = new Set(project.rules.softRules.morningSubjects || []);
+    const afternoonSubjects = new Set(project.rules.softRules.afternoonSubjects || []);
     const preferred = project.rules.softRules.subjectPreferredPeriods?.[task.subjectId] || null;
     const key = `${day}-${period}`;
     const morning = isMorning(project, period);
@@ -664,7 +751,7 @@ function taskSlotAffinity(project, task, day, period) {
     if (isMainSubject(subject, task.subjectId, morningSubjects)) {
         affinity += morning ? 18 : -14;
     }
-    if (prefersLaterSubject(subject, task.subjectId)) {
+    if (prefersLaterSubject(subject, task.subjectId, afternoonSubjects)) {
         affinity += morning ? -8 : 8;
     }
     if (preferred?.prefer?.includes(key)) affinity += Math.max(1, Math.min(100, preferred.weight || 20));

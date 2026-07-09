@@ -33,6 +33,17 @@ public class LessonAssignment {
     private int subjectPriority = 50;
     private boolean preferMorning;
     private boolean preferLater;
+    private int subjectDailyMax;
+    private int teacherWeeklyMax;
+    private int teacherMaxDays;
+    private List<String> mutualExclusionGroups = new ArrayList<>();
+    private List<String> notSameDaySubjectIds = new ArrayList<>();
+    private List<SubjectSequenceRule> sequenceRules = new ArrayList<>();
+    private int spreadMinGapDays = 1;
+    private int classMainDailyMax;
+    private int teacherGapWeight;
+    private int teacherLoadBalanceWeight = 1;
+    private List<TeacherConstraintRef> teacherConstraintRefs = new ArrayList<>();
 
     @PlanningVariable(valueRangeProviderRefs = "timeSlotRange")
     @JsonIdentityReference(alwaysAsId = true)
@@ -200,6 +211,112 @@ public class LessonAssignment {
         this.preferLater = preferLater;
     }
 
+    public int getSubjectDailyMax() {
+        return subjectDailyMax;
+    }
+
+    public void setSubjectDailyMax(int subjectDailyMax) {
+        this.subjectDailyMax = Math.max(0, subjectDailyMax);
+    }
+
+    public int getTeacherWeeklyMax() {
+        return teacherWeeklyMax;
+    }
+
+    public void setTeacherWeeklyMax(int teacherWeeklyMax) {
+        this.teacherWeeklyMax = Math.max(0, teacherWeeklyMax);
+    }
+
+    public int getTeacherMaxDays() {
+        return teacherMaxDays;
+    }
+
+    public void setTeacherMaxDays(int teacherMaxDays) {
+        this.teacherMaxDays = Math.max(0, teacherMaxDays);
+    }
+
+    public List<String> getMutualExclusionGroups() {
+        return mutualExclusionGroups == null ? List.of() : mutualExclusionGroups;
+    }
+
+    public void setMutualExclusionGroups(List<String> mutualExclusionGroups) {
+        this.mutualExclusionGroups = mutualExclusionGroups == null ? new ArrayList<>() : new ArrayList<>(mutualExclusionGroups);
+    }
+
+    public List<String> getNotSameDaySubjectIds() {
+        return notSameDaySubjectIds == null ? List.of() : notSameDaySubjectIds;
+    }
+
+    public void setNotSameDaySubjectIds(List<String> notSameDaySubjectIds) {
+        this.notSameDaySubjectIds = notSameDaySubjectIds == null ? new ArrayList<>() : new ArrayList<>(notSameDaySubjectIds);
+    }
+
+    public List<SubjectSequenceRule> getSequenceRules() {
+        return sequenceRules == null ? List.of() : sequenceRules;
+    }
+
+    public void setSequenceRules(List<SubjectSequenceRule> sequenceRules) {
+        this.sequenceRules = sequenceRules == null ? new ArrayList<>() : new ArrayList<>(sequenceRules);
+    }
+
+    public int getSpreadMinGapDays() {
+        return Math.max(1, spreadMinGapDays);
+    }
+
+    public void setSpreadMinGapDays(int spreadMinGapDays) {
+        this.spreadMinGapDays = Math.max(1, spreadMinGapDays);
+    }
+
+    public int getClassMainDailyMax() {
+        return classMainDailyMax;
+    }
+
+    public void setClassMainDailyMax(int classMainDailyMax) {
+        this.classMainDailyMax = Math.max(0, classMainDailyMax);
+    }
+
+    public int getTeacherGapWeight() {
+        return teacherGapWeight;
+    }
+
+    public void setTeacherGapWeight(int teacherGapWeight) {
+        this.teacherGapWeight = Math.max(0, teacherGapWeight);
+    }
+
+    public int getTeacherLoadBalanceWeight() {
+        return Math.max(0, teacherLoadBalanceWeight);
+    }
+
+    public void setTeacherLoadBalanceWeight(int teacherLoadBalanceWeight) {
+        this.teacherLoadBalanceWeight = Math.max(0, teacherLoadBalanceWeight);
+    }
+
+    public List<TeacherConstraintRef> getTeacherConstraintRefs() {
+        if (teacherConstraintRefs != null && !teacherConstraintRefs.isEmpty()) {
+            return teacherConstraintRefs;
+        }
+        List<TeacherConstraintRef> refs = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (String id : getTeacherIds()) {
+            if (!hasText(id) || !seen.add(id)) {
+                continue;
+            }
+            TeacherConstraintRef ref = new TeacherConstraintRef();
+            ref.setTeacherId(id);
+            ref.setWeeklyMax(teacherWeeklyMax);
+            ref.setMaxDays(teacherMaxDays);
+            ref.setLoadBalanceWeight(getTeacherLoadBalanceWeight());
+            refs.add(ref);
+        }
+        return refs;
+    }
+
+    public void setTeacherConstraintRefs(List<TeacherConstraintRef> teacherConstraintRefs) {
+        this.teacherConstraintRefs = teacherConstraintRefs == null
+                ? new ArrayList<>()
+                : new ArrayList<>(teacherConstraintRefs);
+    }
+
     public TimeSlot getTimeSlot() {
         return timeSlot;
     }
@@ -274,8 +391,44 @@ public class LessonAssignment {
                 && !sameBlockAs(other);
     }
 
+    public String classSubjectDayKey() {
+        if (timeSlot == null) {
+            return null;
+        }
+        return classId + "|" + subjectId + "|" + timeSlot.getWeekday();
+    }
+
+    public String teacherWeekKey() {
+        return hasText(teacherId) ? teacherId : null;
+    }
+
+    public String teacherDayKey() {
+        if (timeSlot == null || !hasText(teacherId)) {
+            return null;
+        }
+        return teacherId + "|" + timeSlot.getWeekday();
+    }
+
     public boolean adjacentSameClassSubject(LessonAssignment other) {
         return sameClassSubjectDay(other) && timeSlot.isAdjacentTo(other.getTimeSlot());
+    }
+
+    public int spreadSameCoursePenalty(LessonAssignment other) {
+        if (other == null
+                || timeSlot == null
+                || other.getTimeSlot() == null
+                || !sharesClassWith(other)
+                || !hasText(subjectId)
+                || !subjectId.equals(other.getSubjectId())
+                || sameBlockAs(other)) {
+            return 0;
+        }
+        int minGap = Math.max(getSpreadMinGapDays(), other.getSpreadMinGapDays());
+        int dayDistance = Math.abs(timeSlot.getWeekday() - other.getTimeSlot().getWeekday());
+        if (dayDistance >= minGap) {
+            return 0;
+        }
+        return Math.max(1, minGap - dayDistance) * 4;
     }
 
     public boolean sameTeacherDay(LessonAssignment other) {
@@ -284,6 +437,50 @@ public class LessonAssignment {
                 && other.getTimeSlot() != null
                 && timeSlot.getWeekday() == other.getTimeSlot().getWeekday()
                 && sharesTeacherWith(other);
+    }
+
+    public boolean sharesMutualExclusionGroup(LessonAssignment other) {
+        if (other == null) {
+            return false;
+        }
+        Set<String> mine = new HashSet<>(getMutualExclusionGroups());
+        mine.remove("");
+        mine.remove(null);
+        mine.retainAll(other.getMutualExclusionGroups());
+        return !mine.isEmpty();
+    }
+
+    public boolean violatesNotSameDay(LessonAssignment other) {
+        return other != null
+                && timeSlot != null
+                && other.getTimeSlot() != null
+                && timeSlot.getWeekday() == other.getTimeSlot().getWeekday()
+                && sharesClassWith(other)
+                && getNotSameDaySubjectIds().contains(other.getSubjectId());
+    }
+
+    public int subjectSequencePenalty(LessonAssignment other) {
+        if (other == null
+                || timeSlot == null
+                || other.getTimeSlot() == null
+                || timeSlot.getWeekday() != other.getTimeSlot().getWeekday()
+                || !sharesClassWith(other)) {
+            return 0;
+        }
+        int penalty = 0;
+        for (SubjectSequenceRule rule : getSequenceRules()) {
+            if (rule == null
+                    || !hasText(subjectId)
+                    || !hasText(other.getSubjectId())
+                    || !subjectId.equals(rule.getBeforeSubjectId())
+                    || !other.getSubjectId().equals(rule.getAfterSubjectId())) {
+                continue;
+            }
+            if (timeSlot.getLessonIndex() > other.getTimeSlot().getLessonIndex()) {
+                penalty += Math.max(1, rule.getWeight());
+            }
+        }
+        return penalty;
     }
 
     public int earlierSubjectPenalty() {
@@ -302,5 +499,80 @@ public class LessonAssignment {
 
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    public static class SubjectSequenceRule {
+        private String beforeSubjectId;
+        private String afterSubjectId;
+        private int weight = 1;
+
+        public SubjectSequenceRule() {
+        }
+
+        public String getBeforeSubjectId() {
+            return beforeSubjectId;
+        }
+
+        public void setBeforeSubjectId(String beforeSubjectId) {
+            this.beforeSubjectId = beforeSubjectId;
+        }
+
+        public String getAfterSubjectId() {
+            return afterSubjectId;
+        }
+
+        public void setAfterSubjectId(String afterSubjectId) {
+            this.afterSubjectId = afterSubjectId;
+        }
+
+        public int getWeight() {
+            return Math.max(1, weight);
+        }
+
+        public void setWeight(int weight) {
+            this.weight = Math.max(1, weight);
+        }
+    }
+
+    public static class TeacherConstraintRef {
+        private String teacherId;
+        private int weeklyMax;
+        private int maxDays;
+        private int loadBalanceWeight = 1;
+
+        public TeacherConstraintRef() {
+        }
+
+        public String getTeacherId() {
+            return teacherId;
+        }
+
+        public void setTeacherId(String teacherId) {
+            this.teacherId = teacherId;
+        }
+
+        public int getWeeklyMax() {
+            return Math.max(0, weeklyMax);
+        }
+
+        public void setWeeklyMax(int weeklyMax) {
+            this.weeklyMax = Math.max(0, weeklyMax);
+        }
+
+        public int getMaxDays() {
+            return Math.max(0, maxDays);
+        }
+
+        public void setMaxDays(int maxDays) {
+            this.maxDays = Math.max(0, maxDays);
+        }
+
+        public int getLoadBalanceWeight() {
+            return Math.max(0, loadBalanceWeight);
+        }
+
+        public void setLoadBalanceWeight(int loadBalanceWeight) {
+            this.loadBalanceWeight = Math.max(0, loadBalanceWeight);
+        }
     }
 }

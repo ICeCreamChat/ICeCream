@@ -193,6 +193,31 @@ export function classUnavailable(project, classId) {
     return new Set(project.rules?.hardRules?.classUnavailable?.[classId] || []);
 }
 
+function mutualGroupIdsForTeachers(project = {}, teacherIds = []) {
+    const teacherSet = new Set(teacherIds);
+    return (project.rules?.hardRules?.teacherMutualExclusion || [])
+        .map((group, index) => ({ id: `mutual_${index + 1}`, teacherIds: group.teacherIds || [] }))
+        .filter(group => group.teacherIds.some(teacherId => teacherSet.has(teacherId)))
+        .map(group => group.id);
+}
+
+function sharesMutualExclusionGroup(project = {}, leftTeacherIds = [], rightTeacherIds = []) {
+    const left = new Set(mutualGroupIdsForTeachers(project, leftTeacherIds));
+    return mutualGroupIdsForTeachers(project, rightTeacherIds).some(groupId => left.has(groupId));
+}
+
+function notSameDaySubjectIds(project = {}, subjectId = '', classId = '') {
+    const result = [];
+    for (const pair of project.rules?.hardRules?.subjectNotSameDay || []) {
+        const subjects = pair.subjectIds || [];
+        const classes = pair.classIds || [];
+        if (!subjects.includes(subjectId)) continue;
+        if (classes.length && !classes.includes(classId)) continue;
+        subjects.filter(id => id !== subjectId).forEach(id => result.push(id));
+    }
+    return new Set(result);
+}
+
 export function canUseSlot(project, usage, slot, options = {}) {
     const key = slotKey(slot.day, slot.period);
     const teacherIds = slotTeacherIds(slot);
@@ -204,11 +229,53 @@ export function canUseSlot(project, usage, slot, options = {}) {
     if (!isActiveTimetableSlot(project, slot.day, slot.period)) {
         return { ok: false, reason: '节次超出当前作息范围' };
     }
+    if ((project.rules?.hardRules?.globalUnavailable || []).includes(key)) {
+        return { ok: false, reason: '全校不可排时间' };
+    }
     if (teacherIds.some(teacherId => teacherUnavailable(project, teacherId).has(key))) {
         return { ok: false, reason: '教师不可排时间' };
     }
     if (classIds.some(classId => classUnavailable(project, classId).has(key))) {
         return { ok: false, reason: '班级不可排时间' };
+    }
+    const subjectDailyLimit = Number.parseInt(project.rules?.hardRules?.subjectDailyLimit?.[slot.subjectId], 10);
+    if (Number.isInteger(subjectDailyLimit) && subjectDailyLimit > 0) {
+        for (const classId of classIds) {
+            const count = (usage.entries || []).filter(entry => (
+                Number(entry.day) === Number(slot.day)
+                && slotClassIds(entry).includes(classId)
+                && entry.subjectId === slot.subjectId
+            )).length;
+            if (count >= subjectDailyLimit) return { ok: false, reason: '课程每日上限' };
+        }
+    }
+    for (const teacherId of teacherIds) {
+        const weeklyLimit = Number.parseInt(project.rules?.hardRules?.teacherWeeklyLimit?.[teacherId], 10);
+        if (Number.isInteger(weeklyLimit) && weeklyLimit > 0) {
+            const count = (usage.entries || []).filter(entry => slotTeacherIds(entry).includes(teacherId)).length;
+            if (count >= weeklyLimit) return { ok: false, reason: '教师每周课时上限' };
+        }
+        const maxDays = Number.parseInt(project.rules?.hardRules?.teacherMaxDaysPerWeek?.[teacherId], 10);
+        if (Number.isInteger(maxDays) && maxDays > 0) {
+            const days = new Set((usage.entries || [])
+                .filter(entry => slotTeacherIds(entry).includes(teacherId))
+                .map(entry => Number(entry.day)));
+            days.add(Number(slot.day));
+            if (days.size > maxDays) return { ok: false, reason: '教师每周授课天数上限' };
+        }
+    }
+    for (const entry of usage.entries || []) {
+        if (entryOverlaps(project, entry, slot) && sharesMutualExclusionGroup(project, slotTeacherIds(entry), teacherIds)) {
+            return { ok: false, reason: '互斥教师同节冲突' };
+        }
+        if (Number(entry.day) === Number(slot.day)) {
+            for (const classId of classIds) {
+                if (!slotClassIds(entry).includes(classId)) continue;
+                if (notSameDaySubjectIds(project, slot.subjectId, classId).has(entry.subjectId)) {
+                    return { ok: false, reason: '课程不能排在同一天' };
+                }
+            }
+        }
     }
     if (!options.ignoreTeacher) {
         for (const teacherId of teacherIds) {

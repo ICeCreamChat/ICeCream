@@ -16,6 +16,7 @@
         "test:timetable:ui-smoke": "node test/timetable-ui-smoke.mjs",
         "test:timetable:workflow-smoke": "node test/timetable-ui-workflow-smoke.mjs",
         "test:timetable:rule-review-smoke": "node test/timetable-ui-rule-review-smoke.mjs",
+        "test:timetable:ai-golden": "node scripts/run-timetable-ai-golden.js",
         "test": "node --test test/*.js"
     },
     "keywords": [

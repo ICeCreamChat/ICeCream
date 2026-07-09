@@ -1,0 +1,35 @@
+{
+  "schoolName": "History B",
+  "term": "2026",
+  "weekdays": 5,
+  "periodsPerDay": 7,
+  "activeWeekdays": [1, 2, 3, 4, 5],
+  "activePeriods": [1, 2, 3, 4, 5, 6, 7],
+  "teachers": [
+    { "id": "t_math", "name": "数学老师", "subjects": ["math"], "unavailableSlots": [] },
+    { "id": "t_pe", "name": "体育老师", "subjects": ["pe"], "unavailableSlots": [] },
+    { "id": "t_art", "name": "美术老师", "subjects": ["art"], "unavailableSlots": [] }
+  ],
+  "classes": [
+    { "id": "c1", "grade": "G8", "name": "1" },
+    { "id": "c2", "grade": "G8", "name": "2" },
+    { "id": "c3", "grade": "G8", "name": "3" },
+    { "id": "c4", "grade": "G8", "name": "4" }
+  ],
+  "subjects": [
+    { "id": "math", "name": "数学", "priority": 90, "color": "#2563eb" },
+    { "id": "pe", "name": "体育", "priority": 30, "color": "#16a34a" },
+    { "id": "art", "name": "美术", "priority": 30, "color": "#ec4899" }
+  ],
+  "lessonPlans": [
+    { "id": "lp_c1_math", "classId": "c1", "subjectId": "math", "teacherId": "t_math", "weeklyHours": 3 },
+    { "id": "lp_c1_pe", "classId": "c1", "subjectId": "pe", "teacherId": "t_pe", "weeklyHours": 1 },
+    { "id": "lp_c2_math", "classId": "c2", "subjectId": "math", "teacherId": "t_math", "weeklyHours": 3 },
+    { "id": "lp_c2_art", "classId": "c2", "subjectId": "art", "teacherId": "t_art", "weeklyHours": 1 },
+    { "id": "lp_c3_math", "classId": "c3", "subjectId": "math", "teacherId": "t_math", "weeklyHours": 3 },
+    { "id": "lp_c3_pe", "classId": "c3", "subjectId": "pe", "teacherId": "t_pe", "weeklyHours": 1 },
+    { "id": "lp_c4_math", "classId": "c4", "subjectId": "math", "teacherId": "t_math", "weeklyHours": 3 },
+    { "id": "lp_c4_art", "classId": "c4", "subjectId": "art", "teacherId": "t_art", "weeklyHours": 1 }
+  ],
+  "rules": { "hardRules": {}, "softRules": { "morningSubjects": ["math"] } }
+}

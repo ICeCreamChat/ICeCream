@@ -790,6 +790,90 @@ function normalizeSpreadSubjects(values = []) {
         : [];
 }
 
+function normalizeIntMap(raw = {}, min = 1, max = 12) {
+    const result = {};
+    for (const [key, value] of Object.entries(raw || {})) {
+        const id = cleanText(key, 80);
+        const intValue = Number.parseInt(value, 10);
+        if (!id || !Number.isInteger(intValue)) continue;
+        result[id] = Math.max(min, Math.min(max, intValue));
+    }
+    return result;
+}
+
+function normalizeIdGroupList(values = []) {
+    return (Array.isArray(values) ? values : [])
+        .map(item => {
+            const teacherIds = normalizeIdList(item?.teacherIds || item?.teachers || item);
+            return teacherIds.length >= 2 ? { teacherIds } : null;
+        })
+        .filter(Boolean);
+}
+
+function normalizeSubjectPairList(values = []) {
+    return (Array.isArray(values) ? values : [])
+        .map(item => {
+            const subjectIds = normalizeIdList(item?.subjectIds || item?.subjects || item);
+            const classIds = normalizeIdList(item?.classIds || item?.classes || []);
+            return subjectIds.length >= 2 ? { subjectIds: subjectIds.slice(0, 2), classIds } : null;
+        })
+        .filter(Boolean);
+}
+
+function normalizeRoomRequirements(raw = {}) {
+    const result = {};
+    for (const [key, value] of Object.entries(raw || {})) {
+        const subjectId = cleanText(key, 80);
+        if (!subjectId || !value) continue;
+        const roomIds = normalizeIdList(value.roomIds || value.allowedRoomIds || value.rooms || value);
+        const requiredTags = normalizeIdList(value.requiredTags || value.tags || []);
+        if (roomIds.length || requiredTags.length) {
+            result[subjectId] = {
+                roomIds,
+                ...(requiredTags.length ? { requiredTags } : {}),
+            };
+        }
+    }
+    return result;
+}
+
+function normalizeSequenceList(values = []) {
+    return (Array.isArray(values) ? values : [])
+        .map(item => {
+            const beforeSubjectId = cleanText(item?.beforeSubjectId || item?.before || item?.subjectId, 80);
+            const afterSubjectId = cleanText(item?.afterSubjectId || item?.after || item?.nextSubjectId, 80);
+            const classIds = normalizeIdList(item?.classIds || item?.classes || []);
+            const weight = intInRange(item?.weight, 1, 1, 10);
+            return beforeSubjectId && afterSubjectId && beforeSubjectId !== afterSubjectId
+                ? { beforeSubjectId, afterSubjectId, classIds, weight }
+                : null;
+        })
+        .filter(Boolean);
+}
+
+function normalizeClassDailyBalance(raw = {}) {
+    return {
+        enabled: Boolean(raw?.enabled),
+        mainSubjectDailyMax: intInRange(raw?.mainSubjectDailyMax, 0, 0, 8),
+    };
+}
+
+function normalizeTeacherLoadBalance(raw = null, legacyBalanced = true) {
+    const hasExplicitRule = raw && typeof raw === 'object' && Object.keys(raw).length > 0;
+    if (hasExplicitRule) {
+        return {
+            enabled: raw.enabled !== false,
+            weight: intInRange(raw.weight, 1, 1, 10),
+            explicit: raw.explicit !== false,
+        };
+    }
+    return {
+        enabled: legacyBalanced !== false,
+        weight: 1,
+        explicit: false,
+    };
+}
+
 function normalizeLockedSlots(values = [], enabled = false) {
     return (Array.isArray(values) ? values : [])
         .map((item, index) => ({
@@ -818,6 +902,13 @@ function normalizeRules(raw = {}, enabled = false) {
             lockedSlots: normalizeLockedSlots(hardRules.lockedSlots, enabled),
             teacherUnavailable: normalizeRuleMap(hardRules.teacherUnavailable),
             classUnavailable: normalizeRuleMap(hardRules.classUnavailable),
+            globalUnavailable: normalizeSlotList(hardRules.globalUnavailable),
+            subjectDailyLimit: normalizeIntMap(hardRules.subjectDailyLimit, 1, 8),
+            teacherWeeklyLimit: normalizeIntMap(hardRules.teacherWeeklyLimit, 1, 40),
+            teacherMaxDaysPerWeek: normalizeIntMap(hardRules.teacherMaxDaysPerWeek, 1, 7),
+            teacherMutualExclusion: normalizeIdGroupList(hardRules.teacherMutualExclusion),
+            subjectNotSameDay: normalizeSubjectPairList(hardRules.subjectNotSameDay),
+            roomRequirements: normalizeRoomRequirements(hardRules.roomRequirements),
         },
         softRules: {
             morningSubjects: Array.isArray(softRules.morningSubjects)
@@ -827,6 +918,13 @@ function normalizeRules(raw = {}, enabled = false) {
             subjectPreferredPeriods: normalizeSubjectPreferredPeriods(softRules.subjectPreferredPeriods, enabled),
             teacherLimits: normalizeTeacherLimits(softRules.teacherLimits),
             spreadSubjects: normalizeSpreadSubjects(softRules.spreadSubjects),
+            spreadSubjectGaps: normalizeIntMap(softRules.spreadSubjectGaps || softRules.spreadMinGapDays, 1, 7),
+            afternoonSubjects: normalizeIdList(softRules.afternoonSubjects),
+            subjectDailySoftLimit: normalizeIntMap(softRules.subjectDailySoftLimit, 1, 8),
+            subjectSequence: normalizeSequenceList(softRules.subjectSequence),
+            teacherGapWeight: intInRange(softRules.teacherGapWeight, 0, 0, 10),
+            classDailyBalance: normalizeClassDailyBalance(softRules.classDailyBalance),
+            teacherLoadBalance: normalizeTeacherLoadBalance(softRules.teacherLoadBalance, softRules.balancedTeacherLoad),
         },
     };
 }
@@ -1168,7 +1266,7 @@ export function normalizeTimetableProject(raw = {}) {
         campuses: enabled && Array.isArray(base.campuses)
             ? base.campuses.map(normalizeCampus)
             : [],
-        rooms: enabled && Array.isArray(base.rooms)
+        rooms: Array.isArray(base.rooms)
             ? base.rooms.map((room, index) => normalizeRoom(room, index, enabled))
             : [],
         teachingGroups: enabled && Array.isArray(base.teachingGroups)

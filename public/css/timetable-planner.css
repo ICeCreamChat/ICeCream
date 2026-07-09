@@ -682,6 +682,10 @@ button.tt-section-title {
     min-width: 0;
 }
 
+.tt-multi-select[open] {
+    z-index: 120;
+}
+
 .tt-multi-select-trigger {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto 16px;
@@ -741,7 +745,7 @@ button.tt-section-title {
     position: absolute;
     top: calc(100% + 6px);
     left: 0;
-    z-index: 30;
+    z-index: 130;
     display: grid;
     gap: var(--tt-space-sm);
     width: min(260px, calc(100vw - 32px));
@@ -1045,11 +1049,6 @@ body.light-mode .tt-range-setup-card .tt-range-summary-trigger {
 
 .tt-range-summary-detail {
     display: block;
-}
-
-.tt-range-summary-extra {
-    display: block;
-    color: color-mix(in srgb, var(--tt-muted) 82%, var(--tt-primary));
 }
 
 .tt-range-setup-card .tt-multi-select-trigger .lucide {
@@ -2632,8 +2631,10 @@ body.light-mode .tt-inspector-problem-group {
 }
 
 .tt-constraint-fulfillment-summary {
-    display: grid;
-    gap: 2px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
     padding: 8px 9px;
     border-top: 1px solid rgba(148, 163, 184, 0.12);
 }
@@ -2646,6 +2647,7 @@ body.light-mode .tt-inspector-problem-group {
 }
 
 .tt-constraint-fulfillment-summary span {
+    flex: 1 1 180px;
     color: var(--tt-muted);
     font-size: 0.7rem;
     line-height: 1.4;
@@ -2698,7 +2700,7 @@ body.light-mode .tt-inspector-problem-group {
 .tt-constraint-fulfillment-row {
     appearance: none;
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
     gap: 8px;
     align-items: center;
     min-height: 42px;
@@ -2778,11 +2780,41 @@ body.light-mode .tt-inspector-problem-group {
     justify-content: flex-end;
     gap: 5px;
     min-width: 0;
-    padding-right: 28px;
     color: var(--tt-muted);
     font-size: 0.68rem;
     line-height: 1.35;
     white-space: nowrap;
+}
+
+.tt-constraint-fulfillment-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
+    min-width: 150px;
+}
+
+.tt-constraint-fulfillment-actions .tt-btn {
+    min-height: 28px;
+    padding: 4px 8px;
+    white-space: nowrap;
+}
+
+.tt-constraint-fulfillment-actions .tt-btn--subtle {
+    border-color: rgba(148, 163, 184, 0.18);
+    background: rgba(148, 163, 184, 0.08);
+}
+
+@media (max-width: 760px) {
+    .tt-constraint-fulfillment-row {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .tt-constraint-fulfillment-meta,
+    .tt-constraint-fulfillment-actions {
+        grid-column: 1 / -1;
+        justify-content: flex-start;
+    }
 }
 
 .tt-constraint-fulfillment-meta b {
@@ -2892,6 +2924,204 @@ body.light-mode .tt-rules-setup-card .tt-rule-entry {
 
 .tt-smart-helper-entry-status {
     color: var(--tt-muted);
+}
+
+.tt-constraint-agent-panel {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid rgba(20, 184, 166, 0.2);
+    border-radius: var(--tt-radius-md);
+    background: var(--tt-bg-input);
+}
+
+.tt-constraint-agent-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+}
+
+.tt-constraint-agent-header > div {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.tt-constraint-agent-header strong {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    color: var(--tt-text);
+    font-size: 0.82rem;
+    font-weight: 900;
+}
+
+.tt-constraint-agent-header strong .lucide {
+    width: 16px;
+    height: 16px;
+    color: var(--tt-primary);
+}
+
+.tt-constraint-agent-header em {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    font-style: normal;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-constraint-agent-thread {
+    display: grid;
+    gap: 6px;
+    max-height: 168px;
+    min-width: 0;
+    overflow-y: auto;
+}
+
+.tt-constraint-agent-message {
+    display: grid;
+    gap: 3px;
+    padding: 7px 8px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-panel);
+}
+
+.tt-constraint-agent-message--user {
+    border-color: rgba(20, 184, 166, 0.24);
+    background: rgba(20, 184, 166, 0.08);
+}
+
+.tt-constraint-agent-message span {
+    color: var(--tt-muted);
+    font-size: 0.66rem;
+    font-weight: 900;
+}
+
+.tt-constraint-agent-message p {
+    margin: 0;
+    color: var(--tt-text-secondary);
+    font-size: 0.72rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+}
+
+.tt-constraint-agent-mini-cards {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.tt-constraint-agent-mini-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.tt-constraint-agent-mini-card.is-excluded {
+    border-style: dashed;
+    opacity: 0.72;
+}
+
+.tt-constraint-agent-mini-card > div {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.tt-constraint-agent-mini-card strong,
+.tt-constraint-agent-mini-card span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-constraint-agent-mini-card strong {
+    color: var(--tt-text);
+    font-size: 0.74rem;
+    font-weight: 800;
+}
+
+.tt-constraint-agent-mini-card span {
+    color: var(--tt-muted);
+    font-size: 0.66rem;
+    font-weight: 700;
+}
+
+.tt-constraint-agent-error {
+    margin: 0;
+    padding: 7px 8px;
+    border-left: 3px solid var(--tt-warning);
+    border-radius: var(--tt-radius-sm);
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--tt-text);
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
+.tt-constraint-agent-input {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.tt-constraint-agent-input span {
+    color: var(--tt-muted);
+    font-size: 0.68rem;
+    font-weight: 900;
+}
+
+.tt-constraint-agent-input textarea {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 78px;
+    padding: 9px 10px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-panel);
+    color: var(--tt-text);
+    font: inherit;
+    font-size: 0.76rem;
+    line-height: 1.45;
+    resize: vertical;
+}
+
+.tt-constraint-agent-input textarea:focus {
+    outline: none;
+    border-color: rgba(20, 184, 166, 0.42);
+    box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.1);
+}
+
+.tt-constraint-agent-actions {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.tt-constraint-agent-actions .tt-btn {
+    min-width: 0;
+    padding-inline: 8px;
+}
+
+.tt-constraint-agent-actions .tt-btn span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .tt-rules-setup-card .tt-rule-entry:hover,
@@ -3160,6 +3390,7 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 }
 
 .tt-roster-import-dialog,
+.tt-roster-issue-editor-dialog,
 .tt-period-time-dialog,
 .tt-duty-assignment-dialog,
 .tt-publish-dialog,
@@ -3181,6 +3412,21 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 
 .tt-roster-import-dialog {
     --tt-dialog-width: 1120px;
+}
+
+.tt-roster-import-dialog--review {
+    --tt-dialog-width: 1220px;
+    width: min(var(--tt-dialog-width), calc(100vw - 72px));
+    max-width: calc(100vw - 72px);
+}
+
+.tt-roster-issue-editor-overlay {
+    z-index: 90;
+}
+
+.tt-roster-issue-editor-dialog {
+    --tt-dialog-width: 560px;
+    --tt-dialog-max-height: 760px;
 }
 
 .tt-period-time-dialog {
@@ -3318,9 +3564,65 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     white-space: nowrap;
 }
 
-.tt-import-mode-tabs {
-    width: fit-content;
-    grid-template-columns: repeat(2, minmax(92px, 1fr));
+.tt-roster-import-options {
+    display: grid;
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.25fr) minmax(0, 0.9fr);
+    gap: var(--tt-space-md);
+    align-items: stretch;
+}
+
+.tt-roster-import-option {
+    display: grid;
+    align-content: start;
+    gap: var(--tt-space-sm);
+    min-width: 0;
+    padding: var(--tt-space-md);
+    background: var(--tt-bg-elevated);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+}
+
+.tt-roster-import-option.is-active {
+    border-color: rgba(8, 145, 178, 0.35);
+    box-shadow: 0 0 0 1px rgba(8, 145, 178, 0.08);
+}
+
+.tt-roster-import-option-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--tt-space-sm);
+    align-items: start;
+}
+
+.tt-roster-import-option-icon {
+    display: inline-grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    background: rgba(8, 145, 178, 0.1);
+    border: 1px solid rgba(8, 145, 178, 0.18);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-primary);
+}
+
+.tt-roster-import-option-icon .lucide {
+    width: 18px;
+    height: 18px;
+}
+
+.tt-roster-import-option h4 {
+    margin: 0;
+    color: var(--tt-text);
+    font-size: 0.92rem;
+    font-weight: 900;
+}
+
+.tt-roster-import-option p {
+    margin: 4px 0 0;
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+    font-weight: 700;
+    line-height: 1.45;
 }
 
 .tt-import-dropzone {
@@ -3339,6 +3641,12 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     transition: border-color var(--tt-transition-fast), box-shadow var(--tt-transition-fast);
 }
 
+.tt-roster-import-option .tt-import-dropzone {
+    min-height: 116px;
+    padding: var(--tt-space-md);
+}
+
+.tt-roster-import-option.is-active .tt-import-dropzone,
 .tt-import-dropzone.is-active,
 .tt-import-dropzone:hover {
     border-color: var(--tt-primary);
@@ -3367,9 +3675,41 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     cursor: pointer;
 }
 
-.tt-roster-import-dialog .tt-import-dropzone:not(.is-active),
-.tt-roster-import-dialog .tt-rule-block:not(.is-active),
-/* 已删除 .tt-rule-review-dialog 模式切换样式（旧弹窗已废弃） */
+.tt-roster-import-option .tt-import-text {
+    min-height: 146px;
+    max-height: 260px;
+}
+
+.tt-roster-import-option-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--tt-space-sm);
+}
+
+.tt-roster-import-manual-preview {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: var(--tt-space-sm);
+    background: var(--tt-bg-input);
+    border: 1px dashed var(--tt-border);
+    border-radius: var(--tt-radius-md);
+}
+
+.tt-roster-import-manual-preview span {
+    min-width: 0;
+    overflow: hidden;
+    padding: 6px 8px;
+    background: rgba(148, 163, 184, 0.08);
+    border-radius: var(--tt-radius-sm);
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    font-weight: 800;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 
 .tt-dialog-actions {
     display: flex;
@@ -3386,6 +3726,120 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     gap: var(--tt-space-sm);
 }
 
+.tt-roster-issue-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--tt-space-xs);
+    color: var(--tt-muted);
+    font-size: 0.78rem;
+    font-weight: 800;
+}
+
+.tt-roster-issue-toggle {
+    min-height: 28px;
+    padding: 0 9px;
+    border: 1px solid rgba(245, 158, 11, 0.32);
+    border-radius: var(--tt-radius-sm);
+    background: rgba(245, 158, 11, 0.08);
+    color: var(--tt-warning);
+    font: inherit;
+    cursor: pointer;
+}
+
+.tt-roster-issue-toggle:hover {
+    border-color: rgba(245, 158, 11, 0.58);
+    background: rgba(245, 158, 11, 0.14);
+}
+
+.tt-roster-issue-edit,
+.tt-roster-issue-jump {
+    appearance: none;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.tt-roster-issue-edit:hover,
+.tt-roster-issue-jump:hover {
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.56);
+}
+
+.tt-roster-issue-item span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-roster-issue-editor-context {
+    margin: 4px 0 0;
+}
+
+.tt-roster-issue-editor-summary {
+    display: grid;
+    gap: 4px;
+    padding: 10px 12px;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.24);
+    border-radius: var(--tt-radius-md);
+    color: var(--tt-warning);
+    font-size: 0.82rem;
+    line-height: 1.45;
+}
+
+.tt-roster-issue-editor-summary strong {
+    color: var(--tt-text);
+    font-size: 0.78rem;
+}
+
+.tt-roster-issue-editor-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--tt-space-sm);
+}
+
+.tt-roster-issue-editor-field {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    color: var(--tt-muted);
+    font-size: 0.74rem;
+    font-weight: 800;
+}
+
+.tt-roster-issue-editor-field input,
+.tt-roster-issue-editor-field select {
+    width: 100%;
+}
+
+.tt-roster-issue-editor-field:nth-child(3),
+.tt-roster-issue-editor-field:nth-child(4),
+.tt-roster-issue-editor-field:nth-child(7) {
+    grid-column: 1 / -1;
+}
+
+.tt-roster-issue-editor-quick-fixes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--tt-space-xs);
+}
+
+.tt-roster-issue-editor-actions {
+    align-items: center;
+}
+
+.tt-roster-issue-editor-progress {
+    margin-right: auto;
+    color: var(--tt-muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
 .tt-roster-review-wrap {
     overflow: auto;
     max-width: 100%;
@@ -3397,55 +3851,59 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 
 .tt-roster-review-table {
     width: 100%;
-    min-width: 1120px;
+    min-width: 1124px;
     table-layout: fixed;
     border-collapse: separate;
     border-spacing: 0;
     font-size: 0.76rem;
 }
 
+.tt-roster-col-row-number {
+    width: 52px;
+}
+
 .tt-roster-col-grade {
-    width: 132px;
-}
-
-.tt-roster-col-class {
-    width: 140px;
-}
-
-.tt-roster-col-subject {
-    width: 140px;
-}
-
-.tt-roster-col-category {
-    width: 68px;
-}
-
-.tt-roster-col-tags {
-    width: 140px;
-}
-
-.tt-roster-col-teacher {
-    width: 140px;
-}
-
-.tt-roster-col-hours {
     width: 88px;
 }
 
-.tt-roster-col-block {
-    width: 76px;
+.tt-roster-col-class {
+    width: 112px;
 }
 
-.tt-roster-col-room {
-    width: 140px;
+.tt-roster-col-subject {
+    width: 108px;
 }
 
-.tt-roster-col-issue {
+.tt-roster-col-category {
     width: 58px;
 }
 
+.tt-roster-col-tags {
+    width: 108px;
+}
+
+.tt-roster-col-teacher {
+    width: 118px;
+}
+
+.tt-roster-col-hours {
+    width: 68px;
+}
+
+.tt-roster-col-block {
+    width: 66px;
+}
+
+.tt-roster-col-room {
+    width: 148px;
+}
+
+.tt-roster-col-issue {
+    width: 52px;
+}
+
 .tt-roster-col-action {
-    width: 48px;
+    width: 52px;
 }
 
 .tt-rule-review-table {
@@ -3523,6 +3981,11 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     vertical-align: middle;
 }
 
+.tt-roster-review-table th,
+.tt-roster-review-table td {
+    text-align: center;
+}
+
 .tt-rule-review-table td {
     vertical-align: top;
 }
@@ -3537,11 +4000,130 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     font-weight: 800;
 }
 
-.tt-roster-review-table th:nth-child(10),
+.tt-roster-review-table th:first-child,
 .tt-roster-review-table th:nth-child(11),
+.tt-roster-review-table th:nth-child(12),
+.tt-roster-review-table td[data-label="行号"],
+.tt-roster-review-table td[data-label="周课时"],
+.tt-roster-review-table td[data-label="连堂"],
 .tt-roster-review-table td[data-label="问题"],
 .tt-roster-review-table td[data-label="操作"] {
     text-align: center;
+}
+
+.tt-roster-review-table th:first-child,
+.tt-roster-review-table td[data-label="行号"] {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    background: var(--tt-bg-input);
+    box-shadow: 1px 0 0 var(--tt-border);
+}
+
+.tt-roster-review-table th:nth-child(11),
+.tt-roster-review-table td[data-label="问题"] {
+    position: sticky;
+    right: 52px;
+    z-index: 3;
+    background: var(--tt-bg-input);
+    box-shadow: -1px 0 0 var(--tt-border), 1px 0 0 var(--tt-border);
+}
+
+.tt-roster-review-table th:nth-child(12),
+.tt-roster-review-table td[data-label="操作"] {
+    position: sticky;
+    right: 0;
+    z-index: 3;
+    background: var(--tt-bg-input);
+    box-shadow: -1px 0 0 var(--tt-border);
+}
+
+.tt-roster-review-table th:first-child,
+.tt-roster-review-table th:nth-child(11),
+.tt-roster-review-table th:nth-child(12) {
+    z-index: 4;
+    background: var(--tt-bg-elevated);
+}
+
+.tt-roster-block-help {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.tt-roster-block-help-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 1px solid rgba(8, 145, 178, 0.32);
+    border-radius: 999px;
+    background: rgba(8, 145, 178, 0.08);
+    color: var(--tt-primary);
+    font: inherit;
+    font-size: 0.68rem;
+    font-weight: 900;
+    line-height: 1;
+    cursor: help;
+}
+
+.tt-roster-block-help-trigger:focus-visible {
+    outline: none;
+    border-color: var(--tt-primary);
+    box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.14);
+}
+
+.tt-roster-block-help-popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 50%;
+    z-index: 12;
+    width: max-content;
+    max-width: 260px;
+    padding: 8px 10px;
+    border: 1px solid rgba(8, 145, 178, 0.22);
+    border-radius: var(--tt-radius-sm);
+    background: #0f172a;
+    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.18);
+    color: var(--tt-text-secondary);
+    font-size: 0.74rem;
+    font-weight: 600;
+    line-height: 1.55;
+    opacity: 0;
+    pointer-events: none;
+    text-align: left;
+    transform: translateX(-50%) translateY(-4px);
+    transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+    visibility: hidden;
+    white-space: normal;
+}
+
+.tt-roster-block-help-popover b {
+    color: var(--tt-text);
+    font-weight: 700;
+}
+
+.tt-roster-block-help-popover em {
+    display: block;
+    margin-top: 5px;
+    color: var(--tt-text-secondary);
+    font-style: normal;
+    font-weight: 600;
+}
+
+body.light-mode .tt-roster-block-help-popover {
+    background: #ffffff;
+}
+
+.tt-roster-block-help:hover .tt-roster-block-help-popover,
+.tt-roster-block-help:focus-within .tt-roster-block-help-popover {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    visibility: visible;
 }
 
 .tt-roster-review-table tbody tr:last-child td,
@@ -3551,6 +4133,11 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 
 .tt-roster-review-row--error td {
     background: rgba(239, 68, 68, 0.08);
+}
+
+.tt-roster-review-row--focused td {
+    background: rgba(8, 145, 178, 0.12);
+    box-shadow: inset 0 0 0 1px rgba(8, 145, 178, 0.36);
 }
 
 .tt-rule-review-row--needs_review td,
@@ -3637,6 +4224,16 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     background: rgba(148, 163, 184, 0.06);
 }
 
+.tt-roster-review-row-number {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-weight: 900;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .tt-roster-review-field {
     box-sizing: border-box;
     width: 100%;
@@ -3649,6 +4246,11 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     color: var(--tt-text);
     font: inherit;
     font-size: 0.76rem;
+}
+
+.tt-roster-review-table .tt-roster-review-field {
+    text-align: center;
+    text-align-last: center;
 }
 
 .tt-rule-review-table .tt-roster-review-field {
@@ -4092,9 +4694,10 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 
 .tt-roster-review-issue {
     display: block;
-    max-width: 180px;
+    max-width: 100%;
     overflow: hidden;
     color: var(--tt-muted);
+    text-align: center;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -5594,6 +6197,10 @@ button.tt-duty-cell:focus-visible span {
         grid-template-columns: 1fr;
     }
 
+    .tt-multi-select[open] {
+        z-index: auto;
+    }
+
     .tt-multi-select-popover {
         position: static;
         width: 100%;
@@ -5615,6 +6222,7 @@ button.tt-duty-cell:focus-visible span {
     }
 
     .tt-roster-import-dialog,
+    .tt-roster-issue-editor-dialog,
     /* 已删除 .tt-rule-review-dialog 响应式样式（旧弹窗已废弃） */
     .tt-period-time-dialog,
     .tt-duty-assignment-dialog,
@@ -5637,6 +6245,14 @@ button.tt-duty-cell:focus-visible span {
 
     .tt-dialog-actions .tt-btn {
         flex: 1 1 120px;
+    }
+
+    .tt-roster-import-options {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .tt-roster-import-option {
+        padding: var(--tt-space-sm);
     }
 
     .tt-duty-actions,
@@ -5760,6 +6376,11 @@ button.tt-duty-cell:focus-visible span {
         background: rgba(239, 68, 68, 0.08);
     }
 
+    .tt-roster-review-row--focused {
+        background: rgba(8, 145, 178, 0.12);
+        box-shadow: inset 0 0 0 1px rgba(8, 145, 178, 0.36);
+    }
+
     .tt-roster-review-table td,
     .tt-rule-review-table td {
         display: grid;
@@ -5769,6 +6390,16 @@ button.tt-duty-cell:focus-visible span {
         padding: 0;
         border-bottom: 0;
         background: transparent;
+    }
+
+    .tt-roster-review-table td[data-label="行号"],
+    .tt-roster-review-table td[data-label="问题"],
+    .tt-roster-review-table td[data-label="操作"] {
+        position: static;
+        left: auto;
+        right: auto;
+        z-index: auto;
+        box-shadow: none;
     }
 
     .tt-roster-review-table td::before,

@@ -53,10 +53,13 @@ export function evaluateSoftScore(project, slots = []) {
     const softRules = project.rules?.softRules || {};
     const subjectMap = new Map((project.subjects || []).map(subject => [subject.id, subject]));
     const morningSubjects = new Set(softRules.morningSubjects || []);
+    const afternoonSubjects = new Set(softRules.afternoonSubjects || []);
     const preferred = softRules.subjectPreferredPeriods || {};
     const teacherLimits = softRules.teacherLimits || {};
     const spreadSubjects = new Set(softRules.spreadSubjects || []);
-    const balanceTeacherLoad = softRules.balancedTeacherLoad !== false;
+    const spreadSubjectGaps = softRules.spreadSubjectGaps || {};
+    const balanceTeacherLoad = softRules.teacherLoadBalance?.enabled !== false && softRules.balancedTeacherLoad !== false;
+    const teacherGapWeight = Number.parseInt(softRules.teacherGapWeight, 10) || 0;
 
     const breakdown = {};
     const dimensions = [];
@@ -78,6 +81,15 @@ export function evaluateSoftScore(project, slots = []) {
         if (isMorningPeriod(project, slot.period)) morningHit += 1;
     }
     if (morningTotal > 0) addDimension('morningSubjects', 3, ratio(morningHit, morningTotal));
+
+    let afternoonTotal = 0;
+    let afternoonHit = 0;
+    for (const slot of slots) {
+        if (!afternoonSubjects.has(slot.subjectId)) continue;
+        afternoonTotal += 1;
+        if (!isMorningPeriod(project, slot.period)) afternoonHit += 1;
+    }
+    if (afternoonTotal > 0) addDimension('afternoonSubjects', 3, ratio(afternoonHit, afternoonTotal));
 
     // 2. Subject preferred / avoided periods
     let prefTotal = 0;
@@ -162,6 +174,19 @@ export function evaluateSoftScore(project, slots = []) {
     if (limitChecks > 0) addDimension('teacherLimits', 2, ratio(limitHits, limitChecks));
     if (consecutiveChecks > 0) addDimension('teacherConsecutive', 2, ratio(consecutiveHits, consecutiveChecks));
 
+    if (teacherGapWeight > 0) {
+        let gapChecks = 0;
+        let gapHits = 0;
+        for (const periods of teacherDaySlots.values()) {
+            const sorted = [...periods].sort((a, b) => a - b);
+            for (let index = 1; index < sorted.length; index += 1) {
+                gapChecks += 1;
+                if (sorted[index] - sorted[index - 1] <= 1) gapHits += 1;
+            }
+        }
+        if (gapChecks > 0) addDimension('teacherGap', Math.max(1, teacherGapWeight), ratio(gapHits, gapChecks));
+    }
+
     // 5. Same-subject spread (avoid stacking the same subject on one day for a class)
     const classSubjectDay = new Map();
     for (const slot of slots) {
@@ -176,6 +201,22 @@ export function evaluateSoftScore(project, slots = []) {
         const limit = spreadSubjects.has(subjectId) ? 1 : 2;
         spreadChecks += 1;
         if (count <= limit) spreadHits += 1;
+    }
+    for (const [subjectId, minGap] of Object.entries(spreadSubjectGaps)) {
+        const gap = Number.parseInt(minGap, 10) || 0;
+        if (gap <= 1) continue;
+        const byClass = new Map();
+        for (const slot of slots.filter(item => item.subjectId === subjectId)) {
+            if (!byClass.has(slot.classId)) byClass.set(slot.classId, []);
+            byClass.get(slot.classId).push(Number(slot.day));
+        }
+        for (const days of byClass.values()) {
+            const sorted = [...days].sort((left, right) => left - right);
+            for (let index = 1; index < sorted.length; index += 1) {
+                spreadChecks += 1;
+                if (Math.abs(sorted[index] - sorted[index - 1]) >= gap) spreadHits += 1;
+            }
+        }
     }
     if (spreadChecks > 0) addDimension('subjectSpread', 1, ratio(spreadHits, spreadChecks));
 

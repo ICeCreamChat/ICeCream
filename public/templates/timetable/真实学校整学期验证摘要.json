@@ -1,0 +1,50 @@
+{
+  "source": "教师配置排课数据.xlsx",
+  "generatedAt": "2026-07-08T13:21:36.859Z",
+  "outputWorkbook": "public\\templates\\timetable\\真实学校整学期任课数据.xlsx",
+  "projectJson": "public\\templates\\timetable\\真实学校整学期排课项目.json",
+  "scheduleCsv": "public\\templates\\timetable\\真实学校整学期总课表.csv",
+  "roster": {
+    "classes": 30,
+    "teachers": 62,
+    "subjects": 14,
+    "rooms": 43,
+    "lessonPlans": 360,
+    "totalLessons": 900,
+    "classLoadMin": 29,
+    "classLoadMax": 31,
+    "teacherLoadMin": 10,
+    "teacherLoadMax": 16,
+    "previewIssueCount": 0,
+    "hasBlockingIssues": false
+  },
+  "schedule": {
+    "success": true,
+    "slots": 900,
+    "unplaced": 0,
+    "hardConflicts": 0,
+    "conflictCount": 0,
+    "completeness": 100,
+    "softSatisfaction": 94,
+    "solveMs": 7150,
+    "seed": "haichuan-real-term-2026-spring-5x8",
+    "periods": {
+      "weekdays": 5,
+      "periodsPerDay": 8,
+      "totalWeeklyPeriodsPerClass": 40
+    },
+    "softBreakdown": {
+      "morningSubjects": 98,
+      "teacherBalance": 91,
+      "teacherConsecutive": 95,
+      "subjectSpread": 100,
+      "classDailyBalance": 73,
+      "roomUsage": 100
+    }
+  },
+  "publication": {
+    "ok": true,
+    "blockingIssues": 0,
+    "warnings": 0
+  }
+}

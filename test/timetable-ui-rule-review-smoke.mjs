@@ -69,7 +69,7 @@ async function main() {
         await page.waitForSelector('#tt-roster-import-dialog', { timeout: 10000 });
 
         await page.click('#tt-fill-roster-sample');
-        await page.click('#tt-preview-roster-import');
+        await page.click('[data-roster-import-submit="text"]');
         await page.waitForFunction(() => {
             const title = document.querySelector('#tt-roster-import-title');
             return title && /检查任课数据/.test(title.textContent || '');
@@ -93,10 +93,11 @@ async function main() {
         await page.fill('#tt-constraint-text-input', '语文尽量安排到上午');
         await clickByScript('[data-action="parse-constraints"]');
 
-        await page.waitForFunction(() => document.querySelectorAll('.tt-constraint-card').length > 0, { timeout: 30000 });
+        await page.waitForSelector('.tt-requirement-workbench', { timeout: 30000 });
 
         const reviewText = await recognizedText();
-        assert.match(reviewText || '', /已理解需求/);
+        assert.match(reviewText || '', /解析结果/);
+        assert.match(reviewText || '', /来自你的输入/);
         assert.match(reviewText || '', /落地结果/);
         assert.match(reviewText || '', /语文/);
         assert.match(reviewText || '', /上午/);
@@ -114,10 +115,11 @@ async function main() {
             { timeout: 10000 },
         );
         await clickByScript('[data-action="parse-constraints"]');
-        await page.waitForFunction(() => document.querySelectorAll('.tt-constraint-card').length > 0, { timeout: 30000 });
+        await page.waitForSelector('.tt-requirement-workbench', { timeout: 30000 });
 
         const fileReviewText = await recognizedText();
-        assert.match(fileReviewText || '', /已理解需求/);
+        assert.match(fileReviewText || '', /解析结果/);
+        assert.match(fileReviewText || '', /来自你的输入/);
         assert.match(fileReviewText || '', /落地结果/);
         assert.match(fileReviewText || '', /数学/);
         assert.match(fileReviewText || '', /上午/);
@@ -139,10 +141,11 @@ async function main() {
             { timeout: 10000 },
         );
         await clickByScript('[data-action="parse-constraints"]');
-        await page.waitForFunction(() => document.querySelectorAll('.tt-constraint-card').length > 0, { timeout: 30000 });
+        await page.waitForSelector('.tt-requirement-workbench', { timeout: 30000 });
 
         const xlsxReviewText = await recognizedText();
-        assert.match(xlsxReviewText || '', /已理解需求/);
+        assert.match(xlsxReviewText || '', /解析结果/);
+        assert.match(xlsxReviewText || '', /来自你的输入/);
         assert.match(xlsxReviewText || '', /落地结果/);
         assert.match(xlsxReviewText || '', /英语/);
         assert.match(xlsxReviewText || '', /上午/);
@@ -154,17 +157,18 @@ async function main() {
         await page.fill('#tt-manual-target', '数学');
         await page.fill('#tt-manual-time', '周一上午');
         await clickByScript('[data-action="add-manual-constraint"]');
-        await page.waitForFunction(() => document.querySelectorAll('.tt-constraint-card').length > 0, { timeout: 10000 });
+        await page.waitForSelector('.tt-requirement-workbench', { timeout: 10000 });
 
         const manualReviewText = await recognizedText();
-        assert.match(manualReviewText || '', /已理解需求/);
+        assert.match(manualReviewText || '', /解析结果/);
+        assert.match(manualReviewText || '', /来自你的输入/);
         assert.match(manualReviewText || '', /落地结果/);
         assert.match(manualReviewText || '', /手动添加/);
         assert.match(manualReviewText || '', /周一上午/);
 
         await clickByScript('[data-action="apply-constraints"]');
         await page.waitForFunction(() => !document.querySelector('[data-constraint-dialog-overlay]'), { timeout: 10000 });
-        assert.ok(dialogs.some(item => item.message === '成功应用 1 条约束'));
+        assert.ok(dialogs.some(item => /已写入 \d+ 条硬规则、\d+ 条软规则，更新 \d+ 个任课计划。共 1 条已生效。/.test(item.message)));
 
         console.log('timetable rule review smoke passed');
     });

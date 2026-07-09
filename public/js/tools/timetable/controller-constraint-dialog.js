@@ -171,6 +171,7 @@ function manualRequirementFromConstraint(constraint = {}) {
         strength: constraint.type === 'forbid' ? 'hard' : 'soft',
         status: 'needs_review',
         applyTo: 'review',
+        origin: 'manual',
         confidence: 0.7,
         source: { rawText: constraint.sourceText || '手动添加' },
         warnings: ['手动填写已进入需求审核，请在应用前确认对象和时间。'],
@@ -268,6 +269,7 @@ export function openConstraintDialog(mode = null) {
         open: true,
         requirementFilter: reviewState.filter,
         selectedRequirementId: reviewState.selectedId,
+        systemGroupCollapsed: currentDialog.systemGroupCollapsed !== false,
     };
     this.state.smartWorkbench = {
         ...(this.state.smartWorkbench || {}),
@@ -311,7 +313,18 @@ export function filterRequirements(filter) {
         this.state.constraintDialog = { open: true };
     }
     this.state.constraintDialog.requirementFilter = nextFilter;
+    if (nextFilter === 'handled') {
+        this.state.constraintDialog.systemGroupCollapsed = false;
+    }
     this.state.constraintDialog.selectedRequirementId = getDefaultRequirementId(items, nextFilter);
+    this.render();
+}
+
+export function toggleSystemRequirementGroup() {
+    if (!this.state.constraintDialog) {
+        this.state.constraintDialog = { open: true };
+    }
+    this.state.constraintDialog.systemGroupCollapsed = this.state.constraintDialog.systemGroupCollapsed === false;
     this.render();
 }
 
@@ -341,7 +354,7 @@ export function toggleConstraintApplyItem(applyItemKey) {
     this.render();
 }
 
-export async function submitRequirementClarification(requirementId) {
+export async function submitRequirementClarification(requirementId, clarifyValue = undefined) {
     const id = String(requirementId || '').trim();
     if (!id) return;
     const items = buildUnifiedRequirementItems(this.state.ruleReview || {});
@@ -352,7 +365,7 @@ export async function submitRequirementClarification(requirementId) {
     const selector = `[data-requirement-clarify-input="${cssAttributeValue(id)}"]`;
     const input = this.state.container?.querySelector?.(selector)
         || (typeof document !== 'undefined' ? document.querySelector?.(selector) : null);
-    const rawValue = input?.value;
+    const rawValue = clarifyValue !== undefined ? clarifyValue : input?.value;
     if (rawValue === undefined || rawValue === null || String(rawValue).trim() === '') {
         alert('请先填写补充信息');
         return;
@@ -692,9 +705,18 @@ export async function applyConstraintsFromDialog() {
         return;
     }
 
-    const confirmMessage = activeFilter === 'all'
-        ? `确定要应用 ${applyCount} 条需求吗？`
-        : `确定要应用当前分类的 ${applyCount} 条需求吗？`;
+    const hardRuleCount = backendRuleRows.filter(row => row.priority === 'hard' || row.strength === 'hard').length;
+    const softRuleCount = backendRuleRows.length - hardRuleCount;
+    const lessonPlanCount = semanticActions.filter(action => ['lesson_plan_patch'].includes(String(action.kind || action.type || '').toLowerCase())).length;
+    const confirmMessage = [
+        activeFilter === 'all'
+            ? `确定应用这 ${applyCount} 条需求吗？`
+            : `确定应用当前分类的 ${applyCount} 条需求吗？`,
+        `${hardRuleCount} 条 → 排课硬规则（必须遵守）`,
+        `${softRuleCount} 条 → 排课软规则（尽量满足）`,
+        `${lessonPlanCount} 条 → 任课计划调整（连堂设置）`,
+        '应用后立刻生效，下次排课就会使用。',
+    ].join('\n');
     if (!confirm(confirmMessage)) {
         return;
     }
@@ -807,6 +829,30 @@ export async function applyConstraintsFromDialog() {
         this.state.ruleReview.requirementItems = (this.state.ruleReview.requirementItems || [])
             .filter(item => !appliedRequirementIds.has(item.id) && item.status !== 'handled');
         const reviewState = normalizeRequirementReviewState(this.state.constraintDialog || {}, buildUnifiedRequirementItems(this.state.ruleReview || {}));
+        let postApplyDiagnosis = null;
+        let blockingCount = 0;
+        try {
+            const diagnosisResult = await requestTimetable('/rules/diagnose', {
+                method: 'POST',
+                body: JSON.stringify({
+                    project: this.state.project,
+                    recentDraftRows: actionableDraftRows,
+                    draftRows: actionableDraftRows,
+                    solverFailure: this.state.lastFailure || this.state.project?.schedule?.solverStats || null,
+                }),
+            });
+            postApplyDiagnosis = diagnosisResult.diagnosis || null;
+            blockingCount = (postApplyDiagnosis?.blockingRules || []).length
+                + (postApplyDiagnosis?.conflicts || []).filter(item => item.level === 'blocking' || item.blocking).length;
+        } catch (diagnosisError) {
+            postApplyDiagnosis = {
+                summary: '约束已应用，但应用后预检暂时不可用。',
+                blockingRules: [],
+                suggestedRelaxations: ['请生成课表后查看约束满足度报告。'],
+                conflicts: [],
+                warning: diagnosisError.message || 'diagnose_failed',
+            };
+        }
         this.state.ruleReview = {
             ...(this.state.ruleReview || {}),
             loading: false,
@@ -814,6 +860,8 @@ export async function applyConstraintsFromDialog() {
             applying: false,
             phase: '',
             phaseText: '',
+            diagnosis: postApplyDiagnosis,
+            postApplyBlockingCount: blockingCount,
         };
         this.state.constraintDialog = {
             ...(this.state.constraintDialog || {}),
@@ -831,9 +879,10 @@ export async function applyConstraintsFromDialog() {
         // 重新渲染主界面
         this.render();
 
-        alert(semanticActions.length
-            ? `成功应用 ${applyCount} 条需求`
-            : `成功应用 ${actionableDraftRows.length} 条约束`);
+        const warningText = blockingCount
+            ? `\n\n预检发现 ${blockingCount} 个阻塞风险，请先查看诊断建议再排课。`
+            : '\n\n预检未发现明显阻塞风险，可以重新排课查看满足度报告。';
+        alert(`已写入 ${hardRuleCount} 条硬规则、${softRuleCount} 条软规则，更新 ${lessonPlanCount} 个任课计划。共 ${applyCount} 条已生效。${warningText}`);
     } catch (error) {
         console.error('Apply constraints error:', error);
         this.state.ruleReview = {

@@ -20,7 +20,10 @@ import {
     resetTimetableOptimizationJobs,
 } from '../gateway/services/timetable-optimization-jobs.js';
 import { buildPublishedSnapshot } from '../gateway/services/timetable-publication.js';
-import { evaluateTimetableConstraintFulfillment } from '../gateway/services/timetable-constraint-fulfillment.js';
+import {
+    applyTimetableConstraintFulfillmentAction,
+    evaluateTimetableConstraintFulfillment,
+} from '../gateway/services/timetable-constraint-fulfillment.js';
 import { buildTimetableProblem } from '../gateway/services/timetable-solver-bridge.js';
 import { buildTimetableExportXlsx } from '../gateway/services/timetable-export.js';
 import {
@@ -928,6 +931,93 @@ function constraintFulfillmentProject(overrides = {}) {
     });
 }
 
+function phase4FulfillmentPrimitiveProject(overrides = {}) {
+    return createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 5,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5],
+        dayPartBoundaries: { afternoonStartPeriod: 4 },
+        teachers: [
+            { id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] },
+            { id: 't_cn', name: 'Chinese Teacher', subjects: ['chinese'], unavailableSlots: [] },
+            { id: 't_eng', name: 'English Teacher', subjects: ['english'], unavailableSlots: [] },
+            { id: 't_pe', name: 'PE Teacher', subjects: ['pe'], unavailableSlots: [] },
+        ],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [
+            { id: 'math', name: 'Math', priority: 90, color: '#2563eb', category: 'main' },
+            { id: 'chinese', name: 'Chinese', priority: 80, color: '#dc2626', category: 'main' },
+            { id: 'english', name: 'English', priority: 75, color: '#7c3aed', category: 'main' },
+            { id: 'pe', name: 'PE', priority: 30, color: '#16a34a' },
+        ],
+        rooms: [
+            { id: 'gym', name: 'Gym', tags: ['sport'] },
+            { id: 'room101', name: 'Room 101', tags: [] },
+        ],
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 4 },
+            { id: 'lp_cn', classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', weeklyHours: 2 },
+            { id: 'lp_eng', classId: 'c1', subjectId: 'english', teacherId: 't_eng', weeklyHours: 1 },
+            { id: 'lp_pe', classId: 'c1', subjectId: 'pe', teacherId: 't_pe', weeklyHours: 1, roomId: 'gym' },
+        ],
+        rules: {
+            hardRules: {
+                teacherUnavailable: { t_math: ['1-1'] },
+                classUnavailable: { c1: ['5-5'] },
+                globalUnavailable: ['3-3'],
+                lockedSlots: [
+                    { day: 2, period: 2, classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', lessonPlanId: 'lp_cn' },
+                ],
+                subjectDailyLimit: { math: 1 },
+                teacherWeeklyLimit: { t_math: 2 },
+                teacherMaxDaysPerWeek: { t_math: 2 },
+                teacherMutualExclusion: [{ teacherIds: ['t_math', 't_eng'] }],
+                subjectNotSameDay: [{ subjectIds: ['math', 'english'], classIds: ['c1'] }],
+                roomRequirements: { pe: { roomIds: ['gym'] } },
+            },
+            softRules: {
+                morningSubjects: ['math'],
+                afternoonSubjects: ['pe'],
+                subjectPreferredPeriods: {
+                    pe: { prefer: ['3-3'], weight: 20 },
+                    chinese: { avoid: ['1-2'], weight: 20 },
+                },
+                teacherLimits: {
+                    t_math: { daily: 1, consecutive: 1 },
+                },
+                spreadSubjects: ['math'],
+                spreadSubjectGaps: { math: 2 },
+                classDailyBalance: { enabled: true, mainSubjectDailyMax: 4 },
+                teacherGapWeight: 1,
+                teacherLoadBalance: { enabled: true, weight: 1, explicit: true },
+                subjectSequence: [{ beforeSubjectId: 'chinese', afterSubjectId: 'math', classIds: ['c1'] }],
+            },
+        },
+        schedule: {
+            id: 'phase4-primitive-coverage',
+            generatedAt: '2026-01-02T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [
+                { id: 'slot-math-1', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math', roomId: 'room101' },
+                { id: 'slot-math-2', day: 1, period: 2, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math', roomId: 'room101' },
+                { id: 'slot-cn-avoid', day: 1, period: 2, classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', lessonPlanId: 'lp_cn', roomId: 'room101' },
+                { id: 'slot-math-3', day: 2, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math', roomId: 'room101' },
+                { id: 'slot-cn-locked', day: 2, period: 2, classId: 'c1', subjectId: 'chinese', teacherId: 't_cn', lessonPlanId: 'lp_cn', roomId: 'room101' },
+                { id: 'slot-pe-room', day: 3, period: 3, classId: 'c1', subjectId: 'pe', teacherId: 't_pe', lessonPlanId: 'lp_pe', roomId: 'room101' },
+                { id: 'slot-math-4', day: 4, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math', roomId: 'room101' },
+                { id: 'slot-eng-1', day: 4, period: 1, classId: 'c1', subjectId: 'english', teacherId: 't_eng', lessonPlanId: 'lp_eng', roomId: 'room101' },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            qualityIssues: [],
+            score: { totalLessons: 8, placedLessons: 8, unplacedLessons: 0, hardConflicts: 0, completeness: 100 },
+        },
+        ...overrides,
+    });
+}
+
 test('timetable constraint fulfillment evaluates saved rules without changing review noise', () => {
     const project = constraintFulfillmentProject();
     const result = evaluateTimetableConstraintFulfillment(project);
@@ -935,16 +1025,32 @@ test('timetable constraint fulfillment evaluates saved rules without changing re
     const bySource = new Map(result.items.map(item => [item.source, item]));
 
     assert.equal(result.evaluated, true);
-    assert.deepEqual(result.summary, { total: 9, satisfied: 2, partial: 1, unmet: 6, notApplicable: 0 });
-    assert.equal(byType.get('teacher_unavailable').status, 'unmet');
+    assert.equal(result.version, 2);
+    assert.deepEqual(result.summary, {
+        total: 9,
+        satisfied: 2,
+        partiallySatisfied: 1,
+        violated: 6,
+        notEvaluable: 0,
+        partial: 1,
+        unmet: 6,
+        notApplicable: 0,
+    });
+    assert.equal(byType.get('teacher_unavailable').status, 'violated');
     assert.equal(byType.get('class_unavailable').status, 'satisfied');
-    assert.equal(byType.get('locked_slot').status, 'unmet');
+    assert.equal(byType.get('locked_slot').status, 'violated');
     assert.equal(byType.get('subject_morning').status, 'partial');
     assert.equal(bySource.get('softRules.subjectPreferredPeriods.prefer').status, 'satisfied');
-    assert.equal(bySource.get('softRules.subjectPreferredPeriods.avoid').status, 'unmet');
-    assert.equal(byType.get('teacher_daily_limit').status, 'unmet');
-    assert.equal(byType.get('teacher_consecutive_limit').status, 'unmet');
-    assert.equal(byType.get('subject_spread').status, 'unmet');
+    assert.equal(bySource.get('softRules.subjectPreferredPeriods.avoid').status, 'violated');
+    assert.equal(byType.get('teacher_daily_limit').status, 'violated');
+    assert.equal(byType.get('teacher_consecutive_limit').status, 'violated');
+    assert.equal(byType.get('subject_spread').status, 'violated');
+    assert.equal(byType.get('teacher_unavailable').ruleId, 'teacher_unavailable:t_math:1-1');
+    assert.equal(byType.get('teacher_unavailable').strength, 'hard');
+    assert.equal(byType.get('teacher_unavailable').typeLabel, '教师不可排');
+    assert.equal(byType.get('teacher_unavailable').legacyStatus, 'unmet');
+    assert.ok(byType.get('teacher_unavailable').evidenceSlots.some(slot => slot.slotId === 'slot-math-1'));
+    assert.ok(byType.get('teacher_unavailable').suggestions.some(action => action.kind === 'delete_rule'));
     assert.ok(byType.get('teacher_unavailable').locateTargets.some(target => target.slotId === 'slot-math-1'));
     assert.match(byType.get('subject_morning').evidence, /1\/2/);
 });
@@ -955,8 +1061,104 @@ test('timetable constraint fulfillment keeps saved rule total before schedule ge
     assert.equal(result.evaluated, false);
     assert.equal(result.summary.total, 9);
     assert.equal(result.summary.notApplicable, 9);
+    assert.equal(result.summary.notEvaluable, 9);
     assert.equal(result.items.length, 9);
-    assert.ok(result.items.every(item => item.status === 'not_applicable'));
+    assert.ok(result.items.every(item => item.status === 'not_evaluable'));
+    assert.ok(result.items.every(item => item.legacyStatus === 'not_applicable'));
+});
+
+test('timetable constraint fulfillment covers the Phase 4 primitive catalog', () => {
+    const result = evaluateTimetableConstraintFulfillment(phase4FulfillmentPrimitiveProject());
+    const itemTypes = new Set(result.items.map(item => item.type));
+
+    assert.equal(result.coverage.primitiveCount, 22);
+    assert.equal(result.coverage.primitives.length, 22);
+    assert.equal(result.coverage.primitiveAliases.class_daily_subject_balance, 'class_daily_balance');
+    assert.ok(result.coverage.primitives.includes('class_daily_subject_balance'));
+    for (const primitive of [
+        'teacher_unavailable',
+        'class_unavailable',
+        'locked_slot',
+        'subject_morning',
+        'subject_preferred_periods',
+        'subject_avoid_periods',
+        'teacher_daily_limit',
+        'teacher_consecutive_limit',
+        'subject_spread',
+        'subject_afternoon',
+        'room_requirement',
+        'class_daily_balance',
+        'teacher_gap_preference',
+        'teacher_load_balance',
+        'global_unavailable',
+        'subject_daily_limit',
+        'teacher_weekly_limit',
+        'teacher_max_days_per_week',
+        'teacher_mutual_exclusion',
+        'subject_not_same_day',
+        'subject_sequence',
+        'course_interval',
+    ]) {
+        assert.ok(itemTypes.has(primitive), `missing ${primitive}`);
+    }
+    assert.equal(result.items.length, 22);
+    assert.ok(result.items.every(item => ['satisfied', 'partial', 'violated', 'not_evaluable'].includes(item.status)));
+    assert.ok(result.items.every(item => item.ruleId && item.typeLabel && item.origin && item.strength && item.detail));
+});
+
+test('timetable constraint fulfillment reports exactly two soft attention items for a small project', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 5,
+        activeWeekdays: [1],
+        activePeriods: [1, 2, 3, 4, 5],
+        dayPartBoundaries: { afternoonStartPeriod: 4 },
+        teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 2 }],
+        rules: {
+            hardRules: {},
+            softRules: {
+                morningSubjects: ['math'],
+                teacherLimits: { t_math: { daily: 1 } },
+            },
+        },
+        schedule: {
+            id: 'two-soft-violations',
+            generatedAt: '2026-01-02T00:00:00.000Z',
+            source: 'fast_constructed',
+            slots: [
+                { id: 'slot-math-afternoon-1', day: 1, period: 4, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+                { id: 'slot-math-afternoon-2', day: 1, period: 5, classId: 'c1', subjectId: 'math', teacherId: 't_math', lessonPlanId: 'lp_math' },
+            ],
+            lockedSlots: [],
+            conflicts: [],
+            unplaced: [],
+            qualityIssues: [],
+            score: { totalLessons: 2, placedLessons: 2, unplacedLessons: 0, hardConflicts: 0, completeness: 100 },
+        },
+    });
+
+    const result = evaluateTimetableConstraintFulfillment(project);
+
+    assert.equal(result.summary.violated + result.summary.partiallySatisfied, 2);
+    assert.equal(result.items.length, 2);
+    assert.ok(result.items.every(item => item.strength === 'soft'));
+    assert.ok(result.items.every(item => item.evidenceSlots.length > 0));
+});
+
+test('timetable constraint fulfillment action can delete a saved rule and refresh the report', () => {
+    const result = applyTimetableConstraintFulfillmentAction(constraintFulfillmentProject(), {
+        kind: 'delete_rule',
+        ruleId: 'teacher_unavailable:t_math:1-1',
+    });
+
+    assert.equal(result.action.kind, 'delete_rule');
+    assert.equal(result.action.type, 'teacher_unavailable');
+    assert.deepEqual(result.project.rules.hardRules.teacherUnavailable, {});
+    assert.equal(result.fulfillment.summary.total, 8);
+    assert.equal(result.fulfillment.items.some(item => item.ruleId === 'teacher_unavailable:t_math:1-1'), false);
 });
 
 test('timetable publication ignores legacy subject spread quality-only review', () => {
@@ -2536,8 +2738,10 @@ test('timetable AI rules parser supplements only unresolved constraint Excel row
     assert.doesNotMatch(observedSupplementPrompt, /Math should be at Monday period 2/);
     assert.match(observedReviewPrompt, /Math should be at Monday period 2/);
     assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.math.prefer, ['1-2']);
-    assert.ok(result.previewItems.some(item => item.type === 'teacher_load_balance' && item.status === 'suggestion'));
-    assert.ok(result.unsupportedItems.some(item => item.type === 'teacher_load_balance'));
+    assert.ok(result.previewItems.some(item => item.type === 'teacher_load_balance' && item.status === 'ready'));
+    assert.equal(result.unsupportedItems.some(item => item.type === 'teacher_load_balance'), false);
+    assert.deepEqual(result.draftRules.softRules.teacherLoadBalance, { enabled: true, weight: 1, explicit: true });
+    assert.ok(result.draftRows.some(row => row.status === 'effective' && row.type === 'teacher_load_balance'));
     assert.ok(result.draftRows.some(row => row.parseSource === 'local_xlsx'));
     assert.ok(result.draftRows.some(row => row.parseSource === 'ai_supplement'));
 });
@@ -2597,7 +2801,8 @@ test('timetable AI rules parser combines local AI constraint workbook rows with 
     assert.match(observedSupplementPrompt, /同一位教师同一时间只能给一个班上课/);
     assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
     assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.prefer, ['1-5', '2-5', '3-3']);
-    assert.ok(result.draftRows.some(row => row.status === 'suggestion' && row.type === 'teacher_load_balance'));
+    assert.ok(result.draftRows.some(row => row.status === 'effective' && row.type === 'teacher_load_balance'));
+    assert.deepEqual(result.draftRules.softRules.teacherLoadBalance, { enabled: true, weight: 10, explicit: true });
     assert.ok(result.draftRows.some(row => row.parseSource === 'local_xlsx'));
     assert.ok(result.draftRows.some(row => row.parseSource === 'ai_supplement'));
 });
@@ -2993,7 +3198,7 @@ test('timetable smart rules expand all-teacher limits across uploaded teachers',
     assert.deepEqual(result.draftRules.softRules.teacherLimits.t_li, { daily: 4, consecutive: 2 });
 });
 
-test('timetable smart rules do not ask object questions for all-teacher suggestions', () => {
+test('timetable smart rules do not ask object questions for all-teacher rules', () => {
     const project = createDefaultTimetableProject({
         weekdays: 5,
         periodsPerDay: 7,
@@ -3042,9 +3247,10 @@ test('timetable smart rules do not ask object questions for all-teacher suggesti
     });
 
     const row = result.draftRows[0];
-    assert.equal(row.status, 'suggestion');
+    assert.equal(row.status, 'needs_review');
     assert.equal(row.targetType, 'all_teachers');
     assert.equal(row.targetId, '__all_teachers');
+    assert.equal(result.requirementItems[0].intent, 'teacher_load_balance');
     assert.equal(result.clarifyingQuestions.length, 0);
     assert.equal(result.missingInfo.length, 0);
     assert.equal(result.nextAction, 'review');
@@ -3094,7 +3300,8 @@ test('timetable rule draft row normalization only saves effective valid rows', (
     });
 
     assert.deepEqual(result.draftRules.hardRules.teacherUnavailable.t_math, ['3-4']);
-    assert.equal(result.draftRows.find(row => row.id === 'row_2').status, 'suggestion');
+    assert.equal(result.draftRows.find(row => row.id === 'row_2').status, 'effective');
+    assert.deepEqual(result.draftRules.softRules.teacherLoadBalance, { enabled: true, weight: 1, explicit: true });
     assert.equal(result.draftRows.find(row => row.id === 'row_3').status, 'needs_review');
     assert.ok(result.warnings.some(warning => warning.includes('Unknown person')));
 });
@@ -7459,7 +7666,8 @@ test('timetable rules normalize API converts review rows without saving rules', 
 
         assert.equal(response.status, 200);
         assert.deepEqual(payload.data.draftRules.hardRules.teacherUnavailable.t_math, ['3-4']);
-        assert.equal(payload.data.draftRows.find(row => row.id === 'review_2').status, 'suggestion');
+        assert.equal(payload.data.draftRows.find(row => row.id === 'review_2').status, 'effective');
+        assert.deepEqual(payload.data.draftRules.softRules.teacherLoadBalance, { enabled: true, weight: 1, explicit: true });
 
         const stored = await store.loadProject();
         assert.deepEqual(stored.rules.hardRules.teacherUnavailable, {});
@@ -7503,12 +7711,60 @@ test('timetable rules fulfillment API evaluates request project without saving i
 
         assert.equal(response.status, 200);
         assert.equal(payload.success, true);
+        assert.equal(payload.data.fulfillment.version, 2);
         assert.equal(payload.data.fulfillment.summary.total, 9);
+        assert.equal(payload.data.fulfillment.summary.violated, 6);
         assert.equal(payload.data.fulfillment.summary.unmet, 6);
 
         const storedAfter = await store.loadProject();
         assert.deepEqual(storedAfter.rules, storedProject.rules);
         assert.equal(storedAfter.schedule, null);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        if (previousDataDir === undefined) {
+            delete process.env.TIMETABLE_DATA_DIR;
+        } else {
+            process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+    }
+});
+
+test('timetable rules fulfillment action API saves a supported delete action', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-rules-fulfillment-action-'));
+
+    const store = createTimetableStore();
+    await store.saveProject(constraintFulfillmentProject());
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => {
+            const address = server.address();
+            resolve(`http://127.0.0.1:${address.port}`);
+        });
+    });
+
+    try {
+        const response = await fetch(`${baseUrl}/api/tools/timetable/rules/fulfillment/action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: {
+                    kind: 'delete_rule',
+                    ruleId: 'teacher_unavailable:t_math:1-1',
+                },
+            }),
+        });
+        const payload = await response.json();
+
+        assert.equal(response.status, 200);
+        assert.equal(payload.success, true);
+        assert.equal(payload.data.action.type, 'teacher_unavailable');
+        assert.equal(payload.data.fulfillment.summary.total, 8);
+
+        const storedAfter = await store.loadProject();
+        assert.deepEqual(storedAfter.rules.hardRules.teacherUnavailable, {});
     } finally {
         await new Promise(resolve => server.close(resolve));
         if (previousDataDir === undefined) {

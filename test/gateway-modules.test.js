@@ -295,8 +295,23 @@ test('gateway mounts legacy timetable APIs', async () => {
         assert.equal(clarifyResponse.status, 200);
         const clarifyPayload = await clarifyResponse.json();
         assert.equal(clarifyPayload.success, true);
-        assert.equal(clarifyPayload.data.requirementItems[0].status, 'actionable');
-        assert.equal(clarifyPayload.data.semanticActions[0].patch.teacherLimits.consecutive, 2);
+        assert.equal(clarifyPayload.data.requirementItems[0].status, 'needs_review');
+        assert.equal(clarifyPayload.data.requirementItems[0].clarification.field, 'dailyLimit');
+        assert.equal(clarifyPayload.data.semanticActions.length, 0);
+
+        const secondClarifyResponse = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/requirements/clarify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                previousResult: clarifyPayload.data,
+                answers: [{ requirementId: 'req_high_load', field: 'dailyLimit', value: 'none' }],
+            }),
+        });
+        assert.equal(secondClarifyResponse.status, 200);
+        const secondClarifyPayload = await secondClarifyResponse.json();
+        assert.equal(secondClarifyPayload.success, true);
+        assert.equal(secondClarifyPayload.data.requirementItems[0].status, 'actionable');
+        assert.equal(secondClarifyPayload.data.semanticActions[0].patch.teacherLimits.consecutive, 2);
 
         const sharedResponse = await fetch(`http://127.0.0.1:${port}/shared/seating/classroom-layout.js`);
         const sharedSource = await sharedResponse.text();

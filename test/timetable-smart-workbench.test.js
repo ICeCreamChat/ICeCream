@@ -74,7 +74,7 @@ test('constraint dialog renders recognized constraints and apply action', () => 
     }));
 
     assert.match(html, /tt-requirement-workbench/);
-    assert.match(html, /已理解需求 \(1\)/);
+    assert.match(html, /来自你的输入 1 条 · 系统补充 0 条 · 本次可写入排课 1 条/);
     assert.match(html, /落地结果/);
     assert.match(html, /数学尽量上午/);
     assert.match(html, /data-constraint-id="rule_1"/);

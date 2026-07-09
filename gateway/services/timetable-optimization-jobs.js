@@ -1,5 +1,6 @@
 import { createTimetableStore } from './timetable-store.js';
 import {
+    buildTimetableSolveScaleHint,
     solveTimetableWithTimefold,
     TimetableTimefoldError,
 } from './timetable-solver-bridge.js';
@@ -167,6 +168,7 @@ async function runOptimizationJob({
             status: 'running',
             jobId,
             lessonCount: project.lessonPlans.reduce((sum, plan) => sum + plan.weeklyHours, 0),
+            ...buildTimetableSolveScaleHint(project, env),
         },
     });
 
@@ -337,6 +339,7 @@ export function createTimetableOptimizationJob({
             lessonCount: project?.lessonPlans?.reduce((sum, plan) => sum + plan.weeklyHours, 0) || 0,
             initialSolutionUsed: Boolean(schedule?.slots?.length),
             pinnedCount: (schedule?.slots || []).filter(slot => slot.locked || slot.manuallyAdjusted).length,
+            ...buildTimetableSolveScaleHint(project || {}, env),
         },
     };
     jobs.set(jobId, job);

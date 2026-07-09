@@ -30,6 +30,87 @@ test('legacy timetable projects stay legacy and do not get complex fields by def
     assert.deepEqual(project.rooms, []);
 });
 
+test('normalizeTimetableProject adds empty rules v2 fields for legacy projects', () => {
+    const project = normalizeTimetableProject({
+        rules: {
+            hardRules: {
+                teacherUnavailable: { t1: ['1-1'] },
+            },
+            softRules: {
+                morningSubjects: ['math'],
+            },
+        },
+    });
+
+    assert.deepEqual(project.rules.hardRules.teacherUnavailable, { t1: ['1-1'] });
+    assert.deepEqual(project.rules.hardRules.globalUnavailable, []);
+    assert.deepEqual(project.rules.hardRules.subjectDailyLimit, {});
+    assert.deepEqual(project.rules.hardRules.teacherWeeklyLimit, {});
+    assert.deepEqual(project.rules.hardRules.teacherMaxDaysPerWeek, {});
+    assert.deepEqual(project.rules.hardRules.teacherMutualExclusion, []);
+    assert.deepEqual(project.rules.hardRules.subjectNotSameDay, []);
+    assert.deepEqual(project.rules.hardRules.roomRequirements, {});
+    assert.deepEqual(project.rules.softRules.afternoonSubjects, []);
+    assert.deepEqual(project.rules.softRules.subjectDailySoftLimit, {});
+    assert.deepEqual(project.rules.softRules.spreadSubjectGaps, {});
+    assert.deepEqual(project.rules.softRules.subjectSequence, []);
+    assert.equal(project.rules.softRules.teacherGapWeight, 0);
+    assert.deepEqual(project.rules.softRules.classDailyBalance, { enabled: false, mainSubjectDailyMax: 0 });
+    assert.deepEqual(project.rules.softRules.teacherLoadBalance, { enabled: true, weight: 1, explicit: false });
+});
+
+test('normalizeTimetableProject sanitizes rules v2 values', () => {
+    const project = normalizeTimetableProject({
+        rules: {
+            hardRules: {
+                globalUnavailable: ['1-1', { day: 2, period: 3 }, 'bad'],
+                subjectDailyLimit: { math: 99, empty: 0, bad: 'x' },
+                teacherWeeklyLimit: { t1: 88, t2: -3 },
+                teacherMaxDaysPerWeek: { t1: 10 },
+                teacherMutualExclusion: [
+                    { teacherIds: ['t1', 't2', 't1'] },
+                    { teacherIds: ['single'] },
+                ],
+                subjectNotSameDay: [
+                    { subjectIds: ['math', 'physics', 'extra'], classIds: ['c1', 'c1'] },
+                    { subjectIds: ['single'] },
+                ],
+                roomRequirements: {
+                    science: { roomIds: ['lab1', 'lab1'], requiredTags: ['lab'] },
+                    empty: { roomIds: [] },
+                },
+            },
+            softRules: {
+                afternoonSubjects: ['pe', 'pe', 'music'],
+                subjectDailySoftLimit: { chinese: 9 },
+                spreadSubjectGaps: { pe: 9 },
+                subjectSequence: [
+                    { beforeSubjectId: 'math', afterSubjectId: 'physics', classIds: ['c1'], weight: 99 },
+                    { beforeSubjectId: 'same', afterSubjectId: 'same' },
+                ],
+                teacherGapWeight: 99,
+                classDailyBalance: { enabled: true, mainSubjectDailyMax: 99 },
+                teacherLoadBalance: { enabled: true, weight: 99 },
+            },
+        },
+    });
+
+    assert.deepEqual(project.rules.hardRules.globalUnavailable, ['1-1', '2-3']);
+    assert.deepEqual(project.rules.hardRules.subjectDailyLimit, { math: 8, empty: 1 });
+    assert.deepEqual(project.rules.hardRules.teacherWeeklyLimit, { t1: 40, t2: 1 });
+    assert.deepEqual(project.rules.hardRules.teacherMaxDaysPerWeek, { t1: 7 });
+    assert.deepEqual(project.rules.hardRules.teacherMutualExclusion, [{ teacherIds: ['t1', 't2'] }]);
+    assert.deepEqual(project.rules.hardRules.subjectNotSameDay, [{ subjectIds: ['math', 'physics'], classIds: ['c1'] }]);
+    assert.deepEqual(project.rules.hardRules.roomRequirements, { science: { roomIds: ['lab1'], requiredTags: ['lab'] } });
+    assert.deepEqual(project.rules.softRules.afternoonSubjects, ['pe', 'music']);
+    assert.deepEqual(project.rules.softRules.subjectDailySoftLimit, { chinese: 8 });
+    assert.deepEqual(project.rules.softRules.spreadSubjectGaps, { pe: 7 });
+    assert.deepEqual(project.rules.softRules.subjectSequence, [{ beforeSubjectId: 'math', afterSubjectId: 'physics', classIds: ['c1'], weight: 10 }]);
+    assert.equal(project.rules.softRules.teacherGapWeight, 10);
+    assert.deepEqual(project.rules.softRules.classDailyBalance, { enabled: true, mainSubjectDailyMax: 8 });
+    assert.deepEqual(project.rules.softRules.teacherLoadBalance, { enabled: true, weight: 10, explicit: true });
+});
+
 test('complex timetable model preserves versioned fields and normalizes metadata', () => {
     const project = normalizeTimetableProject({
         timetableModelVersion: 'complex_v1',

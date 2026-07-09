@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+    buildTimetableSolveScaleHint,
     buildTimetableProblem,
     canUseTimefoldForTimetable,
+    resolveTimetableSolverTimeoutMs,
     solveTimetableWithTimefold,
     TimetableTimefoldError,
     transformTimetableSolutionToSchedule,
@@ -79,6 +81,30 @@ test('buildTimetableProblem expands lessons, blocks, multi-teachers and hard rul
     const pe = problem.lessonAssignments.find(assignment => assignment.lessonPlanId === 'lp_pe');
     assert.equal(pe.requiresRoom, true);
     assert.deepEqual(pe.allowedRoomIds, ['gym']);
+});
+
+test('buildTimetableProblem sends per-teacher constraint refs for co-taught lessons', () => {
+    const problem = buildTimetableProblem(sampleProject({
+        rules: {
+            hardRules: {
+                lockedSlots: [],
+                teacherUnavailable: {},
+                classUnavailable: {},
+                teacherWeeklyLimit: { t_math: 6, t_helper: 1 },
+                teacherMaxDaysPerWeek: { t_math: 5, t_helper: 2 },
+            },
+            softRules: { teacherLoadBalance: { enabled: true, weight: 3, explicit: true } },
+        },
+    }));
+
+    const math = problem.lessonAssignments.find(assignment => assignment.lessonPlanId === 'lp_math');
+
+    assert.equal(math.teacherWeeklyMax, 6);
+    assert.equal(math.teacherMaxDays, 5);
+    assert.deepEqual(math.teacherConstraintRefs, [
+        { teacherId: 't_math', weeklyMax: 6, maxDays: 5, loadBalanceWeight: 3 },
+        { teacherId: 't_helper', weeklyMax: 1, maxDays: 2, loadBalanceWeight: 3 },
+    ]);
 });
 
 test('buildTimetableProblem only exposes active timetable slots to Timefold', () => {
@@ -509,6 +535,23 @@ test('solveTimetableWithTimefold maps request aborts to timeout metadata', async
         && error.solverStats.timeoutSeconds === 210
         && Number.isInteger(error.solverStats.durationMs)
     ));
+});
+
+test('Timefold timeout defaults to 300 seconds for 30+ classes without explicit timeout', () => {
+    const largeProject = sampleProject({
+        classes: Array.from({ length: 30 }, (_, index) => ({ id: `c${index + 1}`, grade: 'G7', name: `${index + 1}` })),
+    });
+
+    assert.equal(resolveTimetableSolverTimeoutMs(sampleProject(), {}), 210000);
+    assert.equal(resolveTimetableSolverTimeoutMs(largeProject, {}), 300000);
+    assert.equal(resolveTimetableSolverTimeoutMs(largeProject, { TIMEFOLD_SOLVER_TIMEOUT: '240' }), 240000);
+    assert.equal(resolveTimetableSolverTimeoutMs(largeProject, { TIMEFOLD_SOLVER_TIMEOUT: '240', TIMETABLE_SOLVER_TIMEOUT: '120' }), 120000);
+
+    const hint = buildTimetableSolveScaleHint(largeProject, {});
+    assert.equal(hint.largeProject, true);
+    assert.equal(hint.classCount, 30);
+    assert.equal(hint.timeoutSeconds, 300);
+    assert.match(hint.message, /30 个班/);
 });
 
 test('solveTimetableWithTimefold rejects hard-score violations and terminates jobs', async () => {

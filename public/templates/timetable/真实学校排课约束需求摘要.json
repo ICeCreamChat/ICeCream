@@ -1,0 +1,39 @@
+{
+  "source": "教师配置排课数据.xlsx",
+  "generatedAt": "2026-07-08T13:31:16.557Z",
+  "outputWorkbook": "public/templates/timetable/真实学校排课约束需求.xlsx",
+  "rowCount": 137,
+  "teacherSourceCount": 62,
+  "mentionedTeacherCount": 62,
+  "missingTeacherMentions": [],
+  "unknownTeacherMentions": [],
+  "typeBreakdown": {
+    "教师不可排": 62,
+    "教师每天最多上限": 6,
+    "教师每周最多天数": 6,
+    "教师少空堂": 8,
+    "班级不可排": 30,
+    "课程上午优先": 1,
+    "课程优先节次": 2,
+    "课程避开节次": 5,
+    "课程下午优先": 2,
+    "课程每天最多上限": 3,
+    "教室要求": 4,
+    "连堂保护": 2,
+    "课程顺序": 1,
+    "课程分散": 1,
+    "课程间隔": 1,
+    "教师负载均衡": 1,
+    "班级每天均衡": 1,
+    "全校不可排": 1
+  },
+  "parseSanity": {
+    "success": true,
+    "inputType": "xlsx_constraints",
+    "parseSource": "local_xlsx",
+    "source": "local_xlsx",
+    "draftRows": 142,
+    "warnings": 29,
+    "aiReviewStatus": "skipped"
+  }
+}

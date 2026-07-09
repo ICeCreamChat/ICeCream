@@ -4,19 +4,9 @@
  */
 
 import { requestTimetable } from './api.js';
+import { RULE_TYPE_LABELS } from './constraint-status-dict.js';
 
 const DAY_LABELS = ['', '一', '二', '三', '四', '五', '六', '日'];
-
-const RULE_TYPE_LABELS = {
-    teacher_unavailable: '教师不可排',
-    class_unavailable: '班级不可排',
-    subject_morning: '上午优先',
-    subject_preferred_periods: '课程优先节次',
-    subject_avoid_periods: '课程避开节次',
-    teacher_daily_limit: '教师每日上限',
-    teacher_consecutive_limit: '教师连续上限',
-    subject_spread: '课程分散',
-};
 
 const RULE_TARGET_KIND = {
     teacher_unavailable: 'teacher',

@@ -221,6 +221,79 @@ test('local fallback parses "语数英尽量上午" as 3 subject_morning rules',
     assert.ok(morningRows.length >= 3, `expected >= 3 subject_morning effective rows, got ${morningRows.length}`);
 });
 
+test('local fallback parses phase 1 rule primitives', async () => {
+    const project = makeProject({
+        lessonPlans: [
+            { id: 'lp1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyHours: 3 },
+            { id: 'lp2', classId: 'c1', subjectId: 's2', teacherId: 't2', weeklyHours: 3 },
+        ],
+    });
+    const result = await parseTimetableRules({
+        text: [
+            '体育尽量安排到下午。',
+            '周一第1节全校升旗不排课。',
+            '李老师每周最多2节。',
+            '张老师和李老师不能同时上课。',
+            '语文每天最多1节。',
+            '语文和数学不要排同一天。',
+            '英语至少间隔2天。',
+        ].join(''),
+        project,
+        env: {},
+    });
+
+    assert.ok(result.draftRows.some(row => row.type === 'subject_afternoon' && row.targetId === 's4' && row.status === 'effective'));
+    assert.deepEqual(result.draftRules.softRules.afternoonSubjects, ['s4']);
+    assert.ok(result.draftRows.some(row => row.type === 'global_unavailable' && row.slots.includes('1-1')));
+    assert.ok(result.draftRules.hardRules.globalUnavailable.includes('1-1'));
+    assert.ok(result.draftRows.some(row => row.type === 'teacher_weekly_limit' && row.targetId === 't2' && row.limit === 2));
+    assert.equal(result.draftRules.hardRules.teacherWeeklyLimit.t2, 2);
+    assert.ok(result.draftRows.some(row => row.type === 'teacher_mutual_exclusion' && row.status === 'effective'));
+    assert.deepEqual(result.draftRules.hardRules.teacherMutualExclusion[0].teacherIds.sort(), ['t1', 't2']);
+    assert.equal(result.draftRules.hardRules.subjectDailyLimit.s1, 1);
+    assert.ok(result.draftRules.hardRules.subjectNotSameDay.some(item => item.subjectIds.includes('s1') && item.subjectIds.includes('s2')));
+    assert.equal(result.draftRules.softRules.spreadSubjectGaps.s3, 2);
+    assert.ok(result.conflicts.some(conflict => /每周上限 2 节/.test(conflict.message)));
+});
+
+test('local fallback parses room_requirement into hard room requirements', async () => {
+    const project = makeProject({
+        rooms: [{ id: 'gym', name: '体育馆', tags: ['sport'] }],
+    });
+    const result = await parseTimetableRules({
+        text: '体育课安排在体育馆',
+        project,
+        env: {},
+    });
+
+    const row = result.draftRows.find(item => item.type === 'room_requirement');
+    assert.ok(row);
+    assert.equal(row.status, 'effective');
+    assert.deepEqual(result.draftRules.hardRules.roomRequirements.s4.roomIds, ['gym']);
+});
+
+test('intent compiler compiles avoid_first_period requirement into machine rules', () => {
+    const project = makeProject();
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: [],
+        source: 'test',
+        semanticRequirements: [{
+            id: 'req_avoid_first',
+            intent: 'avoid_first_period',
+            object: { kind: 'subject', matchedIds: ['s4'], name: '体育' },
+            source: { rawText: '体育不要排第一节' },
+            confidence: 0.9,
+        }],
+    });
+
+    const row = result.draftRows.find(item => item.type === 'subject_avoid_periods');
+    assert.ok(row);
+    assert.equal(row.requirementId, 'req_avoid_first');
+    assert.deepEqual(row.slots, ['1-1', '2-1', '3-1', '4-1', '5-1']);
+    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.s4.avoid, ['1-1', '2-1', '3-1', '4-1', '5-1']);
+});
+
 test('local fallback prefers explicit periods over broad morning text', async () => {
     const project = makeProject();
     const result = await parseTimetableRules({
@@ -357,7 +430,28 @@ test('parseTimetableRules asks for clarification before applying vague high-load
     assert.equal(result.nextAction, 'ask_user');
 });
 
-test('continueTimetableRequirementClarification turns answered requirement into ready semantic action', () => {
+test('parseTimetableRules locally clarifies colloquial dense teacher load wording without AI', async () => {
+    const project = makeProject({
+        lessonPlans: [
+            { id: 'lp_math_c1', classId: 'c1', subjectId: 's2', teacherId: 't1', weeklyHours: 6 },
+            { id: 'lp_chinese_c1', classId: 'c1', subjectId: 's1', teacherId: 't2', weeklyHours: 5 },
+        ],
+    });
+    const result = await parseTimetableRules({
+        text: '老师的课别太密。',
+        project,
+        env: {},
+    });
+
+    const requirement = result.requirementItems.find(item => item.intent === 'teacher_load_protection');
+    assert.ok(requirement);
+    assert.equal(requirement.status, 'needs_review');
+    assert.equal(requirement.applyTo, 'optimization');
+    assert.equal(requirement.clarification?.field, 'maxConsecutive');
+    assert.equal(result.nextAction, 'ask_user');
+});
+
+test('continueTimetableRequirementClarification supports multi-round high-load teacher clarification', () => {
     const project = makeProject({
         lessonPlans: [
             { id: 'lp_math_c1', classId: 'c1', subjectId: 's2', teacherId: 't1', weeklyHours: 6 },
@@ -384,22 +478,41 @@ test('continueTimetableRequirementClarification turns answered requirement into 
         }],
     });
 
-    const result = continueTimetableRequirementClarification({
+    const firstRound = continueTimetableRequirementClarification({
         project,
         previousResult,
         answers: [{ requirementId: 'req_high_load', field: 'maxConsecutive', value: 2 }],
+    });
+
+    const afterFirst = firstRound.requirementItems.find(item => item.id === 'req_high_load');
+    assert.ok(afterFirst);
+    assert.equal(afterFirst.status, 'needs_review');
+    assert.equal(afterFirst.parameters.maxConsecutive, 2);
+    assert.equal(afterFirst.clarification?.kind, 'choice');
+    assert.equal(afterFirst.clarification?.field, 'dailyLimit');
+    assert.equal(afterFirst.clarificationHistory.length, 1);
+    assert.equal(firstRound.semanticActions.some(item => item.requirementId === 'req_high_load'), false);
+    assert.equal(firstRound.nextAction, 'ask_user');
+
+    const result = continueTimetableRequirementClarification({
+        project,
+        previousResult: firstRound,
+        answers: [{ requirementId: 'req_high_load', field: 'dailyLimit', value: '4' }],
     });
 
     const requirement = result.requirementItems.find(item => item.id === 'req_high_load');
     assert.ok(requirement);
     assert.equal(requirement.status, 'actionable');
     assert.equal(requirement.parameters.maxConsecutive, 2);
+    assert.equal(requirement.parameters.maxDaily, 4);
     assert.equal(requirement.clarification, null);
+    assert.equal(requirement.clarificationHistory.length, 2);
     const action = result.semanticActions.find(item => item.requirementId === 'req_high_load');
     assert.ok(action);
     assert.equal(action.kind, 'soft_rules_patch');
     assert.equal(action.status, 'ready');
     assert.equal(action.patch.teacherLimits.consecutive, 2);
+    assert.equal(action.patch.teacherLimits.daily, 4);
     assert.equal(result.nextAction, 'ready_to_apply');
 });
 
@@ -1294,14 +1407,15 @@ test('normalize handles empty draftRows gracefully', () => {
     assert.equal(result.nextAction, 'no_result');
 });
 
-test('normalize handles unsupported constraint type', () => {
+test('normalize handles teacher load balance as an effective v2 soft rule', () => {
     const project = makeProject();
     const result = normalizeTimetableRuleDraftRows({
         project,
         draftRows: [{ type: 'teacher_load_balance', targetId: 't1', confidence: 0.9 }],
         source: 'test',
     });
-    assert.equal(result.draftRows[0].status, 'suggestion');
+    assert.equal(result.draftRows[0].status, 'effective');
+    assert.deepEqual(result.draftRules.softRules.teacherLoadBalance, { enabled: true, weight: 1, explicit: true });
 });
 
 test('normalize handles completely unknown type as unsupported', () => {
@@ -1349,14 +1463,14 @@ test('normalize returns a four-category rule report without dropping legacy fiel
     });
 
     assert.ok(result.ruleReport);
-    assert.equal(result.ruleReport.summary.kept, 1);
+    assert.equal(result.ruleReport.summary.kept, 2);
     assert.equal(result.ruleReport.summary.review >= 1, true);
-    assert.equal(result.ruleReport.summary.degraded, 1);
+    assert.equal(result.ruleReport.summary.degraded, 0);
     assert.equal(result.ruleReport.summary.dropped, 1);
     assert.equal(result.ruleReport.hasIssues, true);
     assert.ok(result.ruleReport.entries.some(item => item.category === 'kept' && item.source.rowId === 'rule_kept'));
     assert.ok(result.ruleReport.entries.some(item => item.category === 'review' && /需要复核|人工确认/.test(item.reason)));
-    assert.ok(result.ruleReport.entries.some(item => item.category === 'degraded' && item.source.rowId === 'rule_degraded'));
+    assert.ok(result.ruleReport.entries.some(item => item.category === 'kept' && item.source.rowId === 'rule_degraded'));
     assert.ok(result.ruleReport.entries.some(item => item.category === 'dropped' && item.source.rowId === 'rule_dropped'));
     assert.ok(Array.isArray(result.draftRows));
     assert.ok(Array.isArray(result.autoAcceptable));
