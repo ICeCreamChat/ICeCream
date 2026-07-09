@@ -114,6 +114,42 @@ test('parseTimetableRules throws on empty text input', async () => {
     );
 });
 
+test('parseTimetableRules does not silently truncate long pasted text', async () => {
+    const project = makeProject();
+    const longText = Array.from({ length: 90 }, (_, index) => (
+        `第${index + 1}条暂时无法识别的排课说明，包含一段用于撑长输入的描述文本，要求系统不要在中间截断，也不要把后面的内容丢掉。`
+    )).join('\n');
+    const aiRequests = [];
+
+    assert.ok(longText.length > 4000);
+    await parseTimetableRules({
+        text: longText,
+        project,
+        env: {
+            DEEPSEEK_API_KEY: 'test-key',
+            DEEPSEEK_API_BASE: 'http://ai.test',
+            TIMETABLE_RULE_AI_REVIEW_DISABLED: '1',
+        },
+        fetchImpl: async (_url, options = {}) => {
+            const body = JSON.parse(options.body || '{}');
+            const user = JSON.parse(body.messages?.[1]?.content || '{}');
+            aiRequests.push(user.request || '');
+            return {
+                ok: true,
+                status: 200,
+                text: async () => JSON.stringify({
+                    choices: [{ message: { content: JSON.stringify({ draftRows: [], requirementItems: [], warnings: [] }) } }],
+                }),
+            };
+        },
+    });
+
+    assert.equal(aiRequests.length, 1);
+    assert.ok(aiRequests[0].length > 4000);
+    assert.match(aiRequests[0], /第90条暂时无法识别的排课说明/);
+    assert.ok(aiRequests[0].includes('\n'));
+});
+
 test('parseTimetableRules throws on unsupported file type', async () => {
     const project = makeProject();
     await assert.rejects(

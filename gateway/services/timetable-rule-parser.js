@@ -239,6 +239,13 @@ function asText(value, max = 4000) {
         .slice(0, max);
 }
 
+function cleanRulePromptText(value = '') {
+    return String(value ?? '')
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
+        .replace(/\r\n?/g, '\n')
+        .trim();
+}
+
 function normalizeBaseUrl(value) {
     return String(value || '').trim().replace(/\/+$/, '');
 }
@@ -5848,7 +5855,7 @@ export async function parseTimetableRules({
         throw new TimetableRuleParseError('智能约束文件只支持 .txt、.csv、.xlsx、.xls。', 'unsupported_file_type', 400);
     }
 
-    const prompt = cleanText(text, 4000);
+    const prompt = cleanRulePromptText(text);
     if (!prompt) {
         throw new TimetableRuleParseError('请先输入要解析的排课约束。', 'empty_prompt', 400);
     }
