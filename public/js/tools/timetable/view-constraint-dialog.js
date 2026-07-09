@@ -274,6 +274,38 @@ function renderRequirementAiReview(item = {}, review = {}) {
     `;
 }
 
+function renderRequirementEvidenceText(item = {}, aiReview = '') {
+    const evidence = item.reviewEvidence || {};
+    const quote = evidence.quote || '';
+    if (aiReview && quote) return '';
+    const sourceText = quote || requirementRawText(item);
+    if (!sourceText) return '';
+    return `<p class="tt-requirement-evidence-source">${escapeHtml(humanizeAiReviewMessage(sourceText))}</p>`;
+}
+
+function renderRequirementDetailSummary(item = {}) {
+    const objectName = requirementObjectName(item);
+    const parameterLabel = requirementParameterLabel(item);
+    const intentLabel = requirementIntentLabel(item.intent);
+    const summaryLine = [intentLabel, parameterLabel].filter(Boolean).join(' · ');
+    const metaLine = [
+        requirementStrengthLabel(item.strength),
+        `置信度 ${requirementConfidenceLabel(item)}`,
+    ].filter(Boolean).join(' · ');
+    return `
+        <div class="tt-requirement-detail-summary">
+            <div class="tt-requirement-detail-summary-title">
+                <span class="tt-requirement-status tt-requirement-status--${escapeAttr(requirementStatusTone(item))}">
+                    ${escapeHtml(requirementStatusLabel(item))}
+                </span>
+                <strong>${escapeHtml(objectName)}</strong>
+            </div>
+            <p>${escapeHtml(summaryLine || intentLabel || '已理解需求')}</p>
+            <small>${escapeHtml(metaLine)}</small>
+        </div>
+    `;
+}
+
 function requirementStrengthLabel(strength = '') {
     const key = String(strength || '').trim().toLowerCase().replace(/-/g, '_');
     return {
@@ -301,53 +333,6 @@ function requirementSlotLabel(value = '') {
     const match = String(value || '').match(/^(\d{1,2})-(\d{1,2})$/);
     if (!match) return String(value || '');
     return `${requirementDayLabel(match[1])}第${match[2]}节`;
-}
-
-function requirementParameterKeyLabel(key = '') {
-    return {
-        blockPreference: '连堂方式',
-        maxConsecutive: '连续最多',
-        limit: '最多节数',
-        slots: '节次',
-        days: '周几',
-        periods: '课节',
-        dayPart: '时段',
-        weekPattern: '单双周',
-        balancedTeacherLoad: '教师负载均衡',
-        teacherLimits: '教师连续保护',
-        lessonPlanIds: '任课计划',
-        subjectIds: '课程',
-        weight: '权重',
-    }[key] || key;
-}
-
-function requirementParameterValueLabel(key = '', value) {
-    if (Array.isArray(value)) {
-        const formatted = value.map(item => requirementParameterValueLabel(key, item)).filter(Boolean);
-        return formatted.join('、');
-    }
-    if (typeof value === 'boolean') return value ? '是' : '否';
-    if (key === 'blockPreference') return blockPreferenceLabel(value);
-    if (key === 'dayPart') return DAY_PART_LABELS[String(value || '').trim()] || String(value || '');
-    if (key === 'slots') return requirementSlotLabel(value);
-    if (key === 'days') return requirementDayLabel(value);
-    if (key === 'periods') return `第${value}节`;
-    if (key === 'weekPattern') {
-        return {
-            odd: '单周',
-            even: '双周',
-            both: '单双周',
-            alternate: '隔周',
-        }[String(value || '').trim()] || String(value || '');
-    }
-    if (key === 'teacherLimits' && value && typeof value === 'object') {
-        const parts = [];
-        if (value.consecutive) parts.push(`连续最多 ${value.consecutive} 节`);
-        if (value.daily) parts.push(`每天最多 ${value.daily} 节`);
-        return parts.join('，') || '已配置';
-    }
-    if (value && typeof value === 'object') return '已配置';
-    return String(value ?? '');
 }
 
 function requirementHasComplexSignal(item = {}) {
@@ -379,32 +364,6 @@ function requirementComplexBadges(item = {}) {
     if (params.roomId || params.roomRequirement || /room|教室|场地/.test(text)) badges.push('教室要求');
     if (!badges.length && requirementHasComplexSignal(item)) badges.push('复杂模型');
     return [...new Set(badges)];
-}
-
-function renderRequirementParameterDetails(item = {}) {
-    const params = item.parameters || {};
-    const primary = requirementParameterLabel(item);
-    const primaryKeys = new Set();
-    if (params.blockPreference) primaryKeys.add('blockPreference');
-    else if (params.maxConsecutive) primaryKeys.add('maxConsecutive');
-    else if (params.limit) primaryKeys.add('limit');
-    else if (params.slots?.length) primaryKeys.add('slots');
-    else if (params.balancedTeacherLoad) primaryKeys.add('balancedTeacherLoad');
-    const entries = Object.entries(params).filter(([key, value]) => (
-        !primaryKeys.has(key)
-        && value !== undefined
-        && value !== null
-        && value !== ''
-    ));
-    if (!entries.length && !primary) return '<span>无额外参数</span>';
-    const rendered = [];
-    if (primary) rendered.push(`<span>${escapeHtml(primary)}</span>`);
-    entries.forEach(([key, value]) => {
-        const keyText = requirementParameterKeyLabel(key);
-        const valueText = requirementParameterValueLabel(key, value);
-        rendered.push(`<span>${escapeHtml(keyText)}：${escapeHtml(valueText)}</span>`);
-    });
-    return rendered.join('');
 }
 
 function constraintFlowStage(review = {}, requirements = []) {
@@ -654,7 +613,7 @@ function renderRequirementMachineRules(item = {}, state = {}) {
     return `
         <div class="tt-requirement-machine-rules tt-requirement-outcome">
             <div class="tt-requirement-machine-header">
-                <span class="tt-requirement-detail-label">落地结果</span>
+                <span class="tt-requirement-detail-label">将应用的规则</span>
                 ${itemCount ? `<em>${itemCount} 项</em>` : ''}
             </div>
             ${outcomeLabels.length ? `
@@ -678,26 +637,16 @@ function renderRequirementMachineRules(item = {}, state = {}) {
     `;
 }
 
-function renderRequirementSupportingRequirements(item = {}) {
-    const supporting = (item.supportingRequirements || []).filter(entry => entry && (entry.intent || entry.object?.name || entry.source?.rawText));
-    if (!supporting.length) return '';
+function renderRequirementEvidenceSection(item = {}, review = {}) {
+    const aiReview = renderRequirementAiReview(item, review);
+    const evidenceText = renderRequirementEvidenceText(item, aiReview);
+    if (!aiReview && !evidenceText) return '';
     return `
-        <div class="tt-requirement-related">
-            <span class="tt-requirement-detail-label">相关理解</span>
-            <div>
-                ${supporting.map(entry => {
-                    const objectName = entry.object?.name || entry.targetName || '';
-                    const intentLabel = requirementIntentLabel(entry.intent || entry.type || 'requirement');
-                    const sourceText = entry.source?.rawText || entry.rawText || '';
-                    return `
-                        <span title="${escapeAttr(sourceText || intentLabel)}">
-                            <b>${escapeHtml(intentLabel)}</b>
-                            ${objectName ? `<em>${escapeHtml(objectName)}</em>` : ''}
-                        </span>
-                    `;
-                }).join('')}
-            </div>
-        </div>
+        <section class="tt-requirement-detail-section tt-requirement-detail-evidence">
+            <span class="tt-requirement-detail-label">识别依据</span>
+            ${aiReview}
+            ${evidenceText}
+        </section>
     `;
 }
 
@@ -820,61 +769,15 @@ function renderRequirementDetail(item = null, state = {}) {
             </aside>
         `;
     }
-    const objectName = requirementObjectName(item);
-    const sourceText = requirementRawText(item);
     const warnings = item.warnings || [];
     const review = state.ruleReview?.aiReview || {};
     return `
         <aside class="tt-requirement-detail" data-requirement-detail-id="${escapeAttr(item.id || '')}">
-            <div class="tt-requirement-detail-header">
-                <span class="tt-requirement-status tt-requirement-status--${escapeAttr(requirementStatusTone(item))}">
-                    ${escapeHtml(requirementStatusLabel(item))}
-                </span>
-                <strong>${escapeHtml(objectName)}</strong>
-            </div>
-            <dl class="tt-requirement-detail-list">
-                <div>
-                    <dt>需求</dt>
-                    <dd>${escapeHtml(requirementIntentLabel(item.intent))}</dd>
-                </div>
-                <div>
-                    <dt>落点</dt>
-                    <dd>
-                        <span class="tt-requirement-destination tt-requirement-destination--${escapeAttr(requirementApplyTone(item.applyTo, item.status))}">
-                            ${escapeHtml(requirementApplyLabel(item.applyTo))}
-                        </span>
-                        <small>${escapeHtml(requirementApplyExplanation(item.applyTo, item.status))}</small>
-                    </dd>
-                </div>
-                <div>
-                    <dt>强度</dt>
-                    <dd>${escapeHtml(requirementStrengthLabel(item.strength))}</dd>
-                </div>
-                <div>
-                    <dt>置信度</dt>
-                    <dd>${escapeHtml(requirementConfidenceLabel(item))}</dd>
-                </div>
-                <div>
-                    <dt>来源</dt>
-                    <dd>${escapeHtml(requirementSourceLabel(item))}</dd>
-                </div>
-            </dl>
-            ${renderRequirementAiReview(item, review)}
-            <div class="tt-requirement-params">
-                <span class="tt-requirement-detail-label">参数</span>
-                <div>${renderRequirementParameterDetails(item)}</div>
-            </div>
-            ${renderRequirementSupportingRequirements(item)}
-            ${renderRequirementComplexBadges(item)}
-            ${renderRequirementModelSupport(item)}
-            ${renderRequirementClarification(item)}
-            ${sourceText ? `
-                <div class="tt-requirement-raw">
-                    <span class="tt-requirement-detail-label">原文</span>
-                    <p>${escapeHtml(sourceText)}</p>
-                </div>
-            ` : ''}
+            ${renderRequirementDetailSummary(item)}
             ${renderRequirementMachineRules(item, state)}
+            ${renderRequirementEvidenceSection(item, review)}
+            ${renderRequirementClarification(item)}
+            ${renderRequirementModelSupport(item)}
             ${warnings.length ? `
                 <div class="tt-constraint-warning">
                     <i data-lucide="alert-circle"></i>

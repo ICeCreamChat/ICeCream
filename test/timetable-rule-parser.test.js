@@ -12,6 +12,9 @@ import {
     normalizeTimetableRuleDraftRows,
     TimetableRuleParseError,
 } from '../gateway/services/timetable-rule-parser.js';
+import {
+    buildUnifiedRequirementItems,
+} from '../public/js/tools/timetable/constraint-dialog-review-model.js';
 
 // --- Helpers ---
 
@@ -739,6 +742,212 @@ test('parseTimetableRules links full-sentence AI requirement to a shortened mach
     assert.equal(row.type, 'teacher_unavailable');
     assert.equal(row.status, 'effective');
     assert.ok(result.requirementItems.some(item => item.id === 'req_need'));
+});
+
+test('parseTimetableRules preserves top-level rawText when AI requirement has a source object', async () => {
+    const fullText = 'AI测试：刘书涵老师周一第2节要参加语文备课组集体备课，这节不要给他安排课。';
+    const shortText = '刘书涵老师周一第2节不要排课';
+    const project = makeProject({
+        teachers: [{ id: 't_liu', name: '刘书涵' }],
+    });
+    const fetchImpl = async (_url, init = {}) => {
+        const body = JSON.parse(init.body || '{}');
+        const system = body.messages?.[0]?.content || '';
+        const isReview = system.includes('复审核查员');
+        const content = isReview
+            ? {
+                reviewItems: [{
+                    verdict: 'accept',
+                    target: { type: 'teacher_unavailable', targetId: 't_liu' },
+                    reason: '需求明确，本地解析正确。',
+                    evidence: { quote: shortText },
+                }],
+            }
+            : {
+                requirementItems: [{
+                    id: 'req_raw_top_level',
+                    object: { kind: 'global', name: '全局', matchedIds: [], scope: 'derived' },
+                    intent: 'schedule_request',
+                    status: 'needs_review',
+                    applyTo: 'rule',
+                    rawText: fullText,
+                    source: { channel: 'user_input' },
+                    confidence: 0.9,
+                }],
+                draftRows: [{
+                    id: 'row_short_rule_from_top_raw',
+                    type: 'teacher_unavailable',
+                    targetType: 'teacher',
+                    targetId: 't_liu',
+                    targetName: '刘书涵',
+                    slots: ['1-2'],
+                    rawText: shortText,
+                    priority: 'hard',
+                    confidence: 0.95,
+                }],
+            };
+        return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+                choices: [{ message: { content: JSON.stringify(content) } }],
+            }),
+        };
+    };
+
+    const result = await parseTimetableRules({
+        text: fullText,
+        project,
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        fetchImpl,
+    });
+
+    const row = result.draftRows.find(item => item.id === 'row_short_rule_from_top_raw');
+    const requirement = result.requirementItems.find(item => item.id === 'req_raw_top_level');
+    assert.ok(row);
+    assert.ok(requirement);
+    assert.equal(row.requirementId, 'req_raw_top_level');
+    assert.equal(requirement.source.rawText, fullText);
+});
+
+test('parseTimetableRules visible review model drops named empty AI shells beside real rules', async () => {
+    const fullText = 'AI测试：刘书涵老师周一第2节要参加语文备课组集体备课，这节不要给他安排课。';
+    const shortText = '刘书涵老师周一第2节不要排课';
+    const project = makeProject({
+        teachers: [{ id: 't_liu', name: '刘书涵' }],
+    });
+    const fetchImpl = async (_url, init = {}) => {
+        const body = JSON.parse(init.body || '{}');
+        const system = body.messages?.[0]?.content || '';
+        const isReview = system.includes('复审核查员');
+        const content = isReview
+            ? {
+                reviewItems: [{
+                    verdict: 'accept',
+                    target: { type: 'teacher_unavailable', targetId: 't_liu' },
+                    reason: '需求明确，本地解析正确。',
+                    evidence: { quote: shortText },
+                }],
+            }
+            : {
+                requirementItems: [{
+                    id: 'req_named_empty_shell',
+                    object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+                    intent: 'schedule_request',
+                    status: 'needs_review',
+                    applyTo: 'rule',
+                    source: { channel: 'user_input' },
+                    parameters: {},
+                    confidence: 0.7,
+                }],
+                draftRows: [{
+                    id: 'row_named_shell_real_rule',
+                    type: 'teacher_unavailable',
+                    targetType: 'teacher',
+                    targetId: 't_liu',
+                    targetName: '刘书涵',
+                    slots: ['1-2'],
+                    rawText: shortText,
+                    priority: 'hard',
+                    confidence: 0.95,
+                }],
+            };
+        return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+                choices: [{ message: { content: JSON.stringify(content) } }],
+            }),
+        };
+    };
+
+    const result = await parseTimetableRules({
+        text: fullText,
+        project,
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        fetchImpl,
+    });
+    const visibleItems = buildUnifiedRequirementItems(result);
+
+    assert.ok(result.draftRows.some(row => row.id === 'row_named_shell_real_rule' && row.status === 'effective'));
+    assert.ok(result.requirementItems.some(item => item.id === 'req_named_empty_shell'));
+    assert.equal(visibleItems.length, 1);
+    assert.equal(visibleItems[0].intent, 'teacher_unavailable');
+    assert.equal(visibleItems[0].object.name, '刘书涵');
+});
+
+test('parseTimetableRules visible review model drops placeholder-only AI shells beside real rules', async () => {
+    const fullText = 'AI测试：刘书涵老师周一第2节要参加语文备课组集体备课，这节不要给他安排课。';
+    const shortText = '刘书涵老师周一第2节不要排课';
+    const project = makeProject({
+        teachers: [{ id: 't_liu', name: '刘书涵' }],
+    });
+    const fetchImpl = async (_url, init = {}) => {
+        const body = JSON.parse(init.body || '{}');
+        const system = body.messages?.[0]?.content || '';
+        const isReview = system.includes('复审核查员');
+        const content = isReview
+            ? {
+                reviewItems: [{
+                    verdict: 'accept',
+                    target: { type: 'teacher_unavailable', targetId: 't_liu' },
+                    reason: '需求明确，本地解析正确。',
+                    evidence: { quote: shortText },
+                }],
+            }
+            : {
+                requirementItems: [{
+                    id: 'req_placeholder_shell',
+                    object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+                    intent: 'schedule_request',
+                    status: 'needs_review',
+                    applyTo: 'rule',
+                    source: { channel: 'user_input', label: '我的输入' },
+                    parameters: {
+                        teacherName: '刘书涵',
+                        type: 'teacher_unavailable',
+                        time: '-',
+                        destination: '排课规则',
+                    },
+                    reviewEvidence: {
+                        reason: 'AI 已复审：这是上层排课需求理解，实际落地为教师不可排规则。',
+                    },
+                    confidence: 0.7,
+                }],
+                draftRows: [{
+                    id: 'row_placeholder_shell_real_rule',
+                    type: 'teacher_unavailable',
+                    targetType: 'teacher',
+                    targetId: 't_liu',
+                    targetName: '刘书涵',
+                    slots: ['1-2'],
+                    rawText: shortText,
+                    priority: 'hard',
+                    confidence: 0.95,
+                }],
+            };
+        return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+                choices: [{ message: { content: JSON.stringify(content) } }],
+            }),
+        };
+    };
+
+    const result = await parseTimetableRules({
+        text: fullText,
+        project,
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        fetchImpl,
+    });
+    const visibleItems = buildUnifiedRequirementItems(result);
+
+    assert.ok(result.draftRows.some(row => row.id === 'row_placeholder_shell_real_rule' && row.status === 'effective'));
+    assert.ok(result.requirementItems.some(item => item.id === 'req_placeholder_shell'));
+    assert.equal(visibleItems.length, 1);
+    assert.equal(visibleItems[0].intent, 'teacher_unavailable');
+    assert.equal(visibleItems[0].object.name, '刘书涵');
 });
 
 test('normalizeTimetableRuleDraftRows links only the matching same-teacher period', () => {

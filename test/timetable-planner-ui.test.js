@@ -105,6 +105,10 @@ function dutyDialogMarkup(html = '') {
   return html.match(/<section class="tt-duty-assignment-dialog"[\s\S]*?<\/section>/)?.[0] || '';
 }
 
+function requirementDetailMarkup(html = '') {
+  return html.match(/<aside class="tt-requirement-detail"[\s\S]*?<\/aside>/)?.[0] || '';
+}
+
 test('timetable opens smart constraints in the constraint dialog instead of the removed workbench', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     smartWorkbench: createConstraintDialogState({
@@ -262,7 +266,7 @@ test('timetable constraint dialog renders object-first requirements as a review 
   assert.match(html, /默认课时块策略/);
   assert.match(html, /未找到唯一匹配课程/);
   assert.match(html, /待补充信息/);
-  assert.match(html, /落地结果/);
+  assert.match(html, /将应用的规则/);
   assert.match(html, /任课计划|优化策略|规则草稿/);
   assert.match(html, /data-requirement-id="req_review"[\s\S]*is-selected/);
   assert.match(html, /应用需求 \(2\)/);
@@ -313,6 +317,11 @@ test('timetable constraint dialog renders AI review as lightweight detail copy',
   assert.match(dialogStyles, /\.tt-requirement-ai-review--warning\s*{/);
   assert.match(dialogStyles, /\.tt-requirement-ai-review p\s*{[\s\S]*color:\s*var\(--tt-text-secondary\);[\s\S]*font-weight:\s*400;/);
   assert.match(dialogStyles, /\.tt-requirement-ai-review small\s*{[\s\S]*color:\s*var\(--tt-muted\);[\s\S]*font-weight:\s*400;/);
+  assert.match(html, /tt-requirement-detail-summary[\s\S]*刘书涵[\s\S]*教师不可排[\s\S]*周一第2节[\s\S]*置信度 95%/);
+  assert.match(html, /将应用的规则[\s\S]*识别依据/);
+  assert.match(html, /tt-requirement-detail-evidence[\s\S]*AI 已复审/);
+  assert.match(html, /tt-requirement-detail-evidence[\s\S]*刘书涵老师周一第2节不要排课/);
+  assert.doesNotMatch(html, /原文与相关理解|tt-requirement-detail-disclosure/);
 });
 
 test('timetable constraint dialog coalesces one natural-language rule into one review row', async () => {
@@ -365,6 +374,7 @@ test('timetable constraint dialog coalesces one natural-language rule into one r
   }));
   const constraintStyles = await readFile(constraintDialogStylePath, 'utf8');
   const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+  const detailHtml = requirementDetailMarkup(html);
 
   assert.equal(requirementRows.length, 1);
   assert.match(requirementRows[0], /刘书涵/);
@@ -374,13 +384,14 @@ test('timetable constraint dialog coalesces one natural-language rule into one r
   assert.match(html, /来自你的输入 1 条/);
   assert.match(html, /当前筛选可应用 1 项/);
   assert.match(html, /应用需求 \(1\)/);
-  assert.match(html, /相关理解/);
-  assert.match(html, /排课需求/);
-  assert.match(html, /不可排时间/);
-  assert.match(html, /原文[\s\S]*刘书涵老师周一第2节/);
-  assert.match(html, /落地结果[\s\S]*规则草稿/);
-  assert.match(constraintStyles, /\.tt-requirement-params,\s*\.tt-requirement-related,\s*\.tt-requirement-raw\s*{/s);
-  assert.match(constraintStyles, /\.tt-requirement-params > div,\s*\.tt-requirement-related > div\s*{/s);
+  assert.doesNotMatch(detailHtml, /相关理解|排课需求|不可排时间/);
+  assert.match(detailHtml, /识别依据[\s\S]*刘书涵老师周一第2节/);
+  assert.match(html, /将应用的规则[\s\S]*规则草稿/);
+  assert.doesNotMatch(html, /<details class="tt-requirement-detail-disclosure">[\s\S]*<summary>原文与相关理解<\/summary>/);
+  assert.doesNotMatch(constraintStyles, /\.tt-requirement-params,\s*\.tt-requirement-related,\s*\.tt-requirement-raw\s*{/s);
+  assert.doesNotMatch(constraintStyles, /\.tt-requirement-params > div,\s*\.tt-requirement-related > div\s*{/s);
+  assert.match(constraintStyles, /\.tt-requirement-detail-summary\s*{/);
+  assert.doesNotMatch(constraintStyles, /\.tt-requirement-detail-disclosure\s*{/);
 });
 
 test('timetable constraint dialog coalesces full-sentence understanding with a shortened machine rule', () => {
@@ -421,6 +432,7 @@ test('timetable constraint dialog coalesces full-sentence understanding with a s
     constraintDialog: { open: true, selectedRequirementId: 'req_full_need' },
   }));
   const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+  const detailHtml = requirementDetailMarkup(html);
 
   assert.equal(requirementRows.length, 1);
   assert.match(requirementRows[0], /刘书涵/);
@@ -430,8 +442,366 @@ test('timetable constraint dialog coalesces full-sentence understanding with a s
   assert.match(html, /全部[\s\S]*1/);
   assert.match(html, /当前筛选可应用 1 项/);
   assert.match(html, /应用需求 \(1\)/);
-  assert.match(html, /相关理解/);
-  assert.match(html, /排课需求/);
+  assert.doesNotMatch(detailHtml, /相关理解|排课需求/);
+  assert.match(detailHtml, /识别依据[\s\S]*刘书涵老师周一第2节/);
+});
+
+test('timetable constraint dialog coalesces schedule request shells with time parameters into matching rules', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [{
+        id: 'rule-liu-time-param',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetId: 't_liu',
+        targetName: '刘书涵',
+        slots: ['1-2'],
+        priority: 'hard',
+        status: 'effective',
+        confidence: 0.95,
+        rawText: '刘书涵老师周一第2节不要排课',
+        parseSource: 'ai',
+      }],
+      requirementItems: [{
+        id: 'req_time_param_shell',
+        object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+        intent: 'schedule_request',
+        status: 'needs_review',
+        applyTo: 'review',
+        parameters: { time: '周一第2节' },
+        source: { channel: 'user_input', label: '我的输入' },
+        confidence: 0.8,
+      }],
+      semanticActions: [],
+      warnings: [],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_time_param_shell' },
+  }));
+  const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+  const detailHtml = requirementDetailMarkup(html);
+
+  assert.equal(requirementRows.length, 1);
+  assert.match(requirementRows[0], /刘书涵/);
+  assert.match(requirementRows[0], /教师不可排/);
+  assert.match(requirementRows[0], /周一第2节/);
+  assert.doesNotMatch(requirementRows[0], /排课需求/);
+  assert.doesNotMatch(detailHtml, /相关理解|排课需求/);
+  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /应用需求 \(1\)/);
+});
+
+test('timetable constraint dialog coalesces schedule request shells with source text parameters into matching rules', () => {
+  const rawText = '刘书涵老师周一第2节要参加语文备课组集体备课，这节不要给他安排课。';
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [{
+        id: 'rule-liu-parameter-text',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetId: 't_liu',
+        targetName: '刘书涵',
+        slots: ['1-2'],
+        priority: 'hard',
+        status: 'effective',
+        confidence: 0.95,
+        rawText: '刘书涵老师周一第2节不要排课',
+        parseSource: 'ai',
+      }],
+      requirementItems: [{
+        id: 'req_parameter_text_shell',
+        object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+        intent: 'schedule_request',
+        status: 'needs_review',
+        applyTo: 'review',
+        parameters: { rawText },
+        source: { channel: 'user_input', label: '我的输入' },
+        confidence: 0.8,
+      }],
+      semanticActions: [],
+      warnings: [],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_parameter_text_shell' },
+  }));
+  const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+  const detailHtml = requirementDetailMarkup(html);
+
+  assert.equal(requirementRows.length, 1);
+  assert.match(requirementRows[0], /刘书涵/);
+  assert.match(requirementRows[0], /教师不可排/);
+  assert.match(requirementRows[0], /周一第2节/);
+  assert.doesNotMatch(requirementRows[0], /排课需求/);
+  assert.doesNotMatch(detailHtml, /相关理解|排课需求/);
+  assert.match(detailHtml, /识别依据[\s\S]*刘书涵老师周一第2节/);
+  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /应用需求 \(1\)/);
+});
+
+test('timetable constraint dialog drops generic empty schedule request shells when a rule exists', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [{
+        id: 'rule-liu-unavailable-from-ai',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetId: 't_liu',
+        targetName: '刘书涵',
+        slots: ['1-2'],
+        priority: 'hard',
+        status: 'effective',
+        confidence: 0.95,
+        rawText: '刘书涵周一第2节参加语文备课组集体备课',
+        parseSource: 'ai',
+      }],
+      requirementItems: [{
+        id: 'req_empty_schedule_shell',
+        object: { kind: 'global', name: '全局', matchedIds: [], scope: 'derived' },
+        intent: 'schedule_request',
+        status: 'needs_review',
+        applyTo: 'rule',
+        parameters: {},
+        source: { channel: 'user_input' },
+        confidence: 0.7,
+      }],
+      semanticActions: [],
+      warnings: [],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_empty_schedule_shell' },
+  }));
+  const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+
+  assert.equal(requirementRows.length, 1);
+  assert.match(requirementRows[0], /刘书涵/);
+  assert.match(requirementRows[0], /教师不可排/);
+  assert.match(requirementRows[0], /周一第2节/);
+  assert.doesNotMatch(requirementRows[0], /排课需求|全局/);
+  assert.match(html, /全部[\s\S]*1/);
+  assert.match(html, /需复核[\s\S]*0/);
+  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /应用需求 \(1\)/);
+});
+
+test('timetable constraint dialog drops named empty schedule request shells when a rule exists', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [{
+        id: 'rule-liu-named-shell',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetId: 't_liu',
+        targetName: '刘书涵',
+        slots: ['1-2'],
+        priority: 'hard',
+        status: 'effective',
+        confidence: 0.95,
+        rawText: '刘书涵周一第2节参加语文备课组集体备课',
+        parseSource: 'ai',
+      }],
+      requirementItems: [{
+        id: 'req_named_empty_schedule_shell',
+        object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+        intent: 'schedule_request',
+        status: 'needs_review',
+        applyTo: 'rule',
+        parameters: {},
+        source: { channel: 'user_input' },
+        confidence: 0.7,
+      }],
+      semanticActions: [],
+      warnings: [],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_named_empty_schedule_shell' },
+  }));
+  const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+
+  assert.equal(requirementRows.length, 1);
+  assert.match(requirementRows[0], /刘书涵/);
+  assert.match(requirementRows[0], /教师不可排/);
+  assert.match(requirementRows[0], /周一第2节/);
+  assert.doesNotMatch(requirementRows[0], /排课需求/);
+  assert.match(html, /全部[\s\S]*1/);
+  assert.match(html, /需复核[\s\S]*0/);
+  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /应用需求 \(1\)/);
+});
+
+test('timetable constraint dialog drops named placeholder-only schedule request shells when a rule exists', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [{
+        id: 'rule-liu-placeholder-shell',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetId: 't_liu',
+        targetName: '刘书涵',
+        slots: ['1-2'],
+        priority: 'hard',
+        status: 'effective',
+        confidence: 0.95,
+        rawText: '刘书涵老师周一第2节不要排课',
+        parseSource: 'ai',
+      }],
+      requirementItems: [{
+        id: 'req_named_placeholder_shell',
+        object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+        intent: 'schedule_request',
+        status: 'needs_review',
+        applyTo: 'rule',
+        parameters: {
+          teacherName: '刘书涵',
+          type: 'teacher_unavailable',
+          time: '-',
+          destination: '排课规则',
+        },
+        source: { channel: 'user_input', label: '我的输入' },
+        reviewEvidence: {
+          reason: 'AI 已复审：这是上层排课需求理解，实际落地为教师不可排规则。',
+        },
+        confidence: 0.7,
+      }],
+      semanticActions: [],
+      warnings: [],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_named_placeholder_shell' },
+  }));
+  const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+
+  assert.equal(requirementRows.length, 1);
+  assert.match(requirementRows[0], /刘书涵/);
+  assert.match(requirementRows[0], /教师不可排/);
+  assert.match(requirementRows[0], /周一第2节/);
+  assert.doesNotMatch(requirementRows[0], /排课需求/);
+  assert.match(html, /全部[\s\S]*1/);
+  assert.match(html, /需复核[\s\S]*0/);
+  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /应用需求 \(1\)/);
+});
+
+test('timetable constraint dialog hides covered redundant review hints from merged rule details', () => {
+  const rawText = '刘书涵老师周一第2节要参加语文备课组集体备课，这节不要给他安排课。';
+  const redundantMessage = '冗余需求：缺少具体时段参数，已被req_rule_draft_1覆盖';
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [{
+        id: 'req_rule_draft_1',
+        requirementId: 'req_redundant_shell',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetId: 't_liu',
+        targetName: '刘书涵',
+        slots: ['1-2'],
+        priority: 'hard',
+        status: 'effective',
+        confidence: 0.95,
+        rawText,
+        parseSource: 'ai',
+        aiReviewStatus: 'accepted',
+        reviewEvidence: {
+          quote: rawText,
+          reason: '需求已正确解析为教师不可用时段规则',
+        },
+      }],
+      requirementItems: [{
+        id: 'req_redundant_shell',
+        object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+        intent: 'schedule_request',
+        status: 'needs_review',
+        applyTo: 'review',
+        parameters: {},
+        source: { rawText: redundantMessage, channel: 'user_input', label: '我的输入' },
+        aiReviewStatus: 'accepted',
+        reviewEvidence: {
+          quote: rawText,
+          reason: '需求已正确解析为教师不可用时段规则',
+        },
+        warnings: [redundantMessage],
+        clarification: {
+          field: 'slots',
+          kind: 'text',
+          question: redundantMessage,
+        },
+        confidence: 0.7,
+      }],
+      semanticActions: [],
+      warnings: [],
+      aiReview: { status: 'reviewed' },
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_redundant_shell' },
+  }));
+  const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+
+  assert.equal(requirementRows.length, 1);
+  assert.match(requirementRows[0], /刘书涵/);
+  assert.match(requirementRows[0], /教师不可排/);
+  assert.match(requirementRows[0], /周一第2节/);
+  assert.match(html, /AI 已复审/);
+  assert.match(html, /需求已正确解析为教师不可用时段规则/);
+  assert.doesNotMatch(html, /待补充信息/);
+  assert.doesNotMatch(html, /冗余需求/);
+  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /应用需求 \(1\)/);
+});
+
+test('timetable constraint dialog keeps meaningful review requirements with clarification', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [],
+      requirementItems: [{
+        id: 'req_meaningful_review',
+        object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+        intent: 'schedule_request',
+        status: 'needs_review',
+        applyTo: 'review',
+        parameters: {},
+        source: { channel: 'user_input' },
+        clarification: {
+          field: 'slots',
+          kind: 'text',
+          question: '请补充刘书涵老师不可排的具体节次。',
+        },
+        confidence: 0.7,
+      }],
+      semanticActions: [],
+      warnings: [],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_meaningful_review' },
+  }));
+  const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+
+  assert.equal(requirementRows.length, 1);
+  assert.match(requirementRows[0], /刘书涵/);
+  assert.match(requirementRows[0], /排课需求/);
+  assert.match(html, /待补充信息/);
+  assert.match(html, /请补充刘书涵老师不可排的具体节次/);
+  assert.match(html, /全部[\s\S]*1/);
+  assert.match(html, /需复核[\s\S]*1/);
 });
 
 test('timetable constraint dialog keeps separate same-teacher demands at different periods', () => {
@@ -587,7 +957,7 @@ test('timetable constraint dialog does not count rules_patch bridge actions as e
     constraintDialog: { open: true, selectedRequirementId: 'req_rule' },
   }));
 
-  assert.match(html, /落地结果[\s\S]{0,80}1 项/);
+  assert.match(html, /将应用的规则[\s\S]{0,80}1 项/);
   assert.match(html, /data-constraint-id="rule-row"/);
   assert.doesNotMatch(html, /约束规则补丁/);
 });
@@ -718,7 +1088,7 @@ test('timetable constraint dialog localizes semantic enum aliases in requirement
   assert.match(html, /避开节次/);
   assert.match(html, /教师不可排/);
   assert.match(html, /双连堂/);
-  assert.match(html, /时段：上午/);
+  assert.match(requirementDetailMarkup(html), /识别依据[\s\S]*语文尽量上午/);
   assert.match(html, /建议/);
   assert.doesNotMatch(html, />candidate</);
   assert.doesNotMatch(html, />morning_preference</);

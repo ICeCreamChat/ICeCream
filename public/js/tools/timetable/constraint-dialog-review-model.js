@@ -168,6 +168,8 @@ function actionSourceText(action = {}) {
 function itemSourceTexts(item = {}) {
     return uniqueValues([
         requirementSourceText(item),
+        ...sourceTextsFromParameterBag(item.parameters),
+        ...sourceTextsFromParameterBag(item.condition),
         item.reviewEvidence?.quote,
         item.reviewEvidence?.reason,
         ...(item.machineRules || []).flatMap(row => [
@@ -181,6 +183,12 @@ function itemSourceTexts(item = {}) {
             action.reviewEvidence?.reason,
         ]),
     ]);
+}
+
+function isCoveredRedundantMessage(value = '') {
+    const text = String(value || '').trim();
+    if (!text) return false;
+    return /冗余需求|已被[^，。；;\n]{0,80}覆盖|covered\s+by|duplicate\s+requirement/i.test(text);
 }
 
 function relatedSourceText(left = {}, right = {}) {
@@ -234,10 +242,62 @@ function slotsFromText(value = '') {
     return uniqueValues(slots);
 }
 
+function valueList(value) {
+    if (Array.isArray(value)) return value;
+    if (value === undefined || value === null || value === '') return [];
+    return [value];
+}
+
+function slotsFromDayPeriodValues(dayValue, periodValue) {
+    const days = valueList(dayValue).map(parseDayNumber).filter(Boolean);
+    const periods = valueList(periodValue).map(parseLooseChineseNumber).filter(Boolean);
+    if (!days.length || !periods.length) return [];
+    return uniqueValues(days.flatMap(day => periods.map(period => `${day}-${period}`)));
+}
+
+function slotsFromParameterBag(bag) {
+    if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return [];
+    const slots = [
+        ...valueList(bag.slots).flatMap(slotsFromText),
+        ...valueList(bag.slot).flatMap(slotsFromText),
+        ...valueList(bag.time).flatMap(value => (typeof value === 'object' ? [] : slotsFromText(value))),
+        ...valueList(bag.timeText).flatMap(slotsFromText),
+        ...valueList(bag.slotText).flatMap(slotsFromText),
+        ...valueList(bag.periodText).flatMap(slotsFromText),
+        ...valueList(bag.scheduleTime).flatMap(slotsFromText),
+        ...valueList(bag.unavailableTime).flatMap(slotsFromText),
+        ...valueList(bag.rawText).flatMap(slotsFromText),
+        ...valueList(bag.sourceText).flatMap(slotsFromText),
+        ...valueList(bag.text).flatMap(slotsFromText),
+        ...valueList(bag.description).flatMap(slotsFromText),
+        ...valueList(bag.conditionText).flatMap(slotsFromText),
+        ...valueList(bag.reason).flatMap(slotsFromText),
+        ...slotsFromDayPeriodValues(bag.day ?? bag.weekday ?? bag.weekDay ?? bag.days, bag.period ?? bag.periods),
+    ];
+    return uniqueValues([
+        ...slots,
+        ...slotsFromParameterBag(bag.time),
+    ]);
+}
+
+function sourceTextsFromParameterBag(bag) {
+    if (!bag || typeof bag !== 'object' || Array.isArray(bag)) return [];
+    return uniqueValues([
+        ...valueList(bag.rawText),
+        ...valueList(bag.sourceText),
+        ...valueList(bag.text),
+        ...valueList(bag.description),
+        ...valueList(bag.conditionText),
+        ...sourceTextsFromParameterBag(bag.time),
+    ]);
+}
+
 function itemSlots(item = {}) {
     const direct = uniqueValues([
-        ...(item.parameters?.slots || []),
-        ...(item.condition?.slots || []),
+        ...valueList(item.parameters?.slots),
+        ...valueList(item.condition?.slots),
+        ...slotsFromParameterBag(item.parameters),
+        ...slotsFromParameterBag(item.condition),
         ...(item.machineRules || []).flatMap(row => row.slots || row.time?.slots || []),
         ...(item.semanticActions || []).flatMap(action => action.parameters?.slots || action.payload?.slots || []),
     ]);
@@ -323,6 +383,121 @@ const INTERMEDIATE_REQUIREMENT_INTENTS = new Set([
     'requirement',
 ]);
 
+const SHELL_PARAMETER_META_KEYS = new Set([
+    'applyto',
+    'channel',
+    'confidence',
+    'destination',
+    'intent',
+    'object',
+    'objectid',
+    'objectids',
+    'objectkind',
+    'objectname',
+    'origin',
+    'parsesource',
+    'reason',
+    'rule',
+    'ruletype',
+    'scope',
+    'source',
+    'status',
+    'target',
+    'targetid',
+    'targetids',
+    'targetname',
+    'targettype',
+    'teacher',
+    'teacherid',
+    'teacherids',
+    'teachername',
+    'teachernames',
+    'type',
+]);
+
+const SHELL_PARAMETER_PLACEHOLDERS = new Set([
+    '-',
+    '—',
+    '–',
+    '/',
+    'n/a',
+    'na',
+    'none',
+    'null',
+    'unknown',
+    'user_input',
+    'review',
+    'needs_review',
+    'rule',
+    'rules',
+    'constraint',
+    'constraint_rule',
+    'teacher_unavailable',
+    'schedule_request',
+    '排课规则',
+    '规则',
+    '需复核',
+    '我的输入',
+    '未知',
+    '无',
+    '暂无',
+    '无参数',
+    '未填写',
+    '未指定',
+    '不确定',
+]);
+
+function parameterKey(value = '') {
+    return normalizeKey(value).replace(/_/g, '');
+}
+
+function isShellPlaceholderParameterValue(value = '') {
+    const text = String(value || '').trim();
+    if (!text) return true;
+    return SHELL_PARAMETER_PLACEHOLDERS.has(text)
+        || SHELL_PARAMETER_PLACEHOLDERS.has(normalizeKey(text));
+}
+
+function isShellMetaParameterKey(key = '') {
+    return SHELL_PARAMETER_META_KEYS.has(parameterKey(key));
+}
+
+function parameterValueHasMeaning(key = '', value) {
+    if (value === undefined || value === null) return false;
+    if (Array.isArray(value)) return value.some(entry => parameterValueHasMeaning(key, entry));
+    if (typeof value === 'object') {
+        return Object.entries(value).some(([childKey, childValue]) => parameterValueHasMeaning(childKey || key, childValue));
+    }
+    if (isShellPlaceholderParameterValue(value)) return false;
+    if (isShellMetaParameterKey(key)) return false;
+    return true;
+}
+
+function hasMeaningfulParameters(item = {}) {
+    const entries = [
+        ...Object.entries(item.parameters || {}),
+        ...Object.entries(item.condition || {}),
+    ];
+    return entries.some(([key, value]) => parameterValueHasMeaning(key, value));
+}
+
+function hasUserTraceText(item = {}) {
+    return uniqueValues([
+        requirementSourceText(item),
+        item.reviewEvidence?.quote,
+    ]).some(value => !isCoveredRedundantMessage(value) && Boolean(sourceTextKey(value)));
+}
+
+function hasClarificationSignal(item = {}) {
+    const clarificationText = item.clarification?.question || item.clarification?.message || '';
+    const hasClarification = Boolean(item.clarification) && !isCoveredRedundantMessage(clarificationText);
+    const hasHistory = (Array.isArray(item.clarificationHistory) ? item.clarificationHistory : [])
+        .some(entry => !isCoveredRedundantMessage(entry?.question || entry?.message || entry));
+    const hasWarnings = (Array.isArray(item.warnings) ? item.warnings : [])
+        .some(warning => !isCoveredRedundantMessage(warning));
+    return hasClarification || hasHistory || hasWarnings;
+}
+
 function isIntermediateRequirement(item = {}) {
     const intent = normalizeKey(item.intent || item.type || '');
     if ((item.origin || '') === 'system_supplement') return false;
@@ -330,6 +505,16 @@ function isIntermediateRequirement(item = {}) {
     return INTERMEDIATE_REQUIREMENT_INTENTS.has(intent)
         || normalizeKey(item.applyTo || '') === 'review'
         || REVIEW_STATUSES.has(normalizeKey(item.status || ''));
+}
+
+function isEmptyIntermediateShell(item = {}) {
+    if (!isIntermediateRequirement(item)) return false;
+    const intent = normalizeKey(item.intent || item.type || '');
+    if (!['schedule_request', 'unknown', 'requirement'].includes(intent)) return false;
+    return !hasMeaningfulParameters(item)
+        && !itemSlots(item).length
+        && !hasUserTraceText(item)
+        && !hasClarificationSignal(item);
 }
 
 function semanticallyMatchesLandingItem(support = {}, landing = {}) {
@@ -452,9 +637,9 @@ function executableMachineRule(item = {}) {
 
 function promoteRequirementDisplay(item = {}) {
     const rule = executableMachineRule(item);
-    if (!rule) return item;
+    if (!rule) return sanitizeCoveredRedundantSignals(item);
     const parameters = draftRowParameters(rule);
-    return {
+    return sanitizeCoveredRedundantSignals({
         ...item,
         object: draftRowObject(rule),
         intent: rule.intent || rule.type || item.intent,
@@ -465,11 +650,42 @@ function promoteRequirementDisplay(item = {}) {
         confidence: rule.confidence ?? item.confidence,
         warnings: mergeUniqueArrays(item.warnings || [], rule.warnings || []),
         displayFromMachineRule: true,
-    };
+    });
 }
 
 function requirementHasLanding(item = {}) {
     return Boolean((item.machineRules || []).length || (item.semanticActions || []).length);
+}
+
+function isCoveredRedundantClarification(clarification = null) {
+    if (!clarification || typeof clarification !== 'object') return false;
+    return isCoveredRedundantMessage(clarification.question || clarification.message || clarification.reason || '');
+}
+
+function isCoveredRedundantSupport(entry = {}) {
+    return [
+        entry.source?.rawText,
+        entry.rawText,
+        entry.description,
+        ...(Array.isArray(entry.warnings) ? entry.warnings : []),
+    ].some(isCoveredRedundantMessage);
+}
+
+function sanitizeCoveredRedundantSignals(item = {}) {
+    if (!requirementHasLanding(item)) return item;
+    const warnings = (Array.isArray(item.warnings) ? item.warnings : [])
+        .filter(warning => !isCoveredRedundantMessage(warning));
+    const supportingRequirements = (Array.isArray(item.supportingRequirements) ? item.supportingRequirements : [])
+        .filter(entry => !isCoveredRedundantSupport(entry));
+    const next = {
+        ...item,
+        warnings,
+        supportingRequirements,
+    };
+    if (isCoveredRedundantClarification(item.clarification)) {
+        next.clarification = null;
+    }
+    return next;
 }
 
 function coalescingKeysForItem(item = {}) {
@@ -581,7 +797,8 @@ function coalesceUnifiedRequirementItems(items = []) {
         }
         group.forEach(item => coalesced.push(promoteRequirementDisplay(item)));
     });
-    return coalesced;
+    if (!coalesced.some(requirementHasLanding)) return coalesced;
+    return coalesced.filter(item => !isEmptyIntermediateShell(item));
 }
 
 function createDraftRequirementItem(row = {}, index = 0) {

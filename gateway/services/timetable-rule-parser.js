@@ -2576,6 +2576,19 @@ function normalizeRequirementModelSupport(modelSupport = null) {
 function externalRequirementItems(items = []) {
     return (Array.isArray(items) ? items : []).map((item, index) => {
         const id = asText(item.id, 120) || `req_external_${index + 1}`;
+        const sourceRawText = asText(
+            item.source?.rawText
+            || item.source?.text
+            || item.rawText
+            || item.reason
+            || item.description
+            || item.reviewEvidence?.quote
+            || '',
+            1000
+        );
+        const source = item.source && typeof item.source === 'object'
+            ? { ...item.source, rawText: sourceRawText }
+            : { rawText: sourceRawText };
         return {
             id,
             object: item.object && typeof item.object === 'object'
@@ -2603,7 +2616,7 @@ function externalRequirementItems(items = []) {
                     at: asText(entry.at || '', 80),
                 }))
                 : [],
-            source: item.source && typeof item.source === 'object' ? item.source : { rawText: asText(item.rawText || item.reason || item.description || '', 1000) },
+            source,
             warnings: Array.isArray(item.warnings) ? item.warnings.map(value => asText(value, 240)).filter(Boolean) : [],
             aiReviewStatus: asText(item.aiReviewStatus || '', 40),
             aiReviewWarnings: Array.isArray(item.aiReviewWarnings) ? item.aiReviewWarnings.map(value => asText(value, 240)).filter(Boolean) : [],

@@ -1191,6 +1191,58 @@
     white-space: nowrap;
 }
 
+.tt-requirement-detail-summary {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--tt-border);
+}
+
+.tt-requirement-detail-summary-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.tt-requirement-detail-summary-title strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-text);
+    font-size: 0.9rem;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-requirement-detail-summary p,
+.tt-requirement-detail-summary small {
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-requirement-detail-summary p {
+    color: var(--tt-text);
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.tt-requirement-detail-summary small {
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.tt-requirement-detail-section {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+}
+
 .tt-requirement-detail-list {
     display: grid;
     gap: 8px;
@@ -1215,50 +1267,6 @@
     margin: 0;
     color: var(--tt-text);
     font-size: 0.76rem;
-}
-
-.tt-requirement-params,
-.tt-requirement-related,
-.tt-requirement-raw {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
-}
-
-.tt-requirement-params > div,
-.tt-requirement-related > div {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-}
-
-.tt-requirement-params span:not(.tt-requirement-detail-label),
-.tt-requirement-related span:not(.tt-requirement-detail-label) {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    max-width: 100%;
-    padding: 3px 7px;
-    border: 1px solid var(--tt-border);
-    border-radius: var(--tt-radius-sm);
-    background: var(--tt-bg-input);
-    color: var(--tt-text-secondary);
-    font-size: 0.7rem;
-    font-weight: 700;
-}
-
-.tt-requirement-related b,
-.tt-requirement-related em {
-    min-width: 0;
-    overflow: hidden;
-    font-style: normal;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.tt-requirement-related em {
-    color: var(--tt-muted);
-    font-weight: 700;
 }
 
 .tt-requirement-ai-review {
@@ -1348,10 +1356,8 @@
     color: var(--tt-muted);
 }
 
-.tt-requirement-raw p {
-    max-height: 88px;
+.tt-requirement-evidence-source {
     margin: 0;
-    overflow-y: auto;
     color: var(--tt-text-secondary);
     font-size: 0.74rem;
     line-height: 1.55;
@@ -1361,7 +1367,6 @@
     display: grid;
     gap: 8px;
     min-width: 0;
-    padding-top: 2px;
 }
 
 .tt-requirement-machine-header {
@@ -1390,6 +1395,10 @@
     padding: 10px;
     border-radius: var(--tt-radius-sm);
     background: var(--tt-bg-input);
+}
+
+.tt-requirement-detail .tt-constraint-source {
+    display: none;
 }
 
 .tt-requirement-detail .tt-constraint-card--excluded,
