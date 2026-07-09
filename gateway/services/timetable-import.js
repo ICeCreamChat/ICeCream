@@ -10,6 +10,15 @@ import {
 
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const PALETTE = ['#14b8a6', '#60a5fa', '#f59e0b', '#f97316', '#a78bfa', '#22c55e', '#ef4444', '#06b6d4'];
+const COMMON_ROSTER_SUBJECTS = [
+    '道德与法治', '信息技术', '综合实践', '劳动技术', '心理健康',
+    '语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治',
+    '体育', '音乐', '美术', '科学', '劳动', '阅读', '书法', '班会',
+];
+const CHINESE_NUMBER_DIGITS = new Map([
+    ['零', 0], ['〇', 0], ['一', 1], ['二', 2], ['两', 2], ['三', 3],
+    ['四', 4], ['五', 5], ['六', 6], ['七', 7], ['八', 8], ['九', 9],
+]);
 
 function cleanCell(value) {
     return String(value ?? '')
@@ -170,12 +179,162 @@ function parseWeeklyHours(value) {
     const plus = text.match(/^(\d+)\s*\+\s*(\d+)$/);
     if (plus) return Number(plus[1]) + Number(plus[2]) * 2;
     const match = text.match(/\d+/);
-    return match ? Number(match[0]) : 0;
+    if (match) return Number(match[0]);
+    const chinese = text.match(/[零〇一二两三四五六七八九十]+/);
+    return chinese ? parseChineseInteger(chinese[0]) : 0;
 }
 
 function pushUnique(map, key, value) {
     if (!map.has(key)) map.set(key, value);
     return map.get(key);
+}
+
+function parseChineseInteger(value) {
+    const text = cleanCell(value);
+    const digit = text.match(/\d+/);
+    if (digit) return Number(digit[0]);
+    if (!text) return 0;
+    if (text.includes('十')) {
+        const [tensText, onesText] = text.split('十');
+        const tens = tensText ? CHINESE_NUMBER_DIGITS.get(tensText) ?? 0 : 1;
+        const ones = onesText ? CHINESE_NUMBER_DIGITS.get(onesText) ?? 0 : 0;
+        return tens * 10 + ones;
+    }
+    return CHINESE_NUMBER_DIGITS.get(text) ?? 0;
+}
+
+function rosterSubjectCandidates(project = {}) {
+    const known = (project.subjects || []).map(subject => subject.name).filter(Boolean);
+    return [...new Set([...known, ...COMMON_ROSTER_SUBJECTS].map(cleanCell).filter(Boolean))]
+        .sort((left, right) => right.length - left.length);
+}
+
+function splitRosterInputLines(text = '') {
+    return String(text)
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean);
+}
+
+function hasRosterHeaderLine(line = '') {
+    const header = splitLine(line).map(normalizeHeader);
+    return header.includes('className') && header.includes('subjectName') && header.includes('teacherName');
+}
+
+function isTableLikeRosterLine(line = '') {
+    const parts = splitLine(line).filter(Boolean);
+    return parts.length >= 4;
+}
+
+function shouldParseRosterAsTable(lines = []) {
+    if (!lines.length) return false;
+    if (hasRosterHeaderLine(lines[0])) return true;
+    return lines.every(isTableLikeRosterLine);
+}
+
+function extractNaturalClass(text = '') {
+    const gradePattern = '(G\\d+|g\\d+|[零〇一二两三四五六七八九十\\d]+年级|[初高][一二三123])';
+    const match = cleanCell(text).match(new RegExp(`${gradePattern}\\s*[-_－—]?\\s*([零〇一二两三四五六七八九十\\d]+)\\s*班`));
+    if (!match) return null;
+    return {
+        grade: match[1],
+        className: `${match[2]}班`,
+        rest: text.slice(match.index + match[0].length),
+    };
+}
+
+function extractNaturalWeeklyHours(text = '') {
+    const match = cleanCell(text).match(/(?:每周|一周|周课时|周课|每星期|一星期)\s*([零〇一二两三四五六七八九十\d]+)\s*(?:节|课时)?/);
+    return match ? parseChineseInteger(match[1]) : 0;
+}
+
+function extractNaturalBlockPreference(text = '') {
+    const value = cleanCell(text);
+    if (/混合|单双|单节和连堂/.test(value)) return 'mixed';
+    if (/双连堂|连堂|连续\s*(?:2|两|二)\s*节/.test(value)) return 'double';
+    if (/单节|不要连堂|不连堂/.test(value)) return 'single';
+    return 'single';
+}
+
+function extractNaturalRoom(text = '') {
+    const roomPattern = /(实验室|教室|机房|电脑房|体育馆|操场|音乐室|美术室|舞蹈室|功能室|专用教室|场馆|礼堂)$/;
+    const segments = cleanCell(text)
+        .split(/[，,。；;]/)
+        .map(segment => cleanCell(segment).replace(/^(?:安排)?(?:在|到|使用)/, ''))
+        .filter(Boolean);
+    const segment = segments.find(item => roomPattern.test(item) && !/(老师|每周|一周|周课时|周课|节)/.test(item));
+    if (segment) return segment;
+    const match = cleanCell(text).match(/(?:安排)?(?:在|到|使用)\s*([^，,。；;\s]*(?:实验室|教室|机房|电脑房|体育馆|操场|音乐室|美术室|舞蹈室|功能室|专用教室|场馆|礼堂))/);
+    return match ? cleanCell(match[1]) : '';
+}
+
+function findNaturalSubject(text = '', project = {}) {
+    const source = cleanCell(text);
+    const matches = rosterSubjectCandidates(project)
+        .map(name => ({ name, index: source.indexOf(name) }))
+        .filter(item => item.index >= 0)
+        .sort((left, right) => left.index - right.index || right.name.length - left.name.length);
+    return matches[0] || null;
+}
+
+function normalizeNaturalTeacherName(value = '') {
+    let text = cleanCell(value)
+        .replace(/^(?:由|教师|老师|任课教师|任课老师|上课教师|上课老师|为|是)/, '')
+        .replace(/(?:负责|任教|授课|上课|上)$/g, '')
+        .replace(/[的：:]+$/g, '');
+    if (/^[\u4e00-\u9fa5]老师$/.test(text)) return text;
+    if (/^[\u4e00-\u9fa5]{2,5}老师$/.test(text)) return text.replace(/老师$/, '');
+    return text;
+}
+
+function extractNaturalTeacher(afterSubject = '') {
+    const teacherText = cleanCell(afterSubject)
+        .split(/(?:每周|一周|周课时|周课|每星期|一星期|双连堂|单节|混合|连堂|在|到|，|,|。|；|;)/)[0];
+    return normalizeNaturalTeacherName(teacherText);
+}
+
+function parseNaturalRosterLine(line = '', project = {}, index = 0) {
+    const text = cleanCell(line);
+    const classInfo = extractNaturalClass(text);
+    if (!classInfo) return null;
+    const subject = findNaturalSubject(classInfo.rest, project);
+    if (!subject) return null;
+    const afterSubject = classInfo.rest.slice(subject.index + subject.name.length);
+    const teacherName = extractNaturalTeacher(afterSubject);
+    const weeklyHours = extractNaturalWeeklyHours(text);
+    if (!teacherName || !weeklyHours) return null;
+    return {
+        sourceRow: index + 1,
+        grade: classInfo.grade,
+        className: classInfo.className,
+        subjectName: subject.name,
+        teacherName,
+        weeklyHours,
+        blockPreference: extractNaturalBlockPreference(text),
+        roomName: extractNaturalRoom(text),
+    };
+}
+
+function parseNaturalRosterRows(lines = [], project = {}) {
+    return lines
+        .map((line, index) => parseNaturalRosterLine(line, project, index))
+        .filter(Boolean);
+}
+
+function unrecognizedRosterTextResult(project = {}) {
+    const result = analyzeDraftRows([], project);
+    const issue = {
+        rowId: '',
+        sourceRow: null,
+        severity: 'warning',
+        field: 'row',
+        message: '本地未能识别自然语言，请改用表格格式，或配置 AI 后重试。',
+    };
+    result.issues = [issue];
+    result.warnings = [issue.message];
+    result.stats = { ...result.stats, issueCount: 1 };
+    result.importReport = buildRosterImportReport(result);
+    return result;
 }
 
 function parseRows(lines) {
@@ -672,9 +831,13 @@ export async function parseRosterAiOrLocal({ text = '', file = null, project = {
 }
 
 function localRosterParse(text, project) {
-    const lines = String(text)
-        .split(/\r?\n/)
-        .map(line => line.trim())
-        .filter(Boolean);
-    return analyzeDraftRows(parseRows(lines), project);
+    const lines = splitRosterInputLines(text);
+    if (shouldParseRosterAsTable(lines)) {
+        return analyzeDraftRows(parseRows(lines), project);
+    }
+    const naturalRows = parseNaturalRosterRows(lines, project);
+    if (naturalRows.length) {
+        return analyzeDraftRows(naturalRows, project);
+    }
+    return unrecognizedRosterTextResult(project);
 }

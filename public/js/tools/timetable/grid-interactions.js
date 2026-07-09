@@ -293,6 +293,10 @@ export function handleTimetableEscape(event, container, controller, state) {
         controller.closeProblemDetails?.();
         return true;
     }
+    if (state.rangePopover) {
+        controller.closeRangePopover?.();
+        return true;
+    }
 
     const openDetails = Array.from(container?.querySelectorAll?.('details.tt-multi-select[open], details.tt-smart-details[open]') || []);
     if (openDetails.length) {
@@ -331,6 +335,14 @@ function bindDelegatedInteractions(container) {
         }
         if (event.target.matches('[data-smart-detail-backdrop]')) {
             controller.closeProblemDetails();
+            return;
+        }
+        if (
+            state.rangePopover
+            && !event.target.closest('[data-range-popover-panel]')
+            && !event.target.closest('[data-range-popover-trigger]')
+        ) {
+            controller.closeRangePopover?.();
             return;
         }
         if (event.target.matches('[data-constraint-chat-overlay]')) {
@@ -777,6 +789,13 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelectorAll('[data-active-weekday], [data-active-period]').forEach(input => {
         input.addEventListener('change', () => controller.updateRangeDraftFromForm());
     });
+    container.querySelectorAll('[data-range-popover-trigger]').forEach(button => {
+        button.addEventListener('click', event => {
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            controller.toggleRangePopover?.(button.dataset.rangePopoverTrigger, button);
+        });
+    });
     container.querySelectorAll('[data-range-preset]').forEach(button => {
         button.addEventListener('click', () => {
             const [kind, preset] = button.dataset.rangePreset.split(':');
@@ -805,6 +824,9 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-cancel-period-times-secondary')?.addEventListener('click', () => controller.closePeriodTimeDialog());
     container.querySelectorAll('[data-tt-popover-close]').forEach(button => {
         button.addEventListener('click', () => button.closest('details')?.removeAttribute('open'));
+    });
+    container.querySelectorAll('[data-range-popover-close]').forEach(button => {
+        button.addEventListener('click', () => controller.closeRangePopover?.());
     });
     container.querySelectorAll('[data-roster-import-trigger]').forEach(button => {
         button.addEventListener('click', () => controller.openRosterImport('file'));

@@ -117,6 +117,7 @@ export function createTimetablePlannerState(overrides = {}) {
         },
         workflowOpenSections: null,
         rangeDraft: null,
+        rangePopover: null,
         periodTimeDialog: {
             open: false,
             settings: null,

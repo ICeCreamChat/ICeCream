@@ -269,6 +269,287 @@ test('timetable constraint dialog renders object-first requirements as a review 
   assert.doesNotMatch(html, /暂不支持[\s\S]{0,80}默认单节/);
 });
 
+test('timetable constraint dialog renders AI review as lightweight detail copy', async () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [],
+      warnings: [],
+      conflicts: [],
+      unsupportedItems: [],
+      requirementItems: [{
+        id: 'req_ai_review_copy',
+        object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+        intent: 'teacher_unavailable',
+        status: 'actionable',
+        applyTo: 'rule',
+        parameters: { slots: ['1-2'] },
+        source: { rawText: '刘书涵老师周一第2节不要排课。' },
+        confidence: 0.95,
+        aiReviewStatus: 'accepted',
+        reviewEvidence: {
+          quote: '刘书涵老师周一第2节不要排课。',
+          reason: 'AI 已复审：需求明确，本地解析正确，生成了合理的teacher_unavailable规则。',
+        },
+      }],
+      semanticActions: [],
+      aiReview: { status: 'reviewed' },
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_ai_review_copy' },
+  }));
+  const dialogStyles = await readFile(constraintDialogStylePath, 'utf8');
+  const aiReviewBlock = html.match(/<div class="tt-requirement-ai-review[\s\S]*?<\/div>/)?.[0] || '';
+
+  assert.match(aiReviewBlock, /tt-requirement-ai-review--info/);
+  assert.match(aiReviewBlock, /AI 已复审/);
+  assert.match(aiReviewBlock, /教师不可排规则/);
+  assert.doesNotMatch(aiReviewBlock, /tt-constraint-info|tt-constraint-warning/);
+  assert.doesNotMatch(aiReviewBlock, /teacher_unavailable/);
+  assert.match(dialogStyles, /\.tt-requirement-ai-review\s*{[\s\S]*font-size:\s*0\.76rem;[\s\S]*font-weight:\s*400;[\s\S]*line-height:\s*1\.55;/);
+  assert.match(dialogStyles, /\.tt-requirement-ai-review--info\s*{[\s\S]*background:\s*color-mix\(in srgb,\s*var\(--tt-primary\)\s*5%,\s*var\(--tt-bg-elevated\)\)/);
+  assert.match(dialogStyles, /\.tt-requirement-ai-review--warning\s*{/);
+  assert.match(dialogStyles, /\.tt-requirement-ai-review p\s*{[\s\S]*color:\s*var\(--tt-text-secondary\);[\s\S]*font-weight:\s*400;/);
+  assert.match(dialogStyles, /\.tt-requirement-ai-review small\s*{[\s\S]*color:\s*var\(--tt-muted\);[\s\S]*font-weight:\s*400;/);
+});
+
+test('timetable constraint dialog coalesces one natural-language rule into one review row', async () => {
+  const rawText = '刘书涵老师周一第2节要参加语文备课组集体备课，这节不要给他安排课。';
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [{
+        id: 'rule-liu-unavailable',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetId: 't_liu',
+        targetName: '刘书涵',
+        slots: ['1-2'],
+        priority: 'hard',
+        status: 'effective',
+        confidence: 0.95,
+        sourceText: rawText,
+        parseSource: 'ai',
+      }],
+      requirementItems: [
+        {
+          id: 'req_raw_need',
+          object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+          intent: 'schedule_request',
+          status: 'needs_review',
+          applyTo: 'rule',
+          parameters: {},
+          source: { rawText },
+          confidence: 0.9,
+        },
+        {
+          id: 'req_unavailable_time',
+          object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+          intent: 'unavailable_periods',
+          status: 'actionable',
+          applyTo: 'rule',
+          parameters: { slots: ['1-2'] },
+          source: { rawText },
+          confidence: 0.92,
+        },
+      ],
+      semanticActions: [],
+      warnings: [],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_unavailable_time' },
+  }));
+  const constraintStyles = await readFile(constraintDialogStylePath, 'utf8');
+  const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+
+  assert.equal(requirementRows.length, 1);
+  assert.match(requirementRows[0], /刘书涵/);
+  assert.match(requirementRows[0], /教师不可排/);
+  assert.match(requirementRows[0], /周一第2节/);
+  assert.doesNotMatch(requirementRows[0], /排课需求|不可排时间/);
+  assert.match(html, /来自你的输入 1 条/);
+  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /应用需求 \(1\)/);
+  assert.match(html, /相关理解/);
+  assert.match(html, /排课需求/);
+  assert.match(html, /不可排时间/);
+  assert.match(html, /原文[\s\S]*刘书涵老师周一第2节/);
+  assert.match(html, /落地结果[\s\S]*规则草稿/);
+  assert.match(constraintStyles, /\.tt-requirement-params,\s*\.tt-requirement-related,\s*\.tt-requirement-raw\s*{/s);
+  assert.match(constraintStyles, /\.tt-requirement-params > div,\s*\.tt-requirement-related > div\s*{/s);
+});
+
+test('timetable constraint dialog coalesces full-sentence understanding with a shortened machine rule', () => {
+  const fullText = '刘书涵老师周一第2节要参加语文备课组集体备课，这节不要给他安排课。';
+  const shortText = '刘书涵老师周一第2节不要排课';
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [{
+        id: 'rule-liu-short-unavailable',
+        type: 'teacher_unavailable',
+        targetType: 'teacher',
+        targetId: 't_liu',
+        targetName: '刘书涵',
+        slots: ['1-2'],
+        priority: 'hard',
+        status: 'effective',
+        confidence: 0.95,
+        rawText: shortText,
+        parseSource: 'ai',
+      }],
+      requirementItems: [{
+        id: 'req_full_need',
+        object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+        intent: 'schedule_request',
+        status: 'needs_review',
+        applyTo: 'review',
+        parameters: {},
+        source: { rawText: fullText },
+        confidence: 0.9,
+      }],
+      semanticActions: [],
+      warnings: [],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_full_need' },
+  }));
+  const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+
+  assert.equal(requirementRows.length, 1);
+  assert.match(requirementRows[0], /刘书涵/);
+  assert.match(requirementRows[0], /教师不可排/);
+  assert.match(requirementRows[0], /周一第2节/);
+  assert.doesNotMatch(requirementRows[0], /排课需求/);
+  assert.match(html, /全部[\s\S]*1/);
+  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /应用需求 \(1\)/);
+  assert.match(html, /相关理解/);
+  assert.match(html, /排课需求/);
+});
+
+test('timetable constraint dialog keeps separate same-teacher demands at different periods', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [
+        {
+          id: 'rule-liu-monday-second',
+          type: 'teacher_unavailable',
+          targetType: 'teacher',
+          targetId: 't_liu',
+          targetName: '刘书涵',
+          slots: ['1-2'],
+          priority: 'hard',
+          status: 'effective',
+          rawText: '刘书涵老师周一第2节不要排课',
+        },
+        {
+          id: 'rule-liu-tuesday-third',
+          type: 'teacher_unavailable',
+          targetType: 'teacher',
+          targetId: 't_liu',
+          targetName: '刘书涵',
+          slots: ['2-3'],
+          priority: 'hard',
+          status: 'effective',
+          rawText: '刘书涵老师周二第3节不要排课',
+        },
+      ],
+      requirementItems: [
+        {
+          id: 'req_monday_second',
+          object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+          intent: 'schedule_request',
+          status: 'needs_review',
+          applyTo: 'review',
+          source: { rawText: '刘书涵老师周一第2节不要排课' },
+        },
+        {
+          id: 'req_tuesday_third',
+          object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+          intent: 'schedule_request',
+          status: 'needs_review',
+          applyTo: 'review',
+          source: { rawText: '刘书涵老师周二第3节不要排课' },
+        },
+      ],
+      semanticActions: [],
+      warnings: [],
+    },
+    constraintDialog: { open: true },
+  }));
+  const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+
+  assert.equal(requirementRows.length, 2);
+  assert.match(requirementRows[0] + requirementRows[1], /周一第2节/);
+  assert.match(requirementRows[0] + requirementRows[1], /周二第3节/);
+  assert.match(html, /当前筛选可应用 2 项/);
+  assert.match(html, /应用需求 \(2\)/);
+});
+
+test('timetable constraint dialog groups one demand with multiple same-slot machine rules', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      inputMode: 'text',
+      draftRows: [
+        {
+          id: 'rule-liu-group',
+          type: 'teacher_unavailable',
+          targetType: 'teacher',
+          targetId: 't_liu',
+          targetName: '刘书涵',
+          slots: ['1-2'],
+          priority: 'hard',
+          status: 'effective',
+          rawText: '刘书涵和张老师周一第2节都不要排课',
+        },
+        {
+          id: 'rule-zhang-group',
+          type: 'teacher_unavailable',
+          targetType: 'teacher',
+          targetId: 't_zhang',
+          targetName: '张老师',
+          slots: ['1-2'],
+          priority: 'hard',
+          status: 'effective',
+          rawText: '刘书涵和张老师周一第2节都不要排课',
+        },
+      ],
+      requirementItems: [{
+        id: 'req_group_unavailable',
+        object: { kind: 'teacher_group', name: '刘书涵、张老师', matchedIds: ['t_liu', 't_zhang'], scope: 'explicit' },
+        intent: 'schedule_request',
+        status: 'needs_review',
+        applyTo: 'review',
+        source: { rawText: '刘书涵和张老师周一第2节都不要排课' },
+      }],
+      semanticActions: [],
+      warnings: [],
+    },
+    constraintDialog: { open: true },
+  }));
+  const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
+
+  assert.equal(requirementRows.length, 1);
+  assert.match(requirementRows[0], /教师不可排/);
+  assert.match(requirementRows[0], /周一第2节/);
+  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /应用需求 \(1\)/);
+});
+
 test('timetable constraint dialog does not count rules_patch bridge actions as extra machine rules', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
@@ -2674,7 +2955,11 @@ test('timetable workbench keeps solving in the board and failure summaries in th
   assert.match(styles, /\.tt-schedule-body\s*{/);
   assert.match(styles, /\.tt-schedule-body\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
   assert.match(styles, /\.tt-schedule-body\s*{[^}]*align-items:\s*start/s);
-  assert.match(styles, /\.tt-schedule-grid\s*{[^}]*align-self:\s*start/s);
+  assert.match(styles, /\.tt-schedule-body\s*{[^}]*width:\s*100%/s);
+  assert.match(styles, /\.tt-schedule-grid\s*{[^}]*align-self:\s*stretch/s);
+  assert.match(styles, /\.tt-schedule-grid\s*{[^}]*justify-self:\s*stretch/s);
+  assert.match(styles, /\.tt-schedule-grid\s*{[^}]*width:\s*100%/s);
+  assert.match(styles, /\.tt-schedule-grid\s*{[^}]*min-width:\s*max\(calc\(96px \+ var\(--tt-days,\s*5\) \* 126px\),\s*100%\)/s);
   assert.match(styles, /\.tt-schedule-grid\s*{[^}]*grid-auto-rows:\s*minmax\(72px,\s*auto\)/s);
   assert.match(styles, /\.tt-grid-head\s*{[^}]*min-height:\s*36px/s);
   assert.match(styles, /\.tt-plan-queue\s*{/);
@@ -2766,9 +3051,17 @@ test('timetable schedule grid labels formal rows by configured time segment', as
   assert.match(styles, /\.tt-period-segment-chip\s*{/);
   assert.match(styles, /\.tt-period--segment-start\s*{/);
   assert.doesNotMatch(styles, /\.tt-study-period\s*{[^}]*border-style:\s*dashed/s);
+  assert.match(styles, /\.tt-study-period\s*{[^}]*background:\s*var\(--tt-bg-soft\)/s);
+  assert.doesNotMatch(styles, /\.tt-study-period\s*{[^}]*color-mix\(in srgb,\s*var\(--tt-bg-input\)/s);
+  assert.match(styles, /\.tt-study-period strong\s*{[^}]*color:\s*var\(--tt-text-secondary\)[^}]*font-size:\s*0\.76rem/s);
+  assert.match(styles, /\.tt-study-period em\s*{[^}]*color:\s*var\(--tt-muted\)[^}]*font-weight:\s*700/s);
+  assert.doesNotMatch(styles, /\.tt-study-period em\s*{[^}]*color:\s*var\(--tt-accent-strong\)/s);
   assert.match(styles, /\.tt-study-cell\s*{[^}]*border:\s*0/s);
   assert.match(styles, /\.tt-study-cell\s*{[^}]*background:\s*var\(--tt-bg-base\)/s);
   assert.match(styles, /button\.tt-duty-cell:hover,\s*button\.tt-duty-cell:focus-visible\s*{[^}]*background:\s*var\(--tt-bg-base\)/s);
+  assert.match(styles, /\.tt-duty-cell\.is-missing span\s*{[^}]*min-height:\s*22px/s);
+  assert.match(styles, /\.tt-duty-cell\.is-missing span\s*{[^}]*padding:\s*0 7px/s);
+  assert.match(styles, /\.tt-duty-cell\.is-missing span\s*{[^}]*font-size:\s*0\.72rem/s);
   assert.match(styles, /\.tt-duty-cell\.is-missing span\s*{[^}]*border:\s*1px\s+dashed\s+var\(--tt-border-strong\)/s);
   assert.match(styles, /\.tt-study-cell\s*{[^}]*justify-items:\s*center/s);
 });
@@ -8251,8 +8544,8 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.doesNotMatch(html, /class="[^"]*tt-rule-summary[^"]*"/);
   assert.match(html, /id="tt-range-weekdays-trigger"/);
   assert.match(html, /id="tt-range-periods-trigger"/);
-  const weekdayTrigger = html.match(/<summary class="[^"]*" id="tt-range-weekdays-trigger">[\s\S]*?<\/summary>/)?.[0] || '';
-  const periodTrigger = html.match(/<summary class="[^"]*" id="tt-range-periods-trigger">[\s\S]*?<\/summary>/)?.[0] || '';
+  const weekdayTrigger = html.match(/<button class="[^"]*" id="tt-range-weekdays-trigger"[\s\S]*?<\/button>/)?.[0] || '';
+  const periodTrigger = html.match(/<button class="[^"]*" id="tt-range-periods-trigger"[\s\S]*?<\/button>/)?.[0] || '';
   const renderWeekdayTrigger = activeWeekdays => {
     const weekdayHtml = renderWorkbench(sampleWorkbenchState({
       project: {
@@ -8261,13 +8554,16 @@ test('timetable data setup uses collapsible groups and compact active range drop
         activeWeekdays,
       },
     }));
-    return weekdayHtml.match(/<summary class="[^"]*" id="tt-range-weekdays-trigger">[\s\S]*?<\/summary>/)?.[0] || '';
+    return weekdayHtml.match(/<button class="[^"]*" id="tt-range-weekdays-trigger"[\s\S]*?<\/button>/)?.[0] || '';
   };
   const workdayTrigger = renderWeekdayTrigger([1, 2, 3, 4, 5]);
   const midweekTrigger = renderWeekdayTrigger([2, 3, 4]);
   const allWeekTrigger = renderWeekdayTrigger([1, 2, 3, 4, 5, 6, 7]);
   assert.match(weekdayTrigger, /tt-multi-select-trigger--summary-only/);
   assert.match(periodTrigger, /tt-multi-select-trigger--summary-only/);
+  assert.match(weekdayTrigger, /data-range-popover-trigger="activeWeekdays"/);
+  assert.match(periodTrigger, /data-range-popover-trigger="activePeriods"/);
+  assert.match(weekdayTrigger, /aria-expanded="false"/);
   assert.doesNotMatch(weekdayTrigger, /<span>可用周几<\/span>/);
   assert.doesNotMatch(periodTrigger, /<span>可用节次<\/span>/);
   assert.match(weekdayTrigger, /<strong>/);
@@ -8279,11 +8575,31 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.match(allWeekTrigger, /全周/);
   assert.doesNotMatch(html, /id="tt-apply-range"/);
   assert.doesNotMatch(html, /id="tt-reset-range"/);
-  assert.match(html, /data-range-apply/);
-  assert.match(html, /data-tt-popover-close/);
-  assert.match(html, /data-active-weekday="1"[^>]*checked/);
-  assert.match(html, /data-active-weekday="3"[^>]*checked/);
-  assert.match(html, /data-active-period="4"[^>]*checked/);
+  assert.doesNotMatch(html, /data-range-popover-panel/);
+  assert.doesNotMatch(html, /tt-range-setup-card[\s\S]*tt-multi-select-popover/);
+  assert.doesNotMatch(html, /data-active-weekday="1"[^>]*checked/);
+  assert.doesNotMatch(html, /data-active-period="4"[^>]*checked/);
+  const weekdayPopoverHtml = renderWorkbench({
+    ...state,
+    rangePopover: { id: 'activeWeekdays', rect: { top: 140, left: 88, width: 260 } },
+  });
+  assert.match(weekdayPopoverHtml, /class="tt-floating-popover-layer"/);
+  assert.match(weekdayPopoverHtml, /data-range-popover-panel="activeWeekdays"/);
+  assert.match(weekdayPopoverHtml, /工作日/);
+  assert.match(weekdayPopoverHtml, /全周/);
+  assert.match(weekdayPopoverHtml, /data-range-apply/);
+  assert.match(weekdayPopoverHtml, /data-range-popover-close/);
+  assert.match(weekdayPopoverHtml, /data-active-weekday="1"[^>]*checked/);
+  assert.match(weekdayPopoverHtml, /data-active-weekday="3"[^>]*checked/);
+  assert.match(weekdayPopoverHtml, /data-active-weekday="5"[^>]*checked/);
+  const periodPopoverHtml = renderWorkbench({
+    ...state,
+    rangePopover: { id: 'activePeriods', rect: { top: 210, left: 88, width: 260 } },
+  });
+  assert.match(periodPopoverHtml, /data-range-popover-panel="activePeriods"/);
+  assert.match(periodPopoverHtml, /第1-7节/);
+  assert.match(periodPopoverHtml, /全部节次/);
+  assert.match(periodPopoverHtml, /data-active-period="4"[^>]*checked/);
   assert.doesNotMatch(html, /tt-chip-grid--range/);
   assert.match(html, /class="tt-roster-stats"/);
   assert.match(html, /id="tt-clear-roster"/);
@@ -8360,6 +8676,9 @@ test('timetable roster import is opened from a data card instead of permanent si
   assert.match(open, /<h4 id="tt-roster-import-file-title">上传文件<\/h4>[\s\S]*智能 CSV \/ TXT \/ Excel 文件导入/);
   assert.match(open, /<h4 id="tt-roster-import-text-title">粘贴文本<\/h4>[\s\S]*智能识别自然语言的文本/);
   assert.match(open, /<h4 id="tt-roster-import-manual-title">手动新增<\/h4>[\s\S]*列好空白任课表，让用户自己手动新增/);
+  assert.equal((open.match(/tt-roster-import-option-body/g) || []).length, 3);
+  assert.equal((open.match(/<div class="tt-roster-import-option-actions/g) || []).length, 3);
+  assert.equal((open.match(/tt-roster-import-option-actions--full/g) || []).length, 2);
   assert.match(open, /id="tt-roster-import-file"/);
   assert.match(open, /\.csv \/ \.txt \/ \.xlsx \/ \.xls/);
   assert.match(open, /id="tt-roster-import-text"/);
@@ -8839,10 +9158,13 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-roster-import-dialog/);
   assert.match(styles, /\.tt-roster-issue-editor-dialog/);
   assert.match(styles, /\.tt-roster-import-options\s*{[\s\S]*grid-template-columns:\s*minmax\(0,\s*0\.95fr\)\s*minmax\(0,\s*1\.25fr\)\s*minmax\(0,\s*0\.9fr\);/);
-  assert.match(styles, /\.tt-roster-import-option\s*{[\s\S]*display:\s*grid;[\s\S]*background:\s*var\(--tt-bg-elevated\);/);
-  assert.match(styles, /\.tt-roster-import-option-actions\s*{[\s\S]*display:\s*flex;/);
-  assert.match(styles, /\.tt-roster-import-manual-preview\s*{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/);
-  assert.match(styles, /\.tt-import-dropzone/);
+  assert.match(styles, /\.tt-roster-import-option\s*{[\s\S]*display:\s*grid;[\s\S]*grid-template-rows:\s*auto minmax\(140px,\s*1fr\) auto;[\s\S]*align-content:\s*stretch;[\s\S]*height:\s*100%;[\s\S]*background:\s*var\(--tt-bg-elevated\);/);
+  assert.match(styles, /\.tt-roster-import-option-body\s*{[\s\S]*display:\s*grid;[\s\S]*min-height:\s*140px;[\s\S]*align-items:\s*stretch;/);
+  assert.match(styles, /\.tt-roster-import-option \.tt-import-dropzone\s*{[\s\S]*min-height:\s*140px;[\s\S]*height:\s*100%;[\s\S]*align-content:\s*center;/);
+  assert.match(styles, /\.tt-roster-import-option \.tt-import-text\s*{[\s\S]*min-height:\s*140px;[\s\S]*max-height:\s*140px;[\s\S]*height:\s*140px;[\s\S]*resize:\s*none;/);
+  assert.match(styles, /\.tt-roster-import-option-actions\s*{[\s\S]*display:\s*flex;[\s\S]*align-items:\s*center;[\s\S]*min-height:\s*40px;[\s\S]*margin-top:\s*auto;/);
+  assert.match(styles, /\.tt-roster-import-option-actions--full \.tt-btn\s*{[\s\S]*width:\s*100%;[\s\S]*justify-content:\s*center;/);
+  assert.match(styles, /\.tt-roster-import-manual-preview\s*{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*align-content:\s*center;[\s\S]*min-height:\s*140px;[\s\S]*height:\s*100%;/);
   assert.doesNotMatch(styles, /\.tt-import-mode-tabs\s*{/);
   assert.match(styles, /\.tt-roster-import-dialog--review\s*{[\s\S]*--tt-dialog-width:\s*1220px;[\s\S]*width:\s*min\(var\(--tt-dialog-width\),\s*calc\(100vw - 72px\)\);[\s\S]*max-width:\s*calc\(100vw - 72px\);/);
   assert.match(styles, /\.tt-roster-review-table\s*{[\s\S]*min-width:\s*1124px;[\s\S]*table-layout:\s*fixed;/);
@@ -9066,9 +9388,25 @@ test('timetable dialogs expand to review content on desktop and stay constrained
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog,[\s\S]*\.tt-period-time-dialog,[\s\S]*\.tt-publish-dialog,[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);
 });
 
-test('timetable roster import preserves input and review drafts when the modal is reopened', () => {
+test('timetable roster import only restores meaningful drafts when the modal is reopened', () => {
   const controller = new TimetablePlannerController();
   controller.render = () => {};
+
+  controller.state.rosterImport = {
+    ...controller.state.rosterImport,
+    open: true,
+    step: 'input',
+    mode: 'text',
+    text: '',
+    fileName: '',
+    draftRows: [],
+  };
+  controller.closeRosterImport();
+  controller.openRosterImport('text');
+  assert.equal(controller.state.rosterImport.open, true);
+  assert.equal(controller.state.rosterImport.step, 'input');
+  assert.equal(controller.state.rosterImport.mode, 'file');
+  assert.equal(controller.state.rosterImport.text, '');
 
   controller.state.rosterImport = {
     ...controller.state.rosterImport,
@@ -9091,6 +9429,52 @@ test('timetable roster import preserves input and review drafts when the modal i
   controller.state.rosterImport = {
     ...controller.state.rosterImport,
     open: true,
+    step: 'input',
+    mode: 'text',
+    text: '   ',
+    fileName: '',
+    draftRows: [],
+  };
+  controller.closeRosterImport();
+  controller.openRosterImport('text');
+  assert.equal(controller.state.rosterImport.step, 'input');
+  assert.equal(controller.state.rosterImport.mode, 'file');
+  assert.equal(controller.state.rosterImport.text, '');
+
+  controller.selectRosterImportFile({ name: 'roster.xlsx' });
+  controller.closeRosterImport();
+  controller.openRosterImport('text');
+  assert.equal(controller.state.rosterImport.step, 'input');
+  assert.equal(controller.state.rosterImport.mode, 'file');
+  assert.equal(controller.state.rosterImport.fileName, 'roster.xlsx');
+
+  controller.rosterImportFile = null;
+  controller.state.rosterImport = {
+    ...controller.state.rosterImport,
+    open: false,
+    step: 'input',
+    mode: 'file',
+    text: '',
+    fileName: 'stale-roster.xlsx',
+    draftRows: [],
+  };
+  controller.openRosterImport('file');
+  assert.equal(controller.state.rosterImport.step, 'input');
+  assert.equal(controller.state.rosterImport.mode, 'file');
+  assert.equal(controller.state.rosterImport.fileName, '');
+
+  controller.startEmptyRosterReview();
+  assert.equal(controller.state.rosterImport.step, 'review');
+  assert.equal(controller.state.rosterImport.draftRows.length, 1);
+  controller.closeRosterImport();
+  controller.openRosterImport('file');
+  assert.equal(controller.state.rosterImport.step, 'input');
+  assert.equal(controller.state.rosterImport.mode, 'file');
+  assert.deepEqual(controller.state.rosterImport.draftRows, []);
+
+  controller.state.rosterImport = {
+    ...controller.state.rosterImport,
+    open: true,
     step: 'review',
     mode: 'file',
     fileName: 'roster.xlsx',
@@ -9107,11 +9491,29 @@ test('timetable roster import preserves input and review drafts when the modal i
   assert.equal(controller.state.rosterImport.mode, 'file');
   assert.equal(controller.state.rosterImport.draftRows.length, 1);
 
+  controller.state.rosterImport = {
+    ...controller.state.rosterImport,
+    open: true,
+    step: 'review',
+    mode: 'file',
+    fileName: '',
+    draftRows: [{ ...controller.emptyRosterDraftRow(), className: '1班' }],
+    stats: { planCount: 1 },
+    warnings: [],
+    issues: [],
+  };
+  controller.closeRosterImport();
+  controller.openRosterImport('file');
+  assert.equal(controller.state.rosterImport.step, 'review');
+  assert.equal(controller.state.rosterImport.mode, 'file');
+  assert.equal(controller.state.rosterImport.draftRows.length, 1);
+  assert.equal(controller.state.rosterImport.draftRows[0].className, '1班');
+
   controller.resetRosterImport();
   controller.openRosterImport('text');
   assert.equal(controller.state.rosterImport.open, true);
   assert.equal(controller.state.rosterImport.step, 'input');
-  assert.equal(controller.state.rosterImport.mode, 'text');
+  assert.equal(controller.state.rosterImport.mode, 'file');
   assert.deepEqual(controller.state.rosterImport.draftRows, []);
 });
 
@@ -10910,6 +11312,10 @@ test('timetable Escape steps back inside the workbench instead of bubbling to th
     closeProblemDetails() {
       closed.push('problem');
     },
+    closeRangePopover() {
+      closed.push('range');
+      state.rangePopover = null;
+    },
     closeSmartWorkbench() {
       closed.push('smart');
       state.smartWorkbench.open = false;
@@ -10928,6 +11334,7 @@ test('timetable Escape steps back inside the workbench instead of bubbling to th
     rosterImport: { open: true, issueEditor: { rowId: 'draft_1', field: 'blockPreference' } },
     constraintChat: { open: true },
     problemDetailDialog: { open: true, problem: { id: 'p1' } },
+    rangePopover: { id: 'activeWeekdays' },
     smartWorkbench: { open: true },
     selectedSlotId: 'slot-1',
     inspectorOpen: true,
@@ -10972,17 +11379,22 @@ test('timetable Escape steps back inside the workbench instead of bubbling to th
 
   state.problemDetailDialog.open = false;
   assert.equal(handleTimetableEscape(event, container, controller, state), true);
-  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster', 'chat', 'problem']);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster', 'chat', 'problem', 'range']);
+  assert.equal(removedDetails, 0);
+  assert.equal(state.selectedSlotId, 'slot-1');
+
+  assert.equal(handleTimetableEscape(event, container, controller, state), true);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster', 'chat', 'problem', 'range']);
   assert.equal(removedDetails, 1);
   assert.equal(state.selectedSlotId, 'slot-1');
 
   openDetails = [];
   assert.equal(handleTimetableEscape(event, container, controller, state), true);
-  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster', 'chat', 'problem', 'smart']);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster', 'chat', 'problem', 'range', 'smart']);
   assert.equal(state.selectedSlotId, 'slot-1');
 
   assert.equal(handleTimetableEscape(event, container, controller, state), true);
-  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster', 'chat', 'problem', 'smart', 'render']);
+  assert.deepEqual(closed, ['restore', 'history', 'publish', 'period', 'issue-editor', 'roster', 'chat', 'problem', 'range', 'smart', 'render']);
   assert.equal(state.selectedSlotId, '');
   assert.equal(state.inspectorOpen, false);
 
@@ -11006,11 +11418,18 @@ test('timetable left sidebar range workflow applies only from the range popover 
 
   assert.match(stateSource, /workflowOpenSections/);
   assert.match(stateSource, /rangeDraft/);
+  assert.match(stateSource, /rangePopover/);
   assert.match(stateSource, /bulkRuleDraft/);
   assert.match(controllerSource, /toggleWorkflowSection\(/);
+  assert.match(controllerSource, /toggleRangePopover\(/);
+  assert.match(controllerSource, /closeRangePopover\(/);
+  assert.match(controllerSource, /repositionRangePopover\(/);
   assert.match(controllerSource, /updateRangeDraftFromForm\(/);
   assert.match(controllerSource, /applyRangeDraft\(/);
   assert.match(interactionSource, /data-tt-section-toggle/);
+  assert.match(interactionSource, /\[data-range-popover-trigger\]/);
+  assert.match(interactionSource, /\[data-range-popover-panel\]/);
+  assert.match(interactionSource, /closeRangePopover/);
   assert.doesNotMatch(interactionSource, /#tt-apply-range/);
   assert.doesNotMatch(interactionSource, /#tt-reset-range/);
   assert.match(interactionSource, /\[data-range-apply\]/);
@@ -11022,15 +11441,17 @@ test('timetable left sidebar range workflow applies only from the range popover 
   assert.match(styles, /\.tt-workflow-panel/);
   assert.match(styles, /\.tt-range-summary-grid/);
   assert.match(styles, /\.tt-multi-select/);
-  assert.match(styles, /\.tt-multi-select\[open\]\s*{\s*z-index:\s*120;\s*}/);
+  assert.match(styles, /\.tt-multi-select\.is-open,[\s\S]*\.tt-multi-select\[open\]\s*{\s*z-index:\s*120;\s*}/);
   assert.match(styles, /\.tt-multi-select-popover\s*{[\s\S]*z-index:\s*130;/);
+  assert.match(styles, /\.tt-floating-popover-layer\s*{[\s\S]*position:\s*fixed;[\s\S]*z-index:\s*70;[\s\S]*pointer-events:\s*none;/);
+  assert.match(styles, /\.tt-floating-popover-layer \.tt-multi-select-popover\s*{[\s\S]*position:\s*fixed;[\s\S]*top:\s*var\(--tt-floating-popover-top/);
   assert.match(styles, /\.tt-range-summary-detail\s*{/);
   assert.doesNotMatch(styles, /\.tt-range-summary-extra\s*{/);
   assert.match(styles, /\.tt-period-time-entry-action\s*{/);
   assert.match(styles, /\.tt-period-time-entry-range\s*{/);
   assert.match(styles, /\.tt-period-time-entry-status\s*{/);
   assert.doesNotMatch(styles, /\.tt-range-setup-card\s+\.tt-range-summary-icon\s*{/);
-  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-multi-select\[open\]\s*{\s*z-index:\s*auto;\s*}[\s\S]*\.tt-multi-select-popover/);
+  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-multi-select\.is-open,[\s\S]*\.tt-multi-select\[open\]\s*{\s*z-index:\s*auto;\s*}[\s\S]*\.tt-floating-popover-layer \.tt-multi-select-popover\s*{[\s\S]*position:\s*fixed;/);
 });
 
 test('timetable period time setup uses a compact entry and modal editor', async () => {

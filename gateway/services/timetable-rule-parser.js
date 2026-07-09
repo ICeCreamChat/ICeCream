@@ -1852,6 +1852,151 @@ function requirementFromRow(row = {}, index = 0, project = {}) {
     };
 }
 
+function requirementSourceText(item = {}) {
+    return asText(item.source?.rawText || item.rawText || item.description || item.reason || item.reviewEvidence?.quote || '', 1200);
+}
+
+function rowSourceText(row = {}) {
+    return asText(row.rawText || row.constraintText || row.text || row.description || row.reason || row.reviewEvidence?.quote || '', 1200);
+}
+
+function textFingerprint(value = '') {
+    return asText(value, 1200)
+        .replace(/\s+/g, '')
+        .replace(/[，,。.;；：:、]/g, '')
+        .toLowerCase();
+}
+
+function textLooksRelated(left = '', right = '') {
+    const a = textFingerprint(left);
+    const b = textFingerprint(right);
+    if (!a || !b) return false;
+    if (a === b) return true;
+    const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+    return shorter.length >= 8 && longer.includes(shorter);
+}
+
+function slotsFromRequirementItem(item = {}, project = {}) {
+    const params = item.parameters || item.params || {};
+    const condition = item.condition || {};
+    const direct = normalizeSlotList(params.slots || params.slotKeys || condition.slots || condition.slotKeys || []);
+    if (direct.length) return direct;
+    const days = parseDays(params.days || condition.days || item.days || '', project, []);
+    const periods = parsePeriods(params.periods || condition.periods || item.periods || '', project, []);
+    if (days.length && periods.length) {
+        return [...new Set(days.flatMap(day => periods.map(period => slotKey(day, period))))].sort();
+    }
+    const source = requirementSourceText(item);
+    const sourceDays = parseDays(source, project, []);
+    const sourcePeriods = parsePeriods(source, project, []);
+    if (sourceDays.length && sourcePeriods.length) {
+        return [...new Set(sourceDays.flatMap(day => sourcePeriods.map(period => slotKey(day, period))))].sort();
+    }
+    return [];
+}
+
+function rowTargetIds(row = {}) {
+    return [
+        row.targetId,
+        row.teacherId,
+        row.classId,
+        row.subjectId,
+        ...(row.teacherIds || []),
+        ...(row.classIds || []),
+        ...(row.subjectIds || []),
+    ].map(value => asText(value, 120)).filter(Boolean);
+}
+
+function rowTargetNames(row = {}) {
+    return [
+        row.targetName,
+        row.teacherName,
+        row.teacher,
+        row.className,
+        row.class,
+        row.subjectName,
+        row.subject,
+    ].map(value => asText(value, 200)).filter(Boolean);
+}
+
+function requirementTargetIds(item = {}) {
+    const params = item.parameters || item.params || {};
+    return [
+        item.targetId,
+        item.object?.id,
+        ...(item.object?.matchedIds || []),
+        ...(params.teacherIds || []),
+        ...(params.classIds || []),
+        ...(params.subjectIds || []),
+    ].map(value => asText(value, 120)).filter(Boolean);
+}
+
+function requirementTargetNames(item = {}) {
+    const params = item.parameters || item.params || {};
+    return [
+        item.targetName,
+        item.target,
+        item.object?.name,
+        ...(params.teacherNames || []),
+        ...(params.classNames || []),
+        ...(params.subjectNames || []),
+    ].map(value => asText(value, 200)).filter(Boolean);
+}
+
+function normalizedEntityName(value = '') {
+    return asText(value, 200).replace(/老师|教师|同学|班级|课程/g, '').replace(/\s+/g, '').toLowerCase();
+}
+
+function requirementTargetMatchesRow(item = {}, row = {}) {
+    const reqIds = requirementTargetIds(item);
+    const ids = rowTargetIds(row);
+    if (reqIds.length && ids.some(id => reqIds.includes(id))) return true;
+    const reqNames = requirementTargetNames(item).map(normalizedEntityName).filter(Boolean);
+    const names = rowTargetNames(row).map(normalizedEntityName).filter(Boolean);
+    if (reqNames.length && names.some(name => reqNames.includes(name))) return true;
+    const source = normalizedEntityName(requirementSourceText(item));
+    return Boolean(source && names.some(name => name && source.includes(name)));
+}
+
+function requirementIntentMatchesRow(item = {}, row = {}) {
+    const intent = normalizeRequirementIntentAlias(item.intent || item.type || '');
+    const rowIntent = normalizeRequirementIntentAlias(row.type || row.intent || '');
+    if (!intent || intent === 'unknown' || intent === 'schedule_request') return true;
+    if (intent === rowIntent) return true;
+    if (intent === 'unavailable_periods' && ['teacher_unavailable', 'class_unavailable', 'global_unavailable'].includes(row.type)) return true;
+    if (normalizeRequirementApplyToAlias(item.applyTo || '') === 'review') return true;
+    return false;
+}
+
+function requirementTimeMatchesRow(item = {}, row = {}, project = {}) {
+    const reqSlots = slotsFromRequirementItem(item, project);
+    const slots = normalizeSlotList(row.slots || []);
+    if (reqSlots.length && slots.length) {
+        const reqSlotSet = new Set(reqSlots);
+        return slots.some(slot => reqSlotSet.has(slot));
+    }
+    return textLooksRelated(requirementSourceText(item), rowSourceText(row));
+}
+
+function semanticRequirementMatchesRow(item = {}, row = {}, project = {}) {
+    if (!item?.id || item.origin === 'system_supplement') return false;
+    if (!requirementIntentMatchesRow(item, row)) return false;
+    if (!requirementTargetMatchesRow(item, row)) return false;
+    return requirementTimeMatchesRow(item, row, project);
+}
+
+function linkRowsToSemanticRequirements(rows = [], semanticRequirements = [], project = {}) {
+    const requirements = externalRequirementItems(semanticRequirements)
+        .filter(item => item.id && item.origin !== 'system_supplement');
+    if (!requirements.length) return rows;
+    return rows.map(row => {
+        if (row.requirementId) return row;
+        const matches = requirements.filter(item => semanticRequirementMatchesRow(item, row, project));
+        if (matches.length !== 1) return row;
+        return { ...row, requirementId: matches[0].id };
+    });
+}
+
 function highLoadTeacherIds(project = {}, threshold = 14) {
     const hours = new Map();
     for (const plan of project.lessonPlans || []) {
@@ -3952,6 +4097,8 @@ export function normalizeTimetableRuleDraftRows({
     unsupportedItems = rows
         .filter(row => row.status === 'suggestion' || row.status === 'unsupported')
         .map(previewFromRow);
+
+    rows = linkRowsToSemanticRequirements(rows, semanticRequirements, project);
 
     const semanticLayer = buildRequirementSemantics(project, rows, {
         originalText,

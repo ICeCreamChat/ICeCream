@@ -145,6 +145,445 @@ function itemOriginFromSource(source = {}, fallback = 'user_input') {
     return fallback;
 }
 
+function sourceTextKey(value = '') {
+    return String(value || '')
+        .trim()
+        .replace(/\s+/g, '')
+        .replace(/[，,。.;；：:、]/g, '')
+        .toLowerCase();
+}
+
+function requirementSourceText(item = {}) {
+    return item.source?.rawText || item.rawText || item.description || '';
+}
+
+function draftRowSourceText(row = {}) {
+    return row.sourceText || row.rawText || row.description || row.reason || '';
+}
+
+function actionSourceText(action = {}) {
+    return action.source?.rawText || action.rawText || action.description || action.reason || '';
+}
+
+function itemSourceTexts(item = {}) {
+    return uniqueValues([
+        requirementSourceText(item),
+        item.reviewEvidence?.quote,
+        item.reviewEvidence?.reason,
+        ...(item.machineRules || []).flatMap(row => [
+            draftRowSourceText(row),
+            row.reviewEvidence?.quote,
+            row.reviewEvidence?.reason,
+        ]),
+        ...(item.semanticActions || []).flatMap(action => [
+            actionSourceText(action),
+            action.reviewEvidence?.quote,
+            action.reviewEvidence?.reason,
+        ]),
+    ]);
+}
+
+function relatedSourceText(left = {}, right = {}) {
+    const leftTexts = itemSourceTexts(left).map(sourceTextKey).filter(Boolean);
+    const rightTexts = itemSourceTexts(right).map(sourceTextKey).filter(Boolean);
+    return leftTexts.some(leftText => rightTexts.some(rightText => {
+        if (leftText === rightText) return true;
+        const [shorter, longer] = leftText.length <= rightText.length ? [leftText, rightText] : [rightText, leftText];
+        return shorter.length >= 8 && longer.includes(shorter);
+    }));
+}
+
+function parseLooseChineseNumber(value = '') {
+    const text = String(value || '').trim();
+    if (/^\d+$/.test(text)) return Number.parseInt(text, 10);
+    const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+    if (text === '十') return 10;
+    if (text.startsWith('十')) return 10 + (digits[text.slice(1)] || 0);
+    if (text.includes('十')) {
+        const [tens, ones] = text.split('十');
+        return (digits[tens] || 1) * 10 + (digits[ones] || 0);
+    }
+    return digits[text] || null;
+}
+
+function parseDayNumber(value = '') {
+    return {
+        一: 1,
+        二: 2,
+        三: 3,
+        四: 4,
+        五: 5,
+        六: 6,
+        日: 7,
+        天: 7,
+    }[String(value || '')] || Number.parseInt(value, 10) || null;
+}
+
+function slotsFromText(value = '') {
+    const text = String(value || '');
+    const slots = [];
+    for (const match of text.matchAll(/\b(\d{1,2})-(\d{1,2})\b/g)) {
+        slots.push(`${Number.parseInt(match[1], 10)}-${Number.parseInt(match[2], 10)}`);
+    }
+    const pairPattern = /(?:周|星期|礼拜)([一二三四五六日天1-7])[^，。；;、\n]{0,16}?第?\s*([0-9一二两三四五六七八九十零〇]{1,3})\s*节/g;
+    for (const match of text.matchAll(pairPattern)) {
+        const day = parseDayNumber(match[1]);
+        const period = parseLooseChineseNumber(match[2]);
+        if (day && period) slots.push(`${day}-${period}`);
+    }
+    return uniqueValues(slots);
+}
+
+function itemSlots(item = {}) {
+    const direct = uniqueValues([
+        ...(item.parameters?.slots || []),
+        ...(item.condition?.slots || []),
+        ...(item.machineRules || []).flatMap(row => row.slots || row.time?.slots || []),
+        ...(item.semanticActions || []).flatMap(action => action.parameters?.slots || action.payload?.slots || []),
+    ]);
+    if (direct.length) return direct;
+    return uniqueValues(itemSourceTexts(item).flatMap(slotsFromText));
+}
+
+function rowTargetIds(row = {}) {
+    return uniqueValues([
+        row.targetId,
+        row.teacherId,
+        row.classId,
+        row.subjectId,
+        ...(row.teacherIds || []),
+        ...(row.classIds || []),
+        ...(row.subjectIds || []),
+    ]);
+}
+
+function itemTargetIds(item = {}) {
+    return uniqueValues([
+        item.targetId,
+        item.object?.id,
+        ...(item.object?.matchedIds || []),
+        ...(item.parameters?.teacherIds || []),
+        ...(item.parameters?.classIds || []),
+        ...(item.parameters?.subjectIds || []),
+        ...(item.machineRules || []).flatMap(rowTargetIds),
+    ]);
+}
+
+function normalizeEntityName(value = '') {
+    return String(value || '').replace(/老师|教师|同学|班级|课程/g, '').replace(/\s+/g, '').toLowerCase();
+}
+
+function rowTargetNames(row = {}) {
+    return uniqueValues([
+        row.targetName,
+        row.teacherName,
+        row.teacher,
+        row.className,
+        row.class,
+        row.subjectName,
+        row.subject,
+    ]).map(normalizeEntityName).filter(Boolean);
+}
+
+function itemTargetNames(item = {}) {
+    return uniqueValues([
+        item.targetName,
+        item.target,
+        item.object?.name,
+        ...(item.parameters?.teacherNames || []),
+        ...(item.parameters?.classNames || []),
+        ...(item.parameters?.subjectNames || []),
+        ...(item.machineRules || []).flatMap(rowTargetNames),
+    ]).map(normalizeEntityName).filter(Boolean);
+}
+
+function sameRequirementTarget(left = {}, right = {}) {
+    const leftIds = itemTargetIds(left);
+    const rightIds = itemTargetIds(right);
+    if (leftIds.length && rightIds.some(id => leftIds.includes(id))) return true;
+    const leftNames = itemTargetNames(left);
+    const rightNames = itemTargetNames(right);
+    if (leftNames.length && rightNames.some(name => leftNames.includes(name))) return true;
+    const leftSource = itemSourceTexts(left).map(normalizeEntityName).join('');
+    return Boolean(leftSource && rightNames.some(name => name && leftSource.includes(name)));
+}
+
+function compatibleRequirementSlots(left = {}, right = {}) {
+    const leftSlots = itemSlots(left);
+    const rightSlots = itemSlots(right);
+    if (!leftSlots.length || !rightSlots.length) return false;
+    const rightSet = new Set(rightSlots);
+    return leftSlots.some(slot => rightSet.has(slot));
+}
+
+const INTERMEDIATE_REQUIREMENT_INTENTS = new Set([
+    'schedule_request',
+    'unavailable_periods',
+    'unknown',
+    'requirement',
+]);
+
+function isIntermediateRequirement(item = {}) {
+    const intent = normalizeKey(item.intent || item.type || '');
+    if ((item.origin || '') === 'system_supplement') return false;
+    if (requirementHasLanding(item)) return false;
+    return INTERMEDIATE_REQUIREMENT_INTENTS.has(intent)
+        || normalizeKey(item.applyTo || '') === 'review'
+        || REVIEW_STATUSES.has(normalizeKey(item.status || ''));
+}
+
+function semanticallyMatchesLandingItem(support = {}, landing = {}) {
+    const rule = executableMachineRule(landing);
+    if (!rule || !isDraftRowActionable(rule)) return false;
+    if (!sameRequirementTarget(support, landing)) return false;
+    return compatibleRequirementSlots(support, landing) || relatedSourceText(support, landing);
+}
+
+function canMergeSupportWithAllLandingItems(support = {}, landingItems = []) {
+    if (landingItems.length <= 1) return landingItems.length === 1;
+    const rules = landingItems.map(executableMachineRule).filter(Boolean);
+    if (rules.length !== landingItems.length) return false;
+    const type = normalizeKey(rules[0].type || rules[0].intent || '');
+    if (!type || rules.some(rule => normalizeKey(rule.type || rule.intent || '') !== type)) return false;
+    const firstSlots = itemSlots(landingItems[0]).sort().join('|');
+    if (!firstSlots || landingItems.some(item => itemSlots(item).sort().join('|') !== firstSlots)) return false;
+    const supportIds = itemTargetIds(support);
+    if (!supportIds.length) return false;
+    return landingItems.every(item => itemTargetIds(item).some(id => supportIds.includes(id)));
+}
+
+function addSourceOwner(sourceOwners, sourceText = '', ownerId = '') {
+    const key = sourceTextKey(sourceText);
+    if (!key || !ownerId) return;
+    if (!sourceOwners.has(key)) sourceOwners.set(key, []);
+    sourceOwners.get(key).push(ownerId);
+}
+
+function requirementStatusScore(status = '') {
+    const key = normalizeKey(status || '');
+    if (['actionable', 'ready', 'effective'].includes(key)) return 20;
+    if (REVIEW_STATUSES.has(key)) return 8;
+    if (HANDLED_STATUSES.has(key)) return 2;
+    return 0;
+}
+
+function ownerScoreForDraftRow(owner = {}, row = {}) {
+    const ownerIntent = normalizeKey(owner.intent || owner.type || '');
+    const rowType = normalizeKey(row.type || row.intent || '');
+    const ownerApplyTo = normalizeKey(owner.applyTo || '');
+    let score = requirementStatusScore(owner.status);
+    if (ownerIntent && rowType && ownerIntent === rowType) score += 80;
+    else if (ownerIntent && rowType && (ownerIntent.includes(rowType) || rowType.includes(ownerIntent))) score += 28;
+    if (['rule', 'rules', 'constraint', 'constraint_rule'].includes(ownerApplyTo)) score += 24;
+    if (Array.isArray(owner.parameters?.slots) && Array.isArray(row.slots)) {
+        const ownerSlots = new Set(owner.parameters.slots.map(String));
+        if (row.slots.some(slot => ownerSlots.has(String(slot)))) score += 12;
+    }
+    return score;
+}
+
+function ownerScoreForAction(owner = {}, action = {}) {
+    const ownerIntent = normalizeKey(owner.intent || owner.type || '');
+    const actionKind = normalizeKey(action.kind || action.type || '');
+    const ownerApplyTo = normalizeKey(owner.applyTo || '');
+    let score = requirementStatusScore(owner.status);
+    if (ownerIntent && actionKind && ownerIntent === actionKind) score += 70;
+    if (ownerApplyTo && ownerApplyTo === actionApplyTo(action)) score += 24;
+    return score;
+}
+
+function bestSourceOwnerId(ownerIds = [], byId, scorer) {
+    let bestId = '';
+    let bestScore = Number.NEGATIVE_INFINITY;
+    ownerIds.forEach(ownerId => {
+        const owner = byId.get(ownerId);
+        if (!owner) return;
+        const score = scorer(owner);
+        if (score > bestScore) {
+            bestScore = score;
+            bestId = ownerId;
+        }
+    });
+    return bestId;
+}
+
+function mergeUniqueArrays(...groups) {
+    const seen = new Set();
+    const merged = [];
+    groups.flat().forEach(item => {
+        if (!item) return;
+        const key = typeof item === 'object'
+            ? item.id || item.stableKey || JSON.stringify({
+                intent: item.intent || item.type || item.kind,
+                rawText: requirementSourceText(item) || draftRowSourceText(item) || actionSourceText(item),
+                applyTo: item.applyTo,
+                targetId: item.targetId || item.target?.id || item.target?.teacherId || item.target?.lessonPlanId,
+                slots: item.slots || item.parameters?.slots,
+            })
+            : String(item);
+        if (seen.has(key)) return;
+        seen.add(key);
+        merged.push(item);
+    });
+    return merged;
+}
+
+function requirementSupportSnapshot(item = {}) {
+    return {
+        id: item.id || '',
+        object: item.object || null,
+        intent: item.intent || item.type || '',
+        condition: item.condition || null,
+        parameters: item.parameters || {},
+        status: item.status || '',
+        applyTo: item.applyTo || '',
+        origin: item.origin || '',
+        confidence: item.confidence,
+        source: item.source || {},
+        warnings: item.warnings || [],
+    };
+}
+
+function executableMachineRule(item = {}) {
+    return (item.machineRules || []).find(row => isDraftRowActionable(row))
+        || (item.machineRules || [])[0]
+        || null;
+}
+
+function promoteRequirementDisplay(item = {}) {
+    const rule = executableMachineRule(item);
+    if (!rule) return item;
+    const parameters = draftRowParameters(rule);
+    return {
+        ...item,
+        object: draftRowObject(rule),
+        intent: rule.intent || rule.type || item.intent,
+        parameters: Object.keys(parameters).length ? parameters : (item.parameters || {}),
+        strength: rule.priority || rule.strength || item.strength || '',
+        status: draftRowStatus(rule),
+        applyTo: draftRowApplyTo(rule),
+        confidence: rule.confidence ?? item.confidence,
+        warnings: mergeUniqueArrays(item.warnings || [], rule.warnings || []),
+        displayFromMachineRule: true,
+    };
+}
+
+function requirementHasLanding(item = {}) {
+    return Boolean((item.machineRules || []).length || (item.semanticActions || []).length);
+}
+
+function coalescingKeysForItem(item = {}) {
+    if ((item.origin || '') === 'system_supplement') return [];
+    const keys = [];
+    const sourceKey = sourceTextKey(requirementSourceText(item));
+    if (sourceKey) keys.push(`source:${sourceKey}`);
+    collectRequirementRowIds(item).forEach(rowId => keys.push(`row:${rowId}`));
+    (item.machineRules || []).forEach(row => keys.push(`rule:${draftRowApplyItemKey(row)}`));
+    (item.semanticActions || []).forEach(action => keys.push(`action:${semanticActionApplyItemKey(action)}`));
+    return keys.filter(Boolean);
+}
+
+function choosePrimaryRequirementItem(group = []) {
+    let best = group[0] || null;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    group.forEach(item => {
+        const rule = executableMachineRule(item);
+        const applyTo = normalizeKey(item.applyTo || '');
+        let score = requirementStatusScore(item.status);
+        if (rule && isDraftRowActionable(rule)) score += 120;
+        else if (rule) score += 90;
+        if ((item.semanticActions || []).some(action => isSemanticActionApplicable(action))) score += 70;
+        if (['rule', 'lesson_plan', 'optimization'].includes(applyTo)) score += 26;
+        if (item.derivedFromDraft || item.derivedFromAction) score += 8;
+        if (score > bestScore) {
+            bestScore = score;
+            best = item;
+        }
+    });
+    return best || group[0] || {};
+}
+
+function mergeRequirementGroup(group = []) {
+    if (group.length === 1) return promoteRequirementDisplay(group[0]);
+    const primary = choosePrimaryRequirementItem(group);
+    const machineRules = mergeUniqueArrays(...group.map(item => item.machineRules || []));
+    const semanticActions = mergeUniqueArrays(...group.map(item => item.semanticActions || []));
+    const supportingRequirements = mergeUniqueArrays(
+        ...group.map(item => item.supportingRequirements || []),
+        group
+            .filter(item => !(item.derivedFromDraft || item.derivedFromAction))
+            .map(item => requirementSupportSnapshot(item))
+    );
+    const merged = {
+        ...primary,
+        machineRules,
+        semanticActions,
+        warnings: mergeUniqueArrays(...group.map(item => item.warnings || [])),
+        supportingRequirements,
+    };
+    return promoteRequirementDisplay(merged);
+}
+
+function coalesceUnifiedRequirementItems(items = []) {
+    const parent = new Map();
+    const keyOwner = new Map();
+    const itemIds = items.map((item, index) => item.id || `item_${index + 1}`);
+    const find = id => {
+        const current = parent.get(id) || id;
+        if (current === id) return id;
+        const root = find(current);
+        parent.set(id, root);
+        return root;
+    };
+    const union = (left, right) => {
+        const leftRoot = find(left);
+        const rightRoot = find(right);
+        if (leftRoot !== rightRoot) parent.set(rightRoot, leftRoot);
+    };
+
+    itemIds.forEach(id => parent.set(id, id));
+    items.forEach((item, index) => {
+        const id = itemIds[index];
+        coalescingKeysForItem(item).forEach(key => {
+            if (keyOwner.has(key)) union(id, keyOwner.get(key));
+            else keyOwner.set(key, id);
+        });
+    });
+
+    items.forEach((item, index) => {
+        if (!isIntermediateRequirement(item)) return;
+        const id = itemIds[index];
+        const landingIndexes = items
+            .map((candidate, candidateIndex) => (
+                candidateIndex !== index && requirementHasLanding(candidate) && semanticallyMatchesLandingItem(item, candidate)
+                    ? candidateIndex
+                    : -1
+            ))
+            .filter(candidateIndex => candidateIndex >= 0);
+        if (!landingIndexes.length) return;
+        const landingItems = landingIndexes.map(candidateIndex => items[candidateIndex]);
+        if (!canMergeSupportWithAllLandingItems(item, landingItems)) return;
+        landingIndexes.forEach(candidateIndex => union(id, itemIds[candidateIndex]));
+    });
+
+    const grouped = new Map();
+    items.forEach((item, index) => {
+        const root = find(itemIds[index]);
+        if (!grouped.has(root)) grouped.set(root, []);
+        grouped.get(root).push(item);
+    });
+
+    const coalesced = [];
+    grouped.forEach(group => {
+        if (group.length > 1 && group.some(requirementHasLanding)) {
+            coalesced.push(mergeRequirementGroup(group));
+            return;
+        }
+        group.forEach(item => coalesced.push(promoteRequirementDisplay(item)));
+    });
+    return coalesced;
+}
+
 function createDraftRequirementItem(row = {}, index = 0) {
     return {
         id: draftRequirementId(row, index),
@@ -233,10 +672,12 @@ export function buildUnifiedRequirementItems(review = {}) {
     }));
     const byId = new Map(items.map(item => [item.id, item]));
     const rowOwners = new Map();
+    const sourceOwners = new Map();
     const attachedActionIds = new Set();
 
     items.forEach(item => {
         collectRequirementRowIds(item).forEach(rowId => addRowOwner(rowOwners, rowId, item.id));
+        if ((item.origin || '') !== 'system_supplement') addSourceOwner(sourceOwners, requirementSourceText(item), item.id);
     });
 
     semanticActions.forEach(action => {
@@ -252,6 +693,14 @@ export function buildUnifiedRequirementItems(review = {}) {
         const ownerIds = new Set();
         if (row.requirementId && byId.has(row.requirementId)) ownerIds.add(row.requirementId);
         (rowOwners.get(String(row.id || '')) || []).forEach(ownerId => ownerIds.add(ownerId));
+        if (!ownerIds.size) {
+            const sourceOwnerId = bestSourceOwnerId(
+                sourceOwners.get(sourceTextKey(draftRowSourceText(row))) || [],
+                byId,
+                owner => ownerScoreForDraftRow(owner, row)
+            );
+            if (sourceOwnerId) ownerIds.add(sourceOwnerId);
+        }
 
         if (!ownerIds.size) {
             const item = createDraftRequirementItem(row, index);
@@ -269,12 +718,25 @@ export function buildUnifiedRequirementItems(review = {}) {
     semanticActions.forEach((action, index) => {
         if (action.id && attachedActionIds.has(action.id)) return;
         if (action.requirementId && byId.has(action.requirementId)) return;
+        const sourceOwnerId = bestSourceOwnerId(
+            sourceOwners.get(sourceTextKey(actionSourceText(action))) || [],
+            byId,
+            owner => ownerScoreForAction(owner, action)
+        );
+        if (sourceOwnerId) {
+            const owner = byId.get(sourceOwnerId);
+            if (owner) {
+                owner.semanticActions.push(action);
+                attachedActionIds.add(action.id);
+                return;
+            }
+        }
         const item = createSemanticRequirementItem(action, index);
         items.push(item);
         byId.set(item.id, item);
     });
 
-    return items;
+    return coalesceUnifiedRequirementItems(items);
 }
 
 export function getDefaultRequirementId(items = [], filter = 'all') {

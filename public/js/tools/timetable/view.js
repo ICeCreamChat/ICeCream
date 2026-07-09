@@ -233,6 +233,29 @@ function renderPresetButtons(items, attr) {
     `;
 }
 
+function renderMultiSelectPopover({
+    title,
+    items,
+    activeValues,
+    dataAttr,
+    presets = [],
+    presetAttr = 'data-range-preset',
+    doneAttr = 'data-tt-popover-close',
+    closeAttr = 'data-tt-popover-close',
+}) {
+    return `
+        <div class="tt-popover-header">
+            <strong>${escapeHtml(title)}</strong>
+            <button class="tt-icon-btn tt-icon-btn--sm" type="button" ${closeAttr} title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </div>
+        ${presets.length ? renderPresetButtons(presets, presetAttr) : ''}
+        ${renderCheckList({ items, activeValues, dataAttr })}
+        <div class="tt-popover-actions">
+            <button class="tt-btn" type="button" ${doneAttr}><i data-lucide="check"></i><span>完成</span></button>
+        </div>
+    `;
+}
+
 function renderMultiSelect({
     id,
     triggerId,
@@ -255,17 +278,30 @@ function renderMultiSelect({
                 <i data-lucide="chevron-down"></i>
             </summary>
             <div class="tt-multi-select-popover">
-                <div class="tt-popover-header">
-                    <strong>${escapeHtml(title)}</strong>
-                    <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-tt-popover-close title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
-                </div>
-                ${presets.length ? renderPresetButtons(presets, presetAttr) : ''}
-                ${renderCheckList({ items, activeValues, dataAttr })}
-                <div class="tt-popover-actions">
-                    <button class="tt-btn" type="button" ${doneAttr}><i data-lucide="check"></i><span>完成</span></button>
-                </div>
+                ${renderMultiSelectPopover({ title, items, activeValues, dataAttr, presets, presetAttr, doneAttr })}
             </div>
         </details>
+    `;
+}
+
+function renderRangePopoverTrigger({
+    id,
+    popoverId,
+    triggerId,
+    title,
+    summary,
+    open = false,
+    summaryOnly = false,
+}) {
+    const triggerClass = `tt-multi-select-trigger${summaryOnly ? ' tt-multi-select-trigger--summary-only' : ''}`;
+    return `
+        <div class="tt-multi-select ${open ? 'is-open' : ''}" data-tt-multi-select="${escapeAttr(id)}">
+            <button class="${triggerClass}" id="${escapeAttr(triggerId)}" type="button" data-range-popover-trigger="${escapeAttr(popoverId)}" aria-haspopup="dialog" aria-expanded="${open ? 'true' : 'false'}">
+                ${summaryOnly ? '' : `<span>${escapeHtml(title)}</span>`}
+                <strong>${escapeHtml(summary)}</strong>
+                <i data-lucide="chevron-down"></i>
+            </button>
+        </div>
     `;
 }
 
@@ -274,6 +310,66 @@ function getRangeDraft(state) {
         activeWeekdays: state.rangeDraft?.activeWeekdays || getActiveWeekdays(state.project),
         activePeriods: state.rangeDraft?.activePeriods || getActivePeriods(state.project),
     };
+}
+
+function rangePopoverConfig(state) {
+    const popoverId = state.rangePopover?.id || '';
+    const { activeWeekdays, activePeriods } = getRangeDraft(state);
+    if (popoverId === 'activeWeekdays') {
+        return {
+            popoverId,
+            title: '可用周几',
+            items: WEEKDAY_OPTIONS,
+            activeValues: activeWeekdays,
+            dataAttr: 'data-active-weekday',
+            presets: [
+                { value: 'weekdays:workdays', label: '工作日' },
+                { value: 'weekdays:all', label: '全周' },
+            ],
+        };
+    }
+    if (popoverId === 'activePeriods') {
+        const periodsFromSegments = Array.isArray(state.project?.periodTimeSegments?.segments)
+            && state.project.periodTimeSegments.segments.length > 0;
+        if (periodsFromSegments) return null;
+        return {
+            popoverId,
+            title: '可用节次',
+            items: PERIOD_OPTIONS,
+            activeValues: activePeriods,
+            dataAttr: 'data-active-period',
+            presets: [
+                { value: 'periods:first7', label: '第1-7节' },
+                { value: 'periods:all', label: '全部节次' },
+            ],
+        };
+    }
+    return null;
+}
+
+function renderRangeFloatingPopover(state) {
+    const config = rangePopoverConfig(state);
+    if (!config) return '';
+    const rect = state.rangePopover?.rect || {};
+    const top = Number.isFinite(rect.top) ? Math.round(rect.top) : 0;
+    const left = Number.isFinite(rect.left) ? Math.round(rect.left) : 0;
+    const width = Number.isFinite(rect.width) ? Math.round(rect.width) : 260;
+    const style = `--tt-floating-popover-top:${top}px;--tt-floating-popover-left:${left}px;--tt-floating-popover-width:${width}px`;
+    return `
+        <div class="tt-floating-popover-layer" data-range-popover-layer>
+            <div class="tt-multi-select-popover tt-floating-range-popover" data-range-popover-panel="${escapeAttr(config.popoverId)}" role="dialog" aria-label="${escapeAttr(config.title)}" style="${escapeAttr(style)}">
+                ${renderMultiSelectPopover({
+                    title: config.title,
+                    items: config.items,
+                    activeValues: config.activeValues,
+                    dataAttr: config.dataAttr,
+                    presets: config.presets,
+                    doneAttr: 'data-range-apply',
+                    closeAttr: 'data-range-popover-close',
+                })}
+            </div>
+        </div>
+    `;
 }
 
 function defaultWorkflowOpenSections(state) {
@@ -344,6 +440,7 @@ export function renderWorkbench(state) {
                     </div>
                 </details>
             </aside>
+            ${renderRangeFloatingPopover(state)}
             ${renderRosterImportDialog(state)}
             ${renderPeriodTimeDialog(state)}
             ${renderDutyAssignmentDialog(state)}
@@ -985,19 +1082,13 @@ function renderProjectSection(state) {
             </div>
             <form id="tt-project-form" class="tt-range-form">
                 <div class="tt-range-summary-grid">
-                    ${renderMultiSelect({
+                    ${renderRangePopoverTrigger({
                         id: 'range-weekdays',
+                        popoverId: 'activeWeekdays',
                         triggerId: 'tt-range-weekdays-trigger',
                         title: '可用周几',
                         summary: summarizeWeekdays(activeWeekdays),
-                        items: WEEKDAY_OPTIONS,
-                        activeValues: activeWeekdays,
-                        dataAttr: 'data-active-weekday',
-                        presets: [
-                            { value: 'weekdays:workdays', label: '工作日' },
-                            { value: 'weekdays:all', label: '全周' },
-                        ],
-                        doneAttr: 'data-range-apply',
+                        open: state.rangePopover?.id === 'activeWeekdays',
                         summaryOnly: true,
                     })}
                     ${periodsFromSegments ? `
@@ -1007,19 +1098,13 @@ function renderProjectSection(state) {
                                 ${rangeSegmentDetail ? `<small class="tt-range-summary-detail" title="${escapeAttr(rangeSegmentDetail)}">${escapeHtml(rangeSegmentDetail)}</small>` : ''}
                             </div>
                         </div>
-                    ` : renderMultiSelect({
+                    ` : renderRangePopoverTrigger({
                         id: 'range-periods',
+                        popoverId: 'activePeriods',
                         triggerId: 'tt-range-periods-trigger',
                         title: '可用节次',
                         summary: summarizePeriods(activePeriods),
-                        items: PERIOD_OPTIONS,
-                        activeValues: activePeriods,
-                        dataAttr: 'data-active-period',
-                        presets: [
-                            { value: 'periods:first7', label: '第1-7节' },
-                            { value: 'periods:all', label: '全部节次' },
-                        ],
-                        doneAttr: 'data-range-apply',
+                        open: state.rangePopover?.id === 'activePeriods',
                         summaryOnly: true,
                     })}
                 </div>
@@ -1099,16 +1184,20 @@ function renderRosterImportInput(dialog, mode, fileName) {
                         <p>智能 CSV / TXT / Excel 文件导入</p>
                     </div>
                 </div>
-                <label class="tt-import-dropzone">
-                    <i data-lucide="${fileBusy ? 'loader-2' : 'upload-cloud'}" class="${fileBusy ? 'tt-spin' : ''}"></i>
-                    <strong>${escapeHtml(fileName)}</strong>
-                    <span>.csv / .txt / .xlsx / .xls</span>
-                    <input id="tt-roster-import-file" type="file" accept=".csv,.txt,.xlsx,.xls" ${disabled}>
-                </label>
-                <button class="tt-btn tt-btn--primary" type="button" data-roster-import-submit="file" ${disabled}>
-                    <i data-lucide="${fileBusy ? 'loader-2' : 'file-search'}" class="${fileBusy ? 'tt-spin' : ''}"></i>
-                    <span>${fileBusy ? '解析中' : '解析文件'}</span>
-                </button>
+                <div class="tt-roster-import-option-body">
+                    <label class="tt-import-dropzone">
+                        <i data-lucide="${fileBusy ? 'loader-2' : 'upload-cloud'}" class="${fileBusy ? 'tt-spin' : ''}"></i>
+                        <strong>${escapeHtml(fileName)}</strong>
+                        <span>.csv / .txt / .xlsx / .xls</span>
+                        <input id="tt-roster-import-file" type="file" accept=".csv,.txt,.xlsx,.xls" ${disabled}>
+                    </label>
+                </div>
+                <div class="tt-roster-import-option-actions tt-roster-import-option-actions--full">
+                    <button class="tt-btn tt-btn--primary" type="button" data-roster-import-submit="file" ${disabled}>
+                        <i data-lucide="${fileBusy ? 'loader-2' : 'file-search'}" class="${fileBusy ? 'tt-spin' : ''}"></i>
+                        <span>${fileBusy ? '解析中' : '解析文件'}</span>
+                    </button>
+                </div>
             </section>
             <section class="tt-roster-import-option tt-roster-import-option--text ${mode === 'text' ? 'is-active' : ''}" aria-labelledby="tt-roster-import-text-title">
                 <div class="tt-roster-import-option-head">
@@ -1118,7 +1207,9 @@ function renderRosterImportInput(dialog, mode, fileName) {
                         <p>智能识别自然语言的文本</p>
                     </div>
                 </div>
-                <textarea id="tt-roster-import-text" class="tt-import-text" spellcheck="false" placeholder="例如：年级,班级,课程,教师,周课时,连堂；七年级,1班,语文,林老师,5,混合" ${disabled}>${escapeHtml(dialog.text || '')}</textarea>
+                <div class="tt-roster-import-option-body">
+                    <textarea id="tt-roster-import-text" class="tt-import-text" spellcheck="false" placeholder="例如：年级,班级,课程,教师,周课时,连堂；七年级,1班,语文,林老师,5,混合" ${disabled}>${escapeHtml(dialog.text || '')}</textarea>
+                </div>
                 <div class="tt-roster-import-option-actions">
                     <button class="tt-btn" id="tt-fill-roster-sample" type="button" ${disabled}><i data-lucide="wand-sparkles"></i><span>示例</span></button>
                     <button class="tt-btn tt-btn--primary" type="button" data-roster-import-submit="text" ${disabled}>
@@ -1135,18 +1226,22 @@ function renderRosterImportInput(dialog, mode, fileName) {
                         <p>列好空白任课表，让用户自己手动新增</p>
                     </div>
                 </div>
-                <div class="tt-roster-import-manual-preview" aria-hidden="true">
-                    <span>年级</span>
-                    <span>班级</span>
-                    <span>课程</span>
-                    <span>教师</span>
-                    <span>周课时</span>
-                    <span>连堂</span>
+                <div class="tt-roster-import-option-body">
+                    <div class="tt-roster-import-manual-preview" aria-hidden="true">
+                        <span>年级</span>
+                        <span>班级</span>
+                        <span>课程</span>
+                        <span>教师</span>
+                        <span>周课时</span>
+                        <span>连堂</span>
+                    </div>
                 </div>
-                <button class="tt-btn tt-btn--primary" id="tt-start-empty-roster-review" type="button" ${disabled}>
-                    <i data-lucide="plus"></i>
-                    <span>打开空白表</span>
-                </button>
+                <div class="tt-roster-import-option-actions tt-roster-import-option-actions--full">
+                    <button class="tt-btn tt-btn--primary" id="tt-start-empty-roster-review" type="button" ${disabled}>
+                        <i data-lucide="plus"></i>
+                        <span>打开空白表</span>
+                    </button>
+                </div>
             </section>
         </div>
         ${isBusy || dialog.phaseText ? `

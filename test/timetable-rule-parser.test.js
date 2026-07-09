@@ -676,6 +676,172 @@ test('xlsx AI supplement cannot turn system invariants into all-slot unavailable
     assert.ok(result.requirementItems.some(item => item.intent === 'lesson_hours_completeness' && item.status === 'handled'));
 });
 
+test('parseTimetableRules links full-sentence AI requirement to a shortened machine rule', async () => {
+    const fullText = 'AI测试：刘书涵老师周一第2节要参加语文备课组集体备课，这节不要给他安排课。';
+    const shortText = '刘书涵老师周一第2节不要排课';
+    const project = makeProject({
+        teachers: [{ id: 't_liu', name: '刘书涵' }],
+    });
+    const fetchImpl = async (_url, init = {}) => {
+        const body = JSON.parse(init.body || '{}');
+        const system = body.messages?.[0]?.content || '';
+        const isReview = system.includes('复审核查员');
+        const content = isReview
+            ? {
+                reviewItems: [{
+                    verdict: 'accept',
+                    target: { type: 'teacher_unavailable', targetId: 't_liu' },
+                    reason: '需求明确，本地解析正确。',
+                    evidence: { quote: shortText },
+                }],
+            }
+            : {
+                requirementItems: [{
+                    id: 'req_need',
+                    object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+                    intent: 'schedule_request',
+                    status: 'needs_review',
+                    applyTo: 'review',
+                    source: { rawText: fullText },
+                    confidence: 0.9,
+                }],
+                draftRows: [{
+                    id: 'row_short_rule',
+                    type: 'teacher_unavailable',
+                    targetType: 'teacher',
+                    targetId: 't_liu',
+                    targetName: '刘书涵',
+                    slots: ['1-2'],
+                    rawText: shortText,
+                    priority: 'hard',
+                    confidence: 0.95,
+                }],
+            };
+        return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+                choices: [{ message: { content: JSON.stringify(content) } }],
+            }),
+        };
+    };
+
+    const result = await parseTimetableRules({
+        text: fullText,
+        project,
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        fetchImpl,
+    });
+
+    const row = result.draftRows.find(item => item.id === 'row_short_rule');
+    assert.ok(row);
+    assert.equal(row.requirementId, 'req_need');
+    assert.equal(row.type, 'teacher_unavailable');
+    assert.equal(row.status, 'effective');
+    assert.ok(result.requirementItems.some(item => item.id === 'req_need'));
+});
+
+test('normalizeTimetableRuleDraftRows links only the matching same-teacher period', () => {
+    const project = makeProject({
+        teachers: [{ id: 't_liu', name: '刘书涵' }],
+    });
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        source: 'ai',
+        inputType: 'text',
+        draftRows: [
+            {
+                id: 'row_monday_second',
+                type: 'teacher_unavailable',
+                targetType: 'teacher',
+                targetId: 't_liu',
+                targetName: '刘书涵',
+                slots: ['1-2'],
+                rawText: '刘书涵老师周一第2节不要排课',
+                priority: 'hard',
+            },
+            {
+                id: 'row_tuesday_third',
+                type: 'teacher_unavailable',
+                targetType: 'teacher',
+                targetId: 't_liu',
+                targetName: '刘书涵',
+                slots: ['2-3'],
+                rawText: '刘书涵老师周二第3节不要排课',
+                priority: 'hard',
+            },
+        ],
+        semanticRequirements: [
+            {
+                id: 'req_monday_second',
+                object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+                intent: 'schedule_request',
+                status: 'needs_review',
+                applyTo: 'review',
+                source: { rawText: '刘书涵老师周一第2节不要排课' },
+            },
+            {
+                id: 'req_tuesday_third',
+                object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
+                intent: 'schedule_request',
+                status: 'needs_review',
+                applyTo: 'review',
+                source: { rawText: '刘书涵老师周二第3节不要排课' },
+            },
+        ],
+    });
+
+    assert.equal(result.draftRows.find(row => row.id === 'row_monday_second').requirementId, 'req_monday_second');
+    assert.equal(result.draftRows.find(row => row.id === 'row_tuesday_third').requirementId, 'req_tuesday_third');
+});
+
+test('normalizeTimetableRuleDraftRows can link one demand to multiple same-slot machine rules', () => {
+    const project = makeProject({
+        teachers: [
+            { id: 't_liu', name: '刘书涵' },
+            { id: 't_zhang', name: '张老师' },
+        ],
+    });
+    const result = normalizeTimetableRuleDraftRows({
+        project,
+        source: 'ai',
+        inputType: 'text',
+        draftRows: [
+            {
+                id: 'row_liu',
+                type: 'teacher_unavailable',
+                targetType: 'teacher',
+                targetId: 't_liu',
+                targetName: '刘书涵',
+                slots: ['1-2'],
+                rawText: '刘书涵和张老师周一第2节都不要排课',
+                priority: 'hard',
+            },
+            {
+                id: 'row_zhang',
+                type: 'teacher_unavailable',
+                targetType: 'teacher',
+                targetId: 't_zhang',
+                targetName: '张老师',
+                slots: ['1-2'],
+                rawText: '刘书涵和张老师周一第2节都不要排课',
+                priority: 'hard',
+            },
+        ],
+        semanticRequirements: [{
+            id: 'req_group',
+            object: { kind: 'teacher_group', name: '刘书涵、张老师', matchedIds: ['t_liu', 't_zhang'], scope: 'explicit' },
+            intent: 'schedule_request',
+            status: 'needs_review',
+            applyTo: 'review',
+            source: { rawText: '刘书涵和张老师周一第2节都不要排课' },
+        }],
+    });
+
+    assert.equal(result.draftRows.find(row => row.id === 'row_liu').requirementId, 'req_group');
+    assert.equal(result.draftRows.find(row => row.id === 'row_zhang').requirementId, 'req_group');
+});
+
 test('applyTimetableRequirementActions applies lesson-plan and soft-rule semantic actions with validation', () => {
     const project = makeProject({
         lessonPlans: [
@@ -1537,6 +1703,106 @@ test('parseRosterAiOrLocal falls back to local when no API key', async () => {
     const result = await parseRosterAiOrLocal({ text, project: {}, env: {} });
     assert.equal(result.source, 'local');
     assert.ok(result.draftRows.length >= 1);
+});
+
+test('parseRosterAiOrLocal local fallback parses common natural language roster rows', async () => {
+    const result = await parseRosterAiOrLocal({
+        text: '七年级1班语文林老师每周5节，混合',
+        project: {},
+        env: {},
+    });
+
+    assert.equal(result.source, 'local');
+    assert.equal(result.draftRows.length, 1);
+    assert.deepEqual({
+        grade: result.draftRows[0].grade,
+        className: result.draftRows[0].className,
+        subjectName: result.draftRows[0].subjectName,
+        teacherName: result.draftRows[0].teacherName,
+        weeklyHours: result.draftRows[0].weeklyHours,
+        blockPreference: result.draftRows[0].blockPreference,
+    }, {
+        grade: '七年级',
+        className: '1班',
+        subjectName: '语文',
+        teacherName: '林老师',
+        weeklyHours: 5,
+        blockPreference: 'mixed',
+    });
+    assert.equal(result.issues.length, 0);
+});
+
+test('parseRosterAiOrLocal local fallback parses natural language block and room details', async () => {
+    const result = await parseRosterAiOrLocal({
+        text: '八年级2班物理程远航老师每周3节，双连堂，物理实验室',
+        project: {},
+        env: {},
+    });
+
+    assert.equal(result.source, 'local');
+    assert.equal(result.draftRows.length, 1);
+    const row = result.draftRows[0];
+    assert.equal(row.grade, '八年级');
+    assert.equal(row.className, '2班');
+    assert.equal(row.subjectName, '物理');
+    assert.equal(row.teacherName, '程远航');
+    assert.equal(row.weeklyHours, 3);
+    assert.equal(row.blockPreference, 'double');
+    assert.equal(row.roomName, '物理实验室');
+    assert.ok(result.warnings.some(message => /双连堂课时建议使用偶数/.test(message)));
+});
+
+test('parseRosterAiOrLocal local fallback parses multiple natural roster rows and Chinese numeral hours', async () => {
+    const result = await parseRosterAiOrLocal({
+        text: [
+            '九年级1班化学丁子航每周4节，双连堂，在化学实验室',
+            '初一3班体育由王强老师上，一周两节，单节',
+        ].join('\n'),
+        project: {},
+        env: {},
+    });
+
+    assert.equal(result.source, 'local');
+    assert.equal(result.draftRows.length, 2);
+    assert.deepEqual(result.draftRows.map(row => ({
+        grade: row.grade,
+        className: row.className,
+        subjectName: row.subjectName,
+        teacherName: row.teacherName,
+        weeklyHours: row.weeklyHours,
+        blockPreference: row.blockPreference,
+        roomName: row.roomName,
+    })), [{
+        grade: '九年级',
+        className: '1班',
+        subjectName: '化学',
+        teacherName: '丁子航',
+        weeklyHours: 4,
+        blockPreference: 'double',
+        roomName: '化学实验室',
+    }, {
+        grade: '初一',
+        className: '3班',
+        subjectName: '体育',
+        teacherName: '王强',
+        weeklyHours: 2,
+        blockPreference: 'single',
+        roomName: '',
+    }]);
+});
+
+test('parseRosterAiOrLocal local fallback does not create shifted fake rows for unrecognized prose', async () => {
+    const result = await parseRosterAiOrLocal({
+        text: '这份任课数据等教务处确认后再补充，暂时没有具体老师和课时。',
+        project: {},
+        env: {},
+    });
+
+    assert.equal(result.source, 'local');
+    assert.equal(result.draftRows.length, 0);
+    assert.ok(result.warnings.some(message => /本地未能识别自然语言/.test(message)));
+    assert.ok(result.importReport.hasIssues);
+    assert.ok(result.importReport.entries.some(item => item.category === 'review' && /本地未能识别自然语言/.test(item.reason)));
 });
 
 test('timetable roster preview includes a four-category import report', () => {

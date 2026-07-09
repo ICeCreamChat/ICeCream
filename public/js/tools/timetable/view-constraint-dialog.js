@@ -230,6 +230,20 @@ function aiReviewStatusLabel(status = '') {
     }[key] || '';
 }
 
+function escapeRegExp(value = '') {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function humanizeAiReviewMessage(value = '') {
+    let message = String(value || '');
+    Object.entries(RULE_TYPE_LABELS).forEach(([type, label]) => {
+        if (!type || !label) return;
+        const pattern = new RegExp(`(^|[^A-Za-z0-9_])${escapeRegExp(type)}(?:规则)?(?=$|[^A-Za-z0-9_])`, 'g');
+        message = message.replace(pattern, `$1${label}规则`);
+    });
+    return message;
+}
+
 function renderRequirementAiReview(item = {}, review = {}) {
     const status = item.aiReviewStatus || (review?.status === 'reviewed' ? 'reviewed' : '');
     const label = aiReviewStatusLabel(status);
@@ -245,17 +259,17 @@ function renderRequirementAiReview(item = {}, review = {}) {
     const rawMessage = warnings[0] || evidence.reason || unavailableMessage || '';
     const defaultMessage = rawMessage || '此项识别结果已通过 AI 复审。';
     const quote = evidence.quote || '';
-    const toneClass = ['flagged', 'unsupported', 'patch_rejected', 'missed'].includes(String(status || '').toLowerCase())
+    const normalizedStatus = String(status || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    const tone = ['flagged', 'unsupported', 'patch_rejected', 'missed'].includes(normalizedStatus)
         || reviewStatus === 'unavailable'
-        ? 'tt-constraint-warning'
-        : 'tt-constraint-info';
+        ? 'warning'
+        : 'info';
+    const title = label || 'AI 复审说明';
     return `
-        <div class="${toneClass} tt-requirement-ai-review">
-            <i data-lucide="${toneClass === 'tt-constraint-warning' ? 'alert-circle' : 'check-circle-2'}"></i>
-            <span>
-                ${label ? `<b>${escapeHtml(label)}</b> ` : ''}${escapeHtml(defaultMessage)}
-                ${quote ? `<em>${escapeHtml(quote)}</em>` : ''}
-            </span>
+        <div class="tt-requirement-ai-review tt-requirement-ai-review--${tone}">
+            <span class="tt-requirement-ai-review-label">${escapeHtml(title)}</span>
+            <p>${escapeHtml(humanizeAiReviewMessage(defaultMessage))}</p>
+            ${quote ? `<small>${escapeHtml(humanizeAiReviewMessage(quote))}</small>` : ''}
         </div>
     `;
 }
@@ -664,6 +678,29 @@ function renderRequirementMachineRules(item = {}, state = {}) {
     `;
 }
 
+function renderRequirementSupportingRequirements(item = {}) {
+    const supporting = (item.supportingRequirements || []).filter(entry => entry && (entry.intent || entry.object?.name || entry.source?.rawText));
+    if (!supporting.length) return '';
+    return `
+        <div class="tt-requirement-related">
+            <span class="tt-requirement-detail-label">相关理解</span>
+            <div>
+                ${supporting.map(entry => {
+                    const objectName = entry.object?.name || entry.targetName || '';
+                    const intentLabel = requirementIntentLabel(entry.intent || entry.type || 'requirement');
+                    const sourceText = entry.source?.rawText || entry.rawText || '';
+                    return `
+                        <span title="${escapeAttr(sourceText || intentLabel)}">
+                            <b>${escapeHtml(intentLabel)}</b>
+                            ${objectName ? `<em>${escapeHtml(objectName)}</em>` : ''}
+                        </span>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    `;
+}
+
 function renderRequirementClarification(item = {}) {
     const clarification = item.clarification;
     const history = Array.isArray(item.clarificationHistory) ? item.clarificationHistory.filter(Boolean) : [];
@@ -827,6 +864,7 @@ function renderRequirementDetail(item = null, state = {}) {
                 <span class="tt-requirement-detail-label">参数</span>
                 <div>${renderRequirementParameterDetails(item)}</div>
             </div>
+            ${renderRequirementSupportingRequirements(item)}
             ${renderRequirementComplexBadges(item)}
             ${renderRequirementModelSupport(item)}
             ${renderRequirementClarification(item)}

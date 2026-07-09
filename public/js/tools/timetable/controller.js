@@ -219,6 +219,8 @@ export class TimetablePlannerController {
         this.constraintFulfillmentRequestSeq = 0;
         this.rosterDraftCounter = 0;
         this.ruleDraftCounter = 0;
+        this.rangePopoverViewportHandler = () => this.repositionRangePopover();
+        this.rangePopoverViewportWindow = null;
     }
 
     async init(container) {
@@ -235,6 +237,7 @@ export class TimetablePlannerController {
             this.inspectorLocatePulseTimer = null;
         }
         this.clearOptimizationPolling();
+        this.cleanupRangePopoverViewportListeners();
         this.timetableToolHost?.classList?.remove('tool-container--timetable');
         this.timetableToolHost = null;
         this.state.container = null;
@@ -253,6 +256,7 @@ export class TimetablePlannerController {
         const periodTimeFocus = this.capturePeriodTimeFocus(container);
         container.innerHTML = renderWorkbench(this.state);
         bindGridInteractions(container, this, this.state);
+        this.syncRangePopoverViewportListeners();
         this.restorePeriodTimeFocus(container, periodTimeFocus);
         window.lucide?.createIcons();
     }
@@ -1214,9 +1218,94 @@ export class TimetablePlannerController {
         this.render();
     }
 
+    rangePopoverRectFromTrigger(trigger) {
+        const rect = trigger?.getBoundingClientRect?.();
+        const ownerWindow = this.state.container?.ownerDocument?.defaultView || globalThis.window || {};
+        const viewportWidth = Number(ownerWindow.innerWidth)
+            || Number(this.state.container?.ownerDocument?.documentElement?.clientWidth)
+            || 1024;
+        const viewportHeight = Number(ownerWindow.innerHeight)
+            || Number(this.state.container?.ownerDocument?.documentElement?.clientHeight)
+            || 768;
+        const rawLeft = Number(rect?.left) || 0;
+        const rawTop = Number(rect?.bottom) || ((Number(rect?.top) || 0) + (Number(rect?.height) || 0));
+        const popoverWidth = Math.min(260, Math.max(180, viewportWidth - 32));
+        const popoverHeight = Math.min(330, Math.max(240, viewportHeight - 32));
+        const left = Math.max(16, Math.min(rawLeft, viewportWidth - popoverWidth - 16));
+        const top = Math.max(16, Math.min(rawTop + 6, viewportHeight - popoverHeight - 16));
+        return {
+            top,
+            left,
+            width: popoverWidth,
+            height: popoverHeight,
+            triggerWidth: Number(rect?.width) || popoverWidth,
+        };
+    }
+
+    toggleRangePopover(id, trigger) {
+        if (!['activeWeekdays', 'activePeriods'].includes(id)) return false;
+        if (this.state.rangePopover?.id === id) {
+            this.closeRangePopover();
+            return true;
+        }
+        this.state.rangePopover = {
+            id,
+            rect: this.rangePopoverRectFromTrigger(trigger),
+        };
+        this.render();
+        return true;
+    }
+
+    closeRangePopover({ render = true } = {}) {
+        if (!this.state.rangePopover) return false;
+        this.state.rangePopover = null;
+        this.cleanupRangePopoverViewportListeners();
+        if (render) this.render();
+        return true;
+    }
+
+    repositionRangePopover() {
+        const id = this.state.rangePopover?.id;
+        if (!id || !this.state.container) return false;
+        const trigger = this.state.container.querySelector(`[data-range-popover-trigger="${selectorAttributeValue(id)}"]`);
+        if (!trigger) return this.closeRangePopover();
+        this.state.rangePopover = {
+            id,
+            rect: this.rangePopoverRectFromTrigger(trigger),
+        };
+        this.render();
+        return true;
+    }
+
+    syncRangePopoverViewportListeners() {
+        const ownerWindow = this.state.container?.ownerDocument?.defaultView || globalThis.window;
+        if (!ownerWindow || typeof ownerWindow.addEventListener !== 'function') return;
+        if (!this.state.rangePopover) {
+            this.cleanupRangePopoverViewportListeners();
+            return;
+        }
+        if (this.rangePopoverViewportWindow === ownerWindow) return;
+        this.cleanupRangePopoverViewportListeners();
+        ownerWindow.addEventListener('resize', this.rangePopoverViewportHandler);
+        ownerWindow.addEventListener('scroll', this.rangePopoverViewportHandler, true);
+        this.rangePopoverViewportWindow = ownerWindow;
+    }
+
+    cleanupRangePopoverViewportListeners() {
+        const ownerWindow = this.rangePopoverViewportWindow;
+        if (!ownerWindow || typeof ownerWindow.removeEventListener !== 'function') {
+            this.rangePopoverViewportWindow = null;
+            return;
+        }
+        ownerWindow.removeEventListener('resize', this.rangePopoverViewportHandler);
+        ownerWindow.removeEventListener('scroll', this.rangePopoverViewportHandler, true);
+        this.rangePopoverViewportWindow = null;
+    }
+
     syncRangeDraftFromProject() {
         if (!this.state.project) {
             this.state.rangeDraft = null;
+            this.state.rangePopover = null;
             return;
         }
         this.state.rangeDraft = {
@@ -1229,10 +1318,16 @@ export class TimetablePlannerController {
     updateRangeDraftFromForm() {
         if (!this.state.container) return;
         const payload = readProjectForm(this.state.container);
+        const currentDraft = {
+            activeWeekdays: this.state.rangeDraft?.activeWeekdays || getActiveWeekdays(this.state.project),
+            activePeriods: this.state.rangeDraft?.activePeriods || getActivePeriods(this.state.project),
+        };
+        const hasWeekdayInputs = Boolean(this.state.container.querySelector('[data-active-weekday]'));
+        const hasPeriodInputs = Boolean(this.state.container.querySelector('[data-active-period]'));
         this.state.rangeDraft = {
             ...(this.state.rangeDraft || {}),
-            activeWeekdays: payload.activeWeekdays,
-            activePeriods: payload.activePeriods,
+            activeWeekdays: hasWeekdayInputs ? payload.activeWeekdays : currentDraft.activeWeekdays,
+            activePeriods: hasPeriodInputs ? payload.activePeriods : currentDraft.activePeriods,
         };
     }
 
@@ -1250,6 +1345,7 @@ export class TimetablePlannerController {
 
     async applyRangeDraft() {
         this.updateRangeDraftFromForm();
+        this.closeRangePopover({ render: false });
         await this.saveProject(this.rangePayloadFromDraft());
     }
 
@@ -3779,39 +3875,44 @@ export class TimetablePlannerController {
     }
 
     openRosterImport(mode = 'file') {
-        const nextMode = mode === 'text' ? 'text' : 'file';
         const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
-        const hasDraftRows = Array.isArray(current.draftRows) && current.draftRows.length > 0;
-        const hasInputDraft = Boolean(current.text || current.fileName || this.rosterImportFile);
+        const hasDraftRows = this.hasRecoverableRosterReviewDraft(current.draftRows);
+        const hasTextDraft = Boolean(String(current.text || '').trim());
+        const hasFileDraft = Boolean(this.rosterImportFile);
         if (hasDraftRows) {
             this.state.rosterImport = {
                 ...current,
                 open: true,
                 step: 'review',
-                mode: current.mode || nextMode,
+                mode: current.mode === 'text' ? 'text' : 'file',
             };
-        } else if (hasInputDraft) {
+        } else if (hasTextDraft || hasFileDraft) {
+            const draftMode = hasFileDraft && current.mode !== 'text' ? 'file' : 'text';
             this.state.rosterImport = {
                 ...createTimetablePlannerState().rosterImport,
                 ...current,
                 open: true,
                 step: 'input',
-                mode: current.mode || nextMode,
+                mode: draftMode,
+                fileName: hasFileDraft ? current.fileName : '',
             };
         } else {
+            this.rosterImportFile = null;
             this.state.rosterImport = {
                 ...createTimetablePlannerState().rosterImport,
                 open: true,
-                mode: nextMode,
+                mode: 'file',
             };
         }
         this.render();
     }
 
     closeRosterImport() {
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
         this.state.rosterImport = {
-            ...(this.state.rosterImport || createTimetablePlannerState().rosterImport),
+            ...current,
             open: false,
+            text: current.step === 'input' ? this.readRosterImportText() : current.text || '',
             issueEditor: null,
         };
         this.render();
@@ -3998,6 +4099,19 @@ export class TimetablePlannerController {
             manual: Boolean(row.manual),
             issues: Array.isArray(row.issues) ? row.issues : [],
         };
+    }
+
+    rosterDraftRowHasCoreContent(row = {}) {
+        return ['grade', 'className', 'subjectName', 'teacherName', 'weeklyHours', 'roomName', 'subjectTags']
+            .some(field => String(row[field] ?? '').trim());
+    }
+
+    hasRecoverableRosterReviewDraft(rows = []) {
+        return (Array.isArray(rows) ? rows : []).some(row => {
+            if (!row || typeof row !== 'object') return false;
+            if (!row.manual) return true;
+            return this.rosterDraftRowHasCoreContent(row);
+        });
     }
 
     rosterDraftRowHasValue(row) {

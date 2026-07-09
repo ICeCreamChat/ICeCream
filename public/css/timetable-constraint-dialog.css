@@ -1218,20 +1218,25 @@
 }
 
 .tt-requirement-params,
+.tt-requirement-related,
 .tt-requirement-raw {
     display: grid;
     gap: 6px;
     min-width: 0;
 }
 
-.tt-requirement-params > div {
+.tt-requirement-params > div,
+.tt-requirement-related > div {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
 }
 
-.tt-requirement-params span:not(.tt-requirement-detail-label) {
+.tt-requirement-params span:not(.tt-requirement-detail-label),
+.tt-requirement-related span:not(.tt-requirement-detail-label) {
     display: inline-flex;
+    align-items: center;
+    gap: 5px;
     max-width: 100%;
     padding: 3px 7px;
     border: 1px solid var(--tt-border);
@@ -1240,6 +1245,77 @@
     color: var(--tt-text-secondary);
     font-size: 0.7rem;
     font-weight: 700;
+}
+
+.tt-requirement-related b,
+.tt-requirement-related em {
+    min-width: 0;
+    overflow: hidden;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-requirement-related em {
+    color: var(--tt-muted);
+    font-weight: 700;
+}
+
+.tt-requirement-ai-review {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--tt-border);
+    border-left: 3px solid var(--tt-primary);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--tt-primary) 5%, var(--tt-bg-elevated));
+    color: var(--tt-text-secondary);
+    font-size: 0.76rem;
+    font-weight: 400;
+    line-height: 1.55;
+}
+
+.tt-requirement-ai-review--info {
+    border-left-color: var(--tt-primary);
+    background: color-mix(in srgb, var(--tt-primary) 5%, var(--tt-bg-elevated));
+}
+
+.tt-requirement-ai-review--warning {
+    border-left-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.06);
+}
+
+.tt-requirement-ai-review-label {
+    width: fit-content;
+    max-width: 100%;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(8, 145, 178, 0.1);
+    color: var(--tt-primary);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.tt-requirement-ai-review--warning .tt-requirement-ai-review-label {
+    background: rgba(245, 158, 11, 0.12);
+    color: #d97706;
+}
+
+.tt-requirement-ai-review p {
+    margin: 0;
+    color: var(--tt-text-secondary);
+    font-size: 0.76rem;
+    font-weight: 400;
+    line-height: 1.55;
+}
+
+.tt-requirement-ai-review small {
+    color: var(--tt-muted);
+    font-size: 0.7rem;
+    font-weight: 400;
+    line-height: 1.45;
 }
 
 .tt-requirement-complex-badges,
