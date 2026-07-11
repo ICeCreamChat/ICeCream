@@ -1,7 +1,8 @@
-export const AI_REQUIREMENT_PROMPT_VERSION = 'timetable_ai_requirement_extract_v2';
+export const AI_REQUIREMENT_PROMPT_VERSION = 'timetable_ai_requirement_extract_v5';
 
 export const TIMETABLE_REQUIREMENT_INTENTS = [
     'teacher_unavailable',
+    'teacher_avoid_periods',
     'class_unavailable',
     'global_unavailable',
     'locked_slot',
@@ -28,6 +29,7 @@ export const TIMETABLE_REQUIREMENT_INTENTS = [
     'teacher_gap_preference',
     'teacher_load_balance',
     'subject_not_same_day',
+    'subject_not_consecutive_with',
     'subject_sequence',
     'block_preference',
     'week_pattern',
@@ -36,51 +38,107 @@ export const TIMETABLE_REQUIREMENT_INTENTS = [
     'unknown',
 ];
 
+export const TIMETABLE_REQUIREMENT_INTENT_GUIDE = [
+    {
+        intent: 'teacher_unavailable',
+        targetKinds: ['teacher'],
+        description: '具体教师或已明确教师集合在明确时段客观不能上课，属于硬约束。',
+        triggers: ['没空', '不方便', '请假', '参加会议', '不能上课', '不要排课'],
+        distinguishFrom: '具体教师即使出现第一节、末节，也不能改成学科 avoid_first_period/avoid_last_period；“太早/太晚”范围不明确时仍用本 intent，并 needsClarification=true。',
+    },
+    {
+        intent: 'teacher_avoid_periods',
+        targetKinds: ['teacher', 'derived_group'],
+        description: '教师或教师角色组对明确课节的软偏好，不表示客观不可用。',
+        triggers: ['尽量不要第一节', '最好避开末节', '班主任首节少排课'],
+        distinguishFrom: '只有明确软偏好才使用；没空、不方便、请假等客观不可用必须用 teacher_unavailable。',
+    },
+    {
+        intent: 'avoid_first_period',
+        targetKinds: ['subject'],
+        description: '某学科尽量避开每天第一节。',
+        triggers: ['音乐不要排第一节', '体育避开首节'],
+        distinguishFrom: '不用于具体教师或教师角色组。',
+    },
+    {
+        intent: 'avoid_last_period',
+        targetKinds: ['subject'],
+        description: '某学科尽量避开每天最后一节。',
+        triggers: ['美术避开放学前最后一节'],
+        distinguishFrom: '不用于具体教师或教师角色组。',
+    },
+    {
+        intent: 'course_interval',
+        targetKinds: ['subject'],
+        description: '同一课程相邻两次授课至少间隔若干天。',
+        triggers: ['隔天排', '至少隔一天', '间隔两天'],
+        distinguishFrom: '“隔天/至少隔N天/间隔N天”属于本 intent；不要改成 subject_spread。',
+    },
+    {
+        intent: 'subject_spread',
+        targetKinds: ['subject'],
+        description: '课程在一周内尽量均匀、分散，不规定最小天数间隔。',
+        triggers: ['均匀分布', '不要集中', '分散到不同天'],
+        distinguishFrom: '出现明确“隔天/间隔N天”时使用 course_interval。',
+    },
+    {
+        intent: 'unknown',
+        targetKinds: ['unknown'],
+        description: '输入属于排课领域，但优化目标、对象、时间或参数不足，无法形成确定约束。',
+        triggers: ['排得好看一点', '安排合理一点'],
+        distinguishFrom: '领域内含糊必须输出 unknown + needsClarification；只有天气、闲聊等领域外输入才 unrecognized=true 且 clauses=[]。',
+    },
+];
+
 export const AI_REQUIREMENT_JSON_SCHEMA = {
     type: 'object',
     additionalProperties: false,
-    required: ['requirements'],
+    required: ['results'],
     properties: {
-        requirements: {
+        results: {
             type: 'array',
             items: {
                 type: 'object',
-                additionalProperties: true,
-                required: ['intent', 'evidence'],
+                additionalProperties: false,
+                required: ['sourceId', 'textHash', 'clauses'],
                 properties: {
-                    id: { type: 'string' },
-                    intent: { type: 'string', enum: TIMETABLE_REQUIREMENT_INTENTS },
-                    targetKind: { type: 'string', enum: ['teacher', 'class', 'subject', 'room', 'global', 'teaching_group', 'derived_group', 'unknown'] },
-                    targetNames: { type: 'array', items: { type: 'string' } },
-                    targetIds: { type: 'array', items: { type: 'string' } },
-                    strength: { type: 'string', enum: ['hard', 'soft'] },
-                    time: {
-                        type: 'object',
-                        additionalProperties: true,
-                        properties: {
-                            slots: { type: 'array', items: { type: 'string' } },
-                            days: { type: 'array', items: { type: 'integer' } },
-                            periods: { type: 'array', items: { type: 'integer' } },
-                            dayPart: { type: 'string', enum: ['morning', 'afternoon', 'evening', 'all_day', ''] },
+                    sourceId: { type: 'string' },
+                    textHash: { type: 'string' },
+                    clauses: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            additionalProperties: true,
+                            required: ['intent', 'evidence'],
+                            properties: {
+                                id: { type: 'string' },
+                                intent: { type: 'string', enum: TIMETABLE_REQUIREMENT_INTENTS },
+                                targetKind: { type: 'string', enum: ['teacher', 'class', 'subject', 'room', 'global', 'teaching_group', 'derived_group', 'unknown'] },
+                                targetNames: { type: 'array', items: { type: 'string' } },
+                                targetIds: { type: 'array', items: { type: 'string' } },
+                                strength: { type: 'string', enum: ['hard', 'soft'] },
+                                time: {
+                                    type: 'object',
+                                    additionalProperties: true,
+                                    properties: {
+                                        slots: { type: 'array', items: { type: 'string' } },
+                                        days: { type: 'array', items: { type: 'integer' } },
+                                        periods: { type: 'array', items: { type: 'integer' } },
+                                        dayPart: { type: 'string', enum: ['morning', 'afternoon', 'evening', 'all_day', ''] },
+                                    },
+                                },
+                                params: { type: 'object', additionalProperties: true },
+                                confidence: { type: 'number', minimum: 0, maximum: 1 },
+                                needsClarification: { type: 'boolean' },
+                                clarification: { type: 'object', additionalProperties: true },
+                                evidence: { type: 'string' },
+                                notes: { type: 'string' },
+                            },
                         },
                     },
-                    params: { type: 'object', additionalProperties: true },
-                    confidence: { type: 'number', minimum: 0, maximum: 1 },
-                    needsClarification: { type: 'boolean' },
-                    clarification: { type: 'object', additionalProperties: true },
-                    evidence: { type: 'string' },
-                    notes: { type: 'string' },
-                },
-            },
-        },
-        unrecognized: {
-            type: 'array',
-            items: {
-                type: 'object',
-                additionalProperties: true,
-                properties: {
-                    text: { type: 'string' },
+                    unrecognized: { type: 'boolean' },
                     reason: { type: 'string' },
+                    warnings: { type: 'array', items: { type: 'string' } },
                 },
             },
         },
@@ -110,6 +168,21 @@ const FEW_SHOTS = [
     { text: '单双周体育分开排', intent: 'week_pattern', targetKind: 'subject', targetNames: ['体育'], strength: 'soft' },
     { text: '跨校区老师两节课之间要留出通勤时间', intent: 'campus_commute_gap', targetKind: 'teacher', targetNames: ['跨校区老师'], strength: 'hard' },
     { text: '一班二班合班上音乐', intent: 'teaching_group_session', targetKind: 'class', targetNames: ['一班', '二班'], params: { subjectNames: ['音乐'] }, strength: 'hard' },
+    { text: '体育课还要隔天排', intent: 'course_interval', targetKind: 'subject', targetNames: ['体育'], params: { minGapDays: 1 }, strength: 'soft' },
+    { text: '体育课时均匀分布到一周', intent: 'subject_spread', targetKind: 'subject', targetNames: ['体育'], strength: 'soft' },
+    { text: '王老师周五末节不方便', intent: 'teacher_unavailable', targetKind: 'teacher', targetNames: ['王老师'], time: { days: [5], periods: [7] }, strength: 'hard' },
+    { text: '王老师不要太早上课', intent: 'teacher_unavailable', targetKind: 'teacher', targetNames: ['王老师'], strength: 'hard', needsClarification: true, clarification: { question: '“太早”具体指哪些课节？' } },
+    { text: '班主任第一节尽量不要有课方便晨检', intent: 'teacher_avoid_periods', targetKind: 'derived_group', targetNames: ['班主任'], time: { periods: [1] }, strength: 'soft', needsClarification: true },
+    { text: '请帮我把课程排得好看一点', intent: 'unknown', targetKind: 'unknown', targetNames: [], strength: 'soft', needsClarification: true, clarification: { question: '请说明希望优化的具体对象、时段或指标。' } },
+    { category: 'colloquial', text: '李老师一天顶多上四堂', intent: 'teacher_daily_limit', targetKind: 'teacher', targetNames: ['李老师'], params: { limit: 4 }, strength: 'hard' },
+    { category: 'noisy_text', text: '張老師週一上午不能上課', intent: 'teacher_unavailable', targetKind: 'teacher', targetNames: ['张老师'], time: { days: [1], dayPart: 'morning' }, strength: 'hard' },
+    { category: 'ellipsis', text: '数学尽量上午，英语也一样', clauses: [
+        { intent: 'subject_morning', targetKind: 'subject', targetNames: ['数学'], time: { dayPart: 'morning' }, strength: 'soft' },
+        { intent: 'subject_morning', targetKind: 'subject', targetNames: ['英语'], time: { dayPart: 'morning' }, strength: 'soft' },
+    ] },
+    { category: 'cross_sentence_reference', text: '张老师负责数学。他周一上午不能上课。', intent: 'teacher_unavailable', targetKind: 'teacher', targetNames: ['张老师'], time: { days: [1], dayPart: 'morning' }, strength: 'hard' },
+    { category: 'complex_negation', text: '张老师不能周一周二都排第一节', intent: 'teacher_avoid_periods', targetKind: 'teacher', targetNames: ['张老师'], time: { days: [1, 2], periods: [1] }, strength: 'soft', needsClarification: true },
+    { category: 'school_terminology', text: '语文组周二下午集备，组内老师不要排课', intent: 'teaching_group_meeting', targetKind: 'teaching_group', targetNames: ['语文组'], time: { days: [2], dayPart: 'afternoon' }, params: { activity: '集备' }, strength: 'hard' },
 ];
 
 function compactEntity(item = {}) {
@@ -148,20 +221,26 @@ function projectSnapshot(project = {}) {
     };
 }
 
-export function buildAiRequirementExtractionMessages({ project = {}, text = '', contextStats = null } = {}) {
+export function buildAiRequirementExtractionMessages({ project = {}, text = '', contextStats = null, sourceInputs = [] } = {}) {
     return [
         {
             role: 'system',
             content: [
                 '你是教务排课约束抽取器，只把自然语言转成 JSON，不写解释。',
                 `版本：${AI_REQUIREMENT_PROMPT_VERSION}`,
-                '必须只输出一个 JSON 对象，形如 {"requirements":[],"unrecognized":[],"warnings":[]}。',
-                'requirements[].intent 必须来自给定 intent 目录；不确定对象、时间、参数时设置 needsClarification=true 并降低 confidence。',
+                '必须只输出一个 JSON 对象，形如 {"results":[{"sourceId":"...","textHash":"...","clauses":[]}],"warnings":[]}。',
+                '每个 results[] 必须原样回传输入 sources[] 中已存在的 sourceId 和 textHash；禁止编造、改写或省略。',
+                '一个用户输入 source 只能有一个顶层 result；一句话包含多个约束时放进同一个 result.clauses，允许 clauses 为 0..N。',
+                '不得按输入或输出数组下标猜来源；无法理解时仍返回对应 sourceId/textHash，并设置 unrecognized=true、clauses=[]、reason。',
+                'results[].clauses[].intent 必须来自给定 intent 目录；先判断 targetKind，再选择与该对象兼容的 intent；不确定对象、时间、参数时设置 needsClarification=true 并降低 confidence。',
                 '不得编造教师、班级、课程、教室 id；可以输出用户原文里的名称，后续由本地系统白名单匹配。',
+                '领域内含糊输入不能丢弃：只要在谈排课、课程、教师、班级、课节或教室，但目标不够具体，就输出 unknown clause、needsClarification=true 和 clarification.question；只有天气、闲聊等领域外内容才设置 unrecognized=true、clauses=[]。',
                 '硬约束用于“必须、不能、不可、不排、固定”；软约束用于“尽量、优先、少、均衡”。',
                 '时间槽统一用 "天-节"，周一=1；也尽量同步给出 time.days/time.periods；如果只知道上午/下午，用 time.dayPart 和 days/periods 表达。',
-                '优先输出用户语义 intent，不要提前编译成底层规则：第一节/最后一节避开用 avoid_first_period/avoid_last_period；早读/首节固定用 first_period_assign；主科黄金时段/前四节用 golden_hour_preference；午休边界用 lunch_protection；全部教师不排课用 teacher_unavailable，只有全校活动/升旗/大扫除才用 global_unavailable。',
+                '优先输出用户语义 intent，不要提前编译成底层规则：学科第一节/最后一节避开用 avoid_first_period/avoid_last_period；教师或教师角色组的软时段偏好用 teacher_avoid_periods；具体教师没空、不方便、请假或不能上课始终用 teacher_unavailable，即使原文出现第一节/末节；早读/首节固定用 first_period_assign；主科黄金时段/前四节用 golden_hour_preference；午休边界用 lunch_protection；全部教师不排课用 teacher_unavailable，只有全校活动/升旗/大扫除才用 global_unavailable。',
+                '课程间隔和均匀分布互斥：隔天排、至少隔 N 天、间隔 N 天用 course_interval；均匀分布、不要集中、分散到不同天才用 subject_spread。',
                 `Intent 目录：${TIMETABLE_REQUIREMENT_INTENTS.join(', ')}`,
+                `Intent 语义边界：${JSON.stringify(TIMETABLE_REQUIREMENT_INTENT_GUIDE)}`,
                 `JSON Schema：${JSON.stringify(AI_REQUIREMENT_JSON_SCHEMA)}`,
                 `Few-shot：${JSON.stringify(FEW_SHOTS)}`,
             ].join('\n'),
@@ -170,6 +249,7 @@ export function buildAiRequirementExtractionMessages({ project = {}, text = '', 
             role: 'user',
             content: JSON.stringify({
                 text,
+                sources: Array.isArray(sourceInputs) ? sourceInputs : [],
                 contextStats,
                 project: projectSnapshot(project),
             }),

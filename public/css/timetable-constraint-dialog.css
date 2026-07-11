@@ -1363,6 +1363,134 @@
     line-height: 1.55;
 }
 
+.tt-requirement-clauses {
+    display: grid;
+    min-width: 0;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: color-mix(in srgb, var(--tt-bg-input) 72%, transparent);
+}
+
+.tt-requirement-clauses > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+    padding: 9px 10px;
+    cursor: pointer;
+    list-style: none;
+}
+
+.tt-requirement-clauses > summary::-webkit-details-marker {
+    display: none;
+}
+
+.tt-requirement-clauses > summary span {
+    color: var(--tt-text);
+    font-size: 0.76rem;
+    font-weight: 800;
+}
+
+.tt-requirement-clauses > summary em {
+    color: var(--tt-muted);
+    font-size: 0.66rem;
+    font-style: normal;
+    font-weight: 600;
+}
+
+.tt-requirement-clause-list {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    margin: 0;
+    padding: 0 10px 10px;
+    list-style: none;
+}
+
+.tt-requirement-clause-item {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+    padding: 9px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-elevated);
+}
+
+.tt-requirement-clause-header,
+.tt-requirement-clause-statuses {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
+.tt-requirement-clause-header {
+    justify-content: space-between;
+}
+
+.tt-requirement-clause-header strong {
+    min-width: 0;
+    color: var(--tt-text);
+    font-size: 0.76rem;
+}
+
+.tt-requirement-clause-header > span {
+    color: var(--tt-text-secondary);
+    font-size: 0.7rem;
+}
+
+.tt-requirement-clause-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 22px;
+    padding: 0 7px;
+    border-radius: 999px;
+    background: rgba(8, 145, 178, 0.1);
+    color: var(--tt-primary);
+    font-size: 0.66rem;
+    font-weight: 700;
+}
+
+.tt-requirement-clause-status b,
+.tt-requirement-clause-parameter b,
+.tt-requirement-clause-warning b {
+    color: inherit;
+    font-size: inherit;
+}
+
+.tt-requirement-clause-status--handled {
+    background: rgba(34, 197, 94, 0.1);
+    color: #16a34a;
+}
+
+.tt-requirement-clause-status--review,
+.tt-requirement-clause-status--warning {
+    background: rgba(245, 158, 11, 0.13);
+    color: #d97706;
+}
+
+.tt-requirement-clause-parameter,
+.tt-requirement-clause-explanation,
+.tt-requirement-clause-warning {
+    margin: 0;
+    color: var(--tt-text-secondary);
+    font-size: 0.7rem;
+    line-height: 1.5;
+}
+
+.tt-requirement-clause-parameter,
+.tt-requirement-clause-warning {
+    display: flex;
+    gap: 6px;
+}
+
+.tt-requirement-clause-warning {
+    color: #d97706;
+}
 .tt-requirement-machine-rules {
     display: grid;
     gap: 8px;

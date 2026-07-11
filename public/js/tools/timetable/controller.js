@@ -51,6 +51,12 @@ import {
 } from './view.js';
 import { PRESET_TEMPLATES } from './preset-templates.js';
 
+function valueList(value) {
+    if (Array.isArray(value)) return value;
+    if (value === null || value === undefined || value === '') return [];
+    return [value];
+}
+
 function createSmartWorkbenchState(overrides = {}) {
     return {
         open: false,
@@ -716,33 +722,51 @@ export class TimetablePlannerController {
         const review = response.review || response.state?.review || null;
         if (!review) return;
         const current = this.state.ruleReview || {};
+        const hasSourceRequirements = Object.prototype.hasOwnProperty.call(review, 'sourceRequirements');
+        const sourceRequirements = hasSourceRequirements ? valueList(review.sourceRequirements) : undefined;
+        const hasReviewItems = [
+            review.sourceRequirements,
+            review.systemSupplements,
+            review.constraintIRs,
+            review.draftRows,
+            review.requirementItems,
+            review.semanticActions,
+        ].some(items => valueList(items).length > 0);
         this.state.ruleReview = {
             ...current,
             open: Boolean(current.open),
             step: 'review',
-            uiStep: (review.draftRows || []).length || (review.requirementItems || []).length ? 'issues' : current.uiStep || 'input',
+            uiStep: hasReviewItems ? 'issues' : current.uiStep || 'input',
             mode: current.mode || 'text',
             inputMode: current.inputMode || 'text',
             text: current.text || response.originalText || '',
+            schemaVersion: review.schemaVersion || '',
+            ...(sourceRequirements === undefined ? {} : { sourceRequirements }),
+            systemSupplements: valueList(review.systemSupplements),
+            manualRequirements: valueList(review.manualRequirements),
+            constraintIRs: valueList(review.constraintIRs),
+            warningItems: valueList(review.warningItems),
+            statistics: review.statistics || null,
             draftRules: review.draftRules || current.draftRules || null,
-            draftRows: review.draftRows || [],
-            previewItems: review.previewItems || [],
-            requirementItems: review.requirementItems || [],
-            semanticActions: review.semanticActions || [],
-            autoAcceptable: review.autoAcceptable || [],
-            needReview: review.needReview || [],
-            clarifyingQuestions: review.clarifyingQuestions || [],
-            missingInfo: review.missingInfo || [],
-            conflicts: review.conflicts || [],
-            warnings: review.warnings || [],
-            unsupportedItems: review.unsupportedItems || [],
+            draftRows: valueList(review.draftRows),
+            previewItems: valueList(review.previewItems),
+            requirementItems: valueList(review.requirementItems),
+            semanticActions: valueList(review.semanticActions),
+            autoAcceptable: valueList(review.autoAcceptable),
+            needReview: valueList(review.needReview),
+            clarifyingQuestions: valueList(review.clarifyingQuestions),
+            missingInfo: valueList(review.missingInfo),
+            conflicts: valueList(review.conflicts),
+            warnings: valueList(review.warnings),
+            unsupportedItems: valueList(review.unsupportedItems),
             ruleReport: review.ruleReport || null,
             confidenceSummary: review.confidenceSummary || { high: 0, medium: 0, low: 0 },
             nextAction: review.nextAction || '',
             inputType: review.inputType || current.inputType || 'constraint_intake',
             contextStats: review.contextStats || current.contextStats || null,
-            excludedApplyItemKeys: response.excludedApplyItemKeys || current.excludedApplyItemKeys || [],
+            excludedApplyItemKeys: valueList(response.excludedApplyItemKeys ?? current.excludedApplyItemKeys),
         };
+        if (!hasSourceRequirements) delete this.state.ruleReview.sourceRequirements;
     }
 
     applyConstraintAgentResponse(response = {}, userMessage = '') {

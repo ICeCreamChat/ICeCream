@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import AdmZip from 'adm-zip';
 
@@ -44,6 +45,12 @@ ${strings.map(value => `<si><t>${xmlEscape(value)}</t></si>`).join('')}
 }
 
 async function main() {
+    const realConstraintFixture = JSON.parse(await readFile(
+        new URL('./fixtures/timetable-natural-language-137.json', import.meta.url),
+        'utf8',
+    ));
+    assert.equal(realConstraintFixture.length, 137);
+
     await withOpenedTimetablePage({ port: 3139 }, async ({ page }) => {
         const clickByScript = async selector => {
             await page.locator(selector).evaluate(element => element.click());
@@ -97,7 +104,10 @@ async function main() {
 
         const reviewText = await recognizedText();
         assert.match(reviewText || '', /解析结果/);
-        assert.match(reviewText || '', /来自你的输入/);
+        assert.match(reviewText || '', /用户输入 1 条/);
+        assert.match(reviewText || '', /子约束 1 条/);
+        assert.match(reviewText || '', /可执行规则 1 条/);
+        assert.match(reviewText || '', /理解为 1 个子约束/);
         assert.match(reviewText || '', /落地结果/);
         assert.match(reviewText || '', /语文/);
         assert.match(reviewText || '', /上午/);
@@ -119,7 +129,10 @@ async function main() {
 
         const fileReviewText = await recognizedText();
         assert.match(fileReviewText || '', /解析结果/);
-        assert.match(fileReviewText || '', /来自你的输入/);
+        assert.match(fileReviewText || '', /用户输入 1 条/);
+        assert.match(fileReviewText || '', /子约束 1 条/);
+        assert.match(fileReviewText || '', /可执行规则 1 条/);
+        assert.match(fileReviewText || '', /理解为 1 个子约束/);
         assert.match(fileReviewText || '', /落地结果/);
         assert.match(fileReviewText || '', /数学/);
         assert.match(fileReviewText || '', /上午/);
@@ -145,11 +158,92 @@ async function main() {
 
         const xlsxReviewText = await recognizedText();
         assert.match(xlsxReviewText || '', /解析结果/);
-        assert.match(xlsxReviewText || '', /来自你的输入/);
+        assert.match(xlsxReviewText || '', /用户输入 1 条/);
+        assert.match(xlsxReviewText || '', /子约束 1 条/);
+        assert.match(xlsxReviewText || '', /可执行规则 1 条/);
+        assert.match(xlsxReviewText || '', /理解为 1 个子约束/);
         assert.match(xlsxReviewText || '', /落地结果/);
         assert.match(xlsxReviewText || '', /英语/);
         assert.match(xlsxReviewText || '', /上午/);
         assert.equal(dialogs.some(item => /Unexpected token|<!DOCTYPE/i.test(item.message)), false);
+
+        await clearRecognizedConstraints();
+
+        await clickByScript('[data-action="switch-constraint-mode"][data-mode="file"]');
+        await page.locator('#tt-constraint-file-input').setInputFiles({
+            name: 'timetable-natural-language-137.xlsx',
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            buffer: buildConstraintWorkbook([
+                ['约束内容'],
+                ...realConstraintFixture.map(item => [item.rawText]),
+            ]),
+        });
+        await clickByScript('[data-action="parse-constraints"]');
+        await page.waitForSelector('.tt-requirement-workbench', { timeout: 30000 });
+        await clickByScript('[data-action="filter-requirements"][data-requirement-filter="all"]');
+        await page.waitForFunction(
+            () => document.querySelectorAll('.tt-requirement-row[data-requirement-id]').length === 137,
+            { timeout: 30000 },
+        );
+
+        const realReviewText = await recognizedText();
+        assert.match(realReviewText || '', /用户输入 137 条/);
+        const realRequirementCards = page.locator('.tt-requirement-row[data-requirement-id]');
+        assert.equal(await realRequirementCards.count(), 137);
+        const sourceIds = await realRequirementCards.evaluateAll(nodes => nodes.map(node => node.dataset.requirementId));
+        assert.equal(new Set(sourceIds).size, 137);
+        const sourceTitles = await realRequirementCards.evaluateAll(nodes => nodes.map(node => node.getAttribute('title') || ''));
+        const sourceTitleCounts = new Map();
+        sourceTitles.forEach(title => sourceTitleCounts.set(title, (sourceTitleCounts.get(title) || 0) + 1));
+        realConstraintFixture.forEach(item => {
+            assert.equal(
+                sourceTitleCounts.get(item.rawText),
+                1,
+                `真实原文必须且只能对应一张一级卡片：${item.rawText}`,
+            );
+        });
+
+        const multiClauseCard = page.locator(
+            '.tt-requirement-row[data-requirement-id][title*="地理和生物尽量隔天分布"]',
+        );
+        assert.equal(await multiClauseCard.count(), 1);
+        await multiClauseCard.click();
+        const selectedDetail = page.locator('.tt-requirement-detail[data-requirement-detail-id]');
+        await selectedDetail.waitFor({ state: 'visible', timeout: 10000 });
+        assert.ok(await selectedDetail.locator('.tt-requirement-clause-item').count() > 1);
+        assert.match(await selectedDetail.textContent() || '', /理解为 [2-9]\d* 个子约束/);
+        assert.match(await selectedDetail.textContent() || '', /已理解，但当前求解器暂不支持/);
+
+        await page.evaluate(() => {
+            const planner = window.ICeCream?.appLauncher?.currentToolInstance;
+            if (!planner) throw new Error("active timetable planner instance is unavailable");
+            planner.state.ruleReview.systemSupplements = [{
+                supplementId: 'smoke-system-supplement',
+                reason: '同一位教师同一时间只能上一节课。',
+                requirement: {
+                    id: 'smoke-system-requirement',
+                    requirementId: 'smoke-system-requirement',
+                    intent: 'teacher_conflict',
+                    status: 'handled',
+                    applyTo: 'handled',
+                    object: { kind: 'global', name: '全校教师' },
+                    source: { rawText: '同一位教师同一时间只能上一节课。' },
+                },
+            }];
+            planner.state.ruleReview.statistics = {
+                ...(planner.state.ruleReview.statistics || {}),
+                systemSupplementCount: 1,
+            };
+            planner.state.constraintDialog.systemGroupCollapsed = true;
+            planner.render();
+        });
+        await page.waitForSelector('.tt-system-requirement-toggle', { timeout: 10000 });
+        assert.match(await recognizedText() || '', /系统补充 1 条/);
+        assert.match(await page.locator('.tt-system-requirement-toggle').textContent() || '', /系统补充的默认规则 \(1 条\)/);
+        assert.equal(await page.locator('[data-requirement-id="smoke-system-supplement"]').count(), 0);
+        await clickByScript('[data-action="toggle-system-group"]');
+        await page.waitForSelector('[data-requirement-id="smoke-system-supplement"]', { timeout: 10000 });
+        assert.equal(await page.locator('[data-requirement-id="smoke-system-supplement"]').count(), 1);
 
         await clearRecognizedConstraints();
 
@@ -161,7 +255,10 @@ async function main() {
 
         const manualReviewText = await recognizedText();
         assert.match(manualReviewText || '', /解析结果/);
-        assert.match(manualReviewText || '', /来自你的输入/);
+        assert.match(manualReviewText || '', /用户输入 0 条/);
+        assert.match(manualReviewText || '', /子约束 1 条/);
+        assert.match(manualReviewText || '', /可执行规则 1 条/);
+        assert.match(manualReviewText || '', /理解为 1 个子约束/);
         assert.match(manualReviewText || '', /落地结果/);
         assert.match(manualReviewText || '', /手动添加/);
         assert.match(manualReviewText || '', /周一上午/);

@@ -7,12 +7,14 @@ import { renderConstraintDialog } from '../public/js/tools/timetable/view-constr
 function generateMockConstraints(count, status = 'effective') {
     return Array.from({ length: count }, (_, index) => ({
         id: `rule-${index + 1}`,
+        sourceId: `src:performance:${index + 1}`,
+        textHash: `performance-hash-${index + 1}`,
         type: 'teacher_unavailable',
         status,
         confidence: index % 3 === 0 ? 0.92 : index % 3 === 1 ? 0.78 : 0.61,
         priority: index % 2 === 0 ? 'hard' : 'soft',
-        targetName: `教师${index % 10}`,
-        rawText: `教师${index % 10}在周${(index % 5) + 1}第${(index % 8) + 1}节不排课`,
+        targetName: `教师${index + 1}`,
+        rawText: `教师${index + 1}在周${(index % 5) + 1}第${(index % 8) + 1}节不排课`,
     }));
 }
 

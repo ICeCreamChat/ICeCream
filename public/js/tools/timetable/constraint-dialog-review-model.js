@@ -1,4 +1,15 @@
-const REVIEW_STATUSES = new Set(['needs_review', 'review', 'candidate', 'pending', 'unsupported', 'invalid']);
+const REVIEW_STATUSES = new Set([
+    'needs_review',
+    'needs_clarification',
+    'review',
+    'candidate',
+    'pending',
+    'partially_supported',
+    'partially_actionable',
+    'understood_not_executable',
+    'unsupported',
+    'invalid',
+]);
 const HANDLED_STATUSES = new Set(['handled', 'ignored']);
 const NON_APPLICABLE_RULE_STATUSES = new Set([
     ...REVIEW_STATUSES,
@@ -52,9 +63,9 @@ function collectRequirementRowIds(item = {}) {
         item.draftRowId,
         item.source?.rowId,
         item.source?.draftRowId,
-        ...(item.rowIds || []),
-        ...(item.draftRowIds || []),
-        ...(item.source?.rowIds || []),
+        ...valueList(item.rowIds),
+        ...valueList(item.draftRowIds),
+        ...valueList(item.source?.rowIds),
     ]);
 }
 
@@ -65,10 +76,10 @@ function collectActionRowIds(action = {}) {
         action.draftRowId,
         target.rowId,
         target.draftRowId,
-        ...(action.rowIds || []),
-        ...(action.draftRowIds || []),
-        ...(target.rowIds || []),
-        ...(target.draftRowIds || []),
+        ...valueList(action.rowIds),
+        ...valueList(action.draftRowIds),
+        ...valueList(target.rowIds),
+        ...valueList(target.draftRowIds),
     ]);
 }
 
@@ -105,17 +116,17 @@ function draftRowApplyTo(row = {}) {
 
 function draftRowParameters(row = {}) {
     const params = {};
-    if (Array.isArray(row.slots) && row.slots.length) params.slots = row.slots;
-    if (Array.isArray(row.time?.slots) && row.time.slots.length) params.slots = row.time.slots;
+    if (valueList(row.slots).length) params.slots = valueList(row.slots);
+    if (valueList(row.time?.slots).length) params.slots = valueList(row.time?.slots);
     if (row.limit !== undefined && row.limit !== null && row.limit !== '') params.limit = row.limit;
     else if (row.value !== undefined && row.value !== null && row.value !== '') params.limit = row.value;
     if (row.weekPattern) params.weekPattern = row.weekPattern;
     if (normalizeKey(row.type) === 'subject_morning' && !params.slots) params.dayPart = 'morning';
     if (normalizeKey(row.type) === 'subject_afternoon' && !params.slots) params.dayPart = 'afternoon';
-    if (Array.isArray(row.roomIds) && row.roomIds.length) params.roomIds = row.roomIds;
-    if (Array.isArray(row.teacherIds) && row.teacherIds.length) params.teacherIds = row.teacherIds;
-    if (Array.isArray(row.subjectIds) && row.subjectIds.length) params.subjectIds = row.subjectIds;
-    if (Array.isArray(row.classIds) && row.classIds.length) params.classIds = row.classIds;
+    if (valueList(row.roomIds).length) params.roomIds = valueList(row.roomIds);
+    if (valueList(row.teacherIds).length) params.teacherIds = valueList(row.teacherIds);
+    if (valueList(row.subjectIds).length) params.subjectIds = valueList(row.subjectIds);
+    if (valueList(row.classIds).length) params.classIds = valueList(row.classIds);
     if (row.minGapDays !== undefined && row.minGapDays !== null && row.minGapDays !== '') params.minGapDays = row.minGapDays;
     return params;
 }
@@ -139,10 +150,9 @@ function draftRowSource(row = {}) {
     };
 }
 
-function itemOriginFromSource(source = {}, fallback = 'user_input') {
-    if (source?.origin) return source.origin;
-    if (source?.sourceRow || source?.row) return 'user_input';
-    return fallback;
+function itemOriginFromSource(source = {}, fallback = 'unknown') {
+    const origin = String(source?.origin || '').trim();
+    return origin || fallback || 'unknown';
 }
 
 function sourceTextKey(value = '') {
@@ -172,12 +182,12 @@ function itemSourceTexts(item = {}) {
         ...sourceTextsFromParameterBag(item.condition),
         item.reviewEvidence?.quote,
         item.reviewEvidence?.reason,
-        ...(item.machineRules || []).flatMap(row => [
+        ...valueList(item.machineRules).flatMap(row => [
             draftRowSourceText(row),
             row.reviewEvidence?.quote,
             row.reviewEvidence?.reason,
         ]),
-        ...(item.semanticActions || []).flatMap(action => [
+        ...valueList(item.semanticActions).flatMap(action => [
             actionSourceText(action),
             action.reviewEvidence?.quote,
             action.reviewEvidence?.reason,
@@ -298,8 +308,8 @@ function itemSlots(item = {}) {
         ...valueList(item.condition?.slots),
         ...slotsFromParameterBag(item.parameters),
         ...slotsFromParameterBag(item.condition),
-        ...(item.machineRules || []).flatMap(row => row.slots || row.time?.slots || []),
-        ...(item.semanticActions || []).flatMap(action => action.parameters?.slots || action.payload?.slots || []),
+        ...valueList(item.machineRules).flatMap(row => valueList(row.slots || row.time?.slots)),
+        ...valueList(item.semanticActions).flatMap(action => valueList(action.parameters?.slots || action.payload?.slots)),
     ]);
     if (direct.length) return direct;
     return uniqueValues(itemSourceTexts(item).flatMap(slotsFromText));
@@ -311,9 +321,9 @@ function rowTargetIds(row = {}) {
         row.teacherId,
         row.classId,
         row.subjectId,
-        ...(row.teacherIds || []),
-        ...(row.classIds || []),
-        ...(row.subjectIds || []),
+        ...valueList(row.teacherIds),
+        ...valueList(row.classIds),
+        ...valueList(row.subjectIds),
     ]);
 }
 
@@ -321,11 +331,11 @@ function itemTargetIds(item = {}) {
     return uniqueValues([
         item.targetId,
         item.object?.id,
-        ...(item.object?.matchedIds || []),
-        ...(item.parameters?.teacherIds || []),
-        ...(item.parameters?.classIds || []),
-        ...(item.parameters?.subjectIds || []),
-        ...(item.machineRules || []).flatMap(rowTargetIds),
+        ...valueList(item.object?.matchedIds),
+        ...valueList(item.parameters?.teacherIds),
+        ...valueList(item.parameters?.classIds),
+        ...valueList(item.parameters?.subjectIds),
+        ...valueList(item.machineRules).flatMap(rowTargetIds),
     ]);
 }
 
@@ -350,10 +360,10 @@ function itemTargetNames(item = {}) {
         item.targetName,
         item.target,
         item.object?.name,
-        ...(item.parameters?.teacherNames || []),
-        ...(item.parameters?.classNames || []),
-        ...(item.parameters?.subjectNames || []),
-        ...(item.machineRules || []).flatMap(rowTargetNames),
+        ...valueList(item.parameters?.teacherNames),
+        ...valueList(item.parameters?.classNames),
+        ...valueList(item.parameters?.subjectNames),
+        ...valueList(item.machineRules).flatMap(rowTargetNames),
     ]).map(normalizeEntityName).filter(Boolean);
 }
 
@@ -491,9 +501,9 @@ function hasUserTraceText(item = {}) {
 function hasClarificationSignal(item = {}) {
     const clarificationText = item.clarification?.question || item.clarification?.message || '';
     const hasClarification = Boolean(item.clarification) && !isCoveredRedundantMessage(clarificationText);
-    const hasHistory = (Array.isArray(item.clarificationHistory) ? item.clarificationHistory : [])
+    const hasHistory = valueList(item.clarificationHistory)
         .some(entry => !isCoveredRedundantMessage(entry?.question || entry?.message || entry));
-    const hasWarnings = (Array.isArray(item.warnings) ? item.warnings : [])
+    const hasWarnings = valueList(item.warnings)
         .some(warning => !isCoveredRedundantMessage(warning));
     return hasClarification || hasHistory || hasWarnings;
 }
@@ -560,9 +570,9 @@ function ownerScoreForDraftRow(owner = {}, row = {}) {
     if (ownerIntent && rowType && ownerIntent === rowType) score += 80;
     else if (ownerIntent && rowType && (ownerIntent.includes(rowType) || rowType.includes(ownerIntent))) score += 28;
     if (['rule', 'rules', 'constraint', 'constraint_rule'].includes(ownerApplyTo)) score += 24;
-    if (Array.isArray(owner.parameters?.slots) && Array.isArray(row.slots)) {
-        const ownerSlots = new Set(owner.parameters.slots.map(String));
-        if (row.slots.some(slot => ownerSlots.has(String(slot)))) score += 12;
+    const ownerSlots = new Set(valueList(owner.parameters?.slots).map(String));
+    if (ownerSlots.size && valueList(row.slots).some(slot => ownerSlots.has(String(slot)))) {
+        score += 12;
     }
     return score;
 }
@@ -630,8 +640,9 @@ function requirementSupportSnapshot(item = {}) {
 }
 
 function executableMachineRule(item = {}) {
-    return (item.machineRules || []).find(row => isDraftRowActionable(row))
-        || (item.machineRules || [])[0]
+    const machineRules = valueList(item.machineRules);
+    return machineRules.find(row => isDraftRowActionable(row))
+        || machineRules[0]
         || null;
 }
 
@@ -642,7 +653,7 @@ function promoteRequirementDisplay(item = {}) {
     return sanitizeCoveredRedundantSignals({
         ...item,
         object: draftRowObject(rule),
-        intent: rule.intent || rule.type || item.intent,
+        intent: rule.type || rule.intent || item.intent,
         parameters: Object.keys(parameters).length ? parameters : (item.parameters || {}),
         strength: rule.priority || rule.strength || item.strength || '',
         status: draftRowStatus(rule),
@@ -654,7 +665,7 @@ function promoteRequirementDisplay(item = {}) {
 }
 
 function requirementHasLanding(item = {}) {
-    return Boolean((item.machineRules || []).length || (item.semanticActions || []).length);
+    return Boolean(valueList(item.machineRules).length || valueList(item.semanticActions).length);
 }
 
 function isCoveredRedundantClarification(clarification = null) {
@@ -667,15 +678,15 @@ function isCoveredRedundantSupport(entry = {}) {
         entry.source?.rawText,
         entry.rawText,
         entry.description,
-        ...(Array.isArray(entry.warnings) ? entry.warnings : []),
+        ...valueList(entry.warnings),
     ].some(isCoveredRedundantMessage);
 }
 
 function sanitizeCoveredRedundantSignals(item = {}) {
     if (!requirementHasLanding(item)) return item;
-    const warnings = (Array.isArray(item.warnings) ? item.warnings : [])
+    const warnings = valueList(item.warnings)
         .filter(warning => !isCoveredRedundantMessage(warning));
-    const supportingRequirements = (Array.isArray(item.supportingRequirements) ? item.supportingRequirements : [])
+    const supportingRequirements = valueList(item.supportingRequirements)
         .filter(entry => !isCoveredRedundantSupport(entry));
     const next = {
         ...item,
@@ -694,8 +705,8 @@ function coalescingKeysForItem(item = {}) {
     const sourceKey = sourceTextKey(requirementSourceText(item));
     if (sourceKey) keys.push(`source:${sourceKey}`);
     collectRequirementRowIds(item).forEach(rowId => keys.push(`row:${rowId}`));
-    (item.machineRules || []).forEach(row => keys.push(`rule:${draftRowApplyItemKey(row)}`));
-    (item.semanticActions || []).forEach(action => keys.push(`action:${semanticActionApplyItemKey(action)}`));
+    valueList(item.machineRules).forEach(row => keys.push(`rule:${draftRowApplyItemKey(row)}`));
+    valueList(item.semanticActions).forEach(action => keys.push(`action:${semanticActionApplyItemKey(action)}`));
     return keys.filter(Boolean);
 }
 
@@ -811,7 +822,7 @@ function createDraftRequirementItem(row = {}, index = 0) {
         strength: row.priority || row.strength || '',
         status: draftRowStatus(row),
         applyTo: draftRowApplyTo(row),
-        origin: row.origin || itemOriginFromSource(row.source, 'user_input'),
+        origin: row.origin || itemOriginFromSource(row.source),
         confidence: row.confidence,
         source: draftRowSource(row),
         warnings: row.warnings || [],
@@ -851,7 +862,7 @@ function createSemanticRequirementItem(action = {}, index = 0) {
         strength: action.strength || '',
         status: actionStatus(action),
         applyTo: actionApplyTo(action),
-        origin: action.origin || itemOriginFromSource(action.source, 'user_input'),
+        origin: action.origin || itemOriginFromSource(action.source),
         confidence: action.confidence,
         source: action.source || {},
         warnings: action.warnings || [],
@@ -877,13 +888,361 @@ export function filterUnifiedRequirementItems(items = [], filter = 'all') {
     return items.filter(item => getRequirementGroupKey(item) === filter);
 }
 
-export function buildUnifiedRequirementItems(review = {}) {
-    const draftRows = review.draftRows || [];
-    const semanticActions = review.semanticActions || [];
-    const items = (review.requirementItems || []).map((item, index) => ({
+function artifactIdentityValues(item = {}, fields = []) {
+    return uniqueValues(fields.flatMap(field => {
+        const value = field.split('.').reduce((current, key) => current?.[key], item);
+        return valueList(value);
+    }));
+}
+
+function addIdentityOwner(index, identity, sourceId) {
+    if (!identity || !sourceId) return;
+    if (!index.has(identity)) index.set(identity, new Set());
+    index.get(identity).add(sourceId);
+}
+
+function createSourceIdentityIndexes(sourceRequirements = [], requirementItems = [], constraintIRs = []) {
+    const indexes = {
+        sourceIds: new Set(sourceRequirements.map(item => item.sourceId).filter(Boolean)),
+        requirements: new Map(),
+        clauses: new Map(),
+        machineRules: new Map(),
+        rows: new Map(),
+    };
+    const registerArtifact = (sourceId, artifact = {}) => {
+        artifactIdentityValues(artifact, ['id', 'requirementId']).forEach(identity => {
+            addIdentityOwner(indexes.requirements, identity, sourceId);
+        });
+        artifactIdentityValues(artifact, ['clauseId', 'constraintId', 'source.clauseId']).forEach(identity => {
+            addIdentityOwner(indexes.clauses, identity, sourceId);
+        });
+        artifactIdentityValues(artifact, ['machineRuleId', 'machineRuleIds']).forEach(identity => {
+            addIdentityOwner(indexes.machineRules, identity, sourceId);
+        });
+        artifactIdentityValues(artifact, ['rowId', 'draftRowId']).forEach(identity => {
+            addIdentityOwner(indexes.rows, identity, sourceId);
+        });
+    };
+
+    sourceRequirements.forEach(sourceRequirement => {
+        const sourceId = sourceRequirement.sourceId;
+        if (!sourceId) return;
+        valueList(sourceRequirement.machineRuleIds).forEach(identity => {
+            addIdentityOwner(indexes.machineRules, identity, sourceId);
+        });
+        valueList(sourceRequirement.clauses).forEach(clause => registerArtifact(sourceId, clause));
+    });
+    [...constraintIRs, ...requirementItems].forEach(artifact => {
+        const sourceId = artifact.sourceId || artifact.source?.sourceId || '';
+        if (!indexes.sourceIds.has(sourceId)) return;
+        registerArtifact(sourceId, artifact);
+    });
+    return indexes;
+}
+
+function uniqueIndexedOwner(index, identities = []) {
+    const owners = new Set();
+    identities.forEach(identity => {
+        (index.get(identity) || []).forEach(sourceId => owners.add(sourceId));
+    });
+    return owners;
+}
+
+function sourceIdForArtifact(artifact = {}, indexes) {
+    const explicitSourceId = artifact.sourceId || artifact.source?.sourceId || '';
+    if (indexes.sourceIds.has(explicitSourceId)) return explicitSourceId;
+
+    const owners = new Set();
+    const groups = [
+        [indexes.requirements, artifactIdentityValues(artifact, ['requirementId', 'target.requirementId', 'id'])],
+        [indexes.clauses, artifactIdentityValues(artifact, ['clauseId', 'constraintId', 'source.clauseId', 'target.clauseId'])],
+        [indexes.machineRules, artifactIdentityValues(artifact, ['machineRuleId', 'target.machineRuleId', 'id'])],
+        [indexes.rows, artifactIdentityValues(artifact, ['rowId', 'draftRowId', 'target.rowId', 'target.draftRowId', 'id'])],
+    ];
+    groups.forEach(([index, identities]) => {
+        uniqueIndexedOwner(index, identities).forEach(sourceId => owners.add(sourceId));
+    });
+    return owners.size === 1 ? [...owners][0] : '';
+}
+
+function clauseIdentity(clause = {}, index = 0) {
+    return clause.clauseId
+        || clause.constraintId
+        || clause.requirementId
+        || clause.id
+        || `clause_${index + 1}`;
+}
+
+function mergeClauseArtifacts(...groups) {
+    const order = [];
+    const byId = new Map();
+    groups.flat().filter(Boolean).forEach((clause, index) => {
+        const identity = clauseIdentity(clause, index);
+        if (!byId.has(identity)) {
+            order.push(identity);
+            byId.set(identity, { ...clause });
+            return;
+        }
+        const current = byId.get(identity);
+        byId.set(identity, {
+            ...current,
+            ...clause,
+            source: {
+                ...(current.source && typeof current.source === 'object' ? current.source : {}),
+                ...(clause.source && typeof clause.source === 'object' ? clause.source : {}),
+            },
+            warnings: mergeUniqueArrays(current.warnings || [], clause.warnings || []),
+            clarifications: mergeUniqueArrays(current.clarifications || [], clause.clarifications || []),
+            parsedBy: mergeUniqueArrays(current.parsedBy || [], clause.parsedBy || []),
+            machineRuleIds: mergeUniqueArrays(current.machineRuleIds || [], clause.machineRuleIds || []),
+            evidence: mergeUniqueArrays(current.evidence || [], clause.evidence || []),
+        });
+    });
+    return order.map(identity => byId.get(identity));
+}
+
+function clauseDisplayObject(clause = {}) {
+    if (clause.object) return clause.object;
+    const target = clause.target || {};
+    return {
+        kind: target.kind || target.type || 'global',
+        name: target.name || '全局',
+        matchedIds: target.matchedIds || (target.id ? [target.id] : []),
+        scope: target.scope || (target.id ? 'explicit' : 'derived'),
+    };
+}
+
+function sourceRequirementSource(sourceRequirement = {}) {
+    const source = sourceRequirement.source || {};
+    const sourceId = sourceRequirement.sourceId || source.sourceId || '';
+    const origin = sourceRequirement.origin || source.origin || 'unknown';
+    const parsedBy = mergeUniqueArrays(sourceRequirement.parsedBy || [], source.parsedBy || []);
+    return {
+        ...source,
+        sourceId,
+        rawText: source.rawText || sourceRequirement.rawText || '',
+        textHash: source.textHash || sourceRequirement.textHash || '',
+        origin,
+        parsedBy,
+        sourceSheet: source.sourceSheet || source.sheetName || '',
+        sourceRow: source.sourceRow || source.rowNumber || null,
+        sheetName: source.sheetName || source.sourceSheet || '',
+        rowNumber: source.rowNumber || source.sourceRow || null,
+    };
+}
+
+function reviewStatusPriority(item = {}) {
+    const status = normalizeKey(item.reviewStatus || item.status || '');
+    if (status === 'needs_clarification') return 5;
+    if (status === 'needs_review' || status === 'invalid') return 4;
+    if (status === 'unsupported' || status === 'partially_supported') return 3;
+    if (status === 'candidate' || status === 'pending') return 2;
+    return 1;
+}
+
+function primaryRequirementArtifact(legacyRequirements = [], clauses = []) {
+    return [...legacyRequirements, ...clauses]
+        .filter(Boolean)
+        .sort((left, right) => reviewStatusPriority(right) - reviewStatusPriority(left))[0]
+        || null;
+}
+
+function buildSourceRequirementCard(sourceRequirement = {}, context = {}) {
+    const {
+        constraintIRs = [],
+        legacyRequirements = [],
+        machineRules = [],
+        semanticActions = [],
+    } = context;
+    const sourceId = sourceRequirement.sourceId;
+    const clauses = mergeClauseArtifacts(sourceRequirement.clauses || [], constraintIRs, legacyRequirements);
+    const primary = primaryRequirementArtifact(legacyRequirements, clauses) || {};
+    const requirementIds = uniqueValues([
+        ...legacyRequirements.flatMap(item => [item.requirementId, item.id]),
+        ...clauses.flatMap(item => [item.requirementId, item.id]),
+    ]);
+    const clauseIds = uniqueValues(clauses.flatMap(item => [item.clauseId, item.constraintId]));
+    const machineRuleIds = uniqueValues([
+        ...valueList(sourceRequirement.machineRuleIds),
+        ...clauses.flatMap(item => valueList(item.machineRuleIds)),
+        ...machineRules.flatMap(item => [item.machineRuleId]),
+    ]);
+    const source = sourceRequirementSource(sourceRequirement);
+    const origin = sourceRequirement.origin || source.origin || 'unknown';
+    const parsedBy = mergeUniqueArrays(
+        sourceRequirement.parsedBy || [],
+        source.parsedBy || [],
+        clauses.flatMap(item => item.parsedBy || []),
+        machineRules.flatMap(item => item.parsedBy || []),
+        semanticActions.flatMap(item => item.parsedBy || []),
+    );
+    const primaryRequirementId = primary.requirementId || primary.id || requirementIds[0] || '';
+    const card = {
+        ...primary,
+        id: sourceId,
+        sourceId,
+        sourceRequirement,
+        primaryRequirementId,
+        requirementIds,
+        clauseIds,
+        machineRuleIds,
+        clauses,
+        constraintIRs: clauses,
+        machineRules,
+        semanticActions,
+        object: clauseDisplayObject(primary),
+        intent: primary.intent || primary.capabilityId || 'requirement',
+        condition: primary.condition || primary.scope || null,
+        parameters: primary.parameters || {},
+        strength: primary.strength || '',
+        status: sourceRequirement.reviewStatus
+            || sourceRequirement.status
+            || primary.reviewStatus
+            || primary.status
+            || 'pending',
+        understandingStatus: sourceRequirement.understandingStatus || primary.understandingStatus || '',
+        executionStatus: sourceRequirement.executionStatus || primary.executionStatus || '',
+        reviewStatus: sourceRequirement.reviewStatus || primary.reviewStatus || '',
+        support: sourceRequirement.support || primary.support || '',
+        applyTo: primary.applyTo || primary.landing?.[0] || 'review',
+        origin,
+        parsedBy,
+        confidence: sourceRequirement.confidence ?? primary.confidence,
+        source,
+        rawText: source.rawText,
+        textHash: source.textHash,
+        warnings: mergeUniqueArrays(
+            sourceRequirement.warnings || [],
+            clauses.flatMap(item => item.warnings || []),
+            machineRules.flatMap(item => item.warnings || []),
+            semanticActions.flatMap(item => item.warnings || []),
+        ),
+        questions: mergeUniqueArrays(sourceRequirement.questions || [], clauses.flatMap(item => item.clarifications || [])),
+        enabled: sourceRequirement.enabled !== false,
+        supportingRequirements: clauses.slice(1).map(requirementSupportSnapshot),
+    };
+    return promoteRequirementDisplay(card);
+}
+
+function buildSystemSupplementItems(review = {}) {
+    const draftRows = valueList(review.draftRows).filter(item => item && typeof item === 'object');
+    const legacyRequirements = valueList(review.requirementItems)
+        .filter(item => item && typeof item === 'object')
+        .filter(item => (item.origin || item.source?.origin || '') === 'system_supplement');
+    const supplements = valueList(review.systemSupplements).filter(item => item && typeof item === 'object');
+    const consumedLegacyIds = new Set();
+    const cards = supplements.map((supplement, index) => {
+        const requirement = supplement.requirement && typeof supplement.requirement === 'object'
+            ? supplement.requirement
+            : {};
+        const sourceText = requirementSourceText(requirement) || supplement.reason || supplement.description || '';
+        const matchingLegacy = legacyRequirements.filter(item => {
+            const sameIdentity = [supplement.supplementId, requirement.id, requirement.requirementId]
+                .filter(Boolean)
+                .includes(item.supplementId || item.id || item.requirementId);
+            const sameText = sourceTextKey(sourceText)
+                && sourceTextKey(sourceText) === sourceTextKey(requirementSourceText(item));
+            if (!sameIdentity && !sameText) return false;
+            if (item.id) consumedLegacyIds.add(item.id);
+            return true;
+        });
+        const machineRuleIds = uniqueValues([
+            ...valueList(supplement.machineRuleIds),
+            ...valueList(requirement.machineRuleIds),
+            ...matchingLegacy.flatMap(item => valueList(item.machineRuleIds)),
+        ]);
+        const machineRules = draftRows.filter(row => machineRuleIds.includes(row.machineRuleId));
+        const mergedRequirement = mergeClauseArtifacts(requirement, matchingLegacy)[0] || requirement;
+        const id = supplement.supplementId || mergedRequirement.supplementId || mergedRequirement.id || `system_supplement_${index + 1}`;
+        return promoteRequirementDisplay({
+            ...mergedRequirement,
+            id,
+            sourceId: '',
+            supplementId: id,
+            primaryRequirementId: mergedRequirement.requirementId || mergedRequirement.id || '',
+            requirementIds: uniqueValues(matchingLegacy.flatMap(item => [item.requirementId, item.id])),
+            clauseIds: uniqueValues(matchingLegacy.flatMap(item => [item.clauseId, item.constraintId])),
+            clauses: mergedRequirement && Object.keys(mergedRequirement).length ? [mergedRequirement] : [],
+            constraintIRs: [],
+            machineRuleIds,
+            machineRules,
+            semanticActions: [],
+            origin: 'system_supplement',
+            parsedBy: mergeUniqueArrays(supplement.parsedBy || [], mergedRequirement.parsedBy || []),
+            status: mergedRequirement.status || 'handled',
+            applyTo: mergedRequirement.applyTo || 'handled',
+            source: {
+                ...(mergedRequirement.source || {}),
+                rawText: sourceText,
+                origin: 'system_supplement',
+            },
+            warnings: mergeUniqueArrays(mergedRequirement.warnings || [], supplement.warnings || []),
+            systemReason: supplement.reason || '',
+        });
+    });
+
+    legacyRequirements.forEach((item, index) => {
+        if (item.id && consumedLegacyIds.has(item.id)) return;
+        cards.push(promoteRequirementDisplay({
+            ...item,
+            id: item.supplementId || item.id || `legacy_system_supplement_${index + 1}`,
+            sourceId: '',
+            supplementId: item.supplementId || '',
+            primaryRequirementId: item.requirementId || item.id || '',
+            requirementIds: uniqueValues([item.requirementId, item.id]),
+            clauseIds: uniqueValues([item.clauseId, item.constraintId]),
+            clauses: [item],
+            constraintIRs: [],
+            machineRules: draftRows.filter(row => valueList(item.machineRuleIds).includes(row.machineRuleId)),
+            semanticActions: [],
+            origin: 'system_supplement',
+            parsedBy: item.parsedBy || [],
+        }));
+    });
+    return cards;
+}
+
+function buildSourceUnifiedRequirementItems(review = {}) {
+    const sourceRequirements = valueList(review.sourceRequirements).filter(item => item && typeof item === 'object');
+    const requirementItems = valueList(review.requirementItems).filter(item => item && typeof item === 'object');
+    const constraintIRs = valueList(review.constraintIRs).filter(item => item && typeof item === 'object');
+    const draftRows = valueList(review.draftRows).filter(item => item && typeof item === 'object');
+    const semanticActions = valueList(review.semanticActions).filter(item => item && typeof item === 'object');
+    const indexes = createSourceIdentityIndexes(sourceRequirements, requirementItems, constraintIRs);
+    const artifactsBySource = new Map(sourceRequirements.map(item => [item.sourceId, {
+        constraintIRs: [],
+        legacyRequirements: [],
+        machineRules: [],
+        semanticActions: [],
+    }]));
+
+    const attach = (artifact, collection) => {
+        if ((artifact.origin || artifact.source?.origin || '') === 'system_supplement') return;
+        const sourceId = sourceIdForArtifact(artifact, indexes);
+        const owner = artifactsBySource.get(sourceId);
+        if (owner) owner[collection].push(artifact);
+    };
+    constraintIRs.forEach(item => attach(item, 'constraintIRs'));
+    requirementItems.forEach(item => attach(item, 'legacyRequirements'));
+    draftRows.forEach(item => attach(item, 'machineRules'));
+    semanticActions.forEach(item => attach(item, 'semanticActions'));
+
+    return [
+        ...sourceRequirements.map(sourceRequirement => buildSourceRequirementCard(
+            sourceRequirement,
+            artifactsBySource.get(sourceRequirement.sourceId) || {},
+        )),
+        ...buildSystemSupplementItems(review),
+    ];
+}
+
+function buildLegacyUnifiedRequirementItems(review = {}) {
+    const draftRows = valueList(review.draftRows).filter(item => item && typeof item === 'object');
+    const semanticActions = valueList(review.semanticActions).filter(item => item && typeof item === 'object');
+    const items = valueList(review.requirementItems).filter(item => item && typeof item === 'object').map((item, index) => ({
         ...item,
         id: item.id || `requirement_${index + 1}`,
-        origin: item.origin || itemOriginFromSource(item.source, 'user_input'),
+        origin: item.origin || itemOriginFromSource(item.source),
         machineRules: [],
         semanticActions: [],
     }));
@@ -956,10 +1315,18 @@ export function buildUnifiedRequirementItems(review = {}) {
     return coalesceUnifiedRequirementItems(items);
 }
 
+export function buildUnifiedRequirementItems(review = {}) {
+    if (Object.prototype.hasOwnProperty.call(review, 'sourceRequirements')) {
+        return buildSourceUnifiedRequirementItems(review);
+    }
+    return buildLegacyUnifiedRequirementItems(review);
+}
+
 export function getDefaultRequirementId(items = [], filter = 'all') {
     const visibleItems = filterUnifiedRequirementItems(items, filter);
-    const selected = visibleItems.find(item => normalizeKey(item.status) === 'needs_review')
+    const selected = visibleItems.find(item => getRequirementGroupKey(item) === 'review')
         || visibleItems.find(item => normalizeKey(item.status) === 'actionable')
+        || visibleItems.find(item => getRequirementGroupKey(item) !== 'handled')
         || visibleItems[0]
         || null;
     return selected?.id || '';
@@ -991,7 +1358,7 @@ export function semanticActionApplyItemKey(action = {}) {
 }
 
 function excludedApplyItemKeySet(review = {}) {
-    return new Set((review.excludedApplyItemKeys || []).map(String).filter(Boolean));
+    return new Set(valueList(review.excludedApplyItemKeys).map(String).filter(Boolean));
 }
 
 export function isApplyItemExcluded(review = {}, key = '') {

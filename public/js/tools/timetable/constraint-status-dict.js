@@ -154,15 +154,27 @@ export function requirementStatusLabel(item = {}) {
     return {
         handled: '已处理',
         ignored: '已处理',
+        applied: '已应用',
         suggestion: '建议',
+        parsed: '已理解',
+        understood: '已理解',
+        compiled: '可执行',
+        executable: '可执行',
         actionable: '可应用',
         ready: '可应用',
         effective: '可应用',
+        needs_clarification: '待补充',
         needs_review: '需复核',
         review: '需复核',
         candidate: '待确认',
         pending: '待确认',
-        unsupported: '暂不支持',
+        partially_parsed: '部分理解',
+        partially_supported: '部分支持',
+        partially_actionable: '部分可执行',
+        partially_executable: '部分可执行',
+        understood_not_executable: '已理解，暂不可执行',
+        unsupported_by_solver: '已理解，但当前求解器暂不支持',
+        unsupported: '已理解，暂不支持',
         invalid: '需修正',
     }[key] || '待确认';
 }
@@ -186,15 +198,25 @@ export function requirementApplyLabel(applyTo = '') {
         handled: '✓ 系统内置',
         review: '⚠ 待你确认',
         needs_review: '⚠ 待你确认',
-        unsupported: '✗ 暂不支持',
+        needs_clarification: '⚠ 待补充',
+        partially_supported: '⚠ 部分可执行',
+        partially_actionable: '⚠ 部分可执行',
+        partially_executable: '⚠ 部分可执行',
+        understood_not_executable: '○ 已理解，暂不可执行',
+        unsupported_by_solver: '○ 求解器暂不支持',
+        unsupported: '○ 暂不可执行',
     }[key] || (/[A-Za-z_]/.test(String(applyTo || '')) ? '⚠ 待你确认' : applyTo || '⚠ 待你确认');
 }
 
 export function requirementApplyTone(applyTo = '', status = '') {
     const applyKey = normalizeStatusKey(applyTo);
     const statusKey = normalizeStatusKey(status);
-    if (statusKey === 'unsupported' || applyKey === 'unsupported') return 'danger';
-    if (statusKey === 'needs_review' || statusKey === 'review' || applyKey === 'review' || applyKey === 'needs_review') return 'warning';
+    const clarificationKeys = new Set(['needs_clarification', 'needs_review', 'review']);
+    const partialKeys = new Set(['partially_supported', 'partially_actionable', 'partially_executable']);
+    const understoodButUnavailableKeys = new Set(['unsupported', 'unsupported_by_solver', 'understood_not_executable']);
+    if (clarificationKeys.has(statusKey) || clarificationKeys.has(applyKey)) return 'warning';
+    if (partialKeys.has(statusKey) || partialKeys.has(applyKey)) return 'warning';
+    if (understoodButUnavailableKeys.has(statusKey) || understoodButUnavailableKeys.has(applyKey)) return 'warning';
     if (applyKey === 'optimization' || applyKey === 'optimize') return 'info';
     if (applyKey === 'solver_policy' || applyKey === 'system_policy' || applyKey === 'handled' || statusKey === 'handled') return 'muted';
     if (applyKey === 'model_extension' || applyKey === 'complex_model') return 'complex';
@@ -205,7 +227,14 @@ export function requirementApplyTone(applyTo = '', status = '') {
 export function requirementApplyExplanation(applyTo = '', status = '') {
     const applyKey = normalizeStatusKey(applyTo);
     const statusKey = normalizeStatusKey(status);
-    if (statusKey === 'unsupported' || applyKey === 'unsupported') return '当前版本无法自动实现，可作为人工调课参考。';
+    if (statusKey === 'unsupported_by_solver' || applyKey === 'unsupported_by_solver') return '已经理解这条需求，但当前求解器暂不能自动执行；请保留为人工调课参考或等待能力扩展。';
+    if (statusKey === 'understood_not_executable' || applyKey === 'understood_not_executable') return '已经理解这条需求，但暂未生成可自动执行的机器规则。';
+    if (['partially_supported', 'partially_actionable', 'partially_executable'].includes(statusKey)
+        || ['partially_supported', 'partially_actionable', 'partially_executable'].includes(applyKey)) {
+        return '这条需求已经理解，其中一部分可自动执行，其余部分仍需复核或等待求解器能力扩展。';
+    }
+    if (statusKey === 'unsupported' || applyKey === 'unsupported') return '已经理解这条需求，但当前版本暂不能自动实现，可作为人工调课参考。';
+    if (statusKey === 'needs_clarification' || applyKey === 'needs_clarification') return '已经识别到需求意图，但缺少必要信息，请补充后再应用。';
     if (statusKey === 'needs_review' || statusKey === 'review' || applyKey === 'review' || applyKey === 'needs_review') return '信息不全或没匹配到对象，补充后才能应用。';
     if (applyKey === 'lesson_plan' || applyKey === 'lesson_plans' || applyKey === 'lessonplan') return '应用后更新任课计划，例如连堂设置或课程安排参数。';
     if (applyKey === 'optimization' || applyKey === 'optimize') return '应用后写入优化目标，排课时会尽量满足。';
@@ -213,7 +242,6 @@ export function requirementApplyExplanation(applyTo = '', status = '') {
     if (applyKey === 'model_extension' || applyKey === 'complex_model') return '应用后写入复杂排课模型字段，仅在对应模型启用时生效。';
     return '应用后写入项目规则，下次排课必须或尽量遵守。';
 }
-
 export function semanticActionStatusLabel(action = {}) {
     const key = normalizeStatusKey(action.status || 'ready');
     return {

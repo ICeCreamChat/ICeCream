@@ -1976,15 +1976,30 @@ function timeBlockKindLabel(kind = 'teaching') {
     return '附加时段';
 }
 
+function smartHelperPendingRequirementCount(review = {}, pendingRules = []) {
+    if (Array.isArray(review.sourceRequirements)) {
+        return review.sourceRequirements.filter(item => (
+            (item?.origin || item?.source?.origin || 'unknown') !== 'system_supplement'
+        )).length;
+    }
+
+    const legacyRequirementCount = buildUnifiedRequirementItems(review)
+        .filter(item => (item?.origin || item?.source?.origin || 'unknown') !== 'system_supplement')
+        .length;
+    return legacyRequirementCount
+        || (review.draftRows || []).length
+        || pendingRules.length;
+}
+
 function smartHelperSidebarChip(state = {}, savedTotal = 0) {
     const review = state.ruleReview || {};
-    const draftCount = (review.draftRows || []).length || (state.pendingRules || []).length;
+    const pendingRequirementCount = smartHelperPendingRequirementCount(review, state.pendingRules || []);
     const requirements = buildUnifiedRequirementItems(review);
     const semanticCount = Math.max(
         getActionableRequirementCount(review, 'all'),
         requirements.length
     );
-    if (draftCount) return `${draftCount} 条`;
+    if (pendingRequirementCount) return `${pendingRequirementCount} 条`;
     if (semanticCount) return `${semanticCount} 项`;
     if (savedTotal) return `${savedTotal} 条`;
     return '待处理';
@@ -2181,11 +2196,12 @@ function renderRulesSection(state) {
     const draftRows = (review.draftRows || []).length ? (review.draftRows || []) : (state.pendingRules || []);
     const savedCount = savedItems.length;
     const draftCount = draftRows.length;
+    const pendingRequirementCount = smartHelperPendingRequirementCount(review, state.pendingRules || []);
     const warningCount = (review.warnings || state.ruleWarnings || []).length + (review.unsupportedItems || []).length;
     const helperStats = smartHelperStats(state, savedCount, draftCount, warningCount);
     const cardTitle = '智能约束助手';
-    const cardDescription = draftCount
-        ? `${draftCount} 条要求待处理${warningCount ? ` / ${warningCount} 条需注意` : ''}，继续完成理解、复核和落地。`
+    const cardDescription = pendingRequirementCount
+        ? `${pendingRequirementCount} 条要求待处理${warningCount ? ` / ${warningCount} 条需注意` : ''}，继续完成理解、复核和落地。`
         : savedCount
             ? `已有 ${savedCount} 条要求应用，可继续检查、调整并生成课表。`
             : '自然语言需求理解、复核与落地。';

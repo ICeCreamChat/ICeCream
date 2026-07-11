@@ -2718,12 +2718,25 @@ test('timetable AI rules parser supplements only unresolved constraint Excel row
             }
             observedSupplementPrompt = JSON.stringify(request.messages);
             assert.equal(request.temperature, 0);
+            const promptPayload = JSON.parse(request.messages?.[1]?.content || '{}');
+            const [source] = promptPayload.constraintRows || [];
+            assert.ok(source?.sourceId);
+            assert.ok(source?.textHash);
+            assert.match(source.rawText || source.constraintText || '', /High-load teachers/);
             return jsonResponse({
                 choices: [{
                     message: {
                         content: JSON.stringify({
-                            constraints: [
-                                { type: 'teacher_load_balance', target: 'Math Teacher', priority: 'soft', reason: 'Balance workload' },
+                            draftRows: [
+                                {
+                                    sourceId: source.sourceId,
+                                    textHash: source.textHash,
+                                    rawText: source.rawText || source.constraintText,
+                                    type: 'teacher_load_balance',
+                                    target: 'Math Teacher',
+                                    priority: 'soft',
+                                    reason: 'Balance workload',
+                                },
                             ],
                         }),
                     },
@@ -2776,14 +2789,26 @@ test('timetable AI rules parser combines local AI constraint workbook rows with 
                 });
             }
             observedSupplementPrompt = JSON.stringify(request.messages);
+            const promptPayload = JSON.parse(request.messages?.[1]?.content || '{}');
+            const source = (promptPayload.constraintRows || [])
+                .find(row => /每个班每天课时数尽量均衡/.test(row.rawText || row.constraintText || ''));
+            assert.ok(source?.sourceId);
+            assert.ok(source?.textHash);
             return jsonResponse({
                 choices: [{
                     message: {
                         content: JSON.stringify({
-                            constraints: [
-                                { type: 'subject_morning', targetId: 'math', priority: 'soft', reason: '主科上午优先' },
-                                { type: 'subject_preferred_periods', targetId: 'pe', slots: ['1-5', '2-5'], priority: 'soft', reason: '体育分散到后半天' },
-                                { type: 'teacher_load_balance', target: '全部教师', priority: 'soft', reason: '高负载教师需要均衡' },
+                            draftRows: [
+                                {
+                                    sourceId: source.sourceId,
+                                    textHash: source.textHash,
+                                    rawText: source.rawText || source.constraintText,
+                                    type: 'class_daily_balance',
+                                    target: '全部班级',
+                                    limit: 6,
+                                    priority: 'soft',
+                                    reason: '班级每日课量均衡',
+                                },
                             ],
                             warnings: ['复杂质量建议仅作为复核建议展示'],
                         }),
@@ -2799,12 +2824,13 @@ test('timetable AI rules parser combines local AI constraint workbook rows with 
     assert.ok(result.contextStats.rowCount >= 10);
     assert.ok(result.draftRows.length >= 3);
     assert.match(observedSupplementPrompt, /同一位教师同一时间只能给一个班上课/);
-    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
-    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.prefer, ['1-5', '2-5', '3-3']);
+    assert.ok(result.draftRules.softRules.subjectPreferredPeriods.math.prefer.includes('1-1'));
+    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.prefer, ['3-3']);
     assert.ok(result.draftRows.some(row => row.status === 'effective' && row.type === 'teacher_load_balance'));
     assert.deepEqual(result.draftRules.softRules.teacherLoadBalance, { enabled: true, weight: 10, explicit: true });
+    assert.deepEqual(result.draftRules.softRules.classDailyBalance, { enabled: true, mainSubjectDailyMax: 6 });
     assert.ok(result.draftRows.some(row => row.parseSource === 'local_xlsx'));
-    assert.ok(result.draftRows.some(row => row.parseSource === 'ai_supplement'));
+    assert.ok(result.draftRows.some(row => row.parseSource === 'ai_supplement' && row.type === 'class_daily_balance'));
 });
 
 test('timetable AI rules parser locally extracts obvious text rules when AI is unavailable', async () => {
@@ -7456,12 +7482,26 @@ test('timetable rules parse API returns an editable AI draft without saving it',
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
         if (!target.startsWith('http://ai.test')) return nativeFetch(url, options);
+        const request = JSON.parse(options.body || '{}');
+        const systemPrompt = request.messages?.[0]?.content || '';
+        if (/复审|审计/.test(systemPrompt)) {
+            return jsonResponse({
+                choices: [{ message: { content: JSON.stringify({ reviewItems: [] }) } }],
+            });
+        }
+        const promptPayload = JSON.parse(request.messages?.[1]?.content || '{}');
+        const [source] = promptPayload.constraintRows || [];
+        assert.ok(source?.sourceId);
+        assert.ok(source?.textHash);
         return jsonResponse({
             choices: [{
                 message: {
                     content: JSON.stringify({
-                        constraints: [
+                        draftRows: [
                             {
+                                sourceId: source.sourceId,
+                                textHash: source.textHash,
+                                rawText: source.rawText || source.constraintText,
                                 type: 'teacher_unavailable',
                                 targetId: 't_math',
                                 slots: ['3-4'],
@@ -7469,6 +7509,9 @@ test('timetable rules parse API returns an editable AI draft without saving it',
                                 reason: 'Teacher request',
                             },
                             {
+                                sourceId: source.sourceId,
+                                textHash: source.textHash,
+                                rawText: source.rawText || source.constraintText,
                                 type: 'subject_morning',
                                 targetId: 'math',
                                 priority: 'soft',
@@ -7554,12 +7597,32 @@ test('timetable rules parse API accepts multipart Excel without saving the draft
     globalThis.fetch = async (url, options = {}) => {
         const target = String(url);
         if (!target.startsWith('http://ai.test')) return nativeFetch(url, options);
+        const request = JSON.parse(options.body || '{}');
+        const systemPrompt = request.messages?.[0]?.content || '';
+        if (/复审|审计/.test(systemPrompt)) {
+            return jsonResponse({
+                choices: [{ message: { content: JSON.stringify({ reviewItems: [] }) } }],
+            });
+        }
+        const promptPayload = JSON.parse(request.messages?.[1]?.content || '{}');
+        const [source] = promptPayload.constraintRows || [];
+        assert.ok(source?.sourceId);
+        assert.ok(source?.textHash);
         return jsonResponse({
             choices: [{
                 message: {
                     content: JSON.stringify({
-                        constraints: [
-                            { type: 'subject_preferred_periods', targetId: 'math', slots: ['2-1'], priority: 'soft', reason: 'Prefer Monday' },
+                        draftRows: [
+                            {
+                                sourceId: source.sourceId,
+                                textHash: source.textHash,
+                                rawText: source.rawText || source.constraintText,
+                                type: 'subject_preferred_periods',
+                                targetId: 'math',
+                                slots: ['2-1'],
+                                priority: 'soft',
+                                reason: 'Prefer Monday',
+                            },
                         ],
                     }),
                 },

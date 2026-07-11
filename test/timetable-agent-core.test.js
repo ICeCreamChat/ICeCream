@@ -10,6 +10,7 @@ import {
 } from '../gateway/services/timetable-agent/timetable-agent-core.js';
 import { createTimetableAgentTools } from '../gateway/services/timetable-agent/timetable-agent-tools.js';
 import { runDiagnosisSkill } from '../gateway/services/timetable-agent/skills/diagnosis-skill.js';
+import { buildRuleReviewArtifact } from '../gateway/services/timetable-agent/skills/constraint-skill.js';
 import { runPublicationSkill } from '../gateway/services/timetable-agent/skills/publication-skill.js';
 import { runSolveSkill } from '../gateway/services/timetable-agent/skills/solve-skill.js';
 import { createDefaultTimetableProject } from '../gateway/services/timetable-scheduler.js';
@@ -150,6 +151,17 @@ test('timetable agent asks data questions instead of solving incomplete projects
     assert.ok(response.lastToolResults.every(item => item.summary && Array.isArray(item.nextActions)));
 });
 
+test('constraint skill artifact preserves legacy sourceRequirements field absence', () => {
+    const artifact = buildRuleReviewArtifact({
+        requirementItems: [{ id: 'legacy-req', origin: 'user_input' }],
+        draftRows: [],
+    });
+
+    assert.equal(Object.prototype.hasOwnProperty.call(artifact, 'sourceRequirements'), false);
+    assert.equal(artifact.sourceRequirements, undefined);
+    assert.deepEqual(artifact.requirementItems, [{ id: 'legacy-req', origin: 'user_input' }]);
+});
+
 test('timetable agent constraint skill returns review artifact and approval queue without saving rules', async () => {
     const project = completeProject();
     const session = createTimetableAgentSession({ project });
@@ -163,6 +175,17 @@ test('timetable agent constraint skill returns review artifact and approval queu
     const artifact = response.artifacts.find(item => item.type === 'rule_review');
     assert.equal(response.stage, 'constraint_review');
     assert.ok(artifact);
+    assert.equal(artifact.schemaVersion, 2);
+    assert.match(artifact.parserVersion, /^timetable_rule_parser_/);
+    assert.equal(artifact.originalText, '王老师周三下午没空，数学尽量上午');
+    assert.ok(Array.isArray(artifact.sourceRequirements));
+    assert.equal(artifact.sourceRequirements.length, 1);
+    assert.equal(artifact.statistics.userInputCount, 1);
+    assert.ok(Array.isArray(artifact.constraintIRs));
+    assert.ok(artifact.constraintIRs.length >= 1);
+    assert.ok(Array.isArray(artifact.requirementItems));
+    assert.ok(artifact.requirementItems.length >= 1);
+    assert.ok(Array.isArray(artifact.semanticActions));
     assert.ok(artifact.draftRows.length >= 1);
     assert.ok(response.approvalQueue.some(action => action.type === 'apply_rules'));
     assert.equal(project.rules.hardRules?.teacherUnavailable?.t_wang, undefined);

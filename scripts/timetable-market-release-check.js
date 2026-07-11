@@ -5,6 +5,14 @@ import path from 'node:path';
 
 import { parseTimetableRules } from '../gateway/services/timetable-rule-parser.js';
 import {
+    countExpectedFieldChecks,
+    loadConstraintCorpus,
+    MARKET_LANGUAGE_CATEGORIES,
+    validateConstraintCorpus,
+} from './lib/timetable-market-language-corpus.js';
+import { AI_REQUIREMENT_PROMPT_VERSION } from '../gateway/services/timetable-ai-prompts.js';
+import { timetableAiGoldenGateFailures } from './lib/timetable-ai-golden-runner.js';
+import {
     createDefaultTimetableProject,
     normalizeTimetableProject,
     runTimetableScheduler,
@@ -19,12 +27,62 @@ function status(ok, label, detail = '') {
 }
 
 async function corpusCheck() {
-    const corpusPath = path.join(process.cwd(), 'test/fixtures/constraint-corpus.jsonl');
-    const baselinePath = path.join(process.cwd(), 'test/fixtures/corpus-baseline.md');
-    const corpus = await readFile(corpusPath, 'utf8');
-    const baseline = await readFile(baselinePath, 'utf8');
-    const rows = corpus.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
-    return status(rows.length >= 100 && /字段准确率基线/.test(baseline), 'golden corpus baseline', `${rows.length} rows`);
+    const corpus = await loadConstraintCorpus();
+    const validation = validateConstraintCorpus(corpus.rows);
+    const fieldChecks = countExpectedFieldChecks(corpus.rows);
+    const categoryCounts = validation.metrics?.categoryCounts || {};
+    const primaryCounts = validation.metrics?.primaryCounts || {};
+    const passingCategories = MARKET_LANGUAGE_CATEGORIES.filter(category => (
+        Number(categoryCounts[category] || 0) >= 15
+        && Number(primaryCounts[category] || 0) >= 10
+    )).length;
+    const errors = [...(corpus.errors || []), ...(validation.errors || [])];
+    const ok = errors.length === 0
+        && validation.valid
+        && fieldChecks > 0
+        && passingCategories === MARKET_LANGUAGE_CATEGORIES.length;
+    const metrics = validation.metrics || {};
+    const detail = ok
+        ? [
+            `${metrics.rowCount || 0} rows`,
+            `${metrics.uniqueIdCount || 0} unique ids`,
+            `${passingCategories}/${MARKET_LANGUAGE_CATEGORIES.length} categories`,
+            `${metrics.expectedClauseCount || 0} expected clauses`,
+            `${fieldChecks} field checks`,
+            `sha256 ${corpus.hash}`,
+        ].join(', ')
+        : errors.slice(0, 5).join('; ') || 'market-language corpus contract is incomplete';
+    return status(ok, 'market-language golden corpus contract', detail);
+}
+
+async function aiGoldenReportCheck() {
+    const reportPath = path.resolve(process.env.TIMETABLE_RULE_AI_GOLDEN_REPORT || '.tmp-timetable-ai-golden-latest.json');
+    let report;
+    try {
+        report = JSON.parse(await readFile(reportPath, 'utf8'));
+    } catch (error) {
+        return status(false, 'full AI golden report', `report unavailable: ${error?.code || error?.message || error}`);
+    }
+    const corpus = await loadConstraintCorpus();
+    const reasons = [];
+    if (report.fullCorpus !== true) reasons.push('fullCorpus must be true');
+    if (report.corpusRows !== corpus.rows.length) reasons.push(`corpusRows ${report.corpusRows} != ${corpus.rows.length}`);
+    if (report.corpusTotalRows !== corpus.rows.length) reasons.push(`corpusTotalRows ${report.corpusTotalRows} != ${corpus.rows.length}`);
+    if (report.corpusHash !== corpus.hash) reasons.push(`corpusHash ${report.corpusHash || '(missing)'} != ${corpus.hash}`);
+    if (report.promptVersion !== AI_REQUIREMENT_PROMPT_VERSION) reasons.push(`promptVersion ${report.promptVersion || '(missing)'} != ${AI_REQUIREMENT_PROMPT_VERSION}`);
+    if (!String(Array.isArray(report.model) ? report.model.join(',') : report.model || '').trim()) reasons.push('model is missing');
+    if (!report.generatedAt) reasons.push('generatedAt is missing');
+    if ((report.selectedIds || []).length) reasons.push('selectedIds must be empty for full corpus validation');
+    const detailIds = (report.details || []).map(item => item?.id).filter(Boolean);
+    if (detailIds.length !== corpus.rows.length || new Set(detailIds).size !== corpus.rows.length) {
+        reasons.push(`details must contain ${corpus.rows.length} unique corpus ids`);
+    }
+    reasons.push(...timetableAiGoldenGateFailures(report));
+    const ok = reasons.length === 0;
+    const detail = ok
+        ? `${report.model}, ${report.promptVersion}, ${report.corpusRows} rows, coverage ${report.coverage}, field ${report.fieldAccuracy}, source ${report.sourcePreservationRate}/${report.sourceAlignmentRate}, P95 ${report.p95Ms}ms, sha256 ${report.corpusHash}`
+        : reasons.join('; ');
+    return status(ok, 'full AI golden report', detail);
 }
 
 function demoProject(classCount = 3) {
@@ -114,6 +172,7 @@ async function chineseCopyCheck() {
 async function main() {
     const checks = [
         await corpusCheck(),
+        await aiGoldenReportCheck(),
         await historicalRegressionCheck(),
         await offlineFallbackCheck(),
         await stressCheck(),

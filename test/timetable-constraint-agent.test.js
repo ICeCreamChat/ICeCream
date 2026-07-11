@@ -38,6 +38,44 @@ function completeProject(overrides = {}) {
     });
 }
 
+test('constraint intake status uses source input statistics instead of expanded clauses or requirement items', () => {
+    const sourceRequirements = Array.from({ length: 137 }, (_, index) => ({
+        sourceId: 'src:' + (index + 1),
+        origin: 'user_input',
+    }));
+    const requirementItems = Array.from({ length: 196 }, (_, index) => ({ id: 'req:' + (index + 1) }));
+    assert.equal(constraintIntakeStatusLine({
+        stage: 'INTAKE',
+        review: {
+            statistics: { userInputCount: 137 },
+            sourceRequirements,
+            requirementItems,
+            draftRows: Array.from({ length: 128 }, (_, index) => ({ id: 'row:' + index })),
+        },
+    }), '[已理解 137 · 待澄清 0 · 待确认 0]');
+
+    assert.equal(constraintIntakeStatusLine({
+        stage: 'INTAKE',
+        review: {
+            sourceRequirements: [
+                { sourceId: 'src:a', origin: 'user_input' },
+                { sourceId: 'src:b', origin: 'manual' },
+                { sourceId: 'src:unknown' },
+                { sourceId: 'sys:a', origin: 'system_supplement' },
+            ],
+            requirementItems,
+        },
+    }), '[已理解 1 · 待澄清 0 · 待确认 0]');
+
+    assert.equal(constraintIntakeStatusLine({
+        stage: 'INTAKE',
+        review: {
+            sourceRequirements: [],
+            requirementItems,
+        },
+    }), '[已理解 0 · 待澄清 0 · 待确认 0]');
+});
+
 test('constraint intake rejects APPLY before explicit confirmation', async () => {
     resetConstraintIntakeSessions();
     const project = completeProject();
@@ -50,7 +88,7 @@ test('constraint intake rejects APPLY before explicit confirmation', async () =>
     });
 
     assert.equal(parsed.stage, 'CONFIRM');
-    assert.match(parsed.statusLine, /^\[已理解 2 · 待澄清 0 · 待确认 2\]$/);
+    assert.match(parsed.statusLine, /^\[已理解 1 · 待澄清 0 · 待确认 2\]$/);
     await assert.rejects(
         () => applyConstraintIntake({
             sessionId: session.sessionId,
@@ -89,7 +127,7 @@ test('constraint intake completes local flow from INTAKE to REPORT', async () =>
     });
     assert.equal(confirmed.stage, 'CONFIRM');
     assert.equal(confirmed.confirmed, true);
-    assert.equal(confirmed.statusLine, '[已理解 2 · 待澄清 0 · 待确认 0]');
+    assert.equal(confirmed.statusLine, '[已理解 1 · 待澄清 0 · 待确认 0]');
 
     let savedAfterApply = null;
     const applied = await applyConstraintIntake({

@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { createDefaultTimetableProject } from '../gateway/services/timetable-scheduler.js';
 import { TimetablePlannerController } from '../public/js/tools/timetable/controller.js';
+import { refreshReviewStatistics } from '../public/js/tools/timetable/controller-constraint-dialog.js';
 import {
   getRosterStats,
   getPublishedScheduleDiff,
@@ -344,10 +345,12 @@ test('timetable constraint dialog coalesces one natural-language rule into one r
         confidence: 0.95,
         sourceText: rawText,
         parseSource: 'ai',
+        origin: 'user_input',
       }],
       requirementItems: [
         {
           id: 'req_raw_need',
+          origin: 'user_input',
           object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
           intent: 'schedule_request',
           status: 'needs_review',
@@ -358,6 +361,7 @@ test('timetable constraint dialog coalesces one natural-language rule into one r
         },
         {
           id: 'req_unavailable_time',
+          origin: 'user_input',
           object: { kind: 'teacher', name: '刘书涵', matchedIds: ['t_liu'], scope: 'explicit' },
           intent: 'unavailable_periods',
           status: 'actionable',
@@ -1200,6 +1204,104 @@ test('constraint dialog renders requirement clarification and submits structured
   }
 });
 
+test('constraint dialog maps source card clarification to legacy requirement identity and preserves source review fields', async () => {
+  const clause = {
+    id: 'req_test',
+    requirementId: 'req_test',
+    sourceId: 'src:test',
+    clauseId: 'src:test:clause:1',
+    object: { kind: 'teacher', name: '张老师', matchedIds: ['t1'], scope: 'explicit' },
+    intent: 'teacher_daily_limit',
+    status: 'needs_review',
+    reviewStatus: 'needs_clarification',
+    applyTo: 'review',
+    source: { sourceId: 'src:test', rawText: '张老师每天不要排太多课。' },
+    clarification: {
+      id: 'clarify_req_test_max_daily',
+      kind: 'number',
+      field: 'maxDaily',
+      question: '每天最多几节？',
+      defaultValue: 4,
+    },
+  };
+  const ruleReview = {
+    schemaVersion: 'timetable_constraints/v2',
+    sourceRequirements: [{
+      sourceId: 'src:test',
+      textHash: 'hash-test',
+      rawText: '张老师每天不要排太多课。',
+      origin: 'user_input',
+      parsedBy: ['local'],
+      reviewStatus: 'needs_clarification',
+      clauses: [clause],
+    }],
+    systemSupplements: [],
+    manualRequirements: [],
+    constraintIRs: [clause],
+    statistics: { userInputCount: 1, clauseCount: 1, executableMachineRuleCount: 0, needsReviewCount: 1 },
+    warningItems: [],
+    draftRows: [],
+    requirementItems: [clause],
+    semanticActions: [],
+  };
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ url: String(url), body });
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          success: true,
+          data: {
+            ...ruleReview,
+            constraintIRs: [{ ...clause, executionStatus: 'compiled' }],
+            statistics: { ...ruleReview.statistics, executableMachineRuleCount: 1, needsReviewCount: 0 },
+            sourceRequirements: [{
+              ...ruleReview.sourceRequirements[0],
+              reviewStatus: 'actionable',
+              clauses: [{ ...clause, status: 'actionable', reviewStatus: 'actionable', clarification: null }],
+            }],
+            requirementItems: [{ ...clause, status: 'actionable', reviewStatus: 'actionable', clarification: null }],
+          },
+        });
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.project = createDefaultTimetableProject();
+    controller.state.ruleReview = JSON.parse(JSON.stringify(ruleReview));
+    controller.state.constraintDialog = { open: true, requirementFilter: 'review', selectedRequirementId: 'src:test' };
+    controller.state.container = {
+      querySelector(selector) {
+        if (selector === '[data-requirement-clarify-input="src:test"]') return { value: '4' };
+        return null;
+      },
+    };
+
+    await controller.submitRequirementClarification('src:test');
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].body.answers, [{
+      requirementId: 'req_test',
+      sourceId: 'src:test',
+      field: 'maxDaily',
+      value: 4,
+    }]);
+    assert.equal(controller.state.ruleReview.sourceRequirements[0].sourceId, 'src:test');
+    assert.equal(controller.state.ruleReview.constraintIRs[0].executionStatus, 'compiled');
+    assert.equal(controller.state.ruleReview.statistics.executableMachineRuleCount, 1);
+    assert.equal(controller.state.constraintDialog.selectedRequirementId, 'src:test');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('constraint dialog renders choice clarification chips and keeps review state after submit', async () => {
   const ruleReview = {
     open: true,
@@ -1413,17 +1515,75 @@ test('constraint dialog manual entry creates an explicit requirement item', () =
     controller.addManualConstraint();
     assert.equal(controller.state.ruleReview.draftRows.length, 1);
     assert.equal(controller.state.ruleReview.requirementItems.length, 1);
+    assert.equal(controller.state.ruleReview.sourceRequirements.length, 1);
+    assert.equal(controller.state.ruleReview.manualRequirements.length, 1);
     const row = controller.state.ruleReview.draftRows[0];
     const requirement = controller.state.ruleReview.requirementItems[0];
+    const sourceRequirement = controller.state.ruleReview.sourceRequirements[0];
     assert.equal(requirement.rowId, row.id);
     assert.equal(requirement.object.name, '体育');
     assert.equal(requirement.intent, 'preferred_periods');
     assert.equal(requirement.source.rawText, '手动添加');
-    assert.equal(controller.state.constraintDialog.selectedRequirementId, requirement.id);
+    assert.equal(sourceRequirement.origin, 'manual');
+    assert.deepEqual(sourceRequirement.parsedBy, ['manual']);
+    assert.equal(sourceRequirement.sourceId, 'manual:source:' + row.id);
+    assert.equal(sourceRequirement.clauses[0].clauseId, sourceRequirement.sourceId + ':clause:1');
+    assert.equal(row.sourceId, sourceRequirement.sourceId);
+    assert.equal(row.clauseId, sourceRequirement.clauses[0].clauseId);
+    assert.equal(row.machineRuleId, sourceRequirement.sourceId + ':rule:1');
+    assert.equal(requirement.sourceId, sourceRequirement.sourceId);
+    assert.equal(controller.state.constraintDialog.selectedRequirementId, sourceRequirement.sourceId);
   } finally {
     globalThis.document = originalDocument;
     globalThis.alert = originalAlert;
     globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
+test('constraint dialog clear removes source review and legacy parse artifacts together', () => {
+  const originalConfirm = globalThis.confirm;
+  globalThis.confirm = () => true;
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.ruleReview = {
+      sourceRequirements: [{ sourceId: 'src:1' }],
+      systemSupplements: [{ supplementId: 'sys:1' }],
+      manualRequirements: [{ sourceId: 'manual:1' }],
+      constraintIRs: [{ constraintId: 'clause:1' }],
+      warningItems: [{ sourceId: 'src:1', message: 'warning' }],
+      statistics: { userInputCount: 1, clauseCount: 1 },
+      draftRows: [{ id: 'row:1' }],
+      requirementItems: [{ id: 'req:1' }],
+      semanticActions: [{ id: 'action:1' }],
+      warnings: ['warning'],
+      unsupportedItems: [{ id: 'unsupported:1' }],
+      excludedApplyItemKeys: ['rule:row:1'],
+    };
+    controller.state.constraintDialog = { open: true, requirementFilter: 'review', selectedRequirementId: 'src:1' };
+
+    controller.clearAllConstraints();
+
+    for (const key of [
+      'sourceRequirements',
+      'systemSupplements',
+      'manualRequirements',
+      'constraintIRs',
+      'warningItems',
+      'draftRows',
+      'requirementItems',
+      'semanticActions',
+      'warnings',
+      'unsupportedItems',
+      'excludedApplyItemKeys',
+    ]) {
+      assert.deepEqual(controller.state.ruleReview[key], [], key + ' should be cleared');
+    }
+    assert.equal(controller.state.ruleReview.statistics, null);
+    assert.equal(controller.state.constraintDialog.requirementFilter, 'all');
+    assert.equal(controller.state.constraintDialog.selectedRequirementId, '');
+  } finally {
+    globalThis.confirm = originalConfirm;
   }
 });
 
@@ -1611,6 +1771,412 @@ test('timetable constraint dialog applies only the current filtered requirements
   }
 });
 
+test('constraint dialog marks fully applied source handled but keeps partially unsupported source for review', async () => {
+  const pureClause = {
+    id: 'req_pure',
+    requirementId: 'req_pure',
+    sourceId: 'src:pure',
+    clauseId: 'src:pure:clause:1',
+    machineRuleIds: ['src:pure:rule:1'],
+    intent: 'subject_morning',
+    status: 'actionable',
+    reviewStatus: 'actionable',
+    executionStatus: 'executable',
+    applyTo: 'rule',
+    object: { kind: 'subject', name: '语文' },
+  };
+  const mixedExecutableClause = {
+    id: 'req_mixed_exec',
+    requirementId: 'req_mixed_exec',
+    sourceId: 'src:mixed',
+    clauseId: 'src:mixed:clause:1',
+    machineRuleIds: ['src:mixed:rule:1'],
+    intent: 'course_interval',
+    status: 'actionable',
+    reviewStatus: 'actionable',
+    executionStatus: 'executable',
+    applyTo: 'rule',
+    object: { kind: 'subject', name: '地理、生物' },
+  };
+  const mixedUnsupportedClause = {
+    id: 'req_mixed_review',
+    requirementId: 'req_mixed_review',
+    sourceId: 'src:mixed',
+    clauseId: 'src:mixed:clause:2',
+    intent: 'weekday_concentration',
+    status: 'unsupported',
+    reviewStatus: 'unsupported',
+    executionStatus: 'unsupported_by_solver',
+    applyTo: 'review',
+    object: { kind: 'subject', name: '地理、生物' },
+  };
+  const ruleReview = {
+    sourceRequirements: [
+      {
+        sourceId: 'src:pure',
+        origin: 'user_input',
+        rawText: '语文尽量上午。',
+        status: 'actionable',
+        reviewStatus: 'actionable',
+        executionStatus: 'executable',
+        clauses: [pureClause],
+        machineRuleIds: ['src:pure:rule:1'],
+      },
+      {
+        sourceId: 'src:mixed',
+        origin: 'user_input',
+        rawText: '地理和生物尽量隔天分布，不要都挤在周四周五。',
+        status: 'partially_supported',
+        reviewStatus: 'partially_supported',
+        executionStatus: 'partially_executable',
+        clauses: [mixedExecutableClause, mixedUnsupportedClause],
+        machineRuleIds: ['src:mixed:rule:1'],
+      },
+    ],
+    constraintIRs: [pureClause, mixedExecutableClause, mixedUnsupportedClause],
+    draftRows: [
+      {
+        id: 'row:pure',
+        sourceId: 'src:pure',
+        clauseId: pureClause.clauseId,
+        machineRuleId: 'src:pure:rule:1',
+        requirementId: pureClause.requirementId,
+        type: 'subject_morning',
+        targetType: 'subject',
+        targetName: '语文',
+        status: 'effective',
+      },
+      {
+        id: 'row:mixed',
+        sourceId: 'src:mixed',
+        clauseId: mixedExecutableClause.clauseId,
+        machineRuleId: 'src:mixed:rule:1',
+        requirementId: mixedExecutableClause.requirementId,
+        type: 'course_interval',
+        targetType: 'subject',
+        targetName: '地理、生物',
+        status: 'effective',
+      },
+    ],
+    requirementItems: [pureClause, mixedExecutableClause, mixedUnsupportedClause],
+    semanticActions: [],
+    conflicts: [],
+    warnings: [],
+  };
+  const originalFetch = globalThis.fetch;
+  const originalConfirm = globalThis.confirm;
+  const originalAlert = globalThis.alert;
+  globalThis.confirm = () => true;
+  globalThis.alert = () => {};
+  globalThis.fetch = async url => {
+    if (String(url).endsWith('/rules/normalize')) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({
+            success: true,
+            data: {
+              draftRows: [{ id: 'row:pure', status: 'effective' }, { id: 'row:mixed', status: 'effective' }],
+              draftRules: { hardRules: {}, softRules: {} },
+            },
+          });
+        },
+      };
+    }
+    if (String(url).endsWith('/rules')) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ success: true, data: { project: createDefaultTimetableProject() } });
+        },
+      };
+    }
+    if (String(url).endsWith('/rules/diagnose')) {
+      return {
+        ok: true,
+        status: 200,
+        async text() {
+          return JSON.stringify({ success: true, data: { diagnosis: { blockingRules: [], conflicts: [] } } });
+        },
+      };
+    }
+    throw new Error('Unexpected fetch ' + url);
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.project = createDefaultTimetableProject();
+    controller.state.ruleReview = JSON.parse(JSON.stringify(ruleReview));
+    controller.state.constraintDialog = { open: true, requirementFilter: 'all', selectedRequirementId: 'src:pure' };
+
+    await controller.applyConstraintsFromDialog();
+
+    assert.deepEqual(controller.state.ruleReview.draftRows, []);
+    const pureSource = controller.state.ruleReview.sourceRequirements.find(item => item.sourceId === 'src:pure');
+    const mixedSource = controller.state.ruleReview.sourceRequirements.find(item => item.sourceId === 'src:mixed');
+    assert.equal(pureSource.status, 'handled');
+    assert.equal(pureSource.reviewStatus, 'handled');
+    assert.equal(pureSource.executionStatus, 'applied');
+    assert.equal(mixedSource.status, 'partially_supported');
+    assert.equal(mixedSource.reviewStatus, 'partially_supported');
+    assert.equal(controller.state.constraintDialog.open, true);
+    assert.equal(controller.state.constraintDialog.selectedRequirementId, 'src:mixed');
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.confirm = originalConfirm;
+    globalThis.alert = originalAlert;
+  }
+});
+
+test('timetable constraint dialog treats missing origin as unknown and excludes it from user input statistics', () => {
+  const review = {
+    sourceRequirements: [{
+      sourceId: 'src:missing-origin',
+      textHash: 'hash-missing-origin',
+      rawText: '来源字段缺失时不能冒充用户输入。',
+      status: 'needs_review',
+      reviewStatus: 'needs_review',
+      understandingStatus: 'unrecognized',
+      executionStatus: 'needs_review',
+      clauses: [],
+      machineRuleIds: [],
+      source: { rawText: '来源字段缺失时不能冒充用户输入。' },
+    }, {
+      sourceId: 'src:real-user',
+      textHash: 'hash-real-user',
+      rawText: '这条才是明确的用户输入。',
+      origin: 'user_input',
+      status: 'needs_review',
+      reviewStatus: 'needs_review',
+      clauses: [],
+      machineRuleIds: [],
+    }],
+    systemSupplements: [],
+    requirementItems: [],
+    constraintIRs: [],
+    draftRows: [],
+    semanticActions: [],
+    warnings: [],
+    conflicts: [],
+    unsupportedItems: [],
+  };
+
+  refreshReviewStatistics(review);
+  assert.equal(review.statistics.sourceRequirementCount, 2);
+  assert.equal(review.statistics.userInputCount, 1);
+
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: { ...review, open: true, step: 'review', mode: 'text' },
+    constraintDialog: {
+      open: true,
+      requirementFilter: 'all',
+      selectedRequirementId: 'src:missing-origin',
+    },
+  }));
+
+  assert.match(html, /用户输入 1 条/);
+  assert.match(html, /data-requirement-id="src:missing-origin"[\s\S]*?<small>来源未知<\/small>/);
+  assert.doesNotMatch(
+    html.match(/data-requirement-id="src:missing-origin"[\s\S]*?<\/button>/)?.[0] || '',
+    /我的输入/
+  );
+});
+
+test('review statistics preserve singleton parse result collections', () => {
+  const review = {
+    sourceRequirements: {
+      sourceId: 'src:singleton',
+      origin: 'user_input',
+      status: 'understood',
+      understandingStatus: 'parsed',
+      executionStatus: 'executable',
+      clauses: { clauseId: 'clause:singleton' },
+    },
+    systemSupplements: { supplementId: 'supplement:singleton' },
+    draftRows: [
+      { id: 'row:singleton', machineRuleId: 'machine:singleton', status: 'effective' },
+      { id: 'row:review', status: 'needs_review', executionStatus: 'unsupported_by_solver' },
+    ],
+    semanticActions: { id: 'action:singleton' },
+  };
+
+  refreshReviewStatistics(review);
+
+  assert.equal(review.statistics.sourceRequirementCount, 1);
+  assert.equal(review.statistics.userInputCount, 1);
+  assert.equal(review.statistics.systemSupplementCount, 1);
+  assert.equal(review.statistics.clauseCount, 1);
+  assert.equal(review.statistics.machineRuleCount, 1);
+  assert.equal(review.statistics.executableMachineRuleCount, 1);
+  assert.equal(review.statistics.draftRowCount, 2);
+  assert.equal(review.statistics.semanticActionCount, 1);
+});
+
+test('timetable constraint dialog uses source statistics and renders clauses without inflating top-level cards', () => {
+  const executableClause = {
+    id: 'req_market_exec',
+    requirementId: 'req_market_exec',
+    sourceId: 'src:market-language',
+    clauseId: 'src:market-language:clause:1',
+    machineRuleIds: ['src:market-language:rule:1'],
+    intent: 'course_interval',
+    status: 'actionable',
+    reviewStatus: 'actionable',
+    understandingStatus: 'parsed',
+    executionStatus: 'executable',
+    applyTo: 'rule',
+    object: { kind: 'subject', name: '地理、生物' },
+  };
+  const unsupportedClause = {
+    id: 'req_market_unsupported',
+    requirementId: 'req_market_unsupported',
+    sourceId: 'src:market-language',
+    clauseId: 'src:market-language:clause:2',
+    machineRuleIds: [],
+    intent: 'weekday_concentration',
+    status: 'unsupported',
+    reviewStatus: 'unsupported',
+    understandingStatus: 'parsed',
+    executionStatus: 'unsupported_by_solver',
+    applyTo: 'review',
+    object: { kind: 'subject', name: '地理、生物' },
+    warnings: ['当前求解器还不能表达“不要都挤在周四周五”。'],
+  };
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      statistics: {
+        userInputCount: 137,
+        systemSupplementCount: 1,
+        clauseCount: 150,
+        executableMachineRuleCount: 128,
+        needsReviewCount: 3,
+      },
+      sourceRequirements: [{
+        sourceId: 'src:market-language',
+        textHash: 'hash-market-language',
+        rawText: '地理和生物尽量隔天分布，不要都挤在周四周五。',
+        origin: 'user_input',
+        parsedBy: ['local', 'ai'],
+        status: 'partially_supported',
+        reviewStatus: 'partially_supported',
+        executionStatus: 'partially_executable',
+        clauses: [executableClause, unsupportedClause],
+        machineRuleIds: ['src:market-language:rule:1'],
+      }],
+      constraintIRs: [executableClause, unsupportedClause],
+      draftRows: [{
+        id: 'row:market-language',
+        sourceId: 'src:market-language',
+        clauseId: executableClause.clauseId,
+        requirementId: executableClause.requirementId,
+        machineRuleId: 'src:market-language:rule:1',
+        type: 'course_interval',
+        targetType: 'subject',
+        targetName: '地理、生物',
+        status: 'effective',
+      }],
+      requirementItems: [executableClause, unsupportedClause],
+      semanticActions: [],
+      systemSupplements: [{
+        supplementId: 'supplement:teacher-conflict',
+        reason: '同一位教师同一时间只能上一节课。',
+        requirement: {
+          id: 'req_system_teacher_conflict',
+          requirementId: 'req_system_teacher_conflict',
+          intent: 'teacher_conflict',
+          status: 'handled',
+          applyTo: 'handled',
+          object: { kind: 'global', name: '全校教师' },
+          source: { rawText: '同一位教师同一时间只能上一节课。' },
+        },
+      }],
+      warnings: [],
+      conflicts: [],
+      unsupportedItems: [],
+    },
+    constraintDialog: {
+      open: true,
+      requirementFilter: 'all',
+      selectedRequirementId: 'src:market-language',
+      systemGroupCollapsed: false,
+    },
+  }));
+
+  assert.match(html, /用户输入 137 条/);
+  assert.match(html, /系统补充 1 条/);
+  assert.match(html, /子约束 150 条/);
+  assert.match(html, /可执行规则 128 条/);
+  assert.match(html, /需复核 3 条/);
+  assert.equal((html.match(/data-requirement-id="src:market-language"/g) || []).length, 1);
+  assert.match(html, /data-requirement-id="src:market-language"[^>]*title="地理和生物尽量隔天分布，不要都挤在周四周五。"/);
+  assert.match(html, /data-requirement-id="src:market-language"[\s\S]*?<small>我的输入<\/small>/);
+  assert.match(html, /本地 \+ AI 解析/);
+  assert.match(html, /理解为 2 个子约束/);
+  assert.match(html, /已理解，但当前求解器暂不支持/);
+  assert.match(html, /系统补充的默认规则/);
+});
+test('timetable smart helper summary counts source requirements instead of expanded machine rows', () => {
+  const sourceRequirements = Array.from({ length: 137 }, (_, index) => ({
+    sourceId: `src:sidebar:${index + 1}`,
+    rawText: `第 ${index + 1} 条自然语言约束`,
+    origin: 'user_input',
+    status: 'actionable',
+    clauses: [],
+    machineRuleIds: [],
+  }));
+  const draftRows = Array.from({ length: 128 }, (_, index) => ({
+    id: `row:sidebar:${index + 1}`,
+    machineRuleId: `rule:sidebar:${index + 1}`,
+    type: 'teacher_unavailable',
+    status: 'effective',
+  }));
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      sourceRequirements,
+      draftRows,
+      requirementItems: [],
+      semanticActions: [],
+      statistics: {
+        userInputCount: 137,
+        clauseCount: 150,
+        executableMachineRuleCount: 128,
+      },
+    },
+  }));
+  const sidebar = html.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
+
+  assert.match(sidebar, /<span class="tt-chip">137 条<\/span>/);
+  assert.match(sidebar, /137 条要求待处理/);
+  assert.doesNotMatch(sidebar, /128 条要求待处理/);
+
+  const explicitEmptyHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      sourceRequirements: [],
+      draftRows,
+      requirementItems: [],
+      semanticActions: [],
+    },
+  }));
+  const explicitEmptySidebar = explicitEmptyHtml.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
+  assert.doesNotMatch(explicitEmptySidebar, /128 条要求待处理/);
+
+  const legacyHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      draftRows: draftRows.slice(0, 3),
+      requirementItems: [],
+      semanticActions: [],
+    },
+  }));
+  const legacySidebar = legacyHtml.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
+  assert.match(legacySidebar, /<span class="tt-chip">3 条<\/span>/);
+  assert.match(legacySidebar, /3 条要求待处理/);
+});
 test('timetable constraint dialog can remove and restore one apply item without deleting it', () => {
   const ruleReview = {
     open: true,
@@ -1780,6 +2346,148 @@ test('constraint intake mini cards share excluded apply state with rule review t
   assert.match(html, /tt-constraint-agent-mini-card is-excluded/);
   assert.match(html, /恢复/);
   assert.match(html, /tt-constraint-card--excluded/);
+});
+
+test('constraint intake agent normalizes singleton source-first review fields without legacy rows', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.ruleReview = {
+    ...(controller.state.ruleReview || {}),
+    open: true,
+    uiStep: 'input',
+  };
+  const sourceRequirement = {
+    sourceId: 'src:agent:math-morning',
+    rawText: 'Math 尽量上午',
+    origin: 'user_input',
+    parsedBy: ['local', 'ai'],
+    clauses: [{
+      clauseId: 'src:agent:math-morning:clause:1',
+      intent: 'subject.preferred_periods',
+      understandingStatus: 'parsed',
+      executionStatus: 'unsupported_by_solver',
+    }],
+  };
+  const review = {
+    schemaVersion: 2,
+    sourceRequirements: sourceRequirement,
+    systemSupplements: { sourceId: 'sys:agent:1', origin: 'system_supplement', rawText: '系统补充' },
+    manualRequirements: { sourceId: 'manual:agent:1', origin: 'manual', rawText: '手动补充' },
+    constraintIRs: {
+      sourceId: sourceRequirement.sourceId,
+      clauseId: sourceRequirement.clauses[0].clauseId,
+      intent: 'subject.preferred_periods',
+    },
+    warningItems: {
+      sourceId: sourceRequirement.sourceId,
+      code: 'solver_unsupported',
+      message: '已理解，但当前求解器暂不支持。',
+    },
+    statistics: {
+      userInputCount: 1,
+      systemSupplementCount: 1,
+      clauseCount: 1,
+      executableMachineRuleCount: 0,
+      needsReviewCount: 1,
+    },
+    draftRows: { id: 'row:agent:1', sourceId: sourceRequirement.sourceId, status: 'effective' },
+    requirementItems: { id: 'req:agent:1', sourceId: sourceRequirement.sourceId },
+    semanticActions: { id: 'action:agent:1', sourceId: sourceRequirement.sourceId },
+    warnings: 'singleton warning',
+    excludedApplyItemKeys: 'rule:row:agent:1',
+  };
+
+  controller.syncConstraintAgentReview({ review, excludedApplyItemKeys: review.excludedApplyItemKeys });
+
+  assert.equal(controller.state.ruleReview.uiStep, 'issues');
+  assert.equal(controller.state.ruleReview.schemaVersion, 2);
+  assert.deepEqual(controller.state.ruleReview.sourceRequirements, [sourceRequirement]);
+  assert.deepEqual(controller.state.ruleReview.systemSupplements, [review.systemSupplements]);
+  assert.deepEqual(controller.state.ruleReview.manualRequirements, [review.manualRequirements]);
+  assert.deepEqual(controller.state.ruleReview.constraintIRs, [review.constraintIRs]);
+  assert.deepEqual(controller.state.ruleReview.warningItems, [review.warningItems]);
+  assert.deepEqual(controller.state.ruleReview.draftRows, [review.draftRows]);
+  assert.deepEqual(controller.state.ruleReview.requirementItems, [review.requirementItems]);
+  assert.deepEqual(controller.state.ruleReview.semanticActions, [review.semanticActions]);
+  assert.deepEqual(controller.state.ruleReview.warnings, [review.warnings]);
+  assert.deepEqual(controller.state.ruleReview.excludedApplyItemKeys, [review.excludedApplyItemKeys]);
+  assert.deepEqual(controller.state.ruleReview.statistics, review.statistics);
+});
+
+test('constraint intake agent preserves legacy fallback when review omits sourceRequirements', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.ruleReview = {
+    ...(controller.state.ruleReview || {}),
+    open: true,
+    sourceRequirements: [{ sourceId: 'src:stale', rawText: 'stale source' }],
+  };
+  const legacyRequirement = {
+    id: 'legacy-agent-req',
+    origin: 'user_input',
+    object: { kind: 'subject', name: '数学' },
+    intent: 'preferred_periods',
+    status: 'actionable',
+    applyTo: 'rule',
+    source: { rawText: '数学尽量上午', origin: 'user_input' },
+  };
+
+  controller.syncConstraintAgentReview({
+    review: {
+      draftRows: [],
+      requirementItems: [legacyRequirement],
+      semanticActions: [],
+    },
+  });
+
+  assert.equal(controller.state.ruleReview.sourceRequirements, undefined);
+  assert.deepEqual(controller.state.ruleReview.requirementItems, [legacyRequirement]);
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: controller.state.ruleReview,
+    constraintDialog: {
+      open: true,
+      requirementFilter: 'all',
+      selectedRequirementId: 'legacy-agent-req',
+    },
+  }));
+  assert.match(html, /data-requirement-id="legacy-agent-req"/);
+  assert.doesNotMatch(html, /stale source/);
+});
+
+test('constraint dialog opening preserves legacy fallback when sourceRequirements is absent', () => {
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  const legacyRequirement = {
+    id: 'legacy-open-req',
+    origin: 'user_input',
+    object: { kind: 'subject', name: '数学' },
+    intent: 'preferred_periods',
+    status: 'actionable',
+    applyTo: 'rule',
+    source: { rawText: '数学尽量上午', origin: 'user_input' },
+  };
+  controller.state.ruleReview = {
+    open: false,
+    inputMode: 'text',
+    draftRows: [],
+    requirementItems: [legacyRequirement],
+    semanticActions: [],
+  };
+  controller.state.constraintDialog = { open: false };
+
+  controller.openConstraintDialog('text');
+
+  assert.equal(controller.state.ruleReview.sourceRequirements, undefined);
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: controller.state.ruleReview,
+    constraintDialog: {
+      ...controller.state.constraintDialog,
+      open: true,
+      requirementFilter: 'all',
+      selectedRequirementId: 'legacy-open-req',
+    },
+  }));
+  assert.match(html, /data-requirement-id="legacy-open-req"/);
 });
 
 test('constraint intake controller calls dedicated agent API endpoints', async () => {
@@ -2175,7 +2883,7 @@ test('timetable constraint dialog confirms before deleting one machine rule', ()
         requirementId: 'req_rule',
         kind: 'rules_patch',
         status: 'ready',
-        target: { rowIds: ['rule-row'] },
+        target: { rowIds: 'rule-row' },
       }],
       excludedApplyItemKeys: ['rule:rule-row'],
     };
@@ -2252,6 +2960,7 @@ test('timetable constraint dialog reserves semantic review height before legacy 
       mode: 'file',
       draftRows: [{
         id: 'legacy-draft-1',
+        origin: 'user_input',
         rawText: '同一位教师同一时间只能给一个班上课。',
         type: 'teacher_unavailable',
         targetName: '全部教师',
@@ -2263,6 +2972,7 @@ test('timetable constraint dialog reserves semantic review height before legacy 
       unsupportedItems: [],
       requirementItems: [{
         id: 'req_review',
+        origin: 'user_input',
         rowId: 'legacy-draft-1',
         object: { kind: 'subject', name: '未知课程', matchedIds: [], scope: 'ambiguous' },
         intent: 'preferred_periods',
@@ -2300,6 +3010,7 @@ test('timetable constraint dialog folds draft-only constraints into understood r
       mode: 'text',
       draftRows: [{
         id: 'draft-only-1',
+        origin: 'user_input',
         rawText: '数学尽量上午',
         type: 'subject_morning',
         targetType: 'subject',
@@ -2309,6 +3020,7 @@ test('timetable constraint dialog folds draft-only constraints into understood r
         warnings: [],
       }, {
         id: 'draft-only-2',
+        origin: 'user_input',
         rawText: '王老师周一前两节不排',
         type: 'teacher_unavailable',
         targetType: 'teacher',
@@ -2367,11 +3079,80 @@ test('timetable constraint dialog can select synthesized draft requirement rows'
   assert.equal(controller.state.constraintDialog.selectedRequirementId, 'draft_req_draft-select-1');
 });
 
+test('timetable constraint dialog preserves legacy fallback when parse response omits sourceRequirements', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalDocument = globalThis.document;
+
+  globalThis.document = {
+    getElementById() {
+      return null;
+    },
+  };
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'application/json' },
+    async text() {
+      return JSON.stringify({
+        success: true,
+        data: {
+          draftRows: [{
+            id: 'legacy-row',
+            requirementId: 'legacy-req',
+            type: 'subject_morning',
+            targetName: '数学',
+            status: 'effective',
+          }],
+          requirementItems: [{
+            id: 'legacy-req',
+            intent: 'preferred_periods',
+            status: 'actionable',
+            applyTo: 'rule',
+            source: { rawText: '数学尽量安排在上午。' },
+          }],
+          semanticActions: [],
+        },
+      });
+    },
+  });
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.detectConstraintConflicts = async () => {};
+    controller.state.project = createDefaultTimetableProject();
+    controller.state.constraintDialog = { open: true, requirementFilter: 'all', selectedRequirementId: '' };
+    controller.state.ruleReview = {
+      inputMode: 'file',
+      mode: 'file',
+      sourceRequirements: [],
+      draftRows: [],
+      requirementItems: [],
+      semanticActions: [],
+    };
+    controller.constraintDialogFile = new Blob(['legacy workbook']);
+
+    await controller.parseConstraintsFromDialog();
+
+    assert.equal(controller.state.constraintDialog.selectedRequirementId, 'legacy-req');
+    assert.equal(controller.state.ruleReview.sourceRequirements, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.document = originalDocument;
+  }
+});
 test('timetable constraint dialog replaces previous xlsx parse results instead of appending', async () => {
   const originalFetch = globalThis.fetch;
   const originalDocument = globalThis.document;
   const responses = [
     {
+      schemaVersion: 'timetable_constraints/v2',
+      sourceRequirements: [{ sourceId: 'src:old', rawText: '语文上午', clauses: [] }],
+      systemSupplements: [{ supplementId: 'sys:old' }],
+      manualRequirements: [{ sourceId: 'manual:old' }],
+      constraintIRs: [{ constraintId: 'clause:old', sourceId: 'src:old' }],
+      statistics: { userInputCount: 1, clauseCount: 1 },
+      warningItems: [{ id: 'warning-item:old' }],
       draftRows: [{ id: 'old-row', type: 'subject_morning', targetName: '语文', status: 'effective', parseSource: 'local_xlsx' }],
       requirementItems: [{ id: 'old-req', rowId: 'old-row', object: { kind: 'subject', name: '语文' }, intent: 'preferred_day_part', applyTo: 'rule', status: 'actionable', source: { rawText: '语文上午' } }],
       semanticActions: [{ id: 'old-action', requirementId: 'old-req', kind: 'rules_patch', target: { rowIds: ['old-row'] }, status: 'ready' }],
@@ -2379,6 +3160,13 @@ test('timetable constraint dialog replaces previous xlsx parse results instead o
       warnings: ['old-warning'],
     },
     {
+      schemaVersion: 'timetable_constraints/v2.1',
+      sourceRequirements: [{ sourceId: 'src:new', rawText: '数学上午', clauses: [] }],
+      systemSupplements: [{ supplementId: 'sys:new' }],
+      manualRequirements: [{ sourceId: 'manual:new' }],
+      constraintIRs: [{ constraintId: 'clause:new', sourceId: 'src:new' }],
+      statistics: { userInputCount: 1, clauseCount: 1, executableMachineRuleCount: 1 },
+      warningItems: [{ id: 'warning-item:new' }],
       draftRows: [{ id: 'new-row', type: 'subject_morning', targetName: '数学', status: 'effective', parseSource: 'local_xlsx' }],
       requirementItems: [{ id: 'new-req', rowId: 'new-row', object: { kind: 'subject', name: '数学' }, intent: 'preferred_day_part', applyTo: 'rule', status: 'actionable', source: { rawText: '数学上午' } }],
       semanticActions: [{ id: 'new-action', requirementId: 'new-req', kind: 'rules_patch', target: { rowIds: ['new-row'] }, status: 'ready' }],
@@ -2433,6 +3221,13 @@ test('timetable constraint dialog replaces previous xlsx parse results instead o
     assert.deepEqual(controller.state.ruleReview.semanticActions.map(action => action.id), ['new-action']);
     assert.deepEqual(controller.state.ruleReview.unsupportedItems.map(item => item.id), ['new-unsupported']);
     assert.deepEqual(controller.state.ruleReview.warnings, ['new-warning']);
+    assert.equal(controller.state.ruleReview.schemaVersion, 'timetable_constraints/v2.1');
+    assert.deepEqual(controller.state.ruleReview.sourceRequirements.map(item => item.sourceId), ['src:new']);
+    assert.deepEqual(controller.state.ruleReview.systemSupplements.map(item => item.supplementId), ['sys:new']);
+    assert.deepEqual(controller.state.ruleReview.manualRequirements.map(item => item.sourceId), ['manual:new']);
+    assert.deepEqual(controller.state.ruleReview.constraintIRs.map(item => item.constraintId), ['clause:new']);
+    assert.equal(controller.state.ruleReview.statistics.executableMachineRuleCount, 1);
+    assert.deepEqual(controller.state.ruleReview.warningItems.map(item => item.id), ['warning-item:new']);
     assert.deepEqual(controller.state.ruleReview.excludedApplyItemKeys, []);
   } finally {
     globalThis.fetch = originalFetch;
@@ -9979,6 +10774,7 @@ test('timetable 智能 rules support Excel file upload and rich preview metadata
 test('timetable constraint dialog keeps parsed drafts in the current review flow', async () => {
   const pendingRules = [{
     id: 'draft-1',
+    origin: 'user_input',
     rawText: 'All teachers should be balanced',
     type: 'teacher_load_balance',
     targetType: 'global',
@@ -9991,6 +10787,7 @@ test('timetable constraint dialog keeps parsed drafts in the current review flow
     warnings: [],
   }, {
     id: 'draft-2',
+    origin: 'user_input',
     rawText: 'Math should prefer Monday period 2',
     type: 'subject_preferred_periods',
     targetType: 'subject',
@@ -10555,6 +11352,7 @@ test('timetable constraint dialog explains card warnings and source text separat
       inputType: 'xlsx_constraints',
       draftRows: [{
         id: 'draft-source-1',
+        origin: 'user_input',
         source: '智能约束建议',
         sourceRow: 1,
         rawText: '同一位教师同一时间只能给一个班上课。',
@@ -10570,6 +11368,7 @@ test('timetable constraint dialog explains card warnings and source text separat
         warnings: [],
       }, {
         id: 'draft-source-2',
+        origin: 'user_input',
         source: '智能约束建议',
         sourceRow: 4,
         rawText: '混合课程连堂块不可拆。',
@@ -11007,6 +11806,7 @@ test('timetable rule review renders a beginner task workbench instead of raw que
       activeTaskId: 'confirm_teacher_names',
       autoAcceptable: [{
         id: 'auto-1',
+        origin: 'user_input',
         rawText: '数学尽量上午',
         type: 'subject_morning',
         targetName: '数学',
@@ -11018,6 +11818,7 @@ test('timetable rule review renders a beginner task workbench instead of raw que
       }],
       needReview: [{
         id: 'review-1',
+        origin: 'user_input',
         rawText: '王老师周三下午不要排',
         type: 'teacher_unavailable',
         targetName: '王老师',
@@ -11054,6 +11855,7 @@ test('timetable rule review renders a beginner task workbench instead of raw que
       confidenceSummary: { high: 1, medium: 1, low: 0 },
       draftRows: [{
         id: 'auto-1',
+        origin: 'user_input',
         rawText: '数学尽量上午',
         type: 'subject_morning',
         targetType: 'subject',
@@ -11065,6 +11867,7 @@ test('timetable rule review renders a beginner task workbench instead of raw que
         warnings: [],
       }, {
         id: 'review-1',
+        origin: 'user_input',
         rawText: '王老师周三下午不要排',
         type: 'teacher_unavailable',
         targetType: 'teacher',
@@ -11194,6 +11997,7 @@ test('timetable constraint dialog renders recognized rule cards instead of the r
       inputType: 'text',
       draftRows: [{
         id: 'rule_kept',
+        origin: 'user_input',
         rawText: '数学尽量上午',
         type: 'subject_morning',
         targetType: 'subject',
@@ -11206,6 +12010,7 @@ test('timetable constraint dialog renders recognized rule cards instead of the r
       }],
       autoAcceptable: [{
         id: 'rule_kept',
+        origin: 'user_input',
         rawText: '数学尽量上午',
         type: 'subject_morning',
         targetId: 'math',

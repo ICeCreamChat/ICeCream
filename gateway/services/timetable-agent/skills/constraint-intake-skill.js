@@ -82,6 +82,17 @@ function questionCount(review = {}) {
 }
 
 function understoodCount(review = {}) {
+    const statisticalCount = Number(review.statistics?.userInputCount);
+    if (Number.isFinite(statisticalCount) && statisticalCount >= 0) {
+        return statisticalCount;
+    }
+
+    if (Array.isArray(review.sourceRequirements)) {
+        return review.sourceRequirements.filter(source => (
+            source?.origin || source?.source?.origin || 'unknown'
+        ) === 'user_input').length;
+    }
+
     const requirementCount = (review.requirementItems || []).length;
     return requirementCount || (review.draftRows || []).length || 0;
 }
@@ -401,8 +412,12 @@ export function answerConstraintIntakeClarification({
         throw new ConstraintIntakeTransitionError('当前会话不在澄清阶段。', 'constraint_intake_not_clarifying', 409);
     }
     const project = normalizeTimetableProject(inputProject || state.projectSnapshot || {});
-    const hasRequirementItems = Array.isArray(state.review?.requirementItems)
-        && state.review.requirementItems.length > 0;
+    const hasRequirementItems = (Array.isArray(state.review?.requirementItems)
+        && state.review.requirementItems.length > 0)
+        || (Array.isArray(state.review?.sourceRequirements)
+            && state.review.sourceRequirements.some(source => (source?.clauses || []).some(clause => (
+                clause?.id || clause?.requirementId || clause?.clauseId
+            ))));
     const rawReview = hasRequirementItems
         ? continueTimetableRequirementClarification({
             project,

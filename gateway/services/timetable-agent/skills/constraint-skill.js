@@ -9,11 +9,26 @@ import {
     makeTimetableAgentArtifactId,
 } from '../timetable-agent-state.js';
 
-function ruleReviewArtifact(parsed = {}) {
+export function buildRuleReviewArtifact(parsed = {}, { originalText = '', inputType = '' } = {}) {
     return {
         id: makeTimetableAgentArtifactId('rule_review'),
         type: 'rule_review',
         title: '智能约束复核',
+        schemaVersion: parsed.schemaVersion,
+        parserVersion: parsed.parserVersion || '',
+        parseSource: parsed.parseSource || parsed.source || '',
+        originalText: parsed.originalText || originalText || '',
+        inputType: parsed.inputType || inputType || 'text',
+        ...(Object.prototype.hasOwnProperty.call(parsed, 'sourceRequirements')
+            ? { sourceRequirements: Array.isArray(parsed.sourceRequirements) ? parsed.sourceRequirements : [] }
+            : {}),
+        systemSupplements: parsed.systemSupplements || [],
+        manualRequirements: parsed.manualRequirements || [],
+        constraintIRs: parsed.constraintIRs || [],
+        warningItems: parsed.warningItems || [],
+        statistics: parsed.statistics || null,
+        requirementItems: parsed.requirementItems || [],
+        semanticActions: parsed.semanticActions || [],
         draftRows: parsed.draftRows || [],
         autoAcceptable: parsed.autoAcceptable || [],
         needReview: parsed.needReview || [],
@@ -88,7 +103,10 @@ export async function runConstraintSkill({
             parsed.source = parsed.source || 'local_text';
         }
     }
-    const artifact = ruleReviewArtifact(parsed);
+    const artifact = buildRuleReviewArtifact(parsed, {
+        originalText: text || previousResult?.originalText || '',
+        inputType: parsed.inputType || previousResult?.inputType || '',
+    });
     return {
         parsed,
         artifacts: [artifact],

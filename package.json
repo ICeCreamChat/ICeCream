@@ -15,9 +15,10 @@
         "build:studio": "esbuild src/manim-studio/main.jsx --bundle --format=iife --global-name=ManimStudioCanvas --outfile=public/js/studio/manim-studio-canvas.js --jsx=automatic --loader:.jsx=jsx",
         "test:timetable:ui-smoke": "node test/timetable-ui-smoke.mjs",
         "test:timetable:workflow-smoke": "node test/timetable-ui-workflow-smoke.mjs",
-        "test:timetable:rule-review-smoke": "node test/timetable-ui-rule-review-smoke.mjs",
-        "test:timetable:ai-golden": "node scripts/run-timetable-ai-golden.js",
-        "test": "node --test test/*.js"
+    "test:timetable:rule-review-smoke": "node test/timetable-ui-rule-review-smoke.mjs",
+    "test:timetable:ai-golden": "node scripts/run-timetable-ai-golden.js",
+    "audit:timetable:natural-language-137": "node scripts/audit-timetable-natural-language-137.js",
+    "test": "node --test test/*.js"
     },
     "keywords": [
         "ai",

@@ -33,6 +33,12 @@ test('constraint dialog state replaces the removed smart workbench by default', 
         requirementFilter: 'all',
         selectedRequirementId: '',
     });
+    assert.deepEqual(state.ruleReview.sourceRequirements, []);
+    assert.deepEqual(state.ruleReview.systemSupplements, []);
+    assert.deepEqual(state.ruleReview.manualRequirements, []);
+    assert.deepEqual(state.ruleReview.constraintIRs, []);
+    assert.deepEqual(state.ruleReview.warningItems, []);
+    assert.equal(state.ruleReview.statistics, null);
 });
 
 test('constraint dialog renders the current intelligent constraints entry without old workbench markers', () => {
@@ -64,6 +70,7 @@ test('constraint dialog renders recognized constraints and apply action', () => 
             draftRows: [{
                 id: 'rule_1',
                 rawText: '数学尽量上午',
+                origin: 'user_input',
                 type: 'subject_morning',
                 targetName: '数学',
                 priority: 'soft',

@@ -16,8 +16,14 @@ function key(value = '') {
         .replace(/[-\s]+/g, '_');
 }
 
+function list(value) {
+    if (Array.isArray(value)) return value;
+    if (value === undefined || value === null || value === '') return [];
+    return [value];
+}
+
 function unique(values = []) {
-    return [...new Set((Array.isArray(values) ? values : [values]).map(item => text(item, 120)).filter(Boolean))];
+    return [...new Set(list(values).map(item => text(item, 120)).filter(Boolean))];
 }
 
 function sourceText(requirement = {}) {
@@ -26,18 +32,18 @@ function sourceText(requirement = {}) {
 
 function subjectIdsOf(requirement = {}) {
     return unique([
-        ...(requirement.parameters?.subjectIds || []),
+        ...list(requirement.parameters?.subjectIds),
         requirement.parameters?.subjectId,
-        ...(requirement.object?.kind === 'subject' ? requirement.object?.matchedIds || [] : []),
+        ...(requirement.object?.kind === 'subject' ? list(requirement.object?.matchedIds) : []),
         requirement.targetId,
     ]);
 }
 
 function classIdsOf(requirement = {}) {
     return unique([
-        ...(requirement.parameters?.classIds || []),
+        ...list(requirement.parameters?.classIds),
         requirement.parameters?.classId,
-        ...(requirement.object?.kind === 'class' ? requirement.object?.matchedIds || [] : []),
+        ...(requirement.object?.kind === 'class' ? list(requirement.object?.matchedIds) : []),
     ]);
 }
 
@@ -66,12 +72,12 @@ function lunchBoundarySlots(project = {}) {
 
 function teachersOfSubject(project = {}, subjectId = '') {
     const ids = [];
-    for (const plan of project.lessonPlans || []) {
+    for (const plan of list(project.lessonPlans)) {
         if (plan.subjectId !== subjectId) continue;
-        ids.push(...(plan.teacherIds || []), plan.teacherId);
+        ids.push(...list(plan.teacherIds), plan.teacherId);
     }
-    for (const teacher of project.teachers || []) {
-        if ((teacher.subjects || []).includes(subjectId)) ids.push(teacher.id);
+    for (const teacher of list(project.teachers)) {
+        if (list(teacher.subjects).includes(subjectId)) ids.push(teacher.id);
     }
     return unique(ids);
 }

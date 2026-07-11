@@ -30,6 +30,43 @@ test('legacy timetable projects stay legacy and do not get complex fields by def
     assert.deepEqual(project.rooms, []);
 });
 
+test('normalizeTimetableProject preserves singleton entity collections', () => {
+    const project = normalizeTimetableProject({
+        timetableModelVersion: 'complex_v1',
+        complexModelEnabled: true,
+        teachers: { id: 't1', name: '张老师', subjects: 's1', unavailableSlots: '1-2' },
+        classes: { id: 'c1', grade: '七年级', name: '1班' },
+        subjects: { id: 's1', name: '语文' },
+        campuses: { id: 'campus1', name: '北校区' },
+        rooms: { id: 'room1', name: '语文教室', campusId: 'campus1' },
+        teachingGroups: { id: 'group1', name: '语文组', classIds: 'c1' },
+        lessonPlans: {
+            id: 'plan1',
+            classId: 'c1',
+            subjectId: 's1',
+            teacherId: 't1',
+            weeklyHours: 4,
+            teachingGroupId: 'group1',
+        },
+        rules: {
+            hardRules: { globalUnavailable: '1-1' },
+            softRules: { morningSubjects: 's1' },
+        },
+    });
+
+    assert.deepEqual(project.teachers.map(item => item.id), ['t1']);
+    assert.deepEqual(project.teachers[0].subjects, ['s1']);
+    assert.deepEqual(project.teachers[0].unavailableSlots, ['1-2']);
+    assert.deepEqual(project.classes.map(item => item.id), ['c1']);
+    assert.deepEqual(project.subjects.map(item => item.id), ['s1']);
+    assert.deepEqual(project.campuses.map(item => item.id), ['campus1']);
+    assert.deepEqual(project.rooms.map(item => item.id), ['room1']);
+    assert.deepEqual(project.teachingGroups.map(item => item.id), ['group1']);
+    assert.deepEqual(project.lessonPlans.map(item => item.id), ['plan1']);
+    assert.deepEqual(project.rules.hardRules.globalUnavailable, ['1-1']);
+    assert.deepEqual(project.rules.softRules.morningSubjects, ['s1']);
+});
+
 test('normalizeTimetableProject adds empty rules v2 fields for legacy projects', () => {
     const project = normalizeTimetableProject({
         rules: {

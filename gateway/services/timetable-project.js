@@ -84,6 +84,12 @@ export function slotKey(day, period) {
     return `${Number(day)}-${Number(period)}`;
 }
 
+function collectionList(value) {
+    if (Array.isArray(value)) return value;
+    if (value === null || value === undefined || value === '') return [];
+    return [value];
+}
+
 function normalizeSlotKey(value) {
     if (typeof value === 'string') {
         const match = value.match(/^(\d{1,2})-(\d{1,2})$/);
@@ -98,7 +104,7 @@ function normalizeSlotKey(value) {
 function normalizeSlotList(values = []) {
     const result = [];
     const seen = new Set();
-    for (const value of Array.isArray(values) ? values : []) {
+    for (const value of collectionList(values)) {
         const key = normalizeSlotKey(value);
         if (key && !seen.has(key)) {
             seen.add(key);
@@ -271,7 +277,7 @@ function rangeList(max) {
 }
 
 function normalizeNumberList(values, fallback, min, max) {
-    const raw = Array.isArray(values) ? values : [];
+    const raw = collectionList(values);
     const normalized = raw
         .map(value => Number.parseInt(value, 10))
         .filter(value => Number.isInteger(value) && value >= min && value <= max);
@@ -343,7 +349,7 @@ function fallbackAfternoonStartPeriod(activePeriods = []) {
 }
 
 export function normalizeDayPartBoundaries(raw, activePeriods = []) {
-    const periods = [...new Set((Array.isArray(activePeriods) ? activePeriods : [])
+    const periods = [...new Set(collectionList(activePeriods)
         .map(value => Number.parseInt(value, 10))
         .filter(Number.isInteger))]
         .sort((left, right) => left - right);
@@ -676,7 +682,7 @@ function normalizeTeacher(raw = {}, index = 0, enabled = false) {
     return {
         id,
         name,
-        subjects: Array.isArray(raw.subjects) ? raw.subjects.map(value => cleanText(value, 60)).filter(Boolean) : [],
+        subjects: collectionList(raw.subjects).map(value => cleanText(value, 60)).filter(Boolean),
         unavailableSlots: normalizeSlotList(raw.unavailableSlots),
         campusId: enabled ? cleanText(raw.campusId || raw.campus, 80) : '',
     };
@@ -802,7 +808,7 @@ function normalizeIntMap(raw = {}, min = 1, max = 12) {
 }
 
 function normalizeIdGroupList(values = []) {
-    return (Array.isArray(values) ? values : [])
+    return collectionList(values)
         .map(item => {
             const teacherIds = normalizeIdList(item?.teacherIds || item?.teachers || item);
             return teacherIds.length >= 2 ? { teacherIds } : null;
@@ -811,7 +817,7 @@ function normalizeIdGroupList(values = []) {
 }
 
 function normalizeSubjectPairList(values = []) {
-    return (Array.isArray(values) ? values : [])
+    return collectionList(values)
         .map(item => {
             const subjectIds = normalizeIdList(item?.subjectIds || item?.subjects || item);
             const classIds = normalizeIdList(item?.classIds || item?.classes || []);
@@ -838,7 +844,7 @@ function normalizeRoomRequirements(raw = {}) {
 }
 
 function normalizeSequenceList(values = []) {
-    return (Array.isArray(values) ? values : [])
+    return collectionList(values)
         .map(item => {
             const beforeSubjectId = cleanText(item?.beforeSubjectId || item?.before || item?.subjectId, 80);
             const afterSubjectId = cleanText(item?.afterSubjectId || item?.after || item?.nextSubjectId, 80);
@@ -875,7 +881,7 @@ function normalizeTeacherLoadBalance(raw = null, legacyBalanced = true) {
 }
 
 function normalizeLockedSlots(values = [], enabled = false) {
-    return (Array.isArray(values) ? values : [])
+    return collectionList(values)
         .map((item, index) => ({
             id: cleanText(item.id, 80) || `locked_${index + 1}`,
             day: Number.parseInt(item.day, 10),
@@ -911,9 +917,9 @@ function normalizeRules(raw = {}, enabled = false) {
             roomRequirements: normalizeRoomRequirements(hardRules.roomRequirements),
         },
         softRules: {
-            morningSubjects: Array.isArray(softRules.morningSubjects)
-                ? softRules.morningSubjects.map(value => cleanText(value, 80)).filter(Boolean)
-                : [],
+            morningSubjects: collectionList(softRules.morningSubjects)
+                .map(value => cleanText(value, 80))
+                .filter(Boolean),
             balancedTeacherLoad: softRules.balancedTeacherLoad !== false,
             subjectPreferredPeriods: normalizeSubjectPreferredPeriods(softRules.subjectPreferredPeriods, enabled),
             teacherLimits: normalizeTeacherLimits(softRules.teacherLimits),
@@ -935,7 +941,7 @@ function normalizePublishedSnapshotTeacher(raw = {}, index = 0, enabled = false)
     return {
         id: cleanText(raw.id, 60) || makeTimetableId('t', name),
         name,
-        subjects: Array.isArray(raw.subjects) ? raw.subjects.map(value => cleanText(value, 60)).filter(Boolean) : [],
+        subjects: collectionList(raw.subjects).map(value => cleanText(value, 60)).filter(Boolean),
         unavailableSlots: normalizeSlotList(raw.unavailableSlots),
     };
 }
@@ -1072,7 +1078,7 @@ function normalizePublishedSnapshot(rawSnapshot, fallback = {}, enabled = false)
 }
 
 function normalizePublishedHistory(values = [], fallback = {}) {
-    return (Array.isArray(values) ? values : [])
+    return collectionList(values)
         .map(item => {
             if (!item || typeof item !== 'object') return null;
             const snapshot = normalizePublishedSnapshot(item.snapshot, {
@@ -1095,8 +1101,8 @@ function normalizePublishedHistory(values = [], fallback = {}) {
 
 function normalizePublicationState(raw = null) {
     if (!raw || typeof raw !== 'object') return null;
-    const blockingIssues = Array.isArray(raw.blockingIssues) ? raw.blockingIssues : [];
-    const warnings = Array.isArray(raw.warnings) ? raw.warnings : [];
+    const blockingIssues = collectionList(raw.blockingIssues);
+    const warnings = collectionList(raw.warnings);
     const legacyPublicationIssues = [...blockingIssues, ...warnings]
         .filter(item => item && typeof item === 'object')
         .map(item => ({
@@ -1210,11 +1216,11 @@ export function normalizeSchedule(raw, enabled = false) {
                 } : {}),
             };
         }).filter(slot => slot.id && slot.classId && slot.subjectId && slot.teacherId && Number.isInteger(slot.day) && Number.isInteger(slot.period)),
-        lockedSlots: Array.isArray(raw.lockedSlots) ? raw.lockedSlots : [],
-        conflicts: Array.isArray(raw.conflicts) ? raw.conflicts : [],
-        unplaced: Array.isArray(raw.unplaced) ? raw.unplaced : [],
+        lockedSlots: collectionList(raw.lockedSlots),
+        conflicts: collectionList(raw.conflicts),
+        unplaced: collectionList(raw.unplaced),
         audit: raw.audit || null,
-        qualityIssues: Array.isArray(raw.qualityIssues) ? raw.qualityIssues : [],
+        qualityIssues: collectionList(raw.qualityIssues),
         publication: normalizePublicationState(raw.publication),
         diagnostics: raw.diagnostics && typeof raw.diagnostics === 'object' ? raw.diagnostics : null,
         published,
@@ -1230,7 +1236,8 @@ export function normalizeTimetableProject(raw = {}) {
     const legacyPeriodsPerDay = intInRange(base.periodsPerDay, DEFAULT_PROJECT.periodsPerDay, 1, 12);
     const hasActiveWeekdays = Object.prototype.hasOwnProperty.call(raw, 'activeWeekdays');
     const hasActivePeriods = Object.prototype.hasOwnProperty.call(raw, 'activePeriods');
-    const dutyAssignmentTimeBlockIds = new Set((Array.isArray(base.dutyAssignments) ? base.dutyAssignments : [])
+    const dutyAssignments = collectionList(base.dutyAssignments);
+    const dutyAssignmentTimeBlockIds = new Set(dutyAssignments
         .map(item => cleanText(item?.timeBlockId || item?.segmentId, 80))
         .filter(Boolean));
     const periodTimeSegments = normalizePeriodTimeSegments(base.periodTimeSegments, { dutyAssignmentTimeBlockIds });
@@ -1239,15 +1246,15 @@ export function normalizeTimetableProject(raw = {}) {
     const activePeriods = periodTimeSegments
         ? segmentActivePeriods
         : normalizeNumberList(hasActivePeriods ? raw.activePeriods : [], rangeList(legacyPeriodsPerDay), 1, 12);
-    const teachers = (Array.isArray(base.teachers) ? base.teachers : [])
+    const teachers = collectionList(base.teachers)
         .map((teacher, index) => normalizeTeacher(teacher, index, enabled));
-    const classes = (Array.isArray(base.classes) ? base.classes : [])
+    const classes = collectionList(base.classes)
         .map((klass, index) => normalizeClass(klass, index, enabled));
-    const subjects = (Array.isArray(base.subjects) ? base.subjects : []).map(normalizeSubject);
-    const lessonPlans = (Array.isArray(base.lessonPlans) ? base.lessonPlans : [])
+    const subjects = collectionList(base.subjects).map(normalizeSubject);
+    const lessonPlans = collectionList(base.lessonPlans)
         .map((plan, index) => normalizeLessonPlan(plan, index, enabled))
         .filter(plan => plan.classId && plan.subjectId && plan.teacherId && plan.weeklyHours > 0);
-    const migratedDutyAssignments = migrateDutyAssignmentsForSplitTimeBlocks(base.dutyAssignments, base.periodTimeSegments, periodTimeSegments);
+    const migratedDutyAssignments = migrateDutyAssignmentsForSplitTimeBlocks(dutyAssignments, base.periodTimeSegments, periodTimeSegments);
     const normalized = {
         id: cleanText(base.id, 80) || 'default',
         timetableModelVersion: enabled ? 'complex_v1' : 'legacy',
@@ -1263,14 +1270,13 @@ export function normalizeTimetableProject(raw = {}) {
         teachers,
         classes,
         subjects,
-        campuses: enabled && Array.isArray(base.campuses)
-            ? base.campuses.map(normalizeCampus)
+        campuses: enabled
+            ? collectionList(base.campuses).map(normalizeCampus)
             : [],
-        rooms: Array.isArray(base.rooms)
-            ? base.rooms.map((room, index) => normalizeRoom(room, index, enabled))
-            : [],
-        teachingGroups: enabled && Array.isArray(base.teachingGroups)
-            ? base.teachingGroups.map(normalizeTeachingGroup)
+        rooms: collectionList(base.rooms)
+            .map((room, index) => normalizeRoom(room, index, enabled)),
+        teachingGroups: enabled
+            ? collectionList(base.teachingGroups).map(normalizeTeachingGroup)
             : [],
         commuteRules: normalizeCommuteRules(base.commuteRules, enabled),
         lessonPlans,

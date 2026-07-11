@@ -95,35 +95,37 @@ test('market release check exits non-zero when any required check is not pass', 
     const result = spawnSync(process.execPath, ['scripts/timetable-market-release-check.js', '--json'], {
         cwd: path.resolve('.'),
         encoding: 'utf8',
+        env: {
+            ...process.env,
+            TIMETABLE_RULE_AI_GOLDEN_REPORT: path.join(os.tmpdir(), `missing-ai-golden-${process.pid}-${Date.now()}.json`),
+        },
     });
     const payload = JSON.parse(result.stdout);
 
     assert.equal(payload.pass, false);
     assert.equal(result.status, 1);
+
+    const corpus = payload.checks.find(item => item.label === 'market-language golden corpus contract');
+    assert.equal(corpus?.status, 'pass');
+    assert.match(corpus.detail, /205 rows/);
+    assert.match(corpus.detail, /6\/6 categories/);
+    assert.match(corpus.detail, /148 expected clauses/);
+    assert.match(corpus.detail, /401 field checks/);
+
+    const aiGolden = payload.checks.find(item => item.label === 'full AI golden report');
+    assert.equal(aiGolden?.status, 'manual_required');
+    assert.match(aiGolden.detail, /report unavailable|fullCorpus|promptVersion|corpusRows|corpusHash/);
 });
 
 test('AI golden runner loads DeepSeek config from local dotenv without leaking secrets', async () => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), 'tt-ai-golden-dotenv-'));
-    await mkdir(path.join(cwd, 'test'), { recursive: true });
     await writeFile(path.join(cwd, '.env'), [
         'DEEPSEEK_API_KEY=dotenv-deepseek-secret',
         'DEEPSEEK_API_BASE=https://api.deepseek.example',
         'DEEPSEEK_MODEL=deepseek-test-model',
         '',
     ].join('\n'), 'utf8');
-    await writeFile(path.join(cwd, 'test/timetable-ai-extraction.test.js'), [
-        "import test from 'node:test';",
-        "import assert from 'node:assert/strict';",
-        "test('runner env', () => {",
-        "    assert.equal(process.env.TIMETABLE_RULE_AI_GOLDEN, '1');",
-        "    assert.equal(process.env.DEEPSEEK_API_KEY, 'dotenv-deepseek-secret');",
-        "    assert.equal(process.env.DEEPSEEK_API_BASE, 'https://api.deepseek.example');",
-        "    assert.equal(process.env.DEEPSEEK_MODEL, 'deepseek-test-model');",
-        '});',
-        '',
-    ].join('\n'), 'utf8');
-
-    const result = spawnSync(process.execPath, [path.resolve('scripts/run-timetable-ai-golden.js')], {
+    const result = spawnSync(process.execPath, [path.resolve('scripts/run-timetable-ai-golden.js'), '--check-config'], {
         cwd,
         encoding: 'utf8',
         env: {
@@ -134,6 +136,8 @@ test('AI golden runner loads DeepSeek config from local dotenv without leaking s
     });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /deepseek-test-model/);
+    assert.match(result.stdout, /"corpusRows":205/);
     assert.doesNotMatch(result.stdout, /dotenv-deepseek-secret/);
     assert.doesNotMatch(result.stderr, /dotenv-deepseek-secret/);
 });

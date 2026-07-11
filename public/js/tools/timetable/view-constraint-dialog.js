@@ -127,6 +127,13 @@ function shouldPreferMachineRuleSource(item = {}) {
 }
 
 function requirementSourceRecord(item = {}) {
+    if (item.sourceRequirement && item.source && typeof item.source === 'object') {
+        return {
+            ...item.source,
+            rawText: item.source.rawText || item.rawText || '',
+        };
+    }
+
     const rule = shouldPreferMachineRuleSource(item) ? primaryMachineRule(item) : null;
     if (rule) {
         return {
@@ -147,10 +154,10 @@ function requirementSourceRecord(item = {}) {
 }
 
 function requirementStatusTone(item = {}) {
-    const status = String(item.status || '').trim().toLowerCase().replace(/-/g, '_');
-    if (status === 'handled' || status === 'ignored') return 'handled';
-    if (status === 'needs_review' || status === 'review') return 'review';
-    if (status === 'candidate' || status === 'pending') return 'warning';
+    const status = normalizeStatusKey(item.status || item.reviewStatus || '');
+    if (status === 'handled' || status === 'ignored' || status === 'applied') return 'handled';
+    if (['needs_clarification', 'needs_review', 'review', 'invalid'].includes(status)) return 'review';
+    if (['candidate', 'pending', 'partially_parsed', 'partially_supported', 'partially_actionable', 'partially_executable', 'understood_not_executable', 'unsupported_by_solver', 'unsupported'].includes(status)) return 'warning';
     if ((item.warnings || []).length) return 'warning';
     return 'actionable';
 }
@@ -185,22 +192,41 @@ function parseSourceLabel(value = '') {
     }[key] || '';
 }
 
+function requirementParsedByLabel(item = {}) {
+    const parsedBy = Array.isArray(item.parsedBy)
+        ? item.parsedBy
+        : item.parsedBy
+            ? [item.parsedBy]
+            : [];
+    const labels = [...new Set(parsedBy.map(value => {
+        const key = normalizeStatusKey(value);
+        if (key.startsWith('local')) return '本地';
+        if (key.startsWith('ai')) return 'AI';
+        if (key === 'manual') return '手动';
+        if (key === 'cache') return '缓存';
+        return value ? String(value) : '';
+    }).filter(Boolean))];
+    return labels.length ? `${labels.join(' + ')} 解析` : '';
+}
+
 function requirementSourceLabel(item = {}) {
     const source = requirementSourceRecord(item);
     const sheet = source.sourceSheet || source.sheet || '';
     const row = source.sourceRow || source.row || '';
-    const parseLabel = parseSourceLabel(source.parseSource || '');
+    const parseLabel = parseSourceLabel(source.parseSource || '') || requirementParsedByLabel(item);
     const locationLabel = sheet && row
         ? `${sheet} 第 ${row} 行`
         : row
             ? `第 ${row} 行`
             : sheet || '';
-    const origin = item.origin || (row ? 'user_input' : '');
+    const origin = item.origin || source.origin || 'unknown';
     const originFallback = origin === 'system_supplement'
         ? '系统补充'
         : origin === 'manual'
             ? '手动添加'
-            : requirementRawText(item) ? '输入文本' : '我的输入';
+            : origin === 'user_input'
+                ? (requirementRawText(item) ? '输入文本' : '我的输入')
+                : '来源未知';
     const baseLabel = locationLabel || originFallback;
     return [baseLabel, parseLabel].filter(Boolean).join(' · ');
 }
@@ -208,7 +234,8 @@ function requirementSourceLabel(item = {}) {
 function requirementOriginLabel(item = {}) {
     if (item.origin === 'system_supplement') return '系统';
     if (item.origin === 'manual') return '手动';
-    return '我的输入';
+    if (item.origin === 'user_input') return '我的输入';
+    return '来源未知';
 }
 
 function requirementConfidenceLabel(item = {}) {
@@ -439,20 +466,57 @@ function requirementCounts(requirements = []) {
     return counts;
 }
 
+const REVIEW_STATISTIC_KEYS = [
+    'userInputCount',
+    'systemSupplementCount',
+    'clauseCount',
+    'executableMachineRuleCount',
+    'needsReviewCount',
+];
+
+function finiteReviewStatistic(statistics = {}, key = '', fallback = 0) {
+    const value = Number(statistics?.[key]);
+    return Number.isFinite(value) && value >= 0 ? Math.trunc(value) : fallback;
+}
+
+function reviewHasExplicitStatistics(review = {}) {
+    const statistics = review.statistics;
+    return Boolean(statistics && typeof statistics === 'object'
+        && REVIEW_STATISTIC_KEYS.some(key => Number.isFinite(Number(statistics[key]))));
+}
+
 function requirementReviewSummary(requirements = [], activeFilter = 'all', review = {}) {
+    const counts = requirementCounts(requirements);
+    const userItems = requirements.filter(item => item.origin === 'user_input');
+    const nonSystemItems = requirements.filter(item => item.origin !== 'system_supplement');
+    const systemItems = requirements.filter(item => item.origin === 'system_supplement');
+    const derivedClauseCount = nonSystemItems.reduce((total, item) => {
+        const clauses = Array.isArray(item.clauses) ? item.clauses.length : 0;
+        return total + (clauses || 1);
+    }, 0);
+    const explicitStatistics = reviewHasExplicitStatistics(review);
+    const statistics = review.statistics || {};
+    const applicable = getActionableRequirementCount(review, activeFilter);
     return {
-        applicable: getActionableRequirementCount(review, activeFilter),
-        reviewCount: requirementCounts(requirements).get('review') || 0,
-        handledCount: requirementCounts(requirements).get('handled') || 0,
+        applicable,
+        usesStatistics: explicitStatistics,
+        userInputCount: finiteReviewStatistic(statistics, 'userInputCount', userItems.length),
+        systemSupplementCount: finiteReviewStatistic(statistics, 'systemSupplementCount', systemItems.length),
+        clauseCount: finiteReviewStatistic(statistics, 'clauseCount', derivedClauseCount),
+        executableRuleCount: finiteReviewStatistic(statistics, 'executableMachineRuleCount', applicable),
+        reviewCount: finiteReviewStatistic(statistics, 'needsReviewCount', counts.get('review') || 0),
+        handledCount: counts.get('handled') || 0,
         complexCount: requirements.filter(requirementHasComplexSignal).length,
     };
 }
 
 function renderRequirementReviewSummary(requirements = [], activeFilter = 'all', review = {}) {
     const summary = requirementReviewSummary(requirements, activeFilter, review);
+    const executableLabel = summary.usesStatistics ? '可执行规则' : '可应用';
+    const executableUnit = summary.usesStatistics ? '条' : '项';
     return `
         <div class="tt-requirement-review-summary" aria-label="需求复核概览">
-            <span><b>可应用</b>${escapeHtml(summary.applicable)} 项</span>
+            <span><b>${executableLabel}</b>${escapeHtml(summary.usesStatistics ? summary.executableRuleCount : summary.applicable)} ${executableUnit}</span>
             <span class="${summary.reviewCount ? 'is-warning' : ''}"><b>需复核</b>${escapeHtml(summary.reviewCount)} 项</span>
             <span><b>已处理</b>${escapeHtml(summary.handledCount)} 项</span>
             <span class="${summary.complexCount ? 'is-complex' : ''}"><b>复杂模型</b>${escapeHtml(summary.complexCount)} 项</span>
@@ -461,6 +525,12 @@ function renderRequirementReviewSummary(requirements = [], activeFilter = 'all',
     `;
 }
 
+function renderRequirementStatisticsLine(summary = {}) {
+    if (!summary.usesStatistics) {
+        return `来自你的输入 ${summary.userInputCount} 条 · 系统补充 ${summary.systemSupplementCount} 条 · 本次可写入排课 ${summary.applicable} 条`;
+    }
+    return `用户输入 ${summary.userInputCount} 条 · 系统补充 ${summary.systemSupplementCount} 条 · 子约束 ${summary.clauseCount} 条 · 可执行规则 ${summary.executableRuleCount} 条 · 需复核 ${summary.reviewCount} 条`;
+}
 function filteredRequirements(requirements = [], filter = 'all') {
     return filterUnifiedRequirementItems(requirements, filter);
 }
@@ -598,6 +668,71 @@ function renderSemanticActionSummary(action = {}, state = {}) {
     `;
 }
 
+function clauseUnderstandingStatusKey(clause = {}) {
+    const explicit = normalizeStatusKey(clause.understandingStatus || '');
+    if (explicit) return explicit;
+    const reviewStatus = normalizeStatusKey(clause.reviewStatus || clause.status || '');
+    if (reviewStatus === 'needs_clarification') return 'needs_clarification';
+    if (reviewStatus === 'invalid') return 'partially_parsed';
+    return 'parsed';
+}
+
+function clauseExecutionStatusKey(clause = {}) {
+    const explicit = normalizeStatusKey(clause.executionStatus || '');
+    if (explicit) return explicit;
+    if ((clause.machineRuleIds || []).length) return 'executable';
+    const reviewStatus = normalizeStatusKey(clause.reviewStatus || clause.status || '');
+    if (['unsupported', 'unsupported_by_solver'].includes(reviewStatus)) return 'unsupported_by_solver';
+    if (reviewStatus === 'needs_clarification') return 'needs_clarification';
+    if (reviewStatus === 'needs_review' || reviewStatus === 'review') return 'needs_review';
+    if (reviewStatus === 'handled') return 'handled';
+    return reviewStatus || 'understood_not_executable';
+}
+
+function renderRequirementClause(clause = {}, index = 0) {
+    const understandingStatus = clauseUnderstandingStatusKey(clause);
+    const executionStatus = clauseExecutionStatusKey(clause);
+    const parameterLabel = requirementParameterLabel(clause);
+    const warnings = Array.isArray(clause.warnings) ? clause.warnings.filter(Boolean) : [];
+    const executionExplanation = requirementApplyExplanation(clause.applyTo, executionStatus);
+    const showExecutionExplanation = ['partially_supported', 'partially_actionable', 'partially_executable', 'understood_not_executable', 'unsupported_by_solver', 'unsupported']
+        .includes(executionStatus);
+    return `
+        <li class="tt-requirement-clause-item" data-clause-id="${escapeAttr(clause.clauseId || clause.constraintId || clause.id || '')}">
+            <div class="tt-requirement-clause-header">
+                <strong>${escapeHtml(index + 1)}. ${escapeHtml(requirementIntentLabel(clause.intent || clause.capabilityId))}</strong>
+                <span>${escapeHtml(requirementObjectName(clause))}</span>
+            </div>
+            <div class="tt-requirement-clause-statuses">
+                <span class="tt-requirement-clause-status tt-requirement-clause-status--${escapeAttr(requirementStatusTone({ ...clause, status: understandingStatus }))}">
+                    <b>理解</b>${escapeHtml(requirementStatusLabel({ status: understandingStatus }))}
+                </span>
+                <span class="tt-requirement-clause-status tt-requirement-clause-status--${escapeAttr(requirementStatusTone({ ...clause, status: executionStatus }))}">
+                    <b>执行</b>${escapeHtml(requirementStatusLabel({ status: executionStatus }))}
+                </span>
+            </div>
+            ${parameterLabel ? `<p class="tt-requirement-clause-parameter"><b>参数</b>${escapeHtml(parameterLabel)}</p>` : ''}
+            ${showExecutionExplanation ? `<p class="tt-requirement-clause-explanation">${escapeHtml(executionExplanation)}</p>` : ''}
+            ${warnings.length ? `<p class="tt-requirement-clause-warning"><b>提示</b>${escapeHtml(warnings[0])}</p>` : ''}
+        </li>
+    `;
+}
+
+function renderRequirementClauses(item = {}) {
+    const clauses = Array.isArray(item.clauses) ? item.clauses.filter(Boolean) : [];
+    if (!clauses.length) return '';
+    return `
+        <details class="tt-requirement-clauses" open>
+            <summary>
+                <span>理解为 ${escapeHtml(clauses.length)} 个子约束</span>
+                <em>展开/收起查看语义拆分</em>
+            </summary>
+            <ol class="tt-requirement-clause-list">
+                ${clauses.map((clause, index) => renderRequirementClause(clause, index)).join('')}
+            </ol>
+        </details>
+    `;
+}
 function renderRequirementMachineRules(item = {}, state = {}) {
     const rules = item.machineRules || [];
     const actions = (item.semanticActions || []).filter(action => !isRulePatchBridgeAction(action));
@@ -774,6 +909,7 @@ function renderRequirementDetail(item = null, state = {}) {
     return `
         <aside class="tt-requirement-detail" data-requirement-detail-id="${escapeAttr(item.id || '')}">
             ${renderRequirementDetailSummary(item)}
+            ${renderRequirementClauses(item)}
             ${renderRequirementMachineRules(item, state)}
             ${renderRequirementEvidenceSection(item, review)}
             ${renderRequirementClarification(item)}
@@ -803,8 +939,6 @@ function renderRequirementGroups(requirements = [], dialog = {}, state = {}) {
     const currentSelection = selectedRequirement(visibleRequirements, dialog.selectedRequirementId || '');
     const review = state.ruleReview || {};
     const summary = requirementReviewSummary(requirements, activeFilter, review);
-    const userItems = requirements.filter(item => (item.origin || 'user_input') !== 'system_supplement');
-    const systemItems = requirements.filter(item => item.origin === 'system_supplement');
     const systemToggle = systemVisibleRequirements.length ? `
         <div class="tt-system-requirement-group ${systemCollapsed ? 'is-collapsed' : 'is-expanded'}">
             <button class="tt-system-requirement-toggle" data-action="toggle-system-group" type="button">
@@ -819,7 +953,7 @@ function renderRequirementGroups(requirements = [], dialog = {}, state = {}) {
             <div class="tt-requirement-workbench-header">
                 <div class="tt-requirement-workbench-title">
                     <strong>解析结果</strong>
-                    <span>来自你的输入 ${userItems.length} 条 · 系统补充 ${systemItems.length} 条 · 本次可写入排课 ${summary.applicable} 条</span>
+                    <span>${renderRequirementStatisticsLine(summary)}</span>
                 </div>
                 <button class="tt-btn-link" data-action="clear-all-constraints" type="button">清空全部</button>
             </div>
