@@ -18,6 +18,131 @@ function uniqueStrings(values = []) {
     return [...new Set(asArray(values).map(value => normalizeSourceText(value)).filter(Boolean))];
 }
 
+const OBSOLETE_EXECUTABLE_WARNING_PATTERNS = [
+    /当前求解器只支持全部教师级空堂权重/,
+    /需求语义和适用范围已保留，但当前求解器不能安全执行/,
+    /当前版本只能预览这类建议，暂不会写入排课规则/,
+];
+
+function aiReviewRequiresHumanReview(artifact = {}) {
+    return artifact.aiReviewBlocking === true
+        && normalizeSourceText(artifact.aiReviewValidationStatus || '').toLowerCase() === 'blocking';
+}
+
+function executableArtifact(artifact = {}) {
+    return artifact.executionStatus === 'executable'
+        && artifact.understandingStatus !== 'ambiguous'
+        && !aiReviewRequiresHumanReview(artifact);
+}
+
+function reconcileExecutableClause(clause = {}) {
+    if (!executableArtifact(clause)) return clause;
+    const explicitTarget = normalizeSourceText(clause.applyTo || '').toLowerCase();
+    const applicationTarget = explicitTarget && !['review', 'needs_review'].includes(explicitTarget)
+        ? clause.applyTo
+        : asArray(clause.machineRuleIds).length
+            ? 'rule'
+            : asArray(clause.landing).includes('lesson_plan')
+                ? 'lesson_plan'
+                : asArray(clause.landing).includes('optimization')
+                    ? 'optimization'
+                    : clause.applyTo || '';
+    return {
+        ...clause,
+        status: 'actionable',
+        reviewStatus: 'understood',
+        support: 'full',
+        ...(applicationTarget ? { applyTo: applicationTarget } : {}),
+        warnings: uniqueStrings(asArray(clause.warnings).filter(warning => (
+            !OBSOLETE_EXECUTABLE_WARNING_PATTERNS.some(pattern => pattern.test(warning))
+        ))),
+    };
+}
+
+function reviewReason(code, message, artifactIds = [], metadata = {}) {
+    return {
+        code,
+        message,
+        artifactIds: uniqueStrings(artifactIds),
+        origin: metadata.origin || 'local',
+        verified: metadata.verified !== false,
+    };
+}
+
+function sourceReviewReasons(item = {}, executionStatus = '', understandingStatus = '') {
+    const artifacts = asArray(item.clauses);
+    const artifactIds = artifacts.flatMap(artifact => [artifact.clauseId, artifact.constraintId, artifact.id]);
+    const reasons = [];
+    if (executionStatus === 'conflicted') {
+        reasons.push(reviewReason('conflicted', '约束之间存在冲突，需要人工处理。', artifactIds));
+    } else if (executionStatus === 'blocked_by_reference') {
+        reasons.push(reviewReason('blocked_by_reference', '约束对象尚未完成绑定。', artifactIds));
+    } else if (executionStatus === 'blocked_by_clarification') {
+        reasons.push(reviewReason('blocked_by_clarification', '约束缺少执行所需参数或课程属性。', artifactIds));
+    } else if (executionStatus === 'partially_executable') {
+        reasons.push(reviewReason('partially_executable', '约束只有部分语义可以执行。', artifactIds));
+    } else if (executionStatus === 'unsupported_by_solver') {
+        reasons.push(reviewReason('unsupported_by_solver', '当前求解器尚未实现这项完整语义。', artifactIds));
+    }
+    if (['ambiguous', 'invalid_reference', 'unrecognized', 'partially_parsed'].includes(understandingStatus)) {
+        reasons.push(reviewReason('semantic_ambiguity', '约束语义或对象仍需确认。', artifactIds));
+    }
+    artifacts.filter(aiReviewRequiresHumanReview).forEach(artifact => {
+        reasons.push(reviewReason(
+            `ai_review_${normalizeSourceText(artifact.aiReviewIssueCode || artifact.aiReviewStatus).toLowerCase()}`,
+            asArray(artifact.aiReviewWarnings)[0] || 'AI复审要求人工确认这项识别结果。',
+            [artifact.clauseId, artifact.constraintId, artifact.id],
+            { origin: 'ai', verified: true },
+        ));
+    });
+    return [...new Map(reasons.map(reason => [reason.code, reason])).values()];
+}
+
+function sourceApplicationTarget(item = {}, executionStatus = '', reviewReasons = []) {
+    if (reviewReasons.length) return 'review';
+    if (executionStatus === 'disabled' || item.origin === 'system_supplement') return 'handled';
+    if (executionStatus !== 'executable') return 'review';
+    if (asArray(item.machineRuleIds).length) return 'rule';
+    const landings = new Set(asArray(item.clauses).flatMap(clause => [
+        ...asArray(clause.landing),
+        clause.applyTo,
+    ]).filter(Boolean));
+    if (landings.has('lesson_plan')) return 'lesson_plan';
+    if (landings.has('optimization')) return 'optimization';
+    if (landings.has('handled')) return 'handled';
+    return 'review';
+}
+
+export function finalizeSourceRequirementPresentation(rawItem = {}) {
+    const item = {
+        ...rawItem,
+        clauses: asArray(rawItem.clauses).map(reconcileExecutableClause),
+    };
+    const understandingStatus = item.understandingStatus || understandingFromArtifacts(item.clauses, []);
+    const executionStatus = item.executionStatus || executionFromArtifacts(item.clauses, []);
+    const reviewReasons = sourceReviewReasons(item, executionStatus, understandingStatus);
+    let applicationTarget = sourceApplicationTarget(item, executionStatus, reviewReasons);
+    if (applicationTarget === 'review' && !reviewReasons.length) {
+        reviewReasons.push(reviewReason('missing_application_artifact', '已理解约束，但尚未生成可应用的排课制品。'));
+        applicationTarget = 'review';
+    }
+    const requiresHumanReview = applicationTarget === 'review';
+    return {
+        ...item,
+        understandingStatus,
+        executionStatus,
+        status: displayStatus(understandingStatus, executionStatus),
+        reviewStatus: requiresHumanReview ? 'needs_review' : 'understood',
+        applicationTarget,
+        requiresHumanReview,
+        reviewReasons,
+        warnings: uniqueStrings(asArray(item.warnings).filter(warning => (
+            executionStatus !== 'executable'
+            || !OBSOLETE_EXECUTABLE_WARNING_PATTERNS.some(pattern => pattern.test(warning))
+        ))),
+    };
+}
+
 function rawTextFromRow(row = {}) {
     return normalizeSourceDisplayText(
         row.rawText
@@ -86,6 +211,9 @@ export function buildSourceRequirement(row = {}, context = {}, index = 0) {
         status: 'needs_review',
         understandingStatus: 'unrecognized',
         executionStatus: 'unsupported_by_solver',
+        applicationTarget: 'review',
+        requiresHumanReview: true,
+        reviewReasons: [reviewReason('missing_application_artifact', '尚未生成可应用的排课制品。')],
         parsedBy: uniqueStrings(asArray(row.parsedBy)),
         clauses: asArray(row.clauses),
         machineRuleIds: uniqueStrings(asArray(row.machineRuleIds)),
@@ -287,6 +415,8 @@ function executionFromArtifacts(clauses = [], rows = []) {
     if (executable === statuses.length) return 'executable';
     if (executable > 0) return 'partially_executable';
     if (statuses.some(status => status === 'conflicted')) return 'conflicted';
+    if (statuses.some(status => status === 'blocked_by_reference')) return 'blocked_by_reference';
+    if (statuses.some(status => status === 'blocked_by_clarification')) return 'blocked_by_clarification';
     return 'unsupported_by_solver';
 }
 
@@ -295,6 +425,7 @@ function displayStatus(understandingStatus, executionStatus) {
     if (['ambiguous', 'invalid_reference', 'unrecognized', 'partially_parsed'].includes(understandingStatus)) return 'needs_review';
     if (executionStatus === 'executable') return 'actionable';
     if (executionStatus === 'partially_executable') return 'partially_actionable';
+    if (executionStatus === 'blocked_by_reference' || executionStatus === 'blocked_by_clarification') return 'needs_review';
     if (executionStatus === 'disabled') return 'disabled';
     return 'understood_not_executable';
 }
@@ -358,15 +489,18 @@ export function attachArtifactsToSourceRequirements(sourceRequirements = [], {
         linkedRules.push(upserted.machineRule);
     });
 
-    const finalized = result.map(item => {
+    const finalized = result.map(rawItem => {
+        const item = {
+            ...rawItem,
+            clauses: asArray(rawItem.clauses).map(reconcileExecutableClause),
+        };
         const rows = linkedRules.filter(row => row.sourceId === item.sourceId);
         const understandingStatus = understandingFromArtifacts(item.clauses, rows);
         const executionStatus = executionFromArtifacts(item.clauses, rows);
-        return {
+        return finalizeSourceRequirementPresentation({
             ...item,
             understandingStatus,
             executionStatus,
-            status: displayStatus(understandingStatus, executionStatus),
             parsedBy: uniqueStrings([
                 ...asArray(item.parsedBy),
                 ...asArray(parsedBy),
@@ -374,7 +508,7 @@ export function attachArtifactsToSourceRequirements(sourceRequirements = [], {
             confidence: item.clauses.length
                 ? Math.min(...item.clauses.map(clause => Number.isFinite(Number(clause.confidence)) ? Number(clause.confidence) : 1))
                 : item.confidence,
-        };
+        });
     });
 
     return { sourceRequirements: finalized, machineRules: linkedRules };

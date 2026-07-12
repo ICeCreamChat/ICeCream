@@ -881,6 +881,57 @@
     color: var(--tt-primary);
 }
 
+.tt-constraint-binding-panel {
+    display: grid;
+    gap: 10px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--tt-border, #d8dee8);
+    border-bottom: 1px solid var(--tt-border, #d8dee8);
+    background: #fffaf0;
+}
+
+.tt-constraint-binding-header,
+.tt-constraint-binding-actions,
+.tt-constraint-binding-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.tt-constraint-binding-header {
+    justify-content: space-between;
+}
+
+.tt-constraint-binding-header span,
+.tt-constraint-binding-row em {
+    color: #697386;
+    font-size: 12px;
+    font-style: normal;
+}
+
+.tt-constraint-binding-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 8px 14px;
+}
+
+.tt-constraint-binding-row {
+    min-width: 0;
+    justify-content: space-between;
+}
+
+.tt-constraint-binding-row > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-constraint-binding-row select {
+    width: min(180px, 48%);
+    min-width: 0;
+}
+
 .tt-requirement-filter-bar {
     display: flex;
     align-items: center;

@@ -91,6 +91,22 @@ function sampleWorkbenchState(overrides = {}) {
   };
 }
 
+function readyConstraintParseProject() {
+  return createDefaultTimetableProject({
+    teachers: [{ id: 'teacher-ready', name: '测试教师' }],
+    classes: [{ id: 'class-ready', name: '测试班', grade: '七年级' }],
+    subjects: [{ id: 'subject-ready', name: '测试学科' }],
+    lessonPlans: [{
+      id: 'plan-ready',
+      classId: 'class-ready',
+      subjectId: 'subject-ready',
+      teacherId: 'teacher-ready',
+      teacherIds: ['teacher-ready'],
+      weeklyHours: 1,
+    }],
+  });
+}
+
 function inspectorSummaryMarkup(html = '') {
   return html.match(/<summary class="tt-inspector-summary"[\s\S]*?<\/summary>/)?.[0] || '';
 }
@@ -309,6 +325,7 @@ test('timetable constraint dialog renders AI review as lightweight detail copy',
   const aiReviewBlock = html.match(/<div class="tt-requirement-ai-review[\s\S]*?<\/div>/)?.[0] || '';
 
   assert.match(aiReviewBlock, /tt-requirement-ai-review--info/);
+  assert.match(aiReviewBlock, /AI 已理解/);
   assert.match(aiReviewBlock, /AI 已复审/);
   assert.match(aiReviewBlock, /教师不可排规则/);
   assert.doesNotMatch(aiReviewBlock, /tt-constraint-info|tt-constraint-warning/);
@@ -761,7 +778,7 @@ test('timetable constraint dialog hides covered redundant review hints from merg
   assert.match(requirementRows[0], /刘书涵/);
   assert.match(requirementRows[0], /教师不可排/);
   assert.match(requirementRows[0], /周一第2节/);
-  assert.match(html, /AI 已复审/);
+  assert.match(html, /AI 已理解/);
   assert.match(html, /需求已正确解析为教师不可用时段规则/);
   assert.doesNotMatch(html, /待补充信息/);
   assert.doesNotMatch(html, /冗余需求/);
@@ -2015,6 +2032,37 @@ test('review statistics preserve singleton parse result collections', () => {
   assert.equal(review.statistics.semanticActionCount, 1);
 });
 
+test('review statistics use canonical source state and ignore advisory AI flags', () => {
+  const review = {
+    sourceRequirements: [{
+      sourceId: 'src:advisory',
+      origin: 'user_input',
+      status: 'needs_review',
+      reviewStatus: 'needs_review',
+      understandingStatus: 'parsed',
+      executionStatus: 'executable',
+      applicationTarget: 'rule',
+      requiresHumanReview: false,
+      clauses: [{
+        clauseId: 'clause:advisory',
+        executionStatus: 'executable',
+        aiReviewStatus: 'flagged',
+        aiReviewValidationStatus: 'advisory',
+        aiReviewBlocking: false,
+      }],
+      machineRuleIds: ['machine:advisory'],
+    }],
+    systemSupplements: [],
+    draftRows: [{ id: 'row:advisory', machineRuleId: 'machine:advisory', status: 'effective' }],
+    semanticActions: [],
+  };
+
+  refreshReviewStatistics(review);
+  assert.equal(review.statistics.sourceRequirementCount, 1);
+  assert.equal(review.statistics.needsReviewCount, 0);
+  assert.equal(review.statistics.executableMachineRuleCount, 1);
+});
+
 test('timetable constraint dialog uses source statistics and renders clauses without inflating top-level cards', () => {
   const executableClause = {
     id: 'req_market_exec',
@@ -2056,6 +2104,9 @@ test('timetable constraint dialog uses source statistics and renders clauses wit
         clauseCount: 150,
         executableMachineRuleCount: 128,
         needsReviewCount: 3,
+        blockedReferenceSourceCount: 1,
+        blockedClarificationSourceCount: 1,
+        unsupportedSolverSourceCount: 1,
       },
       sourceRequirements: [{
         sourceId: 'src:market-language',
@@ -2112,7 +2163,9 @@ test('timetable constraint dialog uses source statistics and renders clauses wit
   assert.match(html, /系统补充 1 条/);
   assert.match(html, /子约束 150 条/);
   assert.match(html, /可执行规则 128 条/);
-  assert.match(html, /需复核 3 条/);
+  assert.match(html, /待绑定 1 条/);
+  assert.match(html, /待补充 1 条/);
+  assert.match(html, /真正不支持 1 条/);
   assert.equal((html.match(/data-requirement-id="src:market-language"/g) || []).length, 1);
   assert.match(html, /data-requirement-id="src:market-language"[^>]*title="地理和生物尽量隔天分布，不要都挤在周四周五。"/);
   assert.match(html, /data-requirement-id="src:market-language"[\s\S]*?<small>我的输入<\/small>/);
@@ -3120,7 +3173,7 @@ test('timetable constraint dialog preserves legacy fallback when parse response 
     const controller = new TimetablePlannerController();
     controller.render = () => {};
     controller.detectConstraintConflicts = async () => {};
-    controller.state.project = createDefaultTimetableProject();
+    controller.state.project = readyConstraintParseProject();
     controller.state.constraintDialog = { open: true, requirementFilter: 'all', selectedRequirementId: '' };
     controller.state.ruleReview = {
       inputMode: 'file',
@@ -3198,7 +3251,7 @@ test('timetable constraint dialog replaces previous xlsx parse results instead o
     const controller = new TimetablePlannerController();
     controller.render = () => {};
     controller.detectConstraintConflicts = async () => {};
-    controller.state.project = createDefaultTimetableProject();
+    controller.state.project = readyConstraintParseProject();
     controller.state.constraintDialog = { open: true, requirementFilter: 'all', selectedRequirementId: '' };
     controller.state.ruleReview = {
       inputMode: 'file',
@@ -3287,7 +3340,7 @@ test('timetable constraint parsing progress does not rerender the spinner on tim
       renderCount += 1;
     };
     controller.detectConstraintConflicts = async () => {};
-    controller.state.project = createDefaultTimetableProject();
+    controller.state.project = readyConstraintParseProject();
     controller.state.constraintDialog = { open: true, requirementFilter: 'all', selectedRequirementId: '' };
     controller.state.ruleReview = {
       inputMode: 'file',

@@ -35,6 +35,12 @@ const DEFAULT_PROJECT = {
         teacherGapPeriods: {},
     },
     lessonPlans: [],
+    constraintEntityAliases: {
+        teacher: {},
+        class: {},
+        subject: {},
+        room: {},
+    },
     rules: {
         hardRules: {
             lockedSlots: [],
@@ -738,10 +744,41 @@ function normalizeLessonPlan(raw = {}, index = 0, enabled = false) {
         campusId: enabled ? cleanText(raw.campusId || raw.campus, 80) : '',
         teachingGroupId: enabled ? cleanText(raw.teachingGroupId || raw.groupId, 80) : '',
         roomRequirement: normalizeRoomRequirement(raw.roomRequirement, enabled),
+        activityTypes: normalizeSubjectTags(raw.activityTypes || raw.activities || raw.activityType),
+        requiredResourceTypes: normalizeSubjectTags(raw.requiredResourceTypes || raw.resourceTypes || raw.resources),
         className: cleanText(raw.className, 80),
         subjectName: cleanText(raw.subjectName, 80),
         teacherName: cleanText(raw.teacherName, 80),
     };
+}
+
+function normalizeConstraintEntityAliases(raw = {}, entityIds = {}) {
+    return Object.fromEntries(['teacher', 'class', 'subject', 'room'].map(kind => {
+        const validIds = entityIds[kind] || new Set();
+        const aliases = {};
+        for (const [alias, targetId] of Object.entries(raw?.[kind] || {})) {
+            const name = cleanText(alias, 120);
+            const id = cleanText(targetId, 80);
+            if (name && id && validIds.has(id)) aliases[name] = id;
+        }
+        return [kind, aliases];
+    }));
+}
+
+function normalizeAdvancedRules(values = []) {
+    return collectionList(values).map((rule, index) => ({
+        ...rule,
+        id: cleanText(rule?.id, 300) || `advanced_${index + 1}`,
+        type: cleanText(rule?.type || rule?.capabilityId, 160).toLowerCase(),
+        capabilityId: cleanText(rule?.capabilityId || rule?.type, 160).toLowerCase(),
+        strength: cleanText(rule?.strength || rule?.priority, 20).toLowerCase() === 'hard' ? 'hard' : 'soft',
+        sourceId: cleanText(rule?.sourceId, 300),
+        clauseId: cleanText(rule?.clauseId, 300),
+        target: rule?.target && typeof rule.target === 'object' ? rule.target : {},
+        scope: rule?.scope && typeof rule.scope === 'object' ? rule.scope : {},
+        parameters: rule?.parameters && typeof rule.parameters === 'object' ? rule.parameters : {},
+        enabled: rule?.enabled !== false,
+    })).filter(rule => rule.type);
 }
 
 function normalizeRuleMap(raw = {}) {
@@ -904,6 +941,7 @@ function normalizeRules(raw = {}, enabled = false) {
     const hardRules = raw.hardRules || {};
     const softRules = raw.softRules || {};
     return {
+        advancedRules: normalizeAdvancedRules(raw.advancedRules),
         hardRules: {
             lockedSlots: normalizeLockedSlots(hardRules.lockedSlots, enabled),
             teacherUnavailable: normalizeRuleMap(hardRules.teacherUnavailable),
@@ -1280,6 +1318,12 @@ export function normalizeTimetableProject(raw = {}) {
             : [],
         commuteRules: normalizeCommuteRules(base.commuteRules, enabled),
         lessonPlans,
+        constraintEntityAliases: normalizeConstraintEntityAliases(base.constraintEntityAliases, {
+            teacher: new Set(teachers.map(item => item.id)),
+            class: new Set(classes.map(item => item.id)),
+            subject: new Set(subjects.map(item => item.id)),
+            room: new Set(collectionList(base.rooms).map(item => cleanText(item?.id, 80)).filter(Boolean)),
+        }),
         dutyAssignments: normalizeDutyAssignments(migratedDutyAssignments, periodTimeSegments, { classes, teachers }),
         rules: normalizeRules(base.rules, enabled),
         schedule: normalizeSchedule(base.schedule, enabled),

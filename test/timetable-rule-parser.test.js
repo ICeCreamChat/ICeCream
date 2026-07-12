@@ -1350,21 +1350,20 @@ test('normalizeTimetableRuleDraftRows never widens a named teacher gap preferenc
         }],
     });
 
-    const row = result.draftRows.find(item => item.id === 'row_teacher_gap' || item.type === 'teacher_gap_preference');
+    const row = result.draftRows.find(item => item.id === 'row_teacher_gap' || item.type === 'advanced_constraint');
     assert.ok(row);
     assert.equal(row.targetType, 'teacher');
     assert.equal(row.targetId, 't1');
     assert.equal(row.targetName, '张老师');
-    assert.equal(row.status, 'unsupported');
-    assert.equal(row.executionStatus, 'unsupported_by_solver');
-    assert.match(row.warnings.join(' '), /指定教师|不会扩大|全部教师/);
+    assert.equal(row.status, 'effective');
+    assert.equal(row.executionStatus, 'executable');
     assert.equal(result.draftRules.softRules.teacherGapWeight, 0);
 
     const ir = result.constraintIRs.find(item => item.capabilityId === 'teacher.compact_day');
     assert.ok(ir);
     assert.equal(ir.target.kind, 'teacher');
     assert.deepEqual(ir.target.matchedIds, ['t1']);
-    assert.equal(ir.executionStatus, 'unsupported_by_solver');
+    assert.equal(ir.executionStatus, 'executable');
 });
 
 test('applyTimetableRequirementActions applies lesson-plan and soft-rule semantic actions with validation', () => {
@@ -1537,7 +1536,7 @@ test('complex model parses combined-class demand into ready teaching group actio
     assert.equal(action.patch.teachingGroup.mode, 'combined_class');
 });
 
-test('parseTimetableRules models room or venue preference as unsupported room attribute requirement', async () => {
+test('room or venue preference waits for binding when the named room is absent', async () => {
     const project = makeProject();
     const result = await parseTimetableRules({
         text: '体育课尽量安排在操场',
@@ -1552,15 +1551,17 @@ test('parseTimetableRules models room or venue preference as unsupported room at
     assert.deepEqual(requirement.object.matchedIds, ['s4']);
     assert.equal(requirement.parameters.roomName, '操场');
     assert.equal(requirement.status, 'needs_review');
-    assert.equal(requirement.applyTo, 'model_extension');
-    assert.equal(requirement.modelSupport?.supported, false);
-    assert.equal(requirement.modelSupport?.capability, 'room_attributes');
+    assert.equal(requirement.applyTo, 'rule');
+    assert.equal(requirement.executionStatus, 'blocked_by_reference');
+    assert.equal(result.sourceRequirements[0].applicationTarget, 'review');
+    assert.equal(result.sourceRequirements[0].requiresHumanReview, true);
     assert.equal(result.semanticActions.some(action => action.requirementId === requirement.id && action.status === 'ready'), false);
 });
 
-test('complex model parses room or venue preference into ready room action', async () => {
+test('room or venue preference compiles after the named room is available', async () => {
     const project = makeProject({
         timetableModelVersion: 'complex_v1',
+        rooms: [{ id: 'playground', name: '操场', tags: ['sport'] }],
         lessonPlans: [
             { id: 'lp_pe', classId: 'c1', subjectId: 's4', teacherId: 't1', weeklyHours: 2 },
         ],
@@ -1574,15 +1575,16 @@ test('complex model parses room or venue preference into ready room action', asy
     const requirement = result.requirementItems.find(item => item.intent === 'room_requirement');
     assert.ok(requirement);
     assert.equal(requirement.status, 'actionable');
-    assert.equal(requirement.applyTo, 'model_extension');
-    assert.equal(requirement.modelSupport?.supported, true);
-    const action = result.semanticActions.find(item => item.requirementId === requirement.id);
-    assert.ok(action);
-    assert.equal(action.kind, 'complex_model_patch');
-    assert.equal(action.status, 'ready');
-    assert.deepEqual(action.target.subjectIds, ['s4']);
-    assert.equal(action.patch.roomRequirement.roomName, '操场');
-    assert.deepEqual(action.patch.roomRequirement.requiredTags, ['sport']);
+    assert.equal(requirement.applyTo, 'rule');
+    assert.equal(requirement.executionStatus, 'executable');
+    assert.deepEqual(requirement.parameters.roomIds, ['playground']);
+    assert.equal(result.sourceRequirements[0].applicationTarget, 'rule');
+    assert.equal(result.sourceRequirements[0].requiresHumanReview, false);
+    assert.ok(result.draftRows.some(row => (
+        row.type === 'room_requirement'
+        && row.targetId === 's4'
+        && row.roomIds.includes('playground')
+    )));
 });
 
 test('xlsx local fallback preserves sheet and row source for expanded subject rules', async () => {
@@ -1694,8 +1696,9 @@ test('xlsx constraints parse locally with stable ids and calls AI review for dec
         })),
     );
     assert.ok(first.draftRows.every(row => row.parseSource === 'local_xlsx'));
-    assert.ok(first.draftRows.every(row => row.aiReviewStatus === 'accepted'));
-    assert.ok(first.draftRows.every(row => row.reviewedParseSource === 'local_xlsx_ai_reviewed'));
+    assert.ok(first.draftRows.every(row => row.aiReviewStatus === ''));
+    assert.ok(first.draftRows.every(row => row.reviewedParseSource === ''));
+    assert.ok(first.aiReview.reviewItems.every(item => item.validationStatus === 'accepted'));
     assert.ok(first.draftRows.every(row => row.stableKey));
     assert.deepEqual(first.draftRows.map(row => row.sourceRow), [...first.draftRows.map(row => row.sourceRow)].sort((a, b) => a - b));
     assert.deepEqual(first.draftRules.softRules.subjectPreferredPeriods.s2.prefer, [
@@ -1704,7 +1707,7 @@ test('xlsx constraints parse locally with stable ids and calls AI review for dec
     assert.deepEqual(first.draftRules.hardRules.teacherUnavailable.t1, ['1-1', '1-2']);
 });
 
-test('AI review flag marks a local row for review without removing the local evidence', async () => {
+test('AI review flag stays advisory when local validation cannot reproduce a blocker', async () => {
     const project = makeProject();
     const fetchImpl = async () => ({
         ok: true,
@@ -1734,12 +1737,28 @@ test('AI review flag marks a local row for review without removing the local evi
 
     const row = result.draftRows.find(item => item.targetId === 's2');
     assert.ok(row);
-    assert.equal(row.status, 'needs_review');
-    assert.equal(row.aiReviewStatus, 'flagged');
-    assert.match(row.aiReviewWarnings.join(' '), /人工确认/);
+    assert.notEqual(row.status, 'needs_review');
+    assert.equal(row.aiReviewStatus, '');
+    assert.equal(row.aiReviewValidationStatus, '');
+    assert.equal(row.aiReviewBlocking, false);
+    assert.deepEqual(row.aiReviewWarnings, []);
     assert.equal(result.aiReview.status, 'reviewed');
+    assert.equal(result.aiReview.reviewItems[0].validationStatus, 'advisory');
+    assert.match(result.aiReview.reviewItems[0].reason, /人工确认/);
     assert.equal(result.aiReview.flaggedCount, 1);
-    assert.ok(result.needReview.some(item => item.id === row.id));
+    assert.equal(result.aiReview.advisoryCount, 1);
+    assert.equal(result.aiReview.blockingCount, 0);
+    assert.equal(result.needReview.some(item => item.id === row.id), false);
+    assert.equal(result.sourceRequirements[0].requiresHumanReview, false);
+    assert.equal(result.sourceRequirements[0].applicationTarget, 'rule');
+    assert.deepEqual(result.sourceRequirements[0].reviewReasons, []);
+    assert.deepEqual(result.aiAssistance, {
+        mode: 'targeted_review',
+        acceptedCount: 0,
+        correctedCount: 0,
+        advisoryCount: 1,
+        blockingCount: 0,
+    });
 });
 
 test('AI review invalid suggested patch is not applied to local result', async () => {
@@ -2584,8 +2603,8 @@ test('pure text preserves repeated 第 period ranges for scoped weekly preferenc
         assert.equal(ir.parameters.minOccurrences, 3);
         assert.deepEqual(ir.parameters.periods, [1, 2, 3]);
         assert.deepEqual(ir.parameters.avoidDayParts, ['afternoon']);
-        assert.equal(ir.executionStatus, 'unsupported_by_solver');
-        assert.deepEqual(ir.machineRuleIds, []);
+        assert.equal(ir.executionStatus, 'executable');
+        assert.equal(ir.machineRuleIds.length, 1);
     });
 });
 
@@ -2603,8 +2622,8 @@ test('pure text resolves 最后一节 from the project day length instead of the
         assert.deepEqual(ir.parameters.gradeNames, ['七年级']);
         assert.deepEqual(ir.parameters.periods, [8]);
         assert.equal(ir.parameters.periods.includes(7), false);
-        assert.equal(ir.executionStatus, 'unsupported_by_solver');
-        assert.deepEqual(ir.machineRuleIds, []);
+        assert.equal(ir.executionStatus, 'executable');
+        assert.equal(ir.machineRuleIds.length, 1);
     });
 });
 
@@ -2727,7 +2746,7 @@ test('ambiguous singular teacher pronoun asks for clarification instead of guess
 
     assert.ok(ir);
     assert.equal(ir.reviewStatus, 'needs_clarification');
-    assert.equal(ir.executionStatus, 'unsupported_by_solver');
+    assert.equal(ir.executionStatus, 'blocked_by_reference');
     assert.deepEqual(ir.machineRuleIds, []);
     assert.equal(ir.target.name, '教师');
     assert.match(ir.clarifications.join(' '), /他.*先行词/);
@@ -2789,7 +2808,7 @@ test('typed context never inherits an antecedent across source requirement bound
     assert.ok(secondIr);
     assert.equal(secondIr.target.name, '教师');
     assert.equal(secondIr.reviewStatus, 'needs_clarification');
-    assert.equal(secondIr.executionStatus, 'unsupported_by_solver');
+    assert.equal(secondIr.executionStatus, 'blocked_by_reference');
     assert.deepEqual(secondIr.machineRuleIds, []);
     assert.equal(result.draftRows.some(item => item.sourceId === secondSource.sourceId), false);
 });
@@ -3011,8 +3030,8 @@ test('undefined golden hour stays as reviewable semantics without a fabricated m
     assert.equal(ir.parameters.dayPart, 'golden');
     assert.equal(ir.strength, 'soft');
     assert.equal(ir.understandingStatus, 'parsed');
-    assert.equal(ir.executionStatus, 'unsupported_by_solver');
-    assert.equal(ir.reviewStatus, 'unsupported');
+    assert.equal(ir.executionStatus, 'blocked_by_clarification');
+    assert.equal(ir.reviewStatus, 'needs_clarification');
     assert.deepEqual(ir.machineRuleIds, []);
     assert.deepEqual(clause.machineRuleIds, []);
     assert.deepEqual(source.machineRuleIds, []);

@@ -76,10 +76,10 @@ test('第 131 行完整保留“隔天分布”和“不要挤在周四周五”
     assert.notEqual(source.understandingStatus, 'unrecognized');
 
     const weekdayConcentration = irs.find(item => item.capabilityId === 'subject.avoid_weekday_concentration');
-    assert.equal(weekdayConcentration.understandingStatus, 'parsed');
-    assert.equal(weekdayConcentration.executionStatus, 'unsupported_by_solver');
-    assert.equal(weekdayConcentration.reviewStatus, 'unsupported');
-    assert.equal(weekdayConcentration.support, 'none');
+    assert.equal(weekdayConcentration.understandingStatus, 'invalid_reference');
+    assert.equal(weekdayConcentration.executionStatus, 'blocked_by_reference');
+    assert.equal(weekdayConcentration.reviewStatus, 'needs_clarification');
+    assert.equal(weekdayConcentration.support, 'full');
     assert.deepEqual(weekdayConcentration.parameters.days, [4, 5]);
     assert.ok((weekdayConcentration.parameters.subjectIds || []).includes('地理'));
     assert.ok((weekdayConcentration.parameters.subjectIds || []).includes('生物'));
@@ -96,14 +96,13 @@ test('第 133 行只形成跨场地边界能力，不再伪造 course_interval �
     assert.equal(irs[0].capabilityId, 'schedule.cross_venue_boundary');
     assert.deepEqual(irs[0].parameters.boundaryPeriods, [4, 5]);
     assert.equal(irs[0].understandingStatus, 'parsed');
-    assert.equal(irs[0].executionStatus, 'unsupported_by_solver');
-    assert.equal(irs[0].reviewStatus, 'unsupported');
-    assert.equal(irs[0].support, 'none');
+    assert.equal(irs[0].executionStatus, 'executable');
+    assert.equal(irs[0].reviewStatus, 'understood');
+    assert.equal(irs[0].support, 'full');
     assert.deepEqual(irs[0].landing, ['clarification', 'solver_policy']);
-    assert.equal(irs[0].machineRuleIds.length, 0);
+    assert.equal(irs[0].machineRuleIds.length, 1);
     assert.equal(rows.some(item => item.type === 'course_interval'), false);
-    assert.equal(source.machineRuleIds.length, 0);
-    assert.ok(source.warnings.some(message => /求解器|不支持/.test(message)));
+    assert.equal(source.machineRuleIds.length, 1);
 });
 
 test('可执行教师不可用能力由 capability registry 生成兼容 draft row', async () => {
@@ -181,14 +180,14 @@ test('第 76～83 行指定教师的少空堂偏好始终保持具体对象，�
         assert.equal(compactDays[0].target.kind, 'teacher');
         assert.equal(compactDays[0].target.name, teacherName);
         assert.deepEqual(compactDays[0].target.matchedIds, []);
-        assert.equal(compactDays[0].executionStatus, 'unsupported_by_solver');
+        assert.equal(compactDays[0].executionStatus, 'blocked_by_reference');
         assert.notEqual(compactDays[0].target.kind, 'teacher_group');
         assert.doesNotMatch(compactDays[0].target.name, /全部教师|__all_teachers/);
         assert.equal(rows.length, 1);
-        assert.equal(rows[0].type, 'teacher_gap_preference');
+        assert.equal(rows[0].type, 'advanced_constraint');
         assert.equal(rows[0].targetType, 'teacher');
         assert.equal(rows[0].targetName, teacherName);
-        assert.equal(rows[0].executionStatus, 'unsupported_by_solver');
+        assert.equal(rows[0].executionStatus, 'blocked_by_reference');
         assert.doesNotMatch(`${rows[0].targetId} ${rows[0].targetName}`, /全部教师|__all_teachers/);
     });
 
@@ -219,14 +218,15 @@ test('第 114 行保留指定任课教师覆盖班级范围，且不得编译成
         assert.deepEqual(ir.parameters.teacherNames, expectedTeacherNames);
         assert.equal(ir.scope.qualifier, 'teacher_covered_classes');
         assert.deepEqual(ir.scope.teacherNames, expectedTeacherNames);
-        assert.equal(ir.understandingStatus, 'parsed');
-        assert.equal(ir.executionStatus, 'unsupported_by_solver');
-        assert.equal(ir.reviewStatus, 'unsupported');
-        assert.equal(ir.support, 'none');
+        assert.equal(ir.understandingStatus, 'invalid_reference');
+        assert.equal(ir.executionStatus, 'blocked_by_reference');
+        assert.equal(ir.reviewStatus, 'needs_clarification');
+        assert.equal(ir.support, 'full');
         assert.deepEqual(ir.machineRuleIds, []);
     });
 
-    assert.equal(rows.length, 0, '指定教师覆盖班级范围不得丢失后扩大为全校学科规则');
+    assert.equal(rows.length, 3);
+    assert.ok(rows.every(row => row.type === 'advanced_constraint' && row.executionStatus === 'blocked_by_reference'));
     assert.equal(source.machineRuleIds.length, 0);
 });
 
@@ -248,10 +248,12 @@ test('第 124 行保留物理实验课条件和四名教师范围，且不得扩
     assert.deepEqual(irs[0].scope.teacherNames, expectedTeacherNames);
     assert.equal(irs[0].scope.qualifier, 'teacher_activity');
     assert.equal(irs[0].strength, 'hard');
-    assert.equal(irs[0].support, 'none');
-    assert.equal(irs[0].executionStatus, 'unsupported_by_solver');
+    assert.equal(irs[0].support, 'full');
+    assert.equal(irs[0].executionStatus, 'blocked_by_reference');
     assert.deepEqual(irs[0].machineRuleIds, []);
-    assert.equal(rows.length, 0);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].type, 'advanced_constraint');
+    assert.equal(rows[0].executionStatus, 'blocked_by_reference');
 });
 
 test('第 125、127 行的一般实验室和机房要求仍保留具体场地并生成兼容机器规则', async () => {
@@ -294,8 +296,8 @@ test('第 126 行拆分生物实验室软偏好与指定教师实验课禁用普
     assert.deepEqual(preferred[0].parameters.preferredRoomIds, ['生物实验室A', '生物实验室B']);
     assert.deepEqual(preferred[0].parameters.activityTypes, ['实验课']);
     assert.equal(preferred[0].parameters.scopeQualifier, 'activity');
-    assert.equal(preferred[0].support, 'none');
-    assert.equal(preferred[0].executionStatus, 'unsupported_by_solver');
+    assert.equal(preferred[0].support, 'full');
+    assert.equal(preferred[0].executionStatus, 'blocked_by_reference');
     assert.deepEqual(preferred[0].machineRuleIds, []);
 
     assert.equal(forbidden.length, 1);
@@ -307,11 +309,12 @@ test('第 126 行拆分生物实验室软偏好与指定教师实验课禁用普
     assert.equal(forbidden[0].parameters.scopeQualifier, 'teacher_activity');
     assert.deepEqual(forbidden[0].scope.teacherNames, expectedTeacherNames);
     assert.equal(forbidden[0].scope.qualifier, 'teacher_activity');
-    assert.equal(forbidden[0].support, 'none');
-    assert.equal(forbidden[0].executionStatus, 'unsupported_by_solver');
+    assert.equal(forbidden[0].support, 'full');
+    assert.equal(forbidden[0].executionStatus, 'blocked_by_reference');
     assert.deepEqual(forbidden[0].machineRuleIds, []);
 
-    assert.equal(rows.length, 0, '混合房间谓词不得降级为全部生物课的硬实验室要求');
+    assert.equal(rows.length, 2);
+    assert.ok(rows.every(row => row.type === 'advanced_constraint' && row.executionStatus === 'blocked_by_reference'));
     assert.equal(source.machineRuleIds.length, 0);
 });
 
@@ -331,11 +334,12 @@ test('第 134 行保留同一备课组内部公平和两个负向边界，不得
     assert.deepEqual(fairness[0].parameters.distributionDays, [1, 2, 3, 4, 5]);
     assert.equal(fairness[0].parameters.maxConsecutiveFullAfternoons, 1);
     assert.equal(fairness[0].parameters.avoidFullDayIdle, true);
-    assert.equal(fairness[0].support, 'none');
-    assert.equal(fairness[0].executionStatus, 'unsupported_by_solver');
-    assert.deepEqual(fairness[0].machineRuleIds, []);
-    assert.equal(rows.length, 0);
-    assert.equal(source.machineRuleIds.length, 0);
+    assert.equal(fairness[0].support, 'full');
+    assert.equal(fairness[0].executionStatus, 'executable');
+    assert.equal(fairness[0].machineRuleIds.length, 1);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].type, 'advanced_constraint');
+    assert.equal(source.machineRuleIds.length, 1);
 });
 test('第 128～129 行实验连堂每条只生成一个 subject IR，并保留年级范围和双连堂参数', async () => {
     const result = await parseFixture();
@@ -347,7 +351,7 @@ test('第 128～129 行实验连堂每条只生成一个 subject IR，并保留�
     for (const [sourceRow, expectation] of expected) {
         const source = sourceByRow(result, sourceRow);
         const irs = irsByRow(result, sourceRow).filter(item => item.capabilityId === 'lesson.consecutive');
-        const rows = result.draftRows.filter(item => item.sourceId === source.sourceId && item.type === 'block_protection');
+        const rows = result.draftRows.filter(item => item.sourceId === source.sourceId && item.type === 'advanced_constraint');
 
         assert.equal(irs.length, 1, `row ${sourceRow} must not duplicate lesson.consecutive`);
         assert.equal(irs[0].target.kind, 'subject');
@@ -356,11 +360,9 @@ test('第 128～129 行实验连堂每条只生成一个 subject IR，并保留�
         assert.deepEqual(irs[0].parameters.gradeNames, expectation.grades);
         assert.notEqual(irs[0].target.kind, 'global');
 
+        assert.equal(irs[0].executionStatus, 'blocked_by_reference');
         assert.equal(rows.length, 1);
-        assert.equal(rows[0].targetType, 'subject');
-        assert.equal(rows[0].targetName, expectation.subject);
-        assert.equal(rows[0].blockPreference, 'double');
-        assert.deepEqual(rows[0].gradeNames, expectation.grades);
+        assert.equal(rows[0].executionStatus, 'blocked_by_reference');
     }
 });
 
@@ -379,14 +381,15 @@ test('第 115 行按三个明确学科保留九年级、每周至少 3 次和避
         assert.equal(ir.parameters.minOccurrences, 3);
         assert.deepEqual(ir.parameters.periods, [1, 2, 3]);
         assert.deepEqual(ir.parameters.avoidDayParts, ['afternoon']);
-        assert.equal(ir.understandingStatus, 'parsed');
-        assert.equal(ir.executionStatus, 'unsupported_by_solver');
-        assert.equal(ir.reviewStatus, 'unsupported');
-        assert.equal(ir.support, 'none');
+        assert.equal(ir.understandingStatus, 'invalid_reference');
+        assert.equal(ir.executionStatus, 'blocked_by_reference');
+        assert.equal(ir.reviewStatus, 'needs_clarification');
+        assert.equal(ir.support, 'full');
         assert.deepEqual(ir.machineRuleIds, []);
         assert.doesNotMatch(ir.target.name, /九年级主科|主科/);
     });
-    assert.equal(rows.length, 0, '带年级和最低次数范围的偏好不得降级成全校机器规则');
+    assert.equal(rows.length, 3);
+    assert.ok(rows.every(row => row.type === 'advanced_constraint' && row.executionStatus === 'blocked_by_reference'));
 });
 
 test('第 116 行数学和英语都继承七年级范围，且最后一节按第 8 节保留', async () => {
@@ -402,14 +405,15 @@ test('第 116 行数学和英语都继承七年级范围，且最后一节按第
         assert.equal(ir.target.kind, 'subject');
         assert.deepEqual(ir.parameters.gradeNames, ['七年级']);
         assert.deepEqual(ir.parameters.periods, [8]);
-        assert.equal(ir.understandingStatus, 'parsed');
-        assert.equal(ir.executionStatus, 'unsupported_by_solver');
-        assert.equal(ir.reviewStatus, 'unsupported');
-        assert.equal(ir.support, 'none');
+        assert.equal(ir.understandingStatus, 'invalid_reference');
+        assert.equal(ir.executionStatus, 'blocked_by_reference');
+        assert.equal(ir.reviewStatus, 'needs_clarification');
+        assert.equal(ir.support, 'full');
         assert.deepEqual(ir.machineRuleIds, []);
         assert.doesNotMatch(ir.target.name, /七年级数学/);
     });
-    assert.equal(rows.length, 0, '七年级范围不得被丢弃后编译成全校学科避让');
+    assert.equal(rows.length, 2);
+    assert.ok(rows.every(row => row.type === 'advanced_constraint' && row.executionStatus === 'blocked_by_reference'));
 });
 
 test('第 117 行的硬禁排与软避让必须拆成两个独立子句', async () => {
@@ -443,10 +447,10 @@ test('第 130 行识别为历史和道法同日不连续，不得伪造成课程
     assert.equal(irs[0].target.kind, 'subject_group');
     assert.deepEqual((irs[0].parameters.subjectNames || []).sort(), ['历史', '道法']);
     assert.equal(irs[0].parameters.sameDay, true);
-    assert.equal(irs[0].understandingStatus, 'parsed');
-    assert.equal(irs[0].executionStatus, 'unsupported_by_solver');
-    assert.equal(irs[0].reviewStatus, 'unsupported');
-    assert.equal(irs[0].support, 'none');
+    assert.equal(irs[0].understandingStatus, 'invalid_reference');
+    assert.equal(irs[0].executionStatus, 'blocked_by_reference');
+    assert.equal(irs[0].reviewStatus, 'needs_clarification');
+    assert.equal(irs[0].support, 'full');
     assert.deepEqual(irs[0].machineRuleIds, []);
     assert.equal(irs.some(item => item.capabilityId === 'subject.sequence'), false);
     assert.equal(rows.some(item => item.type === 'subject_sequence'), false);
@@ -466,14 +470,15 @@ test('第 132 行五个考试学科都继承九年级和周五第 8 节范围', 
         assert.deepEqual(ir.parameters.gradeNames, ['九年级']);
         assert.deepEqual(ir.parameters.days, [5]);
         assert.deepEqual(ir.parameters.periods, [8]);
-        assert.equal(ir.understandingStatus, 'parsed');
-        assert.equal(ir.executionStatus, 'unsupported_by_solver');
-        assert.equal(ir.reviewStatus, 'unsupported');
-        assert.equal(ir.support, 'none');
+        assert.equal(ir.understandingStatus, 'invalid_reference');
+        assert.equal(ir.executionStatus, 'blocked_by_reference');
+        assert.equal(ir.reviewStatus, 'needs_clarification');
+        assert.equal(ir.support, 'full');
         assert.deepEqual(ir.machineRuleIds, []);
         assert.doesNotMatch(ir.target.name, /九年级考试学科|考试学科/);
     });
-    assert.equal(rows.length, 0, '九年级范围不得被丢弃后编译成全校学科禁排');
+    assert.equal(rows.length, 5);
+    assert.ok(rows.every(row => row.type === 'advanced_constraint' && row.executionStatus === 'blocked_by_reference'));
 });
 
 test('第 137 行保留主科新授课与教研社团答疑活动范围，不降级为普通学科避让', async () => {
@@ -490,13 +495,15 @@ test('第 137 行保留主科新授课与教研社团答疑活动范围，不降
     assert.deepEqual((irs[0].parameters.preferredActivityTypes || []).sort(), ['教研', '社团', '答疑']);
     assert.deepEqual(irs[0].parameters.days, [3]);
     assert.deepEqual(irs[0].parameters.periods, [8]);
-    assert.equal(irs[0].understandingStatus, 'parsed');
-    assert.equal(irs[0].executionStatus, 'unsupported_by_solver');
-    assert.equal(irs[0].reviewStatus, 'unsupported');
-    assert.equal(irs[0].support, 'none');
+    assert.equal(irs[0].understandingStatus, 'invalid_reference');
+    assert.equal(irs[0].executionStatus, 'blocked_by_reference');
+    assert.equal(irs[0].reviewStatus, 'needs_clarification');
+    assert.equal(irs[0].support, 'full');
     assert.deepEqual(irs[0].machineRuleIds, []);
     assert.equal(irs.some(item => item.capabilityId === 'subject.avoid_periods'), false);
-    assert.equal(rows.length, 0);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].type, 'advanced_constraint');
+    assert.equal(rows[0].executionStatus, 'blocked_by_reference');
 });
 
 test('第 138 行识别资源属性避让，不得臆造实验课和信息课两个学科', async () => {
@@ -511,9 +518,9 @@ test('第 138 行识别资源属性避让，不得臆造实验课和信息课两
     assert.deepEqual(irs[0].parameters.days, [5]);
     assert.deepEqual(irs[0].parameters.periods, [8]);
     assert.equal(irs[0].understandingStatus, 'parsed');
-    assert.equal(irs[0].executionStatus, 'unsupported_by_solver');
-    assert.equal(irs[0].reviewStatus, 'unsupported');
-    assert.equal(irs[0].support, 'none');
+    assert.equal(irs[0].executionStatus, 'blocked_by_clarification');
+    assert.equal(irs[0].reviewStatus, 'needs_clarification');
+    assert.equal(irs[0].support, 'full');
     assert.deepEqual(irs[0].machineRuleIds, []);
     assert.doesNotMatch(irs[0].target.name, /实验课|信息课/);
     assert.equal(rows.some(item => /实验课|信息课/.test(item.targetName || item.subjectName || '')), false);

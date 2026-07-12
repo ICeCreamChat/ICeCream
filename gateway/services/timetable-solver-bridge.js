@@ -15,6 +15,7 @@ import {
 import {
     validateTimetablePublication,
 } from './timetable-validation.js';
+import { advancedBlockPreference, advancedRuleAppliesToLesson } from './timetable-advanced-rules.js';
 
 const DEFAULT_TIMEOUT_MS = 210000;
 const LARGE_PROJECT_TIMEOUT_MS = 300000;
@@ -304,6 +305,27 @@ function teacherConstraintRefsForPlan(project, teacherIds = []) {
     }));
 }
 
+function advancedRuleRefsForPlan(project, plan) {
+    return (project.rules?.advancedRules || [])
+        .filter(rule => advancedRuleAppliesToLesson(project, rule, plan))
+        .map(rule => ({
+            id: rule.id,
+            type: rule.type,
+            hard: rule.strength === 'hard',
+            slots: rule.parameters?.slots || [],
+            days: rule.parameters?.days || [],
+            periods: rule.parameters?.periods || [],
+            subjectIds: rule.parameters?.subjectIds || rule.target?.matchedIds || [],
+            roomIds: rule.parameters?.roomIds || rule.parameters?.roomRequirement?.roomIds || [],
+            requiredRoomTypes: rule.parameters?.requiredTags || rule.parameters?.roomRequirement?.requiredTags || [],
+            preferredRoomIds: rule.parameters?.preferredRoomIds || [],
+            forbiddenRoomTypes: rule.parameters?.forbiddenRoomTypes || [],
+            boundaryPeriods: rule.parameters?.boundaryPeriods || [],
+            minOccurrences: Number(rule.parameters?.minOccurrences) || 0,
+            blockSize: Number(rule.parameters?.blockSize) || 0,
+        }));
+}
+
 function sequenceRulesForPlan(project, plan) {
     return (project.rules?.softRules?.subjectSequence || [])
         .filter(item => (
@@ -352,7 +374,7 @@ function expandLockedSlotsForPlan(project, plan) {
     for (const slot of matchingSlots) {
         const ruleKey = `${Number(slot.day)}|${Number(slot.period)}`;
         if (consumedRules.has(ruleKey)) continue;
-        const blockSize = nextLockedBlockSizeForPlan(plan, placedHours);
+        const blockSize = nextLockedBlockSizeForPlan(plan, placedHours, project);
         let accepted = 0;
         const startPeriod = lockedBlockStartPeriod(project, slot, blockSize);
         for (let offset = 0; offset < blockSize; offset += 1) {
@@ -426,15 +448,16 @@ function takeNextInitialSlot(initialSlots, usedIndexes) {
     return initialSlots[index];
 }
 
-function blockSizesForPlan(plan) {
+function blockSizesForPlan(plan, project = null) {
     let remaining = Math.max(0, Number.parseInt(plan.weeklyHours, 10) || 0);
     const sizes = [];
-    if (plan.blockPreference === 'double') {
+    const blockPreference = project ? advancedBlockPreference(project, plan) : plan.blockPreference;
+    if (blockPreference === 'double') {
         while (remaining >= 2) {
             sizes.push(2);
             remaining -= 2;
         }
-    } else if (plan.blockPreference === 'mixed' && remaining >= 4) {
+    } else if (blockPreference === 'mixed' && remaining >= 4) {
         // Match the fast scheduler: keep a couple of single periods alongside
         // doubles, e.g. 6h -> 2+2+1+1 and 5h -> 2+2+1.
         const singles = remaining % 2 === 0 ? 2 : 1;
@@ -452,9 +475,9 @@ function blockSizesForPlan(plan) {
     return sizes;
 }
 
-function nextLockedBlockSizeForPlan(plan, placedHours = 0) {
+function nextLockedBlockSizeForPlan(plan, placedHours = 0, project = null) {
     let consumed = 0;
-    for (const size of blockSizesForPlan(plan)) {
+    for (const size of blockSizesForPlan(plan, project)) {
         if (placedHours < consumed + size) return size;
         consumed += size;
     }
@@ -470,6 +493,7 @@ function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pi
     const ruleRoomIds = roomRequirementIdsForPlan(project, plan);
     const allowedRoomIds = unique([...(plan.allowedRoomIds || []), plan.roomId, ...ruleRoomIds]);
     const afternoonSubjects = project.rules?.softRules?.afternoonSubjects || [];
+    const klass = project.classes.find(item => item.id === plan.classId);
     return {
         id: `${plan.id}_${sequence + 1}`,
         lessonPlanId: plan.id,
@@ -506,6 +530,10 @@ function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pi
         classMainDailyMax: project.rules?.softRules?.classDailyBalance?.mainSubjectDailyMax || 0,
         teacherGapWeight: project.rules?.softRules?.teacherGapWeight || 0,
         teacherLoadBalanceWeight,
+        gradeName: klass?.grade || '',
+        activityTypes: plan.activityTypes || [],
+        requiredResourceTypes: plan.requiredResourceTypes || [],
+        advancedRules: advancedRuleRefsForPlan(project, plan),
     };
 }
 
@@ -537,7 +565,7 @@ function buildLessonAssignments(project) {
         const usedInitialIndexes = new Set();
         let sequence = 0;
         let blockNumber = 0;
-        for (const blockSize of blockSizesForPlan(plan)) {
+        for (const blockSize of blockSizesForPlan(plan, project)) {
             blockNumber += 1;
             for (let blockIndex = 0; blockIndex < blockSize; blockIndex++) {
                 const locked = lockedSlots[sequence];

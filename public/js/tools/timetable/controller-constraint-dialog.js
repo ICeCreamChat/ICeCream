@@ -159,6 +159,7 @@ function mergeRuleReviewResult(currentReview = {}, result = {}, { replace = fals
         systemSupplements: mergeArrayField(currentReview, result, 'systemSupplements', replace),
         manualRequirements: mergeArrayField(currentReview, result, 'manualRequirements', replace),
         constraintIRs: mergeArrayField(currentReview, result, 'constraintIRs', replace),
+        entityResolution: mergeValueField(currentReview, result, 'entityResolution', replace, null),
         warningItems: mergeArrayField(currentReview, result, 'warningItems', replace),
         statistics: mergeValueField(currentReview, result, 'statistics', replace, null),
         draftRules: mergeValueField(currentReview, result, 'draftRules', replace, null),
@@ -254,11 +255,20 @@ export function refreshReviewStatistics(review = {}) {
         'unsupported',
         'invalid',
     ]);
-    const needsReview = source => reviewStatuses.has(String(source.reviewStatus || source.status || '').toLowerCase())
-        || ['unsupported', 'unsupported_by_solver', 'conflicted', 'partially_executable']
-            .includes(String(source.executionStatus || '').toLowerCase());
+    const needsReview = source => {
+        const hasCanonicalState = Object.prototype.hasOwnProperty.call(source, 'requiresHumanReview')
+            || Boolean(source.applicationTarget);
+        if (hasCanonicalState) {
+            return source.requiresHumanReview === true || source.applicationTarget === 'review';
+        }
+        return reviewStatuses.has(String(source.reviewStatus || source.status || '').toLowerCase())
+            || ['unsupported', 'unsupported_by_solver', 'conflicted', 'partially_executable']
+                .includes(String(source.executionStatus || '').toLowerCase());
+    };
     const machineRows = rows.filter(row => row.machineRuleId);
     const executableRows = machineRows.filter(row => !reviewStatuses.has(String(row.status || row.executionStatus || '').toLowerCase()));
+    const sourceHasExecution = (source, status) => source.executionStatus === status
+        || valueList(source.clauses).some(clause => clause?.executionStatus === status);
     review.statistics = {
         ...(review.statistics || {}),
         sourceRequirementCount: sources.length,
@@ -266,6 +276,9 @@ export function refreshReviewStatistics(review = {}) {
         manualInputCount: sources.filter(source => source.origin === 'manual').length,
         systemSupplementCount: systemSupplements.length,
         needsReviewCount: sources.filter(needsReview).length,
+        blockedReferenceSourceCount: sources.filter(source => sourceHasExecution(source, 'blocked_by_reference')).length,
+        blockedClarificationSourceCount: sources.filter(source => sourceHasExecution(source, 'blocked_by_clarification')).length,
+        unsupportedSolverSourceCount: sources.filter(source => sourceHasExecution(source, 'unsupported_by_solver')).length,
         clauseCount: clauses.length,
         machineRuleCount: machineRows.length,
         executableMachineRuleCount: executableRows.length,
@@ -316,6 +329,9 @@ function removeEmptyRequirementOwners(review = {}, ownerIds = new Set()) {
 }
 
 function sourceNeedsContinuedReview(source = {}) {
+    if (Object.prototype.hasOwnProperty.call(source, 'requiresHumanReview') || source.applicationTarget) {
+        return source.requiresHumanReview === true || source.applicationTarget === 'review';
+    }
     const status = String(source.reviewStatus || source.status || '').trim().toLowerCase();
     const executionStatus = String(source.executionStatus || '').trim().toLowerCase();
     return [
@@ -676,6 +692,28 @@ export async function parseConstraintsFromDialog() {
         return;
     }
 
+    const project = this.state.project || {};
+    const requiredCollections = ['teachers', 'classes', 'subjects', 'lessonPlans'];
+    const teacherIds = new Set((project.teachers || []).map(item => item.id).filter(Boolean));
+    const classIds = new Set((project.classes || []).map(item => item.id).filter(Boolean));
+    const subjectIds = new Set((project.subjects || []).map(item => item.id).filter(Boolean));
+    const lessonPlansValid = (project.lessonPlans || []).every(plan => {
+        const planTeacherIds = (plan.teacherIds?.length ? plan.teacherIds : [plan.teacherId]).filter(Boolean);
+        return plan.id
+            && classIds.has(plan.classId)
+            && subjectIds.has(plan.subjectId)
+            && planTeacherIds.length > 0
+            && planTeacherIds.every(id => teacherIds.has(id));
+    });
+    const rosterReady = requiredCollections.every(key => Array.isArray(project[key]) && project[key].length > 0)
+        && lessonPlansValid;
+    if (!rosterReady) {
+        this.constraintParseResume = { mode, ...inputData };
+        this.setMessage?.('请先导入完整任课数据，导入后会继续解析当前约束。');
+        this.openRosterImport?.('file');
+        return;
+    }
+
     // 设置解析状态
     this.state.ruleReview.parsing = true;
     this.state.ruleReview.parseProgress = 0;
@@ -758,6 +796,32 @@ export async function parseConstraintsFromDialog() {
         this.state.ruleReview.phaseText = '';
         this.render();
         alert(`解析失败：${error.message || '未知错误'}`);
+    }
+}
+
+export async function rebindConstraintEntities() {
+    const nodes = [...(this.state.container?.querySelectorAll?.('[data-constraint-binding]') || [])];
+    const bindings = nodes.map(node => ({
+        kind: node.dataset.bindingKind || '',
+        sourceName: node.dataset.bindingSource || '',
+        targetId: node.value || '',
+    })).filter(binding => binding.kind && binding.sourceName && binding.targetId);
+    if (!bindings.length) {
+        this.setMessage?.('请选择需要绑定的现有实体。');
+        return;
+    }
+    try {
+        const result = await requestTimetable('/rules/rebind', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bindings, previousResult: this.state.ruleReview || {} }),
+        });
+        if (result.project) this.state.project = result.project;
+        this.state.ruleReview = mergeRuleReviewResult(this.state.ruleReview || {}, result, { replace: true });
+        this.setMessage?.(`已绑定 ${bindings.length} 个名称，并完成本地重新编译。`);
+        this.render();
+    } catch (error) {
+        this.handleError?.(error);
     }
 }
 

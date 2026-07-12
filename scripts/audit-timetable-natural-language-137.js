@@ -9,6 +9,7 @@ import {
 import { buildRequirementStatistics } from '../gateway/services/timetable-constraints/statistics.js';
 
 const EXPECTED_SOURCE_COUNT = 137;
+const EXPECTED_CONSTRAINT_IR_COUNT = 150;
 const EXPECTED_SHEET = '自然语言约束';
 const root = process.cwd();
 const workbookPath = path.join(root, '真实学校排课约束需求.xlsx');
@@ -156,6 +157,7 @@ async function main() {
     recordCheck(sourceIds.every(Boolean), 'missing_source_id', '每个顶层来源都必须有 sourceId。');
     recordCheck(parseResult.statistics?.sourceRequirementCount === EXPECTED_SOURCE_COUNT, 'statistics_source_count_mismatch', 'statistics.sourceRequirementCount 必须为 137.', { actual: parseResult.statistics?.sourceRequirementCount });
     recordCheck(parseResult.statistics?.userInputCount === EXPECTED_SOURCE_COUNT, 'statistics_user_count_mismatch', 'statistics.userInputCount 必须为 137。', { actual: parseResult.statistics?.userInputCount });
+    recordCheck(constraintIRs.length === EXPECTED_CONSTRAINT_IR_COUNT, 'constraint_ir_count_mismatch', '137 条基线必须稳定拆分为 150 个 ConstraintIR。', { actual: constraintIRs.length });
 
     for (const fixtureItem of fixture) {
         const source = sourceByRow.get(fixtureItem.sourceRow);
@@ -218,7 +220,12 @@ async function main() {
         if (machineRuleId) {
             recordCheck(asArray(source.machineRuleIds).includes(machineRuleId), 'source_missing_machine_rule', `来源 ${source.sourceId} 未声明其机器规则 ${machineRuleId}。`);
         } else {
-            recordCheck(row.executionStatus === 'unsupported_by_solver', 'review_row_missing_machine_rule_without_unsupported_status', `无 machineRuleId 的兼容行 ${rowId} 必须明确不可执行。`, { executionStatus: row.executionStatus });
+            recordCheck(
+                ['blocked_by_reference', 'blocked_by_clarification', 'unsupported_by_solver'].includes(row.executionStatus),
+                'review_row_missing_machine_rule_without_blocking_status',
+                `无 machineRuleId 的兼容行 ${rowId} 必须明确为待绑定、待补充或求解器不支持。`,
+                { executionStatus: row.executionStatus },
+            );
         }
     }
     for (const source of sources) {

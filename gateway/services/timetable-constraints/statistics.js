@@ -44,6 +44,7 @@ function sourceCategory(source = {}) {
         return 'needs_clarification';
     }
     if (execution === 'partially_executable') return 'partially_supported';
+    if (['blocked_by_reference', 'blocked_by_clarification'].includes(execution)) return 'needs_clarification';
     if (['unsupported', 'unsupported_by_solver', 'conflicted'].includes(execution)) return 'unsupported';
     if (understanding === 'parsed' || execution === 'executable') return 'understood';
     return 'needs_clarification';
@@ -52,7 +53,12 @@ function sourceCategory(source = {}) {
 function isNeedsReview(source = {}) {
     return sourceCategory(source) === 'needs_clarification'
         || source.status === 'needs_review'
-        || ['unsupported_by_solver', 'conflicted'].includes(source.executionStatus);
+        || ['blocked_by_reference', 'blocked_by_clarification', 'unsupported_by_solver', 'conflicted'].includes(source.executionStatus);
+}
+
+function sourceHasExecution(source = {}, executionStatus = '') {
+    return source.executionStatus === executionStatus
+        || asArray(source.clauses).some(clause => clause?.executionStatus === executionStatus);
 }
 
 export function buildRequirementStatistics({
@@ -95,6 +101,9 @@ export function buildRequirementStatistics({
         parsedCount: parsedSources.length,
         partiallyParsedCount: partiallyParsedSources.length,
         needsReviewCount: sources.filter(isNeedsReview).length,
+        blockedReferenceSourceCount: sources.filter(source => sourceHasExecution(source, 'blocked_by_reference')).length,
+        blockedClarificationSourceCount: sources.filter(source => sourceHasExecution(source, 'blocked_by_clarification')).length,
+        unsupportedSolverSourceCount: sources.filter(source => sourceHasExecution(source, 'unsupported_by_solver')).length,
         unrecognizedCount: unrecognizedSources.length,
         clauseCount: uniqueIds(allClauses, ['clauseId', 'id']),
         machineRuleCount: uniqueIds(rows, ['machineRuleId', 'id', 'stableKey']),

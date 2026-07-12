@@ -274,9 +274,10 @@ test('AI-first parse keeps all sources when AI omits one and rejects an invented
 
     assert.equal(result.sourceRequirements.length, 2);
     assert.equal(result.statistics.userInputCount, 2);
-    assert.ok(result.draftRows.every(row => row.sourceId === promptSources[1].sourceId));
+    assert.deepEqual(new Set(result.draftRows.map(row => row.sourceId)), new Set(promptSources.map(source => source.sourceId)));
     assert.ok(result.warningItems.some(item => item.code === 'ai_source_unknown_source_id'));
-    assert.ok(result.sourceRequirements.some(item => item.sourceId === promptSources[0].sourceId && item.understandingStatus === 'unrecognized'));
+    assert.ok(result.sourceRequirements.every(item => item.understandingStatus === 'parsed'));
+    assert.ok(result.sourceRequirements.every(item => item.applicationTarget === 'rule'));
 });
 
 test('AI review uses source identity and rejects invented or mismatched review items', async () => {
@@ -294,10 +295,12 @@ test('AI review uses source identity and rejects invented or mismatched review i
             promptPayload = JSON.parse(request.messages?.[1]?.content || '{}');
             const [source] = promptPayload.sources || [];
             const [row] = promptPayload.localResult?.draftRows || [];
-            assert.equal(promptPayload.aiReviewPromptVersion, 'timetable_ai_review_v2');
+            assert.equal(promptPayload.aiReviewPromptVersion, 'timetable_ai_review_v4');
             assert.equal(promptPayload.sources.length, 1);
             assert.equal(row.sourceId, source.sourceId);
             assert.equal(row.textHash, source.textHash);
+            assert.equal(promptPayload.applicationBaseline.sourceRequirements, undefined);
+            assert.equal(promptPayload.applicationBaseline.draftRows.length, 1);
             return jsonResponse({
                 choices: [{
                     message: {
@@ -353,9 +356,10 @@ test('AI review uses source identity and rejects invented or mismatched review i
     assert.equal(result.sourceRequirements[0].sourceId, promptPayload.sources[0].sourceId);
     const row = result.draftRows.find(item => item.sourceId === promptPayload.sources[0].sourceId);
     assert.ok(row);
-    assert.equal(row.aiReviewStatus, 'accepted');
+    assert.equal(row.aiReviewStatus, '', 'AI accept metadata must not rewrite the formal machine row');
     assert.equal(row.priority, 'soft');
     assert.equal(result.aiReview.reviewItems.length, 1);
+    assert.equal(result.aiReview.reviewItems[0].validationStatus, 'accepted');
     assert.equal(result.rejected.length, 2);
     assert.ok(result.warningItems.some(item => item.code === 'ai_source_unknown_source_id'));
     assert.ok(result.warningItems.some(item => item.code === 'ai_source_text_hash_mismatch'));
@@ -580,6 +584,9 @@ test('AI review patch/upsert stays idempotent for duplicate patches and repeated
 
     assert.equal(once.aiReview.appliedSuggestionCount, 1);
     assert.equal(twice.aiReview.appliedSuggestionCount, 1);
+    assert.equal(once.draftRows.find(row => row.sourceId === mathSource.sourceId)?.aiReviewStatus, 'patched');
+    assert.equal(twice.draftRows.find(row => row.sourceId === mathSource.sourceId)?.aiReviewStatus, 'patched');
+    assert.ok(!twice.warnings.some(warning => /AI 复审建议未通过本地校验/.test(warning)));
     assert.equal(once.requirementItems.filter(item => item.id === 'req_review_math_daypart_scope').length, 1);
     assert.equal(twice.requirementItems.filter(item => item.id === 'req_review_math_daypart_scope').length, 1);
     assert.deepEqual(identitySnapshot(twice), identitySnapshot(once));
@@ -587,6 +594,136 @@ test('AI review patch/upsert stays idempotent for duplicate patches and repeated
     assert.equal(twice.sourceRequirements.flatMap(item => item.clauses).length, once.sourceRequirements.flatMap(item => item.clauses).length);
     assert.equal(twice.draftRows.length, once.draftRows.length);
     assert.equal(twice.semanticActions.length, once.semanticActions.length);
+});
+
+test('AI review blocks only when local validation reproduces the declared issue', async () => {
+    const timetableProject = project();
+    const requestText = '张老师周一第9节不排课。';
+    const localResult = await parseTimetableRules({
+        text: requestText,
+        project: timetableProject,
+        env: { TIMETABLE_RULE_AI_REVIEW_DISABLED: 'true' },
+    });
+    const [source] = localResult.sourceRequirements;
+    const result = applyAiReviewToParseResult({
+        project: timetableProject,
+        result: localResult,
+        text: requestText,
+        inputType: 'text',
+        review: {
+            model: 'mock-review',
+            reviewItems: [{
+                id: 'review-slot-range',
+                verdict: 'flag',
+                issueCode: 'slot_out_of_range',
+                sourceId: source.sourceId,
+                textHash: source.textHash,
+                target: { sourceId: source.sourceId, textHash: source.textHash },
+                fieldPath: 'time.slots',
+                evidence: { quote: requestText },
+                reason: '第9节超出当前8节作息。',
+            }],
+        },
+    });
+
+    assert.equal(result.aiReview.reviewItems[0].validationStatus, 'blocking');
+    assert.equal(result.aiReview.reviewItems[0].blocking, true);
+    assert.equal(result.aiAssistance.blockingCount, 1);
+    assert.equal(result.sourceRequirements[0].requiresHumanReview, true);
+    assert.equal(result.sourceRequirements[0].applicationTarget, 'review');
+    assert.ok(result.sourceRequirements[0].reviewReasons.some(reason => (
+        reason.code === 'ai_review_slot_out_of_range'
+        && reason.origin === 'ai'
+        && reason.verified === true
+    )));
+});
+
+test('complete AI missed requirements compile locally and dedupe without creating review cards', async () => {
+    const timetableProject = project();
+    const requestText = '数学尽量安排在上午。';
+    const localResult = await parseTimetableRules({
+        text: requestText,
+        project: timetableProject,
+        env: { TIMETABLE_RULE_AI_REVIEW_DISABLED: 'true' },
+    });
+    const [source] = localResult.sourceRequirements;
+    const result = applyAiReviewToParseResult({
+        project: timetableProject,
+        result: localResult,
+        text: requestText,
+        inputType: 'text',
+        review: {
+            model: 'mock-review',
+            reviewItems: [{
+                id: 'review-complete-missed',
+                verdict: 'missed_requirement',
+                sourceId: source.sourceId,
+                textHash: source.textHash,
+                target: { sourceId: source.sourceId, textHash: source.textHash },
+                evidence: { quote: requestText },
+                reason: '补充完整的数学上午偏好语义。',
+                suggestedRequirement: {
+                    id: 'req-complete-missed',
+                    intent: 'subject_morning',
+                    object: { kind: 'subject', name: '数学', matchedIds: ['math'], scope: 'explicit' },
+                    parameters: { periods: [1, 2, 3, 4] },
+                    strength: 'soft',
+                },
+            }],
+        },
+    });
+
+    assert.equal(result.aiReview.reviewItems[0].validationStatus, 'accepted');
+    assert.equal(result.aiReview.reviewItems[0].blocking, false);
+    assert.equal(result.sourceRequirements.length, 1);
+    assert.equal(result.sourceRequirements[0].requiresHumanReview, false);
+    assert.equal(result.sourceRequirements[0].applicationTarget, 'rule');
+    assert.ok(result.constraintIRs.every(item => item.executionStatus === 'executable'));
+    assert.ok(result.constraintIRs.every(item => item.machineRuleIds.length > 0));
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
+});
+
+test('a review requirementId never broadens a patch to every row in the same source', async () => {
+    const timetableProject = project();
+    const requestText = '数学尽量上午，英语尽量下午。';
+    const localResult = await parseTimetableRules({
+        text: requestText,
+        project: timetableProject,
+        env: {
+            TIMETABLE_RULE_AI_EXTRACT: '0',
+            TIMETABLE_RULE_AI_REVIEW_DISABLED: 'true',
+        },
+    });
+    const [source] = localResult.sourceRequirements;
+    const before = localResult.draftRows.map(row => ({ type: row.type, targetId: row.targetId }));
+    const result = applyAiReviewToParseResult({
+        project: timetableProject,
+        result: localResult,
+        text: requestText,
+        inputType: 'text',
+        review: {
+            model: 'mock-review',
+            reviewItems: [{
+                verdict: 'suggest_patch',
+                sourceId: source.sourceId,
+                textHash: source.textHash,
+                target: {
+                    sourceId: source.sourceId,
+                    textHash: source.textHash,
+                    requirementId: 'ai-only-requirement',
+                },
+                patch: { targetId: 'math' },
+                reason: '该补丁只指向诊断结果中的 AI 候选。',
+            }],
+        },
+    });
+
+    assert.deepEqual(
+        result.draftRows.map(row => ({ type: row.type, targetId: row.targetId })),
+        before,
+    );
+    assert.equal(result.aiReview.reviewItems[0].validationStatus, 'advisory');
+    assert.equal(result.aiReview.appliedSuggestionCount, 0);
 });
 
 

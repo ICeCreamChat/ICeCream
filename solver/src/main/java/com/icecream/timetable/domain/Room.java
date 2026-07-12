@@ -4,6 +4,9 @@ import ai.timefold.solver.core.api.domain.common.PlanningId;
 import com.fasterxml.jackson.annotation.JsonIdentityInfo;
 import com.fasterxml.jackson.annotation.ObjectIdGenerators;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @JsonIdentityInfo(scope = Room.class, generator = ObjectIdGenerators.PropertyGenerator.class, property = "id")
 public class Room {
 
@@ -13,6 +16,7 @@ public class Room {
     private String id;
     private String name;
     private boolean none;
+    private List<String> tags = new ArrayList<>();
 
     public Room() {
     }
@@ -49,6 +53,27 @@ public class Room {
 
     public void setNone(boolean none) {
         this.none = none;
+    }
+
+    public List<String> getTags() {
+        return tags == null ? List.of() : tags;
+    }
+
+    public void setTags(List<String> tags) {
+        this.tags = tags == null ? new ArrayList<>() : new ArrayList<>(tags);
+    }
+
+    public boolean hasNormalizedTag(String expected) {
+        String wanted = normalizeTag(expected);
+        return getTags().stream().map(Room::normalizeTag).anyMatch(wanted::equals);
+    }
+
+    private static String normalizeTag(String value) {
+        String key = value == null ? "" : value.trim().toLowerCase().replaceAll("[\\s_-]+", "");
+        if (key.contains("普通教室") || key.contains("ordinary")) return "ordinaryclassroom";
+        if (key.contains("计算机") || key.contains("机房") || key.contains("computer")) return "computerroom";
+        if (key.contains("实验") || key.contains("lab")) return "lab";
+        return key;
     }
 
     @Override

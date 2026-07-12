@@ -153,7 +153,7 @@ test('missing or ambiguous teacher references produce clarification and no ready
     assert.equal(compileConstraintIR(registry, ambiguousTarget).rows.length, 0);
 });
 
-test('unsupported capability remains understood IR with explicit solver warning', () => {
+test('upgraded teacher load balance capability is fully executable', () => {
     const registry = createDefaultTimetableCapabilityRegistry();
     const ir = legacyArtifactToConstraintIR({
         ...provenance,
@@ -168,9 +168,9 @@ test('unsupported capability remains understood IR with explicit solver warning'
 
     assert.equal(ir.capabilityId, 'teacher.load_balance');
     assert.equal(ir.understandingStatus, 'parsed');
-    assert.equal(ir.executionStatus, 'partially_executable');
-    assert.equal(ir.reviewStatus, 'partially_supported');
-    assert.ok(ir.warnings.some(message => /部分|近似|求解器/.test(message)));
+    assert.equal(ir.executionStatus, 'executable');
+    assert.equal(ir.reviewStatus, 'understood');
+    assert.equal(ir.support, 'full');
 });
 
 test('unknown capability is never treated as unrecognized natural language when the clause intent is known', () => {

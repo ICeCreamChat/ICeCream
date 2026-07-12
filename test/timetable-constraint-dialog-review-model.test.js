@@ -5,6 +5,9 @@ import test from 'node:test';
 import { parseTimetableRules } from '../gateway/services/timetable-rule-parser.js';
 import {
     buildUnifiedRequirementItems,
+    getActionableDraftRows,
+    getActionableRequirementCount,
+    getBackendRuleRows,
     getRequirementGroupKey,
 } from '../public/js/tools/timetable/constraint-dialog-review-model.js';
 
@@ -103,6 +106,50 @@ test('sourceRequirements are the only top-level cardinality and identical text n
     assert.deepEqual(items.map(item => item.id), ['src:a', 'src:b']);
     assert.deepEqual(items.map(item => item.sourceId), ['src:a', 'src:b']);
     assert.deepEqual(items.map(item => item.primaryRequirementId), ['req_a', 'req_b']);
+});
+
+test('advanced constraint rows are actionable backend rules when their source card is rule-applicable', () => {
+    const sourceId = 'src:advanced';
+    const machineRuleId = 'machine:advanced';
+    const advancedClause = clause({
+        id: 'req_advanced',
+        sourceId,
+        clauseId: 'clause:advanced',
+        intent: 'teacher_gap_preference',
+    });
+    const review = {
+        schemaVersion: 2,
+        sourceRequirements: [{
+            ...sourceRequirement({
+                sourceId,
+                rawText: '张老师同一天多节课尽量排得紧凑。',
+                clauses: [advancedClause],
+                machineRuleIds: [machineRuleId],
+            }),
+            applicationTarget: 'rule',
+            requiresHumanReview: false,
+        }],
+        constraintIRs: [{
+            ...advancedClause,
+            capabilityId: 'teacher.compact_day',
+        }],
+        requirementItems: [advancedClause],
+        draftRows: [{
+            id: 'row_advanced',
+            sourceId,
+            clauseId: 'clause:advanced',
+            requirementId: 'req_advanced',
+            machineRuleId,
+            type: 'advanced_constraint',
+            advancedType: 'teacher.compact_day',
+            status: 'effective',
+        }],
+        semanticActions: [],
+    };
+
+    assert.equal(getActionableRequirementCount(review), 1);
+    assert.deepEqual(getActionableDraftRows(review).map(row => row.id), ['row_advanced']);
+    assert.deepEqual(getBackendRuleRows(review).map(row => row.id), ['row_advanced']);
 });
 
 test('source requirement with missing origin stays visible as unknown instead of becoming user input', () => {
@@ -357,12 +404,11 @@ test('the real 137-row workbook renders exactly 137 source cards and keeps expan
         );
     }
 
-    const unsupported = bySourceRow(133);
-    assert.ok(unsupported);
-    assert.equal(unsupported.clauses.length, 1);
-    assert.equal(unsupported.machineRules.length, 0);
-    assert.equal(unsupported.understandingStatus, 'parsed');
-    assert.equal(unsupported.executionStatus, 'unsupported_by_solver');
+    const crossVenueBoundary = bySourceRow(133);
+    assert.ok(crossVenueBoundary);
+    assert.equal(crossVenueBoundary.clauses.length, 1);
+    assert.equal(crossVenueBoundary.machineRules.length, 1);
+    assert.equal(crossVenueBoundary.executionStatus, 'executable');
 });
 
 

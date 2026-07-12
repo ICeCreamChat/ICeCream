@@ -1556,6 +1556,8 @@ function renderRosterReview(dialog) {
                     <col class="tt-roster-col-hours">
                     <col class="tt-roster-col-block">
                     <col class="tt-roster-col-room">
+                    <col class="tt-roster-col-tags">
+                    <col class="tt-roster-col-tags">
                     <col class="tt-roster-col-issue">
                     <col class="tt-roster-col-action">
                 </colgroup>
@@ -1571,6 +1573,8 @@ function renderRosterReview(dialog) {
                         <th>${renderRosterHeaderHelp('周课时', 'tt-roster-weekly-hours-help-text', '查看周课时说明', ROSTER_WEEKLY_HOURS_HELP_HTML)}</th>
                         <th>${renderRosterHeaderHelp('连堂', 'tt-roster-block-help-text', '查看连堂说明', ROSTER_BLOCK_HELP_HTML)}</th>
                         <th>教室</th>
+                        <th>课型</th>
+                        <th>资源</th>
                         <th>问题</th>
                         <th>操作</th>
                     </tr>
@@ -1669,6 +1673,8 @@ function renderRosterReviewRow(row, index = 0) {
                 </select>
             </td>
             <td data-label="教室">${input('roomName', row.roomName)}</td>
+            <td data-label="课型">${input('activityTypes', Array.isArray(row.activityTypes) ? row.activityTypes.join('、') : row.activityTypes)}</td>
+            <td data-label="资源">${input('requiredResourceTypes', Array.isArray(row.requiredResourceTypes) ? row.requiredResourceTypes.join('、') : row.requiredResourceTypes)}</td>
             <td data-label="问题"><span class="tt-roster-review-issue" title="${escapeAttr(issueText)}">${escapeHtml(issueText)}</span></td>
             <td data-label="操作">
                 <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-roster-delete-row="${escapeAttr(row.id)}" title="删除此行" aria-label="删除此行"><i data-lucide="trash-2"></i></button>

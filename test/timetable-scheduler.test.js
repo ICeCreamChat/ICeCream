@@ -2594,8 +2594,7 @@ test('timetable AI rules parser derives local suggestions from roster Excel when
     assert.equal(result.contextStats.totalLessons, 12);
     assert.deepEqual(result.draftRules.softRules.morningSubjects.sort(), ['english', 'math']);
     assert.ok(result.previewItems.some(item => item.type === 'subject_morning' && item.status === 'ready'));
-    assert.ok(result.previewItems.some(item => item.type === 'block_protection' && item.status === 'suggestion'));
-    assert.ok(result.unsupportedItems.length >= 1);
+    assert.ok(result.draftRows.some(item => item.type === 'advanced_constraint' && item.advancedType === 'lesson.consecutive'));
 });
 
 test('timetable AI rules parser uses stable local roster suggestions without calling AI', async () => {
@@ -2633,7 +2632,7 @@ test('timetable AI rules parser uses stable local roster suggestions without cal
     assert.equal(result.contextStats.totalLessons, 12);
     assert.ok(result.draftRows.length > 0);
     assert.ok(result.previewItems.some(item => item.type === 'subject_morning'));
-    assert.ok(result.previewItems.some(item => item.type === 'block_protection'));
+    assert.ok(result.draftRows.some(item => item.type === 'advanced_constraint' && item.advancedType === 'lesson.consecutive'));
     assert.equal(result.warnings.length, 0);
 });
 
@@ -4076,8 +4075,12 @@ test('timetable roster preview does not save and reviewed rows replace the saved
 
         const science = importPayload.data.project.lessonPlans.find(plan => plan.subjectName === 'Science');
         assert.deepEqual(science.teacherIds.map(id => importPayload.data.project.teachers.find(teacher => teacher.id === id)?.name), ['Alice', 'Bob']);
-        assert.deepEqual(science.allowedRoomIds, ['Lab A', 'Lab B']);
-        assert.equal(science.roomId, 'Lab A');
+        assert.equal(importPayload.data.project.rooms.length, 2);
+        assert.deepEqual(
+            science.allowedRoomIds.map(id => importPayload.data.project.rooms.find(room => room.id === id)?.name),
+            ['Lab A', 'Lab B'],
+        );
+        assert.equal(importPayload.data.project.rooms.find(room => room.id === science.roomId)?.name, 'Lab A');
     } finally {
         await new Promise(resolve => server.close(resolve));
         if (previousDataDir === undefined) {
@@ -7485,39 +7488,65 @@ test('timetable rules parse API returns an editable AI draft without saving it',
         const request = JSON.parse(options.body || '{}');
         const systemPrompt = request.messages?.[0]?.content || '';
         if (/复审|审计/.test(systemPrompt)) {
+            const promptPayload = JSON.parse(request.messages?.[1]?.content || '{}');
+            const [source] = promptPayload.sources || [];
             return jsonResponse({
-                choices: [{ message: { content: JSON.stringify({ reviewItems: [] }) } }],
+                choices: [{
+                    message: {
+                        content: JSON.stringify({
+                            reviewItems: [{
+                                verdict: 'missed_requirement',
+                                sourceId: source.sourceId,
+                                textHash: source.textHash,
+                                target: { sourceId: source.sourceId, textHash: source.textHash },
+                                fieldPath: 'clauses',
+                                evidence: { quote: 'Math in morning' },
+                                reason: 'The local baseline omitted the independent morning preference.',
+                                suggestedRequirement: {
+                                    intent: 'subject_morning',
+                                    object: {
+                                        kind: 'subject',
+                                        name: 'Math',
+                                        matchedIds: ['math'],
+                                        scope: 'explicit',
+                                    },
+                                    parameters: { periods: [1, 2, 3, 4] },
+                                    strength: 'soft',
+                                },
+                            }],
+                        }),
+                    },
+                }],
             });
         }
         const promptPayload = JSON.parse(request.messages?.[1]?.content || '{}');
-        const [source] = promptPayload.constraintRows || [];
+        const [source] = promptPayload.sources || [];
         assert.ok(source?.sourceId);
         assert.ok(source?.textHash);
         return jsonResponse({
             choices: [{
                 message: {
                     content: JSON.stringify({
-                        draftRows: [
-                            {
-                                sourceId: source.sourceId,
-                                textHash: source.textHash,
-                                rawText: source.rawText || source.constraintText,
-                                type: 'teacher_unavailable',
-                                targetId: 't_math',
-                                slots: ['3-4'],
-                                priority: 'hard',
-                                reason: 'Teacher request',
-                            },
-                            {
-                                sourceId: source.sourceId,
-                                textHash: source.textHash,
-                                rawText: source.rawText || source.constraintText,
-                                type: 'subject_morning',
-                                targetId: 'math',
-                                priority: 'soft',
-                                reason: 'Core subject',
-                            },
-                        ],
+                        results: [{
+                            sourceId: source.sourceId,
+                            textHash: source.textHash,
+                            clauses: [{
+                                intent: 'teacher_unavailable',
+                                targetKind: 'teacher',
+                                targetNames: ['Math Teacher'],
+                                time: { slots: ['3-4'] },
+                                strength: 'hard',
+                                confidence: 0.95,
+                                evidence: 'Math Teacher Wednesday period 4 unavailable',
+                            }, {
+                                intent: 'subject_morning',
+                                targetKind: 'subject',
+                                targetNames: ['Math'],
+                                strength: 'soft',
+                                confidence: 0.95,
+                                evidence: 'Math in morning',
+                            }],
+                        }],
                     }),
                 },
             }],
@@ -7543,10 +7572,25 @@ test('timetable rules parse API returns an editable AI draft without saving it',
 
         assert.equal(response.status, 200);
         assert.equal(payload.success, true);
+        assert.equal(payload.data.aiReview.status, 'reviewed');
+        assert.equal(payload.data.aiReview.reviewItems[0]?.validationStatus, 'accepted');
+        assert.equal(payload.data.aiCandidateValidation?.unverifiedCandidateCount, 0);
+        assert.ok(
+            payload.data.constraintIRs.some(item => (
+                item.capabilityId === 'subject.preferred_day_part'
+                && item.executionStatus === 'executable'
+                && item.machineRuleIds.length > 0
+            )),
+            JSON.stringify({
+                draftRows: payload.data.draftRows,
+                constraintIRs: payload.data.constraintIRs,
+                aiReview: payload.data.aiReview,
+            }),
+        );
         assert.deepEqual(payload.data.draftRules.hardRules.teacherUnavailable.t_math, ['3-4']);
         assert.deepEqual(payload.data.draftRules.softRules.morningSubjects, ['math']);
         assert.equal(payload.data.previewItems.length, 2);
-        assert.equal(payload.data.source, 'ai');
+        assert.equal(payload.data.parseSource, 'ai_extract');
 
         const storedBeforeConfirm = await store.loadProject();
         assert.deepEqual(storedBeforeConfirm.rules.hardRules.teacherUnavailable, {});

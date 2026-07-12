@@ -8,6 +8,7 @@ import {
     weekPatternForSlot,
     weekPatternsOverlap,
 } from './timetable-project.js';
+import { advancedHardBlocker } from './timetable-advanced-rules.js';
 
 export function createTimetableUsage() {
     return {
@@ -229,6 +230,8 @@ export function canUseSlot(project, usage, slot, options = {}) {
     if (!isActiveTimetableSlot(project, slot.day, slot.period)) {
         return { ok: false, reason: '节次超出当前作息范围' };
     }
+    const advancedBlocker = advancedHardBlocker(project, usage.entries || [], slot);
+    if (advancedBlocker) return { ok: false, reason: advancedBlocker };
     if ((project.rules?.hardRules?.globalUnavailable || []).includes(key)) {
         return { ok: false, reason: '全校不可排时间' };
     }

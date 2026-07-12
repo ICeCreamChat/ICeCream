@@ -150,6 +150,10 @@ export function requirementIntentLabel(intent = '') {
 }
 
 export function requirementStatusLabel(item = {}) {
+    const execution = normalizeStatusKey(item.executionStatus || '');
+    const understanding = normalizeStatusKey(item.understandingStatus || '');
+    if (execution === 'blocked_by_reference' || understanding === 'invalid_reference') return '已理解，待绑定对象';
+    if (execution === 'blocked_by_clarification' || ['ambiguous', 'partially_parsed'].includes(understanding)) return '已理解，待补充';
     const key = normalizeStatusKey(item.status || '');
     return {
         handled: '已处理',
@@ -172,6 +176,8 @@ export function requirementStatusLabel(item = {}) {
         partially_supported: '部分支持',
         partially_actionable: '部分可执行',
         partially_executable: '部分可执行',
+        blocked_by_reference: '已理解，待绑定对象',
+        blocked_by_clarification: '已理解，待补充',
         understood_not_executable: '已理解，暂不可执行',
         unsupported_by_solver: '已理解，但当前求解器暂不支持',
         unsupported: '已理解，暂不支持',
@@ -202,6 +208,8 @@ export function requirementApplyLabel(applyTo = '') {
         partially_supported: '⚠ 部分可执行',
         partially_actionable: '⚠ 部分可执行',
         partially_executable: '⚠ 部分可执行',
+        blocked_by_reference: '⚠ 待绑定对象',
+        blocked_by_clarification: '⚠ 待补充信息',
         understood_not_executable: '○ 已理解，暂不可执行',
         unsupported_by_solver: '○ 求解器暂不支持',
         unsupported: '○ 暂不可执行',
@@ -211,7 +219,7 @@ export function requirementApplyLabel(applyTo = '') {
 export function requirementApplyTone(applyTo = '', status = '') {
     const applyKey = normalizeStatusKey(applyTo);
     const statusKey = normalizeStatusKey(status);
-    const clarificationKeys = new Set(['needs_clarification', 'needs_review', 'review']);
+    const clarificationKeys = new Set(['needs_clarification', 'needs_review', 'review', 'blocked_by_reference', 'blocked_by_clarification']);
     const partialKeys = new Set(['partially_supported', 'partially_actionable', 'partially_executable']);
     const understoodButUnavailableKeys = new Set(['unsupported', 'unsupported_by_solver', 'understood_not_executable']);
     if (clarificationKeys.has(statusKey) || clarificationKeys.has(applyKey)) return 'warning';
@@ -227,6 +235,8 @@ export function requirementApplyTone(applyTo = '', status = '') {
 export function requirementApplyExplanation(applyTo = '', status = '') {
     const applyKey = normalizeStatusKey(applyTo);
     const statusKey = normalizeStatusKey(status);
+    if (statusKey === 'blocked_by_reference' || applyKey === 'blocked_by_reference') return '需求已经理解，但项目中尚未绑定对应教师、班级、学科或教室；确认现有对象后即可重新编译。';
+    if (statusKey === 'blocked_by_clarification' || applyKey === 'blocked_by_clarification') return '需求已经理解，但缺少必要参数、作息范围或课程活动属性；补充后即可重新编译。';
     if (statusKey === 'unsupported_by_solver' || applyKey === 'unsupported_by_solver') return '已经理解这条需求，但当前求解器暂不能自动执行；请保留为人工调课参考或等待能力扩展。';
     if (statusKey === 'understood_not_executable' || applyKey === 'understood_not_executable') return '已经理解这条需求，但暂未生成可自动执行的机器规则。';
     if (['partially_supported', 'partially_actionable', 'partially_executable'].includes(statusKey)

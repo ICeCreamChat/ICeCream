@@ -37,8 +37,17 @@ import {
     diagnoseTimetableRules,
     normalizeTimetableRuleDraftRows,
     parseTimetableRules,
+    rebindTimetableRuleResult,
     TimetableRuleParseError,
 } from '../services/timetable-rule-parser.js';
+import {
+    assessConstraintParseReadiness,
+    createRosterRequiredError,
+} from '../services/timetable-constraints/parse-readiness.js';
+import {
+    applyConstraintEntityBindings,
+    findInvalidConstraintEntityAliases,
+} from '../services/timetable-constraints/entity-binding.js';
 import {
     createTimetableOptimizationJob,
     getTimetableOptimizationJob,
@@ -510,6 +519,7 @@ router.post('/roster/clear', async (req, res) => {
             teachers: [],
             classes: [],
             subjects: [],
+            rooms: [],
             lessonPlans: [],
             rules: defaults.rules,
             schedule: preservePublishedArchive(null, current.schedule),
@@ -552,16 +562,18 @@ router.post('/roster/import', upload.single('file'), async (req, res) => {
             : req.file
                 ? parseTimetableRosterFile({ buffer: req.file.buffer, filename: req.file.originalname }, { project: current })
                 : parseTimetableRosterText(req.body?.text || '', { project: current });
+        const invalidatedConstraintAliases = findInvalidConstraintEntityAliases(current, parsed);
         const project = normalizeTimetableProject({
             ...current,
             teachers: parsed.teachers,
             classes: parsed.classes,
             subjects: parsed.subjects,
+            rooms: parsed.rooms,
             lessonPlans: parsed.lessonPlans,
             schedule: preservePublishedArchive(null, current.schedule),
         });
         const saved = await store().saveProject(project);
-        ok(res, { project: saved, import: parsed });
+        ok(res, { project: saved, import: { ...parsed, invalidatedConstraintAliases } });
     } catch (error) {
         fail(res, error);
     }
@@ -586,6 +598,8 @@ async function handleRulesParse(req, res) {
     let current = null;
     try {
         current = await store().loadProject();
+        const readiness = assessConstraintParseReadiness(current);
+        if (!readiness.ready) throw createRosterRequiredError(readiness);
         const parsed = await parseTimetableRules({
             text: req.body?.text || '',
             file: req.file ? { buffer: req.file.buffer, filename: req.file.originalname } : null,
@@ -593,16 +607,36 @@ async function handleRulesParse(req, res) {
         });
         ok(res, parsed);
     } catch (error) {
-        const status = error instanceof TimetableRuleParseError ? error.status : 500;
+        const status = error.status || (error instanceof TimetableRuleParseError ? error.status : 500);
         fail(res, error, status, {
             project: current,
             reason: error.reason || 'rules_parse_failed',
+            ...(error.readiness ? { readiness: error.readiness } : {}),
         });
     }
 }
 
 router.post('/rules/parse', upload.single('file'), handleRulesParse);
 router.post('/rule-review/parse', upload.single('file'), handleRulesParse);
+
+router.post('/rules/rebind', async (req, res) => {
+    let current = null;
+    try {
+        current = await store().loadProject();
+        const project = applyConstraintEntityBindings(current, req.body?.bindings || []);
+        const saved = await store().saveProject(project);
+        const result = rebindTimetableRuleResult({
+            project: saved,
+            previousResult: req.body?.previousResult || {},
+        });
+        ok(res, { ...result, project: saved });
+    } catch (error) {
+        fail(res, error, error.status || 400, {
+            project: current,
+            reason: error.reason || 'rules_rebind_failed',
+        });
+    }
+});
 
 router.post('/rules/normalize', async (req, res) => {
     let current = null;

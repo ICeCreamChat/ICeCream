@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import AdmZip from 'adm-zip';
 
@@ -52,6 +53,8 @@ function normalizeHeader(value) {
     if (/课时|周课时|hours|hour/.test(text)) return 'weeklyHours';
     if (/连堂|块|block/.test(text)) return 'blockPreference';
     if (/教室|场地|room|classroom/.test(text)) return 'roomName';
+    if (/活动类型|课程类型|课型|activity/.test(text)) return 'activityTypes';
+    if (/资源类型|教学资源|resource/.test(text)) return 'requiredResourceTypes';
     return null;
 }
 
@@ -64,6 +67,38 @@ function parseBlockPreferenceInfo(value) {
     if (['double', 'block', '2'].includes(text) || /双|两|连堂|double|block/.test(text)) return { value: 'double', raw, degraded: false };
     if (['mixed', 'mix'].includes(text) || /混|单双|mixed|mix/.test(text)) return { value: 'mixed', raw, degraded: false };
     return { value: 'single', raw, degraded: true };
+}
+
+function roomTagsFromName(value = '') {
+    const name = cleanCell(value);
+    const tags = [];
+    if (/实验室/.test(name)) tags.push('实验室');
+    if (/物理实验室/.test(name)) tags.push('物理实验室');
+    if (/化学实验室/.test(name)) tags.push('化学实验室');
+    if (/生物实验室/.test(name)) tags.push('生物实验室');
+    if (/计算机教室|机房|电脑房/.test(name)) tags.push('计算机教室', '机房');
+    if (/操场/.test(name)) tags.push('操场');
+    if (/体育馆/.test(name)) tags.push('体育馆');
+    if (/音乐/.test(name)) tags.push('音乐教室');
+    if (/美术/.test(name)) tags.push('美术教室');
+    if (/劳动|实践/.test(name)) tags.push('劳动实践室');
+    if (/本班教室|普通教室/.test(name)) tags.push('普通教室');
+    return [...new Set(tags)];
+}
+
+function rosterRoomId(name = '') {
+    const normalized = cleanCell(name).toLowerCase();
+    return `room_${createHash('sha256').update(normalized).digest('hex').slice(0, 12)}`;
+}
+
+function mergeExplicitLessonMetadata(row = {}, roomTags = []) {
+    const activityTypes = [...new Set(row.activityTypes || [])];
+    const requiredResourceTypes = [...new Set(row.requiredResourceTypes || [])];
+    const explicitCourseTags = [row.explicitSubjectCategory, ...(row.subjectTags || [])].join(' ');
+    if (/实验|lab/i.test(explicitCourseTags) && !activityTypes.includes('实验课')) activityTypes.push('实验课');
+    if (roomTags.some(tag => tag === '实验室') && !requiredResourceTypes.includes('实验室')) requiredResourceTypes.push('实验室');
+    if (roomTags.some(tag => tag === '机房' || tag === '计算机教室') && !requiredResourceTypes.includes('计算机教室')) requiredResourceTypes.push('计算机教室');
+    return { activityTypes, requiredResourceTypes };
 }
 
 function blockPreferenceReportReason(row = {}) {
@@ -368,13 +403,16 @@ function rowHasAnyValue(row = {}) {
         row.roomName,
         row.subjectCategory,
         row.subjectTags,
+        row.activityTypes,
+        row.requiredResourceTypes,
     ].some(value => cleanCell(value));
 }
 
 function normalizeDraftRow(row = {}, index = 0) {
     const teacherName = splitEntityNames(row.teacherName).join('、');
     const roomName = splitEntityNames(row.roomName || row.roomId || row.allowedRoomIds).join('、');
-    const subjectCategory = normalizeSubjectCategory(row.subjectCategory || row.category || row.subjectType, row.subjectName);
+    const explicitSubjectCategory = cleanCell(row.subjectCategory || row.category || row.subjectType);
+    const subjectCategory = normalizeSubjectCategory(explicitSubjectCategory, row.subjectName);
     const subjectTags = normalizeSubjectTags(row.subjectTags || row.tags);
     const blockPreference = parseBlockPreferenceInfo(row.blockPreference);
     return {
@@ -384,6 +422,7 @@ function normalizeDraftRow(row = {}, index = 0) {
         className: cleanCell(row.className),
         subjectName: cleanCell(row.subjectName),
         subjectCategory,
+        explicitSubjectCategory,
         subjectTags,
         teacherName,
         weeklyHours: parseWeeklyHours(row.weeklyHours),
@@ -391,6 +430,8 @@ function normalizeDraftRow(row = {}, index = 0) {
         rawBlockPreference: blockPreference.raw,
         blockPreferenceDegraded: blockPreference.degraded,
         roomName,
+        activityTypes: normalizeSubjectTags(row.activityTypes || row.activityType),
+        requiredResourceTypes: normalizeSubjectTags(row.requiredResourceTypes || row.resourceTypes),
     };
 }
 
@@ -532,7 +573,11 @@ export function buildTimetableRosterFromRows(rows = [], { project = {} } = {}) {
     const teachers = new Map();
     const classes = new Map();
     const subjects = new Map();
+    const rooms = new Map();
     const lessonPlans = [];
+    const existingRoomIdsByName = new Map((project.rooms || [])
+        .filter(room => room?.name && room?.id)
+        .map(room => [cleanCell(room.name), room.id]));
 
     preview.draftRows.forEach(row => {
         const teacherNames = splitEntityNames(row.teacherName);
@@ -542,6 +587,8 @@ export function buildTimetableRosterFromRows(rows = [], { project = {} } = {}) {
         const subjectId = makeTimetableId('s', row.subjectName);
         const teacherIds = teacherNames.map(name => makeTimetableId('t', name));
         const roomNames = splitEntityNames(row.roomName);
+        const roomIds = roomNames.map(name => existingRoomIdsByName.get(name) || rosterRoomId(name));
+        const roomTags = roomNames.flatMap(roomTagsFromName);
         const subjectCategory = normalizeSubjectCategory(row.subjectCategory, row.subjectName);
         const subjectTags = normalizeSubjectTags(row.subjectTags);
 
@@ -567,6 +614,17 @@ export function buildTimetableRosterFromRows(rows = [], { project = {} } = {}) {
             });
             if (!teacher.subjects.includes(subjectId)) teacher.subjects.push(subjectId);
         });
+        roomNames.forEach((name, index) => {
+            const room = pushUnique(rooms, roomIds[index], {
+                id: roomIds[index],
+                name,
+                tags: roomTagsFromName(name),
+            });
+            roomTagsFromName(name).forEach(tag => {
+                if (!room.tags.includes(tag)) room.tags.push(tag);
+            });
+        });
+        const lessonMetadata = mergeExplicitLessonMetadata(row, roomTags);
 
         lessonPlans.push({
             id: `lp_${lessonPlans.length + 1}`,
@@ -576,8 +634,10 @@ export function buildTimetableRosterFromRows(rows = [], { project = {} } = {}) {
             teacherIds,
             weeklyHours: row.weeklyHours,
             blockPreference: row.blockPreference,
-            roomId: roomNames[0] || null,
-            allowedRoomIds: roomNames,
+            roomId: roomIds[0] || null,
+            allowedRoomIds: roomIds,
+            activityTypes: lessonMetadata.activityTypes,
+            requiredResourceTypes: lessonMetadata.requiredResourceTypes,
             className: row.className,
             subjectName: row.subjectName,
             teacherName: teacherNames.join('、'),
@@ -588,6 +648,7 @@ export function buildTimetableRosterFromRows(rows = [], { project = {} } = {}) {
         teachers: [...teachers.values()],
         classes: [...classes.values()],
         subjects: [...subjects.values()],
+        rooms: [...rooms.values()],
         lessonPlans,
         warnings: preview.warnings,
         issues: preview.issues,

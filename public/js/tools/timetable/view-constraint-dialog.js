@@ -247,10 +247,10 @@ function requirementConfidenceLabel(item = {}) {
 function aiReviewStatusLabel(status = '') {
     const key = String(status || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
     return {
-        accepted: 'AI 已复审',
-        reviewed: 'AI 已复审',
-        flagged: 'AI 复审提示',
-        unsupported: 'AI 复审提示',
+        accepted: 'AI 已理解',
+        reviewed: 'AI 已理解',
+        flagged: 'AI 建议',
+        unsupported: 'AI 建议',
         patched: 'AI 已修正',
         patch_rejected: 'AI 建议未采纳',
         missed: 'AI 发现漏识别',
@@ -272,10 +272,19 @@ function humanizeAiReviewMessage(value = '') {
 }
 
 function renderRequirementAiReview(item = {}, review = {}) {
-    const status = item.aiReviewStatus || (review?.status === 'reviewed' ? 'reviewed' : '');
-    const label = aiReviewStatusLabel(status);
-    const warnings = Array.isArray(item.aiReviewWarnings) ? item.aiReviewWarnings.filter(Boolean) : [];
-    const evidence = item.reviewEvidence || {};
+    const artifacts = [item, ...(Array.isArray(item.clauses) ? item.clauses : [])];
+    const artifact = artifacts.find(value => value?.aiReviewValidationStatus || value?.aiReviewStatus) || item;
+    const validationStatus = String(artifact.aiReviewValidationStatus || '').trim().toLowerCase();
+    const status = artifact.aiReviewStatus || (review?.status === 'reviewed' ? 'reviewed' : '');
+    const label = artifact.aiReviewBlocking === true && validationStatus === 'blocking'
+        ? '已验证阻断'
+        : status === 'patched'
+            ? 'AI 已修正'
+            : validationStatus === 'advisory'
+                ? 'AI 建议'
+                : aiReviewStatusLabel(status);
+    const warnings = Array.isArray(artifact.aiReviewWarnings) ? artifact.aiReviewWarnings.filter(Boolean) : [];
+    const evidence = artifact.reviewEvidence || {};
     const reviewStatus = String(review?.status || '').trim().toLowerCase();
     if (!label && reviewStatus !== 'unavailable' && reviewStatus !== 'skipped') return '';
     const unavailableMessage = reviewStatus === 'unavailable'
@@ -287,8 +296,7 @@ function renderRequirementAiReview(item = {}, review = {}) {
     const defaultMessage = rawMessage || '此项识别结果已通过 AI 复审。';
     const quote = evidence.quote || '';
     const normalizedStatus = String(status || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
-    const tone = ['flagged', 'unsupported', 'patch_rejected', 'missed'].includes(normalizedStatus)
-        || reviewStatus === 'unavailable'
+    const tone = (artifact.aiReviewBlocking === true && validationStatus === 'blocking') || reviewStatus === 'unavailable'
         ? 'warning'
         : 'info';
     const title = label || 'AI 复审说明';
@@ -505,6 +513,9 @@ function requirementReviewSummary(requirements = [], activeFilter = 'all', revie
         clauseCount: finiteReviewStatistic(statistics, 'clauseCount', derivedClauseCount),
         executableRuleCount: finiteReviewStatistic(statistics, 'executableMachineRuleCount', applicable),
         reviewCount: finiteReviewStatistic(statistics, 'needsReviewCount', counts.get('review') || 0),
+        bindingCount: finiteReviewStatistic(statistics, 'blockedReferenceSourceCount', 0),
+        clarificationCount: finiteReviewStatistic(statistics, 'blockedClarificationSourceCount', 0),
+        unsupportedCount: finiteReviewStatistic(statistics, 'unsupportedSolverSourceCount', 0),
         handledCount: counts.get('handled') || 0,
         complexCount: requirements.filter(requirementHasComplexSignal).length,
     };
@@ -517,7 +528,9 @@ function renderRequirementReviewSummary(requirements = [], activeFilter = 'all',
     return `
         <div class="tt-requirement-review-summary" aria-label="需求复核概览">
             <span><b>${executableLabel}</b>${escapeHtml(summary.usesStatistics ? summary.executableRuleCount : summary.applicable)} ${executableUnit}</span>
-            <span class="${summary.reviewCount ? 'is-warning' : ''}"><b>需复核</b>${escapeHtml(summary.reviewCount)} 项</span>
+            <span class="${summary.bindingCount ? 'is-warning' : ''}"><b>待绑定</b>${escapeHtml(summary.bindingCount)} 项</span>
+            <span class="${summary.clarificationCount ? 'is-warning' : ''}"><b>待补充</b>${escapeHtml(summary.clarificationCount)} 项</span>
+            <span class="${summary.unsupportedCount ? 'is-warning' : ''}"><b>真正不支持</b>${escapeHtml(summary.unsupportedCount)} 项</span>
             <span><b>已处理</b>${escapeHtml(summary.handledCount)} 项</span>
             <span class="${summary.complexCount ? 'is-complex' : ''}"><b>复杂模型</b>${escapeHtml(summary.complexCount)} 项</span>
             <em>当前筛选可应用 ${escapeHtml(summary.applicable)} 项</em>
@@ -529,7 +542,39 @@ function renderRequirementStatisticsLine(summary = {}) {
     if (!summary.usesStatistics) {
         return `来自你的输入 ${summary.userInputCount} 条 · 系统补充 ${summary.systemSupplementCount} 条 · 本次可写入排课 ${summary.applicable} 条`;
     }
-    return `用户输入 ${summary.userInputCount} 条 · 系统补充 ${summary.systemSupplementCount} 条 · 子约束 ${summary.clauseCount} 条 · 可执行规则 ${summary.executableRuleCount} 条 · 需复核 ${summary.reviewCount} 条`;
+    return `用户输入 ${summary.userInputCount} 条 · 系统补充 ${summary.systemSupplementCount} 条 · 子约束 ${summary.clauseCount} 条 · 可执行规则 ${summary.executableRuleCount} 条 · 待绑定 ${summary.bindingCount} 条 · 待补充 ${summary.clarificationCount} 条 · 真正不支持 ${summary.unsupportedCount} 条`;
+}
+
+function renderEntityBindingPanel(review = {}) {
+    const unresolved = Array.isArray(review.entityResolution?.unresolved) ? review.entityResolution.unresolved : [];
+    if (!unresolved.length) return '';
+    const kindLabels = { teacher: '教师', class: '班级', subject: '学科', room: '教室' };
+    const bindable = unresolved.filter(item => Array.isArray(item.candidates) && item.candidates.length);
+    return `
+        <section class="tt-constraint-binding-panel" aria-label="实体绑定">
+            <div class="tt-constraint-binding-header">
+                <strong>待绑定对象</strong>
+                <span>${escapeHtml(unresolved.length)} 个名称未绑定到当前任课数据</span>
+            </div>
+            <div class="tt-constraint-binding-list">
+                ${unresolved.map(item => `
+                    <label class="tt-constraint-binding-row">
+                        <span>${escapeHtml(kindLabels[item.kind] || item.kind)} · ${escapeHtml(item.sourceName)}</span>
+                        ${item.candidates?.length ? `
+                            <select data-constraint-binding data-binding-kind="${escapeAttr(item.kind)}" data-binding-source="${escapeAttr(item.sourceName)}">
+                                <option value="">选择现有对象</option>
+                                ${item.candidates.map(candidate => `<option value="${escapeAttr(candidate.id)}">${escapeHtml(candidate.label || candidate.name || candidate.id)}</option>`).join('')}
+                            </select>
+                        ` : '<em>当前没有可绑定对象</em>'}
+                    </label>
+                `).join('')}
+            </div>
+            <div class="tt-constraint-binding-actions">
+                ${bindable.length ? '<button class="tt-btn tt-btn--primary" data-action="rebind-constraint-entities" type="button"><i data-lucide="link"></i>重新绑定并编译</button>' : ''}
+                ${unresolved.some(item => !item.candidates?.length) ? '<button class="tt-btn" data-action="open-roster-for-constraint-binding" type="button"><i data-lucide="sheet"></i>进入任课数据导入</button>' : ''}
+            </div>
+        </section>
+    `;
 }
 function filteredRequirements(requirements = [], filter = 'all') {
     return filterUnifiedRequirementItems(requirements, filter);
@@ -695,7 +740,7 @@ function renderRequirementClause(clause = {}, index = 0) {
     const parameterLabel = requirementParameterLabel(clause);
     const warnings = Array.isArray(clause.warnings) ? clause.warnings.filter(Boolean) : [];
     const executionExplanation = requirementApplyExplanation(clause.applyTo, executionStatus);
-    const showExecutionExplanation = ['partially_supported', 'partially_actionable', 'partially_executable', 'understood_not_executable', 'unsupported_by_solver', 'unsupported']
+    const showExecutionExplanation = ['blocked_by_reference', 'blocked_by_clarification', 'partially_supported', 'partially_actionable', 'partially_executable', 'understood_not_executable', 'unsupported_by_solver', 'unsupported']
         .includes(executionStatus);
     return `
         <li class="tt-requirement-clause-item" data-clause-id="${escapeAttr(clause.clauseId || clause.constraintId || clause.id || '')}">
@@ -957,6 +1002,7 @@ function renderRequirementGroups(requirements = [], dialog = {}, state = {}) {
                 </div>
                 <button class="tt-btn-link" data-action="clear-all-constraints" type="button">清空全部</button>
             </div>
+            ${renderEntityBindingPanel(review)}
             ${renderRequirementReviewSummary(requirements, activeFilter, review)}
             ${renderRequirementFilterBar(requirements, activeFilter)}
             <div class="tt-requirement-review-layout">

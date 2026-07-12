@@ -60,6 +60,79 @@ function compileLegacyArtifact(ir = {}) {
     };
 }
 
+function compileAdvancedConstraint(ir = {}) {
+    return [{
+        type: 'advanced_constraint',
+        intent: ir.intent,
+        advancedType: ir.capabilityId,
+        targetType: ir.target.kind,
+        targetId: ir.target.matchedIds?.[0] || '',
+        targetIds: ir.target.matchedIds || [],
+        targetName: ir.target.name,
+        priority: ir.strength,
+        status: 'effective',
+        scope: ir.scope || {},
+        parameters: ir.parameters || {},
+        slots: ir.parameters?.slots || ir.time?.slots || [],
+    }];
+}
+
+function hasAdvancedScope(ir = {}) {
+    const parameters = ir.parameters || {};
+    return [
+        'activityTypes',
+        'avoidDayParts',
+        'boundaryPeriods',
+        'comparisonScope',
+        'forbiddenRoomTypes',
+        'gradeNames',
+        'minOccurrences',
+        'preferredActivityTypes',
+        'preferredRoomIds',
+        'requiredResourceTypes',
+        'scopeQualifier',
+        'teacherNames',
+    ].some(key => {
+        const value = parameters[key];
+        return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null && value !== '';
+    });
+}
+
+function compileScopedOrLegacy(ir = {}) {
+    return hasAdvancedScope(ir) ? compileAdvancedConstraint(ir) : compileLegacyArtifact(ir);
+}
+
+function preferredDayPartCompiler(ir = {}, context = {}) {
+    if (hasAdvancedScope(ir)) return compileAdvancedConstraint(ir);
+    const legacyRow = legacyRowOf(ir);
+    if (Object.keys(legacyRow).length) return compileLegacyArtifact(ir);
+    const [subjectId] = unique(ir.target?.matchedIds || []);
+    const periods = asArray(ir.parameters?.periods || ir.time?.periods).map(Number).filter(Number.isInteger);
+    const project = context.project || context;
+    const activePeriods = asArray(project?.activePeriods).map(Number).filter(Number.isInteger);
+    const afternoonStartPeriod = Number(project?.dayPartBoundaries?.afternoonStartPeriod || 5);
+    const inferredDayPart = periods.length && periods.every(period => period >= afternoonStartPeriod)
+        ? 'afternoon'
+        : periods.length && periods.every(period => period < afternoonStartPeriod)
+            ? 'morning'
+            : '';
+    const dayPart = text(ir.parameters?.dayPart || ir.time?.dayPart || inferredDayPart, 40).toLowerCase();
+    const type = dayPart === 'afternoon' ? 'subject_afternoon' : 'subject_morning';
+    const validPeriods = periods.length ? periods : activePeriods;
+    return {
+        rows: subjectId ? [{
+            type,
+            targetType: 'subject',
+            targetId: subjectId,
+            targetName: ir.target?.name || '',
+            periods: validPeriods,
+            priority: 'soft',
+            status: 'effective',
+            rawText: ir.evidence?.[0]?.quote || '',
+        }] : [],
+    };
+}
+
 function singleTargetValidation(kindLabel) {
     return (ir, context = {}) => {
         const matchedIds = unique(ir.target?.matchedIds || []);
@@ -255,10 +328,10 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: [],
         defaultStrength: 'soft',
         landing: ['optimization'],
-        solverSupport: 'partial',
-        machineRuleTypes: ['teacher_gap_preference'],
+        solverSupport: 'full',
+        machineRuleTypes: ['advanced_constraint'],
         fulfillmentEvaluable: true,
-        compile: compileLegacyArtifact,
+        compile: compileAdvancedConstraint,
         explain: () => '同一天多节课尽量紧凑，减少长空堂。',
     },
     {
@@ -273,7 +346,7 @@ const CAPABILITY_DEFINITIONS = [
         solverSupport: 'full',
         machineRuleTypes: ['teacher_mutual_exclusion'],
         fulfillmentEvaluable: true,
-        compile: compileLegacyArtifact,
+        compile: compileScopedOrLegacy,
         explain: () => '指定教师不能在同一课节同时上课。',
     },
     {
@@ -288,7 +361,7 @@ const CAPABILITY_DEFINITIONS = [
         solverSupport: 'full',
         machineRuleTypes: ['subject_morning', 'subject_afternoon'],
         fulfillmentEvaluable: true,
-        compile: compileLegacyArtifact,
+        compile: preferredDayPartCompiler,
         explain: ir => `${ir.target.name || '课程'}优先安排到指定日内时段。`,
     },
     {
@@ -297,13 +370,13 @@ const CAPABILITY_DEFINITIONS = [
         aliases: ['subject_preferred_periods'],
         rowTypes: ['subject_preferred_periods'],
         objectTypes: ['subject'],
-        requiredParameters: ['slots'],
+        requiredParameters: [],
         defaultStrength: 'soft',
         landing: ['rule'],
         solverSupport: 'full',
         machineRuleTypes: ['subject_preferred_periods'],
         fulfillmentEvaluable: true,
-        compile: compileLegacyArtifact,
+        compile: compileScopedOrLegacy,
         explain: ir => `${ir.target.name || '课程'}优先安排在指定课节。`,
     },
     {
@@ -318,7 +391,7 @@ const CAPABILITY_DEFINITIONS = [
         solverSupport: 'full',
         machineRuleTypes: ['subject_avoid_periods'],
         fulfillmentEvaluable: true,
-        compile: compileLegacyArtifact,
+        compile: compileScopedOrLegacy,
         explain: ir => `${ir.target.name || '课程'}尽量避开指定课节。`,
     },
     {
@@ -405,9 +478,10 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: ['preferredRoomIds', 'activityTypes'],
         defaultStrength: 'soft',
         landing: ['clarification', 'optimization'],
-        solverSupport: 'none',
-        machineRuleTypes: [],
-        fulfillmentEvaluable: false,
+        solverSupport: 'full',
+        machineRuleTypes: ['advanced_constraint'],
+        fulfillmentEvaluable: true,
+        compile: compileAdvancedConstraint,
         explain: ir => `${ir.target.name || '课程'}的指定活动优先使用目标教室、实验室或场地。`,
     },
     {
@@ -419,9 +493,10 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: ['forbiddenRoomTypes', 'activityTypes'],
         defaultStrength: 'hard',
         landing: ['clarification', 'solver_policy'],
-        solverSupport: 'none',
-        machineRuleTypes: [],
-        fulfillmentEvaluable: false,
+        solverSupport: 'full',
+        machineRuleTypes: ['advanced_constraint'],
+        fulfillmentEvaluable: true,
+        compile: compileAdvancedConstraint,
         explain: ir => `${ir.target.name || '课程'}的指定活动禁止使用目标教室类型。`,
     },
     {
@@ -436,7 +511,7 @@ const CAPABILITY_DEFINITIONS = [
         solverSupport: 'full',
         machineRuleTypes: ['room_requirement'],
         fulfillmentEvaluable: true,
-        compile: compileLegacyArtifact,
+        compile: compileScopedOrLegacy,
         explain: ir => `${ir.target.name || '课程'}必须使用指定教室、实验室或机房。`,
     },
     {
@@ -448,10 +523,10 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: [],
         defaultStrength: 'soft',
         landing: ['solver_policy', 'optimization'],
-        solverSupport: 'partial',
-        machineRuleTypes: ['block_protection'],
-        fulfillmentEvaluable: false,
-        compile: compileLegacyArtifact,
+        solverSupport: 'full',
+        machineRuleTypes: ['advanced_constraint'],
+        fulfillmentEvaluable: true,
+        compile: compileAdvancedConstraint,
         explain: () => '相关实验或实践课尽量连续安排，避免拆散。',
     },
     {
@@ -463,7 +538,7 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: [],
         defaultStrength: 'soft',
         landing: ['optimization'],
-        solverSupport: 'partial',
+        solverSupport: 'full',
         machineRuleTypes: ['class_subject_spread'],
         fulfillmentEvaluable: false,
         compile: compileLegacyArtifact,
@@ -478,7 +553,7 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: [],
         defaultStrength: 'soft',
         landing: ['optimization'],
-        solverSupport: 'partial',
+        solverSupport: 'full',
         machineRuleTypes: ['quality_subject_later'],
         fulfillmentEvaluable: false,
         compile: compileLegacyArtifact,
@@ -493,7 +568,7 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: [],
         defaultStrength: 'soft',
         landing: ['optimization'],
-        solverSupport: 'partial',
+        solverSupport: 'full',
         machineRuleTypes: ['teacher_load_balance'],
         fulfillmentEvaluable: true,
         compile: compileLegacyArtifact,
@@ -508,7 +583,7 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: [],
         defaultStrength: 'soft',
         landing: ['optimization'],
-        solverSupport: 'partial',
+        solverSupport: 'full',
         machineRuleTypes: ['class_daily_balance'],
         fulfillmentEvaluable: true,
         compile: compileLegacyArtifact,
@@ -523,9 +598,10 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: ['days'],
         defaultStrength: 'soft',
         landing: ['optimization', 'clarification'],
-        solverSupport: 'none',
-        machineRuleTypes: [],
-        fulfillmentEvaluable: false,
+        solverSupport: 'full',
+        machineRuleTypes: ['advanced_constraint'],
+        fulfillmentEvaluable: true,
+        compile: compileAdvancedConstraint,
         explain: () => '指定课程不要集中挤在少数几个工作日。',
     },
     {
@@ -537,9 +613,10 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: ['boundaryPeriods'],
         defaultStrength: 'hard',
         landing: ['clarification', 'solver_policy'],
-        solverSupport: 'none',
-        machineRuleTypes: [],
-        fulfillmentEvaluable: false,
+        solverSupport: 'full',
+        machineRuleTypes: ['advanced_constraint'],
+        fulfillmentEvaluable: true,
+        compile: compileAdvancedConstraint,
         explain: () => '指定课节边界不安排需要跨场地转移的连续课程。',
     },
     {
@@ -551,9 +628,10 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: ['subjectNames', 'sameDay'],
         defaultStrength: 'soft',
         landing: ['clarification', 'optimization'],
-        solverSupport: 'none',
-        machineRuleTypes: [],
-        fulfillmentEvaluable: false,
+        solverSupport: 'full',
+        machineRuleTypes: ['advanced_constraint'],
+        fulfillmentEvaluable: true,
+        compile: compileAdvancedConstraint,
         explain: ir => `${(ir.parameters.subjectNames || []).join('、') || '指定课程'}同一天内不要连续安排。`,
     },
     {
@@ -565,9 +643,10 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: ['subjectNames', 'activityTypes', 'preferredActivityTypes', 'periods'],
         defaultStrength: 'soft',
         landing: ['clarification', 'optimization'],
-        solverSupport: 'none',
-        machineRuleTypes: [],
-        fulfillmentEvaluable: false,
+        solverSupport: 'full',
+        machineRuleTypes: ['advanced_constraint'],
+        fulfillmentEvaluable: true,
+        compile: compileAdvancedConstraint,
         explain: () => '指定学科的特定教学活动应避开目标课节，并优先留给指定活动类型。',
     },
     {
@@ -579,9 +658,10 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: ['requiredResourceTypes', 'periods'],
         defaultStrength: 'soft',
         landing: ['clarification', 'optimization'],
-        solverSupport: 'none',
-        machineRuleTypes: [],
-        fulfillmentEvaluable: false,
+        solverSupport: 'full',
+        machineRuleTypes: ['advanced_constraint'],
+        fulfillmentEvaluable: true,
+        compile: compileAdvancedConstraint,
         explain: () => '需要指定资源类型的课程应避开目标课节。',
     },
     {
@@ -593,12 +673,31 @@ const CAPABILITY_DEFINITIONS = [
         requiredParameters: [],
         defaultStrength: 'soft',
         landing: ['clarification', 'optimization'],
-        solverSupport: 'none',
-        machineRuleTypes: [],
-        fulfillmentEvaluable: false,
+        solverSupport: 'full',
+        machineRuleTypes: ['advanced_constraint'],
+        fulfillmentEvaluable: true,
+        compile: compileAdvancedConstraint,
         explain: () => '同一备课组内教师课量和时段应公平分布。',
     },
 ];
+
+const UPGRADED_CAPABILITY_IDS = new Set([
+    'teacher.compact_day',
+    'subject.preferred_day_part',
+    'subject.preferred_periods',
+    'subject.avoid_periods',
+    'room.preferred',
+    'room.forbidden_type',
+    'room.required',
+    'lesson.consecutive',
+    'class.daily_balance',
+    'subject.avoid_weekday_concentration',
+    'schedule.cross_venue_boundary',
+    'subject.not_consecutive_with',
+    'lesson.activity_scope_period_policy',
+    'lesson.resource_attribute_avoid_periods',
+    'teacher.prep_group_fairness',
+]);
 
 export function createDefaultTimetableCapabilityRegistry(options = {}) {
     const registry = createConstraintCapabilityRegistry([], {
@@ -711,14 +810,29 @@ function understandingFromArtifact(artifact = {}, capability = null, target = {}
 }
 
 function executionFromArtifact(artifact = {}, capability = null, understandingStatus = '') {
-    if (artifact.executionStatus) return artifact.executionStatus;
-    if (understandingStatus !== 'parsed') return 'unsupported_by_solver';
-    if (key(artifact.support || '') === 'none') return 'unsupported_by_solver';
+    const explicitExecution = key(artifact.executionStatus || '');
+    if (['conflicted', 'disabled'].includes(explicitExecution)) return explicitExecution;
     if (!capability || capability.solverSupport === 'none') return 'unsupported_by_solver';
+    if (understandingStatus === 'invalid_reference') return 'blocked_by_reference';
+    if (understandingStatus === 'ambiguous') {
+        return artifact.target?.candidates?.length > 1 || artifact.object?.candidates?.length > 1
+            ? 'blocked_by_reference'
+            : 'blocked_by_clarification';
+    }
+    if (understandingStatus !== 'parsed') return 'blocked_by_clarification';
+    if (
+        artifact.needsClarification === true
+        || (
+            explicitExecution === 'unsupported_by_solver'
+            && UPGRADED_CAPABILITY_IDS.has(capability.id)
+            && asArray(artifact.clarifications).length > 0
+        )
+    ) return 'blocked_by_clarification';
+    if (explicitExecution === 'unsupported_by_solver' && !UPGRADED_CAPABILITY_IDS.has(capability.id)) return explicitExecution;
     if (capability.solverSupport === 'partial') return 'partially_executable';
     const status = key(artifact.status || '');
     if (['effective', 'ready', 'actionable', 'handled', 'suggestion', 'partially_actionable'].includes(status)) return 'executable';
-    return 'unsupported_by_solver';
+    return 'executable';
 }
 
 function clarificationForTarget(target = {}, understandingStatus = '') {
@@ -767,7 +881,10 @@ export function legacyArtifactToConstraintIR(artifact = {}, options = {}) {
     const understandingStatus = understandingFromArtifact(artifact, capability, target);
     const executionStatus = executionFromArtifact(artifact, capability, understandingStatus);
     const capabilityWarnings = [];
-    const effectiveSupport = key(artifact.support || '') || capability?.solverSupport || 'none';
+    const artifactSupport = key(artifact.support || '');
+    const effectiveSupport = artifactSupport === 'none' && UPGRADED_CAPABILITY_IDS.has(capability?.id)
+        ? capability.solverSupport
+        : artifactSupport || capability?.solverSupport || 'none';
     if (effectiveSupport === 'partial') capabilityWarnings.push('当前求解器只能部分或近似执行这条能力，需在审核台确认。');
     if (effectiveSupport === 'none') capabilityWarnings.push('需求语义已保留，但当前求解器不支持自动执行。');
     if (!capability && understandingStatus === 'parsed') capabilityWarnings.push('需求语义已识别，但能力尚未注册，当前不生成机器规则。');
@@ -801,13 +918,19 @@ export function legacyArtifactToConstraintIR(artifact = {}, options = {}) {
         strength: artifact.strength || artifact.priority || capability?.defaultStrength || 'soft',
         understandingStatus,
         executionStatus,
-        support: key(artifact.support || '') || capability?.solverSupport || 'none',
+        support: effectiveSupport,
         landing: asArray(artifact.landing).length
             ? asArray(artifact.landing)
             : asArray(capability?.landing).length
                 ? asArray(capability.landing)
                 : artifact.applyTo || ['review'],
         machineRuleIds: artifact.machineRuleIds || (artifact.machineRuleId ? [artifact.machineRuleId] : []),
+        aiReviewStatus: artifact.aiReviewStatus || '',
+        aiReviewIssueCode: artifact.aiReviewIssueCode || '',
+        aiReviewValidationStatus: artifact.aiReviewValidationStatus || '',
+        aiReviewBlocking: artifact.aiReviewBlocking === true,
+        aiReviewValidationEvidence: asArray(artifact.aiReviewValidationEvidence),
+        aiReviewWarnings: asArray(artifact.aiReviewWarnings),
         warnings: [...asArray(artifact.warnings), ...capabilityWarnings],
         clarifications: [
             ...asArray(artifact.clarifications),

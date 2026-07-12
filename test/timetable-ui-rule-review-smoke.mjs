@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import AdmZip from 'adm-zip';
 
 import { withOpenedTimetablePage } from './timetable-ui-smoke-helpers.mjs';
+import { createCompleteNaturalLanguage137Project } from './fixtures/timetable-natural-language-137-project.js';
 
 function xmlEscape(value = '') {
     return String(value).replace(/[&<>"']/g, char => ({
@@ -140,6 +141,28 @@ async function main() {
 
         await clearRecognizedConstraints();
 
+        const complete137Project = createCompleteNaturalLanguage137Project();
+        await page.evaluate(async project => {
+            const bootstrapResponse = await fetch('/api/tools/timetable/bootstrap');
+            const bootstrapPayload = await bootstrapResponse.json();
+            const saveResponse = await fetch('/api/tools/timetable/project', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...project,
+                    version: bootstrapPayload.data.project.version,
+                }),
+            });
+            const savePayload = await saveResponse.json();
+            if (!saveResponse.ok || !savePayload.success) {
+                throw new Error(savePayload.error || 'complete 137 project save failed');
+            }
+            const planner = window.ICeCream?.appLauncher?.currentToolInstance;
+            if (!planner) throw new Error('active timetable planner instance is unavailable');
+            planner.applyProject(savePayload.data.project);
+            planner.openConstraintDialog();
+        }, complete137Project);
+
         await clickByScript('[data-action="switch-constraint-mode"][data-mode="file"]');
         await page.locator('#tt-constraint-file-input').setInputFiles({
             name: 'AI排课约束建议.xlsx',
@@ -173,10 +196,7 @@ async function main() {
         await page.locator('#tt-constraint-file-input').setInputFiles({
             name: 'timetable-natural-language-137.xlsx',
             mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            buffer: buildConstraintWorkbook([
-                ['约束内容'],
-                ...realConstraintFixture.map(item => [item.rawText]),
-            ]),
+            buffer: await readFile(new URL('../真实学校排课约束需求.xlsx', import.meta.url)),
         });
         await clickByScript('[data-action="parse-constraints"]');
         await page.waitForSelector('.tt-requirement-workbench', { timeout: 30000 });
@@ -188,6 +208,8 @@ async function main() {
 
         const realReviewText = await recognizedText();
         assert.match(realReviewText || '', /用户输入 137 条/);
+        assert.match(realReviewText || '', /需复核\s*0/);
+        assert.doesNotMatch(realReviewText || '', /\b(?:unsupported|need_review|needs_review|schedule_request)\b/i);
         const realRequirementCards = page.locator('.tt-requirement-row[data-requirement-id]');
         assert.equal(await realRequirementCards.count(), 137);
         const sourceIds = await realRequirementCards.evaluateAll(nodes => nodes.map(node => node.dataset.requirementId));
@@ -202,6 +224,10 @@ async function main() {
                 `真实原文必须且只能对应一张一级卡片：${item.rawText}`,
             );
         });
+        await clickByScript('[data-action="filter-requirements"][data-requirement-filter="review"]');
+        assert.equal(await page.locator('.tt-requirement-row[data-requirement-id]').count(), 0);
+        await clickByScript('[data-action="filter-requirements"][data-requirement-filter="rule"]');
+        assert.equal(await page.locator('.tt-requirement-row[data-requirement-id]').count(), 137);
 
         const multiClauseCard = page.locator(
             '.tt-requirement-row[data-requirement-id][title*="地理和生物尽量隔天分布"]',
@@ -212,7 +238,9 @@ async function main() {
         await selectedDetail.waitFor({ state: 'visible', timeout: 10000 });
         assert.ok(await selectedDetail.locator('.tt-requirement-clause-item').count() > 1);
         assert.match(await selectedDetail.textContent() || '', /理解为 [2-9]\d* 个子约束/);
-        assert.match(await selectedDetail.textContent() || '', /已理解，但当前求解器暂不支持/);
+        assert.match(await selectedDetail.textContent() || '', /执行可执行/);
+        assert.doesNotMatch(await selectedDetail.textContent() || '', /当前版本只能预览这类建议/);
+        await clickByScript('[data-action="filter-requirements"][data-requirement-filter="all"]');
 
         await page.evaluate(() => {
             const planner = window.ICeCream?.appLauncher?.currentToolInstance;

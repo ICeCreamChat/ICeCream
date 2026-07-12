@@ -21,6 +21,10 @@ import {
     weekPatternsOverlap,
 } from './timetable-project.js';
 import {
+    advancedBlockPreference,
+    advancedCandidatePenalty,
+} from './timetable-advanced-rules.js';
+import {
     buildTimetableScore,
     buildUnplacedConflicts,
 } from './timetable-score.js';
@@ -245,6 +249,7 @@ function candidateScore(project, usage, slots, task, candidate) {
     if (preferredPeriods?.avoid?.includes(candidateKey)) score += preferenceWeight * 2;
     score += getExistingAdjacentPenalty(slots, task, candidate.day, candidate.period, task.blockSize);
     score += courseIntervalPenalty(project, slots, task, candidate.day);
+    score += advancedCandidatePenalty(project, slots, { ...task, ...candidate });
     score -= (subject?.priority || 50) / 100;
 
     return score;
@@ -319,6 +324,7 @@ function candidateScoreV2(project, usage, slots, task, candidate) {
     score += reservedPreferredSlotPenalty(project, task, candidateKey);
     score += getExistingAdjacentPenalty(slots, task, candidate.day, candidate.period, task.blockSize);
     score += courseIntervalPenalty(project, slots, task, candidate.day);
+    score += advancedCandidatePenalty(project, slots, { ...task, ...candidate });
     score -= (subject?.priority || 50) / 100;
 
     return score;
@@ -617,7 +623,7 @@ function expandLessonPlanTasks(project, placedCountByPlan) {
         const metadata = taskMetadataForPlan(project, plan, { roomCampus });
         const alreadyPlaced = placedCountByPlan.get(plan.id) || 0;
         let remaining = Math.max(0, plan.weeklyHours - alreadyPlaced);
-        let blockIndex = placedBlockCountForPlan(plan, alreadyPlaced);
+        let blockIndex = placedBlockCountForPlan(plan, alreadyPlaced, project);
         const addTask = blockSize => {
             blockIndex += 1;
             tasks.push({
@@ -642,9 +648,10 @@ function expandLessonPlanTasks(project, placedCountByPlan) {
             remaining -= blockSize;
         };
 
-        if (plan.blockPreference === 'double') {
+        const blockPreference = advancedBlockPreference(project, plan);
+        if (blockPreference === 'double') {
             while (remaining >= 2) addTask(2);
-        } else if (plan.blockPreference === 'mixed' && remaining >= 4) {
+        } else if (blockPreference === 'mixed' && remaining >= 4) {
             // genuinely "mixed": pack doubles but always keep a couple of single
             // periods (2 when even, 1 when odd), e.g. 6h -> 2+2+1+1, 5h -> 2+2+1.
             const singles = remaining % 2 === 0 ? 2 : 1;
@@ -883,15 +890,16 @@ function findPerfectMatching(leftIds, rightIds, counts) {
     return pairLeft;
 }
 
-function blockSizesForPlan(plan) {
+function blockSizesForPlan(plan, project = null) {
     let remaining = Math.max(0, Number.parseInt(plan.weeklyHours, 10) || 0);
     const sizes = [];
-    if (plan.blockPreference === 'double') {
+    const blockPreference = project ? advancedBlockPreference(project, plan) : plan.blockPreference;
+    if (blockPreference === 'double') {
         while (remaining >= 2) {
             sizes.push(2);
             remaining -= 2;
         }
-    } else if (plan.blockPreference === 'mixed' && remaining >= 4) {
+    } else if (blockPreference === 'mixed' && remaining >= 4) {
         // keep a couple of single periods alongside the doubles, e.g. 6h -> 2+2+1+1
         const singles = remaining % 2 === 0 ? 2 : 1;
         let doubleBudget = remaining - singles;
@@ -908,10 +916,10 @@ function blockSizesForPlan(plan) {
     return sizes;
 }
 
-function placedBlockCountForPlan(plan, placedHours = 0) {
+function placedBlockCountForPlan(plan, placedHours = 0, project = null) {
     let consumed = 0;
     let count = 0;
-    for (const size of blockSizesForPlan(plan)) {
+    for (const size of blockSizesForPlan(plan, project)) {
         if (consumed + size > placedHours) break;
         consumed += size;
         count += 1;
@@ -919,9 +927,9 @@ function placedBlockCountForPlan(plan, placedHours = 0) {
     return count;
 }
 
-function nextLockedBlockSizeForPlan(plan, placedHours = 0) {
+function nextLockedBlockSizeForPlan(plan, placedHours = 0, project = null) {
     let consumed = 0;
-    for (const size of blockSizesForPlan(plan)) {
+    for (const size of blockSizesForPlan(plan, project)) {
         if (placedHours < consumed + size) return size;
         consumed += size;
     }
@@ -968,7 +976,7 @@ function expandSingleTeacherEdgeTasks(project) {
     for (const plan of project.lessonPlans) {
         let sequence = 0;
         let blockNumber = 0;
-        for (const blockSize of blockSizesForPlan(plan)) {
+        for (const blockSize of blockSizesForPlan(plan, project)) {
             blockNumber += 1;
             for (let blockIndex = 0; blockIndex < blockSize; blockIndex++) {
                 sequence += 1;
@@ -1823,8 +1831,8 @@ function seedLockedSlots(project, usage, maps) {
         const lockedCellKey = lockedRuleCellKey(locked, plan);
         if (consumedLockedCells.has(lockedCellKey)) continue;
         const placedHours = plan ? (placedCountByPlan.get(plan.id) || 0) : 0;
-        const blockSize = plan ? nextLockedBlockSizeForPlan(plan, placedHours) : 1;
-        const blockNumber = plan ? placedBlockCountForPlan(plan, placedHours) + 1 : 1;
+        const blockSize = plan ? nextLockedBlockSizeForPlan(plan, placedHours, project) : 1;
+        const blockNumber = plan ? placedBlockCountForPlan(plan, placedHours, project) + 1 : 1;
         const lessonPlanId = locked.lessonPlanId || plan?.id || null;
         const classId = locked.classId || plan?.classId || null;
         const teacherId = locked.teacherId || plan?.teacherId || null;

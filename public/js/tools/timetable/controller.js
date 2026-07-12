@@ -4075,6 +4075,8 @@ export class TimetablePlannerController {
             weeklyHours: '',
             blockPreference: 'single',
             roomName: '',
+            activityTypes: '',
+            requiredResourceTypes: '',
             manual: true,
             issues: [],
         };
@@ -4101,6 +4103,8 @@ export class TimetablePlannerController {
                 weeklyHours: plan.weeklyHours || '',
                 blockPreference: plan.blockPreference || 'single',
                 roomName: roomNames.join('、'),
+                activityTypes: Array.isArray(plan.activityTypes) ? plan.activityTypes.join('、') : '',
+                requiredResourceTypes: Array.isArray(plan.requiredResourceTypes) ? plan.requiredResourceTypes.join('、') : '',
                 issues: [],
             };
         });
@@ -4120,6 +4124,8 @@ export class TimetablePlannerController {
             weeklyHours: String(row.weeklyHours ?? '').trim(),
             blockPreference: ['single', 'double', 'mixed'].includes(row.blockPreference) ? row.blockPreference : 'single',
             roomName: String(row.roomName ?? '').trim(),
+            activityTypes: Array.isArray(row.activityTypes) ? row.activityTypes.join('、') : String(row.activityTypes ?? '').trim(),
+            requiredResourceTypes: Array.isArray(row.requiredResourceTypes) ? row.requiredResourceTypes.join('、') : String(row.requiredResourceTypes ?? '').trim(),
             manual: Boolean(row.manual),
             issues: Array.isArray(row.issues) ? row.issues : [],
         };
@@ -4267,6 +4273,8 @@ export class TimetablePlannerController {
                 weeklyHours: value('weeklyHours'),
                 blockPreference: value('blockPreference') || 'single',
                 roomName: value('roomName'),
+                activityTypes: value('activityTypes'),
+                requiredResourceTypes: value('requiredResourceTypes'),
             };
         });
     }
@@ -4688,6 +4696,19 @@ export class TimetablePlannerController {
             this.clearRuleDraft();
             this.resetRosterImport();
             this.setMessage(`已导入 ${result.import.count} 条任课信息。`);
+            const resume = this.constraintParseResume || null;
+            if (resume) {
+                this.constraintParseResume = null;
+                this.state.ruleReview = {
+                    ...createTimetablePlannerState().ruleReview,
+                    open: true,
+                    step: 'input',
+                    inputMode: resume.mode,
+                    text: resume.text || '',
+                };
+                if (resume.file) this.constraintDialogFile = resume.file;
+                setTimeout(() => this.parseConstraintsFromDialog?.(), 0);
+            }
         } catch (error) {
             this.handleError(error);
         } finally {

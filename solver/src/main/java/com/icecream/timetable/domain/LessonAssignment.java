@@ -44,6 +44,10 @@ public class LessonAssignment {
     private int teacherGapWeight;
     private int teacherLoadBalanceWeight = 1;
     private List<TeacherConstraintRef> teacherConstraintRefs = new ArrayList<>();
+    private String gradeName;
+    private List<String> activityTypes = new ArrayList<>();
+    private List<String> requiredResourceTypes = new ArrayList<>();
+    private List<AdvancedRuleRef> advancedRules = new ArrayList<>();
 
     @PlanningVariable(valueRangeProviderRefs = "timeSlotRange")
     @JsonIdentityReference(alwaysAsId = true)
@@ -317,6 +321,38 @@ public class LessonAssignment {
                 : new ArrayList<>(teacherConstraintRefs);
     }
 
+    public String getGradeName() {
+        return gradeName;
+    }
+
+    public void setGradeName(String gradeName) {
+        this.gradeName = gradeName;
+    }
+
+    public List<String> getActivityTypes() {
+        return activityTypes == null ? List.of() : activityTypes;
+    }
+
+    public void setActivityTypes(List<String> activityTypes) {
+        this.activityTypes = activityTypes == null ? new ArrayList<>() : new ArrayList<>(activityTypes);
+    }
+
+    public List<String> getRequiredResourceTypes() {
+        return requiredResourceTypes == null ? List.of() : requiredResourceTypes;
+    }
+
+    public void setRequiredResourceTypes(List<String> requiredResourceTypes) {
+        this.requiredResourceTypes = requiredResourceTypes == null ? new ArrayList<>() : new ArrayList<>(requiredResourceTypes);
+    }
+
+    public List<AdvancedRuleRef> getAdvancedRules() {
+        return advancedRules == null ? List.of() : advancedRules;
+    }
+
+    public void setAdvancedRules(List<AdvancedRuleRef> advancedRules) {
+        this.advancedRules = advancedRules == null ? new ArrayList<>() : new ArrayList<>(advancedRules);
+    }
+
     public TimeSlot getTimeSlot() {
         return timeSlot;
     }
@@ -497,6 +533,28 @@ public class LessonAssignment {
         return timeSlot != null && preferLater && timeSlot.isMorning() ? 6 : 0;
     }
 
+    public boolean advancedHardViolation() {
+        return getAdvancedRules().stream().anyMatch(rule -> rule.isHard() && rule.unaryViolation(this));
+    }
+
+    public int advancedSoftPenalty() {
+        return getAdvancedRules().stream()
+                .filter(rule -> !rule.isHard())
+                .mapToInt(rule -> rule.unaryPenalty(this))
+                .sum();
+    }
+
+    public boolean advancedPairHardViolation(LessonAssignment other) {
+        return getAdvancedRules().stream().anyMatch(rule -> rule.isHard() && rule.pairViolation(this, other));
+    }
+
+    public int advancedPairSoftPenalty(LessonAssignment other) {
+        return getAdvancedRules().stream()
+                .filter(rule -> !rule.isHard())
+                .mapToInt(rule -> rule.pairPenalty(this, other))
+                .sum();
+    }
+
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
     }
@@ -573,6 +631,120 @@ public class LessonAssignment {
 
         public void setLoadBalanceWeight(int loadBalanceWeight) {
             this.loadBalanceWeight = Math.max(0, loadBalanceWeight);
+        }
+    }
+
+    public static class AdvancedRuleRef {
+        private String id;
+        private String type;
+        private boolean hard;
+        private List<String> slots = new ArrayList<>();
+        private List<Integer> days = new ArrayList<>();
+        private List<Integer> periods = new ArrayList<>();
+        private List<String> subjectIds = new ArrayList<>();
+        private List<String> roomIds = new ArrayList<>();
+        private List<String> requiredRoomTypes = new ArrayList<>();
+        private List<String> preferredRoomIds = new ArrayList<>();
+        private List<String> forbiddenRoomTypes = new ArrayList<>();
+        private List<Integer> boundaryPeriods = new ArrayList<>();
+        private int minOccurrences;
+        private int blockSize;
+
+        public AdvancedRuleRef() {
+        }
+
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type; }
+        public boolean isHard() { return hard; }
+        public void setHard(boolean hard) { this.hard = hard; }
+        public List<String> getSlots() { return slots == null ? List.of() : slots; }
+        public void setSlots(List<String> slots) { this.slots = slots == null ? new ArrayList<>() : new ArrayList<>(slots); }
+        public List<Integer> getDays() { return days == null ? List.of() : days; }
+        public void setDays(List<Integer> days) { this.days = days == null ? new ArrayList<>() : new ArrayList<>(days); }
+        public List<Integer> getPeriods() { return periods == null ? List.of() : periods; }
+        public void setPeriods(List<Integer> periods) { this.periods = periods == null ? new ArrayList<>() : new ArrayList<>(periods); }
+        public List<String> getSubjectIds() { return subjectIds == null ? List.of() : subjectIds; }
+        public void setSubjectIds(List<String> subjectIds) { this.subjectIds = subjectIds == null ? new ArrayList<>() : new ArrayList<>(subjectIds); }
+        public List<String> getRoomIds() { return roomIds == null ? List.of() : roomIds; }
+        public void setRoomIds(List<String> roomIds) { this.roomIds = roomIds == null ? new ArrayList<>() : new ArrayList<>(roomIds); }
+        public List<String> getRequiredRoomTypes() { return requiredRoomTypes == null ? List.of() : requiredRoomTypes; }
+        public void setRequiredRoomTypes(List<String> types) { this.requiredRoomTypes = types == null ? new ArrayList<>() : new ArrayList<>(types); }
+        public List<String> getPreferredRoomIds() { return preferredRoomIds == null ? List.of() : preferredRoomIds; }
+        public void setPreferredRoomIds(List<String> ids) { this.preferredRoomIds = ids == null ? new ArrayList<>() : new ArrayList<>(ids); }
+        public List<String> getForbiddenRoomTypes() { return forbiddenRoomTypes == null ? List.of() : forbiddenRoomTypes; }
+        public void setForbiddenRoomTypes(List<String> types) { this.forbiddenRoomTypes = types == null ? new ArrayList<>() : new ArrayList<>(types); }
+        public List<Integer> getBoundaryPeriods() { return boundaryPeriods == null ? List.of() : boundaryPeriods; }
+        public void setBoundaryPeriods(List<Integer> values) { this.boundaryPeriods = values == null ? new ArrayList<>() : new ArrayList<>(values); }
+        public int getMinOccurrences() { return minOccurrences; }
+        public void setMinOccurrences(int minOccurrences) { this.minOccurrences = Math.max(0, minOccurrences); }
+        public int getBlockSize() { return blockSize; }
+        public void setBlockSize(int blockSize) { this.blockSize = Math.max(0, blockSize); }
+
+        private boolean atTargetSlot(LessonAssignment lesson) {
+            return lesson.getTimeSlot() != null && getSlots().contains(lesson.getTimeSlot().getId());
+        }
+
+        private boolean unaryViolation(LessonAssignment lesson) {
+            if (lesson.getTimeSlot() == null) return false;
+            if (List.of("subject.avoid_periods", "lesson.activity_scope_period_policy", "lesson.resource_attribute_avoid_periods").contains(type)) {
+                return atTargetSlot(lesson);
+            }
+            if ("room.required".equals(type)) {
+                if (!getRoomIds().isEmpty() && (lesson.getRoom() == null || !getRoomIds().contains(lesson.getRoom().getId()))) return true;
+                return !getRequiredRoomTypes().isEmpty() && (lesson.getRoom() == null
+                        || getRequiredRoomTypes().stream().anyMatch(tag -> !lesson.getRoom().hasNormalizedTag(tag)));
+            }
+            if ("room.forbidden_type".equals(type) && lesson.getRoom() != null) {
+                return getForbiddenRoomTypes().stream().anyMatch(lesson.getRoom()::hasNormalizedTag);
+            }
+            return false;
+        }
+
+        private int unaryPenalty(LessonAssignment lesson) {
+            if (lesson.getTimeSlot() == null) return 0;
+            if (List.of("subject.avoid_periods", "lesson.activity_scope_period_policy", "lesson.resource_attribute_avoid_periods").contains(type)) {
+                return atTargetSlot(lesson) ? 20 : 0;
+            }
+            if (List.of("subject.preferred_day_part", "subject.preferred_periods").contains(type)) {
+                return !getSlots().isEmpty() && !atTargetSlot(lesson) ? 12 : 0;
+            }
+            if ("subject.avoid_weekday_concentration".equals(type)) {
+                return getDays().contains(lesson.getTimeSlot().getWeekday()) ? 8 : 0;
+            }
+            if ("room.preferred".equals(type)) {
+                return !getPreferredRoomIds().isEmpty() && (lesson.getRoom() == null || !getPreferredRoomIds().contains(lesson.getRoom().getId())) ? 10 : 0;
+            }
+            return 0;
+        }
+
+        private boolean pairViolation(LessonAssignment left, LessonAssignment right) {
+            if (!"schedule.cross_venue_boundary".equals(type) || left.getTimeSlot() == null || right.getTimeSlot() == null) return false;
+            if (!left.sharesClassWith(right) && !left.sharesTeacherWith(right)) return false;
+            if (left.getTimeSlot().getWeekday() != right.getTimeSlot().getWeekday()) return false;
+            if (!getBoundaryPeriods().contains(left.getTimeSlot().getLessonIndex()) || !getBoundaryPeriods().contains(right.getTimeSlot().getLessonIndex())) return false;
+            String leftRoom = left.getRoom() == null ? "" : left.getRoom().getId();
+            String rightRoom = right.getRoom() == null ? "" : right.getRoom().getId();
+            return !leftRoom.equals(rightRoom);
+        }
+
+        private int pairPenalty(LessonAssignment left, LessonAssignment right) {
+            if (left.getTimeSlot() == null || right.getTimeSlot() == null) return 0;
+            if ("teacher.compact_day".equals(type) && left.sharesTeacherWith(right)
+                    && left.getTimeSlot().getWeekday() == right.getTimeSlot().getWeekday()) {
+                return Math.max(0, Math.abs(left.getTimeSlot().getLessonIndex() - right.getTimeSlot().getLessonIndex()) - 1) * 3;
+            }
+            if ("subject.not_consecutive_with".equals(type) && left.sharesClassWith(right)
+                    && left.getTimeSlot().getWeekday() == right.getTimeSlot().getWeekday()
+                    && Math.abs(left.getTimeSlot().getLessonIndex() - right.getTimeSlot().getLessonIndex()) == 1
+                    && getSubjectIds().contains(right.getSubjectId())) return 12;
+            if ("class.daily_balance".equals(type) && left.sharesClassWith(right)
+                    && left.getTimeSlot().getWeekday() == right.getTimeSlot().getWeekday()) return 2;
+            if ("teacher.prep_group_fairness".equals(type) && left.sharesTeacherWith(right)
+                    && left.getTimeSlot().getLessonIndex() >= 5
+                    && right.getTimeSlot().getLessonIndex() >= 5) return 3;
+            return 0;
         }
     }
 }

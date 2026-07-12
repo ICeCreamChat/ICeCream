@@ -35,6 +35,8 @@ public class TimetableConstraintProvider implements ConstraintProvider {
                 teacherMaxDaysPerWeek(factory),
                 teacherMutualExclusion(factory),
                 subjectNotSameDay(factory),
+                advancedHardRules(factory),
+                advancedPairHardRules(factory),
 
                 // 基础软约束
                 spreadSameCourse(factory),
@@ -48,6 +50,8 @@ public class TimetableConstraintProvider implements ConstraintProvider {
                 teacherGap(factory),
                 subjectSequence(factory),
                 sameCourseHalfDaySplit(factory),
+                advancedSoftRules(factory),
+                advancedPairSoftRules(factory),
 
                 // 中国教育场景专用约束
                 chineseConstraints.mainSubjectGoldenHourPreference(factory),
@@ -173,6 +177,35 @@ public class TimetableConstraintProvider implements ConstraintProvider {
                 .filter((left, right) -> left.violatesNotSameDay(right) || right.violatesNotSameDay(left))
                 .penalize(HardSoftScore.ONE_HARD)
                 .asConstraint("Subject not same day");
+    }
+
+    Constraint advancedHardRules(ConstraintFactory factory) {
+        return factory.forEach(LessonAssignment.class)
+                .filter(LessonAssignment::advancedHardViolation)
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Advanced hard rules");
+    }
+
+    Constraint advancedPairHardRules(ConstraintFactory factory) {
+        return factory.forEachUniquePair(LessonAssignment.class)
+                .filter((left, right) -> left.advancedPairHardViolation(right) || right.advancedPairHardViolation(left))
+                .penalize(HardSoftScore.ONE_HARD)
+                .asConstraint("Advanced pair hard rules");
+    }
+
+    Constraint advancedSoftRules(ConstraintFactory factory) {
+        return factory.forEach(LessonAssignment.class)
+                .filter(lesson -> lesson.advancedSoftPenalty() > 0)
+                .penalize(HardSoftScore.ONE_SOFT, LessonAssignment::advancedSoftPenalty)
+                .asConstraint("Advanced soft rules");
+    }
+
+    Constraint advancedPairSoftRules(ConstraintFactory factory) {
+        return factory.forEachUniquePair(LessonAssignment.class)
+                .filter((left, right) -> left.advancedPairSoftPenalty(right) + right.advancedPairSoftPenalty(left) > 0)
+                .penalize(HardSoftScore.ONE_SOFT,
+                        (left, right) -> left.advancedPairSoftPenalty(right) + right.advancedPairSoftPenalty(left))
+                .asConstraint("Advanced pair soft rules");
     }
 
     Constraint avoidAdjacentSameCourse(ConstraintFactory factory) {

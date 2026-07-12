@@ -81,7 +81,7 @@ test('137 spreadsheet inputs remain 137 top-level source requirements while mach
     });
 
     assert.equal(result.schemaVersion, 2);
-    assert.equal(result.parserVersion, 'timetable_rule_parser_constraint_ir_v6');
+    assert.equal(result.parserVersion, 'timetable_rule_parser_constraint_ir_v9');
     assert.equal(result.sourceRequirements.length, 137);
     assert.equal(new Set(result.sourceRequirements.map(item => item.sourceId)).size, 137);
     assert.equal(result.statistics.userInputCount, 137);
@@ -102,7 +102,7 @@ test('137 spreadsheet inputs remain 137 top-level source requirements while mach
     const geographyBiology = findSourceByRow(result, 131);
     assert.ok(geographyBiology, 'unrecognized source row must remain visible');
     assert.match(geographyBiology.source.rawText, /地理和生物尽量隔天分布/);
-    assert.match(geographyBiology.understandingStatus, /partially_parsed|unrecognized|ambiguous/);
+    assert.match(geographyBiology.understandingStatus, /invalid_reference|partially_parsed|unrecognized|ambiguous/);
 
     const expandedMorningSource = findSourceByRow(result, 114);
     assert.ok(expandedMorningSource);
@@ -124,7 +124,7 @@ test('137 spreadsheet inputs remain 137 top-level source requirements while mach
     assert.ok(crossVenueBoundary);
     assert.equal(crossVenueBoundary.clauses.length, 1);
     assert.equal(crossVenueBoundary.clauses[0].capabilityId, 'schedule.cross_venue_boundary');
-    assert.equal(crossVenueBoundary.machineRuleIds.length, 0, 'unsupported cross-venue boundary must not fabricate machine rules');
+    assert.equal(crossVenueBoundary.machineRuleIds.length, 1, 'cross-venue boundary must compile to one advanced machine rule');
 
     const cached = await parseTimetableRules({
         file: {
@@ -136,7 +136,7 @@ test('137 spreadsheet inputs remain 137 top-level source requirements while mach
     });
     assert.equal(cached.cacheHit, true);
     assert.equal(cached.schemaVersion, 2);
-    assert.equal(cached.parserVersion, 'timetable_rule_parser_constraint_ir_v6');
+    assert.equal(cached.parserVersion, 'timetable_rule_parser_constraint_ir_v9');
     assert.equal(cached.sourceRequirements.length, 137);
 });
 

@@ -13,6 +13,8 @@ export const UNDERSTANDING_STATUSES = new Set([
 export const EXECUTION_STATUSES = new Set([
     'executable',
     'partially_executable',
+    'blocked_by_reference',
+    'blocked_by_clarification',
     'unsupported_by_solver',
     'conflicted',
     'disabled',
@@ -113,6 +115,7 @@ export function deriveConstraintReviewStatus(understandingStatus = '', execution
         return 'needs_clarification';
     }
     if (executionStatus === 'conflicted') return 'needs_clarification';
+    if (executionStatus === 'blocked_by_reference' || executionStatus === 'blocked_by_clarification') return 'needs_clarification';
     if (executionStatus === 'partially_executable') return 'partially_supported';
     if (executionStatus === 'unsupported_by_solver') return 'unsupported';
     if (executionStatus === 'executable' || executionStatus === 'disabled') return 'understood';
@@ -253,6 +256,8 @@ function aggregateExecution(statuses = []) {
     if (statuses.some(status => status === 'conflicted')) return 'conflicted';
     if (statuses.every(status => status === 'executable' || status === 'disabled')) return 'executable';
     if (statuses.some(status => ['executable', 'partially_executable'].includes(status))) return 'partially_executable';
+    if (statuses.some(status => status === 'blocked_by_reference')) return 'blocked_by_reference';
+    if (statuses.some(status => status === 'blocked_by_clarification')) return 'blocked_by_clarification';
     return 'unsupported_by_solver';
 }
 

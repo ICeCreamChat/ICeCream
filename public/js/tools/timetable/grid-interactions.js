@@ -476,6 +476,10 @@ function bindDelegatedInteractions(container) {
             controller.useConstraintExample(text);
         } else if (action === 'parse-constraints') {
             controller.parseConstraintsFromDialog();
+        } else if (action === 'rebind-constraint-entities') {
+            controller.rebindConstraintEntities();
+        } else if (action === 'open-roster-for-constraint-binding') {
+            controller.openRosterImport?.('file');
         } else if (action === 'add-manual-constraint') {
             controller.addManualConstraint();
         } else if (action === 'filter-requirements') {

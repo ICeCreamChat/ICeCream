@@ -1242,7 +1242,116 @@ test('parseTimetableRules uses AI-first extraction for enabled free text', async
     assert.equal(result.parseSource, 'ai_extract');
     assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
     assert.deepEqual(result.draftRules.hardRules.teacherUnavailable.t_zhang, ['1-1']);
-    assert.equal(result.aiReview.status, 'skipped');
+    assert.equal(result.aiReview.status, 'reviewed');
+    assert.equal(result.aiAssistance.mode, 'targeted_review');
+});
+
+test('failed targeted review discards unverified AI candidates and returns the local baseline', async () => {
+    let calls = 0;
+    const result = await parseTimetableRules({
+        text: '数学尽量上午',
+        project: project(),
+        env: {
+            DEEPSEEK_API_KEY: 'test-key',
+            DEEPSEEK_API_BASE: 'http://ai.test',
+            TIMETABLE_RULE_AI_EXTRACT: '1',
+            TIMETABLE_RULE_AI_CACHE: '0',
+        },
+        fetchImpl: async (_url, options = {}) => {
+            calls += 1;
+            if (calls > 1) throw new Error('terminated');
+            const promptPayload = JSON.parse(JSON.parse(options.body).messages[1].content);
+            const [source] = promptPayload.sources;
+            return jsonResponse({
+                choices: [{
+                    message: {
+                        content: JSON.stringify({
+                            results: [{
+                                sourceId: source.sourceId,
+                                textHash: source.textHash,
+                                clauses: [{
+                                    intent: 'subject_morning',
+                                    targetKind: 'subject',
+                                    targetNames: ['英语'],
+                                    strength: 'soft',
+                                    confidence: 0.95,
+                                    evidence: source.rawText,
+                                }],
+                            }],
+                        }),
+                    },
+                }],
+            });
+        },
+    });
+
+    assert.equal(calls, 2);
+    assert.equal(result.parseSource, 'local_text');
+    assert.equal(result.aiReview.status, 'unavailable');
+    assert.equal(result.aiAssistance.mode, 'local_fallback');
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
+    assert.equal(result.draftRows.some(row => row.targetName === '英语'), false);
+});
+
+test('successful targeted review also discards AI-only candidates that review did not explicitly validate', async () => {
+    let calls = 0;
+    const result = await parseTimetableRules({
+        text: '数学尽量安排在上午。',
+        project: project(),
+        env: {
+            DEEPSEEK_API_KEY: 'test-key',
+            DEEPSEEK_API_BASE: 'http://ai.test',
+            TIMETABLE_RULE_AI_EXTRACT: '1',
+            TIMETABLE_RULE_AI_CACHE: '0',
+        },
+        fetchImpl: async (_url, options = {}) => {
+            calls += 1;
+            const promptPayload = JSON.parse(JSON.parse(options.body).messages[1].content);
+            if (promptPayload.aiReviewPromptVersion) {
+                return jsonResponse({
+                    choices: [{ message: { content: JSON.stringify({ reviewItems: [], warnings: [] }) } }],
+                });
+            }
+            const [source] = promptPayload.sources;
+            return jsonResponse({
+                choices: [{
+                    message: {
+                        content: JSON.stringify({
+                            results: [{
+                                sourceId: source.sourceId,
+                                textHash: source.textHash,
+                                clauses: [
+                                    {
+                                        intent: 'subject_morning',
+                                        targetKind: 'subject',
+                                        targetNames: ['数学'],
+                                        strength: 'soft',
+                                        confidence: 0.95,
+                                        evidence: source.rawText,
+                                    },
+                                    {
+                                        intent: 'subject_afternoon',
+                                        targetKind: 'subject',
+                                        targetNames: ['数学'],
+                                        strength: 'soft',
+                                        confidence: 0.95,
+                                        evidence: source.rawText,
+                                    },
+                                ],
+                            }],
+                        }),
+                    },
+                }],
+            });
+        },
+    });
+
+    assert.equal(calls, 2, 'AI-only semantics must trigger targeted review');
+    assert.equal(result.aiReview.status, 'reviewed');
+    assert.equal(result.constraintIRs.length, 1);
+    assert.equal(result.draftRows.some(row => row.type === 'subject_afternoon'), false);
+    assert.equal(result.aiCandidateValidation?.unverifiedCandidateCount, 0);
+    assert.ok(result.aiCandidateValidation?.droppedCandidateCount >= 1);
 });
 
 test('parseTimetableRules falls back to local parsing when AI-first returns invalid JSON', async () => {

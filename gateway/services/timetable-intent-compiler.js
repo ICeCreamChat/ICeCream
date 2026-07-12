@@ -82,6 +82,30 @@ function teachersOfSubject(project = {}, subjectId = '') {
     return unique(ids);
 }
 
+function preferredDayPartRows(requirement = {}, project = {}) {
+    const periods = list(requirement.parameters?.periods || requirement.condition?.periods)
+        .map(Number)
+        .filter(Number.isInteger);
+    const boundaries = getDayPartBoundaries(project);
+    const afternoonStart = Number(boundaries.afternoonStartPeriod || 5);
+    const explicit = key(requirement.parameters?.dayPart || requirement.condition?.dayPart || '');
+    const dayPart = explicit || (
+        periods.length && periods.every(period => period >= afternoonStart)
+            ? 'afternoon'
+            : 'morning'
+    );
+    const type = dayPart === 'afternoon' ? 'subject_afternoon' : 'subject_morning';
+    return subjectIdsOf(requirement).map((subjectId, index) => ({
+        ...baseRow(requirement, index),
+        type,
+        targetType: 'subject',
+        targetId: subjectId,
+        periods,
+        priority: 'soft',
+        status: 'effective',
+    }));
+}
+
 function baseRow(requirement = {}, index = 0) {
     return {
         id: `${requirement.id || 'intent'}_${index + 1}`,
@@ -94,6 +118,24 @@ function baseRow(requirement = {}, index = 0) {
 }
 
 const INTENT_COMPILERS = {
+    preferred_day_part(requirement, project) {
+        return preferredDayPartRows(requirement, project);
+    },
+
+    subject_morning(requirement, project) {
+        return preferredDayPartRows({
+            ...requirement,
+            parameters: { ...requirement.parameters, dayPart: 'morning' },
+        }, project);
+    },
+
+    subject_afternoon(requirement, project) {
+        return preferredDayPartRows({
+            ...requirement,
+            parameters: { ...requirement.parameters, dayPart: 'afternoon' },
+        }, project);
+    },
+
     avoid_first_period(requirement, project) {
         const slots = firstPeriodSlots(project);
         return subjectIdsOf(requirement).map((subjectId, index) => ({

@@ -6,6 +6,7 @@ import {
     slotKey,
     slotTeacherIds,
 } from './timetable-project.js';
+import { evaluateAdvancedRule } from './timetable-advanced-rules.js';
 
 const STATUS_LABELS = {
     satisfied: '已满足',
@@ -75,6 +76,7 @@ const PRIMITIVE_ALIASES = {
 const EVALUABLE_PRIMITIVES = new Set([
     ...FULFILLMENT_PRIMITIVES,
     'class_daily_balance',
+    'advanced_constraint',
 ]);
 
 const LEGACY_STATUS_TO_V2 = {
@@ -591,6 +593,23 @@ function savedConstraintItems(project) {
         });
     });
 
+    (rules.advancedRules || []).forEach(rule => {
+        items.push({
+            id: rule.id,
+            type: 'advanced_constraint',
+            primitive: rule.type,
+            source: 'advancedRules',
+            targetKind: rule.target?.kind || 'global',
+            targetId: (rule.target?.matchedIds || []).join('|'),
+            targetName: rule.target?.name || rule.type,
+            slots: rule.parameters?.slots || [],
+            priority: rule.strength || 'soft',
+            description: rule.type,
+            title: rule.target?.name ? `${rule.target.name} ${rule.type}` : rule.type,
+            advancedRule: rule,
+        });
+    });
+
     return items;
 }
 
@@ -716,6 +735,9 @@ function deleteRuleFromProject(project = {}, rule = {}) {
             break;
         case 'subject_sequence':
             soft.subjectSequence = deleteIndexed(soft.subjectSequence, rule.id, 'subject_sequence:');
+            break;
+        case 'advanced_constraint':
+            rules.advancedRules = (rules.advancedRules || []).filter(item => item.id !== rule.id);
             break;
         default: {
             const error = new Error('当前约束类型暂不支持自动删除。');
@@ -1166,6 +1188,15 @@ function evaluateRule(project, rule, slots, evaluated) {
         return makeResult(rule, 'not_applicable', '当前版本暂不支持评估该约束。');
     }
     switch (rule.type) {
+        case 'advanced_constraint': {
+            const advanced = evaluateAdvancedRule(project, rule.advancedRule || {}, slots);
+            return makeResult(
+                rule,
+                advanced.status === 'violated' ? 'unmet' : advanced.status === 'satisfied' ? 'satisfied' : 'not_evaluable',
+                advanced.detail,
+                (advanced.evidence || []).map(slot => locateFromSlot(project, slot, rule.targetKind, rule.targetId)),
+            );
+        }
         case 'teacher_unavailable':
             return evaluateTeacherUnavailable(project, rule, slots);
         case 'class_unavailable':

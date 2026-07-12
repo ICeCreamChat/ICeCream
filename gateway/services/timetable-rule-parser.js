@@ -36,6 +36,7 @@ import {
     attachArtifactsToSourceRequirements,
     buildLegacyRequirementItemsFromSources,
     buildSourceRequirements,
+    finalizeSourceRequirementPresentation,
     linkArtifactToSource,
     sourceInputRowsFromText,
 } from './timetable-constraints/source-requirement.js';
@@ -59,12 +60,21 @@ import {
 } from './timetable-constraints/capability-registry.js';
 import {
     aggregateConstraintIRStatuses,
+    CONSTRAINT_IR_SCHEMA_VERSION,
     normalizeConstraintIR,
 } from './timetable-constraints/constraint-ir.js';
+import {
+    assessConstraintIRExecutionReadiness,
+    buildEntityResolution,
+    resolveConstraintIRReferences,
+} from './timetable-constraints/entity-resolution.js';
+import { getTimetableConstraintParseCache } from './timetable-constraints/parse-cache.js';
 
 const MAX_RULE_FILE_BYTES = 5 * 1024 * 1024;
-const PARSER_VERSION = 'timetable_rule_parser_constraint_ir_v6';
-const AI_REVIEW_PROMPT_VERSION = 'timetable_ai_review_v2';
+const PARSER_VERSION = 'timetable_rule_parser_constraint_ir_v9';
+const AI_REVIEW_PROMPT_VERSION = 'timetable_ai_review_v4';
+const CAPABILITY_VERSION = 'timetable_capability_registry_v6';
+const AI_CANDIDATE_VALIDATION_VERSION = 'timetable_ai_candidate_validation_v1';
 const DEFAULT_AI_REVIEW_TIMEOUT_MS = 30_000;
 const PARSE_CACHE = new Map();
 const MAX_PARSE_CACHE_ITEMS = 40;
@@ -93,6 +103,7 @@ const SUPPORTED_EFFECTIVE_TYPES = new Set([
     'teacher_load_balance',
     'subject_not_same_day',
     'subject_sequence',
+    'advanced_constraint',
 ]);
 
 const SUGGESTION_ONLY_TYPES = new Set([
@@ -166,7 +177,9 @@ function projectFingerprintForParse(project = {}) {
         teachers: project.teachers || [],
         classes: project.classes || [],
         subjects: project.subjects || [],
+        rooms: project.rooms || [],
         lessonPlans: project.lessonPlans || [],
+        constraintEntityAliases: project.constraintEntityAliases || {},
         rules: project.rules || {},
     };
 }
@@ -182,7 +195,7 @@ function aiReviewTimeoutMs(env = {}) {
 }
 
 function aiReviewCachePart(env = {}) {
-    const aiExtractEnabled = ['1', 'true', 'yes', 'on'].includes(String(env.TIMETABLE_RULE_AI_EXTRACT || '').trim().toLowerCase());
+    const aiExtractEnabled = shouldUseAiExtraction('text', env);
     const extractPart = aiExtractEnabled ? `:ai_extract:${AI_REQUIREMENT_PROMPT_VERSION}` : '';
     if (aiReviewDisabled(env)) return `ai_review_disabled${extractPart}`;
     if (!hasConfiguredAi(env)) return 'ai_review_unavailable';
@@ -194,13 +207,20 @@ function aiReviewCachePart(env = {}) {
     }
 }
 
-function parseCacheKey({ fileBuffer, project, env = {} }) {
-    return [
-        PARSER_VERSION,
-        aiReviewCachePart(env),
-        hashValue(fileBuffer, 32),
-        hashValue(projectFingerprintForParse(project), 24),
-    ].join(':');
+function parseCacheKey({ content, inputType = 'text', project, env = {} }) {
+    const seed = Number.parseInt(env.TIMETABLE_RULE_AI_SEED, 10);
+    return `constraint_parse:${hashValue({
+        contentHash: hashValue(content, 64),
+        inputType,
+        projectFingerprint: hashValue(projectFingerprintForParse(project), 64),
+        ai: aiReviewCachePart(env),
+        extractionPromptVersion: AI_REQUIREMENT_PROMPT_VERSION,
+        reviewPromptVersion: AI_REVIEW_PROMPT_VERSION,
+        parserVersion: PARSER_VERSION,
+        constraintIRVersion: CONSTRAINT_IR_SCHEMA_VERSION,
+        capabilityVersion: CAPABILITY_VERSION,
+        seed: Number.isInteger(seed) ? seed : null,
+    }, 64)}`;
 }
 
 function getParseCache(key = '') {
@@ -221,13 +241,107 @@ function setParseCache(key = '', value = null) {
     PARSE_CACHE.set(key, cloneValue(value));
 }
 
+function determinismMetadata(cacheKey = '', env = {}, cacheHit = false) {
+    let model = '';
+    try {
+        if (hasConfiguredAi(env)) model = resolveAiConfig(env).model;
+    } catch {
+        model = '';
+    }
+    const seed = Number.parseInt(env.TIMETABLE_RULE_AI_SEED, 10);
+    return {
+        cacheKey,
+        cacheHit: Boolean(cacheHit),
+        parserVersion: PARSER_VERSION,
+        promptVersions: {
+            extraction: AI_REQUIREMENT_PROMPT_VERSION,
+            review: AI_REVIEW_PROMPT_VERSION,
+        },
+        model,
+        seed: Number.isInteger(seed) ? seed : null,
+    };
+}
+
 function withParseMetadata(result = {}, overrides = {}) {
+    const cacheHit = Boolean(overrides.cacheHit ?? result.cacheHit);
     return {
         ...result,
         parserVersion: result.parserVersion || PARSER_VERSION,
         parseSource: overrides.parseSource || result.parseSource || result.source || '',
-        cacheHit: Boolean(overrides.cacheHit ?? result.cacheHit),
+        cacheHit,
+        determinism: determinismMetadata(overrides.cacheKey || result.determinism?.cacheKey || '', overrides.env || {}, cacheHit),
     };
+}
+
+function persistentParseCacheEnabled(env = {}) {
+    return env === process.env || ['1', 'true', 'yes', 'on'].includes(String(env.TIMETABLE_RULE_PERSISTENT_CACHE || '').trim().toLowerCase());
+}
+
+const INVALID_INFERRED_ENTITY_NAMES = new Set([
+    '日课量', '至少', '每个班每天课量', '课组内的教师', '固定活动',
+    'unsupported', 'need_review', 'needs_review', 'unknown', 'requirement', 'schedule_request',
+]);
+
+function cacheConstraintIRSignature(ir = {}) {
+    const { legacyRow, selectorCurrentlyUnmatched, ...parameters } = ir.parameters || {};
+    void legacyRow;
+    void selectorCurrentlyUnmatched;
+    return stableJson({
+        sourceId: ir.sourceId || '',
+        capabilityId: ir.capabilityId || '',
+        intent: ir.intent || '',
+        target: ir.target || {},
+        scope: ir.scope || {},
+        time: ir.time || {},
+        relation: ir.relation || {},
+        parameters,
+        strength: ir.strength || '',
+    });
+}
+
+function parseResultPassesCacheAdmission(result = {}) {
+    if (result.inputType === 'xlsx_roster') return true;
+    const sources = asList(result.sourceRequirements).filter(item => item && typeof item === 'object');
+    const irs = asList(result.constraintIRs).filter(item => item && typeof item === 'object');
+    if (!sources.length || !irs.length) return false;
+
+    const sourceIds = sources.map(source => asText(source.sourceId, 300));
+    const sourceIdSet = new Set(sourceIds.filter(Boolean));
+    if (sourceIdSet.size !== sources.length) return false;
+    if (irs.some(ir => !sourceIdSet.has(asText(ir.sourceId, 300)) || !asText(ir.textHash, 128))) return false;
+
+    const signatures = irs.map(cacheConstraintIRSignature);
+    if (new Set(signatures).size !== signatures.length) return false;
+
+    const applicationTargets = new Set(['rule', 'lesson_plan', 'optimization', 'handled', 'review']);
+    if (sources.some(source => !applicationTargets.has(source.applicationTarget))) return false;
+    if (sources.some(source => source.requiresHumanReview && asList(source.reviewReasons).some(reason => (
+        reason?.origin === 'ai' && reason?.verified !== true
+    )))) return false;
+
+    if (result.parseSource === 'ai_extract') {
+        const validation = result.aiCandidateValidation || {};
+        if (result.aiReview?.status === 'unavailable') return false;
+        if (validation.version !== AI_CANDIDATE_VALIDATION_VERSION) return false;
+        if (validation.formalBase !== 'local_baseline') return false;
+        if (Number(validation.unverifiedCandidateCount || 0) !== 0) return false;
+    }
+    if (irs.some(ir => {
+        const kind = asText(ir.target?.kind, 80);
+        const name = asText(ir.target?.name, 120).toLowerCase();
+        return ['teacher', 'class', 'subject', 'room'].includes(kind) && INVALID_INFERRED_ENTITY_NAMES.has(name);
+    })) return false;
+    return true;
+}
+
+async function parseWithPersistentCache({ cacheKey, env, producer }) {
+    const cache = getTimetableConstraintParseCache(env);
+    const cached = await cache.getOrCreate(cacheKey, async () => withParseMetadata(await producer(), {
+        cacheKey,
+        cacheHit: false,
+        env,
+    }), { shouldCache: parseResultPassesCacheAdmission });
+    return withParseMetadata(cached.value, { cacheKey, cacheHit: cached.cacheHit, env });
 }
 
 function sourceRowsForParse({ text = '', inputType = 'text', constraintRows = [], origin = 'user_input' } = {}) {
@@ -600,6 +714,152 @@ function mergeConstraintIR(left = {}, right = {}) {
     });
 }
 
+function compactCapabilityIRs(irs = [], rows = []) {
+    const removedClauseIds = new Set();
+    const semanticallyUnique = [];
+    const semanticIndexes = new Map();
+    const semanticKey = ir => {
+        const { legacyRow, selectorCurrentlyUnmatched, ...parameters } = ir.parameters || {};
+        void legacyRow;
+        void selectorCurrentlyUnmatched;
+        return stableJson({
+            sourceId: ir.sourceId,
+            capabilityId: ir.capabilityId,
+            intent: ir.intent,
+            target: ir.target,
+            scope: ir.scope,
+            time: ir.time,
+            relation: ir.relation,
+            parameters,
+            strength: ir.strength,
+        });
+    };
+    for (const ir of irs) {
+        const key = semanticKey(ir);
+        const existingIndex = semanticIndexes.get(key);
+        if (existingIndex === undefined) {
+            semanticIndexes.set(key, semanticallyUnique.length);
+            semanticallyUnique.push(ir);
+            continue;
+        }
+        const existing = semanticallyUnique[existingIndex];
+        removedClauseIds.add(ir.clauseId);
+        semanticallyUnique[existingIndex] = normalizeConstraintIR({
+            ...mergeConstraintIR(existing, ir),
+            constraintId: existing.constraintId,
+            clauseId: existing.clauseId,
+            machineRuleIds: existing.machineRuleIds,
+            aiReviewStatus: ir.aiReviewStatus || existing.aiReviewStatus || '',
+            aiReviewIssueCode: ir.aiReviewIssueCode || existing.aiReviewIssueCode || '',
+            aiReviewValidationStatus: ir.aiReviewValidationStatus || existing.aiReviewValidationStatus || '',
+            aiReviewBlocking: ir.aiReviewBlocking === true || existing.aiReviewBlocking === true,
+            aiReviewValidationEvidence: uniqueConstraintMessages([
+                ...asList(existing.aiReviewValidationEvidence),
+                ...asList(ir.aiReviewValidationEvidence),
+            ]),
+            aiReviewWarnings: uniqueConstraintMessages([
+                ...asList(existing.aiReviewWarnings),
+                ...asList(ir.aiReviewWarnings),
+            ]),
+        });
+    }
+    const kept = [];
+    const sourcesWithSpecializedRoomRules = new Set(semanticallyUnique
+        .filter(ir => ['room.preferred', 'room.forbidden_type'].includes(ir.capabilityId))
+        .map(ir => ir.sourceId));
+    const specificity = ir => {
+        const parameters = ir.parameters || {};
+        return [
+            ...(parameters.roomIds || []),
+            ...(parameters.roomRequirement?.roomIds || []),
+            ...(parameters.activityTypes || []),
+            ...(parameters.teacherNames || []),
+            ...(parameters.requiredTags || []),
+        ].length;
+    };
+    for (const ir of semanticallyUnique) {
+        if (
+            ir.capabilityId === 'room.required'
+            && sourcesWithSpecializedRoomRules.has(ir.sourceId)
+            && !(ir.parameters?.roomIds || []).length
+            && !(ir.parameters?.roomRequirement?.roomIds || []).length
+            && !(ir.parameters?.activityTypes || []).length
+        ) {
+            removedClauseIds.add(ir.clauseId);
+            continue;
+        }
+        if (ir.capabilityId !== 'room.required') {
+            kept.push(ir);
+            continue;
+        }
+        const duplicateIndex = kept.findIndex(existing => (
+            existing.capabilityId === ir.capabilityId
+            && existing.sourceId === ir.sourceId
+            && existing.target?.kind === ir.target?.kind
+            && existing.target?.name === ir.target?.name
+        ));
+        if (duplicateIndex < 0) {
+            kept.push(ir);
+            continue;
+        }
+        const existing = kept[duplicateIndex];
+        if (specificity(ir) > specificity(existing)) {
+            removedClauseIds.add(existing.clauseId);
+            kept[duplicateIndex] = ir;
+        } else {
+            removedClauseIds.add(ir.clauseId);
+        }
+    }
+    return {
+        constraintIRs: kept,
+        rows: rows.filter(row => !removedClauseIds.has(row.clauseId)),
+    };
+}
+
+const INTERNAL_OBJECT_NAMES = new Set([
+    'unsupported',
+    'need_review',
+    'needs_review',
+    'unknown',
+    'requirement',
+    'schedule_request',
+]);
+const OBSOLETE_EXECUTABLE_WARNING_PATTERNS = [
+    /当前求解器只支持全部教师级空堂权重/,
+    /需求语义和适用范围已保留，但当前求解器不能安全执行/,
+    /当前版本只能预览这类建议，暂不会写入排课规则/,
+];
+
+function usableSemanticObject(object = null) {
+    if (!object || typeof object !== 'object') return false;
+    const name = asText(object.name || object.label || '', 120).trim().toLowerCase().replace(/[\s-]+/g, '_');
+    return Boolean(name && !INTERNAL_OBJECT_NAMES.has(name));
+}
+
+function aiReviewBlocksAutomaticApplication(artifact = {}) {
+    return artifact.aiReviewBlocking === true
+        && asText(artifact.aiReviewValidationStatus || '', 40).toLowerCase() === 'blocking';
+}
+
+function resolvedReferenceWarnings(ir = {}) {
+    const references = asList(ir.entityReferences);
+    const fullyResolved = references.length
+        && references.every(reference => reference.status === 'matched')
+        && !asList(ir.referenceIssues).length;
+    if (!fullyResolved) return asList(ir.warnings);
+    return asList(ir.warnings).filter(warning => !/存在多个候选.*确认后再生效/.test(String(warning || '')));
+}
+
+function staleResolvedReferenceReview(row = {}, ir = {}) {
+    const references = asList(ir.entityReferences);
+    return row.status === 'needs_review'
+        && Boolean(row.ambiguity || asList(row.ambiguities).length)
+        && references.length > 0
+        && references.every(reference => reference.status === 'matched')
+        && !asList(ir.referenceIssues).length
+        && !aiReviewBlocksAutomaticApplication(row);
+}
+
 function compileArtifactsThroughCapabilityRegistry({
     project = {},
     rows = [],
@@ -642,13 +902,16 @@ function compileArtifactsThroughCapabilityRegistry({
             registry: TIMETABLE_CAPABILITY_REGISTRY,
             parsedBy: candidate.artifact.parsedBy || [],
         });
+        ir = resolveConstraintIRReferences(ir, project);
+        ir = assessConstraintIRExecutionReadiness(ir, project);
+        ir = normalizeConstraintIR({ ...ir, warnings: resolvedReferenceWarnings(ir) });
         const capability = resolveConstraintCapability(TIMETABLE_CAPABILITY_REGISTRY, ir);
         let outputRows = [];
         let compileWarnings = [];
         let rowCompileWarnings = [];
         let compileClarifications = [];
 
-        if (candidate.originalRow && capability?.solverSupport !== 'none' && ir.support !== 'none') {
+        if (capability?.solverSupport !== 'none' && ir.support !== 'none') {
             const compiled = compileConstraintIR(TIMETABLE_CAPABILITY_REGISTRY, ir, {
                 project,
                 deferEntityValidation: true,
@@ -662,7 +925,7 @@ function compileArtifactsThroughCapabilityRegistry({
             compileClarifications = compiled.clarifications || [];
             if (compiled.rows.length) {
                 outputRows = compiled.rows;
-            } else {
+            } else if (candidate.originalRow) {
                 outputRows = [{
                     ...candidate.originalRow,
                     status: ['effective', 'ready'].includes(candidate.originalRow.status) && !compiled.valid
@@ -694,8 +957,24 @@ function compileArtifactsThroughCapabilityRegistry({
                 )
             )
         ) outputRows = [];
+        if (
+            ir.executionStatus === 'blocked_by_clarification'
+            && (
+                candidate.artifact.needsClarification === true
+                || candidate.artifact.executionStatus === 'unsupported_by_solver'
+            )
+        ) outputRows = [];
         outputRows = outputRows.map(row => ({
             ...row,
+            status: ['blocked_by_reference', 'blocked_by_clarification'].includes(ir.executionStatus)
+                ? 'needs_review'
+                : ir.executionStatus === 'unsupported_by_solver'
+                    ? 'unsupported'
+                    : ir.executionStatus === 'partially_executable' || aiReviewBlocksAutomaticApplication(row)
+                        ? 'needs_review'
+                        : ir.executionStatus === 'executable' && staleResolvedReferenceReview(row, ir)
+                            ? 'effective'
+                            : row.status,
             capabilityId: row.capabilityId || capability?.id || ir.capabilityId,
             understandingStatus: ir.understandingStatus,
             executionStatus: ir.executionStatus,
@@ -712,18 +991,15 @@ function compileArtifactsThroughCapabilityRegistry({
             legacyClause: candidate.artifact.legacyClause || ir.legacyClause || null,
             warnings: uniqueConstraintMessages([...asList(ir.warnings), ...compileWarnings]),
             clarifications: uniqueConstraintMessages([...asList(ir.clarifications), ...compileClarifications]),
-            machineRuleIds: ir.executionStatus === 'unsupported_by_solver'
-                ? []
-                : outputRows.map(row => row.machineRuleId || row.id).filter(Boolean),
+            machineRuleIds: ['executable', 'partially_executable'].includes(ir.executionStatus)
+                ? outputRows.map(row => row.machineRuleId || row.id).filter(Boolean)
+                : [],
         });
         const existing = irById.get(ir.constraintId);
         irById.set(ir.constraintId, existing ? mergeConstraintIR(existing, ir) : ir);
     }
 
-    return {
-        rows: compiledRows,
-        constraintIRs: [...irById.values()],
-    };
+    return compactCapabilityIRs([...irById.values()], compiledRows);
 }
 
 function publicConstraintIR(input = {}, machineRuleIds = input.machineRuleIds || []) {
@@ -735,9 +1011,14 @@ function publicConstraintIR(input = {}, machineRuleIds = input.machineRuleIds ||
     return normalizeConstraintIR({
         ...publicFields,
         parameters,
-        machineRuleIds: ir.executionStatus === 'unsupported_by_solver'
-            ? []
-            : normalizedTextValues(300, machineRuleIds),
+        warnings: ir.executionStatus === 'executable' && ir.support === 'full'
+            ? asList(ir.warnings).filter(warning => (
+                !OBSOLETE_EXECUTABLE_WARNING_PATTERNS.some(pattern => pattern.test(String(warning || '')))
+            ))
+            : ir.warnings,
+        machineRuleIds: ['executable', 'partially_executable'].includes(ir.executionStatus)
+            ? normalizedTextValues(300, machineRuleIds)
+            : [],
     });
 }
 
@@ -755,7 +1036,7 @@ function legacyClauseFromConstraintIR(ir = {}) {
         textHash: ir.textHash,
         origin: ir.origin,
         parsedBy: ir.parsedBy,
-        object: legacyClause.object || ir.target,
+        object: usableSemanticObject(legacyClause.object) ? legacyClause.object : ir.target,
         intent: legacyClause.intent || legacyRow?.intent || legacyRow?.type || ir.intent,
         condition: legacyClause.condition || ir.time,
         parameters,
@@ -843,16 +1124,19 @@ function mergeLegacyRequirementWithConstraintIR(requirement = {}, ir = {}) {
 
 function mergeLegacyRequirementsWithConstraintIRs(requirements = [], constraintIRs = []) {
     const usedIndexes = new Set();
-    const merged = requirements.map(requirement => {
+    const requirementByIRIndex = new Map();
+    requirements.forEach(requirement => {
         const match = constraintIRForLegacyRequirement(requirement, constraintIRs, usedIndexes);
-        if (!match) return requirement;
+        if (!match) return;
         usedIndexes.add(match.index);
-        return mergeLegacyRequirementWithConstraintIR(requirement, match.ir);
+        requirementByIRIndex.set(match.index, requirement);
     });
-    constraintIRs.forEach((ir, index) => {
-        if (!usedIndexes.has(index)) merged.push(legacyClauseFromConstraintIR(ir));
+    return constraintIRs.map((ir, index) => {
+        const requirement = requirementByIRIndex.get(index);
+        return requirement
+            ? mergeLegacyRequirementWithConstraintIR(requirement, ir)
+            : legacyClauseFromConstraintIR(ir);
     });
-    return merged;
 }
 
 function rowCanOwnMachineRule(row = {}) {
@@ -886,7 +1170,7 @@ function sourceAwareParseResult(result = {}, sourceRequirements = [], { parsedBy
             rows: result.draftRows || [],
             actors,
         });
-        return {
+        const parsed = {
             ...result,
             schemaVersion: SOURCE_SCHEMA_VERSION,
             sourceRequirements: [],
@@ -904,6 +1188,7 @@ function sourceAwareParseResult(result = {}, sourceRequirements = [], { parsedBy
                 semanticActions,
             }),
         };
+        return { ...parsed, entityResolution: buildEntityResolution(parsed) };
     }
 
     const linkedRequirements = [];
@@ -979,7 +1264,12 @@ function sourceAwareParseResult(result = {}, sourceRequirements = [], { parsedBy
     const reviewRows = linkedRows.filter(row => (
         row.origin !== 'system_supplement' && !rowCanOwnMachineRule(row)
     ));
-    const attached = attachArtifactsToSourceRequirements(inputSources, {
+    const canonicalSources = inputSources.map(source => ({
+        ...source,
+        clauses: [],
+        machineRuleIds: [],
+    }));
+    const attached = attachArtifactsToSourceRequirements(canonicalSources, {
         clauses: constraintClauses,
         machineRules: machineRows,
         parsedBy: actors[0] || '',
@@ -1057,7 +1347,8 @@ function sourceAwareParseResult(result = {}, sourceRequirements = [], { parsedBy
             ]),
         };
     });
-    const finalSources = aggregateSourceWarnings(statusAwareSources, finalRows, result.warningItems || []);
+    const finalSources = aggregateSourceWarnings(statusAwareSources, finalRows, result.warningItems || [])
+        .map(finalizeSourceRequirementPresentation);
     const sourceLegacyRequirements = buildLegacyRequirementItemsFromSources(finalSources);
     const requirementItems = dedupeRequirements([
         ...sourceLegacyRequirements,
@@ -1093,7 +1384,7 @@ function sourceAwareParseResult(result = {}, sourceRequirements = [], { parsedBy
         draftRows: finalRows,
         semanticActions,
     });
-    return {
+    const parsed = {
         ...result,
         schemaVersion: SOURCE_SCHEMA_VERSION,
         sourceRequirements: finalSources,
@@ -1106,6 +1397,7 @@ function sourceAwareParseResult(result = {}, sourceRequirements = [], { parsedBy
         warningItems,
         statistics,
     };
+    return { ...parsed, entityResolution: buildEntityResolution(parsed) };
 }
 
 function aiReviewStatusPayload({
@@ -1116,6 +1408,9 @@ function aiReviewStatusPayload({
     warnings = [],
     appliedSuggestionCount = 0,
     flaggedCount = 0,
+    acceptedCount = 0,
+    advisoryCount = 0,
+    blockingCount = 0,
 } = {}) {
     return {
         status,
@@ -1125,7 +1420,21 @@ function aiReviewStatusPayload({
         warningCount: warnings.length,
         flaggedCount,
         appliedSuggestionCount,
+        acceptedCount,
+        correctedCount: appliedSuggestionCount,
+        advisoryCount,
+        blockingCount,
         reviewItems,
+    };
+}
+
+function aiAssistancePayload({ mode = 'targeted_review', reviewItems = [], correctedCount = 0 } = {}) {
+    return {
+        mode,
+        acceptedCount: reviewItems.filter(item => item.validationStatus === 'accepted').length,
+        correctedCount,
+        advisoryCount: reviewItems.filter(item => item.validationStatus === 'advisory').length,
+        blockingCount: reviewItems.filter(item => item.validationStatus === 'blocking' && item.blocking === true).length,
     };
 }
 
@@ -1139,6 +1448,7 @@ function withAiReviewUnavailable(result = {}, reason = 'ai_not_configured', mess
             reason,
             warnings: warning ? [warning] : [],
         }),
+        aiAssistance: aiAssistancePayload({ mode: 'local_fallback' }),
     };
 }
 
@@ -1636,9 +1946,12 @@ function parsePeriods(value, project, fallback = []) {
         consume(match);
     }
 
-    const absoluteText = consumedRanges.length
+    const unconsumedText = consumedRanges.length
         ? text.split('').map((char, index) => consumedRanges.some(([start, end]) => index >= start && index < end) ? ' ' : char).join('')
         : text;
+    const absoluteText = unconsumedText
+        .replace(/\b[A-Za-z]+\d{1,2}-\d{1,2}\s*班?/g, ' ')
+        .replace(/\b\d{1,2}-\d{1,2}\s*班/g, ' ');
     const rangePattern = new RegExp(`第?\\s*(${NUMBER_TOKEN_PATTERN})\\s*[-~到至]\\s*第?\\s*(${NUMBER_TOKEN_PATTERN})\\s*节?`, 'g');
     for (const range of absoluteText.matchAll(rangePattern)) {
         values.push(...expandRange(range[1], range[2], maxPeriod));
@@ -1821,6 +2134,19 @@ function matchEntityCandidates(project = {}, targetText = '', targetType = '', {
             });
         }
     };
+
+    const aliasMap = project.constraintEntityAliases?.[targetType] || {};
+    const normalizedAliasQuery = normalizeEntityName(query);
+    const aliasTargetId = Object.entries(aliasMap).find(([alias]) => (
+        normalizeEntityName(alias) === normalizedAliasQuery
+    ))?.[1];
+    if (aliasTargetId) {
+        const aliasTarget = items.find(item => item.id === aliasTargetId);
+        if (aliasTarget) {
+            const candidate = { ...candidatePreview(aliasTarget, targetType, 1), matchType: 'alias' };
+            return { candidates: [candidate], confidence: 1, targetText: query, targetType, matchType: 'alias' };
+        }
+    }
 
     if (targetId) {
         const exactId = items.find(item => item.id === targetId);
@@ -2377,6 +2703,10 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
         scope: row.scope && typeof row.scope === 'object' ? { ...row.scope } : {},
         parameters: row.parameters && typeof row.parameters === 'object' ? { ...row.parameters } : {},
         aiReviewStatus: asText(row.aiReviewStatus || '', 40),
+        aiReviewIssueCode: asText(row.aiReviewIssueCode || '', 80),
+        aiReviewValidationStatus: asText(row.aiReviewValidationStatus || '', 40),
+        aiReviewBlocking: row.aiReviewBlocking === true,
+        aiReviewValidationEvidence: normalizedMessageValues(500, row.aiReviewValidationEvidence),
         aiReviewWarnings: normalizedMessageValues(240, row.aiReviewWarnings),
         reviewEvidence: row.reviewEvidence && typeof row.reviewEvidence === 'object'
             ? {
@@ -2743,6 +3073,7 @@ function previewFromRow(row = {}) {
 
 function emptyRulesFrom(project) {
     const rules = cloneValue(project.rules);
+    rules.advancedRules = [...(rules.advancedRules || [])];
     rules.hardRules = rules.hardRules || {};
     rules.hardRules.teacherUnavailable = { ...(rules.hardRules.teacherUnavailable || {}) };
     rules.hardRules.classUnavailable = { ...(rules.hardRules.classUnavailable || {}) };
@@ -3914,6 +4245,10 @@ function externalRequirementItems(items = []) {
             source,
             warnings: normalizedMessageValues(240, item.warnings),
             aiReviewStatus: asText(item.aiReviewStatus || '', 40),
+            aiReviewIssueCode: asText(item.aiReviewIssueCode || '', 80),
+            aiReviewValidationStatus: asText(item.aiReviewValidationStatus || '', 40),
+            aiReviewBlocking: item.aiReviewBlocking === true,
+            aiReviewValidationEvidence: normalizedMessageValues(500, item.aiReviewValidationEvidence),
             aiReviewWarnings: normalizedMessageValues(240, item.aiReviewWarnings),
             reviewEvidence: item.reviewEvidence && typeof item.reviewEvidence === 'object'
                 ? {
@@ -5277,6 +5612,18 @@ export function normalizeTimetableRuleDraftRows({
                 negation: row.negation ?? requirement.negation ?? null,
                 exceptions: row.exceptions?.length ? row.exceptions : (requirement.exceptions || []),
                 activity: row.activity ?? requirement.activity ?? null,
+                aiReviewStatus: row.aiReviewStatus || requirement.aiReviewStatus || '',
+                aiReviewIssueCode: row.aiReviewIssueCode || requirement.aiReviewIssueCode || '',
+                aiReviewValidationStatus: row.aiReviewValidationStatus || requirement.aiReviewValidationStatus || '',
+                aiReviewBlocking: row.aiReviewBlocking === true || requirement.aiReviewBlocking === true,
+                aiReviewValidationEvidence: uniqueConstraintMessages([
+                    ...asList(requirement.aiReviewValidationEvidence),
+                    ...asList(row.aiReviewValidationEvidence),
+                ]),
+                aiReviewWarnings: uniqueConstraintMessages([
+                    ...asList(requirement.aiReviewWarnings),
+                    ...asList(row.aiReviewWarnings),
+                ]),
             }));
         });
 
@@ -5418,6 +5765,36 @@ export function normalizeTimetableRuleDraftRows({
                 }
                 addGlobalUnavailable(rules, slots);
                 return { ...row, targetType: 'global', targetId: '__global__', targetName: '全校', priority: 'hard', status: 'effective' };
+            }
+
+            if (row.type === 'advanced_constraint') {
+                const advancedRule = {
+                    id: row.machineRuleId || row.id,
+                    type: row.advancedType || row.capabilityId,
+                    capabilityId: row.capabilityId || row.advancedType,
+                    strength: row.priority || 'soft',
+                    sourceId: row.sourceId || '',
+                    clauseId: row.clauseId || '',
+                    target: {
+                        kind: row.targetType || 'global',
+                        name: row.targetName || '',
+                        matchedIds: [...new Set([...(row.targetIds || []), row.targetId].filter(Boolean))],
+                    },
+                    scope: row.scope || {},
+                    parameters: {
+                        ...(row.parameters || {}),
+                        ...(row.slots?.length ? { slots: row.slots } : {}),
+                    },
+                    enabled: row.enabled !== false,
+                };
+                const existingIndex = rules.advancedRules.findIndex(item => item.id === advancedRule.id);
+                if (existingIndex >= 0) rules.advancedRules[existingIndex] = advancedRule;
+                else rules.advancedRules.push(advancedRule);
+                return {
+                    ...row,
+                    targetId: advancedRule.target.matchedIds[0] || row.targetId || '__global__',
+                    status: 'effective',
+                };
             }
 
             if (row.type === 'subject_morning') {
@@ -5651,6 +6028,24 @@ export function normalizeTimetableRuleDraftRows({
     return sourceAwareParseResult(legacyResult, effectiveSourceRequirements, { parsedBy: parseActor });
 }
 
+export function rebindTimetableRuleResult({
+    project = {},
+    previousResult = {},
+} = {}) {
+    return normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: previousResult.draftRows || [],
+        semanticRequirements: previousResult.requirementItems || [],
+        sourceRequirements: previousResult.sourceRequirements || [],
+        source: 'entity_rebind',
+        inputType: previousResult.inputType || 'entity_rebind',
+        contextStats: previousResult.contextStats || null,
+        initialWarnings: previousResult.warningItems || previousResult.warnings || [],
+        rejected: previousResult.rejected || [],
+        originalText: previousResult.originalText || '',
+    });
+}
+
 function normalizeAiContent(content) {
     if (typeof content === 'object' && content) return content;
     const text = String(content || '').trim();
@@ -5828,6 +6223,8 @@ function compactParseResultForReview(result = {}) {
         parseSource: result.parseSource,
         draftRows: (result.draftRows || []).map(row => ({
             id: row.id,
+            requirementId: row.requirementId,
+            clauseId: row.clauseId,
             stableKey: row.stableKey,
             sourceId: row.sourceId,
             textHash: row.textHash,
@@ -5837,6 +6234,8 @@ function compactParseResultForReview(result = {}) {
             sourceRow: row.sourceRow,
             lineNumber: row.lineNumber,
             rawText: row.rawText,
+            capabilityId: row.capabilityId,
+            intent: row.intent,
             type: row.type,
             targetType: row.targetType,
             targetId: row.targetId,
@@ -5884,27 +6283,42 @@ function compactParseResultForReview(result = {}) {
     };
 }
 
-function buildAiReviewPrompt({ project, text, inputType, contextStats = null, constraintRows = [], localResult = {} }) {
+function buildAiReviewPrompt({
+    project,
+    text,
+    inputType,
+    contextStats = null,
+    constraintRows = [],
+    candidateResult = {},
+    applicationResult = {},
+}) {
     return [
         {
             role: 'system',
             content: [
-                '你是中文中小学排课需求识别结果的复审核查员。你只复审本地解析结果，不直接生成最终规则。',
+                '你是中文中小学排课需求识别结果的复审核查员。你复审 AI 候选与本地安全基线的差异，不直接生成最终规则。',
                 '只输出 JSON 对象，不要 markdown，不要解释文字。格式：{"reviewItems":[],"warnings":[]}。',
-                'reviewItems 每项必须包含 verdict、target、reason、evidence，可选 patch 或 suggestedRequirement。',
+                'reviewItems 每项必须包含 verdict、issueCode、target、fieldPath、reason、evidence，可选 patch 或 suggestedRequirement。',
                 'Every reviewItems[] item must copy sourceId and textHash from exactly one provided sources[] item.',
                 'The review item and its target must use the same sourceId/textHash. Never review, flag, or patch across source identities.',
                 'Never align review output to input by array index. If source identity cannot be proven, omit the review item and add a warning.',
                 'verdict 只能是 accept、flag、suggest_patch、missed_requirement、unsupported。',
+                'issueCode 只能是 entity_missing、entity_ambiguous、required_parameter_missing、slot_out_of_range、activity_scope_ambiguous、semantic_interpretation_conflict、rule_conflict、unsupported_capability；没有这些问题时留空。',
+                '普通优化建议、低置信度和无法用项目数据验证的担忧只能作为建议，不能要求阻断。系统会独立验证 issueCode，未复现的问题会降为 advisory。',
                 'target 用于定位本地结果，可包含 rowId、requirementId、stableKey、sourceSheet、sourceRow、targetId、type。',
                 'evidence 必须包含 quote 或 sourceRow，说明建议来自哪句原文或哪一行 xlsx。',
                 'suggest_patch 只能提出字段级建议，系统会重新做本地实体匹配、时间校验和能力校验；不要假设建议会自动生效。',
                 'missed_requirement 只能指出漏识别的自然语言需求，不能直接写入项目。',
+                'candidateResult 只是诊断候选集，applicationBaseline 才是待修改的正式基线。未在 reviewItems 中明确处理的 AI-only 候选会被丢弃。',
+                'accept 只用于确认 candidateResult 与 applicationBaseline 已经一致的候选，不能用 accept 新增规则。',
+                'AI-only 的独立语义如果确实应用，必须返回 missed_requirement 并给出完整 suggestedRequirement；信息不完整时返回 flag。',
+                'suggest_patch 必须精确指向 applicationBaseline 中的 rowId 或 requirementId，不得把 candidateResult 中的临时 ID 当成正式补丁目标。',
                 '系统基础规则如“同一位教师同一时间只能给一个班上课”“同一班级同一时间只能一门课”属于已处理系统不变量，不要建议生成全教师/全班级不可排。',
                 '“默认单节”“连堂块不能拆开”属于系统策略或任课计划策略，不要建议生成无意义的 teacher_unavailable/class_unavailable。',
                 '“高负载教师不要连续太多”缺少阈值时应 flag 或 missed_requirement 并要求确认阈值，不要猜成固定 3 节。',
                 '具体节次优先于宽泛时段；例如“上午第1-3节”应核查为具体 slots，而不是只保留 subject_morning。',
                 '对象或时间不唯一时必须 flag，不能猜。',
+                '如果 targetedReviewSourceIds 非空，只复审这些来源；其他来源不要返回 reviewItems。',
             ].join('\n'),
         },
         {
@@ -5914,8 +6328,11 @@ function buildAiReviewPrompt({ project, text, inputType, contextStats = null, co
                 inputType,
                 request: text,
                 contextStats,
+                targetedReviewSourceIds: asList(contextStats?.targetedReviewSourceIds),
                 constraintRows,
-                sources: sourceRequirementsToAiInputs(localResult.sourceRequirements || []),
+                sources: sourceRequirementsToAiInputs(
+                    applicationResult.sourceRequirements || candidateResult.sourceRequirements || [],
+                ),
                 project: compactProjectDictionary(project),
                 supportedCapabilities: {
                     ruleTypes: [...SUPPORTED_EFFECTIVE_TYPES],
@@ -5923,7 +6340,9 @@ function buildAiReviewPrompt({ project, text, inputType, contextStats = null, co
                     semanticDestinations: ['rule', 'lesson_plan', 'optimization', 'solver_policy', 'model_extension', 'review'],
                     complexModelEnabled: complexModelIsEnabled(project),
                 },
-                localResult: compactParseResultForReview(localResult),
+                localResult: compactParseResultForReview(candidateResult),
+                candidateResult: compactParseResultForReview(candidateResult),
+                applicationBaseline: compactParseResultForReview(applicationResult),
             }),
         },
     ];
@@ -5979,7 +6398,17 @@ async function fetchAiReviewWithTimeout(fetchClient, url, options = {}, timeoutM
     }
 }
 
-async function callAiReview({ project, text, inputType, contextStats, constraintRows, localResult, env, fetchImpl }) {
+async function callAiReview({
+    project,
+    text,
+    inputType,
+    contextStats,
+    constraintRows,
+    candidateResult,
+    applicationResult,
+    env,
+    fetchImpl,
+}) {
     const { apiKey, baseUrl, model } = resolveAiConfig(env);
     const fetchClient = resolveFetch(fetchImpl);
     const seed = Number.parseInt(env.TIMETABLE_RULE_AI_SEED, 10);
@@ -5994,7 +6423,15 @@ async function callAiReview({ project, text, inputType, contextStats, constraint
             temperature: 0,
             ...(Number.isInteger(seed) ? { seed } : {}),
             response_format: { type: 'json_object' },
-            messages: buildAiReviewPrompt({ project, text, inputType, contextStats, constraintRows, localResult }),
+            messages: buildAiReviewPrompt({
+                project,
+                text,
+                inputType,
+                contextStats,
+                constraintRows,
+                candidateResult,
+                applicationResult,
+            }),
         }),
     }, aiReviewTimeoutMs(env));
     const raw = await response.text();
@@ -6669,6 +7106,11 @@ function roomMentionIsNegated(sentence = '', mentionStart = 0) {
     return /(?:不要|不能|不得|不可|避免|禁止|别|不应)[^，。；！？]*$/.test(clausePrefix);
 }
 
+function roomMentionNeedsClarification(value = '') {
+    const name = normalizeRoomMention(value).replace(/的/g, '');
+    return /^(?:合适|适合|适当|对应|相应|指定|专用|相关|可用|能用)(?:教室|场地|房间|实验室|机房)?$/.test(name);
+}
+
 function textRoomTargets(sentence = '', project = {}) {
     const targets = [];
     (project.rooms || []).forEach(room => {
@@ -7047,7 +7489,11 @@ function schoolTerminologyConstraints(project = {}, rawText = '', sourceMeta = {
         }, sourceMeta)];
     }
 
-    if (/黄金(?:时段|段)/.test(text) && /(?:尽量别|不要|避免|避开|别占|不占)/.test(text)) {
+    if (
+        /黄金(?:时段|段)/.test(text)
+        && /(?:尽量别|不要|避免|避开|别占|不占)/.test(text)
+        && !periods.length
+    ) {
         const subjects = textSubjectTargets(text, project, { allowHeuristic: false });
         return [clarificationSemanticConstraint({
             type: 'subject_avoid_periods', capabilityId: 'subject.avoid_periods', intent: 'subject_avoid_periods',
@@ -7225,9 +7671,152 @@ function preciseSemanticConstraintsFromText(project = {}, text = '', sourceMeta 
     const priority = /尽量|优先|最好|希望/.test(rawText) ? 'soft' : 'hard';
     const teacherNames = teacherNamesFromText(rawText, project);
     const teacherTargets = textTeacherTargets(rawText, project);
+    const classTargets = textClassTargets(rawText, project);
     const roomTargets = textRoomTargets(rawText, project);
     const roomIds = roomTargets.map(room => room.id || room.name).filter(Boolean);
     const activeDays = days.length ? days : getActiveWeekdays(project);
+
+    const teacherDailyLimit = constraintLimitFromText('teacher_daily_limit', rawText);
+    if (
+        teacherTargets.length
+        && Number.isInteger(teacherDailyLimit)
+        && /(?:日课量|每日课量|每天课量|单日课量|一天课量)/.test(rawText)
+        && /(?:不要超过|不超过|不多于|至多|最多|上限)/.test(rawText)
+    ) {
+        return teacherTargets.map(teacher => {
+            const teacherName = asText(teacher.name, 120).replace(/(?:老师|教师)$/u, '');
+            return withSource({
+            type: 'teacher_daily_limit',
+            capabilityId: 'teacher.daily_lesson_limit',
+            targetType: 'teacher',
+            targetId: teacher.id || '',
+            target: teacherName,
+            teacherId: teacher.id || '',
+            teacherName,
+            days: activeDays,
+            limit: teacherDailyLimit,
+            parameters: { days: activeDays, limit: teacherDailyLimit },
+            priority: 'soft',
+            reason: rawText,
+            confidence: 0.95,
+            weekPattern,
+            }, sourceMeta);
+        });
+    }
+
+    const fixedActivitySlots = days.length && periods.length
+        ? days.flatMap(day => periods.map(period => slotKey(day, period)))
+        : [];
+    if (
+        classTargets.length
+        && fixedActivitySlots.length
+        && /(?:固定安排|固定为|统一安排|固定活动)/.test(rawText)
+        && /(?:班会|德育活动|年级会|答疑|集体活动)/.test(rawText)
+        && /(?:不要排|不排|停排|不得排).{0,12}(?:普通|常规)?(?:学科)?课|普通(?:学科)?课.{0,12}(?:不要排|不排|停排)/.test(rawText)
+    ) {
+        const activity = ['班会', '德育活动', '毕业班答疑', '年级会', '集体活动']
+            .filter(value => rawText.includes(value))
+            .join('、');
+        return classTargets.map(klass => withSource({
+            type: 'class_unavailable',
+            capabilityId: 'class.fixed_activity',
+            intent: 'class_unavailable',
+            targetType: 'class',
+            targetId: klass.id || '',
+            target: klass.id ? entityLabel(klass) : klass.name,
+            classId: klass.id || '',
+            className: klass.id ? entityLabel(klass) : klass.name,
+            days,
+            periods,
+            slots: fixedActivitySlots,
+            activity,
+            parameters: { days, periods, slots: fixedActivitySlots },
+            priority: 'hard',
+            reason: rawText,
+            confidence: 0.95,
+            weekPattern,
+        }, sourceMeta));
+    }
+
+    const subjectDailyLimit = constraintLimitFromText('subject_daily_limit', rawText);
+    if (
+        subjectTargets.length
+        && Number.isInteger(subjectDailyLimit)
+        && /(?:同一个班|同一班|每个班|各班).{0,16}(?:一天|每天|每日)/.test(rawText)
+        && /(?:不要超过|不超过|不多于|至多|最多|上限)/.test(rawText)
+    ) {
+        return subjectTargets.map(subject => withSource({
+            type: 'subject_daily_limit',
+            capabilityId: 'class.subject_daily_limit',
+            targetType: 'subject',
+            targetId: subject.id || '',
+            target: subject.name,
+            subjectId: subject.id || '',
+            subjectName: subject.name,
+            days: activeDays,
+            limit: subjectDailyLimit,
+            parameters: { days: activeDays, limit: subjectDailyLimit },
+            priority: 'hard',
+            reason: rawText,
+            confidence: 0.95,
+            weekPattern,
+        }, sourceMeta));
+    }
+
+    if (
+        !sourceMeta.sourceSheet
+        &&
+        subjectTargets.length === 1
+        && gradeNames.length
+        && /实验课|实验教学|实验活动/.test(rawText)
+        && /(?:两节)?连堂|连续两节|连排两节/.test(rawText)
+        && /(?:不要|避免|不能|不可|至少不要).{0,20}(?:拆|拆开|拆分)|(?:拆|拆开|拆分).{0,16}(?:不要|避免|不能|不可)/.test(rawText)
+    ) {
+        const [subject] = subjectTargets;
+        return [withSource({
+            type: 'block_protection',
+            capabilityId: 'lesson.consecutive',
+            intent: 'block_preference',
+            targetType: 'subject',
+            targetId: subject.id || '',
+            target: subject.name,
+            subjectId: subject.id || '',
+            subjectName: subject.name,
+            blockPreference: 'double',
+            gradeNames,
+            days: activeDays,
+            parameters: {
+                blockPreference: 'double',
+                blockSize: 2,
+                days: activeDays,
+                gradeNames,
+            },
+            priority: 'soft',
+            reason: rawText,
+            confidence: 0.95,
+            weekPattern,
+        }, sourceMeta)];
+    }
+
+    if (
+        !sourceMeta.sourceSheet
+        &&
+        /(?:每个班|各班|班级).{0,12}(?:每天|每日|一天).{0,12}(?:课量|课时).{0,12}(?:尽量)?(?:均衡|平衡)/.test(rawText)
+    ) {
+        return [withSource({
+            type: 'class_daily_balance',
+            capabilityId: 'class.daily_balance',
+            targetType: 'global',
+            targetId: '__all_classes',
+            target: '全部班级',
+            days: activeDays,
+            parameters: { days: activeDays },
+            priority: 'soft',
+            reason: rawText,
+            confidence: 0.95,
+            weekPattern,
+        }, sourceMeta)];
+    }
 
     const scopedConsecutiveLimit = teacherConsecutiveLimitFromText(rawText);
     const scopedConsecutiveDayPart = dayPartName(rawText);
@@ -8600,19 +9189,41 @@ function localTextConstraints(project, text, sourceMeta = {}) {
                     weekPattern,
                     }, tracedSourceMeta));
                 }
-                if (effectiveRoomTargets.length && /(教室|场地|实验室|机房|操场|体育馆|音乐室|美术室|功能室|安排|使用|去|在)/.test(sentence)) {
-                    constraints.push(withSource({
-                    type: 'room_requirement',
-                    targetId: subject.id,
-                    target: subject.name,
-                    roomIds: effectiveRoomTargets.map(room => room.id || room.name),
-                    roomName: effectiveRoomTargets[0]?.name || '',
-                    requiredTags: roomTagsFromText(effectiveRoomTargets[0]?.name || '', sentence),
-                    priority: 'hard',
-                    reason: rawText,
-                    confidence: subject.id ? 0.88 : 0.64,
-                    weekPattern,
-                    }, tracedSourceMeta));
+                const hasSpecializedRoomConstraint = constraints.some(item => (
+                    ['room.required', 'room.preferred', 'room.forbidden_type'].includes(item.capabilityId)
+                    && (item.targetId || item.subjectId || '') === (subject.id || '')
+                ));
+                if (
+                    !hasSpecializedRoomConstraint
+                    && effectiveRoomTargets.length
+                    && /(教室|场地|实验室|机房|操场|体育馆|音乐室|美术室|功能室|安排|使用|去|在)/.test(sentence)
+                ) {
+                    const roomName = effectiveRoomTargets[0]?.name || '';
+                    const roomConstraint = {
+                        type: 'room_requirement',
+                        capabilityId: 'room.required',
+                        targetType: 'subject',
+                        targetId: subject.id,
+                        target: subject.name,
+                        roomIds: effectiveRoomTargets.map(room => room.id || room.name),
+                        roomName,
+                        requiredTags: roomTagsFromText(roomName, sentence),
+                        priority: 'hard',
+                        reason: rawText,
+                        confidence: subject.id ? 0.88 : 0.64,
+                        weekPattern,
+                    };
+                    const needsRoomClarification = effectiveRoomTargets.every(room => (
+                        !room.id && roomMentionNeedsClarification(room.name)
+                    ));
+                    constraints.push(needsRoomClarification
+                        ? clarificationSemanticConstraint({
+                            ...roomConstraint,
+                            roomIds: [],
+                            requiredTags: [],
+                            clarifications: ['请明确具体教室，或补充可验证的教室资源类型。'],
+                        }, tracedSourceMeta)
+                        : withSource(roomConstraint, tracedSourceMeta));
                 }
             });
 
@@ -8648,7 +9259,10 @@ function localTextConstraints(project, text, sourceMeta = {}) {
         }
     }
 
-    const augmentedConstraints = tracedSourceMeta.sourceSheet
+    // Prepared parse inputs already represent one stable SourceRequirement. Running the
+    // legacy whole-prompt fallback again invents extra targets from clause fragments.
+    const needsRegisteredAliasExpansion = /(?:物化生|物理、化学、生物|音体美信|音乐、体育、美术、信息技术)/.test(normalized.text);
+    const augmentedConstraints = tracedSourceMeta.sourceId && !needsRegisteredAliasExpansion
         ? constraints
         : categorizedMarketFallbackConstraints(project, normalized.text, tracedSourceMeta, constraints);
     return compactLocalConstraints(augmentedConstraints);
@@ -8656,7 +9270,10 @@ function localTextConstraints(project, text, sourceMeta = {}) {
 
 function structuredConstraintFromRow(project, row = {}) {
     const type = normalizeConstraintType(row.ruleType || row.type || '');
-    const target = asText(row.target || row.targetName || row.teacherName || row.className || row.subjectName || '', 200);
+    const rawTarget = asText(row.target || row.targetName || row.teacherName || row.className || row.subjectName || '', 200);
+    const target = targetTypeFor(type, row) === 'teacher'
+        ? rawTarget.replace(/(?:老师|教师)$/u, '')
+        : rawTarget;
     const rawText = asText(row.constraintText || row.description || row.ruleName || '', 1500)
         || [
             row.ruleName ? `名称：${row.ruleName}` : '',
@@ -8855,7 +9472,133 @@ function shouldUseLocalFirst(inputType = '') {
 
 function shouldUseAiExtraction(inputType = '', env = {}) {
     if (!['text', 'txt', 'csv_text'].includes(inputType)) return false;
-    return ['1', 'true', 'yes', 'on'].includes(String(env.TIMETABLE_RULE_AI_EXTRACT || '').trim().toLowerCase());
+    const configured = String(env.TIMETABLE_RULE_AI_EXTRACT || '').trim().toLowerCase();
+    if (['0', 'false', 'no', 'off'].includes(configured)) return false;
+    if (['1', 'true', 'yes', 'on'].includes(configured)) return true;
+    // The HTTP runtime passes process.env. Injected environments remain opt-in so offline callers stay deterministic.
+    return env === process.env && hasConfiguredAi(env);
+}
+
+function candidateSemanticSignature(row = {}) {
+    return stableJson({
+        sourceId: row.sourceId || row.source?.sourceId || '',
+        textHash: row.textHash || row.source?.textHash || '',
+        capability: row.capabilityId || row.type || row.intent || '',
+        targetType: row.targetType || row.object?.kind || '',
+        targetIds: normalizedTextValues(160,
+            row.targetId,
+            row.teacherId,
+            row.classId,
+            row.subjectId,
+            row.object?.matchedIds,
+        ).sort(),
+        targetName: row.targetName || row.target || row.object?.name || '',
+        slots: normalizedTextValues(40, row.slots, row.condition?.slots, row.parameters?.slots).sort(),
+        days: asList(row.days || row.parameters?.days).map(Number).filter(Number.isInteger).sort((left, right) => left - right),
+        periods: asList(row.periods || row.parameters?.periods).map(Number).filter(Number.isInteger).sort((left, right) => left - right),
+        parameters: row.parameters || {},
+        priority: row.priority || row.strength || '',
+    });
+}
+
+function mergeAiFirstCandidateRows(aiRows = [], localRows = []) {
+    const merged = [];
+    const seen = new Set();
+    for (const row of [...asList(aiRows), ...asList(localRows)]) {
+        if (!row || typeof row !== 'object') continue;
+        const signature = candidateSemanticSignature(row);
+        if (seen.has(signature)) continue;
+        seen.add(signature);
+        merged.push(row);
+    }
+    return merged;
+}
+
+function candidateSignatureSet(rows = []) {
+    return new Set(asList(rows)
+        .filter(row => row && typeof row === 'object')
+        .map(candidateSemanticSignature));
+}
+
+function constraintIRSignatureSet(irs = []) {
+    return new Set(asList(irs)
+        .filter(ir => ir && typeof ir === 'object')
+        .map(cacheConstraintIRSignature));
+}
+
+function aiLocalAgreementCount(aiRows = [], localRows = []) {
+    const aiSignatures = candidateSignatureSet(aiRows);
+    const localSignatures = candidateSignatureSet(localRows);
+    return [...aiSignatures].filter(signature => localSignatures.has(signature)).length;
+}
+
+function withValidatedAiFirstResult({
+    result = {},
+    diagnosticResult = {},
+    localBaselineResult = {},
+    targetedSourceIds = [],
+} = {}) {
+    const diagnosticIRs = asList(diagnosticResult.constraintIRs);
+    const baselineIRs = asList(localBaselineResult.constraintIRs);
+    const formalIRs = asList(result.constraintIRs);
+    const diagnosticSignatures = constraintIRSignatureSet(diagnosticIRs);
+    const baselineSignatures = constraintIRSignatureSet(baselineIRs);
+    const formalSignatures = constraintIRSignatureSet(formalIRs);
+    const promotedIRs = formalIRs.filter(ir => !baselineSignatures.has(cacheConstraintIRSignature(ir)));
+    const unverifiedPromoted = promotedIRs.filter(ir => ir.aiReviewValidationStatus !== 'accepted');
+    return {
+        ...result,
+        parseSource: 'ai_extract',
+        warningItems: [...new Map([
+            ...asList(result.warningItems),
+            ...asList(diagnosticResult.warningItems),
+        ].map(item => [stableJson(item), item])).values()],
+        rejected: [...new Map([
+            ...asList(result.rejected),
+            ...asList(diagnosticResult.rejected),
+        ].map(item => [stableJson(item), item])).values()],
+        aiCandidateValidation: {
+            version: AI_CANDIDATE_VALIDATION_VERSION,
+            formalBase: 'local_baseline',
+            diagnosticCandidateCount: diagnosticSignatures.size,
+            baselineCandidateCount: baselineSignatures.size,
+            formalCandidateCount: formalSignatures.size,
+            promotedCandidateCount: new Set(promotedIRs.map(cacheConstraintIRSignature)).size,
+            droppedCandidateCount: [...diagnosticSignatures].filter(signature => !formalSignatures.has(signature)).length,
+            unverifiedCandidateCount: new Set(unverifiedPromoted.map(cacheConstraintIRSignature)).size,
+            targetedSourceCount: new Set(asList(targetedSourceIds).filter(Boolean)).size,
+        },
+    };
+}
+
+function targetedReviewSourceIds(sourceRequirements = [], aiRows = [], localRows = []) {
+    const aiBySource = new Map();
+    const localBySource = new Map();
+    const add = (map, row) => {
+        const sourceId = row?.sourceId || row?.source?.sourceId || '';
+        if (!sourceId) return;
+        const values = map.get(sourceId) || [];
+        values.push(row);
+        map.set(sourceId, values);
+    };
+    asList(aiRows).forEach(row => add(aiBySource, row));
+    asList(localRows).forEach(row => add(localBySource, row));
+    const targeted = new Set();
+    for (const source of asList(sourceRequirements)) {
+        const aiCandidates = aiBySource.get(source.sourceId) || [];
+        const localCandidates = localBySource.get(source.sourceId) || [];
+        if (!aiCandidates.length || !localCandidates.length) {
+            targeted.add(source.sourceId);
+            continue;
+        }
+        const aiSignatures = candidateSignatureSet(aiCandidates);
+        const localSignatures = candidateSignatureSet(localCandidates);
+        if (
+            aiSignatures.size !== localSignatures.size
+            || [...aiSignatures].some(signature => !localSignatures.has(signature))
+        ) targeted.add(source.sourceId);
+    }
+    return [...targeted];
 }
 
 function localParseSourceForInput(inputType = '') {
@@ -8960,6 +9703,15 @@ function normalizeAiReviewItems(items = []) {
             lineNumber,
             rawText: asText(item.rawText || item.source?.rawText || evidence.quote || '', 1000),
             verdict,
+            issueCode: asText(item.issueCode || item.code || '', 80).toLowerCase(),
+            fieldPath: asText(item.fieldPath || item.path || '', 240),
+            validationStatus: ['accepted', 'advisory', 'blocking', 'rejected'].includes(asText(item.validationStatus || '', 40).toLowerCase())
+                ? asText(item.validationStatus, 40).toLowerCase()
+                : '',
+            blocking: item.blocking === true,
+            validationEvidence: asList(item.validationEvidence)
+                .map(value => asText(typeof value === 'object' ? value.message || value.code || stableJson(value) : value, 500))
+                .filter(Boolean),
             target: {
                 sourceId,
                 textHash,
@@ -9004,48 +9756,193 @@ function reviewTargetMatchesSource(artifact = {}, target = {}) {
 
 function reviewTargetMatchesRow(row = {}, target = {}) {
     if (!reviewTargetMatchesSource(row, target)) return false;
-    if (target.rowId && row.id === target.rowId) return true;
-    if (target.stableKey && row.stableKey === target.stableKey) return true;
-    if (target.sourceRow && Number(row.sourceRow) === Number(target.sourceRow)) {
-        if (!target.sourceSheet || !row.sourceSheet || target.sourceSheet === row.sourceSheet) return true;
+    const selectors = [];
+    if (target.rowId) selectors.push(row.id === target.rowId);
+    if (target.requirementId) selectors.push(
+        row.requirementId === target.requirementId || row.clauseId === target.requirementId,
+    );
+    if (target.stableKey) selectors.push(row.stableKey === target.stableKey);
+    if (target.sourceRow) {
+        selectors.push(
+            Number(row.sourceRow) === Number(target.sourceRow)
+            && (!target.sourceSheet || !row.sourceSheet || target.sourceSheet === row.sourceSheet),
+        );
     }
-    if (target.targetId && row.targetId === target.targetId) {
-        if (!target.type || target.type === row.type) return true;
-    }
-    if (target.type && target.type === row.type && !target.rowId && !target.sourceRow && !target.targetId) return true;
-    return false;
+    if (target.lineNumber) selectors.push(Number(row.lineNumber) === Number(target.lineNumber));
+    if (target.targetId) selectors.push(row.targetId === target.targetId);
+    if (target.type) selectors.push(row.type === target.type);
+    return selectors.length ? selectors.every(Boolean) : Boolean(target.sourceId || target.textHash);
 }
 
 function reviewTargetMatchesRequirement(item = {}, target = {}) {
     if (!reviewTargetMatchesSource(item, target)) return false;
-    if (target.requirementId && item.id === target.requirementId) return true;
-    if (target.sourceRow && Number(item.source?.sourceRow) === Number(target.sourceRow)) {
-        if (!target.sourceSheet || !item.source?.sourceSheet || target.sourceSheet === item.source.sourceSheet) return true;
+    const selectors = [];
+    if (target.requirementId) selectors.push(
+        item.id === target.requirementId || item.requirementId === target.requirementId || item.clauseId === target.requirementId,
+    );
+    if (target.sourceRow) {
+        const sourceRow = item.sourceRow ?? item.source?.sourceRow ?? item.source?.rowNumber;
+        const sourceSheet = item.sourceSheet || item.source?.sourceSheet || item.source?.sheetName || '';
+        selectors.push(
+            Number(sourceRow) === Number(target.sourceRow)
+            && (!target.sourceSheet || !sourceSheet || target.sourceSheet === sourceSheet),
+        );
     }
-    if (target.targetId && asList(item.object?.matchedIds).includes(target.targetId)) return true;
-    return false;
+    if (target.lineNumber) {
+        selectors.push(Number(item.lineNumber ?? item.source?.lineNumber) === Number(target.lineNumber));
+    }
+    if (target.targetId) selectors.push(asList(item.object?.matchedIds).includes(target.targetId));
+    if (target.type) selectors.push((item.intent || item.type) === target.type);
+    return selectors.length ? selectors.every(Boolean) : Boolean(target.sourceId || target.textHash);
+}
+
+const BLOCKING_AI_REVIEW_ISSUE_CODES = new Set([
+    'entity_missing',
+    'entity_ambiguous',
+    'required_parameter_missing',
+    'slot_out_of_range',
+    'activity_scope_ambiguous',
+    'semantic_interpretation_conflict',
+    'rule_conflict',
+    'unsupported_capability',
+]);
+
+function sourceArtifactsForReview(result = {}, item = {}, rows = [], requirements = []) {
+    const target = item.target || {};
+    const matchingRows = rows.filter(row => reviewTargetMatchesRow(row, target));
+    const matchingRequirements = requirements.filter(requirement => reviewTargetMatchesRequirement(requirement, target));
+    const matchingIRs = asList(result.constraintIRs).filter(ir => reviewTargetMatchesSource(ir, target));
+    const matchingSources = asList(result.sourceRequirements).filter(source => reviewTargetMatchesSource(source, target));
+    return { matchingRows, matchingRequirements, matchingIRs, matchingSources };
+}
+
+function rowContainsOutOfRangeSlot(row = {}, project = {}) {
+    const activeDays = new Set(getActiveWeekdays(project).map(Number));
+    const activePeriods = new Set(getActivePeriods(project).map(Number));
+    const slots = [
+        ...asList(row.slots),
+        ...asList(row.condition?.slots),
+        ...asList(row.parameters?.slots),
+    ];
+    return slots.some(slot => {
+        const [day, period] = String(slot || '').split('-').map(Number);
+        return Number.isInteger(day) && Number.isInteger(period)
+            && (!activeDays.has(day) || !activePeriods.has(period));
+    }) || [
+        ...asList(row.periods),
+        ...asList(row.parameters?.periods),
+        ...asList(row.parameters?.boundaryPeriods),
+    ].map(Number).some(period => Number.isInteger(period) && !activePeriods.has(period));
+}
+
+function validateAiReviewFinding({ item = {}, result = {}, rows = [], requirements = [], project = {} } = {}) {
+    if (item.verdict === 'accept') {
+        return { validationStatus: 'accepted', blocking: false, validationEvidence: ['本地解析制品已存在。'] };
+    }
+    if (!['flag', 'unsupported'].includes(item.verdict)) {
+        return { validationStatus: 'advisory', blocking: false, validationEvidence: [] };
+    }
+
+    const issueCode = item.issueCode || (item.verdict === 'unsupported' ? 'unsupported_capability' : '');
+    if (!BLOCKING_AI_REVIEW_ISSUE_CODES.has(issueCode)) {
+        return {
+            validationStatus: 'advisory',
+            blocking: false,
+            validationEvidence: ['AI 提示没有可由本地验证器确认的阻断原因码。'],
+        };
+    }
+
+    const artifacts = sourceArtifactsForReview(result, item, rows, requirements);
+    const allArtifacts = [
+        ...artifacts.matchingRows,
+        ...artifacts.matchingRequirements,
+        ...artifacts.matchingIRs,
+        ...artifacts.matchingSources,
+    ];
+    const clarifications = allArtifacts.flatMap(artifact => [
+        ...asList(artifact.clarifications),
+        ...asList(artifact.questions),
+        ...asList(artifact.reviewReasons).map(reason => reason?.message || reason?.code),
+    ]).map(value => String(value || ''));
+    const referenceIssues = artifacts.matchingIRs.flatMap(ir => asList(ir.referenceIssues));
+    let reproduced = false;
+    let evidence = '';
+
+    if (issueCode === 'entity_missing') {
+        reproduced = referenceIssues.some(reference => reference.status === 'missing')
+            || allArtifacts.some(artifact => artifact.understandingStatus === 'invalid_reference');
+        evidence = '本地实体解析确认目标不存在。';
+    } else if (issueCode === 'entity_ambiguous') {
+        reproduced = referenceIssues.some(reference => reference.status === 'ambiguous')
+            || allArtifacts.some(artifact => artifact.understandingStatus === 'ambiguous'
+                && (asList(artifact.target?.candidates).length > 1 || asList(artifact.object?.candidates).length > 1));
+        evidence = '本地实体解析确认存在多个候选。';
+    } else if (issueCode === 'required_parameter_missing') {
+        reproduced = allArtifacts.some(artifact => artifact.executionStatus === 'blocked_by_clarification')
+            || clarifications.some(message => /缺少|尚未配置|请补充|请确认/.test(message));
+        evidence = '本地参数校验确认缺少执行所需参数。';
+    } else if (issueCode === 'slot_out_of_range') {
+        reproduced = artifacts.matchingRows.some(row => rowContainsOutOfRangeSlot(row, project))
+            || clarifications.some(message => /不在当前排课范围|作息尚未配置第/.test(message));
+        evidence = '本地作息校验确认节次超出范围。';
+    } else if (issueCode === 'activity_scope_ambiguous') {
+        reproduced = allArtifacts.some(artifact => artifact.executionStatus === 'blocked_by_clarification')
+            && clarifications.some(message => /课型|活动|课程属性|适用范围|实验课|新授课/.test(message));
+        evidence = '本地课程活动范围校验确认适用范围不完整。';
+    } else if (issueCode === 'semantic_interpretation_conflict') {
+        reproduced = allArtifacts.some(artifact => artifact.understandingStatus === 'ambiguous'
+            && !asList(artifact.referenceIssues).length)
+            || allArtifacts.some(artifact => artifact.executionStatus === 'conflicted');
+        evidence = '本地语义归并确认存在无法自动裁决的解释。';
+    } else if (issueCode === 'rule_conflict') {
+        reproduced = allArtifacts.some(artifact => artifact.executionStatus === 'conflicted')
+            || asList(result.conflicts).some(conflict => reviewTargetMatchesSource(conflict, item.target));
+        evidence = '本地冲突检测确认规则冲突。';
+    } else if (issueCode === 'unsupported_capability') {
+        reproduced = artifacts.matchingIRs.some(ir => ir.executionStatus === 'unsupported_by_solver')
+            || allArtifacts.some(artifact => artifact.support === 'none');
+        evidence = '本地能力注册表确认当前求解器不支持该语义。';
+    }
+
+    return reproduced
+        ? { validationStatus: 'blocking', blocking: true, validationEvidence: [evidence] }
+        : {
+            validationStatus: 'advisory',
+            blocking: false,
+            validationEvidence: [`本地验证器未复现 ${issueCode}，该提示仅作参考。`],
+        };
 }
 
 function markRowWithAiReview(row = {}, status = 'accepted', reviewItem = {}, warning = '') {
     const parseSource = row.parseSource || row.source || 'local';
+    const blockingWarning = warning && reviewItem.blocking === true ? warning : '';
     return {
         ...row,
         aiReviewStatus: status,
+        aiReviewIssueCode: reviewItem.issueCode || '',
+        aiReviewValidationStatus: reviewItem.validationStatus || 'advisory',
+        aiReviewBlocking: reviewItem.blocking === true,
+        aiReviewValidationEvidence: asList(reviewItem.validationEvidence),
         aiReviewWarnings: warning ? appendUniqueText(row.aiReviewWarnings || [], warning) : row.aiReviewWarnings || [],
         reviewEvidence: reviewItem.evidence || row.reviewEvidence || null,
         reviewedParseSource: `${parseSource}_ai_reviewed`,
-        warnings: warning ? appendUniqueText(row.warnings || [], warning) : row.warnings || [],
+        warnings: blockingWarning ? appendUniqueText(row.warnings || [], blockingWarning) : row.warnings || [],
     };
 }
 
 function markRequirementWithAiReview(item = {}, status = 'accepted', reviewItem = {}, warning = '') {
+    const blockingWarning = warning && reviewItem.blocking === true ? warning : '';
     return {
         ...item,
         aiReviewStatus: status,
+        aiReviewIssueCode: reviewItem.issueCode || '',
+        aiReviewValidationStatus: reviewItem.validationStatus || 'advisory',
+        aiReviewBlocking: reviewItem.blocking === true,
+        aiReviewValidationEvidence: asList(reviewItem.validationEvidence),
         aiReviewWarnings: warning ? appendUniqueText(item.aiReviewWarnings || [], warning) : item.aiReviewWarnings || [],
         reviewEvidence: reviewItem.evidence || item.reviewEvidence || null,
         reviewedParseSource: `${item.source?.parseSource || item.parseSource || 'local'}_ai_reviewed`,
-        warnings: warning ? appendUniqueText(item.warnings || [], warning) : item.warnings || [],
+        warnings: blockingWarning ? appendUniqueText(item.warnings || [], blockingWarning) : item.warnings || [],
     };
 }
 
@@ -9079,6 +9976,14 @@ function reviewPatchEffectKey(item = {}) {
         },
         patch: sanitizedReviewPatch(item.patch || {}),
     });
+}
+
+function reviewPatchAlreadyApplied(row = {}, item = {}) {
+    if (row.aiReviewStatus !== 'patched') return false;
+    const patch = sanitizedReviewPatch(item.patch || {});
+    const patchEntries = Object.entries(patch);
+    return patchEntries.length > 0
+        && patchEntries.every(([key, value]) => stableJson(row[key]) === stableJson(value));
 }
 
 function validatedReviewPatchRow(project = {}, row = {}, patch = {}, { inputType = '', contextStats = null, originalText = '' } = {}) {
@@ -9125,6 +10030,8 @@ function missedRequirementFromReviewItem(reviewItem = {}, index = 0) {
     const lineNumber = reviewItem.lineNumber || reviewItem.evidence?.lineNumber || null;
     const rawText = reviewItem.rawText || reviewItem.evidence?.quote || reviewItem.reason || '';
     const parsedBy = normalizedParsedBy(reviewItem.parsedBy, 'ai_review');
+    const intent = normalizeRequirementIntentAlias(suggested.intent || suggested.type || 'unknown');
+    const complete = intent !== 'unknown' && Boolean(suggested.object || suggested.targetName || suggested.target);
     const source = {
         sourceId: reviewItem.sourceId || '',
         textHash: reviewItem.textHash || '',
@@ -9148,16 +10055,22 @@ function missedRequirementFromReviewItem(reviewItem = {}, index = 0) {
         lineNumber,
         rawText,
         object: suggested.object || { kind: 'global', name: asText(suggested.targetName || suggested.target || '待确认需求', 120), matchedIds: [], scope: 'unknown' },
-        intent: normalizeRequirementIntentAlias(suggested.intent || suggested.type || 'unknown'),
+        intent,
         condition: suggested.condition || {},
         parameters: suggested.parameters || {},
         strength: asText(suggested.strength || suggested.priority || 'soft', 40),
-        status: 'needs_review',
-        applyTo: normalizeRequirementApplyToAlias(suggested.applyTo || 'review'),
+        status: normalizeRequirementStatusAlias(suggested.status || (complete ? 'actionable' : 'needs_review')),
+        applyTo: normalizeRequirementApplyToAlias(suggested.applyTo || (complete ? 'rule' : 'review')),
         confidence: Number.isFinite(Number(suggested.confidence)) ? Number(suggested.confidence) : 0.55,
         source,
         warnings: [reviewItem.reason || 'AI 复审发现可能漏识别的需求，请人工确认。'],
         aiReviewStatus: 'missed',
+        aiReviewIssueCode: reviewItem.issueCode || (complete ? '' : 'required_parameter_missing'),
+        aiReviewValidationStatus: complete ? 'accepted' : 'blocking',
+        aiReviewBlocking: !complete,
+        aiReviewValidationEvidence: complete
+            ? ['AI 补充语义已进入本地实体和能力编译。']
+            : ['AI 补充语义缺少可编译的意图或对象。'],
         aiReviewWarnings: [reviewItem.reason || 'AI 复审发现可能漏识别的需求，请人工确认。'],
         reviewEvidence: reviewItem.evidence || null,
     };
@@ -9198,6 +10111,7 @@ export function applyAiReviewToParseResult({
     const appliedPatchEffects = new Set();
     let appliedSuggestionCount = 0;
     let flaggedCount = 0;
+    let formalArtifactsChanged = false;
 
     reviewItems.forEach((item, index) => {
         const rowIndexes = rows
@@ -9207,33 +10121,41 @@ export function applyAiReviewToParseResult({
             .map((requirement, requirementIndex) => reviewTargetMatchesRequirement(requirement, item.target) ? requirementIndex : -1)
             .filter(requirementIndex => requirementIndex >= 0);
         const reason = item.reason || 'AI 复审提示需要人工确认。';
+        const validation = validateAiReviewFinding({ item, result, rows, requirements, project });
+        Object.assign(item, validation);
 
         if (item.verdict === 'accept') {
-            rowIndexes.forEach(rowIndex => {
-                rows[rowIndex] = markRowWithAiReview(rows[rowIndex], 'accepted', item);
-            });
-            requirementIndexes.forEach(requirementIndex => {
-                requirements[requirementIndex] = markRequirementWithAiReview(requirements[requirementIndex], 'accepted', item);
-            });
             return;
         }
 
         if (item.verdict === 'flag' || item.verdict === 'unsupported') {
             flaggedCount += Math.max(1, rowIndexes.length || requirementIndexes.length);
+            if (!item.blocking) return;
             rowIndexes.forEach(rowIndex => {
                 const row = rows[rowIndex];
-                rows[rowIndex] = {
-                    ...markRowWithAiReview(row, item.verdict === 'unsupported' ? 'unsupported' : 'flagged', item, reason),
-                    status: row.status === 'ignored' ? row.status : 'needs_review',
-                };
+                const marked = markRowWithAiReview(
+                    row,
+                    item.verdict === 'unsupported' ? 'unsupported' : 'flagged',
+                    item,
+                    reason,
+                );
+                rows[rowIndex] = item.blocking && row.status !== 'ignored'
+                    ? { ...marked, status: 'needs_review' }
+                    : marked;
+                formalArtifactsChanged = true;
             });
             requirementIndexes.forEach(requirementIndex => {
                 const requirement = requirements[requirementIndex];
-                requirements[requirementIndex] = {
-                    ...markRequirementWithAiReview(requirement, item.verdict === 'unsupported' ? 'unsupported' : 'flagged', item, reason),
-                    status: requirement.status === 'handled' ? requirement.status : 'needs_review',
-                    applyTo: requirement.status === 'handled' ? requirement.applyTo : 'review',
-                };
+                const marked = markRequirementWithAiReview(
+                    requirement,
+                    item.verdict === 'unsupported' ? 'unsupported' : 'flagged',
+                    item,
+                    reason,
+                );
+                requirements[requirementIndex] = item.blocking && requirement.status !== 'handled'
+                    ? { ...marked, status: 'needs_review', applyTo: 'review' }
+                    : marked;
+                formalArtifactsChanged = true;
             });
             return;
         }
@@ -9243,31 +10165,84 @@ export function applyAiReviewToParseResult({
             if (appliedPatchEffects.has(patchEffectKey)) return;
             appliedPatchEffects.add(patchEffectKey);
             if (!item.patch || !rowIndexes.length) {
+                Object.assign(item, { validationStatus: 'advisory', blocking: false, validationEvidence: ['没有可本地校验的补丁目标。'] });
                 warnings.push(`AI 复审建议未通过本地校验：${reason}`);
                 return;
             }
             rowIndexes.forEach(rowIndex => {
+                if (reviewPatchAlreadyApplied(rows[rowIndex], item)) {
+                    appliedSuggestionCount += 1;
+                    return;
+                }
                 const patched = validatedReviewPatchRow(project, rows[rowIndex], item.patch, {
                     inputType,
                     contextStats,
                     originalText: text,
                 });
                 if (!patched) {
+                    Object.assign(item, { validationStatus: 'advisory', blocking: false, validationEvidence: ['补丁未通过实体、时间或能力校验。'] });
                     warnings.push(`AI 复审建议未通过本地校验：${reason}`);
-                    rows[rowIndex] = markRowWithAiReview(rows[rowIndex], 'patch_rejected', item, `AI 复审建议未通过本地校验：${reason}`);
                     return;
                 }
+                Object.assign(item, { validationStatus: 'accepted', blocking: false, validationEvidence: ['补丁已通过本地实体、时间和能力校验。'] });
                 rows[rowIndex] = markRowWithAiReview({ ...patched, id: rows[rowIndex].id, stableKey: rows[rowIndex].stableKey }, 'patched', item);
                 appliedSuggestionCount += 1;
+                formalArtifactsChanged = true;
             });
             return;
         }
 
         if (item.verdict === 'missed_requirement') {
             flaggedCount += 1;
-            missedRequirements.push(missedRequirementFromReviewItem(item, index));
+            const missed = missedRequirementFromReviewItem(item, index);
+            Object.assign(item, {
+                issueCode: missed.aiReviewIssueCode,
+                validationStatus: missed.aiReviewValidationStatus,
+                blocking: missed.aiReviewBlocking,
+                validationEvidence: missed.aiReviewValidationEvidence,
+            });
+            missedRequirements.push(missed);
+            formalArtifactsChanged = true;
         }
     });
+
+    const reviewAssistance = aiAssistancePayload({
+        mode: 'targeted_review',
+        reviewItems,
+        correctedCount: appliedSuggestionCount,
+    });
+    const assistance = {
+        ...reviewAssistance,
+        acceptedCount: Number(result.aiAssistance?.acceptedCount || 0) + reviewAssistance.acceptedCount,
+        correctedCount: Number(result.aiAssistance?.correctedCount || 0) + reviewAssistance.correctedCount,
+        advisoryCount: Number(result.aiAssistance?.advisoryCount || 0) + reviewAssistance.advisoryCount,
+        blockingCount: Number(result.aiAssistance?.blockingCount || 0) + reviewAssistance.blockingCount,
+    };
+    const aiReview = aiReviewStatusPayload({
+        status: 'reviewed',
+        model: review.model || '',
+        reviewItems,
+        warnings,
+        appliedSuggestionCount,
+        flaggedCount,
+        ...assistance,
+    });
+    if (!formalArtifactsChanged) {
+        return {
+            ...result,
+            warnings: [...new Set(warnings.filter(Boolean))],
+            warningItems: [...new Map([
+                ...asList(result.warningItems),
+                ...reviewAlignment.warnings,
+            ].map(item => [stableJson(item), item])).values()],
+            rejected: [...new Map([
+                ...asList(result.rejected),
+                ...reviewAlignment.rejected,
+            ].map(item => [stableJson(item), item])).values()],
+            aiAssistance: assistance,
+            aiReview,
+        };
+    }
 
     const rebuilt = normalizeTimetableRuleDraftRows({
         project,
@@ -9290,23 +10265,37 @@ export function applyAiReviewToParseResult({
     });
     return {
         ...rebuilt,
-        aiReview: aiReviewStatusPayload({
-            status: 'reviewed',
-            model: review.model || '',
-            reviewItems,
-            warnings,
-            appliedSuggestionCount,
-            flaggedCount,
-        }),
+        parseSource: result.parseSource || rebuilt.parseSource,
+        warningItems: [...new Map([
+            ...asList(result.warningItems),
+            ...asList(rebuilt.warningItems),
+        ].map(item => [stableJson(item), item])).values()],
+        rejected: [...new Map([
+            ...asList(result.rejected),
+            ...asList(rebuilt.rejected),
+        ].map(item => [stableJson(item), item])).values()],
+        aiAssistance: assistance,
+        aiReview,
     };
 }
 
-async function reviewTimetableParseResult({ project, text, inputType, contextStats = null, constraintRows = [], result, env, fetchImpl }) {
+async function reviewTimetableParseResult({
+    project,
+    text,
+    inputType,
+    contextStats = null,
+    constraintRows = [],
+    result,
+    diagnosticResult = result,
+    applicationResult = result,
+    env,
+    fetchImpl,
+}) {
     if (aiReviewDisabled(env)) {
-        return withAiReviewUnavailable(result, 'disabled', 'AI 复审已禁用，已返回本地识别结果。');
+        return withAiReviewUnavailable(applicationResult, 'disabled', 'AI 复审已禁用，已返回本地识别结果。');
     }
     if (!hasConfiguredAi(env)) {
-        return withAiReviewUnavailable(result, 'ai_not_configured', 'AI 复审不可用，已返回本地识别结果：ai_not_configured');
+        return withAiReviewUnavailable(applicationResult, 'ai_not_configured', 'AI 复审不可用，已返回本地识别结果：ai_not_configured');
     }
     try {
         const review = await callAiReview({
@@ -9315,13 +10304,14 @@ async function reviewTimetableParseResult({ project, text, inputType, contextSta
             inputType,
             contextStats,
             constraintRows,
-            localResult: result,
+            candidateResult: diagnosticResult,
+            applicationResult,
             env,
             fetchImpl,
         });
         return applyAiReviewToParseResult({
             project,
-            result,
+            result: applicationResult,
             review,
             text,
             inputType,
@@ -9330,7 +10320,7 @@ async function reviewTimetableParseResult({ project, text, inputType, contextSta
     } catch (error) {
         const reason = error instanceof TimetableRuleParseError ? error.reason : 'ai_review_failed';
         const message = error?.message || reason;
-        return withAiReviewUnavailable(result, reason, `AI 复审未完成，已返回本地识别结果：${message}`);
+        return withAiReviewUnavailable(applicationResult, reason, `AI 复审未完成，已返回本地识别结果：${message}`);
     }
 }
 
@@ -9341,6 +10331,22 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
     const aiExtractWarnings = [];
     if (shouldUseAiExtraction(inputType, env)) {
         try {
+            const localConstraints = localTextConstraintsFromInput(project, text, constraintRows, {
+                preferStructuredRows: inputType === 'xlsx_constraints',
+            });
+            const localConversion = rowsFromAiConstraints(localConstraints, {
+                source: localParseSourceForInput(inputType),
+                project,
+            });
+            const localBaselineResult = normalizeTimetableRuleDraftRows({
+                project,
+                draftRows: localConversion.rows,
+                source: localParseSourceForInput(inputType),
+                inputType,
+                contextStats,
+                originalText: text,
+                sourceRequirements,
+            });
             const extracted = await extractRequirementsWithAI({
                 project,
                 text,
@@ -9349,9 +10355,14 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
                 env,
                 fetchImpl,
             });
+            const reviewSourceIds = targetedReviewSourceIds(
+                sourceRequirements,
+                extracted.draftRows,
+                localConversion.rows,
+            );
             const normalized = normalizeTimetableRuleDraftRows({
                 project,
-                draftRows: extracted.draftRows,
+                draftRows: mergeAiFirstCandidateRows(extracted.draftRows, localConversion.rows),
                 source: 'ai_extract',
                 inputType,
                 contextStats: {
@@ -9366,9 +10377,16 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
                 initialWarnings: [...asList(extracted.warningItems), ...asList(extracted.warnings)],
                 rejected: extracted.rejected || [],
             });
-            return {
+            const aiFirstResult = {
                 ...normalized,
                 parseSource: 'ai_extract',
+                aiAssistance: {
+                    mode: 'ai_first',
+                    acceptedCount: normalized.constraintIRs?.filter(item => item.executionStatus === 'executable').length || 0,
+                    correctedCount: 0,
+                    advisoryCount: 0,
+                    blockingCount: normalized.sourceRequirements?.filter(item => item.requiresHumanReview).length || 0,
+                },
                 aiReview: aiReviewStatusPayload({
                     status: 'skipped',
                     reason: 'ai_extract',
@@ -9376,6 +10394,60 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
                     warnings: [],
                 }),
             };
+            const formalBaselineResult = {
+                ...localBaselineResult,
+                parseSource: 'ai_extract',
+                aiAssistance: {
+                    mode: 'ai_first',
+                    acceptedCount: aiLocalAgreementCount(extracted.draftRows, localConversion.rows),
+                    correctedCount: 0,
+                    advisoryCount: 0,
+                    blockingCount: 0,
+                },
+                aiReview: aiReviewStatusPayload({
+                    status: 'skipped',
+                    reason: 'ai_local_agreement',
+                    model: extracted.model || '',
+                    warnings: [],
+                }),
+            };
+            if (reviewSourceIds.length) {
+                const reviewed = await reviewTimetableParseResult({
+                    project,
+                    text,
+                    inputType,
+                    contextStats: {
+                        ...(contextStats || {}),
+                        targetedReviewSourceIds: reviewSourceIds,
+                        targetedReviewReason: 'ai_local_disagreement_or_missing_candidate',
+                    },
+                    constraintRows,
+                    result: formalBaselineResult,
+                    diagnosticResult: aiFirstResult,
+                    applicationResult: formalBaselineResult,
+                    env,
+                    fetchImpl,
+                });
+                if (reviewed.aiReview?.status !== 'reviewed') {
+                    return withAiReviewUnavailable(
+                        localBaselineResult,
+                        reviewed.aiReview?.reason || 'ai_review_failed',
+                        reviewed.aiReview?.warnings?.[0] || '定向 AI 复审未完成，已丢弃未验证候选并返回本地识别结果。',
+                    );
+                }
+                return withValidatedAiFirstResult({
+                    result: reviewed,
+                    diagnosticResult: aiFirstResult,
+                    localBaselineResult,
+                    targetedSourceIds: reviewSourceIds,
+                });
+            }
+            return withValidatedAiFirstResult({
+                result: formalBaselineResult,
+                diagnosticResult: aiFirstResult,
+                localBaselineResult,
+                targetedSourceIds: [],
+            });
         } catch (error) {
             const reason = error?.reason || 'ai_extract_failed';
             const message = error?.message || reason;
@@ -9400,6 +10472,9 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
                 sourceRequirements,
                 initialWarnings: [...aiExtractWarnings, ...(hasConfiguredAi(env) ? [] : ['智能解析不可用，已仅提取明确规则：ai_not_configured'])],
             });
+            if (aiExtractWarnings.length) {
+                return withAiReviewUnavailable(localResult, 'ai_extract_failed', aiExtractWarnings[0]);
+            }
             if (!hasConfiguredAi(env)) {
                 return reviewTimetableParseResult({ project, text, inputType, contextStats, constraintRows, result: localResult, env, fetchImpl });
             }
@@ -9556,33 +10631,36 @@ export async function parseTimetableRules({
     if (file?.buffer) {
         const ext = path.extname(file.filename || '').toLowerCase();
         if (['.xlsx', '.xls'].includes(ext)) {
-            const cacheKey = parseCacheKey({ fileBuffer: file.buffer, project, env });
+            const cacheKey = parseCacheKey({ content: file.buffer, inputType: 'xlsx', project, env });
+            const producer = async () => {
+                const sheets = workbookSheets(file);
+                const classified = classifyWorkbook(sheets);
+                if (classified.inputType === 'xlsx_roster') {
+                    return parseRosterWorkbookRules({ file, project, env, fetchImpl });
+                }
+                return parseConstraintWorkbookRules({ classified, file, project, env, fetchImpl });
+            };
+            if (persistentParseCacheEnabled(env)) {
+                return parseWithPersistentCache({ cacheKey, env, producer });
+            }
             const cached = getParseCache(cacheKey);
             if (cached) {
-                return withParseMetadata(cached, { cacheHit: true, parseSource: 'cache' });
+                return withParseMetadata(cached, { cacheKey, cacheHit: true, env });
             }
-            const sheets = workbookSheets(file);
-            const classified = classifyWorkbook(sheets);
-            let result;
-            if (classified.inputType === 'xlsx_roster') {
-                result = await parseRosterWorkbookRules({ file, project, env, fetchImpl });
-            } else {
-                result = await parseConstraintWorkbookRules({ classified, file, project, env, fetchImpl });
-            }
-            const normalizedResult = withParseMetadata(result);
+            const normalizedResult = withParseMetadata(await producer(), { cacheKey, cacheHit: false, env });
             setParseCache(cacheKey, normalizedResult);
             return normalizedResult;
         }
         if (['.txt', '.csv'].includes(ext)) {
             const fileText = uploadText(file);
-            return parseAiOrLocal({
-                project,
-                text: [text, fileText].filter(Boolean).join('\n'),
-                inputType: ext === '.csv' ? 'csv_text' : 'txt',
-                fileName: file.filename || '',
-                env,
-                fetchImpl,
+            const combinedText = cleanRulePromptText([text, fileText].filter(Boolean).join('\n'));
+            const inputType = ext === '.csv' ? 'csv_text' : 'txt';
+            const cacheKey = parseCacheKey({ content: combinedText, inputType, project, env });
+            const producer = () => parseAiOrLocal({
+                project, text: combinedText, inputType, fileName: file.filename || '', env, fetchImpl,
             });
+            if (persistentParseCacheEnabled(env)) return parseWithPersistentCache({ cacheKey, env, producer });
+            return withParseMetadata(await producer(), { cacheKey, cacheHit: false, env });
         }
         throw new TimetableRuleParseError('智能约束文件只支持 .txt、.csv、.xlsx、.xls。', 'unsupported_file_type', 400);
     }
@@ -9592,11 +10670,8 @@ export async function parseTimetableRules({
         throw new TimetableRuleParseError('请先输入要解析的排课约束。', 'empty_prompt', 400);
     }
 
-    return parseAiOrLocal({
-        project,
-        text: prompt,
-        inputType: 'text',
-        env,
-        fetchImpl,
-    });
+    const cacheKey = parseCacheKey({ content: prompt, inputType: 'text', project, env });
+    const producer = () => parseAiOrLocal({ project, text: prompt, inputType: 'text', env, fetchImpl });
+    if (persistentParseCacheEnabled(env)) return parseWithPersistentCache({ cacheKey, env, producer });
+    return withParseMetadata(await producer(), { cacheKey, cacheHit: false, env });
 }

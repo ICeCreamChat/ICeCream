@@ -11,6 +11,14 @@ const REVIEW_STATUSES = new Set([
     'invalid',
 ]);
 const HANDLED_STATUSES = new Set(['handled', 'ignored']);
+const INTERNAL_OBJECT_NAMES = new Set([
+    'unsupported',
+    'need_review',
+    'needs_review',
+    'unknown',
+    'requirement',
+    'schedule_request',
+]);
 const NON_APPLICABLE_RULE_STATUSES = new Set([
     ...REVIEW_STATUSES,
     ...HANDLED_STATUSES,
@@ -18,6 +26,7 @@ const NON_APPLICABLE_RULE_STATUSES = new Set([
 ]);
 
 const BACKEND_RULE_TYPES = new Set([
+    'advanced_constraint',
     'teacher_unavailable',
     'class_unavailable',
     'locked_slot',
@@ -50,6 +59,18 @@ function normalizeKey(value = '') {
         .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
         .toLowerCase()
         .replace(/[-\s]+/g, '_');
+}
+
+function validDisplayObject(object = null) {
+    if (!object || typeof object !== 'object') return false;
+    const name = normalizeKey(object.name || object.label || '');
+    return Boolean(name && !INTERNAL_OBJECT_NAMES.has(name));
+}
+
+function safeDisplayObject(object = null, fallback = null) {
+    if (validDisplayObject(object)) return object;
+    if (validDisplayObject(fallback)) return fallback;
+    return { kind: 'global', name: '全局排课范围', matchedIds: [], scope: 'derived' };
 }
 
 function uniqueValues(values = []) {
@@ -650,14 +671,15 @@ function promoteRequirementDisplay(item = {}) {
     const rule = executableMachineRule(item);
     if (!rule) return sanitizeCoveredRedundantSignals(item);
     const parameters = draftRowParameters(rule);
+    const canonicalSource = Boolean(item.sourceRequirement?.applicationTarget || item.applicationTarget);
     return sanitizeCoveredRedundantSignals({
         ...item,
-        object: draftRowObject(rule),
+        object: safeDisplayObject(draftRowObject(rule), item.object),
         intent: rule.type || rule.intent || item.intent,
         parameters: Object.keys(parameters).length ? parameters : (item.parameters || {}),
         strength: rule.priority || rule.strength || item.strength || '',
-        status: draftRowStatus(rule),
-        applyTo: draftRowApplyTo(rule),
+        status: canonicalSource ? item.status : draftRowStatus(rule),
+        applyTo: canonicalSource ? item.applicationTarget : draftRowApplyTo(rule),
         confidence: rule.confidence ?? item.confidence,
         warnings: mergeUniqueArrays(item.warnings || [], rule.warnings || []),
         displayFromMachineRule: true,
@@ -815,7 +837,7 @@ function coalesceUnifiedRequirementItems(items = []) {
 function createDraftRequirementItem(row = {}, index = 0) {
     return {
         id: draftRequirementId(row, index),
-        object: draftRowObject(row),
+        object: safeDisplayObject(draftRowObject(row)),
         intent: row.intent || row.type || 'rule',
         condition: row.condition || null,
         parameters: draftRowParameters(row),
@@ -873,6 +895,20 @@ function createSemanticRequirementItem(action = {}, index = 0) {
 }
 
 export function getRequirementGroupKey(item = {}) {
+    const applicationTarget = normalizeKey(item.applicationTarget || item.sourceRequirement?.applicationTarget || '');
+    const executionStatus = normalizeKey(item.executionStatus || item.sourceRequirement?.executionStatus || '');
+    const requiresHumanReview = item.requiresHumanReview ?? item.sourceRequirement?.requiresHumanReview;
+    if (applicationTarget) {
+        if (requiresHumanReview === true) return 'review';
+        if (['conflicted', 'blocked_by_reference', 'blocked_by_clarification', 'partially_executable', 'unsupported_by_solver'].includes(executionStatus)) {
+            return 'review';
+        }
+        if (applicationTarget === 'handled') return 'handled';
+        if (applicationTarget === 'lesson_plan') return 'lesson_plan';
+        if (applicationTarget === 'optimization') return 'optimization';
+        if (applicationTarget === 'rule') return 'rule';
+        return 'review';
+    }
     const status = normalizeKey(item.status || '');
     const applyTo = normalizeKey(item.applyTo || '');
     if (status === 'handled' || status === 'ignored' || applyTo === 'handled') return 'handled';
@@ -1002,14 +1038,22 @@ function mergeClauseArtifacts(...groups) {
 }
 
 function clauseDisplayObject(clause = {}) {
-    if (clause.object) return clause.object;
+    if (validDisplayObject(clause.object)) return clause.object;
     const target = clause.target || {};
-    return {
+    return safeDisplayObject({
         kind: target.kind || target.type || 'global',
         name: target.name || '全局',
         matchedIds: target.matchedIds || (target.id ? [target.id] : []),
         scope: target.scope || (target.id ? 'explicit' : 'derived'),
-    };
+    });
+}
+
+function sourceCardDisplayObject(primary = {}, clauses = []) {
+    if (validDisplayObject(primary.object) || validDisplayObject(primary.target)) {
+        return clauseDisplayObject(primary);
+    }
+    const concrete = clauses.find(clause => validDisplayObject(clause.object) || validDisplayObject(clause.target));
+    return concrete ? clauseDisplayObject(concrete) : safeDisplayObject(null);
 }
 
 function sourceRequirementSource(sourceRequirement = {}) {
@@ -1040,10 +1084,23 @@ function reviewStatusPriority(item = {}) {
     return 1;
 }
 
+function primaryArtifactScore(item = {}) {
+    const intent = normalizeKey(item.intent || item.type || item.capabilityId || '');
+    const target = item.object || item.target || {};
+    let score = reviewStatusPriority(item) * 5;
+    if (INTERMEDIATE_REQUIREMENT_INTENTS.has(intent)) score -= 200;
+    if (item.capabilityId && !String(item.capabilityId).startsWith('legacy.schedule_request')) score += 80;
+    if (intent && !['schedule_request', 'unknown', 'requirement'].includes(intent)) score += 60;
+    if (target.name && !['全局', '全校', '排课需求'].includes(target.name)) score += 30;
+    if (hasMeaningfulParameters(item) || itemSlots(item).length) score += 25;
+    if (item.clauseId || item.constraintId) score += 10;
+    return score;
+}
+
 function primaryRequirementArtifact(legacyRequirements = [], clauses = []) {
     return [...legacyRequirements, ...clauses]
         .filter(Boolean)
-        .sort((left, right) => reviewStatusPriority(right) - reviewStatusPriority(left))[0]
+        .sort((left, right) => primaryArtifactScore(right) - primaryArtifactScore(left))[0]
         || null;
 }
 
@@ -1090,13 +1147,13 @@ function buildSourceRequirementCard(sourceRequirement = {}, context = {}) {
         constraintIRs: clauses,
         machineRules,
         semanticActions,
-        object: clauseDisplayObject(primary),
+        object: sourceCardDisplayObject(primary, clauses),
         intent: primary.intent || primary.capabilityId || 'requirement',
         condition: primary.condition || primary.scope || null,
         parameters: primary.parameters || {},
         strength: primary.strength || '',
-        status: sourceRequirement.reviewStatus
-            || sourceRequirement.status
+        status: sourceRequirement.status
+            || sourceRequirement.reviewStatus
             || primary.reviewStatus
             || primary.status
             || 'pending',
@@ -1104,7 +1161,10 @@ function buildSourceRequirementCard(sourceRequirement = {}, context = {}) {
         executionStatus: sourceRequirement.executionStatus || primary.executionStatus || '',
         reviewStatus: sourceRequirement.reviewStatus || primary.reviewStatus || '',
         support: sourceRequirement.support || primary.support || '',
-        applyTo: primary.applyTo || primary.landing?.[0] || 'review',
+        applicationTarget: sourceRequirement.applicationTarget || '',
+        requiresHumanReview: sourceRequirement.requiresHumanReview,
+        reviewReasons: valueList(sourceRequirement.reviewReasons),
+        applyTo: sourceRequirement.applicationTarget || primary.applyTo || primary.landing?.[0] || 'review',
         origin,
         parsedBy,
         confidence: sourceRequirement.confidence ?? primary.confidence,
