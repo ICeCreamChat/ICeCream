@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
     advancedCandidatePenalty,
     advancedHardBlocker,
+    advancedRuleAppliesToLesson,
     evaluateAdvancedRule,
 } from '../gateway/services/timetable-advanced-rules.js';
 import { normalizeTimetableProject } from '../gateway/services/timetable-project.js';
@@ -115,4 +116,28 @@ test('Timefold bridge carries advanced rules and explicit lesson metadata', () =
     assert.deepEqual(assignment.requiredResourceTypes, ['实验室']);
     assert.ok(assignment.advancedRules.some(item => item.id === 'resource'));
     assert.ok(problem.rooms.find(item => item.id === 'lab').tags.includes('实验室'));
+});
+
+test('advanced rules match shared activity and resource aliases', () => {
+    const activityRule = {
+        id: 'activity-alias', type: 'lesson.activity_scope_period_policy', strength: 'soft',
+        target: { kind: 'global' }, parameters: { activityTypes: ['experiment'], slots: ['1-1'] },
+    };
+    const activityProject = projectWithRule(activityRule);
+    assert.equal(advancedRuleAppliesToLesson(activityProject, activityRule, activityProject.lessonPlans[0]), true);
+
+    const resourceAliases = [
+        ['普通教室', 'ordinary'],
+        ['化学实验室', 'lab'],
+        ['机房', 'computer_room'],
+    ];
+    for (const [planResource, ruleResource] of resourceAliases) {
+        const rule = {
+            id: `resource-${ruleResource}`, type: 'lesson.resource_attribute_avoid_periods', strength: 'soft',
+            target: { kind: 'global' }, parameters: { requiredResourceTypes: [ruleResource], slots: ['1-1'] },
+        };
+        const project = projectWithRule(rule);
+        project.lessonPlans[0].requiredResourceTypes = [planResource];
+        assert.equal(advancedRuleAppliesToLesson(project, rule, project.lessonPlans[0]), true, planResource);
+    }
 });

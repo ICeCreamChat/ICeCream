@@ -1,4 +1,8 @@
 import { campusIdForSlot, slotClassIds, slotKey, slotTeacherIds } from './timetable-project.js';
+import {
+    timetableActivityTypeKey,
+    timetableResourceTypeKey,
+} from '../../shared/timetable/lesson-metadata.js';
 
 function list(value) {
     return Array.isArray(value) ? value : value === undefined || value === null || value === '' ? [] : [value];
@@ -6,24 +10,6 @@ function list(value) {
 
 function norm(value) {
     return String(value ?? '').trim().toLowerCase().replace(/[\s_-]+/g, '');
-}
-
-function activityKey(value) {
-    const key = norm(value).replace(/课程?$/, '');
-    if (/实验|lab|experiment/.test(key)) return 'lab';
-    if (/新授|newlesson/.test(key)) return 'new_lesson';
-    if (/答疑|qanda/.test(key)) return 'q_and_a';
-    if (/社团|club/.test(key)) return 'club';
-    if (/复习|review/.test(key)) return 'review';
-    return key;
-}
-
-function resourceKey(value) {
-    const key = norm(value);
-    if (/机房|计算机|computer/.test(key)) return 'computer_room';
-    if (/实验|lab/.test(key)) return 'lab';
-    if (/普通教室|ordinary/.test(key)) return 'ordinary_classroom';
-    return key;
 }
 
 function idsByName(items = [], names = []) {
@@ -59,8 +45,8 @@ function metadata(project, lesson = {}) {
         subjectId: plan.subjectId || lesson.subjectId,
         teacherIds: slotTeacherIds(plan).length ? slotTeacherIds(plan) : slotTeacherIds(lesson),
         grade: klass?.grade || '',
-        activityTypes: list(plan.activityTypes).map(activityKey),
-        resourceTypes: list(plan.requiredResourceTypes).map(resourceKey),
+        activityTypes: list(plan.activityTypes).map(timetableActivityTypeKey),
+        resourceTypes: list(plan.requiredResourceTypes).map(timetableResourceTypeKey),
     };
 }
 
@@ -85,9 +71,9 @@ export function advancedRuleAppliesToLesson(project = {}, rule = {}, lesson = {}
         ...idsByName(project.teachers || [], params.teacherNames),
     ]);
     if (teacherIds.size && !data.teacherIds.some(id => teacherIds.has(id))) return false;
-    const activities = list(params.activityTypes).map(activityKey).filter(Boolean);
+    const activities = list(params.activityTypes).map(timetableActivityTypeKey).filter(Boolean);
     if (activities.length && !activities.some(value => data.activityTypes.includes(value))) return false;
-    const resources = list(params.requiredResourceTypes).map(resourceKey).filter(Boolean);
+    const resources = list(params.requiredResourceTypes).map(timetableResourceTypeKey).filter(Boolean);
     if (resources.length && !resources.some(value => data.resourceTypes.includes(value))) return false;
     return true;
 }
@@ -97,7 +83,7 @@ function targetSlots(rule = {}) {
 }
 
 function roomTags(project, roomId) {
-    return new Set((project.rooms || []).find(item => item.id === roomId)?.tags?.map(resourceKey) || []);
+    return new Set((project.rooms || []).find(item => item.id === roomId)?.tags?.map(timetableResourceTypeKey) || []);
 }
 
 export function advancedHardBlocker(project = {}, entries = [], lesson = {}) {
@@ -109,14 +95,14 @@ export function advancedHardBlocker(project = {}, entries = [], lesson = {}) {
         if (rule.type === 'lesson.resource_attribute_avoid_periods' && targetSlots(rule).has(key)) return '高级规则：资源课程禁排时段';
         if (rule.type === 'room.required') {
             const allowed = new Set([...list(params.roomIds), ...list(params.roomRequirement?.roomIds)]);
-            const requiredTags = list(params.requiredTags || params.roomRequirement?.requiredTags).map(resourceKey);
+            const requiredTags = list(params.requiredTags || params.roomRequirement?.requiredTags).map(timetableResourceTypeKey);
             if (allowed.size && !allowed.has(lesson.roomId)) return '高级规则：必须使用指定教室';
             const tags = roomTags(project, lesson.roomId);
             if (requiredTags.length && !requiredTags.every(tag => tags.has(tag))) return '高级规则：教室资源不匹配';
         }
         if (rule.type === 'room.forbidden_type') {
             const tags = roomTags(project, lesson.roomId);
-            if (list(params.forbiddenRoomTypes).map(resourceKey).some(tag => tags.has(tag))) return '高级规则：禁止该教室类型';
+            if (list(params.forbiddenRoomTypes).map(timetableResourceTypeKey).some(tag => tags.has(tag))) return '高级规则：禁止该教室类型';
         }
         if (rule.type === 'schedule.cross_venue_boundary') {
             const boundary = list(params.boundaryPeriods).map(Number);

@@ -1,3 +1,8 @@
+import {
+    normalizeTimetableActivityTypes,
+    normalizeTimetableResourceTypes,
+} from '../../shared/timetable/lesson-metadata.js';
+
 const DEFAULT_SUBJECT_COLORS = [
     '#2563eb',
     '#16a34a',
@@ -744,8 +749,8 @@ function normalizeLessonPlan(raw = {}, index = 0, enabled = false) {
         campusId: enabled ? cleanText(raw.campusId || raw.campus, 80) : '',
         teachingGroupId: enabled ? cleanText(raw.teachingGroupId || raw.groupId, 80) : '',
         roomRequirement: normalizeRoomRequirement(raw.roomRequirement, enabled),
-        activityTypes: normalizeSubjectTags(raw.activityTypes || raw.activities || raw.activityType),
-        requiredResourceTypes: normalizeSubjectTags(raw.requiredResourceTypes || raw.resourceTypes || raw.resources),
+        activityTypes: normalizeTimetableActivityTypes(raw.activityTypes || raw.activities || raw.activityType),
+        requiredResourceTypes: normalizeTimetableResourceTypes(raw.requiredResourceTypes || raw.resourceTypes || raw.resources),
         className: cleanText(raw.className, 80),
         subjectName: cleanText(raw.subjectName, 80),
         teacherName: cleanText(raw.teacherName, 80),

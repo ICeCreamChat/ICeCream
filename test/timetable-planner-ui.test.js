@@ -1,9 +1,10 @@
-import assert from 'node:assert/strict';
+﻿import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createDefaultTimetableProject } from '../gateway/services/timetable-scheduler.js';
 import { TimetablePlannerController } from '../public/js/tools/timetable/controller.js';
+import { createTimetablePlannerState } from '../public/js/tools/timetable/state.js';
 import { refreshReviewStatistics } from '../public/js/tools/timetable/controller-constraint-dialog.js';
 import {
   getRosterStats,
@@ -9933,6 +9934,8 @@ test('timetable roster import is opened from a data card instead of permanent si
         weeklyHours: 4,
         blockPreference: 'double',
         roomName: 'Lab A/Lab B',
+        activityTypes: ['普通课', '实验课程', '校本研修课'],
+        requiredResourceTypes: ['机房', '创客空间'],
         issues: [],
       }, {
         id: 'draft_2',
@@ -9945,6 +9948,20 @@ test('timetable roster import is opened from a data card instead of permanent si
         weeklyHours: 3,
         blockPreference: 'single',
         roomName: '',
+        issues: [],
+      }, {
+        id: 'draft_3',
+        grade: 'G9',
+        className: '3',
+        subjectName: 'Review Lab',
+        subjectCategory: 'normal',
+        subjectTags: [],
+        teacherName: 'Dana',
+        weeklyHours: 2,
+        blockPreference: 'single',
+        roomName: '',
+        activityTypes: ['复习课'],
+        requiredResourceTypes: ['机房'],
         issues: [],
       }],
       stats: { classCount: 2, teacherCount: 3, subjectCount: 2, planCount: 2, totalLessons: 7, blockLessons: 4, fixedRoomCount: 2, issueCount: 0 },
@@ -9966,6 +9983,15 @@ test('timetable roster import is opened from a data card instead of permanent si
   assert.match(review, /data-roster-field="weeklyHours"[^>]*aria-label="周课时"[^>]*title="表示这个班级这门课每周要排几节；填 5，就是每周排 5 节这门课。"/);
   assert.match(review, /data-roster-field="blockPreference"[^>]*aria-label="连堂方式"[^>]*title="单节：每次只排 1 节课；双连堂：每次连续排 2 节课，周课时建议为偶数；混合：单节和连堂都可。不确定时选“混合”；明确不要连堂选“单节”；需要连续时间选“双连堂”。"/);
   assert.match(review, /data-roster-field="roomName"/);
+  const importedRow = review.match(/data-roster-review-row="draft_1"[\s\S]*?<\/tr>/)?.[0] || '';
+  const emptyRow = review.match(/data-roster-review-row="draft_2"[\s\S]*?<\/tr>/)?.[0] || '';
+  const aliasRow = review.match(/data-roster-review-row="draft_3"[\s\S]*?<\/tr>/)?.[0] || '';
+  assert.match(importedRow, /data-roster-field="activityTypes"[^>]*title="普通课、实验课、校本研修课（导入值）"[\s\S]*<option value="普通课、实验课、校本研修课" selected>普通课、实验课、校本研修课（导入值）<\/option>/);
+  assert.match(importedRow, /data-roster-field="requiredResourceTypes"[^>]*title="计算机教室、创客空间（导入值）"[\s\S]*<option value="计算机教室、创客空间" selected>计算机教室、创客空间（导入值）<\/option>/);
+  assert.match(emptyRow, /data-roster-field="activityTypes"[^>]*title="未选择"[\s\S]*<option value="" selected>未选择<\/option>/);
+  assert.match(aliasRow, /data-roster-field="activityTypes"[^>]*title="复习"[\s\S]*<option value="复习" selected>复习<\/option>/);
+  assert.match(aliasRow, /data-roster-field="requiredResourceTypes"[^>]*title="计算机教室"[\s\S]*<option value="计算机教室" selected>计算机教室<\/option>/);
+  assert.doesNotMatch(review, /data-roster-metadata|tt-popover-header/);
   assert.match(review, /data-roster-delete-row="draft_1"/);
   assert.match(review, /<colgroup class="tt-roster-review-cols">/);
   assert.match(review, /class="tt-roster-col-row-number"/);
@@ -9973,6 +9999,10 @@ test('timetable roster import is opened from a data card instead of permanent si
   assert.match(review, /class="tt-roster-block-help"[\s\S]*<span>类型<\/span>[\s\S]*class="tt-roster-block-help-trigger"[^>]*aria-label="查看类型说明"[^>]*>\?<\/button>/);
   assert.match(review, /class="tt-roster-block-help"[\s\S]*<span>周课时<\/span>[\s\S]*class="tt-roster-block-help-trigger"[^>]*aria-label="查看周课时说明"[^>]*>\?<\/button>/);
   assert.match(review, /class="tt-roster-block-help"[\s\S]*<span>连堂<\/span>[\s\S]*class="tt-roster-block-help-trigger"[^>]*aria-label="查看连堂说明"[^>]*>\?<\/button>/);
+  assert.match(review, /aria-label="查看课型说明"/);
+  assert.match(review, /id="tt-roster-activity-help-text"[\s\S]*选择这条任课计划的主要课型[\s\S]*智能约束助手会用该标签定位课程/);
+  assert.match(review, /aria-label="查看资源说明"/);
+  assert.match(review, /id="tt-roster-resource-help-text"[\s\S]*选择这条任课计划的主要资源类型[\s\S]*不会单独指定教室/);
   const categoryHelp = review.match(/id="tt-roster-category-help-text" role="tooltip">([\s\S]*?)<\/span>/)?.[1] || '';
   assert.match(categoryHelp, /<b>普通：<\/b>常规课程，按普通课程安排。[\s\S]*<b>主科：<\/b>语文、数学、英语等核心课程。[\s\S]*<b>素质：<\/b>体育、音乐、美术、劳动等课程。[\s\S]*<b>实验：<\/b>需要实验室或实验安排的课程。[\s\S]*<em>不确定时选“普通”；核心考试科目选“主科”；实验课选“实验”。<\/em>/);
   assert.doesNotMatch(categoryHelp, /功能教室/);
@@ -9983,7 +10013,7 @@ test('timetable roster import is opened from a data card instead of permanent si
   assert.match(review, /class="tt-roster-col-grade"/);
   assert.match(review, /class="tt-roster-col-issue"/);
   assert.match(review, /class="tt-roster-col-action"/);
-  assert.match(review, /data-label="行号"><span class="tt-roster-review-row-number" title="源表第 257 行">257<\/span>/);
+  assert.match(review, /data-label="行号"><span class="tt-roster-review-row-number" title="任课数据 · 第 257 行">257<\/span>/);
   assert.match(review, /data-roster-review-row="draft_2"[\s\S]*data-label="行号"><span class="tt-roster-review-row-number" title="当前第 2 行">2<\/span>/);
   assert.match(review, /class="tt-roster-review-issue" title="无">无<\/span>/);
   assert.match(review, /id="tt-add-roster-review-row"/);
@@ -10278,6 +10308,94 @@ test('timetable roster import report hides kept-only detail rows', () => {
   assert.doesNotMatch(html, /tt-rule-warning-list/);
 });
 
+test('timetable roster review renders worksheet provenance and parser call summary', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    rosterImport: {
+      open: true,
+      step: 'review',
+      mode: 'file',
+      source: 'mixed',
+      draftRows: [{
+        id: 'draft_sheet-1_2',
+        sourceSheetId: 'sheet-1',
+        sourceSheet: '任课数据',
+        sourceRow: 2,
+        parseSource: 'local',
+        grade: '七年级',
+        className: '1班',
+        subjectName: '语文',
+        subjectCategory: 'main',
+        subjectTags: ['主科'],
+        teacherName: '林老师',
+        weeklyHours: 5,
+        blockPreference: 'single',
+        roomName: 'A101',
+        activityTypes: [],
+        requiredResourceTypes: [],
+        issues: [],
+      }],
+      stats: { classCount: 1, teacherCount: 1, subjectCount: 1, planCount: 1, totalLessons: 5, blockLessons: 0, fixedRoomCount: 1, issueCount: 0 },
+      issues: [],
+      warnings: [],
+      importReport: { summary: { total: 1, kept: 1, degraded: 0, dropped: 0, review: 0 }, entries: [], hasIssues: false },
+      sheetReviews: [
+        { id: 'sheet-1', name: '任课数据', index: 0, selected: true, status: 'included', headerRow: 1, rowCount: 1, parseSource: 'local', reason: '已识别标准任课表头。' },
+        { id: 'sheet-2', name: '说明', index: 1, selected: false, status: 'ignored', headerRow: null, rowCount: 0, parseSource: 'none', reason: '内容不像任课明细表。' },
+      ],
+      parseSummary: { format: 'xlsx', sheetCount: 2, includedSheetCount: 1, localRowCount: 1, aiRowCount: 0, aiAttempted: true, aiCallCount: 1 },
+    },
+  }));
+
+  assert.match(html, /混合解析/);
+  assert.match(html, /XLSX · 1\/2 个工作表 · 本地 1 行 · AI 0 行 \/ 1 次/);
+  assert.match(html, /data-roster-sheet-toggle="sheet-1" checked/);
+  assert.match(html, /data-roster-sheet-toggle="sheet-2"[^>]*disabled/);
+  assert.match(html, /任课数据 · 第 2 行/);
+  assert.match(html, /data-roster-source-sheet-id="sheet-1"/);
+  assert.match(html, /data-roster-parse-source="local"/);
+});
+
+test('timetable roster worksheet toggles preserve edited rows and recompute selected statistics', () => {
+  const controller = new TimetablePlannerController();
+  const first = {
+    id: 'row-1', sourceSheetId: 'sheet-1', sourceSheet: '七年级', sourceRow: 2, parseSource: 'local',
+    grade: '七年级', className: '1班', subjectName: '语文', subjectCategory: 'main', subjectTags: '', teacherName: '林老师', weeklyHours: 5, blockPreference: 'single', roomName: 'A101',
+  };
+  const second = {
+    id: 'row-2', sourceSheetId: 'sheet-2', sourceSheet: '八年级', sourceRow: 2, parseSource: 'ai',
+    grade: '八年级', className: '2班', subjectName: '数学', subjectCategory: 'main', subjectTags: '', teacherName: '王老师', weeklyHours: 4, blockPreference: 'double', roomName: 'B201',
+  };
+  controller.state.rosterImport = {
+    ...createTimetablePlannerState().rosterImport,
+    open: true,
+    step: 'review',
+    source: 'mixed',
+    draftRows: [first, second],
+    allDraftRows: [first, second],
+    sheetReviews: [
+      { id: 'sheet-1', name: '七年级', selected: true, status: 'included', rowCount: 1, parseSource: 'local' },
+      { id: 'sheet-2', name: '八年级', selected: true, status: 'included', rowCount: 1, parseSource: 'ai' },
+    ],
+    parseSummary: { format: 'xlsx', sheetCount: 2, includedSheetCount: 2, includedSheetNames: ['七年级', '八年级'], localRowCount: 1, aiRowCount: 1 },
+  };
+  controller.readRosterReviewRows = () => controller.state.rosterImport.draftRows;
+  controller.render = () => {};
+
+  controller.state.rosterImport.draftRows[1] = { ...second, teacherName: '王老师（已复核）' };
+  assert.equal(controller.toggleRosterSheet('sheet-2', false), true);
+  assert.equal(controller.state.rosterImport.draftRows.length, 1);
+  assert.equal(controller.state.rosterImport.stats.planCount, 1);
+  assert.equal(controller.state.rosterImport.parseSummary.includedSheetCount, 1);
+  assert.equal(controller.state.rosterImport.source, 'local');
+
+  assert.equal(controller.toggleRosterSheet('sheet-2', true), true);
+  assert.equal(controller.state.rosterImport.draftRows.length, 2);
+  assert.equal(controller.state.rosterImport.draftRows.find(row => row.id === 'row-2').teacherName, '王老师（已复核）');
+  assert.equal(controller.state.rosterImport.stats.planCount, 2);
+  assert.equal(controller.state.rosterImport.parseSummary.aiRowCount, 1);
+  assert.equal(controller.state.rosterImport.source, 'mixed');
+});
+
 test('timetable roster import shows a loading state while parsing before review', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     rosterImport: {
@@ -10339,6 +10457,7 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(controllerSource, /updateRosterReviewField\(/);
   assert.match(controllerSource, /appendRosterReviewRows\(/);
   assert.match(controllerSource, /deleteRosterReviewRow\(/);
+  assert.match(controllerSource, /toggleRosterSheet\(/);
   assert.match(controllerSource, /toggleRosterIssueList\(/);
   assert.match(controllerSource, /locateRosterIssue\(/);
   assert.match(controllerSource, /openRosterIssueEditor\(/);
@@ -10360,6 +10479,7 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(interactionSource, /#tt-cancel-roster-import/);
   assert.match(interactionSource, /#tt-roster-import-file/);
   assert.match(interactionSource, /\[data-roster-field\]/);
+  assert.match(interactionSource, /data-roster-sheet-toggle/);
   assert.match(interactionSource, /\[data-roster-delete-row\]/);
   assert.match(interactionSource, /\[data-roster-toggle-issues\]/);
   assert.match(interactionSource, /\[data-roster-edit-issue-row\]/);
@@ -10384,19 +10504,22 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-roster-import-option-actions--full \.tt-btn\s*{[\s\S]*width:\s*100%;[\s\S]*justify-content:\s*center;/);
   assert.match(styles, /\.tt-roster-import-manual-preview\s*{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*align-content:\s*center;[\s\S]*min-height:\s*140px;[\s\S]*height:\s*100%;/);
   assert.doesNotMatch(styles, /\.tt-import-mode-tabs\s*{/);
-  assert.match(styles, /\.tt-roster-import-dialog--review\s*{[\s\S]*--tt-dialog-width:\s*1220px;[\s\S]*width:\s*min\(var\(--tt-dialog-width\),\s*calc\(100vw - 72px\)\);[\s\S]*max-width:\s*calc\(100vw - 72px\);/);
-  assert.match(styles, /\.tt-roster-review-table\s*{[\s\S]*min-width:\s*1124px;[\s\S]*table-layout:\s*fixed;/);
-  assert.match(styles, /\.tt-roster-col-row-number\s*{[\s\S]*width:\s*52px;/);
-  assert.match(styles, /\.tt-roster-col-issue\s*{[\s\S]*width:\s*52px;/);
-  assert.match(styles, /\.tt-roster-col-action\s*{[\s\S]*width:\s*52px;/);
-  assert.match(styles, /\.tt-roster-review-table th,[\s\S]*\.tt-roster-review-table td\s*{[\s\S]*text-align:\s*center;/);
-  assert.match(styles, /\.tt-roster-review-table \.tt-roster-review-field\s*{[\s\S]*text-align:\s*center;[\s\S]*text-align-last:\s*center;/);
-  assert.match(styles, /\.tt-roster-review-table th:first-child,[\s\S]*\.tt-roster-review-table td\[data-label="行号"\],[\s\S]*\.tt-roster-review-table td\[data-label="周课时"\],[\s\S]*\.tt-roster-review-table td\[data-label="连堂"\],[\s\S]*\.tt-roster-review-table td\[data-label="问题"\],[\s\S]*\.tt-roster-review-table td\[data-label="操作"\]\s*{[\s\S]*text-align:\s*center;/);
-  assert.match(styles, /\.tt-roster-review-issue\s*{[\s\S]*text-align:\s*center;/);
-  assert.match(styles, /\.tt-roster-review-table th:first-child,[\s\S]*\.tt-roster-review-table td\[data-label="行号"\]\s*{[\s\S]*position:\s*sticky;[\s\S]*left:\s*0;/);
-  assert.match(styles, /\.tt-roster-review-table th:nth-child\(11\),[\s\S]*\.tt-roster-review-table td\[data-label="问题"\]\s*{[\s\S]*position:\s*sticky;[\s\S]*right:\s*52px;/);
-  assert.match(styles, /\.tt-roster-review-table th:nth-child\(12\),[\s\S]*\.tt-roster-review-table td\[data-label="操作"\]\s*{[\s\S]*position:\s*sticky;[\s\S]*right:\s*0;/);
-  assert.match(styles, /\.tt-roster-review-table th:first-child,[\s\S]*\.tt-roster-review-table th:nth-child\(11\),[\s\S]*\.tt-roster-review-table th:nth-child\(12\)\s*{[\s\S]*z-index:\s*4;[\s\S]*background:\s*var\(--tt-bg-elevated\);/);
+  assert.match(styles, /\.tt-roster-import-dialog--review\s*\{[\s\S]*--tt-dialog-width:\s*1600px;[\s\S]*width:\s*min\(var\(--tt-dialog-width\),\s*calc\(100vw - 24px\)\);[\s\S]*max-width:\s*calc\(100vw - 24px\);/);
+  assert.match(styles, /\.tt-roster-review-wrap\s*\{[^}]*overflow:\s*visible;[^}]*max-width:\s*100%;/);
+  assert.match(styles, /\.tt-roster-review-table\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*0;[^}]*table-layout:\s*fixed;/);
+  assert.match(styles, /\.tt-roster-col-row-number\s*\{[^}]*width:\s*48px;/);
+  assert.match(styles, /\.tt-roster-col-issue\s*\{[^}]*width:\s*52px;/);
+  assert.match(styles, /\.tt-roster-col-action\s*\{[^}]*width:\s*48px;/);
+  assert.match(styles, /\.tt-roster-review-table th,[\s\S]*\.tt-roster-review-table td\s*\{[\s\S]*text-align:\s*center;/);
+  assert.match(styles, /\.tt-roster-review-table \.tt-roster-review-field\s*\{[\s\S]*text-align:\s*center;[\s\S]*text-align-last:\s*center;/);
+  assert.match(styles, /\.tt-roster-review-field\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/);
+  assert.match(styles, /\.tt-roster-review-table th:first-child,[\s\S]*\.tt-roster-review-table td\[data-label="行号"\],[\s\S]*\.tt-roster-review-table td\[data-label="周课时"\],[\s\S]*\.tt-roster-review-table td\[data-label="连堂"\],[\s\S]*\.tt-roster-review-table td\[data-label="问题"\],[\s\S]*\.tt-roster-review-table td\[data-label="操作"\]\s*\{[\s\S]*text-align:\s*center;/);
+  assert.match(styles, /\.tt-roster-review-issue\s*\{[\s\S]*text-align:\s*center;/);
+  assert.doesNotMatch(styles, /\.tt-roster-review-table th:first-child\s*\{[^}]*left:\s*0;/);
+  assert.doesNotMatch(styles, /\.tt-roster-review-table th:nth-child\(13\)\s*\{[^}]*right:/);
+  assert.doesNotMatch(styles, /\.tt-roster-review-table th:nth-child\(14\)\s*\{[^}]*right:/);
+  assert.doesNotMatch(styles, /\.tt-roster-review-table td\[data-label="(?:行号|问题|操作)"\]\s*\{[^}]*position:\s*sticky;/);
+  assert.match(styles, /\.tt-roster-sheet-options\s*{[\s\S]*grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(220px,\s*1fr\)\);/);
   assert.match(styles, /\.tt-roster-block-help\s*{[\s\S]*position:\s*relative;[\s\S]*display:\s*inline-flex;/);
   assert.match(styles, /\.tt-roster-block-help-trigger\s*{[\s\S]*cursor:\s*help;/);
   assert.match(styles, /\.tt-roster-block-help-popover\s*{[\s\S]*position:\s*absolute;[\s\S]*background:\s*#0f172a;[\s\S]*color:\s*var\(--tt-text-secondary\);[\s\S]*font-size:\s*0\.74rem;[\s\S]*font-weight:\s*600;[\s\S]*opacity:\s*0;[\s\S]*visibility:\s*hidden;/);
@@ -10408,13 +10531,34 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-roster-review-row--focused/);
   assert.match(styles, /\.tt-roster-issue-edit/);
   assert.match(styles, /\.tt-roster-issue-editor-progress/);
-  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-review-table colgroup,[\s\S]*\.tt-rule-review-table colgroup/);
-  assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-review-table td\[data-label="行号"\],[\s\S]*\.tt-roster-review-table td\[data-label="问题"\],[\s\S]*\.tt-roster-review-table td\[data-label="操作"\]\s*{[\s\S]*position:\s*static;/);
+  assert.match(styles, /@media \(max-width:\s*1279px\)[\s\S]*\.tt-roster-review-table colgroup,[\s\S]*\.tt-roster-review-table thead\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styles, /@media \(max-width:\s*1279px\)[\s\S]*\.tt-roster-review-table tr\s*\{[\s\S]*display:\s*grid;/);
+  assert.match(styles, /@media \(max-width:\s*1279px\)[\s\S]*\.tt-roster-review-table td\s*\{[\s\S]*grid-template-columns:\s*76px minmax\(0,\s*1fr\);/);
   // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 constraint dialog 替代）
   assert.match(styles, /\.tt-roster-import-dialog/);
   assert.match(styles, /\.tt-roster-issue-editor-dialog/);
   assert.match(styles, /\.tt-period-time-dialog/);
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog/);
+});
+
+test('timetable roster metadata fields use native single-select controls', async () => {
+  const [viewSource, controllerSource, stateSource, interactionSource, styles] = await Promise.all([
+    readFile(new URL('view.js', moduleRoot), 'utf8'),
+    readFile(new URL('controller.js', moduleRoot), 'utf8'),
+    readFile(new URL('state.js', moduleRoot), 'utf8'),
+    readFile(new URL('grid-interactions.js', moduleRoot), 'utf8'),
+    readFile(stylePath, 'utf8'),
+  ]);
+
+  assert.match(viewSource, /function renderRosterMetadataControl\(row = {}, field = ''\)/);
+  assert.match(viewSource, /<select class="tt-roster-review-field" data-roster-field="\$\{escapeAttr\(field\)\}"/);
+  assert.match(viewSource, /<option value="" \$\{selectedValue \? '' : 'selected'\}>未选择<\/option>/);
+  assert.match(viewSource, /config\.options\.map\(option => `\s*<option value="\$\{escapeAttr\(option\.value\)\}"/);
+  assert.match(viewSource, /importedValue \? `<option value="\$\{escapeAttr\(importedValue\)\}" selected>/);
+  assert.doesNotMatch(
+    [viewSource, controllerSource, stateSource, interactionSource, styles].join('\n'),
+    /metadataPicker|toggleRosterMetadataPicker|setRosterMetadataOption|closeRosterMetadataPicker|data-roster-metadata|tt-roster-metadata/,
+  );
 });
 
 test('timetable roster issue locator scrolls to row and focuses the field', () => {
@@ -10596,11 +10740,11 @@ test('timetable dialogs expand to review content on desktop and stay constrained
   // 已删除 .tt-rule-review-dialog CSS 断言（旧弹窗已废弃，使用 constraint dialog 替代）
   assert.match(styles, /\.tt-roster-import-dialog,\s*[\s\S]*\.tt-period-time-dialog,\s*[\s\S]*\.tt-publish-dialog,\s*[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*min\(var\(--tt-dialog-width,\s*720px\),\s*calc\(100vw - 48px\)\);[\s\S]*max-width:\s*calc\(100vw - 48px\);[\s\S]*max-height:\s*min\(var\(--tt-dialog-max-height,\s*860px\),\s*calc\(100vh - 48px\)\);[\s\S]*overflow:\s*auto;[\s\S]*box-shadow:\s*0 24px 60px rgba\(2,\s*6,\s*23,\s*0\.38\);/);
   assert.match(styles, /\.tt-roster-import-dialog\s*{[\s\S]*--tt-dialog-width:\s*1120px;/);
-  assert.match(styles, /\.tt-roster-import-dialog--review\s*{[\s\S]*--tt-dialog-width:\s*1220px;[\s\S]*width:\s*min\(var\(--tt-dialog-width\),\s*calc\(100vw - 72px\)\);[\s\S]*max-width:\s*calc\(100vw - 72px\);/);
+  assert.match(styles, /\.tt-roster-import-dialog--review\s*\{[\s\S]*--tt-dialog-width:\s*1600px;[\s\S]*width:\s*min\(var\(--tt-dialog-width\),\s*calc\(100vw - 24px\)\);[\s\S]*max-width:\s*calc\(100vw - 24px\);/);
   assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*--tt-dialog-width:\s*960px;[\s\S]*--tt-dialog-max-height:\s*820px;/);
   assert.match(styles, /\.tt-publish-dialog\s*{[\s\S]*--tt-dialog-width:\s*640px;[\s\S]*--tt-dialog-max-height:\s*760px;/);
   assert.match(styles, /\.tt-publication-history-dialog\s*{[\s\S]*--tt-dialog-width:\s*920px;[\s\S]*--tt-dialog-max-height:\s*820px;/);
-  assert.match(styles, /\.tt-roster-review-wrap\s*{[\s\S]*overflow:\s*auto;[\s\S]*max-width:\s*100%;/);
+  assert.match(styles, /\.tt-roster-review-wrap\s*\{[^}]*overflow:\s*visible;[^}]*max-width:\s*100%;/);
   assert.match(styles, /\.tt-period-time-review\s*{[\s\S]*overflow:\s*auto;[\s\S]*max-width:\s*100%;[\s\S]*min-height:\s*0;/);
   // 已删除响应式 CSS 中对 .tt-rule-review-dialog 的断言
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog,[\s\S]*\.tt-period-time-dialog,[\s\S]*\.tt-publish-dialog,[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);

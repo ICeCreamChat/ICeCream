@@ -2285,6 +2285,29 @@ test('parseRosterAiOrLocal falls back to local when no API key', async () => {
     assert.ok(result.draftRows.length >= 1);
 });
 
+test('parseRosterAiOrLocal preserves structured lesson metadata without sending the table to AI', async () => {
+    let fetchCalls = 0;
+    const text = [
+        '年级,班级,课程,教师,周课时,连堂,课型,教学资源',
+        '七年级,1班,物理,程老师,4,单节,复习课、校本研修课,机房、Maker Space',
+    ].join('\n');
+    const result = await parseRosterAiOrLocal({
+        text,
+        project: {},
+        env: { DEEPSEEK_API_KEY: 'configured-for-test' },
+        fetchImpl: async () => {
+            fetchCalls += 1;
+            throw new Error('structured table must not call AI');
+        },
+    });
+
+    assert.equal(fetchCalls, 0);
+    assert.equal(result.source, 'local');
+    assert.deepEqual(result.draftRows[0].activityTypes, ['复习', '校本研修课']);
+    assert.deepEqual(result.draftRows[0].requiredResourceTypes, ['计算机教室', 'Maker Space']);
+    assert.equal(result.draftRows[0].roomName, '');
+});
+
 test('parseRosterAiOrLocal local fallback parses common natural language roster rows', async () => {
     const result = await parseRosterAiOrLocal({
         text: '七年级1班语文林老师每周5节，混合',

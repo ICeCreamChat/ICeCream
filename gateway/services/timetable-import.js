@@ -1,16 +1,34 @@
-import path from 'node:path';
 import { createHash } from 'node:crypto';
-
-import AdmZip from 'adm-zip';
 
 import {
     makeTimetableId,
     normalizeSubjectCategory,
     normalizeSubjectTags,
 } from './timetable-scheduler.js';
+import {
+    normalizeTimetableActivityTypes,
+    normalizeTimetableResourceTypes,
+} from '../../shared/timetable/lesson-metadata.js';
+import { readRosterFileSource } from './timetable-roster-workbook.js';
 
-const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const PALETTE = ['#14b8a6', '#60a5fa', '#f59e0b', '#f97316', '#a78bfa', '#22c55e', '#ef4444', '#06b6d4'];
+const MAX_ROSTER_AI_CALLS = 8;
+const MAX_ROSTER_AI_INPUT_CHARS = 10_000;
+const MAX_HEADER_SCAN_ROWS = 30;
+const REQUIRED_ROSTER_FIELDS = ['className', 'subjectName', 'teacherName'];
+const AI_HEADER_FIELDS = new Set([
+    'grade',
+    'className',
+    'subjectName',
+    'teacherName',
+    'weeklyHours',
+    'blockPreference',
+    'roomName',
+    'subjectCategory',
+    'subjectTags',
+    'activityTypes',
+    'requiredResourceTypes',
+]);
 const COMMON_ROSTER_SUBJECTS = [
     '道德与法治', '信息技术', '综合实践', '劳动技术', '心理健康',
     '语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治',
@@ -146,7 +164,7 @@ export function buildRosterImportReport(preview = {}) {
     });
 
     rows.forEach(row => {
-        const rowSource = { row: row.sourceRow || null, rowId: row.id || null };
+        const rowSource = { sheet: row.sourceSheet || null, row: row.sourceRow || null, rowId: row.id || null };
         const rowIssues = issuesByRow.get(row.id) || row.issues || [];
         const errors = rowIssues.filter(issue => issue.severity === 'error');
         const warnings = rowIssues.filter(issue => issue.severity !== 'error');
@@ -193,7 +211,7 @@ export function buildRosterImportReport(preview = {}) {
         .forEach(issue => {
             const category = issue.severity === 'error' ? 'dropped' : 'review';
             report[category]({
-                source: { row: issue.sourceRow || null, rowId: null },
+                source: { sheet: issue.sourceSheet || null, row: issue.sourceRow || null, rowId: null },
                 field: issue.field || 'row',
                 reason: issue.message || '导入数据需要复核。',
             });
@@ -417,7 +435,10 @@ function normalizeDraftRow(row = {}, index = 0) {
     const blockPreference = parseBlockPreferenceInfo(row.blockPreference);
     return {
         id: cleanCell(row.id, 80) || `draft_${index + 1}`,
+        sourceSheetId: cleanCell(row.sourceSheetId),
+        sourceSheet: cleanCell(row.sourceSheet),
         sourceRow: Number.parseInt(row.sourceRow, 10) || index + 1,
+        parseSource: row.parseSource === 'ai' ? 'ai' : 'local',
         grade: cleanCell(row.grade || '默认年级') || '默认年级',
         className: cleanCell(row.className),
         subjectName: cleanCell(row.subjectName),
@@ -430,14 +451,15 @@ function normalizeDraftRow(row = {}, index = 0) {
         rawBlockPreference: blockPreference.raw,
         blockPreferenceDegraded: blockPreference.degraded,
         roomName,
-        activityTypes: normalizeSubjectTags(row.activityTypes || row.activityType),
-        requiredResourceTypes: normalizeSubjectTags(row.requiredResourceTypes || row.resourceTypes),
+        activityTypes: normalizeTimetableActivityTypes(row.activityTypes || row.activityType),
+        requiredResourceTypes: normalizeTimetableResourceTypes(row.requiredResourceTypes || row.resourceTypes),
     };
 }
 
 function createIssue(row, severity, field, message) {
     return {
         rowId: row.id,
+        sourceSheet: row.sourceSheet || '',
         sourceRow: row.sourceRow,
         severity,
         field,
@@ -663,66 +685,202 @@ export function parseTimetableRosterText(text = '', options = {}) {
     return buildTimetableRosterFromRows(previewTimetableRosterText(text, options).draftRows, options);
 }
 
-function readEntry(zip, name) {
-    const entry = zip.getEntry(name);
-    return entry ? zip.readAsText(entry, 'utf8') : '';
-}
-
-function parseSharedStrings(xml = '') {
-    const values = [];
-    for (const match of xml.matchAll(/<si[\s\S]*?<\/si>/g)) {
-        const text = [...match[0].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)]
-            .map(item => item[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'))
-            .join('');
-        values.push(cleanCell(text));
+function findRosterHeader(sheet = {}) {
+    let best = null;
+    for (const row of (sheet.rows || []).slice(0, MAX_HEADER_SCAN_ROWS)) {
+        const mapping = (row.cells || []).map(normalizeHeader);
+        const requiredCount = REQUIRED_ROSTER_FIELDS.filter(field => mapping.includes(field)).length;
+        const recognizedCount = mapping.filter(Boolean).length;
+        const candidate = { row, mapping, requiredCount, score: requiredCount * 100 + recognizedCount, source: 'local' };
+        if (!best || candidate.score > best.score) best = candidate;
     }
-    return values;
+    return best;
 }
 
-function columnIndex(ref = '') {
-    const letters = String(ref).replace(/\d+/g, '');
-    let index = 0;
-    for (const letter of letters) index = index * 26 + letter.charCodeAt(0) - 64;
-    return index - 1;
+function rowFromSheetMapping(sheet, row, mapping, parseSource = 'local') {
+    const draft = {
+        id: `draft_${sheet.id}_${row.sourceRow}`,
+        sourceSheetId: sheet.id,
+        sourceSheet: sheet.name,
+        sourceRow: row.sourceRow,
+        parseSource,
+    };
+    mapping.forEach((field, columnIndex) => {
+        if (field) draft[field] = row.cells?.[columnIndex] ?? '';
+    });
+    return draft;
 }
 
-function worksheetToText(xml = '', sharedStrings = []) {
-    const lines = [];
-    for (const rowMatch of xml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {
-        const cells = [];
-        for (const cellMatch of rowMatch[1].matchAll(/<c[^>]*r="([A-Z]+\d+)"[^>]*>([\s\S]*?)<\/c>/g)) {
-            const ref = cellMatch[1];
-            const cellXml = cellMatch[0];
-            const value = cellXml.match(/<v>([\s\S]*?)<\/v>/)?.[1] || '';
-            const text = /t="s"/.test(cellXml) ? sharedStrings[Number(value)] : value;
-            cells[columnIndex(ref)] = cleanCell(text);
+function parseMappedSheetRows(sheet, header, parseSource = header?.source || 'local') {
+    if (!header?.row || !Array.isArray(header.mapping)) return { rows: [], unresolved: [] };
+    const rows = [];
+    const unresolved = [];
+    for (const sourceRow of sheet.rows || []) {
+        if (sourceRow.sourceRow <= header.row.sourceRow) continue;
+        const repeatedHeader = (sourceRow.cells || []).map(normalizeHeader);
+        if (REQUIRED_ROSTER_FIELDS.every(field => repeatedHeader.includes(field))) continue;
+        const draft = rowFromSheetMapping(sheet, sourceRow, header.mapping, parseSource);
+        if (!rowHasAnyValue(draft) && !(sourceRow.cells || []).some(Boolean)) continue;
+        if (REQUIRED_ROSTER_FIELDS.every(field => cleanCell(draft[field]))) rows.push(draft);
+        else unresolved.push({ sourceKey: `${sheet.id}:${sourceRow.sourceRow}`, sheet, sourceRow, draft });
+    }
+    return { rows, unresolved };
+}
+
+function workbookSheetClassification(source = {}) {
+    const sheetReviews = [];
+    const rows = [];
+    const unresolvedRows = [];
+    const unresolvedSheets = [];
+
+    for (const sheet of source.sheets || []) {
+        const header = findRosterHeader(sheet);
+        const base = {
+            id: sheet.id,
+            name: sheet.name,
+            index: sheet.index,
+            selected: false,
+            status: 'ignored',
+            headerRow: header?.row?.sourceRow || null,
+            rowCount: 0,
+            parseSource: 'none',
+            reason: '',
+        };
+        if (sheet.hidden) {
+            sheetReviews.push({ ...base, reason: '隐藏工作表默认不导入。' });
+            continue;
         }
-        if (cells.some(Boolean)) lines.push(cells.join(','));
+        if (!sheet.rows?.length) {
+            sheetReviews.push({ ...base, reason: '工作表为空。' });
+            continue;
+        }
+        if (header?.requiredCount === REQUIRED_ROSTER_FIELDS.length) {
+            const parsed = parseMappedSheetRows(sheet, header, 'local');
+            rows.push(...parsed.rows, ...parsed.unresolved.map(item => item.draft));
+            unresolvedRows.push(...parsed.unresolved);
+            sheetReviews.push({
+                ...base,
+                selected: true,
+                status: parsed.unresolved.length ? 'review' : 'included',
+                rowCount: parsed.rows.length + parsed.unresolved.length,
+                parseSource: 'local',
+                reason: parsed.unresolved.length ? `有 ${parsed.unresolved.length} 行需要补充或复核。` : '已识别标准任课表头。',
+            });
+            continue;
+        }
+
+        const maxColumns = Math.max(0, ...(sheet.rows || []).map(row => row.cells?.filter(Boolean).length || 0));
+        if (sheet.rows.length >= 2 && maxColumns >= 4) {
+            unresolvedSheets.push({ sheet, header });
+            sheetReviews.push({ ...base, status: 'review', reason: '表头需要智能识别，当前未自动导入。' });
+        } else {
+            sheetReviews.push({ ...base, reason: '内容不像任课明细表。' });
+        }
     }
-    return lines.join('\n');
+    return { sheetReviews, rows, unresolvedRows, unresolvedSheets };
 }
 
-function fileToText({ buffer, filename = '' } = {}) {
-    if (!Buffer.isBuffer(buffer) || buffer.length <= 0) throw new Error('导入文件为空');
-    if (buffer.length > MAX_IMPORT_BYTES) throw new Error('导入文件不能超过 5MB');
+function appendGlobalPreviewIssues(preview, issues = []) {
+    if (!issues.length) return preview;
+    preview.issues = [...(preview.issues || []), ...issues];
+    const issuesByRow = new Map();
+    issues.forEach(issue => {
+        if (!issue.rowId) return;
+        if (!issuesByRow.has(issue.rowId)) issuesByRow.set(issue.rowId, []);
+        issuesByRow.get(issue.rowId).push(issue);
+    });
+    preview.draftRows = (preview.draftRows || []).map(row => ({
+        ...row,
+        issues: [...(row.issues || []), ...(issuesByRow.get(row.id) || [])],
+    }));
+    preview.warnings = [...new Set([...(preview.warnings || []), ...issues.map(issue => issue.message)])];
+    preview.hasBlockingIssues = preview.issues.some(issue => issue.severity === 'error');
+    preview.stats = { ...(preview.stats || {}), issueCount: preview.issues.length };
+    preview.importReport = buildRosterImportReport(preview);
+    return preview;
+}
 
-    const ext = path.extname(filename).toLowerCase();
-    if (ext === '.xlsx' || ext === '.xls') {
-        const zip = new AdmZip(buffer);
-        const sharedStrings = parseSharedStrings(readEntry(zip, 'xl/sharedStrings.xml'));
-        const sheetEntry = zip.getEntries().find(entry => /^xl\/worksheets\/sheet\d+\.xml$/.test(entry.entryName));
-        if (!sheetEntry) return '';
-        return worksheetToText(zip.readAsText(sheetEntry, 'utf8'), sharedStrings);
-    }
-    return buffer.toString('utf8');
+function rosterParseSummary(source, sheetReviews, rows, {
+    aiAttempted = false,
+    aiCallCount = 0,
+    unresolvedRowCount = 0,
+} = {}) {
+    const selected = (sheetReviews || []).filter(sheet => sheet.selected);
+    return {
+        format: source.format,
+        sheetCount: source.sheets?.length || 0,
+        includedSheetCount: selected.length,
+        includedSheetNames: selected.map(sheet => sheet.name),
+        localRowCount: rows.filter(row => row.parseSource !== 'ai').length,
+        aiRowCount: rows.filter(row => row.parseSource === 'ai').length,
+        unresolvedRowCount,
+        aiAttempted,
+        aiCallCount,
+    };
+}
+
+function localWorkbookPreview(source, { project = {} } = {}) {
+    const classified = workbookSheetClassification(source);
+    const preview = analyzeDraftRows(classified.rows, project);
+    const globalIssues = classified.unresolvedSheets.map(({ sheet }) => ({
+        rowId: '',
+        sourceSheet: sheet.name,
+        sourceRow: null,
+        severity: 'warning',
+        field: 'sheet',
+        message: `工作表“${sheet.name}”未识别为任课表，未自动导入。`,
+    }));
+    appendGlobalPreviewIssues(preview, globalIssues);
+    preview.warnings = [...new Set([...(source.warnings || []), ...(preview.warnings || [])])];
+    preview.sheetReviews = classified.sheetReviews;
+    preview.parseSummary = rosterParseSummary(source, classified.sheetReviews, preview.draftRows, {
+        unresolvedRowCount: classified.unresolvedRows.length + classified.unresolvedSheets.reduce((total, item) => total + item.sheet.rowCount, 0),
+    });
+    preview.source = 'local';
+    return preview;
+}
+
+function textParseMetadata(format, preview, { aiAttempted = false, aiCallCount = 0 } = {}) {
+    return {
+        ...preview,
+        sheetReviews: [],
+        parseSummary: {
+            format,
+            sheetCount: 0,
+            includedSheetCount: 0,
+            includedSheetNames: [],
+            localRowCount: (preview.draftRows || []).filter(row => row.parseSource !== 'ai').length,
+            aiRowCount: (preview.draftRows || []).filter(row => row.parseSource === 'ai').length,
+            unresolvedRowCount: preview.draftRows?.length ? 0 : 1,
+            aiAttempted,
+            aiCallCount,
+        },
+    };
 }
 
 export function previewTimetableRosterFile(input = {}, options = {}) {
-    return previewTimetableRosterText(fileToText(input), options);
+    const source = readRosterFileSource(input);
+    if (source.kind === 'text') {
+        const preview = previewTimetableRosterText(source.text, options);
+        preview.warnings = [...new Set([...(source.warnings || []), ...(preview.warnings || [])])];
+        return textParseMetadata(source.format, { ...preview, source: 'local' });
+    }
+    return localWorkbookPreview(source, options);
 }
 
 export function parseTimetableRosterFile(input = {}, options = {}) {
-    return parseTimetableRosterText(fileToText(input), options);
+    const preview = previewTimetableRosterFile(input, options);
+    return {
+        ...buildTimetableRosterFromRows(preview.draftRows, options),
+        warnings: preview.warnings,
+        issues: preview.issues,
+        stats: preview.stats,
+        draftRows: preview.draftRows,
+        importReport: preview.importReport,
+        source: preview.source,
+        sheetReviews: preview.sheetReviews,
+        parseSummary: preview.parseSummary,
+    };
 }
 
 export const TIMETABLE_BLOCK_LABELS = {
@@ -781,7 +939,9 @@ function buildRosterAiPrompt(text, project = {}) {
         '      "weeklyHours": 4,',
         '      "blockPreference": "single|double|mixed",',
         '      "roomName": "教室名(可选)",',
-        '      "subjectCategory": "core|elective|activity"',
+        '      "subjectCategory": "core|elective|activity",',
+        '      "activityTypes": ["普通课|实验课|上机课|新授课|复习|答疑|社团或原始学校值"],',
+        '      "requiredResourceTypes": ["普通教室|实验室|计算机教室或原始学校值"]',
         '    }',
         '  ],',
         '  "anomalies": [',
@@ -798,7 +958,8 @@ function buildRosterAiPrompt(text, project = {}) {
         '5. 识别不规则格式: 合并单元格、跨行数据、备注文字',
         '6. 忽略纯标题/汇总/空行',
         '7. anomalies: 周课时>10标为异常,重复任课标为异常',
-        '8. 只输出 JSON,不要 markdown 包裹,不要解释文字',
+        '8. activityTypes 和 requiredResourceTypes 可多选；保留无法归类的学校自定义原值',
+        '9. 只输出 JSON,不要 markdown 包裹,不要解释文字',
         existingTeachers.length ? `\n已知教师: ${existingTeachers.join('、')}` : '',
         existingSubjects.length ? `已知科目: ${existingSubjects.join('、')}` : '',
         existingClasses.length ? `已知班级: ${existingClasses.join('、')}` : '',
@@ -807,10 +968,16 @@ function buildRosterAiPrompt(text, project = {}) {
     return { systemPrompt, userMessage: text };
 }
 
-async function callRosterAi({ text, project, env = {}, fetchImpl }) {
+async function callRosterAiJson({ systemPrompt, userMessage, env = {}, fetchImpl, budget = null }) {
+    if (budget) budget.attempted = true;
     const { apiKey, baseUrl, model } = resolveRosterAiConfig(env);
     const fetchClient = resolveRosterFetch(fetchImpl);
-    const { systemPrompt, userMessage } = buildRosterAiPrompt(text, project);
+    if (budget) {
+        if (budget.calls >= MAX_ROSTER_AI_CALLS) {
+            throw new RosterAiError('AI 补充解析已达到单次上传调用上限。', 'ai_call_limit');
+        }
+        budget.calls += 1;
+    }
 
     const response = await fetchClient(`${baseUrl}/v1/chat/completions`, {
         method: 'POST',
@@ -822,7 +989,7 @@ async function callRosterAi({ text, project, env = {}, fetchImpl }) {
             model,
             messages: [
                 { role: 'system', content: systemPrompt },
-                { role: 'user', content: userMessage.slice(0, 12000) },
+                { role: 'user', content: String(userMessage || '').slice(0, MAX_ROSTER_AI_INPUT_CHARS) },
             ],
             temperature: 0.1,
             response_format: { type: 'json_object' },
@@ -843,28 +1010,265 @@ async function callRosterAi({ text, project, env = {}, fetchImpl }) {
     }
 }
 
+async function callRosterAi({ text, project, env = {}, fetchImpl, budget = null }) {
+    const prompt = buildRosterAiPrompt(text, project);
+    return callRosterAiJson({ ...prompt, env, fetchImpl, budget });
+}
+
+function buildRosterHeaderAiPrompt(sheet = {}) {
+    const rows = (sheet.rows || []).slice(0, 8).map(row => ({ row: row.sourceRow, cells: row.cells }));
+    return {
+        systemPrompt: [
+            '你负责识别中国学校任课表的列含义。',
+            '只返回 JSON，不提取整张表数据，不修改单元格内容。',
+            '允许字段: grade,className,subjectName,teacherName,weeklyHours,blockPreference,roomName,subjectCategory,subjectTags,activityTypes,requiredResourceTypes。',
+            '输出格式: {"headerRow":数字,"columnMappings":[{"columnIndex":0,"field":"grade"}],"confidence":0到1}。',
+            '必须映射 className、subjectName、teacherName；无法确定时返回空 columnMappings。',
+        ].join('\n'),
+        userMessage: JSON.stringify({ sheet: sheet.name, rows }),
+    };
+}
+
+function normalizeAiHeaderResult(result = {}, sheet = {}) {
+    const headerRow = Number.parseInt(result.headerRow, 10);
+    const row = (sheet.rows || []).find(item => item.sourceRow === headerRow) || sheet.rows?.[0] || null;
+    if (!row) return null;
+    const mapping = Array.from({ length: row.cells?.length || 0 }, () => null);
+    const rawMappings = Array.isArray(result.columnMappings)
+        ? result.columnMappings
+        : Object.entries(result.columnMappings || {}).map(([columnIndex, field]) => ({ columnIndex, field }));
+    rawMappings.forEach(item => {
+        const columnIndex = Number.parseInt(item?.columnIndex, 10);
+        const field = String(item?.field || '').trim();
+        if (Number.isInteger(columnIndex) && columnIndex >= 0 && columnIndex < mapping.length && AI_HEADER_FIELDS.has(field)) {
+            mapping[columnIndex] = field;
+        }
+    });
+    if (!REQUIRED_ROSTER_FIELDS.every(field => mapping.includes(field))) return null;
+    return { row, mapping, source: 'ai', requiredCount: 3, score: 1_000 };
+}
+
+function buildRosterRowAiPrompt(items = []) {
+    return {
+        systemPrompt: [
+            '你负责补全中国学校任课表中缺少必要字段的少量行。',
+            '只返回 JSON: {"draftRows":[{"sourceKey":"原值", "grade":"", "className":"", "subjectName":"", "teacherName":"", "weeklyHours":1, "blockPreference":"single", "roomName":""}]}。',
+            'sourceKey 必须原样返回。不得改写 knownFields 中已有的非空值；无法确定的行不要输出。',
+        ].join('\n'),
+        userMessage: JSON.stringify({
+            rows: items.map(item => ({
+                sourceKey: item.sourceKey,
+                sheet: item.sheet.name,
+                row: item.sourceRow.sourceRow,
+                cells: item.sourceRow.cells,
+                knownFields: item.draft,
+            })),
+        }),
+    };
+}
+
+function rosterAiBatches(items = []) {
+    const batches = [];
+    let current = [];
+    let currentSize = 0;
+    for (const item of items) {
+        const itemSize = JSON.stringify(item).length + 2;
+        if (current.length && currentSize + itemSize > MAX_ROSTER_AI_INPUT_CHARS - 1_000) {
+            batches.push(current);
+            current = [];
+            currentSize = 0;
+        }
+        current.push(item);
+        currentSize += itemSize;
+    }
+    if (current.length) batches.push(current);
+    return batches;
+}
+
+function mergeAiRowWithKnown(aiRow = {}, unresolved) {
+    const merged = {
+        ...aiRow,
+        id: unresolved.draft.id,
+        sourceSheetId: unresolved.sheet.id,
+        sourceSheet: unresolved.sheet.name,
+        sourceRow: unresolved.sourceRow.sourceRow,
+        parseSource: 'ai',
+    };
+    const conflicts = [];
+    for (const field of AI_HEADER_FIELDS) {
+        const known = unresolved.draft[field];
+        const hasKnown = Array.isArray(known) ? known.length > 0 : Boolean(cleanCell(known));
+        if (!hasKnown) continue;
+        const aiValue = aiRow[field];
+        const comparableKnown = Array.isArray(known) ? known.map(cleanCell).join('|') : cleanCell(known);
+        const comparableAi = Array.isArray(aiValue) ? aiValue.map(cleanCell).join('|') : cleanCell(aiValue);
+        if (comparableAi && comparableAi !== comparableKnown) conflicts.push(field);
+        merged[field] = known;
+    }
+    return { row: merged, conflicts };
+}
+
 function normalizeAiRosterRows(parsed = {}) {
     const rows = Array.isArray(parsed.draftRows) ? parsed.draftRows : Array.isArray(parsed) ? parsed : [];
     const anomalies = Array.isArray(parsed.anomalies) ? parsed.anomalies : [];
     return { rows, anomalies };
 }
 
+async function parseWorkbookAiOrLocal(source, { project = {}, env = {}, fetchImpl } = {}) {
+    const classified = workbookSheetClassification(source);
+    const budget = { attempted: false, calls: 0 };
+    const unresolvedIds = new Set(classified.unresolvedRows.map(item => item.draft.id));
+    const parsedRows = classified.rows.filter(row => !unresolvedIds.has(row.id));
+    const unresolvedRows = [...classified.unresolvedRows];
+    const unresolvedSheets = [];
+    const aiConflictIssues = [];
+    let aiFailure = null;
+
+    for (const item of classified.unresolvedSheets) {
+        if (aiFailure || budget.calls >= MAX_ROSTER_AI_CALLS) {
+            unresolvedSheets.push(item);
+            continue;
+        }
+        try {
+            const result = await callRosterAiJson({
+                ...buildRosterHeaderAiPrompt(item.sheet),
+                env,
+                fetchImpl,
+                budget,
+            });
+            const header = normalizeAiHeaderResult(result, item.sheet);
+            if (!header) {
+                unresolvedSheets.push(item);
+                continue;
+            }
+            const parsed = parseMappedSheetRows(item.sheet, header, 'ai');
+            parsedRows.push(...parsed.rows);
+            unresolvedRows.push(...parsed.unresolved);
+            const review = classified.sheetReviews.find(sheet => sheet.id === item.sheet.id);
+            if (review) Object.assign(review, {
+                selected: true,
+                status: parsed.unresolved.length ? 'review' : 'included',
+                headerRow: header.row.sourceRow,
+                rowCount: parsed.rows.length + parsed.unresolved.length,
+                parseSource: 'ai',
+                reason: parsed.unresolved.length ? `AI 已识别表头，仍有 ${parsed.unresolved.length} 行需要复核。` : 'AI 已补充识别表头。',
+            });
+        } catch (error) {
+            aiFailure = error;
+            unresolvedSheets.push(item);
+        }
+    }
+
+    const unresolvedByKey = new Map(unresolvedRows.map(item => [item.sourceKey, item]));
+    const resolvedKeys = new Set();
+    if (!aiFailure && unresolvedRows.length) {
+        for (const batch of rosterAiBatches(unresolvedRows)) {
+            if (budget.calls >= MAX_ROSTER_AI_CALLS) break;
+            try {
+                const result = await callRosterAiJson({
+                    ...buildRosterRowAiPrompt(batch),
+                    env,
+                    fetchImpl,
+                    budget,
+                });
+                const aiRows = Array.isArray(result.draftRows) ? result.draftRows : [];
+                for (const aiRow of aiRows) {
+                    const sourceKey = String(aiRow?.sourceKey || '').trim();
+                    const unresolved = unresolvedByKey.get(sourceKey);
+                    if (!unresolved || resolvedKeys.has(sourceKey)) continue;
+                    const merged = mergeAiRowWithKnown(aiRow, unresolved);
+                    parsedRows.push(merged.row);
+                    if (merged.conflicts.length) {
+                        aiConflictIssues.push({
+                            rowId: unresolved.draft.id,
+                            sourceSheet: unresolved.sheet.name,
+                            sourceRow: unresolved.sourceRow.sourceRow,
+                            severity: 'warning',
+                            field: merged.conflicts[0],
+                            message: `AI 补充与本地字段冲突(${merged.conflicts.join('、')})，已保留本地值，请复核。`,
+                        });
+                    }
+                    resolvedKeys.add(sourceKey);
+                }
+            } catch (error) {
+                aiFailure = error;
+                break;
+            }
+        }
+    }
+
+    const stillUnresolvedRows = unresolvedRows.filter(item => !resolvedKeys.has(item.sourceKey));
+    parsedRows.push(...stillUnresolvedRows.map(item => item.draft));
+    const preview = analyzeDraftRows(parsedRows, project);
+    const globalIssues = [...aiConflictIssues, ...unresolvedSheets.map(({ sheet }) => ({
+        rowId: '',
+        sourceSheet: sheet.name,
+        sourceRow: null,
+        severity: 'warning',
+        field: 'sheet',
+        message: `工作表“${sheet.name}”的表头仍无法识别，未自动导入其中 ${sheet.rowCount} 行。`,
+    }))];
+    if (aiFailure) {
+        globalIssues.push({
+            rowId: '',
+            sourceSheet: '',
+            sourceRow: null,
+            severity: 'warning',
+            field: 'ai',
+            message: `AI 补充解析未完成(${aiFailure.message})，本地结果已保留。`,
+        });
+    } else if (stillUnresolvedRows.length && budget.calls >= MAX_ROSTER_AI_CALLS) {
+        globalIssues.push({
+            rowId: '',
+            sourceSheet: '',
+            sourceRow: null,
+            severity: 'warning',
+            field: 'ai',
+            message: `AI 补充解析达到 ${MAX_ROSTER_AI_CALLS} 次调用上限，剩余行已保留待复核。`,
+        });
+    }
+    appendGlobalPreviewIssues(preview, globalIssues);
+    preview.warnings = [...new Set([...(source.warnings || []), ...(preview.warnings || [])])];
+    const localRowCount = preview.draftRows.filter(row => row.parseSource !== 'ai').length;
+    const aiRowCount = preview.draftRows.filter(row => row.parseSource === 'ai').length;
+    preview.source = aiRowCount && localRowCount ? 'mixed' : aiRowCount ? 'ai' : 'local';
+    preview.sheetReviews = classified.sheetReviews;
+    preview.parseSummary = rosterParseSummary(source, classified.sheetReviews, preview.draftRows, {
+        aiAttempted: budget.attempted,
+        aiCallCount: budget.calls,
+        unresolvedRowCount: stillUnresolvedRows.length + unresolvedSheets.reduce((total, item) => total + item.sheet.rowCount, 0),
+    });
+    return preview;
+}
+
 export async function parseRosterAiOrLocal({ text = '', file = null, project = {}, env = {}, fetchImpl } = {}) {
-    const rawText = file ? fileToText(file) : text;
-    if (!rawText.trim()) {
-        throw new Error('导入内容为空，请粘贴文本或上传文件。');
+    let fileSource = null;
+    if (file) {
+        fileSource = readRosterFileSource(file);
+        if (fileSource.kind === 'workbook') {
+            return parseWorkbookAiOrLocal(fileSource, { project, env, fetchImpl });
+        }
+        text = fileSource.text;
+    }
+
+    const rawText = String(text || '');
+    if (!rawText.trim()) throw new Error('导入内容为空，请粘贴文本或上传文件。');
+    const format = fileSource?.format || 'text';
+    const lines = splitRosterInputLines(rawText);
+    if (hasRosterHeaderLine(lines[0])) {
+        const result = { ...analyzeDraftRows(parseRows(lines), project), source: 'local' };
+        return textParseMetadata(format, result);
     }
 
     try {
         const aiResult = await callRosterAi({ text: rawText, project, env, fetchImpl });
         const { rows: aiRows, anomalies } = normalizeAiRosterRows(aiResult);
         if (!aiRows.length) {
-            // AI returned empty — fall back to local
-            return { ...localRosterParse(rawText, project), source: 'local', aiEmpty: true };
+            const fallback = { ...localRosterParse(rawText, project), source: 'local', aiEmpty: true };
+            return textParseMetadata(format, fallback, { aiAttempted: true, aiCallCount: 1 });
         }
-        const normalized = aiRows.map((row, index) => normalizeDraftRow(row, index));
+        const normalized = aiRows.map((row, index) => normalizeDraftRow({ ...row, parseSource: 'ai' }, index));
         const analysis = analyzeDraftRows(normalized, project);
-        // Merge AI anomalies as extra issues
         anomalies.forEach(anomaly => {
             const rowIndex = Number(anomaly.row) || 0;
             const targetRow = analysis.draftRows[rowIndex] || analysis.draftRows[0];
@@ -878,16 +1282,15 @@ export async function parseRosterAiOrLocal({ text = '', file = null, project = {
             }
         });
         analysis.importReport = buildRosterImportReport(analysis);
-        return { ...analysis, source: 'ai' };
+        return textParseMetadata(format, { ...analysis, source: 'ai' }, { aiAttempted: true, aiCallCount: 1 });
     } catch (error) {
-        if (error instanceof RosterAiError && ['ai_not_configured', 'missing_fetch'].includes(error.reason)) {
-            return { ...localRosterParse(rawText, project), source: 'local' };
-        }
-        // Non-config AI errors: still fall back to local with a warning
         const result = localRosterParse(rawText, project);
-        result.warnings = [...(result.warnings || []), `AI 解析失败(${error.message})，已使用本地解析。`];
+        if (!(error instanceof RosterAiError && ['ai_not_configured', 'missing_fetch'].includes(error.reason))) {
+            result.warnings = [...(result.warnings || []), `AI 解析失败(${error.message})，已使用本地解析。`];
+        }
         result.source = 'local';
-        return result;
+        const aiCallCount = ['ai_not_configured', 'missing_fetch'].includes(error.reason) ? 0 : 1;
+        return textParseMetadata(format, result, { aiAttempted: true, aiCallCount });
     }
 }
 

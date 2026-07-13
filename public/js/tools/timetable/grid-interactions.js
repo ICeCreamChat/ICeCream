@@ -848,6 +848,12 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelector('#tt-roster-import-file')?.addEventListener('change', event => {
         controller.selectRosterImportFile(event.target.files?.[0] || null);
     });
+    container.querySelectorAll('[data-roster-sheet-toggle]').forEach(input => {
+        input.addEventListener('change', () => controller.toggleRosterSheet(
+            input.dataset.rosterSheetToggle || '',
+            Boolean(input.checked),
+        ));
+    });
     container.querySelectorAll('[data-roster-field]').forEach(input => {
         input.addEventListener('change', () => controller.updateRosterReviewField());
     });

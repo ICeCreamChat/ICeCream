@@ -1,3 +1,8 @@
+import {
+    timetableActivityTypeKey,
+    timetableResourceTypeKey,
+} from '../../../shared/timetable/lesson-metadata.js';
+
 const KINDS = ['teacher', 'class', 'subject', 'room'];
 const COLLECTIONS = {
     teacher: 'teachers',
@@ -180,22 +185,6 @@ function relevantLessonPlans(ir = {}, project = {}) {
     });
 }
 
-function activityMetadataKey(value) {
-    const key = text(value).toLowerCase();
-    if (/实验|lab/.test(key)) return 'experiment';
-    if (/新授|new/.test(key)) return 'new_lesson';
-    if (/答疑|tutorial/.test(key)) return 'tutorial';
-    if (/社团|club/.test(key)) return 'club';
-    return key;
-}
-
-function resourceMetadataKey(value) {
-    const key = text(value).toLowerCase();
-    if (/机房|计算机|computer/.test(key)) return 'computer_room';
-    if (/实验|lab/.test(key)) return 'lab';
-    return key;
-}
-
 export function assessConstraintIRExecutionReadiness(ir = {}, project = {}) {
     const readinessMessagePattern = /项目作息尚未配置|任课计划尚未标注/;
     const legacyPeriodMessagePattern = /节次\s+\d+-\d+\s+不在当前排课范围内/;
@@ -218,13 +207,13 @@ export function assessConstraintIRExecutionReadiness(ir = {}, project = {}) {
     const requestedActivities = list(ir.parameters?.activityTypes);
     const requestedResources = list(ir.parameters?.requiredResourceTypes);
     const plans = relevantLessonPlans(ir, project);
-    const activityKeys = new Set(requestedActivities.map(activityMetadataKey));
-    const resourceKeys = new Set(requestedResources.map(resourceMetadataKey));
+    const activityKeys = new Set(requestedActivities.map(timetableActivityTypeKey));
+    const resourceKeys = new Set(requestedResources.map(timetableResourceTypeKey));
     const hasActivityMetadata = !requestedActivities.length || plans.some(plan => (
-        list(plan.activityTypes).some(value => activityKeys.has(activityMetadataKey(value)))
+        list(plan.activityTypes).some(value => activityKeys.has(timetableActivityTypeKey(value)))
     ));
     const hasResourceMetadata = !requestedResources.length || plans.some(plan => (
-        list(plan.requiredResourceTypes).some(value => resourceKeys.has(resourceMetadataKey(value)))
+        list(plan.requiredResourceTypes).some(value => resourceKeys.has(timetableResourceTypeKey(value)))
     ));
     if (!missingPeriods.length) {
         if (!previousReadinessMessages.length && !previousPeriodWarnings.length) return ir;

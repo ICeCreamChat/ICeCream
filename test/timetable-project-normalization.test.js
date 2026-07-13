@@ -30,6 +30,26 @@ test('legacy timetable projects stay legacy and do not get complex fields by def
     assert.deepEqual(project.rooms, []);
 });
 
+test('normalizeTimetableProject shares lesson metadata aliases and preserves custom labels with spaces', () => {
+    const project = normalizeTimetableProject({
+        teachers: [{ id: 't-metadata', name: '程老师' }],
+        classes: [{ id: 'c-metadata', grade: '七年级', name: '1班' }],
+        subjects: [{ id: 's-metadata', name: '物理' }],
+        lessonPlans: [{
+            id: 'lp-metadata',
+            classId: 'c-metadata',
+            subjectId: 's-metadata',
+            teacherId: 't-metadata',
+            weeklyHours: 4,
+            activityTypes: ['复习课', '校本研修课'],
+            requiredResourceTypes: ['机房', 'Maker Space'],
+        }],
+    });
+
+    assert.deepEqual(project.lessonPlans[0].activityTypes, ['复习', '校本研修课']);
+    assert.deepEqual(project.lessonPlans[0].requiredResourceTypes, ['计算机教室', 'Maker Space']);
+});
+
 test('normalizeTimetableProject preserves singleton entity collections', () => {
     const project = normalizeTimetableProject({
         timetableModelVersion: 'complex_v1',

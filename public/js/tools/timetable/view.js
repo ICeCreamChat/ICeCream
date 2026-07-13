@@ -1,4 +1,10 @@
 import {
+    normalizeTimetableActivityTypes,
+    normalizeTimetableResourceTypes,
+    TIMETABLE_ACTIVITY_TYPE_OPTIONS,
+    TIMETABLE_RESOURCE_TYPE_OPTIONS,
+} from '../../../../shared/timetable/lesson-metadata.js';
+import {
     dayName,
     entityMaps,
     ensureOwnerSelection,
@@ -1149,12 +1155,14 @@ function renderRosterImportDialog(state) {
     const fileName = dialog.fileName || '选择 CSV / TXT / Excel 文件';
     const isReview = dialog.step === 'review';
     const dialogClass = `tt-roster-import-dialog${isReview ? ' tt-roster-import-dialog--review' : ''}`;
+    const sourceLabel = { ai: '智能辅助解析', mixed: '混合解析', local: '本地解析' }[dialog.source] || '';
+    const sourceTone = dialog.source === 'ai' || dialog.source === 'mixed' ? 'success' : 'neutral';
     return `
         <div class="tt-dialog-overlay" data-roster-import-close>
             <section class="${dialogClass}" id="tt-roster-import-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-roster-import-title">
                 <div class="tt-dialog-header">
                     <div>
-                        <span class="tt-eyebrow">任课数据${isReview && dialog.source ? ` · <span class="tt-badge tt-badge--${dialog.source === 'ai' ? 'success' : 'neutral'}">${dialog.source === 'ai' ? '智能辅助解析' : '本地解析'}</span>` : ''}</span>
+                        <span class="tt-eyebrow">任课数据${isReview && sourceLabel ? ` · <span class="tt-badge tt-badge--${sourceTone}">${sourceLabel}</span>` : ''}</span>
                         <h3 id="tt-roster-import-title">${isReview ? '检查任课数据' : '导入任课数据'}</h3>
                         <p>${isReview ? '检查解析后的任课表，可以增删改；确认后才会写入项目并清空旧课表。' : '上传文件、粘贴文本，或直接手动新增任课表。'}</p>
                     </div>
@@ -1319,6 +1327,9 @@ function rosterIssueEditorNavigation(dialog = {}, rows = [], editor = {}, issue 
 
 function rosterIssueSourceLabel(row, issue = {}, rowIndex = -1) {
     const sourceRow = issue.sourceRow || row?.sourceRow;
+    const sourceSheet = issue.sourceSheet || row?.sourceSheet;
+    if (sourceSheet && sourceRow) return `${sourceSheet} · 第 ${sourceRow} 行`;
+    if (sourceSheet) return sourceSheet;
     if (sourceRow) return `第 ${sourceRow} 行`;
     if (rowIndex >= 0) return `表格第 ${rowIndex + 1} 行`;
     return '全局';
@@ -1522,6 +1533,48 @@ const ROSTER_BLOCK_HELP_HTML = `
     <em>不确定时选“混合”；明确不要连堂选“单节”；需要连续时间选“双连堂”。</em>
 `;
 const ROSTER_BLOCK_TITLE = '单节：每次只排 1 节课；双连堂：每次连续排 2 节课，周课时建议为偶数；混合：单节和连堂都可。不确定时选“混合”；明确不要连堂选“单节”；需要连续时间选“双连堂”。';
+const ROSTER_ACTIVITY_HELP_HTML = '选择这条任课计划的主要课型。智能约束助手会用该标签定位课程。';
+const ROSTER_RESOURCE_HELP_HTML = '选择这条任课计划的主要资源类型。该标签供智能约束匹配，不会单独指定教室。';
+
+function rosterMetadataConfig(field) {
+    if (field === 'activityTypes') {
+        return {
+            label: '课型',
+            options: TIMETABLE_ACTIVITY_TYPE_OPTIONS,
+            normalize: normalizeTimetableActivityTypes,
+        };
+    }
+    if (field === 'requiredResourceTypes') {
+        return {
+            label: '资源',
+            options: TIMETABLE_RESOURCE_TYPE_OPTIONS,
+            normalize: normalizeTimetableResourceTypes,
+        };
+    }
+    return null;
+}
+
+function renderRosterMetadataControl(row = {}, field = '') {
+    const config = rosterMetadataConfig(field);
+    if (!config) return '';
+    const values = config.normalize(row[field]);
+    const standardValues = new Set(config.options.map(option => option.value));
+    const standardValue = values.length === 1 && standardValues.has(values[0]) ? values[0] : '';
+    const importedValue = values.length && !standardValue ? values.join('、') : '';
+    const selectedValue = standardValue || importedValue;
+    const summary = selectedValue || '未选择';
+    const title = importedValue ? `${summary}（导入值）` : summary;
+    return `
+        <select class="tt-roster-review-field" data-roster-field="${escapeAttr(field)}"
+            aria-label="${escapeAttr(config.label)}" title="${escapeAttr(title)}">
+            <option value="" ${selectedValue ? '' : 'selected'}>未选择</option>
+            ${config.options.map(option => `
+                <option value="${escapeAttr(option.value)}" ${selectedValue === option.value ? 'selected' : ''}>${escapeHtml(option.label)}</option>
+            `).join('')}
+            ${importedValue ? `<option value="${escapeAttr(importedValue)}" selected>${escapeHtml(title)}</option>` : ''}
+        </select>
+    `;
+}
 
 function renderRosterHeaderHelp(label, id, ariaLabel, contentHtml) {
     return `
@@ -1535,11 +1588,51 @@ function renderRosterHeaderHelp(label, id, ariaLabel, contentHtml) {
     `;
 }
 
+function renderRosterSheetReviews(dialog = {}) {
+    const sheets = Array.isArray(dialog.sheetReviews) ? dialog.sheetReviews : [];
+    const summary = dialog.parseSummary || null;
+    if (!sheets.length && !summary) return '';
+    const format = String(summary?.format || '').toUpperCase();
+    const parseFacts = [
+        format,
+        summary ? `${summary.includedSheetCount || 0}/${summary.sheetCount || 0} 个工作表` : '',
+        summary ? `本地 ${summary.localRowCount || 0} 行` : '',
+        summary?.aiAttempted ? `AI ${summary.aiRowCount || 0} 行 / ${summary.aiCallCount || 0} 次` : 'AI 未调用',
+    ].filter(Boolean);
+    return `
+        <section class="tt-roster-sheet-review" aria-label="工作表复核">
+            <div class="tt-roster-sheet-review-head">
+                <strong><i data-lucide="sheets"></i><span>工作表</span></strong>
+                <span>${escapeHtml(parseFacts.join(' · '))}</span>
+            </div>
+            ${sheets.length ? `
+                <div class="tt-roster-sheet-options">
+                    ${sheets.map(sheet => {
+                        const selectable = Number(sheet.rowCount || 0) > 0 && sheet.status !== 'ignored';
+                        const source = sheet.parseSource === 'ai' ? 'AI' : sheet.parseSource === 'local' ? '本地' : '未识别';
+                        return `
+                            <label class="tt-roster-sheet-option ${sheet.selected ? 'is-selected' : ''} ${selectable ? '' : 'is-disabled'}">
+                                <input type="checkbox" data-roster-sheet-toggle="${escapeAttr(sheet.id)}" ${sheet.selected ? 'checked' : ''} ${selectable ? '' : 'disabled'}>
+                                <span class="tt-roster-sheet-option-main">
+                                    <strong>${escapeHtml(sheet.name)}</strong>
+                                    <small>${escapeHtml(`${source} · ${sheet.rowCount || 0} 行`)}</small>
+                                </span>
+                                <span class="tt-roster-sheet-reason" title="${escapeAttr(sheet.reason || '')}">${escapeHtml(sheet.reason || '')}</span>
+                            </label>
+                        `;
+                    }).join('')}
+                </div>
+            ` : ''}
+        </section>
+    `;
+}
+
 function renderRosterReview(dialog) {
     const rows = dialog.draftRows || [];
     const issues = dialog.issues || [];
     const blocking = Boolean(dialog.hasBlockingIssues || issues.some(issue => issue.severity === 'error'));
     return `
+        ${renderRosterSheetReviews(dialog)}
         ${dialog.stats ? renderRosterStats(dialog.stats) : ''}
         ${renderRosterImportReport(dialog.importReport)}
         ${renderRosterIssueList(dialog, rows, issues)}
@@ -1556,8 +1649,8 @@ function renderRosterReview(dialog) {
                     <col class="tt-roster-col-hours">
                     <col class="tt-roster-col-block">
                     <col class="tt-roster-col-room">
-                    <col class="tt-roster-col-tags">
-                    <col class="tt-roster-col-tags">
+                    <col class="tt-roster-col-activity">
+                    <col class="tt-roster-col-resource">
                     <col class="tt-roster-col-issue">
                     <col class="tt-roster-col-action">
                 </colgroup>
@@ -1573,8 +1666,8 @@ function renderRosterReview(dialog) {
                         <th>${renderRosterHeaderHelp('周课时', 'tt-roster-weekly-hours-help-text', '查看周课时说明', ROSTER_WEEKLY_HOURS_HELP_HTML)}</th>
                         <th>${renderRosterHeaderHelp('连堂', 'tt-roster-block-help-text', '查看连堂说明', ROSTER_BLOCK_HELP_HTML)}</th>
                         <th>教室</th>
-                        <th>课型</th>
-                        <th>资源</th>
+                        <th>${renderRosterHeaderHelp('课型', 'tt-roster-activity-help-text', '查看课型说明', ROSTER_ACTIVITY_HELP_HTML)}</th>
+                        <th>${renderRosterHeaderHelp('资源', 'tt-roster-resource-help-text', '查看资源说明', ROSTER_RESOURCE_HELP_HTML)}</th>
                         <th>问题</th>
                         <th>操作</th>
                     </tr>
@@ -1624,12 +1717,15 @@ function renderRosterImportReport(report) {
             </div>
             ${visibleEntries.length ? `
                 <div class="tt-rule-warning-list">
-                    ${visibleEntries.map(item => `
+                    ${visibleEntries.map(item => {
+                        const source = item.source || {};
+                        const sourceLabel = source.sheet && source.row ? `${source.sheet} · 第 ${source.row} 行` : source.sheet || (source.row ? `第 ${source.row} 行` : '');
+                        return `
                         <div class="tt-rule-warning ${categoryClass(item.category)}">
                             <i data-lucide="${categoryIcon(item.category)}"></i>
-                            <span>${escapeHtml(item.reason || item.field || item.category)}</span>
+                            <span>${sourceLabel ? `<b>${escapeHtml(sourceLabel)}</b> · ` : ''}${escapeHtml(item.reason || item.field || item.category)}</span>
                         </div>
-                    `).join('')}
+                    `;}).join('')}
                 </div>
             ` : ''}
         </section>
@@ -1641,15 +1737,19 @@ function renderRosterReviewRow(row, index = 0) {
     const hasError = issues.some(issue => issue.severity === 'error');
     const issueText = issues.map(issue => issue.message).join('；') || '无';
     const rowNumber = row.sourceRow || index + 1;
-    const rowNumberTitle = row.sourceRow ? `源表第 ${row.sourceRow} 行` : `当前第 ${index + 1} 行`;
-    const input = (field, value, type = 'text', extraAttrs = '') => `
-        <input class="tt-roster-review-field" data-roster-field="${escapeAttr(field)}" type="${escapeAttr(type)}" value="${escapeAttr(value ?? '')}" ${extraAttrs}>
+    const rowNumberTitle = row.sourceRow
+        ? row.sourceSheet ? `${row.sourceSheet} · 第 ${row.sourceRow} 行` : `源表第 ${row.sourceRow} 行`
+        : `当前第 ${index + 1} 行`;
+    const input = (field, value, type = 'text', extraAttrs = '', title = value) => `
+        <input class="tt-roster-review-field" data-roster-field="${escapeAttr(field)}" type="${escapeAttr(type)}" value="${escapeAttr(value ?? '')}" ${extraAttrs} title="${escapeAttr(title ?? '')}">
     `;
     return `
         <tr class="tt-roster-review-row ${hasError ? 'tt-roster-review-row--error' : ''}"
             data-roster-review-row="${escapeAttr(row.id)}"
+            data-roster-source-sheet-id="${escapeAttr(row.sourceSheetId || '')}"
             data-roster-source-row="${escapeAttr(row.sourceRow || '')}"
-            data-roster-source-sheet="${escapeAttr(row.sourceSheet || '')}">
+            data-roster-source-sheet="${escapeAttr(row.sourceSheet || '')}"
+            data-roster-parse-source="${escapeAttr(row.parseSource || 'local')}">
             <td data-label="行号"><span class="tt-roster-review-row-number" title="${escapeAttr(rowNumberTitle)}">${escapeHtml(rowNumber)}</span></td>
             <td data-label="年级">${input('grade', row.grade)}</td>
             <td data-label="班级">${input('className', row.className)}</td>
@@ -1664,7 +1764,7 @@ function renderRosterReviewRow(row, index = 0) {
             </td>
             <td data-label="标签">${input('subjectTags', Array.isArray(row.subjectTags) ? row.subjectTags.join('、') : row.subjectTags)}</td>
             <td data-label="教师">${input('teacherName', row.teacherName)}</td>
-            <td data-label="周课时">${input('weeklyHours', row.weeklyHours, 'number', `aria-label="周课时" title="${escapeAttr(ROSTER_WEEKLY_HOURS_TITLE)}"`)}</td>
+            <td data-label="周课时">${input('weeklyHours', row.weeklyHours, 'number', 'aria-label="周课时"', ROSTER_WEEKLY_HOURS_TITLE)}</td>
             <td data-label="连堂">
                 <select class="tt-roster-review-field" data-roster-field="blockPreference" aria-label="连堂方式" title="${escapeAttr(ROSTER_BLOCK_TITLE)}">
                     <option value="single" ${row.blockPreference === 'single' ? 'selected' : ''}>单节</option>
@@ -1673,8 +1773,8 @@ function renderRosterReviewRow(row, index = 0) {
                 </select>
             </td>
             <td data-label="教室">${input('roomName', row.roomName)}</td>
-            <td data-label="课型">${input('activityTypes', Array.isArray(row.activityTypes) ? row.activityTypes.join('、') : row.activityTypes)}</td>
-            <td data-label="资源">${input('requiredResourceTypes', Array.isArray(row.requiredResourceTypes) ? row.requiredResourceTypes.join('、') : row.requiredResourceTypes)}</td>
+            <td data-label="课型">${renderRosterMetadataControl(row, 'activityTypes')}</td>
+            <td data-label="资源">${renderRosterMetadataControl(row, 'requiredResourceTypes')}</td>
             <td data-label="问题"><span class="tt-roster-review-issue" title="${escapeAttr(issueText)}">${escapeHtml(issueText)}</span></td>
             <td data-label="操作">
                 <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-roster-delete-row="${escapeAttr(row.id)}" title="删除此行" aria-label="删除此行"><i data-lucide="trash-2"></i></button>

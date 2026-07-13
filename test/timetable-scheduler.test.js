@@ -2467,6 +2467,18 @@ test('timetable roster parser imports teachers, classes, subjects and lesson pla
     assert.equal(parsed.lessonPlans.find(plan => plan.subjectName === '体育').blockPreference, 'double');
 });
 
+test('timetable roster parser normalizes lesson metadata aliases and keeps school-defined values', () => {
+    const parsed = parseTimetableRosterText([
+        '年级,班级,课程,教师,周课时,连堂,课型,教学资源',
+        '七年级,1班,物理,程老师,4,单节,复习课、校本研修课,机房、Maker Space',
+    ].join('\n'));
+    const plan = parsed.lessonPlans[0];
+
+    assert.deepEqual(plan.activityTypes, ['复习', '校本研修课']);
+    assert.deepEqual(plan.requiredResourceTypes, ['计算机教室', 'Maker Space']);
+    assert.equal(parsed.rooms.length, 0);
+});
+
 test('timetable roster parser preserves subject category and tags from reviewed rows', () => {
     const result = parseTimetableRosterText([
         'grade,class,subject,teacher,hours,block,room,subject category,subject tags',

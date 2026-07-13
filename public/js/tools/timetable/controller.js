@@ -260,9 +260,27 @@ export class TimetablePlannerController {
             this.state.selectedOwnerId = ensureOwnerSelection(this.state);
         }
         const periodTimeFocus = this.capturePeriodTimeFocus(container);
+        const rosterImportDialog = container.querySelector?.('#tt-roster-import-dialog');
+        const rosterImportDialogScroll = rosterImportDialog
+            ? { left: rosterImportDialog.scrollLeft, top: rosterImportDialog.scrollTop }
+            : null;
+        const rosterReviewWrap = container.querySelector?.('.tt-roster-review-wrap');
+        const rosterReviewScroll = rosterReviewWrap
+            ? { left: rosterReviewWrap.scrollLeft, top: rosterReviewWrap.scrollTop }
+            : null;
         container.innerHTML = renderWorkbench(this.state);
         bindGridInteractions(container, this, this.state);
         this.syncRangePopoverViewportListeners();
+        const nextRosterImportDialog = container.querySelector?.('#tt-roster-import-dialog');
+        if (nextRosterImportDialog && rosterImportDialogScroll) {
+            nextRosterImportDialog.scrollLeft = rosterImportDialogScroll.left;
+            nextRosterImportDialog.scrollTop = rosterImportDialogScroll.top;
+        }
+        const nextRosterReviewWrap = container.querySelector?.('.tt-roster-review-wrap');
+        if (nextRosterReviewWrap && rosterReviewScroll) {
+            nextRosterReviewWrap.scrollLeft = rosterReviewScroll.left;
+            nextRosterReviewWrap.scrollTop = rosterReviewScroll.top;
+        }
         this.restorePeriodTimeFocus(container, periodTimeFocus);
         window.lucide?.createIcons();
     }
@@ -3885,6 +3903,10 @@ export class TimetablePlannerController {
             fileName: '',
             text: '',
             draftRows: [],
+            allDraftRows: [],
+            sheetReviews: [],
+            parseSummary: null,
+            source: null,
             stats: null,
             warnings: [],
             issues: [],
@@ -3900,7 +3922,8 @@ export class TimetablePlannerController {
 
     openRosterImport(mode = 'file') {
         const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
-        const hasDraftRows = this.hasRecoverableRosterReviewDraft(current.draftRows);
+        const hasDraftRows = this.hasRecoverableRosterReviewDraft(current.draftRows)
+            || this.hasRecoverableRosterReviewDraft(current.allDraftRows);
         const hasTextDraft = Boolean(String(current.text || '').trim());
         const hasFileDraft = Boolean(this.rosterImportFile);
         if (hasDraftRows) {
@@ -4113,8 +4136,10 @@ export class TimetablePlannerController {
     normalizeRosterDraftRow(row = {}, index = 0) {
         return {
             id: row.id || this.nextRosterDraftId(),
+            sourceSheetId: String(row.sourceSheetId ?? row.source?.sheetId ?? '').trim(),
             sourceRow: String(row.sourceRow ?? row.source?.row ?? '').trim(),
             sourceSheet: String(row.sourceSheet ?? row.source?.sheet ?? '').trim(),
+            parseSource: row.parseSource === 'ai' ? 'ai' : 'local',
             grade: String(row.grade ?? '').trim(),
             className: String(row.className ?? '').trim(),
             subjectName: String(row.subjectName ?? '').trim(),
@@ -4228,6 +4253,7 @@ export class TimetablePlannerController {
     }
 
     setRosterReviewState(payload = {}) {
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
         const analyzed = this.analyzeRosterDraftRows(payload.draftRows || []);
         const issues = Array.isArray(payload.issues) && payload.issues.length ? payload.issues : analyzed.issues;
         const warnings = Array.isArray(payload.warnings) && payload.warnings.length ? payload.warnings : analyzed.warnings;
@@ -4238,12 +4264,32 @@ export class TimetablePlannerController {
         const visibleIssueEditor = editorRowId && draftRows.some(row => String(row.id || '') === editorRowId)
             ? issueEditor
             : null;
+        const hasSheetReviews = Object.prototype.hasOwnProperty.call(payload, 'sheetReviews');
+        const sheetReviews = hasSheetReviews ? payload.sheetReviews || [] : current.sheetReviews || [];
+        const hasAllDraftRows = Object.prototype.hasOwnProperty.call(payload, 'allDraftRows');
+        const selectedSheetIds = new Set(sheetReviews.filter(sheet => sheet.selected).map(sheet => String(sheet.id || '')));
+        const preservedUnselectedRows = (current.allDraftRows || []).filter(row => {
+            const sourceSheetId = String(row.sourceSheetId || '');
+            return sourceSheetId && !selectedSheetIds.has(sourceSheetId);
+        });
+        const allDraftRowsSource = hasAllDraftRows
+            ? payload.allDraftRows || []
+            : hasSheetReviews
+                ? payload.draftRows || []
+                : sheetReviews.length && payload.draftRows
+                    ? [...preservedUnselectedRows, ...draftRows]
+                    : current.allDraftRows?.length
+                        ? current.allDraftRows
+                    : draftRows;
         this.state.rosterImport = {
-            ...(this.state.rosterImport || {}),
+            ...current,
             open: true,
             step: 'review',
-            source: payload.source || this.state.rosterImport?.source || null,
+            source: payload.source || current.source || null,
             draftRows,
+            allDraftRows: allDraftRowsSource.map((row, index) => this.normalizeRosterDraftRow(row, index)),
+            sheetReviews,
+            parseSummary: Object.prototype.hasOwnProperty.call(payload, 'parseSummary') ? payload.parseSummary : current.parseSummary,
             stats: payload.stats || analyzed.stats,
             warnings,
             issues,
@@ -4262,8 +4308,10 @@ export class TimetablePlannerController {
             const value = field => row.querySelector(`[data-roster-field="${field}"]`)?.value?.trim() || '';
             return {
                 id: row.dataset.rosterReviewRow || this.nextRosterDraftId(),
+                sourceSheetId: row.dataset.rosterSourceSheetId || '',
                 sourceRow: row.dataset.rosterSourceRow || '',
                 sourceSheet: row.dataset.rosterSourceSheet || '',
+                parseSource: row.dataset.rosterParseSource || 'local',
                 grade: value('grade'),
                 className: value('className'),
                 subjectName: value('subjectName'),
@@ -4552,8 +4600,98 @@ export class TimetablePlannerController {
         return this.locateRosterIssue(rowId, field);
     }
 
+    buildRosterReviewImportReport(analyzed = {}) {
+        const issuesByRow = new Map();
+        (analyzed.issues || []).forEach(issue => {
+            const rowId = String(issue.rowId || '').trim();
+            if (!rowId) return;
+            if (!issuesByRow.has(rowId)) issuesByRow.set(rowId, []);
+            issuesByRow.get(rowId).push(issue);
+        });
+        const entries = [];
+        (analyzed.draftRows || []).forEach(row => {
+            const rowIssues = issuesByRow.get(String(row.id || '')) || [];
+            const category = rowIssues.some(issue => issue.severity === 'error')
+                ? 'dropped'
+                : rowIssues.length ? 'review' : 'kept';
+            entries.push({
+                category,
+                source: { sheet: row.sourceSheet || null, row: row.sourceRow || null, rowId: row.id || null },
+                field: rowIssues[0]?.field || 'row',
+                reason: rowIssues[0]?.message || '任课行已保留。',
+            });
+        });
+        const summary = { total: entries.length, kept: 0, degraded: 0, dropped: 0, review: 0 };
+        entries.forEach(entry => { summary[entry.category] += 1; });
+        return { sourceKind: 'roster', summary, entries, hasIssues: entries.some(entry => entry.category !== 'kept') };
+    }
+
+    reconcileRosterAllRows(visibleRows = []) {
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+        const selectedSheetIds = new Set((current.sheetReviews || []).filter(sheet => sheet.selected).map(sheet => String(sheet.id || '')));
+        const currentAll = current.allDraftRows?.length ? current.allDraftRows : current.draftRows || [];
+        const preserved = currentAll.filter(row => {
+            const sheetId = String(row.sourceSheetId || '');
+            return sheetId && !selectedSheetIds.has(sheetId);
+        });
+        return [...preserved, ...visibleRows].map((row, index) => this.normalizeRosterDraftRow(row, index));
+    }
+
+    updateRosterParseSummary(sheetReviews = [], rows = []) {
+        const current = this.state.rosterImport?.parseSummary;
+        if (!current) return null;
+        const selected = sheetReviews.filter(sheet => sheet.selected);
+        return {
+            ...current,
+            includedSheetCount: selected.length,
+            includedSheetNames: selected.map(sheet => sheet.name),
+            localRowCount: rows.filter(row => row.parseSource !== 'ai').length,
+            aiRowCount: rows.filter(row => row.parseSource === 'ai').length,
+        };
+    }
+
+    toggleRosterSheet(sheetId = '', selected = false) {
+        const normalizedSheetId = String(sheetId || '').trim();
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+        if (!normalizedSheetId || !(current.sheetReviews || []).some(sheet => sheet.id === normalizedSheetId && sheet.rowCount > 0)) return false;
+        const visibleRows = this.readRosterReviewRows();
+        const allDraftRows = this.reconcileRosterAllRows(visibleRows);
+        const sheetReviews = (current.sheetReviews || []).map(sheet => (
+            sheet.id === normalizedSheetId ? { ...sheet, selected: Boolean(selected) } : sheet
+        ));
+        const selectedIds = new Set(sheetReviews.filter(sheet => sheet.selected).map(sheet => sheet.id));
+        const nextRows = allDraftRows.filter(row => !row.sourceSheetId || selectedIds.has(row.sourceSheetId));
+        const analyzed = this.analyzeRosterDraftRows(nextRows);
+        const hasLocalRows = analyzed.draftRows.some(row => row.parseSource !== 'ai');
+        const hasAiRows = analyzed.draftRows.some(row => row.parseSource === 'ai');
+        const source = hasLocalRows && hasAiRows ? 'mixed' : hasAiRows ? 'ai' : hasLocalRows ? 'local' : current.source;
+        this.setRosterReviewState({
+            ...analyzed,
+            source,
+            allDraftRows,
+            sheetReviews,
+            parseSummary: this.updateRosterParseSummary(sheetReviews, analyzed.draftRows),
+            importReport: this.buildRosterReviewImportReport(analyzed),
+            issueListExpanded: current.issueListExpanded,
+            issueEditor: null,
+        });
+        this.render();
+        return true;
+    }
+
     refreshRosterReviewFromRows(rows) {
-        this.setRosterReviewState(this.analyzeRosterDraftRows(rows));
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+        const analyzed = this.analyzeRosterDraftRows(rows);
+        const allDraftRows = this.reconcileRosterAllRows(analyzed.draftRows);
+        this.setRosterReviewState({
+            ...analyzed,
+            source: current.source,
+            allDraftRows,
+            sheetReviews: current.sheetReviews || [],
+            parseSummary: this.updateRosterParseSummary(current.sheetReviews || [], analyzed.draftRows),
+            importReport: this.buildRosterReviewImportReport(analyzed),
+            issueListExpanded: current.issueListExpanded,
+        });
         this.render();
     }
 
