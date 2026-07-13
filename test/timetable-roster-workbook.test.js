@@ -44,6 +44,28 @@ function aiResponse(payload) {
     };
 }
 
+function naturalRosterText(rows = []) {
+    const categoryLabel = {
+        main: '主科',
+        lab: '实验课程',
+        quality: '活动/场地课程',
+        normal: '普通课程',
+    };
+    const blockLabel = {
+        single: '不要求连堂，按单节课安排',
+        double: '要求双连堂安排',
+        mixed: '可单节或连堂灵活安排',
+    };
+    return rows.map(row => [
+        `${row.grade}${row.className}的${row.subjectName}由${row.teacherName}老师任教`,
+        `每周安排${row.weeklyHours}课时`,
+        blockLabel[row.blockPreference] || blockLabel.single,
+        row.roomName ? `上课地点为${row.roomName.replace(/、/g, '或')}` : '',
+        `课程类型为${categoryLabel[row.subjectCategory] || '普通课程'}`,
+        row.subjectTags?.length ? `课程标签为${row.subjectTags.join('、')}` : '',
+    ].filter(Boolean).join('，') + '。').join('\n');
+}
+
 test('real school roster workbook keeps exact provenance and deterministic baseline', async () => {
     const file = {
         filename: '真实学校整学期任课数据.xlsx',
@@ -109,6 +131,101 @@ test('real school roster workbook keeps exact provenance and deterministic basel
     assert.equal(imported.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('实验室')).length, 50);
     assert.equal(imported.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('计算机教室')).length, 30);
     assert.equal(imported.lessonPlans[179].allowedRoomIds.length, 2);
+});
+
+test('real school roster natural-language text matches the workbook baseline without AI', async () => {
+    const file = {
+        filename: '真实学校整学期任课数据.xlsx',
+        buffer: fs.readFileSync('真实学校整学期任课数据.xlsx'),
+    };
+    const workbookPreview = previewTimetableRosterFile(file);
+    const text = naturalRosterText(workbookPreview.draftRows);
+    let aiCalls = 0;
+    const preview = await parseRosterAiOrLocal({
+        text,
+        project: {},
+        env: { DEEPSEEK_API_KEY: 'configured-but-unused' },
+        fetchImpl: async () => {
+            aiCalls += 1;
+            throw new Error('high-confidence natural roster text must not call AI');
+        },
+    });
+
+    assert.equal(aiCalls, 0);
+    assert.equal(preview.source, 'local');
+    assert.deepEqual(preview.parseSummary, {
+        format: 'text',
+        sheetCount: 0,
+        includedSheetCount: 0,
+        includedSheetNames: [],
+        localRowCount: 360,
+        aiRowCount: 0,
+        unresolvedRowCount: 0,
+        aiAttempted: false,
+        aiCallCount: 0,
+    });
+    assert.deepEqual(preview.stats, {
+        classCount: 30,
+        teacherCount: 62,
+        subjectCount: 14,
+        planCount: 360,
+        totalLessons: 900,
+        blockLessons: 160,
+        fixedRoomCount: 43,
+        issueCount: 0,
+    });
+    assert.deepEqual(preview.importReport.summary, { total: 360, kept: 360, degraded: 0, dropped: 0, review: 0 });
+    assert.deepEqual(
+        [preview.draftRows[0], preview.draftRows[179], preview.draftRows[359]].map(row => [
+            Number(row.sourceRow), row.grade, row.className, row.subjectName, row.teacherName,
+            Number(row.weeklyHours), row.blockPreference, row.roomName,
+        ]),
+        [
+            [1, '七年级', 'G7-1班', '语文', '刘书涵', 5, 'single', 'G7-01本班教室'],
+            [180, '八年级', 'G8-5班', '物理', '余思齐', 2, 'mixed', '物理实验室A、物理实验室B'],
+            [360, '九年级', 'G9-10班', '劳动', '顾安然', 1, 'single', '劳动实践室'],
+        ],
+    );
+    assert.equal(preview.draftRows.filter(row => row.activityTypes.includes('实验课')).length, 50);
+    assert.equal(preview.draftRows.filter(row => row.requiredResourceTypes.includes('实验室')).length, 50);
+    assert.equal(preview.draftRows.filter(row => row.requiredResourceTypes.includes('计算机教室')).length, 30);
+});
+
+test('long unrecognized roster text is sent to AI in bounded line batches without truncation', async () => {
+    const text = Array.from({ length: 91 }, (_, index) => `自定义任课记录${index + 1}，等待智能识别。`).join('\n');
+    let calls = 0;
+    const preview = await parseRosterAiOrLocal({
+        text,
+        project: {},
+        env: { DEEPSEEK_API_KEY: 'test-key' },
+        fetchImpl: async (_url, options) => {
+            calls += 1;
+            const body = JSON.parse(options.body);
+            const userMessage = body.messages[1].content;
+            assert.equal(userMessage.length <= 10_000, true);
+            assert.equal(body.max_tokens, 8192);
+            const sourceRows = [...userMessage.matchAll(/\[第(\d+)行\]/g)].map(match => Number(match[1]));
+            return aiResponse({
+                draftRows: sourceRows.map(sourceRow => ({
+                    sourceRow,
+                    grade: '七年级',
+                    className: `${sourceRow}班`,
+                    subjectName: '校本课程',
+                    teacherName: `教师${sourceRow}`,
+                    weeklyHours: 2,
+                    blockPreference: 'single',
+                })),
+            });
+        },
+    });
+
+    assert.equal(calls, 3);
+    assert.equal(preview.source, 'ai');
+    assert.equal(preview.draftRows.length, 91);
+    assert.equal(preview.parseSummary.aiAttempted, true);
+    assert.equal(preview.parseSummary.aiCallCount, 3);
+    assert.equal(preview.parseSummary.unresolvedRowCount, 0);
+    assert.deepEqual(preview.draftRows.map(row => Number(row.sourceRow)), Array.from({ length: 91 }, (_, index) => index + 1));
 });
 
 test('reader parses genuine BIFF8 XLS and quoted CSV through the same workbook model', () => {

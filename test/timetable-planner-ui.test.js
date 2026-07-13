@@ -10505,7 +10505,7 @@ test('timetable roster import controller exposes modal workflow methods and bind
   assert.match(styles, /\.tt-roster-import-manual-preview\s*{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);[\s\S]*align-content:\s*center;[\s\S]*min-height:\s*140px;[\s\S]*height:\s*100%;/);
   assert.doesNotMatch(styles, /\.tt-import-mode-tabs\s*{/);
   assert.match(styles, /\.tt-roster-import-dialog--review\s*\{[\s\S]*--tt-dialog-width:\s*1600px;[\s\S]*width:\s*min\(var\(--tt-dialog-width\),\s*calc\(100vw - 24px\)\);[\s\S]*max-width:\s*calc\(100vw - 24px\);/);
-  assert.match(styles, /\.tt-roster-review-wrap\s*\{[^}]*overflow:\s*visible;[^}]*max-width:\s*100%;/);
+  assert.match(styles, /\.tt-roster-review-wrap\s*\{[^}]*overflow:\s*clip;[^}]*max-width:\s*100%;/);
   assert.match(styles, /\.tt-roster-review-table\s*\{[^}]*width:\s*100%;[^}]*min-width:\s*0;[^}]*table-layout:\s*fixed;/);
   assert.match(styles, /\.tt-roster-col-row-number\s*\{[^}]*width:\s*48px;/);
   assert.match(styles, /\.tt-roster-col-issue\s*\{[^}]*width:\s*52px;/);
@@ -10744,7 +10744,7 @@ test('timetable dialogs expand to review content on desktop and stay constrained
   assert.match(styles, /\.tt-period-time-dialog\s*{[\s\S]*--tt-dialog-width:\s*960px;[\s\S]*--tt-dialog-max-height:\s*820px;/);
   assert.match(styles, /\.tt-publish-dialog\s*{[\s\S]*--tt-dialog-width:\s*640px;[\s\S]*--tt-dialog-max-height:\s*760px;/);
   assert.match(styles, /\.tt-publication-history-dialog\s*{[\s\S]*--tt-dialog-width:\s*920px;[\s\S]*--tt-dialog-max-height:\s*820px;/);
-  assert.match(styles, /\.tt-roster-review-wrap\s*\{[^}]*overflow:\s*visible;[^}]*max-width:\s*100%;/);
+  assert.match(styles, /\.tt-roster-review-wrap\s*\{[^}]*overflow:\s*clip;[^}]*max-width:\s*100%;/);
   assert.match(styles, /\.tt-period-time-review\s*{[\s\S]*overflow:\s*auto;[\s\S]*max-width:\s*100%;[\s\S]*min-height:\s*0;/);
   // 已删除响应式 CSS 中对 .tt-rule-review-dialog 的断言
   assert.match(styles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-roster-import-dialog,[\s\S]*\.tt-period-time-dialog,[\s\S]*\.tt-publish-dialog,[\s\S]*\.tt-publication-history-dialog\s*{[\s\S]*width:\s*100%;[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;/);

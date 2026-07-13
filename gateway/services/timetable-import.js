@@ -14,6 +14,7 @@ import { readRosterFileSource } from './timetable-roster-workbook.js';
 const PALETTE = ['#14b8a6', '#60a5fa', '#f59e0b', '#f97316', '#a78bfa', '#22c55e', '#ef4444', '#06b6d4'];
 const MAX_ROSTER_AI_CALLS = 8;
 const MAX_ROSTER_AI_INPUT_CHARS = 10_000;
+const MAX_ROSTER_AI_BATCH_ROWS = 45;
 const MAX_HEADER_SCAN_ROWS = 30;
 const REQUIRED_ROSTER_FIELDS = ['className', 'subjectName', 'teacherName'];
 const AI_HEADER_FIELDS = new Set([
@@ -31,6 +32,7 @@ const AI_HEADER_FIELDS = new Set([
 ]);
 const COMMON_ROSTER_SUBJECTS = [
     '道德与法治', '信息技术', '综合实践', '劳动技术', '心理健康',
+    '道法', '信息',
     '语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理', '政治',
     '体育', '音乐', '美术', '科学', '劳动', '阅读', '书法', '班会',
 ];
@@ -275,8 +277,9 @@ function hasRosterHeaderLine(line = '') {
 }
 
 function isTableLikeRosterLine(line = '') {
+    if (/[。！？]|(?:任教|授课|每周|一周|上课地点|课程类型|课程标签)/.test(line)) return false;
     const parts = splitLine(line).filter(Boolean);
-    return parts.length >= 4;
+    return parts.length >= 5 && parseWeeklyHours(parts[4]) > 0;
 }
 
 function shouldParseRosterAsTable(lines = []) {
@@ -286,39 +289,76 @@ function shouldParseRosterAsTable(lines = []) {
 }
 
 function extractNaturalClass(text = '') {
-    const gradePattern = '(G\\d+|g\\d+|[零〇一二两三四五六七八九十\\d]+年级|[初高][一二三123])';
-    const match = cleanCell(text).match(new RegExp(`${gradePattern}\\s*[-_－—]?\\s*([零〇一二两三四五六七八九十\\d]+)\\s*班`));
+    const source = cleanCell(text);
+    const gradePattern = '([零〇一二两三四五六七八九十\\d]+年级|[初高][一二三123])';
+    const codedClass = '(G\\d+\\s*[-_－—]\\s*[零〇一二两三四五六七八九十\\d]+\\s*班)';
+    const ordinaryClass = '([零〇一二两三四五六七八九十\\d]+\\s*班)';
+    const match = source.match(new RegExp(`(?:${gradePattern}\\s*)?${codedClass}`, 'i'))
+        || source.match(new RegExp(`${gradePattern}\\s*${ordinaryClass}`, 'i'));
     if (!match) return null;
+    const grade = cleanCell(match[1] || match[0].match(/^G\\d+/i)?.[0]);
+    const className = cleanCell(match[2] || match[3])
+        .replace(/\\s*[-_－—]\\s*/g, '-')
+        .replace(/\\s+班$/g, '班');
     return {
-        grade: match[1],
-        className: `${match[2]}班`,
-        rest: text.slice(match.index + match[0].length),
+        grade,
+        className,
+        rest: source.slice(match.index + match[0].length),
     };
 }
 
 function extractNaturalWeeklyHours(text = '') {
-    const match = cleanCell(text).match(/(?:每周|一周|周课时|周课|每星期|一星期)\s*([零〇一二两三四五六七八九十\d]+)\s*(?:节|课时)?/);
+    const match = cleanCell(text).match(/(?:每周|一周|周课时|周课|每星期|一星期)\s*(?:安排|设置|开设|为|共|需要)?\s*([零〇一二两三四五六七八九十\d]+)\s*(?:节|课时)?/);
     return match ? parseChineseInteger(match[1]) : 0;
 }
 
 function extractNaturalBlockPreference(text = '') {
     const value = cleanCell(text);
-    if (/混合|单双|单节和连堂/.test(value)) return 'mixed';
-    if (/双连堂|连堂|连续\s*(?:2|两|二)\s*节/.test(value)) return 'double';
-    if (/单节|不要连堂|不连堂/.test(value)) return 'single';
+    if (/不(?:要求|需|需要)?连堂|不要连堂|不连堂|按单节|单节课安排/.test(value)) return 'single';
+    if (/混合|单双|单节(?:和|或|与)连堂|连堂或单节/.test(value)) return 'mixed';
+    if (/双连堂|连续\s*(?:2|两|二)\s*节|连堂/.test(value)) return 'double';
+    if (/单节/.test(value)) return 'single';
     return 'single';
 }
 
+function normalizeNaturalRoomNames(value = '') {
+    return cleanCell(value)
+        .replace(/^(?:为|是|：|:)/, '')
+        .split(/\s*(?:或者|或|、|\/|／)\s*/)
+        .map(cleanCell)
+        .filter(Boolean)
+        .join('、');
+}
+
 function extractNaturalRoom(text = '') {
+    const value = cleanCell(text);
+    const labelled = value.match(/(?:上课地点|授课地点|上课教室|地点|场地)\s*(?:为|是|：|:)\s*([^，,。；;]+)/);
+    if (labelled) return normalizeNaturalRoomNames(labelled[1]);
     const roomPattern = /(实验室|教室|机房|电脑房|体育馆|操场|音乐室|美术室|舞蹈室|功能室|专用教室|场馆|礼堂)$/;
-    const segments = cleanCell(text)
+    const segments = value
         .split(/[，,。；;]/)
         .map(segment => cleanCell(segment).replace(/^(?:安排)?(?:在|到|使用)/, ''))
         .filter(Boolean);
     const segment = segments.find(item => roomPattern.test(item) && !/(老师|每周|一周|周课时|周课|节)/.test(item));
-    if (segment) return segment;
-    const match = cleanCell(text).match(/(?:安排)?(?:在|到|使用)\s*([^，,。；;\s]*(?:实验室|教室|机房|电脑房|体育馆|操场|音乐室|美术室|舞蹈室|功能室|专用教室|场馆|礼堂))/);
-    return match ? cleanCell(match[1]) : '';
+    if (segment) return normalizeNaturalRoomNames(segment);
+    const match = value.match(/(?:安排)?(?:在|到|使用)\s*([^，,。；;]+?(?:实验室|教室|机房|电脑房|体育馆|操场|音乐室|美术室|舞蹈室|功能室|专用教室|场馆|礼堂))/);
+    return match ? normalizeNaturalRoomNames(match[1]) : '';
+}
+
+function extractNaturalSubjectCategory(text = '') {
+    const match = cleanCell(text).match(/(?:课程|学科)(?:类型|类别)\s*(?:为|是|：|:)\s*([^，,。；;]+)/);
+    const value = cleanCell(match?.[1]);
+    if (!value) return '';
+    if (/主科|核心/.test(value)) return 'main';
+    if (/实验/.test(value)) return 'lab';
+    if (/活动|场地|素质|艺体/.test(value)) return 'quality';
+    if (/普通|常规/.test(value)) return 'normal';
+    return value;
+}
+
+function extractNaturalSubjectTags(text = '') {
+    const match = cleanCell(text).match(/(?:课程|学科)标签\s*(?:为|是|：|:)\s*([^。；;]+)/);
+    return cleanCell(match?.[1]);
 }
 
 function findNaturalSubject(text = '', project = {}) {
@@ -356,6 +396,13 @@ function parseNaturalRosterLine(line = '', project = {}, index = 0) {
     const teacherName = extractNaturalTeacher(afterSubject);
     const weeklyHours = extractNaturalWeeklyHours(text);
     if (!teacherName || !weeklyHours) return null;
+    const roomName = extractNaturalRoom(text);
+    const subjectCategory = extractNaturalSubjectCategory(text);
+    const subjectTags = extractNaturalSubjectTags(text);
+    const metadata = mergeExplicitLessonMetadata({
+        explicitSubjectCategory: subjectCategory,
+        subjectTags: normalizeSubjectTags(subjectTags),
+    }, roomTagsFromName(roomName));
     return {
         sourceRow: index + 1,
         grade: classInfo.grade,
@@ -364,7 +411,11 @@ function parseNaturalRosterLine(line = '', project = {}, index = 0) {
         teacherName,
         weeklyHours,
         blockPreference: extractNaturalBlockPreference(text),
-        roomName: extractNaturalRoom(text),
+        roomName,
+        subjectCategory,
+        subjectTags,
+        activityTypes: metadata.activityTypes,
+        requiredResourceTypes: metadata.requiredResourceTypes,
     };
 }
 
@@ -577,11 +628,7 @@ export function previewTimetableRosterRows(rows = [], { project = {} } = {}) {
 }
 
 export function previewTimetableRosterText(text = '', { project = {} } = {}) {
-    const lines = String(text)
-        .split(/\r?\n/)
-        .map(line => line.trim())
-        .filter(Boolean);
-    return analyzeDraftRows(parseRows(lines), project);
+    return localRosterParse(text, project);
 }
 
 export function buildTimetableRosterFromRows(rows = [], { project = {} } = {}) {
@@ -840,7 +887,11 @@ function localWorkbookPreview(source, { project = {} } = {}) {
     return preview;
 }
 
-function textParseMetadata(format, preview, { aiAttempted = false, aiCallCount = 0 } = {}) {
+function textParseMetadata(format, preview, {
+    aiAttempted = false,
+    aiCallCount = 0,
+    unresolvedRowCount = preview.draftRows?.length ? 0 : 1,
+} = {}) {
     return {
         ...preview,
         sheetReviews: [],
@@ -851,7 +902,7 @@ function textParseMetadata(format, preview, { aiAttempted = false, aiCallCount =
             includedSheetNames: [],
             localRowCount: (preview.draftRows || []).filter(row => row.parseSource !== 'ai').length,
             aiRowCount: (preview.draftRows || []).filter(row => row.parseSource === 'ai').length,
-            unresolvedRowCount: preview.draftRows?.length ? 0 : 1,
+            unresolvedRowCount,
             aiAttempted,
             aiCallCount,
         },
@@ -932,6 +983,7 @@ function buildRosterAiPrompt(text, project = {}) {
         '{',
         '  "draftRows": [',
         '    {',
+        '      "sourceRow": 1,',
         '      "grade": "年级名(如 高一、一年级)",',
         '      "className": "班级名(如 1班、高一(2)班)",',
         '      "subjectName": "科目名(如 语文、数学)",',
@@ -939,7 +991,8 @@ function buildRosterAiPrompt(text, project = {}) {
         '      "weeklyHours": 4,',
         '      "blockPreference": "single|double|mixed",',
         '      "roomName": "教室名(可选)",',
-        '      "subjectCategory": "core|elective|activity",',
+        '      "subjectCategory": "normal|main|quality|lab",',
+        '      "subjectTags": ["课程标签"],',
         '      "activityTypes": ["普通课|实验课|上机课|新授课|复习|答疑|社团或原始学校值"],',
         '      "requiredResourceTypes": ["普通教室|实验室|计算机教室或原始学校值"]',
         '    }',
@@ -958,8 +1011,10 @@ function buildRosterAiPrompt(text, project = {}) {
         '5. 识别不规则格式: 合并单元格、跨行数据、备注文字',
         '6. 忽略纯标题/汇总/空行',
         '7. anomalies: 周课时>10标为异常,重复任课标为异常',
-        '8. activityTypes 和 requiredResourceTypes 可多选；保留无法归类的学校自定义原值',
-        '9. 只输出 JSON,不要 markdown 包裹,不要解释文字',
+        '8. sourceRow 必须使用输入中标注的原始行号，不得自行重新编号',
+        '9. activityTypes 和 requiredResourceTypes 保持数组结构；每条任课只提取一个主要课型和一个主要资源标签',
+        '10. 保留无法归类的学校自定义原值',
+        '11. 只输出 JSON,不要 markdown 包裹,不要解释文字',
         existingTeachers.length ? `\n已知教师: ${existingTeachers.join('、')}` : '',
         existingSubjects.length ? `已知科目: ${existingSubjects.join('、')}` : '',
         existingClasses.length ? `已知班级: ${existingClasses.join('、')}` : '',
@@ -968,10 +1023,14 @@ function buildRosterAiPrompt(text, project = {}) {
     return { systemPrompt, userMessage: text };
 }
 
-async function callRosterAiJson({ systemPrompt, userMessage, env = {}, fetchImpl, budget = null }) {
+async function callRosterAiJson({ systemPrompt, userMessage, env = {}, fetchImpl, budget = null, maxTokens = 4096 }) {
     if (budget) budget.attempted = true;
     const { apiKey, baseUrl, model } = resolveRosterAiConfig(env);
     const fetchClient = resolveRosterFetch(fetchImpl);
+    const input = String(userMessage || '');
+    if (input.length > MAX_ROSTER_AI_INPUT_CHARS) {
+        throw new RosterAiError(`AI 单次输入不能超过 ${MAX_ROSTER_AI_INPUT_CHARS} 个字符。`, 'ai_input_too_large');
+    }
     if (budget) {
         if (budget.calls >= MAX_ROSTER_AI_CALLS) {
             throw new RosterAiError('AI 补充解析已达到单次上传调用上限。', 'ai_call_limit');
@@ -989,11 +1048,11 @@ async function callRosterAiJson({ systemPrompt, userMessage, env = {}, fetchImpl
             model,
             messages: [
                 { role: 'system', content: systemPrompt },
-                { role: 'user', content: String(userMessage || '').slice(0, MAX_ROSTER_AI_INPUT_CHARS) },
+                { role: 'user', content: input },
             ],
             temperature: 0.1,
             response_format: { type: 'json_object' },
-            max_tokens: 4096,
+            max_tokens: maxTokens,
         }),
     });
 
@@ -1012,7 +1071,7 @@ async function callRosterAiJson({ systemPrompt, userMessage, env = {}, fetchImpl
 
 async function callRosterAi({ text, project, env = {}, fetchImpl, budget = null }) {
     const prompt = buildRosterAiPrompt(text, project);
-    return callRosterAiJson({ ...prompt, env, fetchImpl, budget });
+    return callRosterAiJson({ ...prompt, env, fetchImpl, budget, maxTokens: 8192 });
 }
 
 function buildRosterHeaderAiPrompt(sheet = {}) {
@@ -1241,6 +1300,159 @@ async function parseWorkbookAiOrLocal(source, { project = {}, env = {}, fetchImp
     return preview;
 }
 
+function rosterTextAiBatches(lines = [], sourceRows = []) {
+    const batches = [];
+    const oversized = [];
+    let current = [];
+    let currentSize = 0;
+    for (const sourceRow of sourceRows) {
+        const item = { sourceRow, text: lines[sourceRow - 1] || '' };
+        const formatted = `[第${sourceRow}行] ${item.text}`;
+        if (formatted.length > MAX_ROSTER_AI_INPUT_CHARS) {
+            oversized.push(item);
+            continue;
+        }
+        if (current.length && (
+            current.length >= MAX_ROSTER_AI_BATCH_ROWS
+            || currentSize + formatted.length + 1 > MAX_ROSTER_AI_INPUT_CHARS
+        )) {
+            batches.push(current);
+            current = [];
+            currentSize = 0;
+        }
+        current.push(item);
+        currentSize += formatted.length + 1;
+    }
+    if (current.length) batches.push(current);
+    return { batches, oversized };
+}
+
+function rosterTextBatchMessage(batch = []) {
+    return batch.map(item => `[第${item.sourceRow}行] ${item.text}`).join('\n');
+}
+
+function normalizeAiTextBatch(result = {}, batch = []) {
+    const { rows, anomalies } = normalizeAiRosterRows(result);
+    const allowedRows = new Set(batch.map(item => item.sourceRow));
+    const canUseOrder = rows.length === batch.length;
+    const normalizedRows = [];
+    rows.forEach((row, index) => {
+        let sourceRow = Number.parseInt(row?.sourceRow, 10);
+        if (!allowedRows.has(sourceRow) && canUseOrder) sourceRow = batch[index]?.sourceRow;
+        if (!allowedRows.has(sourceRow)) return;
+        normalizedRows.push(normalizeDraftRow({ ...row, sourceRow, parseSource: 'ai' }, sourceRow - 1));
+    });
+    return { rows: normalizedRows, anomalies };
+}
+
+async function parseRosterTextAiOrLocal(rawText, {
+    format = 'text',
+    project = {},
+    env = {},
+    fetchImpl,
+} = {}) {
+    const lines = splitRosterInputLines(rawText);
+    if (shouldParseRosterAsTable(lines)) {
+        const result = { ...analyzeDraftRows(parseRows(lines), project), source: 'local' };
+        return textParseMetadata(format, result, { unresolvedRowCount: 0 });
+    }
+
+    const localRows = parseNaturalRosterRows(lines, project);
+    const localSourceRows = new Set(localRows.map(row => Number(row.sourceRow)));
+    if (localRows.length === lines.length) {
+        const result = { ...analyzeDraftRows(localRows, project), source: 'local' };
+        return textParseMetadata(format, result, { unresolvedRowCount: 0 });
+    }
+
+    const unresolvedSourceRows = lines
+        .map((_line, index) => index + 1)
+        .filter(sourceRow => !localSourceRows.has(sourceRow));
+    const { batches, oversized } = rosterTextAiBatches(lines, unresolvedSourceRows);
+    const budget = { attempted: false, calls: 0 };
+    const aiRows = [];
+    const aiAnomalies = [];
+    let aiFailure = null;
+
+    for (const batch of batches) {
+        if (budget.calls >= MAX_ROSTER_AI_CALLS) break;
+        try {
+            const result = await callRosterAi({
+                text: rosterTextBatchMessage(batch),
+                project,
+                env,
+                fetchImpl,
+                budget,
+            });
+            const normalized = normalizeAiTextBatch(result, batch);
+            aiRows.push(...normalized.rows);
+            aiAnomalies.push(...normalized.anomalies);
+        } catch (error) {
+            aiFailure = error;
+            break;
+        }
+    }
+
+    const aiSourceRows = new Set(aiRows.map(row => Number(row.sourceRow)));
+    const stillUnresolved = unresolvedSourceRows.filter(sourceRow => !aiSourceRows.has(sourceRow));
+    const combinedRows = [...localRows, ...aiRows]
+        .sort((left, right) => Number(left.sourceRow) - Number(right.sourceRow));
+    const preview = analyzeDraftRows(combinedRows, project);
+    const issues = [];
+
+    if (aiFailure) {
+        issues.push({
+            rowId: '',
+            sourceRow: null,
+            severity: 'warning',
+            field: 'ai',
+            message: `AI 补充解析未完成(${aiFailure.message})，已保留本地结果和未识别行。`,
+        });
+    } else if (batches.length > MAX_ROSTER_AI_CALLS) {
+        issues.push({
+            rowId: '',
+            sourceRow: null,
+            severity: 'warning',
+            field: 'ai',
+            message: `AI 补充解析达到 ${MAX_ROSTER_AI_CALLS} 次调用上限，剩余内容已保留待复核。`,
+        });
+    }
+    oversized.forEach(item => issues.push({
+        rowId: '',
+        sourceRow: item.sourceRow,
+        severity: 'warning',
+        field: 'row',
+        message: `第 ${item.sourceRow} 行超过 AI 单次输入上限，已保留待复核。`,
+    }));
+    stillUnresolved.forEach(sourceRow => issues.push({
+        rowId: '',
+        sourceRow,
+        severity: 'warning',
+        field: 'row',
+        message: `第 ${sourceRow} 行本地未能识别自然语言，AI 也未可靠补全，已保留待复核。`,
+    }));
+    aiAnomalies.forEach(anomaly => {
+        const sourceRow = Number.parseInt(anomaly?.sourceRow ?? anomaly?.row, 10);
+        const row = preview.draftRows.find(item => Number(item.sourceRow) === sourceRow);
+        if (!row) return;
+        issues.push(createIssue(
+            row,
+            'warning',
+            anomaly.field || 'general',
+            `${anomaly.message || 'AI 异常检测'}${anomaly.suggestion ? ` — 建议: ${anomaly.suggestion}` : ''}`,
+        ));
+    });
+    appendGlobalPreviewIssues(preview, issues);
+
+    const localRowCount = preview.draftRows.filter(row => row.parseSource !== 'ai').length;
+    const aiRowCount = preview.draftRows.filter(row => row.parseSource === 'ai').length;
+    preview.source = aiRowCount && localRowCount ? 'mixed' : aiRowCount ? 'ai' : 'local';
+    return textParseMetadata(format, preview, {
+        aiAttempted: budget.attempted,
+        aiCallCount: budget.calls,
+        unresolvedRowCount: stillUnresolved.length,
+    });
+}
+
 export async function parseRosterAiOrLocal({ text = '', file = null, project = {}, env = {}, fetchImpl } = {}) {
     let fileSource = null;
     if (file) {
@@ -1254,44 +1466,7 @@ export async function parseRosterAiOrLocal({ text = '', file = null, project = {
     const rawText = String(text || '');
     if (!rawText.trim()) throw new Error('导入内容为空，请粘贴文本或上传文件。');
     const format = fileSource?.format || 'text';
-    const lines = splitRosterInputLines(rawText);
-    if (hasRosterHeaderLine(lines[0])) {
-        const result = { ...analyzeDraftRows(parseRows(lines), project), source: 'local' };
-        return textParseMetadata(format, result);
-    }
-
-    try {
-        const aiResult = await callRosterAi({ text: rawText, project, env, fetchImpl });
-        const { rows: aiRows, anomalies } = normalizeAiRosterRows(aiResult);
-        if (!aiRows.length) {
-            const fallback = { ...localRosterParse(rawText, project), source: 'local', aiEmpty: true };
-            return textParseMetadata(format, fallback, { aiAttempted: true, aiCallCount: 1 });
-        }
-        const normalized = aiRows.map((row, index) => normalizeDraftRow({ ...row, parseSource: 'ai' }, index));
-        const analysis = analyzeDraftRows(normalized, project);
-        anomalies.forEach(anomaly => {
-            const rowIndex = Number(anomaly.row) || 0;
-            const targetRow = analysis.draftRows[rowIndex] || analysis.draftRows[0];
-            if (targetRow) {
-                analysis.issues.push(createIssue(
-                    targetRow,
-                    'warning',
-                    anomaly.field || 'general',
-                    `${anomaly.message || 'AI 异常检测'}${anomaly.suggestion ? ` — 建议: ${anomaly.suggestion}` : ''}`,
-                ));
-            }
-        });
-        analysis.importReport = buildRosterImportReport(analysis);
-        return textParseMetadata(format, { ...analysis, source: 'ai' }, { aiAttempted: true, aiCallCount: 1 });
-    } catch (error) {
-        const result = localRosterParse(rawText, project);
-        if (!(error instanceof RosterAiError && ['ai_not_configured', 'missing_fetch'].includes(error.reason))) {
-            result.warnings = [...(result.warnings || []), `AI 解析失败(${error.message})，已使用本地解析。`];
-        }
-        result.source = 'local';
-        const aiCallCount = ['ai_not_configured', 'missing_fetch'].includes(error.reason) ? 0 : 1;
-        return textParseMetadata(format, result, { aiAttempted: true, aiCallCount });
-    }
+    return parseRosterTextAiOrLocal(rawText, { format, project, env, fetchImpl });
 }
 
 function localRosterParse(text, project) {
@@ -1301,7 +1476,19 @@ function localRosterParse(text, project) {
     }
     const naturalRows = parseNaturalRosterRows(lines, project);
     if (naturalRows.length) {
-        return analyzeDraftRows(naturalRows, project);
+        const preview = analyzeDraftRows(naturalRows, project);
+        const recognized = new Set(naturalRows.map(row => Number(row.sourceRow)));
+        const unresolved = lines
+            .map((_line, index) => index + 1)
+            .filter(sourceRow => !recognized.has(sourceRow))
+            .map(sourceRow => ({
+                rowId: '',
+                sourceRow,
+                severity: 'warning',
+                field: 'row',
+                message: `第 ${sourceRow} 行本地未能识别自然语言，已保留待复核。`,
+            }));
+        return appendGlobalPreviewIssues(preview, unresolved);
     }
     return unrecognizedRosterTextResult(project);
 }

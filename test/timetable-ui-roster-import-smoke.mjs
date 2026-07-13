@@ -105,7 +105,7 @@ async function assertDesktopRosterTableFits(page) {
     assert.equal(layout.wrap.scrollWidth <= layout.wrap.clientWidth + 1, true, JSON.stringify(layout));
     assert.equal(layout.headers.every(header => header.left >= layout.wrap.left - 1 && header.right <= layout.wrap.right + 1), true, JSON.stringify(layout));
     assert.equal(layout.horizontalPositions.every(item => item.position === 'static' && item.left === 'auto' && item.right === 'auto'), true, JSON.stringify(layout));
-    assert.equal(layout.overflowX, 'visible');
+    assert.equal(layout.overflowX, 'clip');
     return layout;
 }
 
