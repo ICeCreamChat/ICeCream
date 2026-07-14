@@ -894,6 +894,8 @@ function createSemanticRequirementItem(action = {}, index = 0) {
 }
 
 export function getRequirementGroupKey(item = {}) {
+    const status = normalizeKey(item.status || item.reviewStatus || '');
+    if (HANDLED_STATUSES.has(status)) return 'handled';
     const applicationTarget = normalizeKey(item.applicationTarget || item.sourceRequirement?.applicationTarget || '');
     const executionStatus = normalizeKey(item.executionStatus || item.sourceRequirement?.executionStatus || '');
     const requiresHumanReview = item.requiresHumanReview ?? item.sourceRequirement?.requiresHumanReview;
@@ -908,7 +910,6 @@ export function getRequirementGroupKey(item = {}) {
         if (applicationTarget === 'rule') return 'rule';
         return 'review';
     }
-    const status = normalizeKey(item.status || '');
     const applyTo = normalizeKey(item.applyTo || '');
     if (status === 'handled' || status === 'ignored' || applyTo === 'handled') return 'handled';
     if (REVIEW_STATUSES.has(status) || applyTo === 'review' || applyTo === 'needs_review') return 'review';
