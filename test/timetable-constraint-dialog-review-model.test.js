@@ -378,6 +378,24 @@ test('legacy responses without sourceRequirements keep the existing requirementI
     assert.deepEqual(items[0].machineRules.map(row => row.id), ['legacy_row']);
 });
 
+test('legacy manual placeholder rows stay visible but are never actionable or persistable', () => {
+    for (const type of ['forbid', 'prefer', 'avoid']) {
+        const row = {
+            id: `manual_${type}`,
+            type,
+            targetName: '张老师',
+            timeLabel: '周一第1节',
+            status: 'ready',
+            origin: 'manual',
+        };
+        const review = { draftRows: [row] };
+
+        assert.equal(getActionableRequirementCount(review), 0, `${type} must require conversion`);
+        assert.deepEqual(getBackendRuleRows(review), []);
+        assert.deepEqual(buildUnifiedRequirementItems(review)[0]?.machineRules?.map(item => item.id), [row.id]);
+    }
+});
+
 test('the real 137-row workbook renders exactly 137 source cards and keeps expanded clauses inside their source', async () => {
     const result = await parseTimetableRules({
         file: {
