@@ -73,82 +73,6 @@
     padding: var(--tt-space-md);
 }
 
-.tt-constraint-edit-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.tt-constraint-edit-slots {
-    display: grid;
-    gap: var(--tt-space-xs);
-}
-
-.tt-edit-slot-grid {
-    display: grid;
-    gap: 8px;
-    padding: var(--tt-space-sm);
-    background: var(--tt-bg-input);
-    border: 1px solid var(--tt-border);
-    border-radius: var(--tt-radius-sm);
-}
-
-.tt-edit-slot-day {
-    display: grid;
-    grid-template-columns: 42px minmax(0, 1fr);
-    align-items: center;
-    gap: 8px;
-}
-
-.tt-edit-slot-day > span {
-    color: var(--tt-muted);
-    font-size: 0.74rem;
-    font-weight: 800;
-}
-
-.tt-edit-slot-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    min-width: 0;
-}
-
-.tt-edit-slot-chip {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 28px;
-    cursor: pointer;
-}
-
-.tt-edit-slot-chip input {
-    position: absolute;
-    inset: 0;
-    opacity: 0;
-    cursor: pointer;
-}
-
-.tt-edit-slot-chip span {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    height: 100%;
-    border: 1px solid var(--tt-border);
-    border-radius: var(--tt-radius-sm);
-    background: var(--tt-bg-panel);
-    color: var(--tt-text);
-    font-size: 0.78rem;
-    font-weight: 800;
-    transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
-}
-
-.tt-edit-slot-chip input:checked + span {
-    border-color: rgba(8, 145, 178, 0.48);
-    background: rgba(8, 145, 178, 0.12);
-    color: var(--tt-primary);
-}
-
 .tt-constraint-edit-readonly {
     display: grid;
     gap: 8px;
@@ -709,25 +633,35 @@
     gap: var(--tt-space-sm);
 }
 
-.tt-form-grid {
+.tt-constraint-rule-form {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 12px;
+    min-width: 0;
 }
 
-.tt-form-grid label {
+.tt-constraint-rule-main-fields {
+    display: grid;
+    grid-template-columns: minmax(180px, 1.15fr) minmax(180px, 1fr) minmax(150px, auto);
+    gap: 12px;
+    align-items: start;
+}
+
+.tt-constraint-rule-field {
     display: grid;
     gap: 6px;
+    min-width: 0;
 }
 
-.tt-form-grid label > span {
+.tt-constraint-rule-field > span,
+.tt-constraint-rule-strength > span,
+.tt-constraint-rule-parameter > legend {
     color: var(--tt-muted);
     font-size: 0.74rem;
     font-weight: 800;
 }
 
-.tt-form-grid input,
-.tt-form-grid select {
+.tt-constraint-rule-field input,
+.tt-constraint-rule-field select {
     box-sizing: border-box;
     width: 100%;
     min-height: 36px;
@@ -740,15 +674,155 @@
     transition: border-color 0.15s ease;
 }
 
-.tt-form-grid input:focus,
-.tt-form-grid select:focus {
+.tt-constraint-rule-field input:focus,
+.tt-constraint-rule-field select:focus {
     outline: none;
     border-color: rgba(8, 145, 178, 0.5);
     box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.1);
 }
 
-.tt-form-grid input::placeholder {
+.tt-constraint-rule-strength {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+    padding: 0 0 0 12px;
+    border-left: 2px solid var(--tt-border-strong);
+}
+
+.tt-constraint-rule-strength strong {
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    color: var(--tt-text);
+    font-size: 0.8rem;
+    line-height: 1.35;
+}
+
+.tt-constraint-rule-strength--hard {
+    border-left-color: #dc2626;
+}
+
+.tt-constraint-rule-strength--soft {
+    border-left-color: var(--tt-primary);
+}
+
+.tt-constraint-rule-conversion {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    border-left: 3px solid #d97706;
+    background: rgba(217, 119, 6, 0.08);
+    color: var(--tt-text);
+    font-size: 0.78rem;
+    line-height: 1.45;
+}
+
+.tt-constraint-rule-conversion i {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    color: #d97706;
+}
+
+.tt-constraint-rule-parameter {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.tt-constraint-rule-parameter > legend {
+    margin-bottom: 7px;
+    padding: 0;
+}
+
+.tt-constraint-rule-slot-grid {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+    overflow-x: auto;
+    padding: 9px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-input);
+    overscroll-behavior-x: contain;
+}
+
+.tt-constraint-rule-slot-day {
+    display: grid;
+    grid-template-columns: 48px minmax(max-content, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-width: max-content;
+}
+
+.tt-constraint-rule-slot-day > span {
     color: var(--tt-muted);
+    font-size: 0.74rem;
+    font-weight: 800;
+}
+
+.tt-constraint-rule-slot-row {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 32px;
+    justify-content: start;
+    gap: 6px;
+}
+
+.tt-constraint-rule-slot-chip {
+    position: relative;
+    display: block;
+    width: 32px;
+    height: 30px;
+    cursor: pointer;
+}
+
+.tt-constraint-rule-slot-chip input {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.tt-constraint-rule-slot-chip span {
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 30px;
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-panel);
+    color: var(--tt-text);
+    font-size: 0.76rem;
+    font-weight: 800;
+    transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.tt-constraint-rule-slot-chip input:checked + span {
+    border-color: var(--tt-primary);
+    background: var(--tt-primary);
+    color: #fff;
+}
+
+.tt-constraint-rule-slot-chip input:focus-visible + span {
+    outline: 2px solid var(--tt-primary);
+    outline-offset: 2px;
+}
+
+.tt-constraint-rule-limit {
+    width: min(240px, 100%);
+}
+
+.tt-constraint-rule-error {
+    color: #dc2626;
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1.35;
 }
 
 /* 约束预览区 */
@@ -1906,13 +1980,20 @@
         border-radius: var(--tt-radius-md);
     }
 
-    .tt-constraint-edit-grid {
+    .tt-constraint-rule-main-fields {
         grid-template-columns: 1fr;
     }
 
-    .tt-edit-slot-day {
-        grid-template-columns: 1fr;
-        align-items: stretch;
+    .tt-constraint-rule-strength {
+        padding: 0 0 0 10px;
+    }
+
+    .tt-constraint-rule-slot-grid {
+        padding: 8px;
+    }
+
+    .tt-constraint-rule-slot-day {
+        grid-template-columns: 42px minmax(max-content, 1fr);
     }
 
     .tt-constraint-dialog .tt-dialog-title {
