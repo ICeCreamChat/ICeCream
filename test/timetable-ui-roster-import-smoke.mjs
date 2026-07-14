@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import * as XLSX from '@e965/xlsx';
 
+import { sampleRosterText } from '../public/js/tools/timetable/forms.js';
 import { withOpenedTimetablePage } from './timetable-ui-smoke-helpers.mjs';
 
 const REAL_WORKBOOK = path.resolve('真实学校整学期任课数据.xlsx');
@@ -58,6 +59,12 @@ async function assertRepresentativeRow(page, sourceRow, expected) {
     assert.equal(await row.getAttribute('data-roster-source-sheet'), '任课数据');
     const values = await row.locator('[data-roster-field="className"], [data-roster-field="subjectName"], [data-roster-field="teacherName"], [data-roster-field="weeklyHours"]').evaluateAll(elements => elements.map(element => element.value));
     assert.deepEqual(values, expected);
+}
+
+async function assertDisplayedRowNumber(page, sourceRow, expectedNumber, expectedTitle) {
+    const number = page.locator(`[data-roster-source-row="${sourceRow}"] .tt-roster-review-row-number`);
+    assert.equal(await number.innerText(), String(expectedNumber));
+    assert.equal(await number.getAttribute('title'), expectedTitle);
 }
 
 function buildBiff8Buffer() {
@@ -122,9 +129,42 @@ await withOpenedTimetablePage({ port: 3140 }, async ({ page, baseUrl }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.click('#tt-open-roster-import');
     await page.waitForSelector('#tt-roster-import-dialog');
+    assert.match(await page.locator('#tt-roster-import-dialog').innerText(), /支持表格数据，也可尝试自然语言描述/);
+    assert.equal(
+        await page.locator('#tt-roster-import-text').getAttribute('placeholder'),
+        '每条任课一行，支持带表头的表格数据或自然语言描述。\n至少包含：班级、课程、教师、周课时。',
+    );
+    assert.equal(await page.locator('#tt-fill-roster-sample').innerText(), '填入示例');
+    await page.click('#tt-fill-roster-sample');
+    assert.equal(await page.locator('#tt-roster-import-text').inputValue(), sampleRosterText());
+    const samplePreview = await waitForRosterReview(page, () => page.click('[data-roster-import-submit="text"]'));
+    assert.equal(samplePreview.source, 'local');
+    assert.equal(samplePreview.parseSummary.aiAttempted, false);
+    assert.equal(samplePreview.parseSummary.aiCallCount, 0);
+    assert.equal(samplePreview.draftRows.length, 2);
+    assert.deepEqual(samplePreview.draftRows.map(row => ({
+        subjectName: row.subjectName,
+        subjectCategory: row.subjectCategory,
+        activityTypes: row.activityTypes,
+        requiredResourceTypes: row.requiredResourceTypes,
+    })), [{
+        subjectName: '语文',
+        subjectCategory: 'main',
+        activityTypes: ['普通课'],
+        requiredResourceTypes: ['普通教室'],
+    }, {
+        subjectName: '物理',
+        subjectCategory: 'lab',
+        activityTypes: ['实验课'],
+        requiredResourceTypes: ['实验室'],
+    }]);
+    await page.click('#tt-back-roster-import');
+    await page.waitForFunction(() => document.querySelector('#tt-roster-import-title')?.textContent?.includes('导入任课数据'));
     await page.locator('#tt-roster-import-file').setInputFiles(REAL_WORKBOOK);
     const xlsxPreview = await waitForRosterReview(page, () => page.click('[data-roster-import-submit="file"]'));
     await assertRealRosterPreview(page, xlsxPreview, 'xlsx');
+    await assertDisplayedRowNumber(page, 2, 1, '第 1 行 · 来源：任课数据 · 源文件第 2 行');
+    await assertDisplayedRowNumber(page, 361, 360, '第 360 行 · 来源：任课数据 · 源文件第 361 行');
 
     assert.match(await page.locator('#tt-roster-import-dialog').innerText(), /本地解析/);
     assert.match(await page.locator('.tt-roster-sheet-review').innerText(), /XLSX · 1\/1 个工作表 · 本地 360 行 · AI 未调用/);
@@ -136,6 +176,24 @@ await withOpenedTimetablePage({ port: 3140 }, async ({ page, baseUrl }) => {
     await page.waitForFunction(() => document.querySelectorAll('[data-roster-review-row]').length === 360);
 
     await assertDesktopRosterTableFits(page);
+
+    const reviewActions = page.locator('.tt-roster-review-actions');
+    assert.equal(await page.locator('#tt-roster-bulk-text').count(), 0);
+    assert.deepEqual(await reviewActions.locator('button').allTextContents(), [
+        '返回导入方式', '新增行', '批量追加', '取消', '确认导入',
+    ]);
+    assert.equal(await reviewActions.evaluate(element => getComputedStyle(element).position), 'sticky');
+
+    const preservedTags = '主科、返回后仍保留';
+    const rowTags = page.locator('[data-roster-source-row="2"] [data-roster-field="subjectTags"]');
+    await rowTags.fill(preservedTags);
+    await page.click('#tt-back-roster-import');
+    await page.waitForFunction(() => document.querySelector('#tt-roster-import-title')?.textContent?.includes('导入任课数据'));
+    assert.match(await page.locator('#tt-roster-import-dialog').innerText(), /当前保留\s*360\s*条复核数据/);
+    assert.equal(await page.locator('#tt-resume-roster-review').innerText(), '继续复核（360 条）');
+    await page.click('#tt-resume-roster-review');
+    await page.waitForFunction(() => document.querySelectorAll('[data-roster-review-row]').length === 360);
+    assert.equal(await rowTags.inputValue(), preservedTags);
 
     const editableActivity = page.locator('[data-roster-source-row="2"] [data-roster-field="activityTypes"]');
     const editableResource = page.locator('[data-roster-source-row="2"] [data-roster-field="requiredResourceTypes"]');
@@ -247,6 +305,112 @@ await withOpenedTimetablePage({ port: 3140 }, async ({ page, baseUrl }) => {
     assert.equal(await editableActivity.inputValue(), '');
 
     await page.setViewportSize({ width: 1440, height: 900 });
+    const duplicateValues = await page.locator('[data-roster-source-row="2"]').evaluate(row => ({
+        grade: row.querySelector('[data-roster-field="grade"]')?.value,
+        className: row.querySelector('[data-roster-field="className"]')?.value,
+        subjectName: row.querySelector('[data-roster-field="subjectName"]')?.value,
+        teacherName: row.querySelector('[data-roster-field="teacherName"]')?.value,
+        weeklyHours: row.querySelector('[data-roster-field="weeklyHours"]')?.value,
+    }));
+    const appendText = [
+        '年级,班级,课程,教师,周课时,连堂',
+        [
+            duplicateValues.grade,
+            duplicateValues.className,
+            duplicateValues.subjectName,
+            duplicateValues.teacherName,
+            duplicateValues.weeklyHours,
+            '单节',
+        ].join(','),
+        '九年级,G9-11班,数学,追加老师,3,单节',
+    ].join('\n');
+    await page.click('#tt-open-roster-append');
+    await page.waitForSelector('#tt-roster-append-dialog');
+    const appendDialogLayout = await page.locator('#tt-roster-append-dialog').evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, width: rect.width, viewport: innerWidth };
+    });
+    assert.equal(appendDialogLayout.left >= 0 && appendDialogLayout.right <= appendDialogLayout.viewport, true, JSON.stringify(appendDialogLayout));
+    await page.locator('#tt-roster-append-text').fill(appendText);
+    const appendPreview = await waitForRosterReview(page, () => page.click('#tt-submit-roster-append'));
+    assert.equal(appendPreview.draftRows.length, 2);
+    await page.waitForFunction(() => document.querySelectorAll('[data-roster-review-row]').length === 362);
+    assert.equal(await page.locator('[data-roster-source-sheet="追加文本"]').count(), 2);
+    assert.match(await page.locator('#tt-roster-import-dialog').innerText(), /已追加\s*2\s*行/);
+    assert.match(await page.locator('#tt-roster-import-dialog').innerText(), /存在重复任课/);
+    const firstAppendedRow = page.locator('[data-roster-source-sheet="追加文本"]').first();
+    const secondAppendedRow = page.locator('[data-roster-source-sheet="追加文本"]').nth(1);
+    assert.equal(await firstAppendedRow.locator('.tt-roster-review-row-number').innerText(), '361');
+    assert.equal(await secondAppendedRow.locator('.tt-roster-review-row-number').innerText(), '362');
+    assert.match(await firstAppendedRow.getAttribute('class'), /tt-roster-review-row--duplicate/);
+    assert.equal(await firstAppendedRow.locator('.tt-roster-review-issue--duplicate').innerText(), '重复');
+    assert.equal(
+        await firstAppendedRow.locator('.tt-roster-review-issue--duplicate').getAttribute('data-roster-jump-row'),
+        await page.locator('[data-roster-source-sheet="任课数据"][data-roster-source-row="2"]').getAttribute('data-roster-review-row'),
+    );
+    assert.doesNotMatch(await secondAppendedRow.getAttribute('class'), /tt-roster-review-row--duplicate/);
+    await page.waitForFunction(() => {
+        const row = document.querySelector('[data-roster-source-sheet="追加文本"]');
+        if (!row) return false;
+        const rect = row.getBoundingClientRect();
+        return rect.top >= 0 && rect.bottom <= innerHeight;
+    });
+    assert.equal(await firstAppendedRow.locator('[data-roster-field="teacherName"]').inputValue(), duplicateValues.teacherName);
+    await page.waitForFunction(() => !document.querySelector('[data-roster-source-sheet="追加文本"]')?.classList.contains('tt-roster-review-row--focused'));
+    const duplicateVisuals = await page.evaluate(() => {
+        const duplicate = document.querySelector('[data-roster-source-sheet="追加文本"]');
+        const normal = document.querySelectorAll('[data-roster-source-sheet="追加文本"]')[1];
+        return {
+            duplicateBackground: getComputedStyle(duplicate.cells[1]).backgroundColor,
+            normalBackground: getComputedStyle(normal.cells[1]).backgroundColor,
+            leftMarker: getComputedStyle(duplicate.cells[0]).boxShadow,
+        };
+    });
+    assert.notEqual(duplicateVisuals.duplicateBackground, duplicateVisuals.normalBackground, JSON.stringify(duplicateVisuals));
+    assert.notEqual(duplicateVisuals.leftMarker, 'none', JSON.stringify(duplicateVisuals));
+    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-roster-import-append-desktop.png') });
+
+    await firstAppendedRow.locator('.tt-roster-review-issue--duplicate').click();
+    const originalDuplicateRow = page.locator('[data-roster-source-sheet="任课数据"][data-roster-source-row="2"]');
+    await page.waitForFunction(() => document.querySelector('[data-roster-source-sheet="任课数据"][data-roster-source-row="2"]')?.classList.contains('tt-roster-review-row--focused'));
+    assert.equal(await originalDuplicateRow.locator('.tt-roster-review-row-number').innerText(), '1');
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await firstAppendedRow.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-roster-import-duplicate-mobile.png') });
+    const mobileActionLayout = await page.evaluate(() => {
+        const actions = document.querySelector('.tt-roster-review-actions');
+        const rect = actions.getBoundingClientRect();
+        return {
+            viewport: innerWidth,
+            documentWidth: document.documentElement.scrollWidth,
+            left: rect.left,
+            right: rect.right,
+            scrollHeight: actions.scrollHeight,
+            clientHeight: actions.clientHeight,
+        };
+    });
+    assert.equal(mobileActionLayout.documentWidth <= mobileActionLayout.viewport, true, JSON.stringify(mobileActionLayout));
+    assert.equal(mobileActionLayout.left >= 0 && mobileActionLayout.right <= mobileActionLayout.viewport, true, JSON.stringify(mobileActionLayout));
+    await page.click('#tt-open-roster-append');
+    await page.waitForSelector('#tt-roster-append-dialog');
+    const mobileAppendLayout = await page.locator('#tt-roster-append-dialog').evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return {
+            viewport: innerWidth,
+            documentWidth: document.documentElement.scrollWidth,
+            left: rect.left,
+            right: rect.right,
+            width: rect.width,
+        };
+    });
+    assert.equal(mobileAppendLayout.documentWidth <= mobileAppendLayout.viewport, true, JSON.stringify(mobileAppendLayout));
+    assert.equal(mobileAppendLayout.left >= 0 && mobileAppendLayout.right <= mobileAppendLayout.viewport, true, JSON.stringify(mobileAppendLayout));
+    await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-roster-import-append-mobile.png') });
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('#tt-roster-append-dialog'));
+
+    await page.setViewportSize({ width: 1440, height: 900 });
     const importResponsePromise = page.waitForResponse(response => response.url().includes('/api/tools/timetable/roster/import'), { timeout: 30_000 });
     await page.click('#tt-confirm-roster-import');
     const importResponse = await importResponsePromise;
@@ -256,7 +420,7 @@ await withOpenedTimetablePage({ port: 3140 }, async ({ page, baseUrl }) => {
 
     const stored = await fetch(`${baseUrl}/api/tools/timetable/bootstrap`).then(response => response.json());
     assert.equal(stored.success, true);
-    assert.equal(stored.data.project.lessonPlans.length, 360);
+    assert.equal(stored.data.project.lessonPlans.length, 362);
     assert.equal(stored.data.project.rooms.length, 43);
     assert.equal(stored.data.project.lessonPlans.filter(plan => plan.activityTypes.includes('实验课')).length, 50);
     assert.equal(stored.data.project.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('实验室')).length, 50);

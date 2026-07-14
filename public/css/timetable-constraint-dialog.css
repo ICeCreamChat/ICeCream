@@ -446,13 +446,6 @@
     font-size: 0.68rem;
 }
 
-.tt-constraint-intake-note {
-    margin: 0;
-    color: var(--tt-muted);
-    font-size: 0.72rem;
-    font-weight: 700;
-}
-
 .tt-constraint-mode-row {
     display: flex;
     align-items: center;
@@ -536,10 +529,9 @@
 .tt-constraint-form-surface {
     display: grid;
     gap: var(--tt-space-sm);
-    padding: var(--tt-space-md);
-    border: 1px solid var(--tt-border);
-    border-radius: var(--tt-radius-md);
-    background: var(--tt-bg-input);
+    padding: 0;
+    border: 0;
+    background: transparent;
 }
 
 /* 文本输入模式 */
@@ -592,15 +584,15 @@
     color: var(--tt-muted);
 }
 
-/* 快速示例 */
-.tt-quick-examples {
+/* 澄清选项 */
+.tt-requirement-choice-list {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
     min-width: 0;
 }
 
-.tt-example-chip {
+.tt-requirement-choice-chip {
     padding: 4px 12px;
     border: 1px solid var(--tt-border);
     border-radius: var(--tt-radius-sm);
@@ -612,21 +604,10 @@
     transition: all 0.15s ease;
 }
 
-.tt-example-chip:hover {
+.tt-requirement-choice-chip:hover {
     border-color: rgba(8, 145, 178, 0.5);
     background: rgba(8, 145, 178, 0.06);
     color: var(--tt-primary);
-}
-
-.tt-constraint-command-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--tt-space-sm);
-}
-
-.tt-constraint-command-row--end {
-    justify-content: flex-end;
 }
 
 /* 解析状态 */
@@ -1797,6 +1778,15 @@
     border-top: 1px solid var(--tt-border);
 }
 
+.tt-constraint-dialog-actions .tt-btn {
+    min-width: 112px;
+    white-space: nowrap;
+}
+
+.tt-constraint-dialog-actions .tt-btn--primary {
+    min-width: 128px;
+}
+
 /* 按钮样式 - 完全对齐现有设计 */
 .tt-constraint-dialog .tt-btn {
     display: flex;
@@ -1934,8 +1924,7 @@
         height: 28px;
     }
 
-    .tt-constraint-mode-row,
-    .tt-constraint-command-row {
+    .tt-constraint-mode-row {
         align-items: stretch;
         flex-direction: column;
     }
@@ -1970,10 +1959,6 @@
     .tt-tab-btn {
         gap: 4px;
         padding: 0 8px;
-    }
-
-    .tt-constraint-command-row .tt-btn {
-        width: 100%;
     }
 
     .tt-requirement-workbench {
@@ -2068,5 +2053,10 @@
 
     .tt-constraint-dialog .tt-dialog-actions .tt-btn {
         flex: 1 1 120px;
+    }
+
+    .tt-constraint-dialog-actions .tt-btn[data-action="apply-constraints"] {
+        order: 3;
+        flex-basis: 100%;
     }
 }

@@ -641,27 +641,6 @@ export function switchConstraintMode(mode) {
 }
 
 /**
- * 使用示例文本
- */
-export function useConstraintExample(text) {
-    if (!this.state.ruleReview) {
-        this.state.ruleReview = {};
-    }
-    const currentText = this.state.ruleReview.text || '';
-    this.state.ruleReview.text = currentText ? `${currentText}\n${text}` : text;
-    this.render();
-
-    // 聚焦到文本框末尾
-    setTimeout(() => {
-        const textarea = document.getElementById('tt-constraint-text-input');
-        if (textarea) {
-            textarea.focus();
-            textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
-        }
-    }, 0);
-}
-
-/**
  * 解析约束（优化版：支持进度反馈）
  */
 export async function parseConstraintsFromDialog() {

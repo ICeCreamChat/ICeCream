@@ -9,7 +9,7 @@ async function main() {
 
         await page.click('#tt-fill-roster-sample');
         const rosterText = await page.locator('#tt-roster-import-text').inputValue();
-        assert.match(rosterText, /七年级,1班,数学,陈老师,4,单节/);
+        assert.match(rosterText, /七年级,G7-1班,语文,刘书涵,5,单节,G7-01本班教室/);
 
         await page.click('[data-roster-import-submit="text"]');
         await page.waitForFunction(() => {
@@ -18,13 +18,13 @@ async function main() {
         }, { timeout: 20000 });
 
         const reviewRows = await page.locator('[data-roster-review-row]').count();
-        assert.ok(reviewRows >= 8, `expected imported review rows, got ${reviewRows}`);
+        assert.equal(reviewRows, 2);
 
         await page.click('#tt-confirm-roster-import');
         await page.waitForFunction(() => !document.querySelector('#tt-roster-import-dialog'), { timeout: 20000 });
 
         const rosterChip = await page.textContent('[data-workflow-step="data"] .tt-chip');
-        assert.match(rosterChip || '', /8 条/);
+        assert.match(rosterChip || '', /2 条/);
 
         await page.click('#tt-run-schedule');
         await page.waitForFunction(() => document.querySelectorAll('.tt-slot').length > 0, { timeout: 30000 });

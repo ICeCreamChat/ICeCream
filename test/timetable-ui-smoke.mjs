@@ -3,6 +3,72 @@ import assert from 'node:assert/strict';
 import { createDefaultTimetableProject } from '../gateway/services/timetable-project.js';
 import { withOpenedTimetablePage } from './timetable-ui-smoke-helpers.mjs';
 
+async function openWorkflowPanel(page, id) {
+    const panel = page.locator(`.tt-workflow-panel[data-workflow-step="${id}"]`);
+    if (await panel.locator(':scope > .tt-workflow-body').getAttribute('hidden') !== null) {
+        await panel.locator(':scope > [data-tt-section-toggle]').click();
+    }
+    await panel.locator(':scope > .tt-workflow-body:not([hidden])').waitFor({ timeout: 10000 });
+    return panel;
+}
+
+async function assertWorkflowSubsectionDividers(page) {
+    const dataPanel = await openWorkflowPanel(page, 'data');
+    const rulesPanel = await openWorkflowPanel(page, 'rules');
+    const solvePanel = await openWorkflowPanel(page, 'solve');
+
+    for (const [panel, expectedCount] of [[dataPanel, 2], [rulesPanel, 1], [solvePanel, 2]]) {
+        assert.equal(await panel.locator(':scope > .tt-workflow-body > .tt-workflow-subsection').count(), expectedCount);
+    }
+
+    const inspectDivider = panel => panel.locator(':scope > .tt-workflow-body > .tt-workflow-subsection').evaluateAll(elements => elements.map(element => {
+        const style = getComputedStyle(element, '::before');
+        return {
+            content: style.content,
+            position: style.position,
+            top: style.top,
+            left: style.left,
+            right: style.right,
+            height: style.height,
+            backgroundImage: style.backgroundImage,
+            rowGap: getComputedStyle(element.parentElement).rowGap,
+            pointerEvents: style.pointerEvents,
+        };
+    }));
+
+    const dataDividers = await inspectDivider(dataPanel);
+    const ruleDividers = await inspectDivider(rulesPanel);
+    const solveDividers = await inspectDivider(solvePanel);
+    const lightMode = await page.locator('body').evaluate(element => element.classList.contains('light-mode'));
+    for (const dividers of [dataDividers, solveDividers]) {
+        assert.equal(dividers[0].content, 'none');
+        assert.notEqual(dividers[1].content, 'none');
+        assert.equal(dividers[1].position, 'absolute');
+        assert.equal(dividers[1].top, '-12px');
+        assert.equal(dividers[1].left, lightMode ? '16px' : '8px');
+        assert.equal(dividers[1].right, lightMode ? '16px' : '8px');
+        assert.equal(dividers[1].height, lightMode ? '1px' : '2px');
+        assert.equal(dividers[1].rowGap, '24px');
+        assert.match(dividers[1].backgroundImage, /linear-gradient/);
+        assert.match(dividers[1].backgroundImage, /10%/);
+        assert.match(dividers[1].backgroundImage, /90%/);
+        assert.equal(dividers[1].pointerEvents, 'none');
+    }
+    assert.equal(ruleDividers[0].content, 'none');
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileLayout = await page.evaluate(() => ({
+        viewportWidth: innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        dataDivider: getComputedStyle(document.querySelector('.tt-workflow-panel[data-workflow-step="data"] .tt-workflow-subsection + .tt-workflow-subsection'), '::before').backgroundImage,
+        solveDivider: getComputedStyle(document.querySelector('.tt-workflow-panel[data-workflow-step="solve"] .tt-workflow-subsection + .tt-workflow-subsection'), '::before').backgroundImage,
+    }));
+    assert.equal(mobileLayout.documentWidth <= mobileLayout.viewportWidth, true, JSON.stringify(mobileLayout));
+    assert.match(mobileLayout.dataDivider, /linear-gradient/);
+    assert.match(mobileLayout.solveDivider, /linear-gradient/);
+    await page.setViewportSize({ width: 1440, height: 900 });
+}
+
 function createInspectorSmokeProject() {
     const classes = Array.from({ length: 24 }, (_, index) => ({
         id: `c${index + 1}`,
@@ -128,6 +194,7 @@ async function main() {
     await withOpenedTimetablePage({ port: 3137, seedProject: createInspectorSmokeProject() }, async ({ page }) => {
         const title = await page.textContent('.tool-title');
         assert.match(title || '', /智能排课/);
+        await assertWorkflowSubsectionDividers(page);
 
         const inspectorSummary = page.locator('.tt-inspector-summary');
         assert.match(await inspectorSummary.textContent(), /复核 24/);

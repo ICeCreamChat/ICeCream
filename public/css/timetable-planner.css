@@ -14,6 +14,7 @@
     --tt-bg-input: rgba(15, 23, 42, 0.6);
     --tt-border: rgba(148, 163, 184, 0.15);
     --tt-border-strong: rgba(148, 163, 184, 0.3);
+    --tt-workflow-divider: rgba(148, 163, 184, 0.42);
     --tt-text: #f1f5f9;
     --tt-text-secondary: #cbd5e1;
     --tt-muted: #94a3b8;
@@ -56,6 +57,7 @@ body.light-mode .tt-workbench {
     --tt-bg-input: rgba(241, 245, 249, 0.8);
     --tt-border: rgba(15, 23, 42, 0.1);
     --tt-border-strong: rgba(15, 23, 42, 0.2);
+    --tt-workflow-divider: rgba(63, 111, 124, 0.3);
     --tt-text: #0f172a;
     --tt-text-secondary: #334155;
     --tt-muted: #64748b;
@@ -440,7 +442,7 @@ button.tt-section-title {
 
 .tt-workflow-body {
     display: grid;
-    gap: var(--tt-space-md);
+    gap: var(--tt-space-lg);
     padding: var(--tt-space-md);
 }
 
@@ -455,10 +457,37 @@ button.tt-section-title {
     min-width: 0;
 }
 
-.tt-setup-card + .tt-setup-card,
 .tt-rule-stack .tt-rule-block + .tt-rule-block {
     padding-top: var(--tt-space-md);
     border-top: 1px solid var(--tt-border);
+}
+
+.tt-workflow-subsection {
+    position: relative;
+}
+
+.tt-workflow-subsection + .tt-workflow-subsection::before {
+    content: "";
+    position: absolute;
+    top: -12px;
+    left: 8px;
+    right: 8px;
+    height: 2px;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        var(--tt-workflow-divider) 10%,
+        var(--tt-workflow-divider) 90%,
+        transparent 100%
+    );
+    pointer-events: none;
+    transform: translateY(-50%);
+}
+
+body.light-mode .tt-workflow-subsection + .tt-workflow-subsection::before {
+    left: 16px;
+    right: 16px;
+    height: 1px;
 }
 
 .tt-subsection-title {
@@ -3418,6 +3447,7 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 
 .tt-roster-import-dialog,
 .tt-roster-issue-editor-dialog,
+.tt-roster-append-dialog,
 .tt-period-time-dialog,
 .tt-duty-assignment-dialog,
 .tt-publish-dialog,
@@ -3451,9 +3481,44 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     z-index: 90;
 }
 
+.tt-roster-append-overlay {
+    z-index: 90;
+}
+
 .tt-roster-issue-editor-dialog {
     --tt-dialog-width: 560px;
     --tt-dialog-max-height: 760px;
+}
+
+.tt-roster-append-dialog {
+    --tt-dialog-width: 620px;
+    --tt-dialog-max-height: 680px;
+}
+
+.tt-roster-append-dialog .tt-import-text {
+    min-height: 180px;
+    resize: vertical;
+}
+
+.tt-roster-append-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px solid rgba(239, 68, 68, 0.34);
+    border-radius: var(--tt-radius-sm);
+    background: rgba(239, 68, 68, 0.08);
+    color: var(--tt-danger);
+    font-size: 0.76rem;
+    line-height: 1.45;
+}
+
+.tt-roster-append-error .lucide {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    margin-top: 1px;
 }
 
 .tt-period-time-dialog {
@@ -3772,8 +3837,59 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
     border-top: 1px solid var(--tt-border);
 }
 
-.tt-roster-review-issues,
-.tt-roster-bulk-panel {
+.tt-roster-import-resume {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--tt-space-sm);
+    padding: var(--tt-space-sm);
+    border: 1px solid var(--tt-border);
+    border-radius: var(--tt-radius-md);
+    background: var(--tt-bg-soft);
+    color: var(--tt-muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.tt-roster-append-summary {
+    display: flex;
+    align-items: center;
+    gap: var(--tt-space-xs);
+    margin: 0;
+    padding: var(--tt-space-sm);
+    border: 1px solid color-mix(in srgb, var(--tt-success) 36%, var(--tt-border));
+    border-radius: var(--tt-radius-md);
+    background: color-mix(in srgb, var(--tt-success) 9%, var(--tt-bg-soft));
+    color: var(--tt-success);
+    font-size: 0.8rem;
+    font-weight: 800;
+}
+
+.tt-roster-append-summary .lucide {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+}
+
+.tt-roster-review-actions {
+    position: sticky;
+    bottom: calc(-1 * var(--tt-space-md));
+    z-index: 3;
+    justify-content: space-between;
+    margin: 0 calc(-1 * var(--tt-space-md)) calc(-1 * var(--tt-space-md));
+    padding: var(--tt-space-sm) var(--tt-space-md) var(--tt-space-md);
+    background: var(--tt-bg-panel);
+}
+
+.tt-roster-review-actions-start,
+.tt-roster-review-actions-end {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--tt-space-sm);
+}
+
+.tt-roster-review-issues {
     display: grid;
     gap: var(--tt-space-sm);
 }
@@ -4261,6 +4377,18 @@ body.light-mode .tt-roster-block-help-popover {
     background: rgba(239, 68, 68, 0.08);
 }
 
+.tt-roster-review-row--duplicate:not(.tt-roster-review-row--error) td {
+    background: color-mix(in srgb, var(--tt-danger) 5%, transparent);
+}
+
+.tt-roster-review-row--duplicate:not(.tt-roster-review-row--error) td:first-child {
+    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--tt-danger) 58%, transparent);
+}
+
+.tt-roster-review-row--duplicate:not(.tt-roster-review-row--error):hover td {
+    background: color-mix(in srgb, var(--tt-danger) 8%, transparent);
+}
+
 .tt-roster-review-row--focused td {
     background: rgba(8, 145, 178, 0.12);
     box-shadow: inset 0 0 0 1px rgba(8, 145, 178, 0.36);
@@ -4724,6 +4852,10 @@ body.light-mode .tt-roster-block-help-popover {
     white-space: nowrap;
 }
 
+.tt-period-time-block-row--separated > td {
+    border-top: 2px solid var(--tt-border-strong);
+}
+
 .tt-period-time-label-note {
     display: block;
     width: fit-content;
@@ -4829,6 +4961,40 @@ body.light-mode .tt-roster-block-help-popover {
     text-align: center;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.tt-roster-review-issue--duplicate {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 24px;
+    padding: 2px 5px;
+    border: 1px solid color-mix(in srgb, var(--tt-danger) 30%, var(--tt-border));
+    border-radius: var(--tt-radius-sm);
+    background: color-mix(in srgb, var(--tt-danger) 8%, var(--tt-bg-soft));
+    color: var(--tt-danger);
+    font: inherit;
+    font-size: 0.66rem;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.tt-roster-review-issue--duplicate:hover {
+    border-color: color-mix(in srgb, var(--tt-danger) 48%, var(--tt-border));
+    background: color-mix(in srgb, var(--tt-danger) 13%, var(--tt-bg-soft));
+}
+
+.tt-roster-review-issue--duplicate:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--tt-danger) 44%, transparent);
+    outline-offset: 2px;
+}
+
+.tt-roster-review-issue--duplicate .lucide {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 auto;
 }
 
 .tt-rule-row-warning,
@@ -6378,6 +6544,17 @@ button.tt-duty-cell:focus-visible span {
         background: rgba(239, 68, 68, 0.08);
     }
 
+    .tt-roster-review-row--duplicate:not(.tt-roster-review-row--error) {
+        border-color: color-mix(in srgb, var(--tt-danger) 32%, var(--tt-border));
+        background: color-mix(in srgb, var(--tt-danger) 5%, var(--tt-bg-soft));
+        box-shadow: inset 3px 0 0 color-mix(in srgb, var(--tt-danger) 58%, transparent);
+    }
+
+    .tt-roster-review-row--duplicate:not(.tt-roster-review-row--error) td,
+    .tt-roster-review-row--duplicate:not(.tt-roster-review-row--error):hover td {
+        background: transparent;
+    }
+
     .tt-roster-review-row--focused {
         background: rgba(8, 145, 178, 0.12);
         box-shadow: inset 0 0 0 1px rgba(8, 145, 178, 0.36);
@@ -6451,6 +6628,7 @@ button.tt-duty-cell:focus-visible span {
 
     .tt-roster-import-dialog,
     .tt-roster-issue-editor-dialog,
+    .tt-roster-append-dialog,
     /* 已删除 .tt-rule-review-dialog 响应式样式（旧弹窗已废弃） */
     .tt-period-time-dialog,
     .tt-duty-assignment-dialog,
@@ -6472,6 +6650,21 @@ button.tt-duty-cell:focus-visible span {
     }
 
     .tt-dialog-actions .tt-btn {
+        flex: 1 1 120px;
+    }
+
+    .tt-roster-review-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .tt-roster-review-actions-start,
+    .tt-roster-review-actions-end {
+        width: 100%;
+    }
+
+    .tt-roster-review-actions-start .tt-btn,
+    .tt-roster-review-actions-end .tt-btn {
         flex: 1 1 120px;
     }
 
@@ -6717,6 +6910,26 @@ button.tt-duty-cell:focus-visible span {
         border: 1px solid var(--tt-border);
         border-radius: var(--tt-radius-md);
         background: var(--tt-bg-soft);
+    }
+
+    .tt-period-time-table .tt-period-time-block-row--separated {
+        position: relative;
+        margin-top: var(--tt-space-md);
+    }
+
+    .tt-period-time-table .tt-period-time-block-row--separated::before {
+        content: "";
+        position: absolute;
+        top: -9px;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: var(--tt-border-strong);
+        pointer-events: none;
+    }
+
+    .tt-period-time-table .tt-period-time-block-row--separated > td {
+        border-top: 0;
     }
 
     .tt-period-time-table td {

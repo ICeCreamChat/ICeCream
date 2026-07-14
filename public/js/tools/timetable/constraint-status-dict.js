@@ -47,43 +47,6 @@ export function plannerRuleTypeLabel(type = '') {
     return PLANNER_RULE_TYPE_LABELS[type] || type;
 }
 
-export const CONSTRAINT_EXAMPLE_GROUPS = [
-    { intent: 'teacher_unavailable', label: '教师不可排', examples: ['张老师周一上午不排课', '王老师周三第3节不能上课'] },
-    { intent: 'class_unavailable', label: '班级不可排', examples: ['三(1)班周五下午社团活动，不排常规课', '七年级2班周二第6节班会占用'] },
-    { intent: 'global_unavailable', label: '全校不可排', examples: ['每天第1节全校早读不排常规课', '周五下午全校社团活动，不排普通课程'] },
-    { intent: 'locked_slot', label: '固定课节', examples: ['七年级1班数学固定在周一第2节', '三(2)班班会固定周五第6节'] },
-    { intent: 'subject_morning', label: '上午优先', examples: ['数学尽量安排在上午', '语文和英语优先上午'] },
-    { intent: 'subject_afternoon', label: '下午优先', examples: ['体育尽量安排在下午', '音乐美术可以放下午'] },
-    { intent: 'subject_preferred_periods', label: '课程优先节次', examples: ['数理化尽量在前四节', '英语最好排第2到第4节'] },
-    { intent: 'subject_avoid_periods', label: '课程避开节次', examples: ['体育不要排第一节', '音乐尽量避开上午第1节'] },
-    { intent: 'subject_daily_limit', label: '课程每日上限', examples: ['每个班数学每天最多1节', '英语一天不要超过2节'] },
-    { intent: 'teacher_daily_limit', label: '教师每日上限', examples: ['每位老师每天最多4节', '张老师一天不要超过5节'] },
-    { intent: 'teacher_consecutive_limit', label: '教师连续上限', examples: ['老师连续上课不超过3节', '王老师连堂最多2节'] },
-    { intent: 'teacher_weekly_limit', label: '教师每周上限', examples: ['李老师每周最多16节课', '高负载老师每周不要超过18节'] },
-    { intent: 'teacher_max_days_per_week', label: '教师每周天数上限', examples: ['张老师每周最多来校4天', '兼职老师一周不超过3天有课'] },
-    { intent: 'teacher_mutual_exclusion', label: '教师互斥', examples: ['张老师和王老师不能同一节都有课', '两位跨校老师的课尽量错开'] },
-    { intent: 'subject_spread', label: '课程分散', examples: ['数学课要分散一点', '英语不要连着几天都排'] },
-    { intent: 'course_interval', label: '课程间隔', examples: ['体育课最好隔天排', '音乐美术之间至少隔一天'] },
-    { intent: 'room_requirement', label: '教室要求', examples: ['物理必须去实验室上', '信息技术安排在机房'] },
-    { intent: 'class_daily_balance', label: '班级每日均衡', examples: ['班级每天课时尽量均衡', '每天每个班主科不要堆太多'] },
-    { intent: 'teacher_gap_preference', label: '教师少空堂', examples: ['老师每天尽量少空堂', '张老师的课尽量集中一点'] },
-    { intent: 'block_protection', label: '连堂块保护', examples: ['数学最好两节连上', '实验课连堂块不要拆开'] },
-    { intent: 'teacher_load_balance', label: '教师负载均衡', examples: ['教师工作量要均衡', '高负载老师不要一直被压课'] },
-    { intent: 'teacher_load_protection', label: '高负载教师保护', examples: ['老师别太密', '别给张老师排太累'] },
-    { intent: 'subject_not_same_day', label: '课程不同天', examples: ['语文和数学不要排在同一天', '体育和音乐别放同一天'] },
-    { intent: 'subject_sequence', label: '课程顺序', examples: ['先上数学再上物理', '实验课要排在理论课之后'] },
-    { intent: 'week_pattern', label: '单双周', examples: ['单双周体育分开排', '这门课只在单周上'] },
-    { intent: 'campus_commute_gap', label: '跨校区间隔', examples: ['跨校区老师两节课之间要留出通勤时间', '南北校区连续课之间至少隔一节'] },
-    { intent: 'teaching_group_meeting', label: '教研时间', examples: ['数学组周三下午教研，数学课不要排这个时间', '英语组周二第7节集备，相关老师不排课'] },
-    { intent: 'golden_hour_preference', label: '黄金时段', examples: ['主科尽量排上午黄金时段', '高年级主科放精力最好的时段'] },
-    { intent: 'class_subject_spread', label: '班级课程分散', examples: ['三(1)班语文一周内分散到不同天', '七年级数学不要集中在前两天'] },
-    { intent: 'default_block_policy', label: '默认连堂策略', examples: ['未注明默认单节课', '理化实验默认按两节连堂处理'] },
-];
-
-export const QUICK_CONSTRAINT_EXAMPLES = CONSTRAINT_EXAMPLE_GROUPS
-    .flatMap(group => group.examples.slice(0, 1))
-    .slice(0, 8);
-
 export function normalizeStatusKey(value = '') {
     return String(value || '').trim()
         .replace(/([a-z0-9])([A-Z])/g, '$1_$2')

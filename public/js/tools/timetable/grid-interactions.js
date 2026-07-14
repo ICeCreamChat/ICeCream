@@ -234,6 +234,13 @@ export function handleTimetableEscape(event, container, controller, state) {
     // Check if we're in an input field that's being edited
     const target = event.target;
     if (target && (target.matches('input[type="text"], input[type="time"], input[type="number"], textarea, select') || target.isContentEditable)) {
+        if (state?.rosterImport?.appendDialog?.open && target.closest?.('#tt-roster-append-dialog')) {
+            target.blur();
+            event.preventDefault();
+            event.stopPropagation();
+            controller?.closeRosterAppendDialog?.();
+            return true;
+        }
         if (state?.rosterImport?.issueEditor && target.closest?.('#tt-roster-issue-editor-dialog')) {
             target.blur();
             event.preventDefault();
@@ -275,6 +282,10 @@ export function handleTimetableEscape(event, container, controller, state) {
     }
     if (state.rosterImport?.issueEditor) {
         controller.closeRosterIssueEditor?.();
+        return true;
+    }
+    if (state.rosterImport?.appendDialog?.open) {
+        controller.closeRosterAppendDialog?.();
         return true;
     }
     if (state.rosterImport?.open) {
@@ -359,6 +370,10 @@ function bindDelegatedInteractions(container) {
         }
         if (event.target.matches('[data-roster-issue-editor-overlay]')) {
             controller.closeRosterIssueEditor?.();
+            return;
+        }
+        if (event.target.matches('[data-roster-append-overlay]')) {
+            controller.closeRosterAppendDialog?.();
             return;
         }
         if (event.target.matches('[data-duty-teacher-search]')) {
@@ -471,9 +486,6 @@ function bindDelegatedInteractions(container) {
         } else if (action === 'switch-constraint-mode') {
             const mode = event.target.closest('[data-mode]')?.dataset.mode;
             controller.switchConstraintMode(mode);
-        } else if (action === 'use-example') {
-            const text = event.target.closest('[data-text]')?.dataset.text;
-            controller.useConstraintExample(text);
         } else if (action === 'parse-constraints') {
             controller.parseConstraintsFromDialog();
         } else if (action === 'rebind-constraint-entities') {
@@ -643,6 +655,8 @@ function bindDelegatedInteractions(container) {
             };
         } else if (event.target.matches('[data-duty-teacher-search]')) {
             controller.filterDutyTeacherOptions?.(event.target.value);
+        } else if (event.target.matches('#tt-roster-append-text')) {
+            controller.updateRosterAppendText?.(event.target.value);
         }
     });
 
@@ -780,6 +794,25 @@ export function bindRuleReviewInteractions(root, controller) {
     root.querySelector('#tt-open-smart-helper')?.addEventListener('click', () => controller.openSmartConstraintHelper());
 }
 
+function bindRosterReviewAction(container, selector, action) {
+    const button = container.querySelector(selector);
+    if (!button) return;
+    let activatedByPointer = false;
+    button.addEventListener('pointerdown', event => {
+        if (event.button !== 0) return;
+        activatedByPointer = true;
+        event.preventDefault();
+        action();
+    });
+    button.addEventListener('click', event => {
+        if (activatedByPointer) {
+            event.preventDefault();
+            return;
+        }
+        action();
+    });
+}
+
 export function bindGridInteractions(container, controller, state) {
     container.__ttController = controller;
     container.__ttState = state;
@@ -841,10 +874,16 @@ export function bindGridInteractions(container, controller, state) {
     container.querySelectorAll('[data-roster-import-submit]').forEach(button => {
         button.addEventListener('click', () => controller.previewRosterImport(button.dataset.rosterImportSubmit));
     });
+    container.querySelector('#tt-resume-roster-review')?.addEventListener('click', () => controller.resumeRosterReview());
     container.querySelector('#tt-start-empty-roster-review')?.addEventListener('click', () => controller.startEmptyRosterReview());
-    container.querySelector('#tt-confirm-roster-import')?.addEventListener('click', () => controller.confirmRosterImport());
-    container.querySelector('#tt-cancel-roster-import')?.addEventListener('click', () => controller.closeRosterImport());
-    container.querySelector('#tt-cancel-roster-import-secondary')?.addEventListener('click', () => controller.closeRosterImport());
+    bindRosterReviewAction(container, '#tt-confirm-roster-import', () => controller.confirmRosterImport());
+    bindRosterReviewAction(container, '#tt-back-roster-import', () => controller.returnToRosterImportInput());
+    bindRosterReviewAction(container, '#tt-cancel-roster-import', () => controller.closeRosterImport());
+    bindRosterReviewAction(container, '#tt-cancel-roster-import-secondary', () => controller.closeRosterImport());
+    bindRosterReviewAction(container, '#tt-open-roster-append', () => controller.openRosterAppendDialog());
+    bindRosterReviewAction(container, '#tt-close-roster-append', () => controller.closeRosterAppendDialog());
+    bindRosterReviewAction(container, '#tt-cancel-roster-append', () => controller.closeRosterAppendDialog());
+    bindRosterReviewAction(container, '#tt-submit-roster-append', () => controller.appendRosterReviewRows());
     container.querySelector('#tt-roster-import-file')?.addEventListener('change', event => {
         controller.selectRosterImportFile(event.target.files?.[0] || null);
     });
@@ -886,8 +925,7 @@ export function bindGridInteractions(container, controller, state) {
             button.dataset.rosterJumpField || '',
         ));
     });
-    container.querySelector('#tt-add-roster-review-row')?.addEventListener('click', () => controller.addRosterReviewRow());
-    container.querySelector('#tt-append-roster-rows')?.addEventListener('click', () => controller.appendRosterReviewRows());
+    bindRosterReviewAction(container, '#tt-add-roster-review-row', () => controller.addRosterReviewRow());
     container.querySelector('#tt-clear-roster')?.addEventListener('click', () => controller.clearRoster());
     container.querySelector('#tt-save-rules')?.addEventListener('click', () => controller.saveRules());
 

@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
 
 import AdmZip from 'adm-zip';
 
 import { withOpenedTimetablePage } from './timetable-ui-smoke-helpers.mjs';
 import { createCompleteNaturalLanguage137Project } from './fixtures/timetable-natural-language-137-project.js';
+
+const ARTIFACT_DIR = path.resolve('artifacts');
 
 function xmlEscape(value = '') {
     return String(value).replace(/[&<>"']/g, char => ({
@@ -46,6 +49,7 @@ ${strings.map(value => `<si><t>${xmlEscape(value)}</t></si>`).join('')}
 }
 
 async function main() {
+    await mkdir(ARTIFACT_DIR, { recursive: true });
     const realConstraintFixture = JSON.parse(await readFile(
         new URL('./fixtures/timetable-natural-language-137.json', import.meta.url),
         'utf8',
@@ -72,6 +76,8 @@ async function main() {
         };
 
         const recognizedText = async () => page.textContent('[data-constraint-dialog-overlay]');
+        const constraintFooterLabels = async () => page.locator('.tt-constraint-dialog-actions .tt-btn')
+            .evaluateAll(buttons => buttons.map(button => (button.textContent || '').replace(/\s+/g, ' ').trim()));
 
         await page.click('#tt-open-roster-import');
         await page.waitForSelector('#tt-roster-import-dialog', { timeout: 10000 });
@@ -97,6 +103,56 @@ async function main() {
         await page.click('#tt-open-rule-review');
         await page.waitForSelector('[data-constraint-dialog-overlay]', { timeout: 10000 });
         assert.equal(await page.locator('[data-smart-workbench-root]').count(), 0);
+        assert.equal(await page.locator('.tt-quick-examples, [data-action="use-example"], .tt-constraint-intake-note').count(), 0);
+        assert.deepEqual(await constraintFooterLabels(), ['取消', '开始理解']);
+
+        const assertIntakeLayout = async () => {
+            const layout = await page.evaluate(() => {
+                const dialog = document.querySelector('.tt-constraint-dialog').getBoundingClientRect();
+                const textarea = document.querySelector('#tt-constraint-text-input').getBoundingClientRect();
+                const footer = document.querySelector('.tt-constraint-dialog-actions').getBoundingClientRect();
+                const buttons = [...document.querySelectorAll('.tt-constraint-dialog-actions .tt-btn')].map(button => {
+                    const rect = button.getBoundingClientRect();
+                    return {
+                        left: rect.left,
+                        right: rect.right,
+                        height: rect.height,
+                        clientWidth: button.clientWidth,
+                        scrollWidth: button.scrollWidth,
+                        whiteSpace: getComputedStyle(button).whiteSpace,
+                    };
+                });
+                return {
+                    viewportWidth: window.innerWidth,
+                    documentWidth: document.documentElement.scrollWidth,
+                    dialog: { left: dialog.left, right: dialog.right },
+                    textareaBottom: textarea.bottom,
+                    footerTop: footer.top,
+                    buttons,
+                };
+            });
+            assert.equal(layout.documentWidth <= layout.viewportWidth, true, JSON.stringify(layout));
+            assert.equal(layout.footerTop >= layout.textareaBottom, true, JSON.stringify(layout));
+            assert.equal(layout.buttons.every(button => (
+                button.left >= layout.dialog.left - 1
+                && button.right <= layout.dialog.right + 1
+                && button.height <= 42
+                && button.scrollWidth <= button.clientWidth + 1
+                && button.whiteSpace === 'nowrap'
+            )), true, JSON.stringify(layout));
+        };
+
+        await page.evaluate(() => document.body.classList.add('light-mode'));
+        await assertIntakeLayout();
+        await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-intake-light.png') });
+        await page.evaluate(() => document.body.classList.remove('light-mode'));
+        await assertIntakeLayout();
+        await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-intake-dark.png') });
+
+        await page.setViewportSize({ width: 390, height: 844 });
+        await assertIntakeLayout();
+        await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-intake-mobile.png') });
+        await page.setViewportSize({ width: 1440, height: 900 });
 
         await page.fill('#tt-constraint-text-input', '语文尽量安排到上午');
         await clickByScript('[data-action="parse-constraints"]');
@@ -112,6 +168,8 @@ async function main() {
         assert.match(reviewText || '', /落地结果/);
         assert.match(reviewText || '', /语文/);
         assert.match(reviewText || '', /上午/);
+        assert.deepEqual(await constraintFooterLabels(), ['取消', '重新理解', '应用需求 (1)']);
+        assert.equal(await page.locator('.tt-constraint-dialog-actions .tt-btn--primary').count(), 1);
 
         await clearRecognizedConstraints();
 
@@ -119,7 +177,7 @@ async function main() {
         await page.locator('#tt-constraint-file-input').setInputFiles({
             name: 'smart-constraints.txt',
             mimeType: 'text/plain',
-            buffer: Buffer.from('数学尽量安排到上午', 'utf8'),
+            buffer: Buffer.from('物理尽量安排到上午', 'utf8'),
         });
         await page.waitForFunction(
             () => /smart-constraints\.txt/.test(document.querySelector('[data-constraint-dialog-overlay]')?.textContent || ''),
@@ -135,7 +193,7 @@ async function main() {
         assert.match(fileReviewText || '', /可执行规则 1 条/);
         assert.match(fileReviewText || '', /理解为 1 个子约束/);
         assert.match(fileReviewText || '', /落地结果/);
-        assert.match(fileReviewText || '', /数学/);
+        assert.match(fileReviewText || '', /物理/);
         assert.match(fileReviewText || '', /上午/);
         assert.equal(dialogs.some(item => item.message === '请选择文件'), false);
 

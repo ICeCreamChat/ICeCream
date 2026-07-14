@@ -223,6 +223,7 @@ export class TimetablePlannerController {
         this.constraintDialogFile = null;
         this.inspectorLocatePulseTimer = null;
         this.constraintFulfillmentRequestSeq = 0;
+        this.rosterAppendRequestSeq = 0;
         this.rosterDraftCounter = 0;
         this.ruleDraftCounter = 0;
         this.rangePopoverViewportHandler = () => this.repositionRangePopover();
@@ -3914,6 +3915,14 @@ export class TimetablePlannerController {
             hasBlockingIssues: false,
             issueListExpanded: false,
             issueEditor: null,
+            appendDialog: {
+                open: false,
+                text: '',
+                loading: false,
+                error: '',
+                requestId: 0,
+                lastSummary: null,
+            },
             loading: false,
             phaseText: '',
             phaseTone: '',
@@ -3956,13 +3965,64 @@ export class TimetablePlannerController {
 
     closeRosterImport() {
         const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+        this.rosterAppendRequestSeq += 1;
         this.state.rosterImport = {
             ...current,
             open: false,
             text: current.step === 'input' ? this.readRosterImportText() : current.text || '',
             issueEditor: null,
+            appendDialog: {
+                ...(current.appendDialog || {}),
+                open: false,
+                loading: false,
+                error: '',
+                requestId: this.rosterAppendRequestSeq,
+            },
         };
         this.render();
+    }
+
+    returnToRosterImportInput() {
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+        if (current.step !== 'review') return false;
+        const analyzed = this.analyzeRosterDraftRows(this.readRosterReviewRows());
+        const allDraftRows = this.reconcileRosterAllRows(analyzed.draftRows);
+        this.rosterAppendRequestSeq += 1;
+        this.state.rosterImport = {
+            ...current,
+            step: 'input',
+            draftRows: analyzed.draftRows,
+            allDraftRows,
+            stats: analyzed.stats,
+            issues: analyzed.issues,
+            warnings: [...new Set([...(current.warnings || []), ...analyzed.warnings])],
+            importReport: this.buildRosterReviewImportReport(analyzed),
+            hasBlockingIssues: analyzed.hasBlockingIssues,
+            issueEditor: null,
+            appendDialog: {
+                ...(current.appendDialog || {}),
+                open: false,
+                loading: false,
+                error: '',
+                requestId: this.rosterAppendRequestSeq,
+            },
+        };
+        this.render();
+        return true;
+    }
+
+    resumeRosterReview() {
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+        if (!this.hasRecoverableRosterReviewDraft(current.draftRows)
+            && !this.hasRecoverableRosterReviewDraft(current.allDraftRows)) return false;
+        this.state.rosterImport = {
+            ...current,
+            open: true,
+            step: 'review',
+            issueEditor: null,
+        };
+        this.render();
+        return true;
     }
 
     setRosterImportMode(mode) {
@@ -4181,7 +4241,7 @@ export class TimetablePlannerController {
         const warnings = [];
         const duplicateKeys = new Map();
         const rowIssues = new Map();
-        const addIssue = (row, severity, field, message) => {
+        const addIssue = (row, severity, field, message, details = {}) => {
             const issue = {
                 rowId: row.id,
                 sourceRow: row.sourceRow || null,
@@ -4189,6 +4249,7 @@ export class TimetablePlannerController {
                 severity,
                 field,
                 message,
+                ...details,
                 grade: row.grade,
                 className: row.className,
                 subjectName: row.subjectName,
@@ -4203,7 +4264,7 @@ export class TimetablePlannerController {
         };
         const split = value => String(value || '').split(/[、,，/／;；|]+/).map(item => item.trim()).filter(Boolean);
 
-        draftRows.forEach(row => {
+        draftRows.forEach((row, index) => {
             const hours = Number(row.weeklyHours);
             if (!row.className) addIssue(row, 'error', 'className', '请填写班级。');
             if (!row.subjectName) addIssue(row, 'error', 'subjectName', '请填写课程。');
@@ -4213,8 +4274,24 @@ export class TimetablePlannerController {
                 addIssue(row, 'warning', 'blockPreference', '双连堂课时建议使用偶数。');
             }
             const key = [row.grade, row.className, row.subjectName, row.teacherName].join('|');
-            if (duplicateKeys.has(key)) addIssue(row, 'warning', 'subjectName', '存在重复任课，请确认是否需要合并。');
-            else duplicateKeys.set(key, row);
+            if (duplicateKeys.has(key)) {
+                const duplicateOf = duplicateKeys.get(key);
+                addIssue(
+                    row,
+                    'warning',
+                    'subjectName',
+                    `存在重复任课：与第 ${duplicateOf.reviewRow} 行重复，请确认是否需要合并。`,
+                    {
+                        code: 'duplicate_roster',
+                        duplicateOfRowId: duplicateOf.row.id,
+                        duplicateOfReviewRow: duplicateOf.reviewRow,
+                        duplicateOfSourceRow: duplicateOf.row.sourceRow || null,
+                        duplicateOfSourceSheet: duplicateOf.row.sourceSheet || '',
+                    },
+                );
+            } else {
+                duplicateKeys.set(key, { row, reviewRow: index + 1 });
+            }
         });
 
         const classSet = new Set();
@@ -4297,6 +4374,9 @@ export class TimetablePlannerController {
             hasBlockingIssues: Boolean(payload.hasBlockingIssues) || issues.some(issue => issue.severity === 'error'),
             issueListExpanded: Boolean(payload.issueListExpanded ?? this.state.rosterImport?.issueListExpanded),
             issueEditor: visibleIssueEditor,
+            appendDialog: Object.prototype.hasOwnProperty.call(payload, 'appendDialog')
+                ? payload.appendDialog
+                : current.appendDialog || createTimetablePlannerState().rosterImport.appendDialog,
             loading: false,
             phaseText: '',
             phaseTone: '',
@@ -4700,32 +4780,193 @@ export class TimetablePlannerController {
     }
 
     addRosterReviewRow() {
-        this.refreshRosterReviewFromRows([...this.readRosterReviewRows(), this.emptyRosterDraftRow()]);
+        const row = this.emptyRosterDraftRow();
+        this.refreshRosterReviewFromRows([...this.readRosterReviewRows(), row]);
+        this.locateRosterIssue(row.id);
+        return row.id;
     }
 
     deleteRosterReviewRow(rowId) {
         this.refreshRosterReviewFromRows(this.readRosterReviewRows().filter(row => row.id !== rowId));
     }
 
+    openRosterAppendDialog() {
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+        if (current.step !== 'review') return false;
+        this.state.rosterImport = {
+            ...current,
+            issueEditor: null,
+            appendDialog: {
+                ...(current.appendDialog || createTimetablePlannerState().rosterImport.appendDialog),
+                open: true,
+                loading: false,
+                error: '',
+                requestId: this.rosterAppendRequestSeq,
+            },
+        };
+        this.render();
+        return true;
+    }
+
+    closeRosterAppendDialog() {
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+        if (!current.appendDialog?.open && !current.appendDialog?.loading) return false;
+        this.rosterAppendRequestSeq += 1;
+        this.state.rosterImport = {
+            ...current,
+            appendDialog: {
+                ...(current.appendDialog || {}),
+                open: false,
+                loading: false,
+                error: '',
+                requestId: this.rosterAppendRequestSeq,
+            },
+        };
+        this.render();
+        return true;
+    }
+
+    updateRosterAppendText(text = '') {
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+        this.state.rosterImport = {
+            ...current,
+            appendDialog: {
+                ...(current.appendDialog || createTimetablePlannerState().rosterImport.appendDialog),
+                text: String(text ?? ''),
+                error: '',
+            },
+        };
+    }
+
+    mergeRosterAppendParseSummary(currentSummary = null, appendSummary = null, rows = []) {
+        const current = currentSummary || {};
+        const appended = appendSummary || {};
+        const hasCurrent = Boolean(currentSummary);
+        return {
+            ...(hasCurrent ? current : appended),
+            format: current.format || appended.format || 'text',
+            sheetCount: Number(current.sheetCount || 0),
+            includedSheetCount: Number(current.includedSheetCount || 0),
+            includedSheetNames: Array.isArray(current.includedSheetNames) ? current.includedSheetNames : [],
+            localRowCount: rows.filter(row => row.parseSource !== 'ai').length,
+            aiRowCount: rows.filter(row => row.parseSource === 'ai').length,
+            unresolvedRowCount: Number(current.unresolvedRowCount || 0) + Number(appended.unresolvedRowCount || 0),
+            aiAttempted: Boolean(current.aiAttempted || appended.aiAttempted),
+            aiCallCount: Number(current.aiCallCount || 0) + Number(appended.aiCallCount || 0),
+            appendedRowCount: Number(current.appendedRowCount || 0)
+                + Number(appended.localRowCount || 0)
+                + Number(appended.aiRowCount || 0),
+        };
+    }
+
     async appendRosterReviewRows() {
-        const text = this.state.container?.querySelector('#tt-roster-bulk-text')?.value?.trim() || '';
+        const current = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+        if (current.appendDialog?.loading) return false;
+        const text = String(current.appendDialog?.text || '').trim();
         if (!text) {
-            this.setMessage('请先粘贴要追加的任课数据。');
-            return;
-        }
-        try {
-            this.state.loading = true;
+            this.state.rosterImport = {
+                ...current,
+                appendDialog: {
+                    ...(current.appendDialog || createTimetablePlannerState().rosterImport.appendDialog),
+                    open: true,
+                    error: '请先粘贴要追加的任课数据。',
+                },
+            };
             this.render();
+            return false;
+        }
+        const baseRows = this.readRosterReviewRows();
+        const baseAllRows = this.reconcileRosterAllRows(baseRows);
+        const requestId = ++this.rosterAppendRequestSeq;
+        this.state.rosterImport = {
+            ...current,
+            draftRows: baseRows,
+            allDraftRows: baseAllRows,
+            appendDialog: {
+                ...(current.appendDialog || {}),
+                open: true,
+                loading: true,
+                error: '',
+                requestId,
+            },
+        };
+        this.render();
+        try {
             const result = await requestTimetable('/roster/preview', {
                 method: 'POST',
                 body: JSON.stringify({ text }),
             });
-            this.refreshRosterReviewFromRows([...this.readRosterReviewRows(), ...(result.draftRows || [])]);
-        } catch (error) {
-            this.handleError(error);
-        } finally {
-            this.state.loading = false;
+            const latest = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+            if (requestId !== this.rosterAppendRequestSeq
+                || latest.appendDialog?.requestId !== requestId
+                || !latest.appendDialog?.open) return false;
+            const appendedRows = (Array.isArray(result.draftRows) ? result.draftRows : []).map((row, index) => this.normalizeRosterDraftRow({
+                ...row,
+                id: this.nextRosterDraftId(),
+                sourceSheetId: '',
+                sourceSheet: '追加文本',
+                sourceRow: row.sourceRow || row.source?.row || index + 1,
+            }, index));
+            if (!appendedRows.length) {
+                this.state.rosterImport = {
+                    ...latest,
+                    appendDialog: {
+                        ...latest.appendDialog,
+                        loading: false,
+                        error: '没有识别到可追加的任课数据，请检查文本格式。',
+                    },
+                };
+                this.render();
+                return false;
+            }
+            const analyzed = this.analyzeRosterDraftRows([...baseRows, ...appendedRows]);
+            const appendedIds = new Set(appendedRows.map(row => row.id));
+            const appendedReviewCount = analyzed.draftRows.filter(row => appendedIds.has(row.id) && row.issues?.length).length;
+            const hasLocalRows = analyzed.draftRows.some(row => row.parseSource !== 'ai');
+            const hasAiRows = analyzed.draftRows.some(row => row.parseSource === 'ai');
+            const source = hasLocalRows && hasAiRows ? 'mixed' : hasAiRows ? 'ai' : hasLocalRows ? 'local' : latest.source;
+            const summary = { added: appendedRows.length, review: appendedReviewCount };
+            this.setRosterReviewState({
+                ...analyzed,
+                source,
+                allDraftRows: [...baseAllRows, ...appendedRows],
+                sheetReviews: latest.sheetReviews || [],
+                parseSummary: this.mergeRosterAppendParseSummary(latest.parseSummary, result.parseSummary, analyzed.draftRows),
+                warnings: [...new Set([...(latest.warnings || []), ...(result.warnings || []), ...analyzed.warnings])],
+                importReport: this.buildRosterReviewImportReport(analyzed),
+                issueListExpanded: latest.issueListExpanded,
+                issueEditor: null,
+                appendDialog: {
+                    ...latest.appendDialog,
+                    open: false,
+                    text: '',
+                    loading: false,
+                    error: '',
+                    requestId,
+                    lastSummary: summary,
+                },
+            });
+            this.state.message = `已追加 ${summary.added} 行，${summary.review} 行需要复核。`;
+            this.state.lastFailure = null;
             this.render();
+            this.locateRosterIssue(appendedRows[0].id);
+            return true;
+        } catch (error) {
+            const latest = this.state.rosterImport || createTimetablePlannerState().rosterImport;
+            if (requestId !== this.rosterAppendRequestSeq
+                || latest.appendDialog?.requestId !== requestId
+                || !latest.appendDialog?.open) return false;
+            const normalized = normalizeApiError(error);
+            this.state.rosterImport = {
+                ...latest,
+                appendDialog: {
+                    ...latest.appendDialog,
+                    loading: false,
+                    error: normalized.message || '追加解析失败，请稍后重试。',
+                },
+            };
+            this.render();
+            return false;
         }
     }
 

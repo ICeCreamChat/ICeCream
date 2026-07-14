@@ -33,7 +33,6 @@ import {
     semanticActionApplyItemKey,
 } from './constraint-dialog-review-model.js';
 import {
-    QUICK_CONSTRAINT_EXAMPLES,
     RULE_TYPE_LABELS,
     normalizeStatusKey,
     requirementApplyExplanation,
@@ -872,7 +871,7 @@ function renderRequirementClarification(item = {}) {
     const inputHtml = kind === 'choice' && options.length
         ? `<div class="tt-requirement-choice-list">
                 ${options.map(option => `
-                    <button class="tt-example-chip tt-requirement-choice-chip"
+                    <button class="tt-requirement-choice-chip"
                         data-action="submit-requirement-clarification"
                         data-requirement-id="${escapeAttr(requirementId)}"
                         data-clarify-value="${escapeAttr(option.value ?? option.id ?? option.label)}"
@@ -1071,20 +1070,19 @@ export function renderConstraintDialog(state) {
                 <div class="tt-constraint-input-area">
                     ${renderInputArea(state, mode, parsing, review)}
                 </div>
-                <p class="tt-constraint-intake-note">文本、文件、手动补充会进入同一套需求理解与人工复核流程。</p>
             </div>
             ${requirements.length > 0 ? renderRequirementGroups(requirements, dialog, state) : ''}
         </div>
     `;
     const actionsHtml = aiActive ? '' : `
         <!-- 操作按钮 -->
-        <div class="tt-dialog-actions">
+        <div class="tt-dialog-actions tt-constraint-dialog-actions">
             <button class="tt-btn" data-action="close-constraint-dialog" type="button">取消</button>
+            ${renderInputModeAction(mode, parsing, review, requirements.length > 0, actionableRequirementCount === 0)}
             ${actionableRequirementCount > 0 ? `
-                <button class="tt-btn tt-btn--primary" data-action="apply-constraints" type="button" ${parsing || hasBlockingConflict ? 'disabled' : ''}>
+                <button class="tt-btn tt-btn--primary" data-action="apply-constraints" type="button" title="将写入排课规则，立即参与下次排课" ${parsing || hasBlockingConflict ? 'disabled' : ''}>
                     <i data-lucide="check"></i>
                     <span>${applyButtonLabel} (${actionableRequirementCount})</span>
-                    <small>将写入排课规则，立即参与下次排课</small>
                 </button>
             ` : ''}
         </div>
@@ -1145,6 +1143,37 @@ function renderInputTabs(mode, parsing) {
     `).join('');
 }
 
+function renderInputModeAction(mode, parsing, review, hasResults, isPrimary) {
+    const primaryClass = isPrimary ? ' tt-btn--primary' : '';
+    if (mode === 'file') {
+        const hasFile = Boolean(review.fileName);
+        const label = parsing ? '正在解析...' : hasResults ? '重新解析文件' : '解析文件';
+        const icon = parsing ? 'loader-2' : hasResults ? 'refresh-cw' : 'file-text';
+        return `
+            <button class="tt-btn${primaryClass}" data-action="parse-constraints" type="button" ${parsing || !hasFile ? 'disabled' : ''}>
+                <i data-lucide="${icon}" ${parsing ? 'class="tt-spin"' : ''}></i>
+                <span>${label}</span>
+            </button>
+        `;
+    }
+    if (mode === 'manual') {
+        return `
+            <button class="tt-btn${primaryClass}" data-action="add-manual-constraint" type="button" ${parsing ? 'disabled' : ''}>
+                <i data-lucide="${parsing ? 'loader-2' : 'plus'}" ${parsing ? 'class="tt-spin"' : ''}></i>
+                <span>${parsing ? '正在添加...' : '添加约束'}</span>
+            </button>
+        `;
+    }
+    const label = parsing ? '正在理解...' : hasResults ? '重新理解' : '开始理解';
+    const icon = parsing ? 'loader-2' : hasResults ? 'refresh-cw' : 'wand-sparkles';
+    return `
+        <button class="tt-btn${primaryClass}" data-action="parse-constraints" type="button" ${parsing ? 'disabled' : ''}>
+            <i data-lucide="${icon}" ${parsing ? 'class="tt-spin"' : ''}></i>
+            <span>${label}</span>
+        </button>
+    `;
+}
+
 function renderInputArea(state, mode, parsing, review) {
     if (mode === 'text') {
         return `
@@ -1170,21 +1199,7 @@ function renderInputArea(state, mode, parsing, review) {
                             ` : ''}
                         </div>
                     </div>
-                ` : `
-                    <div class="tt-constraint-command-row">
-                        <div class="tt-quick-examples" aria-label="常用示例">
-                            ${QUICK_CONSTRAINT_EXAMPLES.map(ex => `
-                                <button class="tt-example-chip" data-action="use-example" data-text="${escapeAttr(ex)}" type="button">
-                                    ${escapeHtml(ex)}
-                                </button>
-                            `).join('')}
-                        </div>
-                        <button class="tt-btn tt-btn--primary" data-action="parse-constraints" type="button">
-                            <i data-lucide="wand-sparkles"></i>
-                            <span>理解要求</span>
-                        </button>
-                    </div>
-                `}
+                ` : ''}
             </div>
         `;
     }
@@ -1198,14 +1213,6 @@ function renderInputArea(state, mode, parsing, review) {
                     <strong>${escapeHtml(review.fileName || '点击选择文件')}</strong>
                     <span>支持 TXT / CSV / XLSX 格式</span>
                 </label>
-                ${review.fileName ? `
-                    <div class="tt-constraint-command-row tt-constraint-command-row--end">
-                        <button class="tt-btn tt-btn--primary" data-action="parse-constraints" type="button" ${parsing ? 'disabled' : ''}>
-                            <i data-lucide="${parsing ? 'loader-2' : 'file-text'}" ${parsing ? 'class="tt-spin"' : ''}></i>
-                            <span>${parsing ? '正在解析...' : '解析文件'}</span>
-                        </button>
-                    </div>
-                ` : ''}
             </div>
         `;
     }
@@ -1230,12 +1237,6 @@ function renderInputArea(state, mode, parsing, review) {
                         <span>时间</span>
                         <input type="text" id="tt-manual-time" placeholder="周一上午 或 第1-2节">
                     </label>
-                </div>
-                <div class="tt-constraint-command-row tt-constraint-command-row--end">
-                    <button class="tt-btn tt-btn--primary" data-action="add-manual-constraint" type="button">
-                        <i data-lucide="plus"></i>
-                        <span>添加约束</span>
-                    </button>
                 </div>
             </div>
         `;

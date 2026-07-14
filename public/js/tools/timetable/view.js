@@ -930,13 +930,16 @@ export function renderPeriodTimeTableBody({
             const nextInterval = rowIntervals[rowIndex + 1] || null;
             const gapValue = nextInterval ? gapBetweenPeriodRows({ end: endTime }, { start: nextInterval.start }) : '';
             const kindClass = row.kind === 'duty' ? 'tt-period-time-block-row--duty' : 'tt-period-time-block-row--display';
+            const separatedClass = rows[rowIndex - 1]?.kind === 'teaching'
+                ? 'tt-period-time-block-row--separated'
+                : '';
             const gapCell = nextInterval
                 ? `<input type="number" class="tt-roster-review-field tt-period-time-gap-input" data-period-time-block-gap-after="${escapeAttr(segment.id || '')}" min="0" max="240" step="1" value="${escapeAttr(gapValue)}" ${saving ? 'disabled' : ''}>`
                 : '<span class="tt-period-time-gap-empty">无课后间隔</span>';
             const dutyNote = row.kind === 'duty'
                 ? '<span class="tt-period-time-label-note">值班教师</span>'
                 : '';
-            return `<tr data-period-time-block-row="${escapeAttr(segment.id || '')}" class="tt-period-time-block-row ${kindClass}">
+            return `<tr data-period-time-block-row="${escapeAttr(segment.id || '')}" class="tt-period-time-block-row ${kindClass} ${separatedClass}">
                 <td class="tt-period-time-label" data-label="节次"><strong>${escapeHtml(segment.label || '附加时段')}</strong>${dutyNote}</td>
                 <td data-label="开始时间"><input type="time" class="tt-roster-review-field tt-period-time-input" data-period-time-block-start="${escapeAttr(segment.id || '')}" value="${escapeAttr(startTime || '')}" ${saving ? 'disabled' : ''}></td>
                 <td data-label="结束时间"><input type="time" class="tt-roster-review-field tt-period-time-input" data-period-time-block-end="${escapeAttr(segment.id || '')}" value="${escapeAttr(endTime || '')}" ${saving ? 'disabled' : ''}></td>
@@ -1081,7 +1084,7 @@ function renderProjectSection(state) {
     ].filter(Boolean).join(' · ');
 
     return `
-        <div class="tt-setup-card tt-range-setup-card" data-workflow-step="data">
+        <div class="tt-setup-card tt-range-setup-card tt-workflow-subsection" data-workflow-step="data">
             <div class="tt-subsection-title">
                 <h4><i data-lucide="calendar-days"></i><span>排课范围</span></h4>
                 <span class="tt-chip">${activeWeekdays.length} 天 · ${activePeriods.length} 节</span>
@@ -1125,7 +1128,7 @@ function renderImportSection(state) {
     const stats = getRosterStats(project);
     const hasRoster = stats.planCount > 0;
     return `
-        <div class="tt-setup-card tt-import-setup-card" data-workflow-step="data">
+        <div class="tt-setup-card tt-import-setup-card tt-workflow-subsection" data-workflow-step="data">
             <div class="tt-subsection-title">
                 <h4><i data-lucide="file-input"></i><span>任课数据</span></h4>
                 <span class="tt-chip">${stats.planCount} 条</span>
@@ -1170,6 +1173,7 @@ function renderRosterImportDialog(state) {
                 </div>
                 ${isReview ? renderRosterReview(dialog) : renderRosterImportInput(dialog, mode, fileName)}
             </section>
+            ${renderRosterAppendDialog(dialog)}
             ${renderRosterIssueEditor(dialog)}
         </div>
     `;
@@ -1177,12 +1181,22 @@ function renderRosterImportDialog(state) {
 
 function renderRosterImportInput(dialog, mode, fileName) {
     const isBusy = Boolean(dialog.loading);
+    const reviewCount = Array.isArray(dialog.draftRows) ? dialog.draftRows.length : 0;
+    const hasReviewDraft = reviewCount > 0;
     const disabled = isBusy ? 'disabled' : '';
     const fileBusy = isBusy && mode === 'file';
     const textBusy = isBusy && mode === 'text';
     const phaseText = dialog.phaseText || '解析任课数据中...';
     const phaseTone = dialog.phaseTone === 'warning' ? ' tt-process-chip--warning' : '';
     return `
+        ${hasReviewDraft ? `
+            <div class="tt-roster-import-resume">
+                <span>当前保留 ${reviewCount} 条复核数据</span>
+                <button class="tt-btn" id="tt-resume-roster-review" type="button" ${disabled}>
+                    <i data-lucide="arrow-left"></i><span>继续复核（${reviewCount} 条）</span>
+                </button>
+            </div>
+        ` : ''}
         <div class="tt-roster-import-options" role="group" aria-label="选择任课数据导入方式">
             <section class="tt-roster-import-option tt-roster-import-option--file ${mode === 'file' ? 'is-active' : ''}" aria-labelledby="tt-roster-import-file-title">
                 <div class="tt-roster-import-option-head">
@@ -1203,7 +1217,7 @@ function renderRosterImportInput(dialog, mode, fileName) {
                 <div class="tt-roster-import-option-actions tt-roster-import-option-actions--full">
                     <button class="tt-btn tt-btn--primary" type="button" data-roster-import-submit="file" ${disabled}>
                         <i data-lucide="${fileBusy ? 'loader-2' : 'file-search'}" class="${fileBusy ? 'tt-spin' : ''}"></i>
-                        <span>${fileBusy ? '解析中' : '解析文件'}</span>
+                        <span>${fileBusy ? '解析中' : hasReviewDraft ? '重新解析并替换' : '解析文件'}</span>
                     </button>
                 </div>
             </section>
@@ -1212,17 +1226,17 @@ function renderRosterImportInput(dialog, mode, fileName) {
                     <span class="tt-roster-import-option-icon"><i data-lucide="file-text"></i></span>
                     <div>
                         <h4 id="tt-roster-import-text-title">粘贴文本</h4>
-                        <p>智能识别自然语言的文本</p>
+                        <p>支持表格数据，也可尝试自然语言描述</p>
                     </div>
                 </div>
                 <div class="tt-roster-import-option-body">
-                    <textarea id="tt-roster-import-text" class="tt-import-text" spellcheck="false" placeholder="例如：年级,班级,课程,教师,周课时,连堂；七年级,1班,语文,林老师,5,混合" ${disabled}>${escapeHtml(dialog.text || '')}</textarea>
+                    <textarea id="tt-roster-import-text" class="tt-import-text" spellcheck="false" placeholder="每条任课一行，支持带表头的表格数据或自然语言描述。&#10;至少包含：班级、课程、教师、周课时。" ${disabled}>${escapeHtml(dialog.text || '')}</textarea>
                 </div>
                 <div class="tt-roster-import-option-actions">
-                    <button class="tt-btn" id="tt-fill-roster-sample" type="button" ${disabled}><i data-lucide="wand-sparkles"></i><span>示例</span></button>
+                    <button class="tt-btn" id="tt-fill-roster-sample" type="button" ${disabled}><i data-lucide="wand-sparkles"></i><span>填入示例</span></button>
                     <button class="tt-btn tt-btn--primary" type="button" data-roster-import-submit="text" ${disabled}>
                         <i data-lucide="${textBusy ? 'loader-2' : 'file-search'}" class="${textBusy ? 'tt-spin' : ''}"></i>
-                        <span>${textBusy ? '解析中' : '解析文本'}</span>
+                        <span>${textBusy ? '解析中' : hasReviewDraft ? '重新解析并替换' : '解析文本'}</span>
                     </button>
                 </div>
             </section>
@@ -1631,9 +1645,16 @@ function renderRosterReview(dialog) {
     const rows = dialog.draftRows || [];
     const issues = dialog.issues || [];
     const blocking = Boolean(dialog.hasBlockingIssues || issues.some(issue => issue.severity === 'error'));
+    const appendSummary = dialog.appendDialog?.lastSummary;
     return `
         ${renderRosterSheetReviews(dialog)}
         ${dialog.stats ? renderRosterStats(dialog.stats) : ''}
+        ${appendSummary ? `
+            <p class="tt-roster-append-summary" role="status">
+                <i data-lucide="circle-check"></i>
+                <span>已追加 ${Number(appendSummary.added || 0)} 行，${Number(appendSummary.review || 0)} 行需要复核。</span>
+            </p>
+        ` : ''}
         ${renderRosterImportReport(dialog.importReport)}
         ${renderRosterIssueList(dialog, rows, issues)}
         <div class="tt-roster-review-wrap">
@@ -1677,16 +1698,44 @@ function renderRosterReview(dialog) {
                 </tbody>
             </table>
         </div>
-        <div class="tt-roster-bulk-panel">
-            <textarea id="tt-roster-bulk-text" class="tt-import-text" spellcheck="false" placeholder="可粘贴多行任课数据并追加到检查表"></textarea>
-            <div class="tt-action-row tt-action-row--end">
+        <div class="tt-dialog-actions tt-roster-review-actions">
+            <div class="tt-roster-review-actions-start">
+                <button class="tt-btn" id="tt-back-roster-import" type="button"><i data-lucide="arrow-left"></i><span>返回导入方式</span></button>
                 <button class="tt-btn" id="tt-add-roster-review-row" type="button"><i data-lucide="plus"></i><span>新增行</span></button>
-                <button class="tt-btn" id="tt-append-roster-rows" type="button"><i data-lucide="list-plus"></i><span>追加粘贴</span></button>
+                <button class="tt-btn" id="tt-open-roster-append" type="button"><i data-lucide="list-plus"></i><span>批量追加</span></button>
+            </div>
+            <div class="tt-roster-review-actions-end">
+                <button class="tt-btn" id="tt-cancel-roster-import-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
+                <button class="tt-btn tt-btn--primary" id="tt-confirm-roster-import" type="button" ${blocking ? 'disabled' : ''}><i data-lucide="check"></i><span>确认导入</span></button>
             </div>
         </div>
-        <div class="tt-dialog-actions">
-            <button class="tt-btn" id="tt-cancel-roster-import-secondary" type="button"><i data-lucide="x"></i><span>取消</span></button>
-            <button class="tt-btn tt-btn--primary" id="tt-confirm-roster-import" type="button" ${blocking ? 'disabled' : ''}><i data-lucide="check"></i><span>确认导入</span></button>
+    `;
+}
+
+function renderRosterAppendDialog(dialog = {}) {
+    const append = dialog.appendDialog || {};
+    if (!append.open) return '';
+    const loading = Boolean(append.loading);
+    const error = String(append.error || '').trim();
+    return `
+        <div class="tt-dialog-overlay tt-roster-append-overlay" data-roster-append-overlay>
+            <section class="tt-roster-append-dialog" id="tt-roster-append-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-roster-append-title">
+                <div class="tt-dialog-header">
+                    <div>
+                        <span class="tt-eyebrow">任课数据复核</span>
+                        <h3 id="tt-roster-append-title">批量追加</h3>
+                    </div>
+                    <button class="tt-icon-btn" id="tt-close-roster-append" type="button" title="关闭批量追加" aria-label="关闭批量追加" ${loading ? 'disabled' : ''}><i data-lucide="x"></i></button>
+                </div>
+                <textarea id="tt-roster-append-text" class="tt-import-text" spellcheck="false" placeholder="粘贴多行任课数据，例如：七年级,1班,语文,林老师,5,单节" ${loading ? 'disabled' : ''}>${escapeHtml(append.text || '')}</textarea>
+                ${error ? `<p class="tt-roster-append-error" role="alert"><i data-lucide="triangle-alert"></i><span>${escapeHtml(error)}</span></p>` : ''}
+                <div class="tt-dialog-actions">
+                    <button class="tt-btn" id="tt-cancel-roster-append" type="button" ${loading ? 'disabled' : ''}><i data-lucide="x"></i><span>取消</span></button>
+                    <button class="tt-btn tt-btn--primary" id="tt-submit-roster-append" type="button" ${loading ? 'disabled' : ''}>
+                        <i data-lucide="${loading ? 'loader-2' : 'list-plus'}" class="${loading ? 'tt-spin' : ''}"></i><span>${loading ? '解析中' : '解析并追加'}</span>
+                    </button>
+                </div>
+            </section>
         </div>
     `;
 }
@@ -1735,17 +1784,36 @@ function renderRosterImportReport(report) {
 function renderRosterReviewRow(row, index = 0) {
     const issues = row.issues || [];
     const hasError = issues.some(issue => issue.severity === 'error');
+    const duplicateIssue = issues.find(issue => issue.code === 'duplicate_roster');
+    const hasDuplicate = Boolean(duplicateIssue);
     const issueText = issues.map(issue => issue.message).join('；') || '无';
-    const rowNumber = row.sourceRow || index + 1;
+    const rowNumber = index + 1;
+    const sourceRowLabel = row.sourceSheet === '追加文本'
+        ? `文本第 ${row.sourceRow} 行`
+        : `源文件第 ${row.sourceRow} 行`;
     const rowNumberTitle = row.sourceRow
-        ? row.sourceSheet ? `${row.sourceSheet} · 第 ${row.sourceRow} 行` : `源表第 ${row.sourceRow} 行`
+        ? `第 ${rowNumber} 行 · 来源：${row.sourceSheet ? `${row.sourceSheet} · ` : ''}${sourceRowLabel}`
         : `当前第 ${index + 1} 行`;
+    const rowClasses = [
+        'tt-roster-review-row',
+        hasError ? 'tt-roster-review-row--error' : '',
+        hasDuplicate ? 'tt-roster-review-row--duplicate' : '',
+    ].filter(Boolean).join(' ');
+    const issueControl = hasDuplicate
+        ? `<button class="tt-roster-review-issue tt-roster-review-issue--duplicate" type="button"
+            data-roster-jump-row="${escapeAttr(duplicateIssue.duplicateOfRowId || '')}"
+            data-roster-jump-field="subjectName"
+            title="${escapeAttr(issueText)}" aria-label="${escapeAttr(issueText)}">
+                <i data-lucide="copy"></i><span>重复</span>
+            </button>`
+        : `<span class="tt-roster-review-issue" title="${escapeAttr(issueText)}">${escapeHtml(issueText)}</span>`;
     const input = (field, value, type = 'text', extraAttrs = '', title = value) => `
         <input class="tt-roster-review-field" data-roster-field="${escapeAttr(field)}" type="${escapeAttr(type)}" value="${escapeAttr(value ?? '')}" ${extraAttrs} title="${escapeAttr(title ?? '')}">
     `;
     return `
-        <tr class="tt-roster-review-row ${hasError ? 'tt-roster-review-row--error' : ''}"
+        <tr class="${rowClasses}"
             data-roster-review-row="${escapeAttr(row.id)}"
+            data-roster-duplicate-of="${escapeAttr(duplicateIssue?.duplicateOfRowId || '')}"
             data-roster-source-sheet-id="${escapeAttr(row.sourceSheetId || '')}"
             data-roster-source-row="${escapeAttr(row.sourceRow || '')}"
             data-roster-source-sheet="${escapeAttr(row.sourceSheet || '')}"
@@ -1775,7 +1843,7 @@ function renderRosterReviewRow(row, index = 0) {
             <td data-label="教室">${input('roomName', row.roomName)}</td>
             <td data-label="课型">${renderRosterMetadataControl(row, 'activityTypes')}</td>
             <td data-label="资源">${renderRosterMetadataControl(row, 'requiredResourceTypes')}</td>
-            <td data-label="问题"><span class="tt-roster-review-issue" title="${escapeAttr(issueText)}">${escapeHtml(issueText)}</span></td>
+            <td data-label="问题">${issueControl}</td>
             <td data-label="操作">
                 <button class="tt-icon-btn tt-icon-btn--sm" type="button" data-roster-delete-row="${escapeAttr(row.id)}" title="删除此行" aria-label="删除此行"><i data-lucide="trash-2"></i></button>
             </td>
@@ -2313,7 +2381,7 @@ function renderRulesSection(state) {
             : '自然语言需求理解、复核与落地。';
 
     return `
-        <div class="tt-rule-stack tt-rules-setup-card" data-workflow-step="rules">
+        <div class="tt-rule-stack tt-rules-setup-card tt-workflow-subsection" data-workflow-step="rules">
             <div class="tt-rules-setup-body">
                 <button class="tt-empty-card tt-roster-entry tt-rule-entry tt-smart-helper-entry" id="tt-open-rule-review" type="button" data-action="open-constraint-dialog">
                     <i data-lucide="brain-circuit"></i>
@@ -2973,7 +3041,7 @@ function renderSolveSection(state) {
     const scaleMessage = solveScaleMessage(project, state.solveScaleHint);
     const runLabel = state.loading ? (state.solvePhaseText || '快速生成中') : '';
     return `
-        <section class="tt-section tt-section--solve tt-solve-setup-card" data-workflow-step="solve">
+        <section class="tt-section tt-section--solve tt-solve-setup-card tt-workflow-subsection" data-workflow-step="solve">
             <div class="tt-section-title">
                 <h3><i data-lucide="sparkles"></i><span>求解</span></h3>
                 <span class="tt-chip ${readiness.ready || isArchiveOnlyReadyState(project) ? 'tt-chip--ok' : 'tt-chip--warn'}">${readinessChipLabel(project, readiness)}</span>
@@ -4075,7 +4143,7 @@ function renderExportSection(state) {
                 ? '发布前校验已通过，可确认发布后导出。'
                 : '发布前校验通过后才能发布正式课表。';
     return `
-        <section class="tt-section tt-export-setup-card" data-workflow-step="review">
+        <section class="tt-section tt-export-setup-card tt-workflow-subsection" data-workflow-step="review">
             <div class="tt-section-title">
                 <h3><i data-lucide="download"></i><span>发布导出</span></h3>
                 <span class="tt-chip ${publishStatusTone(schedule)}">${escapeHtml(publishStatusLabel(schedule))}</span>
