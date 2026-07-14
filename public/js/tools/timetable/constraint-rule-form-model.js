@@ -314,6 +314,9 @@ export function compileConstraintRuleArtifacts(form = {}, project = {}, options 
     };
     delete draftRow.time;
     delete draftRow.timeLabel;
+    delete draftRow.originalId;
+    delete draftRow.formType;
+    delete draftRow.formErrors;
     delete draftRow.limit;
     delete draftRow.value;
     delete draftRow.slots;

@@ -4,63 +4,7 @@
  */
 
 import { requestTimetable } from './api.js';
-import { RULE_TYPE_LABELS } from './constraint-status-dict.js';
-
-const DAY_LABELS = ['', '一', '二', '三', '四', '五', '六', '日'];
-
-const RULE_TARGET_KIND = {
-    teacher_unavailable: 'teacher',
-    teacher_daily_limit: 'teacher',
-    teacher_consecutive_limit: 'teacher',
-    class_unavailable: 'class',
-    subject_morning: 'subject',
-    subject_preferred_periods: 'subject',
-    subject_avoid_periods: 'subject',
-    subject_spread: 'subject',
-};
-
-const SLOT_RULE_TYPES = new Set([
-    'teacher_unavailable',
-    'class_unavailable',
-    'subject_preferred_periods',
-    'subject_avoid_periods',
-]);
-
-const LIMIT_RULE_TYPES = new Set([
-    'teacher_daily_limit',
-    'teacher_consecutive_limit',
-]);
-
-function normalizeRuleKey(value = '') {
-    return String(value || '').trim()
-        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-        .toLowerCase()
-        .replace(/[-\s]+/g, '_');
-}
-
-function entityLabel(kind, item = {}) {
-    if (kind === 'class') return [item.grade, item.name].filter(Boolean).join(' ') || item.name || item.id || '班级';
-    return item.name || item.label || item.id || '对象';
-}
-
-function collectionForKind(project = {}, kind = '') {
-    return {
-        subject: project.subjects || [],
-        teacher: project.teachers || [],
-        class: project.classes || [],
-    }[kind] || [];
-}
-
-function resolveEditTarget(project = {}, value = '') {
-    const [kind, id] = String(value || '').split(':');
-    if (!kind || !id) return null;
-    const item = collectionForKind(project, kind).find(entry => String(entry.id) === id);
-    return {
-        kind,
-        id,
-        name: item ? entityLabel(kind, item) : id,
-    };
-}
+import { compileConstraintRuleArtifacts } from './constraint-rule-form-model.js';
 
 function checkedEditSlots() {
     return Array.from(document.querySelectorAll?.('[data-edit-slot]:checked') || [])
@@ -68,20 +12,51 @@ function checkedEditSlots() {
         .filter(Boolean);
 }
 
-function formatSlot(slot = '') {
-    const match = String(slot).match(/^(\d{1,2})-(\d{1,2})$/);
-    if (!match) return String(slot || '');
-    const day = Number.parseInt(match[1], 10);
-    const period = Number.parseInt(match[2], 10);
-    return `周${DAY_LABELS[day] || day}第${period}节`;
-}
+function replaceLinkedArtifacts(review = {}, editing = {}, result = {}) {
+    const matchesClause = item => item && (
+        item.id === editing.requirementId
+        || item.requirementId === editing.requirementId
+        || item.rowId === editing.originalId
+        || (editing.clauseId && item.clauseId === editing.clauseId)
+    );
+    const replaceArtifact = (items, replacement) => {
+        let replaced = false;
+        const next = (Array.isArray(items) ? items : []).map(item => {
+            if (!matchesClause(item)) return item;
+            replaced = true;
+            return { ...item, ...replacement };
+        });
+        if (!replaced) next.push(replacement);
+        return next;
+    };
+    const replaceSource = (items, replacement) => {
+        let replaced = false;
+        const next = (Array.isArray(items) ? items : []).map(source => {
+            if (source?.sourceId !== editing.sourceId) return source;
+            replaced = true;
+            const clauses = replaceArtifact(source.clauses, result.requirementItem);
+            const machineRuleIds = [...new Set([
+                ...(source.machineRuleIds || []).filter(id => id !== editing.machineRuleId),
+                result.draftRow.machineRuleId,
+            ])];
+            const promoteManualSource = source.origin === 'manual' && clauses.length === 1;
+            return {
+                ...source,
+                ...(promoteManualSource ? replacement : {}),
+                clauses,
+                machineRuleIds,
+                rawText: source.rawText || replacement.rawText,
+                source: source.source || replacement.source,
+            };
+        });
+        if (!replaced && result.draftRow.origin === 'manual') next.push(replacement);
+        return next;
+    };
 
-function summarizeRule(type, targetName, slots = [], limit = null) {
-    if (LIMIT_RULE_TYPES.has(type)) return `${targetName} 最多 ${limit} 节`;
-    if (type === 'subject_morning') return `${targetName} 上午优先`;
-    if (type === 'subject_spread') return `${targetName} 分散排布`;
-    if (slots.length) return `${targetName} ${slots.map(formatSlot).join('、')}`;
-    return `${targetName} ${RULE_TYPE_LABELS[type] || '约束规则'}`;
+    review.requirementItems = replaceArtifact(review.requirementItems, result.requirementItem);
+    review.constraintIRs = replaceArtifact(review.constraintIRs, result.constraintIR);
+    review.sourceRequirements = replaceSource(review.sourceRequirements, result.sourceRequirement);
+    review.manualRequirements = replaceSource(review.manualRequirements, result.sourceRequirement);
 }
 
 /**
@@ -158,74 +133,46 @@ export function saveEditedConstraint() {
     const editing = this.state.constraintDialog?.editingConstraint;
     if (!editing) return;
 
-    const type = normalizeRuleKey(document.getElementById('tt-edit-constraint-type')?.value);
-    const targetValue = document.getElementById('tt-edit-constraint-target')?.value;
-    const priority = document.getElementById('tt-edit-constraint-priority')?.value || editing.priority || 'soft';
-    const status = document.getElementById('tt-edit-constraint-status')?.value || editing.status || 'effective';
-    const limitText = document.getElementById('tt-edit-constraint-limit')?.value;
+    const type = document.getElementById('tt-edit-constraint-type')?.value || '';
+    const targetValue = document.getElementById('tt-edit-constraint-target')?.value || '';
+    const limit = document.getElementById('tt-edit-constraint-limit')?.value || '';
     const slots = checkedEditSlots();
-    const target = resolveEditTarget(this.state.project || {}, targetValue);
-    const expectedKind = RULE_TARGET_KIND[type];
+    const result = compileConstraintRuleArtifacts(
+        { type, targetValue, slots, limit },
+        this.state.project || {},
+        { existing: editing },
+    );
 
-    if (!type || !target) {
-        alert('请选择规则类型和对象');
+    if (!result.ok) {
+        this.state.constraintDialog.editingConstraint = {
+            ...editing,
+            formType: type,
+            formErrors: result.errors,
+        };
+        this.render();
         return;
-    }
-    if (expectedKind && target.kind !== expectedKind) {
-        alert('对象类型与规则类型不匹配');
-        return;
-    }
-    if (SLOT_RULE_TYPES.has(type) && !slots.length) {
-        alert('请选择至少一个节次');
-        return;
-    }
-
-    const limit = Number.parseInt(limitText, 10);
-    if (LIMIT_RULE_TYPES.has(type) && (!Number.isInteger(limit) || limit <= 0)) {
-        alert('请填写有效的上限节数');
-        return;
-    }
-
-    const updatedConstraint = {
-        ...editing,
-        type,
-        typeLabel: RULE_TYPE_LABELS[type] || '约束规则',
-        targetType: target.kind,
-        targetId: target.id,
-        targetName: target.name,
-        target: { type: target.kind, id: target.id, name: target.name },
-        priority,
-        status,
-        description: summarizeRule(type, target.name, slots, LIMIT_RULE_TYPES.has(type) ? limit : null),
-        understanding: summarizeRule(type, target.name, slots, LIMIT_RULE_TYPES.has(type) ? limit : null),
-    };
-
-    delete updatedConstraint.originalId;
-    delete updatedConstraint.time;
-    delete updatedConstraint.timeLabel;
-
-    if (SLOT_RULE_TYPES.has(type)) {
-        updatedConstraint.slots = slots;
-    } else {
-        delete updatedConstraint.slots;
-    }
-    if (LIMIT_RULE_TYPES.has(type)) {
-        updatedConstraint.limit = limit;
-    } else {
-        delete updatedConstraint.limit;
     }
 
     const index = this.state.ruleReview.draftRows.findIndex(c => c.id === editing.originalId);
     if (index >= 0) {
-        this.state.ruleReview.draftRows[index] = updatedConstraint;
+        this.state.ruleReview.draftRows[index] = result.draftRow;
     }
+    replaceLinkedArtifacts(this.state.ruleReview, editing, result);
+    this.refreshReviewStatistics?.(this.state.ruleReview);
 
-    // 清除编辑状态
     this.state.constraintDialog.editingConstraint = null;
-
-    // 重新检测冲突
     this.detectConstraintConflicts();
+    this.render();
+}
 
+export function updateEditingConstraintType(type = '') {
+    const editing = this.state.constraintDialog?.editingConstraint;
+    if (!editing) return;
+    this.state.constraintDialog.editingConstraint = {
+        ...editing,
+        formType: type,
+        formErrors: {},
+    };
     this.render();
 }
 

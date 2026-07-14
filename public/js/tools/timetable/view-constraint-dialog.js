@@ -21,6 +21,7 @@ function escapeAttr(value) {
 import {
     renderConstraintCard as renderCard,
     renderConstraintEditForm,
+    renderConstraintRuleFormFields,
     renderAIChatPanel,
 } from './view-constraint-dialog-components.js';
 import {
@@ -1218,26 +1219,16 @@ function renderInputArea(state, mode, parsing, review) {
     }
 
     if (mode === 'manual') {
+        const manualType = state.constraintDialog?.manualRuleType || 'teacher_unavailable';
         return `
             <div class="tt-manual-input tt-constraint-form-surface">
-                <div class="tt-form-grid">
-                    <label>
-                        <span>约束类型</span>
-                        <select id="tt-manual-type">
-                            <option value="forbid">禁止安排</option>
-                            <option value="prefer">优先安排</option>
-                            <option value="avoid">尽量避开</option>
-                        </select>
-                    </label>
-                    <label>
-                        <span>对象</span>
-                        <input type="text" id="tt-manual-target" placeholder="教师名或课程名">
-                    </label>
-                    <label>
-                        <span>时间</span>
-                        <input type="text" id="tt-manual-time" placeholder="周一上午 或 第1-2节">
-                    </label>
-                </div>
+                ${renderConstraintRuleFormFields({
+                    project: state.project || {},
+                    value: { type: manualType, targetId: '', slots: [], limit: '' },
+                    idPrefix: 'tt-manual-rule',
+                    slotAttribute: 'data-manual-rule-slot',
+                    errors: state.constraintDialog?.manualRuleErrors || {},
+                })}
             </div>
         `;
     }

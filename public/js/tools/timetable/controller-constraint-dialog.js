@@ -4,6 +4,7 @@
  */
 
 import { requestTimetable } from './api.js';
+import { compileConstraintRuleArtifacts } from './constraint-rule-form-model.js';
 import {
     buildUnifiedRequirementItems,
     draftRowApplyItemKey,
@@ -191,53 +192,6 @@ function mergeRuleReviewResult(currentReview = {}, result = {}, { replace = fals
 
 function cssAttributeValue(value = '') {
     return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-function manualRequirementIntent(type = '') {
-    return {
-        forbid: 'unavailable_periods',
-        prefer: 'preferred_periods',
-        avoid: 'avoid_periods',
-    }[type] || 'manual_requirement';
-}
-
-function manualRequirementFromConstraint(constraint = {}) {
-    const id = constraint.requirementId || `req_${constraint.id || Date.now()}`;
-    return {
-        id,
-        requirementId: id,
-        sourceId: constraint.sourceId || '',
-        clauseId: constraint.clauseId || '',
-        machineRuleIds: constraint.machineRuleId ? [constraint.machineRuleId] : [],
-        rowId: constraint.id || '',
-        object: {
-            kind: 'manual_target',
-            name: constraint.targetName || constraint.target?.name || '手动对象',
-            matchedIds: [],
-            scope: 'manual',
-        },
-        intent: manualRequirementIntent(constraint.type),
-        condition: constraint.timeLabel ? { timeText: constraint.timeLabel } : {},
-        parameters: {
-            ...(constraint.timeLabel ? { timeText: constraint.timeLabel } : {}),
-        },
-        strength: constraint.type === 'forbid' ? 'hard' : 'soft',
-        status: 'needs_review',
-        reviewStatus: 'needs_review',
-        understandingStatus: 'parsed',
-        executionStatus: 'executable',
-        applyTo: 'review',
-        origin: 'manual',
-        parsedBy: ['manual'],
-        confidence: 0.7,
-        source: {
-            sourceId: constraint.sourceId || '',
-            rawText: constraint.sourceText || '手动添加',
-            origin: 'manual',
-            parsedBy: ['manual'],
-        },
-        warnings: ['手动填写已进入需求审核，请在应用前确认对象和时间。'],
-    };
 }
 
 export function refreshReviewStatistics(review = {}) {
@@ -808,61 +762,23 @@ export async function rebindConstraintEntities() {
  * 添加手动约束
  */
 export function addManualConstraint() {
-    const type = document.getElementById('tt-manual-type')?.value;
-    const target = document.getElementById('tt-manual-target')?.value?.trim();
-    const time = document.getElementById('tt-manual-time')?.value?.trim();
+    const type = document.getElementById('tt-manual-rule-type')?.value || '';
+    const targetValue = document.getElementById('tt-manual-rule-target')?.value || '';
+    const limit = document.getElementById('tt-manual-rule-limit')?.value || '';
+    const slots = Array.from(document.querySelectorAll?.('[data-manual-rule-slot]:checked') || [])
+        .map(input => String(input.value || '').trim())
+        .filter(Boolean);
+    const result = compileConstraintRuleArtifacts({ type, targetValue, slots, limit }, this.state.project || {});
 
-    if (!target || !time) {
-        alert('请填写对象和时间');
+    if (!result.ok) {
+        this.state.constraintDialog = {
+            ...(this.state.constraintDialog || {}),
+            manualRuleType: type,
+            manualRuleErrors: result.errors,
+        };
+        this.render();
         return;
     }
-
-    const constraint = {
-        id: `manual_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        type,
-        typeLabel: { forbid: '禁止', prefer: '优先', avoid: '尽量避开' }[type] || type,
-        targetName: target,
-        timeLabel: time,
-        target: { name: target },
-        time: { label: time },
-        understanding: `${target} ${time} ${{ forbid: '不排课', prefer: '优先排课', avoid: '尽量避开' }[type]}`,
-        sourceText: '手动添加',
-        confidenceTone: 'high',
-        confidenceLabel: '高',
-        status: 'ready',
-    };
-    const sourceId = `manual:source:${constraint.id}`;
-    const clauseId = `${sourceId}:clause:1`;
-    const machineRuleId = `${sourceId}:rule:1`;
-    Object.assign(constraint, {
-        sourceId,
-        clauseId,
-        machineRuleId,
-        origin: 'manual',
-        parsedBy: ['manual'],
-    });
-    const requirement = manualRequirementFromConstraint(constraint);
-    constraint.requirementId = requirement.id;
-    const sourceRequirement = {
-        sourceId,
-        rawText: constraint.understanding,
-        origin: 'manual',
-        parsedBy: ['manual'],
-        understandingStatus: 'parsed',
-        executionStatus: 'executable',
-        reviewStatus: 'needs_review',
-        status: 'needs_review',
-        confidence: requirement.confidence,
-        clauses: [requirement],
-        machineRuleIds: [machineRuleId],
-        source: {
-            sourceId,
-            rawText: constraint.understanding,
-            origin: 'manual',
-            parsedBy: ['manual'],
-        },
-        warnings: [...valueList(requirement.warnings)],
-    };
 
     if (!this.state.ruleReview) {
         this.state.ruleReview = { draftRows: [] };
@@ -873,27 +789,30 @@ export function addManualConstraint() {
     this.state.ruleReview.manualRequirements = valueList(this.state.ruleReview.manualRequirements);
     this.state.ruleReview.constraintIRs = valueList(this.state.ruleReview.constraintIRs);
 
-    this.state.ruleReview.draftRows.push(constraint);
-    this.state.ruleReview.requirementItems.push(requirement);
-    this.state.ruleReview.sourceRequirements.push(sourceRequirement);
-    this.state.ruleReview.manualRequirements.push(sourceRequirement);
-    this.state.ruleReview.constraintIRs.push(requirement);
+    this.state.ruleReview.draftRows.push(result.draftRow);
+    this.state.ruleReview.requirementItems.push(result.requirementItem);
+    this.state.ruleReview.sourceRequirements.push(result.sourceRequirement);
+    this.state.ruleReview.manualRequirements.push(result.sourceRequirement);
+    this.state.ruleReview.constraintIRs.push(result.constraintIR);
     refreshReviewStatistics(this.state.ruleReview);
     const reviewState = normalizeRequirementReviewState(this.state.constraintDialog || {}, buildUnifiedRequirementItems(this.state.ruleReview || {}));
     this.state.constraintDialog = {
         ...(this.state.constraintDialog || {}),
         requirementFilter: reviewState.filter,
-        selectedRequirementId: sourceRequirement.sourceId,
+        selectedRequirementId: result.sourceRequirement.sourceId,
+        manualRuleType: type,
+        manualRuleErrors: {},
     };
     this.render();
+}
 
-    // 清空表单
-    setTimeout(() => {
-        const targetInput = document.getElementById('tt-manual-target');
-        const timeInput = document.getElementById('tt-manual-time');
-        if (targetInput) targetInput.value = '';
-        if (timeInput) timeInput.value = '';
-    }, 0);
+export function updateManualConstraintType(type = '') {
+    this.state.constraintDialog = {
+        ...(this.state.constraintDialog || {}),
+        manualRuleType: type,
+        manualRuleErrors: {},
+    };
+    this.render();
 }
 
 /**

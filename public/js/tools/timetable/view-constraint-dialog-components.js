@@ -1,3 +1,11 @@
+import {
+    CONSTRAINT_RULE_DEFINITIONS,
+    getConstraintRuleDefinition,
+    getConstraintRuleFormValue,
+    getConstraintRuleRange,
+    getConstraintRuleTargetOptions,
+} from './constraint-rule-form-model.js';
+
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({
         '&': '&amp;',
@@ -13,28 +21,6 @@ function escapeAttr(value) {
 }
 
 const DAY_LABELS = ['', '一', '二', '三', '四', '五', '六', '日'];
-
-const EDITABLE_RULE_TYPES = [
-    { value: 'subject_preferred_periods', label: '课程优先节次' },
-    { value: 'subject_avoid_periods', label: '课程避开节次' },
-    { value: 'subject_morning', label: '上午优先' },
-    { value: 'subject_spread', label: '课程分散' },
-    { value: 'teacher_unavailable', label: '教师不可排' },
-    { value: 'class_unavailable', label: '班级不可排' },
-    { value: 'teacher_daily_limit', label: '教师每日上限' },
-    { value: 'teacher_consecutive_limit', label: '教师连续上限' },
-];
-
-const STATUS_OPTIONS = [
-    { value: 'effective', label: '可应用' },
-    { value: 'needs_review', label: '需复核' },
-    { value: 'suggestion', label: '建议项' },
-];
-
-const PRIORITY_OPTIONS = [
-    { value: 'soft', label: '尽量满足' },
-    { value: 'hard', label: '必须满足' },
-];
 
 function slotsFromConstraint(constraint = {}) {
     return [
@@ -84,74 +70,97 @@ function constraintSourceLabel(constraint = {}) {
     return [locationLabel, parseLabel].filter(Boolean).join(' · ');
 }
 
-function activeWeekdays(project = {}) {
-    const days = Array.isArray(project.activeWeekdays) && project.activeWeekdays.length
-        ? project.activeWeekdays
-        : Array.from({ length: Number(project.weekdays) || 5 }, (_, index) => index + 1);
-    return days.map(Number).filter(day => Number.isInteger(day) && day > 0);
+function renderFieldError(message = '') {
+    return message ? `<span class="tt-constraint-rule-error" role="alert">${escapeHtml(message)}</span>` : '';
 }
 
-function activePeriods(project = {}) {
-    const periods = Array.isArray(project.activePeriods) && project.activePeriods.length
-        ? project.activePeriods
-        : Array.from({ length: Number(project.periodsPerDay) || 7 }, (_, index) => index + 1);
-    return periods.map(Number).filter(period => Number.isInteger(period) && period > 0);
-}
+export function renderConstraintRuleFormFields({
+    project = {},
+    value = {},
+    idPrefix = 'tt-edit-constraint',
+    slotAttribute = 'data-edit-slot',
+    errors = {},
+    legacy = false,
+} = {}) {
+    const type = getConstraintRuleDefinition(value.type)?.type || '';
+    const definition = getConstraintRuleDefinition(type);
+    const targets = getConstraintRuleTargetOptions(project, type);
+    const selectedTargetValue = value.targetValue
+        || (value.targetKind && value.targetId ? `${value.targetKind}:${value.targetId}` : '');
+    const selectedSlots = new Set((value.slots || []).map(String));
+    const range = getConstraintRuleRange(project);
+    const strengthLabel = definition?.strength === 'hard' ? '硬约束 · 必须遵守' : '软约束 · 尽量满足';
 
-function entityLabel(kind, item = {}) {
-    if (kind === 'class') return [item.grade, item.name].filter(Boolean).join(' ') || item.name || item.id || '班级';
-    return item.name || item.label || item.id || '对象';
-}
-
-function selectedTargetValue(constraint = {}) {
-    const kind = constraint.targetType || constraint.target?.type || constraint.target?.kind || '';
-    const id = constraint.targetId || constraint.target?.id || '';
-    if (kind && id) return `${kind}:${id}`;
-    return '';
-}
-
-function renderTargetOptions(project = {}, constraint = {}) {
-    const selectedValue = selectedTargetValue(constraint);
-    const groups = [
-        { kind: 'subject', label: '课程', items: project.subjects || [] },
-        { kind: 'teacher', label: '教师', items: project.teachers || [] },
-        { kind: 'class', label: '班级', items: project.classes || [] },
-    ];
-    const knownValues = new Set();
-    const html = groups.map(group => {
-        const options = (group.items || []).map(item => {
-            const value = `${group.kind}:${item.id}`;
-            knownValues.add(value);
-            return `<option value="${escapeAttr(value)}" ${value === selectedValue ? 'selected' : ''}>${escapeHtml(entityLabel(group.kind, item))}</option>`;
-        }).join('');
-        return options ? `<optgroup label="${escapeAttr(group.label)}">${options}</optgroup>` : '';
-    }).join('');
-
-    if (selectedValue && !knownValues.has(selectedValue)) {
-        const label = constraint.target?.name || constraint.targetName || selectedValue;
-        return `<option value="${escapeAttr(selectedValue)}" selected>${escapeHtml(label)}</option>${html}`;
-    }
-    return html;
-}
-
-function renderSlotCheckboxes(project = {}, constraint = {}) {
-    const selectedSlots = new Set(slotsFromConstraint(constraint).map(String));
-    return activeWeekdays(project).map(day => `
-        <div class="tt-edit-slot-day">
-            <span>周${escapeHtml(DAY_LABELS[day] || day)}</span>
-            <div class="tt-edit-slot-row">
-                ${activePeriods(project).map(period => {
-                    const value = `${day}-${period}`;
-                    return `
-                        <label class="tt-edit-slot-chip">
-                            <input type="checkbox" data-edit-slot value="${escapeAttr(value)}" ${selectedSlots.has(value) ? 'checked' : ''}>
-                            <span>${period}</span>
-                        </label>
-                    `;
-                }).join('')}
+    return `
+        <div class="tt-constraint-rule-form" data-constraint-rule-form="${escapeAttr(idPrefix)}">
+            ${legacy ? `
+                <div class="tt-constraint-rule-conversion" role="note">
+                    <i data-lucide="triangle-alert"></i>
+                    <span>旧手动内容需要先选择具体规则类型和项目对象，转换后才能应用。</span>
+                </div>
+            ` : ''}
+            <div class="tt-constraint-rule-main-fields">
+                <label class="tt-constraint-rule-field">
+                    <span>规则类型</span>
+                    <select id="${escapeAttr(idPrefix)}-type" data-constraint-rule-type-select>
+                        <option value="" ${type ? '' : 'selected'}>请选择具体规则类型</option>
+                        ${CONSTRAINT_RULE_DEFINITIONS.map(item => `
+                            <option value="${escapeAttr(item.type)}" ${item.type === type ? 'selected' : ''}>${escapeHtml(item.label)}</option>
+                        `).join('')}
+                    </select>
+                    ${renderFieldError(errors.type)}
+                </label>
+                <label class="tt-constraint-rule-field">
+                    <span>${escapeHtml(definition?.targetLabel || '项目对象')}</span>
+                    <select id="${escapeAttr(idPrefix)}-target" ${definition ? '' : 'disabled'}>
+                        <option value="">${definition ? `请选择项目中的${escapeHtml(definition.targetLabel)}` : '请先选择规则类型'}</option>
+                        ${targets.map(target => {
+                            const optionValue = `${target.kind}:${target.id}`;
+                            return `<option value="${escapeAttr(optionValue)}" ${optionValue === selectedTargetValue ? 'selected' : ''}>${escapeHtml(target.name)}</option>`;
+                        }).join('')}
+                    </select>
+                    ${renderFieldError(errors.target)}
+                </label>
+                ${definition ? `
+                    <div class="tt-constraint-rule-strength tt-constraint-rule-strength--${escapeAttr(definition.strength)}">
+                        <span>规则强度</span>
+                        <strong>${escapeHtml(strengthLabel)}</strong>
+                    </div>
+                ` : ''}
             </div>
+            ${definition?.parameterKind === 'slots' ? `
+                <fieldset class="tt-constraint-rule-parameter tt-constraint-rule-slots">
+                    <legend>${escapeHtml(definition.parameterLabel)}</legend>
+                    <div class="tt-constraint-rule-slot-grid">
+                        ${range.weekdays.map(day => `
+                            <div class="tt-constraint-rule-slot-day">
+                                <span>周${escapeHtml(DAY_LABELS[day] || day)}</span>
+                                <div class="tt-constraint-rule-slot-row">
+                                    ${range.periods.map(period => {
+                                        const slot = `${day}-${period}`;
+                                        return `
+                                            <label class="tt-constraint-rule-slot-chip" title="周${escapeAttr(DAY_LABELS[day] || day)}第${escapeAttr(period)}节">
+                                                <input type="checkbox" ${slotAttribute} value="${escapeAttr(slot)}" ${selectedSlots.has(slot) ? 'checked' : ''}>
+                                                <span>${escapeHtml(period)}</span>
+                                            </label>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    ${renderFieldError(errors.slots)}
+                </fieldset>
+            ` : ''}
+            ${definition?.parameterKind === 'limit' ? `
+                <label class="tt-constraint-rule-field tt-constraint-rule-limit">
+                    <span>${escapeHtml(definition.parameterLabel)}</span>
+                    <input id="${escapeAttr(idPrefix)}-limit" type="number" min="1" max="${escapeAttr(range.periods.length)}" step="1" value="${escapeAttr(value.limit ?? '')}">
+                    ${renderFieldError(errors.limit)}
+                </label>
+            ` : `<input id="${escapeAttr(idPrefix)}-limit" type="hidden" value="">`}
         </div>
-    `).join('');
+    `;
 }
 
 export function renderConstraintCard(constraint, state) {
@@ -218,9 +227,11 @@ export function renderConstraintCard(constraint, state) {
 export function renderConstraintEditForm(constraint, state = {}) {
     const project = state.project || {};
     const sourceLabel = constraintSourceLabel(constraint);
-    const ruleType = String(constraint.type || 'subject_preferred_periods');
-    const priority = String(constraint.priority || 'soft');
-    const status = String(constraint.status || 'effective');
+    const originalDefinition = getConstraintRuleDefinition(constraint.type);
+    const formValue = getConstraintRuleFormValue({
+        ...constraint,
+        type: constraint.formType ?? constraint.type,
+    });
     return `
         <div class="tt-constraint-edit-backdrop" data-constraint-edit-backdrop>
             <section class="tt-constraint-edit-modal" role="dialog" aria-modal="true" aria-labelledby="constraint-edit-title">
@@ -237,48 +248,14 @@ export function renderConstraintEditForm(constraint, state = {}) {
                     </button>
                 </div>
                 <div class="tt-constraint-edit-body">
-                    <div class="tt-form-grid tt-constraint-edit-grid">
-                        <label>
-                            <span>规则类型</span>
-                            <select id="tt-edit-constraint-type">
-                                ${EDITABLE_RULE_TYPES.map(type => `
-                                    <option value="${escapeAttr(type.value)}" ${type.value === ruleType ? 'selected' : ''}>${escapeHtml(type.label)}</option>
-                                `).join('')}
-                            </select>
-                        </label>
-                        <label>
-                            <span>对象</span>
-                            <select id="tt-edit-constraint-target">
-                                ${renderTargetOptions(project, constraint)}
-                            </select>
-                        </label>
-                        <label>
-                            <span>强度</span>
-                            <select id="tt-edit-constraint-priority">
-                                ${PRIORITY_OPTIONS.map(option => `
-                                    <option value="${escapeAttr(option.value)}" ${option.value === priority ? 'selected' : ''}>${escapeHtml(option.label)}</option>
-                                `).join('')}
-                            </select>
-                        </label>
-                        <label>
-                            <span>状态</span>
-                            <select id="tt-edit-constraint-status">
-                                ${STATUS_OPTIONS.map(option => `
-                                    <option value="${escapeAttr(option.value)}" ${option.value === status ? 'selected' : ''}>${escapeHtml(option.label)}</option>
-                                `).join('')}
-                            </select>
-                        </label>
-                        <label>
-                            <span>上限节数</span>
-                            <input type="number" min="1" id="tt-edit-constraint-limit" value="${escapeAttr(constraint.limit || '')}" placeholder="仅上限规则填写">
-                        </label>
-                    </div>
-                    <div class="tt-constraint-edit-slots">
-                        <span class="tt-field-label">节次</span>
-                        <div class="tt-edit-slot-grid">
-                            ${renderSlotCheckboxes(project, constraint)}
-                        </div>
-                    </div>
+                    ${renderConstraintRuleFormFields({
+                        project,
+                        value: formValue,
+                        idPrefix: 'tt-edit-constraint',
+                        slotAttribute: 'data-edit-slot',
+                        errors: constraint.formErrors || {},
+                        legacy: !originalDefinition,
+                    })}
                     <div class="tt-constraint-edit-readonly">
                         <div>
                             <span>原文</span>

@@ -626,6 +626,10 @@ function bindDelegatedInteractions(container) {
             controller.refreshPeriodTimeGapInputsFromDom();
         } else if (event.target.matches('#tt-constraint-file-input')) {
             controller.handleConstraintFileSelect(event);
+        } else if (event.target.matches('#tt-manual-rule-type')) {
+            controller.updateManualConstraintType?.(event.target.value);
+        } else if (event.target.matches('#tt-edit-constraint-type')) {
+            controller.updateEditingConstraintType?.(event.target.value);
         }
     });
 
