@@ -334,6 +334,63 @@ async function main() {
         await clearRecognizedConstraints();
 
         await clickByScript('[data-action="switch-constraint-mode"][data-mode="manual"]');
+        const assertManualFormLayout = async (expectedColumns, expectedChipColor) => {
+            const layout = await page.evaluate(() => {
+                const dialog = document.querySelector('.tt-constraint-dialog').getBoundingClientRect();
+                const form = document.querySelector('.tt-constraint-rule-form').getBoundingClientRect();
+                const fields = document.querySelector('.tt-constraint-rule-main-fields');
+                const slotGrid = document.querySelector('.tt-constraint-rule-slot-grid');
+                const slotRect = slotGrid.getBoundingClientRect();
+                const firstChipInput = document.querySelector('.tt-constraint-rule-slot-chip input');
+                const firstChipStyle = getComputedStyle(firstChipInput.nextElementSibling);
+                return {
+                    viewportWidth: window.innerWidth,
+                    documentWidth: document.documentElement.scrollWidth,
+                    dialog: { left: dialog.left, right: dialog.right },
+                    form: { left: form.left, right: form.right },
+                    fieldColumns: getComputedStyle(fields).gridTemplateColumns.split(/\s+/).filter(Boolean).length,
+                    slot: {
+                        left: slotRect.left,
+                        right: slotRect.right,
+                        clientWidth: slotGrid.clientWidth,
+                        scrollWidth: slotGrid.scrollWidth,
+                        overflowX: getComputedStyle(slotGrid).overflowX,
+                    },
+                    chip: {
+                        checked: firstChipInput.checked,
+                        background: firstChipStyle.backgroundColor,
+                        color: firstChipStyle.color,
+                        opacity: firstChipStyle.opacity,
+                    },
+                };
+            });
+            assert.equal(layout.documentWidth <= layout.viewportWidth, true, JSON.stringify(layout));
+            assert.equal(layout.form.left >= layout.dialog.left - 1 && layout.form.right <= layout.dialog.right + 1, true, JSON.stringify(layout));
+            assert.equal(layout.slot.left >= layout.dialog.left - 1 && layout.slot.right <= layout.dialog.right + 1, true, JSON.stringify(layout));
+            assert.equal(layout.slot.overflowX, 'auto', JSON.stringify(layout));
+            assert.equal(layout.fieldColumns, expectedColumns, JSON.stringify(layout));
+            assert.equal(layout.chip.checked, false, JSON.stringify(layout));
+            assert.equal(layout.chip.opacity, '1', JSON.stringify(layout));
+            assert.equal(layout.chip.color, expectedChipColor, JSON.stringify(layout));
+        };
+
+        await page.evaluate(() => document.body.classList.add('light-mode'));
+        await page.waitForFunction(() => (
+            getComputedStyle(document.querySelector('.tt-constraint-rule-slot-chip span')).color === 'rgb(15, 23, 42)'
+        ));
+        await assertManualFormLayout(3, 'rgb(15, 23, 42)');
+        await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-manual-light.png') });
+        await page.evaluate(() => document.body.classList.remove('light-mode'));
+        await page.waitForFunction(() => (
+            getComputedStyle(document.querySelector('.tt-constraint-rule-slot-chip span')).color === 'rgb(241, 245, 249)'
+        ));
+        await assertManualFormLayout(3, 'rgb(241, 245, 249)');
+        await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-manual-dark.png') });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await assertManualFormLayout(1, 'rgb(241, 245, 249)');
+        await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-manual-mobile.png') });
+        await page.setViewportSize({ width: 1440, height: 900 });
+
         await page.selectOption('#tt-manual-rule-type', 'teacher_unavailable');
         const manualTeacher = await page.locator('#tt-manual-rule-target option').nth(1).evaluate(option => ({
             value: option.value,
