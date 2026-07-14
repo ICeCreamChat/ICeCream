@@ -51,8 +51,7 @@ const BACKEND_RULE_TYPES = new Set([
     'subject_sequence',
 ]);
 
-const LEGACY_MANUAL_RULE_TYPES = new Set(['forbid', 'prefer', 'avoid']);
-const ACTIONABLE_RULE_TYPES = new Set([...BACKEND_RULE_TYPES, ...LEGACY_MANUAL_RULE_TYPES]);
+const ACTIONABLE_RULE_TYPES = BACKEND_RULE_TYPES;
 
 function normalizeKey(value = '') {
     return String(value || '').trim()
