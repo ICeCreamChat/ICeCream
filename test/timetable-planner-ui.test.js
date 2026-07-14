@@ -12655,6 +12655,19 @@ test('timetable constraint dialog renders manual mode without old clarify questi
   assert.doesNotMatch(html, /data-rule-question-answer="q_empty"/);
 });
 
+test('structured constraint forms use isolated responsive styles and one shared rule model', async () => {
+  const dialogStyles = await readFile(constraintDialogStylePath, 'utf8');
+  const componentSource = await readFile(new URL('view-constraint-dialog-components.js', moduleRoot), 'utf8');
+  const advancedControllerSource = await readFile(new URL('controller-constraint-dialog-advanced.js', moduleRoot), 'utf8');
+
+  assert.match(dialogStyles, /\.tt-constraint-rule-form\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-rule-main-fields\s*{[^}]*grid-template-columns:/s);
+  assert.match(dialogStyles, /\.tt-constraint-rule-slot-grid\s*{[^}]*overflow-x:\s*auto/s);
+  assert.match(dialogStyles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-constraint-rule-main-fields\s*{[^}]*grid-template-columns:\s*1fr/s);
+  assert.doesNotMatch(componentSource, /EDITABLE_RULE_TYPES/);
+  assert.doesNotMatch(advancedControllerSource, /RULE_TARGET_KIND|SLOT_RULE_TYPES|LIMIT_RULE_TYPES/);
+});
+
 test('timetable constraint dialog renders recognized rule cards instead of the removed report workbench', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     smartWorkbench: createConstraintDialogState({
