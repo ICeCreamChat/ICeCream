@@ -1645,16 +1645,26 @@ test('constraint dialog manual entry creates an explicit requirement item', () =
   const originalSetTimeout = globalThis.setTimeout;
   const controller = new TimetablePlannerController();
   controller.render = () => {};
+  controller.state.project = createDefaultTimetableProject({
+    activeWeekdays: [1, 2, 3, 4, 5],
+    activePeriods: [1, 2, 3, 4, 5, 6, 7],
+    teachers: [],
+    classes: [],
+    subjects: [{ id: 'subject_sport', name: '体育' }],
+  });
   controller.state.ruleReview = { draftRows: [], requirementItems: [], semanticActions: [] };
   controller.state.constraintDialog = { open: true, requirementFilter: 'all', selectedRequirementId: '' };
   globalThis.alert = () => {};
   globalThis.document = {
     getElementById(id) {
       return {
-        'tt-manual-type': { value: 'prefer' },
-        'tt-manual-target': { value: '体育' },
-        'tt-manual-time': { value: '周一第1节' },
+        'tt-manual-rule-type': { value: 'subject_preferred_periods' },
+        'tt-manual-rule-target': { value: 'subject:subject_sport' },
+        'tt-manual-rule-limit': { value: '' },
       }[id] || null;
+    },
+    querySelectorAll(selector) {
+      return selector === '[data-manual-rule-slot]:checked' ? [{ value: '1-1' }] : [];
     },
   };
   globalThis.setTimeout = callback => {
@@ -1673,8 +1683,13 @@ test('constraint dialog manual entry creates an explicit requirement item', () =
     const sourceRequirement = controller.state.ruleReview.sourceRequirements[0];
     assert.equal(requirement.rowId, row.id);
     assert.equal(requirement.object.name, '体育');
-    assert.equal(requirement.intent, 'preferred_periods');
-    assert.equal(requirement.source.rawText, '手动添加');
+    assert.equal(requirement.intent, 'subject_preferred_periods');
+    assert.equal(requirement.source.rawText, '体育 优先安排：周一第1节');
+    assert.equal(row.type, 'subject_preferred_periods');
+    assert.equal(row.targetId, 'subject_sport');
+    assert.deepEqual(row.slots, ['1-1']);
+    assert.equal(row.priority, 'soft');
+    assert.equal(row.status, 'effective');
     assert.equal(sourceRequirement.origin, 'manual');
     assert.deepEqual(sourceRequirement.parsedBy, ['manual']);
     assert.equal(sourceRequirement.sourceId, 'manual:source:' + row.id);
@@ -2902,7 +2917,29 @@ test('timetable constraint edit opens a compact machine-rule modal', () => {
   assert.match(html, /value="1-1" checked/);
   assert.match(html, /value="1-2" checked/);
   assert.match(html, /AI约束建议 第 2 行 · 本地识别/);
+  assert.doesNotMatch(html, /id="tt-edit-constraint-priority"/);
+  assert.doesNotMatch(html, /id="tt-edit-constraint-status"/);
   assert.doesNotMatch(html, /<div class="tt-constraint-edit-form">/);
+});
+
+test('timetable constraint edit requires explicit conversion for legacy manual placeholder types', () => {
+  const legacy = {
+    id: 'manual-legacy',
+    originalId: 'manual-legacy',
+    type: 'prefer',
+    targetName: '数学',
+    timeLabel: '周一上午',
+    status: 'ready',
+    origin: 'manual',
+  };
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: { open: true, mode: 'manual', draftRows: [legacy] },
+    constraintDialog: { open: true, editingConstraint: legacy },
+  }));
+
+  assert.match(html, /value="" selected[^>]*>请选择具体规则类型/);
+  assert.match(html, /旧手动内容需要先选择具体规则类型和项目对象/);
+  assert.doesNotMatch(html, /value="subject_preferred_periods" selected/);
 });
 
 test('timetable constraint edit saves business fields back to the draft rule', () => {
@@ -2967,8 +3004,6 @@ test('timetable constraint edit saves business fields back to the draft rule', (
       return {
         'tt-edit-constraint-type': { value: 'subject_preferred_periods' },
         'tt-edit-constraint-target': { value: 'subject:english' },
-        'tt-edit-constraint-priority': { value: 'soft' },
-        'tt-edit-constraint-status': { value: 'effective' },
         'tt-edit-constraint-limit': { value: '' },
       }[id] || null;
     },
@@ -11576,7 +11611,7 @@ test('timetable smart rules sidebar opens the constraint dialog', async () => {
   assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
   // The current dialog owns text, file, manual, preview, edit, and AI actions.
   assert.match(dialogSource, /data-action="switch-constraint-mode"/);
-  assert.match(dialogSource, /id="tt-manual-type"/);
+  assert.match(dialogSource, /id="tt-manual-rule-type"/);
   assert.match(dialogSource, /data-action="add-manual-constraint"/);
   assert.match(dialogSource, /data-action="parse-constraints"/);
   assert.match(dialogSource, /data-action="apply-constraints"/);
@@ -12609,8 +12644,12 @@ test('timetable constraint dialog renders manual mode without old clarify questi
   }));
 
   assert.match(html, /data-constraint-dialog-overlay/);
-  assert.match(html, /id="tt-manual-target"/);
-  assert.match(html, /id="tt-manual-time"/);
+  assert.match(html, /id="tt-manual-rule-target"/);
+  assert.match(html, /data-manual-rule-slot/);
+  assert.match(html, /教师不可排/);
+  assert.match(html, /课程分散安排/);
+  assert.doesNotMatch(html, /id="tt-manual-target"/);
+  assert.doesNotMatch(html, /id="tt-manual-time"/);
   assert.match(html, /data-action="add-manual-constraint"/);
   assert.doesNotMatch(html, /data-rule-clarify-question="q_empty"/);
   assert.doesNotMatch(html, /data-rule-question-answer="q_empty"/);
