@@ -6,13 +6,10 @@
 import { requestTimetable } from './api.js';
 import { compileConstraintRuleArtifacts } from './constraint-rule-form-model.js';
 import {
+    buildConstraintApplyPlan,
     buildUnifiedRequirementItems,
     draftRowApplyItemKey,
     filterUnifiedRequirementItems,
-    getActionableDraftRows,
-    getActionableRequirementCount,
-    getApplicableSemanticActions,
-    getBackendRuleRows,
     getDefaultRequirementId,
     getRequirementGroupKey,
     semanticActionApplyItemKey,
@@ -890,11 +887,9 @@ export async function applyConstraintsFromDialog() {
     const activeFilter = REQUIREMENT_FILTER_KEYS.has(this.state.constraintDialog?.requirementFilter)
         ? this.state.constraintDialog.requirementFilter
         : 'all';
-    const actionableDraftRows = getActionableDraftRows(this.state.ruleReview || {}, activeFilter);
-    const backendRuleRows = getBackendRuleRows(this.state.ruleReview || {}, activeFilter);
-    const semanticActions = getApplicableSemanticActions(this.state.ruleReview || {}, activeFilter);
-    const applyCount = getActionableRequirementCount(this.state.ruleReview || {}, activeFilter);
-    if (applyCount === 0) {
+    const plan = buildConstraintApplyPlan(this.state.ruleReview || {}, activeFilter);
+    const { backendRuleRows, semanticActions } = plan;
+    if (plan.requirementCount === 0 || plan.effectCount === 0) {
         alert('没有可应用的需求');
         return;
     }
@@ -905,16 +900,13 @@ export async function applyConstraintsFromDialog() {
         return;
     }
 
-    const hardRuleCount = backendRuleRows.filter(row => row.priority === 'hard' || row.strength === 'hard').length;
-    const softRuleCount = backendRuleRows.length - hardRuleCount;
-    const lessonPlanCount = semanticActions.filter(action => ['lesson_plan_patch'].includes(String(action.kind || action.type || '').toLowerCase())).length;
     const confirmMessage = [
         activeFilter === 'all'
-            ? `确定应用这 ${applyCount} 条需求吗？`
-            : `确定应用当前分类的 ${applyCount} 条需求吗？`,
-        `${hardRuleCount} 条 → 排课硬规则（必须遵守）`,
-        `${softRuleCount} 条 → 排课软规则（尽量满足）`,
-        `${lessonPlanCount} 条 → 任课计划调整（连堂设置）`,
+            ? `确定应用这 ${plan.requirementCount} 条需求吗？`
+            : `确定应用当前分类的 ${plan.requirementCount} 条需求吗？`,
+        `${plan.hardRuleCount} 条 → 排课硬规则（必须遵守）`,
+        `${plan.softRuleCount} 条 → 排课软规则（尽量满足）`,
+        `${plan.lessonPlanActionCount} 条 → 任课计划调整（连堂设置）`,
         '应用后立刻生效，下次排课就会使用。',
     ].join('\n');
     if (!confirm(confirmMessage)) {
@@ -933,109 +925,148 @@ export async function applyConstraintsFromDialog() {
     this.render();
 
     try {
-        if (backendRuleRows.length) {
-            const normalized = await requestTimetable('/rules/normalize', {
-                method: 'POST',
-                body: JSON.stringify({
-                    draftRows: backendRuleRows,
-                    inputType: this.state.ruleReview?.inputType || 'constraint_dialog',
-                    contextStats: this.state.ruleReview?.contextStats || null,
-                }),
-            });
-            const effectiveCount = valueList(normalized.draftRows).filter(row => row.status === 'effective').length;
-            if (effectiveCount !== backendRuleRows.length) {
-                this.state.ruleReview = {
-                    ...(this.state.ruleReview || {}),
-                    ...normalized,
-                    open: true,
-                    loading: false,
-                    parsing: false,
-                    applying: false,
-                    phase: '',
-                    phaseText: '',
-                };
-                this.render();
-                alert('部分约束需要复核后才能应用');
-                return;
-            }
-            const savedRules = await requestTimetable('/rules', {
-                method: 'POST',
-                body: JSON.stringify({ rules: normalized.draftRules }),
-            });
-            if (savedRules.project) {
-                if (typeof this.applyProject === 'function') {
-                    this.applyProject(savedRules.project);
-                } else {
-                    this.state.project = savedRules.project;
-                }
-            }
-        }
-
+        const applyErrors = [];
+        const savedRuleIds = new Set();
         const appliedActionIds = new Set();
-        const appliedRequirementIds = new Set();
-        const appliedSourceIds = new Set();
-        if (semanticActions.length) {
-            const result = await requestTimetable('/requirements/apply', {
-                method: 'POST',
-                body: JSON.stringify({ actions: semanticActions }),
-            });
-            if (result.project) {
-                if (typeof this.applyProject === 'function') {
-                    this.applyProject(result.project);
-                } else {
-                    this.state.project = result.project;
-                }
-            }
-            valueList(result.applied).forEach(item => appliedActionIds.add(item.id));
-            semanticActions
-                .filter(action => appliedActionIds.has(action.id))
-                .forEach(action => {
-                    if (action.requirementId) appliedRequirementIds.add(action.requirementId);
-                    getRequirementOwnersForSemanticAction(this.state.ruleReview || {}, action.id)
-                        .forEach(ownerId => appliedSourceIds.add(ownerId));
+        const ruleOwnerIds = new Map(backendRuleRows.map(row => [
+            row.id,
+            getRequirementOwnersForDraftRow(this.state.ruleReview || {}, row.id),
+        ]));
+        const actionOwnerIds = new Map(semanticActions.map(action => [
+            action.id,
+            getRequirementOwnersForSemanticAction(this.state.ruleReview || {}, action.id),
+        ]));
+        const applyReturnedProject = project => {
+            if (!project) return;
+            if (typeof this.applyProject === 'function') this.applyProject(project);
+            else this.state.project = project;
+        };
+
+        if (backendRuleRows.length) {
+            try {
+                const normalized = await requestTimetable('/rules/normalize', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        draftRows: backendRuleRows,
+                        inputType: this.state.ruleReview?.inputType || 'constraint_dialog',
+                        contextStats: this.state.ruleReview?.contextStats || null,
+                    }),
                 });
-            const needsReview = valueList(result.needsReview);
-            if (needsReview.length && typeof this.setMessage === 'function') {
-                this.setMessage(`${needsReview.length} 条需求需要复核后再应用。`);
+                const plannedById = new Map(backendRuleRows.map(row => [row.id, row]));
+                const normalizedById = new Map(valueList(normalized.draftRows)
+                    .filter(row => row?.id && plannedById.has(row.id))
+                    .map(row => [row.id, row]));
+                this.state.ruleReview.draftRows = valueList(this.state.ruleReview.draftRows).map(row => (
+                    normalizedById.has(row.id) ? { ...row, ...normalizedById.get(row.id), id: row.id } : row
+                ));
+                const effectiveRows = valueList(normalized.draftRows)
+                    .filter(row => row?.status === 'effective' && plannedById.has(row.id));
+
+                if (effectiveRows.length) {
+                    const savedRules = await requestTimetable('/rules', {
+                        method: 'POST',
+                        body: JSON.stringify({ rules: normalized.draftRules }),
+                    });
+                    if (!savedRules?.project) throw new Error('规则接口未返回更新后的项目');
+                    applyReturnedProject(savedRules.project);
+                    effectiveRows.forEach(row => savedRuleIds.add(row.id));
+                }
+                const pendingRuleCount = backendRuleRows.length - effectiveRows.length;
+                if (pendingRuleCount > 0) {
+                    applyErrors.push(`${pendingRuleCount} 条规则未通过规范化校验，已保留复核草稿`);
+                }
+            } catch (error) {
+                applyErrors.push(`规则写入失败：${error.message || '未知错误'}`);
             }
         }
 
-        // 将约束标记为已应用
-        actionableDraftRows.forEach(c => {
-            c.status = 'effective';
+        if (semanticActions.length) {
+            try {
+                const result = await requestTimetable('/requirements/apply', {
+                    method: 'POST',
+                    body: JSON.stringify({ actions: semanticActions }),
+                });
+                const requestedActionIds = new Set(semanticActions.map(action => action.id));
+                valueList(result.applied).forEach(item => {
+                    const id = typeof item === 'string' ? item : item?.id;
+                    if (requestedActionIds.has(id)) appliedActionIds.add(id);
+                });
+                if (appliedActionIds.size && result.project) applyReturnedProject(result.project);
+                const pendingActionCount = semanticActions.length - appliedActionIds.size;
+                if (pendingActionCount > 0) {
+                    applyErrors.push(`${pendingActionCount} 个模型动作未实际生效，已保留复核草稿`);
+                }
+                const needsReview = valueList(result.needsReview);
+                if (needsReview.length && typeof this.setMessage === 'function') {
+                    this.setMessage(`${needsReview.length} 条需求需要复核后再应用。`);
+                }
+            } catch (error) {
+                applyErrors.push(`模型动作应用失败：${error.message || '未知错误'}`);
+            }
+        }
+
+        const savedRuleRows = backendRuleRows.filter(row => savedRuleIds.has(row.id));
+        const appliedActions = semanticActions.filter(action => appliedActionIds.has(action.id));
+        const successfulEffectCount = savedRuleRows.length + appliedActions.length;
+        if (successfulEffectCount === 0) {
+            this.state.ruleReview = {
+                ...(this.state.ruleReview || {}),
+                loading: false,
+                parsing: false,
+                applying: false,
+                phase: '',
+                phaseText: '',
+                applyErrors,
+            };
+            this.state.constraintDialog = {
+                ...(this.state.constraintDialog || {}),
+                open: true,
+            };
+            this.render();
+            const reason = applyErrors.length ? `\n${applyErrors.join('\n')}` : '';
+            alert(`没有需求实际生效，所有草稿均已保留。${reason}`);
+            return;
+        }
+
+        const appliedOwnerIds = new Set();
+        savedRuleRows.forEach(row => {
+            const owners = ruleOwnerIds.get(row.id) || new Set();
+            if (owners.size) owners.forEach(id => appliedOwnerIds.add(id));
+            else if (row.requirementId) appliedOwnerIds.add(row.requirementId);
+        });
+        appliedActions.forEach(action => {
+            const owners = actionOwnerIds.get(action.id) || new Set();
+            if (owners.size) owners.forEach(id => appliedOwnerIds.add(id));
+            else if (action.requirementId) appliedOwnerIds.add(action.requirementId);
         });
 
-        // 合并到已保存的约束
         this.state.ruleReview.savedItems = valueList(this.state.ruleReview.savedItems);
         this.state.ruleReview.savedItems = [
             ...this.state.ruleReview.savedItems,
-            ...actionableDraftRows,
+            ...savedRuleRows,
         ];
-
-        // 清空草稿
-        const appliedRuleIds = new Set(actionableDraftRows.map(row => row.id));
-        actionableDraftRows.forEach(row => {
-            getRequirementOwnersForDraftRow(this.state.ruleReview || {}, row.id)
-                .forEach(ownerId => {
-                    appliedRequirementIds.add(ownerId);
-                    appliedSourceIds.add(ownerId);
-                });
-        });
         const appliedApplyItemKeys = new Set([
-            ...actionableDraftRows.map(row => draftRowApplyItemKey(row)),
-            ...semanticActions.map(action => semanticActionApplyItemKey(action)),
+            ...savedRuleRows.map(row => draftRowApplyItemKey(row)),
+            ...appliedActions.map(action => semanticActionApplyItemKey(action)),
         ]);
         this.state.ruleReview.draftRows = valueList(this.state.ruleReview.draftRows)
-            .filter(row => !appliedRuleIds.has(row.id));
+            .filter(row => !savedRuleIds.has(row.id));
         this.state.ruleReview.semanticActions = valueList(this.state.ruleReview.semanticActions)
             .filter(action => !appliedActionIds.has(action.id));
         this.state.ruleReview.excludedApplyItemKeys = valueList(this.state.ruleReview.excludedApplyItemKeys)
             .filter(key => !appliedApplyItemKeys.has(key));
         if (valueList(this.state.ruleReview.sourceRequirements).length) {
-            markAppliedSourceRequirements(this.state.ruleReview, appliedSourceIds);
+            markAppliedSourceRequirements(this.state.ruleReview, appliedOwnerIds);
         } else {
+            const remainingById = new Map(buildUnifiedRequirementItems(this.state.ruleReview || {})
+                .map(item => [item.id, item]));
             this.state.ruleReview.requirementItems = valueList(this.state.ruleReview.requirementItems)
-                .filter(item => !appliedRequirementIds.has(item.id) && item.status !== 'handled');
+                .filter(item => {
+                    if (item.status === 'handled') return false;
+                    if (!appliedOwnerIds.has(item.id)) return true;
+                    const remaining = remainingById.get(item.id);
+                    return Boolean(valueList(remaining?.machineRules).length || valueList(remaining?.semanticActions).length);
+                });
         }
         refreshReviewStatistics(this.state.ruleReview);
         const reviewState = normalizeRequirementReviewState(this.state.constraintDialog || {}, buildUnifiedRequirementItems(this.state.ruleReview || {}));
@@ -1046,8 +1077,8 @@ export async function applyConstraintsFromDialog() {
                 method: 'POST',
                 body: JSON.stringify({
                     project: this.state.project,
-                    recentDraftRows: actionableDraftRows,
-                    draftRows: actionableDraftRows,
+                    recentDraftRows: savedRuleRows,
+                    draftRows: savedRuleRows,
                     solverFailure: this.state.lastFailure || this.state.project?.schedule?.solverStats || null,
                 }),
             });
@@ -1072,6 +1103,7 @@ export async function applyConstraintsFromDialog() {
             phaseText: '',
             diagnosis: postApplyDiagnosis,
             postApplyBlockingCount: blockingCount,
+            applyErrors,
         };
         this.state.constraintDialog = {
             ...(this.state.constraintDialog || {}),
@@ -1089,10 +1121,24 @@ export async function applyConstraintsFromDialog() {
         // 重新渲染主界面
         this.render();
 
+        const actualHardRuleCount = savedRuleRows.filter(row => (
+            String(row.priority || row.strength || '').toLowerCase() === 'hard'
+        )).length;
+        const actualSoftRuleCount = savedRuleRows.length - actualHardRuleCount;
+        const actualLessonPlanCount = appliedActions.filter(action => (
+            String(action.kind || action.type || '').toLowerCase() === 'lesson_plan_patch'
+        )).length;
+        const actualRequirementCount = appliedOwnerIds.size || successfulEffectCount;
         const warningText = blockingCount
             ? `\n\n预检发现 ${blockingCount} 个阻塞风险，请先查看诊断建议再排课。`
             : '\n\n预检未发现明显阻塞风险，可以重新排课查看满足度报告。';
-        alert(`已写入 ${hardRuleCount} 条硬规则、${softRuleCount} 条软规则，更新 ${lessonPlanCount} 个任课计划。共 ${applyCount} 条已生效。${warningText}`);
+        const partial = successfulEffectCount < plan.effectCount || applyErrors.length > 0;
+        const prefix = partial ? '部分应用成功：' : '';
+        const errorText = applyErrors.length ? `\n\n未生效内容：\n${applyErrors.join('\n')}` : '';
+        if (partial && typeof this.setMessage === 'function') {
+            this.setMessage(`已应用 ${successfulEffectCount} 个效果，${plan.effectCount - successfulEffectCount} 个效果仍待处理。`);
+        }
+        alert(`${prefix}已写入 ${actualHardRuleCount} 条硬规则、${actualSoftRuleCount} 条软规则，更新 ${actualLessonPlanCount} 个任课计划。共 ${actualRequirementCount} 条已生效。${errorText}${warningText}`);
     } catch (error) {
         console.error('Apply constraints error:', error);
         this.state.ruleReview = {
