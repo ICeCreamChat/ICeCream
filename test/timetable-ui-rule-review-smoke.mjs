@@ -8,6 +8,7 @@ import { withOpenedTimetablePage } from './timetable-ui-smoke-helpers.mjs';
 import { createCompleteNaturalLanguage137Project } from './fixtures/timetable-natural-language-137-project.js';
 
 const ARTIFACT_DIR = path.resolve('artifacts');
+const REAL_ROSTER_FILE = path.resolve('真实学校整学期任课数据.xlsx');
 
 function xmlEscape(value = '') {
     return String(value).replace(/[&<>"']/g, char => ({
@@ -333,6 +334,20 @@ async function main() {
 
         await clearRecognizedConstraints();
 
+        await clickByScript('.tt-dialog-header [data-action="close-constraint-dialog"]');
+        await page.waitForFunction(() => !document.querySelector('[data-constraint-dialog-overlay]'));
+        await page.evaluate(() => window.ICeCream?.appLauncher?.currentToolInstance?.openRosterImport('file'));
+        await page.waitForSelector('#tt-roster-import-dialog', { timeout: 10000 });
+        await page.locator('#tt-roster-import-file').setInputFiles(REAL_ROSTER_FILE);
+        await page.click('[data-roster-import-submit="file"]');
+        await page.waitForFunction(() => (
+            document.querySelectorAll('[data-roster-review-row]').length === 360
+        ), { timeout: 30000 });
+        await page.click('#tt-confirm-roster-import');
+        await page.waitForFunction(() => !document.querySelector('#tt-roster-import-dialog'), { timeout: 30000 });
+        await page.click('#tt-open-rule-review');
+        await page.waitForSelector('[data-constraint-dialog-overlay]', { timeout: 10000 });
+
         await clickByScript('[data-action="switch-constraint-mode"][data-mode="manual"]');
         const assertManualFormLayout = async (expectedColumns, expectedChipColor) => {
             const layout = await page.evaluate(() => {
@@ -412,6 +427,22 @@ async function main() {
         assert.match(manualReviewText || '', new RegExp(manualTeacher.label));
         assert.match(manualReviewText || '', /周一第1节/);
 
+        await page.selectOption('#tt-manual-rule-type', 'subject_preferred_periods');
+        const manualSubject = await page.locator('#tt-manual-rule-target option').nth(1).evaluate(option => ({
+            value: option.value,
+            label: option.textContent?.trim() || '',
+        }));
+        assert.ok(manualSubject.value.startsWith('subject:'));
+        await page.selectOption('#tt-manual-rule-target', manualSubject.value);
+        await page.check('[data-manual-rule-slot][value="2-2"]');
+        await clickByScript('[data-action="add-manual-constraint"]');
+
+        await page.selectOption('#tt-manual-rule-type', 'teacher_daily_limit');
+        await page.selectOption('#tt-manual-rule-target', manualTeacher.value);
+        await page.fill('#tt-manual-rule-limit', '4');
+        await clickByScript('[data-action="add-manual-constraint"]');
+        assert.deepEqual(await constraintFooterLabels(), ['取消', '添加约束', '应用需求 (3)']);
+
         await clickByScript('[data-action="apply-constraints"]');
         await page.waitForFunction(() => {
             const planner = window.ICeCream?.appLauncher?.currentToolInstance;
@@ -432,16 +463,22 @@ async function main() {
             };
         });
         assert.equal(applyState.dialogOpen, false, JSON.stringify({ applyState, dialogs }, null, 2));
-        assert.ok(dialogs.some(item => /已写入 \d+ 条硬规则、\d+ 条软规则，更新 \d+ 个任课计划。共 1 条已生效。/.test(item.message)));
-        const persistedManualRule = await page.evaluate(({ targetValue, slot }) => {
+        assert.ok(dialogs.some(item => /已写入 1 条硬规则、2 条软规则，更新 0 个任课计划。共 3 条已生效。/.test(item.message)));
+        const persistedManualRules = await page.evaluate(({ teacherValue, subjectValue }) => {
             const planner = window.ICeCream?.appLauncher?.currentToolInstance;
-            const teacherId = targetValue.split(':').slice(1).join(':');
+            const teacherId = teacherValue.split(':').slice(1).join(':');
+            const subjectId = subjectValue.split(':').slice(1).join(':');
             return {
                 teacherId,
-                slots: planner?.state?.project?.rules?.hardRules?.teacherUnavailable?.[teacherId] || [],
+                subjectId,
+                unavailableSlots: planner?.state?.project?.rules?.hardRules?.teacherUnavailable?.[teacherId] || [],
+                preferredSlots: planner?.state?.project?.rules?.softRules?.subjectPreferredPeriods?.[subjectId]?.prefer || [],
+                dailyLimit: planner?.state?.project?.rules?.softRules?.teacherLimits?.[teacherId]?.daily ?? null,
             };
-        }, { targetValue: manualTeacher.value, slot: '1-1' });
-        assert.ok(persistedManualRule.slots.includes('1-1'));
+        }, { teacherValue: manualTeacher.value, subjectValue: manualSubject.value });
+        assert.ok(persistedManualRules.unavailableSlots.includes('1-1'));
+        assert.ok(persistedManualRules.preferredSlots.includes('2-2'));
+        assert.equal(persistedManualRules.dailyLimit, 4);
 
         console.log('timetable rule review smoke passed');
     });
