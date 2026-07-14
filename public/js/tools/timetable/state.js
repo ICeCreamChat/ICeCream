@@ -124,8 +124,6 @@ export function createTimetablePlannerState(overrides = {}) {
             open: false,
             requirementFilter: 'all',
             selectedRequirementId: '',
-            manualRuleType: 'teacher_unavailable',
-            manualRuleErrors: {},
         },
         workflowOpenSections: null,
         rangeDraft: null,
