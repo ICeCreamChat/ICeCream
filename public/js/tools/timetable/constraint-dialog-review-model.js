@@ -1472,6 +1472,37 @@ export function getApplicableSemanticActions(review = {}, filter = 'all') {
     return actions;
 }
 
+export function buildConstraintApplyPlan(review = {}, filter = 'all') {
+    const backendRuleRows = getBackendRuleRows(review, filter);
+    const semanticActions = getApplicableSemanticActions(review, filter);
+    const ruleKeys = new Set(backendRuleRows.map(draftRowApplyItemKey));
+    const actionKeys = new Set(semanticActions.map(semanticActionApplyItemKey));
+    const requirementItems = getActionableRequirementItems(review, filter).filter(item => (
+        valueList(item.machineRules).some(row => ruleKeys.has(draftRowApplyItemKey(row)))
+        || valueList(item.semanticActions).some(action => actionKeys.has(semanticActionApplyItemKey(action)))
+    ));
+    const hardRuleCount = backendRuleRows.filter(row => (
+        normalizeKey(row.priority || row.strength || '') === 'hard'
+    )).length;
+    const lessonPlanActionCount = semanticActions.filter(action => (
+        normalizeKey(action.kind || action.type || '') === 'lesson_plan_patch'
+    )).length;
+
+    return {
+        filter,
+        requirementItems,
+        requirementIds: requirementItems.map(item => item.id).filter(Boolean),
+        requirementCount: requirementItems.length,
+        backendRuleRows,
+        semanticActions,
+        hardRuleCount,
+        softRuleCount: backendRuleRows.length - hardRuleCount,
+        lessonPlanActionCount,
+        semanticActionCount: semanticActions.length,
+        effectCount: backendRuleRows.length + semanticActions.length,
+    };
+}
+
 export function getActionableRequirementCount(review = {}, filter = 'all') {
-    return getActionableRequirementItems(review, filter).length;
+    return buildConstraintApplyPlan(review, filter).requirementCount;
 }
