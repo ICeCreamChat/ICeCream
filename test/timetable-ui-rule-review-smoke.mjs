@@ -334,8 +334,14 @@ async function main() {
         await clearRecognizedConstraints();
 
         await clickByScript('[data-action="switch-constraint-mode"][data-mode="manual"]');
-        await page.fill('#tt-manual-target', '数学');
-        await page.fill('#tt-manual-time', '周一上午');
+        await page.selectOption('#tt-manual-rule-type', 'teacher_unavailable');
+        const manualTeacher = await page.locator('#tt-manual-rule-target option').nth(1).evaluate(option => ({
+            value: option.value,
+            label: option.textContent?.trim() || '',
+        }));
+        assert.ok(manualTeacher.value.startsWith('teacher:'));
+        await page.selectOption('#tt-manual-rule-target', manualTeacher.value);
+        await page.check('[data-manual-rule-slot][value="1-1"]');
         await clickByScript('[data-action="add-manual-constraint"]');
         await page.waitForSelector('.tt-requirement-workbench', { timeout: 10000 });
 
@@ -346,12 +352,39 @@ async function main() {
         assert.match(manualReviewText || '', /可执行规则 1 条/);
         assert.match(manualReviewText || '', /理解为 1 个子约束/);
         assert.match(manualReviewText || '', /落地结果/);
-        assert.match(manualReviewText || '', /手动添加/);
-        assert.match(manualReviewText || '', /周一上午/);
+        assert.match(manualReviewText || '', new RegExp(manualTeacher.label));
+        assert.match(manualReviewText || '', /周一第1节/);
 
         await clickByScript('[data-action="apply-constraints"]');
-        await page.waitForFunction(() => !document.querySelector('[data-constraint-dialog-overlay]'), { timeout: 10000 });
+        await page.waitForFunction(() => {
+            const planner = window.ICeCream?.appLauncher?.currentToolInstance;
+            return planner && !planner.state?.ruleReview?.applying;
+        }, { timeout: 10000 });
+        const applyState = await page.evaluate(() => {
+            const planner = window.ICeCream?.appLauncher?.currentToolInstance;
+            return {
+                dialogOpen: Boolean(planner?.state?.constraintDialog?.open),
+                applyErrors: planner?.state?.ruleReview?.applyErrors || [],
+                draftRows: (planner?.state?.ruleReview?.draftRows || []).map(row => ({ id: row.id, type: row.type, status: row.status })),
+                sourceRequirements: (planner?.state?.ruleReview?.sourceRequirements || []).map(source => ({
+                    sourceId: source.sourceId,
+                    status: source.status,
+                    reviewStatus: source.reviewStatus,
+                    executionStatus: source.executionStatus,
+                })),
+            };
+        });
+        assert.equal(applyState.dialogOpen, false, JSON.stringify({ applyState, dialogs }, null, 2));
         assert.ok(dialogs.some(item => /已写入 \d+ 条硬规则、\d+ 条软规则，更新 \d+ 个任课计划。共 1 条已生效。/.test(item.message)));
+        const persistedManualRule = await page.evaluate(({ targetValue, slot }) => {
+            const planner = window.ICeCream?.appLauncher?.currentToolInstance;
+            const teacherId = targetValue.split(':').slice(1).join(':');
+            return {
+                teacherId,
+                slots: planner?.state?.project?.rules?.hardRules?.teacherUnavailable?.[teacherId] || [],
+            };
+        }, { targetValue: manualTeacher.value, slot: '1-1' });
+        assert.ok(persistedManualRule.slots.includes('1-1'));
 
         console.log('timetable rule review smoke passed');
     });

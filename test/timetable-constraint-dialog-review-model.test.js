@@ -439,6 +439,16 @@ test('constraint apply plan counts unique requirements and only persistable effe
     assert.deepEqual(plan.requirementIds, ['req_combined']);
 });
 
+test('handled status takes precedence over a stale application target', () => {
+    assert.equal(getRequirementGroupKey({
+        status: 'handled',
+        reviewStatus: 'handled',
+        executionStatus: 'applied',
+        applicationTarget: 'rule',
+        requiresHumanReview: false,
+    }), 'handled');
+});
+
 test('the real 137-row workbook renders exactly 137 source cards and keeps expanded clauses inside their source', async () => {
     const result = await parseTimetableRules({
         file: {

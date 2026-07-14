@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { normalizeTimetableRuleDraftRows } from '../gateway/services/timetable-rule-parser.js';
 import {
     CONSTRAINT_RULE_DEFINITIONS,
     compileConstraintRuleArtifacts,
@@ -118,4 +119,31 @@ test('editing converts legacy placeholders without silently changing type and pr
     assert.equal(result.draftRow.machineRuleId, legacy.machineRuleId);
     assert.equal(result.draftRow.requirementId, legacy.requirementId);
     assert.equal(result.draftRow.type, 'teacher_unavailable');
+});
+
+test('all structured manual rows pass the real backend normalizer', () => {
+    const draftRows = CONSTRAINT_RULE_DEFINITIONS.map((definition, index) => {
+        const targetId = definition.targetKind === 'teacher'
+            ? 'teacher_zhang'
+            : definition.targetKind === 'class'
+                ? 'class_g7_1'
+                : 'subject_chinese';
+        return compileConstraintRuleArtifacts({
+            type: definition.type,
+            targetId,
+            slots: definition.parameterKind === 'slots' ? ['1-1', '3-4'] : [],
+            limit: definition.parameterKind === 'limit' ? 3 : '',
+        }, project, { id: `normalize_${index}` }).draftRow;
+    });
+
+    const normalized = normalizeTimetableRuleDraftRows({
+        project: { ...project, lessonPlans: [], rules: { hardRules: {}, softRules: {} } },
+        draftRows,
+        inputType: 'manual',
+    });
+
+    assert.equal(normalized.draftRows.length, CONSTRAINT_RULE_DEFINITIONS.length);
+    assert.deepEqual(normalized.draftRows.map(row => row.status), CONSTRAINT_RULE_DEFINITIONS.map(() => 'effective'));
+    assert.ok(normalized.draftRules?.hardRules);
+    assert.ok(normalized.draftRules?.softRules);
 });

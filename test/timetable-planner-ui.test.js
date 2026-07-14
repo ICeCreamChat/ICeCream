@@ -11611,7 +11611,7 @@ test('timetable smart rules sidebar opens the constraint dialog', async () => {
   assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
   // The current dialog owns text, file, manual, preview, edit, and AI actions.
   assert.match(dialogSource, /data-action="switch-constraint-mode"/);
-  assert.match(dialogSource, /id="tt-manual-rule-type"/);
+  assert.match(componentSource, /id="\$\{escapeAttr\(idPrefix\)\}-type"/);
   assert.match(dialogSource, /data-action="add-manual-constraint"/);
   assert.match(dialogSource, /data-action="parse-constraints"/);
   assert.match(dialogSource, /data-action="apply-constraints"/);
@@ -11655,7 +11655,8 @@ test('timetable rule type labels are centralized while preserving planner wordin
   assert.doesNotMatch(viewSource, /const RULE_TYPE_LABELS/);
   assert.match(viewSource, /plannerRuleTypeLabel\s+as\s+ruleTypeLabel/);
   assert.doesNotMatch(dialogControllerSource, /const RULE_TYPE_LABELS/);
-  assert.match(dialogControllerSource, /RULE_TYPE_LABELS/);
+  assert.doesNotMatch(dialogControllerSource, /RULE_TYPE_LABELS/);
+  assert.match(dialogControllerSource, /compileConstraintRuleArtifacts/);
 });
 
 test('timetable constraint dialog shows parse progress feedback', async () => {
