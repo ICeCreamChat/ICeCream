@@ -4,6 +4,7 @@ import test from 'node:test';
 
 import { parseTimetableRules } from '../gateway/services/timetable-rule-parser.js';
 import {
+    buildConstraintApplyPlan,
     buildUnifiedRequirementItems,
     getActionableDraftRows,
     getActionableRequirementCount,
@@ -394,6 +395,48 @@ test('legacy manual placeholder rows stay visible but are never actionable or pe
         assert.deepEqual(getBackendRuleRows(review), []);
         assert.deepEqual(buildUnifiedRequirementItems(review)[0]?.machineRules?.map(item => item.id), [row.id]);
     }
+});
+
+test('constraint apply plan counts unique requirements and only persistable effects', () => {
+    const review = {
+        requirementItems: [{
+            id: 'req_combined',
+            status: 'actionable',
+            applyTo: 'rule',
+            source: { rawText: '语文上午优先并改为连堂' },
+        }],
+        draftRows: [{
+            id: 'rule_soft',
+            requirementId: 'req_combined',
+            type: 'subject_morning',
+            targetType: 'subject',
+            targetId: 'subject_chinese',
+            status: 'effective',
+            priority: 'soft',
+        }, {
+            id: 'legacy_forbid',
+            requirementId: 'req_combined',
+            type: 'forbid',
+            status: 'ready',
+        }],
+        semanticActions: [{
+            id: 'action_block',
+            requirementId: 'req_combined',
+            kind: 'lesson_plan_patch',
+            status: 'ready',
+        }],
+    };
+
+    const plan = buildConstraintApplyPlan(review);
+
+    assert.equal(plan.requirementCount, 1);
+    assert.equal(plan.effectCount, 2);
+    assert.equal(plan.hardRuleCount, 0);
+    assert.equal(plan.softRuleCount, 1);
+    assert.equal(plan.lessonPlanActionCount, 1);
+    assert.deepEqual(plan.backendRuleRows.map(row => row.id), ['rule_soft']);
+    assert.deepEqual(plan.semanticActions.map(action => action.id), ['action_block']);
+    assert.deepEqual(plan.requirementIds, ['req_combined']);
 });
 
 test('the real 137-row workbook renders exactly 137 source cards and keeps expanded clauses inside their source', async () => {
