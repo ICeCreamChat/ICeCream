@@ -113,6 +113,35 @@ function entityName(project, kind, id) {
     return pool.get(id)?.name || id;
 }
 
+function scopedCourseRuleLabel(project, rule = {}) {
+    const parameters = rule.parameters || {};
+    const scope = rule.scope || {};
+    const classIds = [...new Set([...(parameters.classIds || []), ...(scope.classIds || [])].filter(Boolean))];
+    const teacherIds = [...new Set([...(parameters.teacherIds || []), ...(scope.teacherIds || [])].filter(Boolean))];
+    const isCourseRule = rule.target?.kind === 'subject' && [
+        'subject.preferred_periods',
+        'subject.avoid_periods',
+        'subject.preferred_day_part',
+        'subject.spread',
+    ].includes(rule.type);
+    if (!isCourseRule) return '';
+    if (!classIds.length) return '历史全校范围';
+    const classes = classIds.map(classId => entityName(project, 'class', classId)).filter(Boolean);
+    const teachers = teacherIds.map(teacherId => entityName(project, 'teacher', teacherId)).filter(Boolean);
+    return [
+        ...classes,
+        entityName(project, 'subject', rule.target?.matchedIds?.[0]) || rule.target?.name || '',
+        teachers.length ? teachers.join('、') : '不限教师',
+    ].filter(Boolean).join(' · ');
+}
+
+function historicalGlobalCourseScope() {
+    return {
+        scopeLabel: '历史全校范围',
+        legacyCourseGlobal: true,
+    };
+}
+
 function slotLabel(slot = {}) {
     return `周${Number(slot.day)}第${Number(slot.period)}节`;
 }
@@ -208,6 +237,8 @@ function makeResult(rule, status, evidence, locateTargets = []) {
         targetKind: rule.targetKind,
         targetId: rule.targetId,
         targetName: rule.targetName,
+        scopeLabel: rule.scopeLabel || '',
+        legacyCourseGlobal: rule.legacyCourseGlobal === true,
         slots: rule.slots || [],
         title: rule.title || `${rule.targetName || ''}${rule.description ? ` ${rule.description}` : ''}`.trim(),
         description: rule.description,
@@ -312,6 +343,7 @@ function savedConstraintItems(project) {
             priority: 'soft',
             description: '课程上午优先',
             title: `${entityName(project, 'subject', subjectId)} 上午优先`,
+            ...historicalGlobalCourseScope(),
         });
     }
 
@@ -343,6 +375,7 @@ function savedConstraintItems(project) {
                 priority: 'soft',
                 description: '课程偏好节次',
                 title: `${entityName(project, 'subject', subjectId)} 偏好 ${slot}`,
+                ...historicalGlobalCourseScope(),
             });
         }
         for (const slot of preference.avoid || []) {
@@ -357,6 +390,7 @@ function savedConstraintItems(project) {
                 priority: 'soft',
                 description: '课程避开节次',
                 title: `${entityName(project, 'subject', subjectId)} 避开 ${slot}`,
+                ...historicalGlobalCourseScope(),
             });
         }
     }
@@ -507,6 +541,7 @@ function savedConstraintItems(project) {
             priority: 'soft',
             description: '同科分散',
             title: `${entityName(project, 'subject', subjectId)} 分散排布`,
+            ...historicalGlobalCourseScope(),
         });
     }
 
@@ -594,6 +629,7 @@ function savedConstraintItems(project) {
     });
 
     (rules.advancedRules || []).forEach(rule => {
+        const scopeLabel = scopedCourseRuleLabel(project, rule);
         items.push({
             id: rule.id,
             type: 'advanced_constraint',
@@ -604,8 +640,10 @@ function savedConstraintItems(project) {
             targetName: rule.target?.name || rule.type,
             slots: rule.parameters?.slots || [],
             priority: rule.strength || 'soft',
-            description: rule.type,
-            title: rule.target?.name ? `${rule.target.name} ${rule.type}` : rule.type,
+            description: scopeLabel || rule.type,
+            title: scopeLabel || (rule.target?.name ? `${rule.target.name} ${rule.type}` : rule.type),
+            scopeLabel,
+            legacyCourseGlobal: scopeLabel === '历史全校范围',
             advancedRule: rule,
         });
     });

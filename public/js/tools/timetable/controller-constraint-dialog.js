@@ -762,15 +762,22 @@ export function addManualConstraint() {
     const type = document.getElementById('tt-manual-rule-type')?.value || '';
     const targetValue = document.getElementById('tt-manual-rule-target')?.value || '';
     const limit = document.getElementById('tt-manual-rule-limit')?.value || '';
+    const scopeClassId = document.getElementById('tt-manual-rule-scope-class')?.value || '';
+    const restrictTeacher = Boolean(document.getElementById('tt-manual-rule-scope-limit-teacher')?.checked);
+    const scopeTeacherId = restrictTeacher
+        ? (document.getElementById('tt-manual-rule-scope-teacher')?.value || '')
+        : '';
     const slots = Array.from(document.querySelectorAll?.('[data-manual-rule-slot]:checked') || [])
         .map(input => String(input.value || '').trim())
         .filter(Boolean);
-    const result = compileConstraintRuleArtifacts({ type, targetValue, slots, limit }, this.state.project || {});
+    const formScope = { targetValue, scopeClassId, restrictTeacher, scopeTeacherId };
+    const result = compileConstraintRuleArtifacts({ type, targetValue, slots, limit, ...formScope }, this.state.project || {});
 
     if (!result.ok) {
         this.state.constraintDialog = {
             ...(this.state.constraintDialog || {}),
             manualRuleType: type,
+            manualRuleScope: formScope,
             manualRuleErrors: result.errors,
         };
         this.render();
@@ -798,6 +805,7 @@ export function addManualConstraint() {
         requirementFilter: reviewState.filter,
         selectedRequirementId: result.sourceRequirement.sourceId,
         manualRuleType: type,
+        manualRuleScope: {},
         manualRuleErrors: {},
     };
     this.render();
@@ -807,6 +815,19 @@ export function updateManualConstraintType(type = '') {
     this.state.constraintDialog = {
         ...(this.state.constraintDialog || {}),
         manualRuleType: type,
+        manualRuleScope: {},
+        manualRuleErrors: {},
+    };
+    this.render();
+}
+
+export function updateManualConstraintScope(scope = {}) {
+    this.state.constraintDialog = {
+        ...(this.state.constraintDialog || {}),
+        manualRuleScope: {
+            ...(this.state.constraintDialog?.manualRuleScope || {}),
+            ...scope,
+        },
         manualRuleErrors: {},
     };
     this.render();

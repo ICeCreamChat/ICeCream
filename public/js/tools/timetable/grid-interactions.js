@@ -1,3 +1,5 @@
+import { getConstraintRuleDefinition } from './constraint-rule-form-model.js';
+
 function resizeConstraintChatInput(textarea) {
     if (!textarea) return;
     textarea.style.height = 'auto';
@@ -10,10 +12,282 @@ const INSPECTOR_POSITION_MARGIN = 12;
 const INSPECTOR_DRAG_THRESHOLD = 4;
 const INSPECTOR_ISSUE_DEFAULT_LIMIT = 5;
 const INSPECTOR_ISSUE_LIMIT_STEP = 20;
+const RULE_TYPE_PICKER_MOBILE_BREAKPOINT = 640;
+const RULE_TYPE_PICKER_VIEWPORT_MARGIN = 12;
 
 function roundedFiniteNumber(value) {
     const number = Number(value);
     return Number.isFinite(number) ? Math.round(number) : null;
+}
+
+function isCompactRuleTypePickerViewport() {
+    const win = typeof window === 'undefined' ? null : window;
+    if (!win) return false;
+    if (typeof win.matchMedia === 'function') {
+        return win.matchMedia(`(max-width: ${RULE_TYPE_PICKER_MOBILE_BREAKPOINT}px)`).matches;
+    }
+    return Number(win.innerWidth || 0) <= RULE_TYPE_PICKER_MOBILE_BREAKPOINT;
+}
+
+function ruleTypePickerViewport() {
+    const win = typeof window === 'undefined' ? null : window;
+    const doc = typeof document === 'undefined' ? null : document.documentElement;
+    return {
+        width: Number(win?.innerWidth || doc?.clientWidth || 0),
+        height: Number(win?.innerHeight || doc?.clientHeight || 0),
+    };
+}
+
+function ruleTypePickerElements(picker) {
+    if (!picker) return {};
+    return {
+        input: picker.querySelector?.('[data-constraint-rule-type-input]') || null,
+        trigger: picker.querySelector?.('[data-constraint-rule-type-trigger]') || null,
+        listbox: picker.querySelector?.('[data-constraint-rule-type-listbox]') || null,
+        help: picker.querySelector?.('[data-constraint-rule-type-help]') || null,
+    };
+}
+
+function ruleTypePickerOptions(picker) {
+    return [...(picker?.querySelectorAll?.('[data-constraint-rule-type-option]') || [])];
+}
+
+function hideRuleTypeHelp(picker) {
+    const { help } = ruleTypePickerElements(picker);
+    if (!help) return;
+    help.hidden = true;
+    help.removeAttribute('data-placement');
+    help.style.removeProperty('left');
+    help.style.removeProperty('top');
+    help.style.removeProperty('width');
+}
+
+function positionRuleTypeListbox(picker) {
+    const { trigger, listbox } = ruleTypePickerElements(picker);
+    if (!trigger || !listbox || typeof trigger.getBoundingClientRect !== 'function') return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const viewport = ruleTypePickerViewport();
+    if (!viewport.width || !viewport.height) return;
+    const margin = RULE_TYPE_PICKER_VIEWPORT_MARGIN;
+    const width = Math.min(Math.max(220, triggerRect.width), Math.max(0, viewport.width - margin * 2));
+    const left = Math.min(Math.max(margin, triggerRect.left), Math.max(margin, viewport.width - width - margin));
+    const estimatedHeight = Math.min(320, Math.max(120, Number(listbox.scrollHeight) || 0));
+    const belowTop = triggerRect.bottom + 6;
+    const shouldOpenAbove = belowTop + estimatedHeight > viewport.height - margin
+        && triggerRect.top - estimatedHeight - 6 >= margin;
+    const top = shouldOpenAbove
+        ? Math.max(margin, triggerRect.top - estimatedHeight - 6)
+        : Math.min(belowTop, Math.max(margin, viewport.height - estimatedHeight - margin));
+    listbox.style.left = `${Math.round(left)}px`;
+    listbox.style.top = `${Math.round(top)}px`;
+    listbox.style.width = `${Math.round(width)}px`;
+    listbox.style.maxHeight = `${Math.max(120, Math.min(320, viewport.height - margin * 2))}px`;
+    listbox.dataset.placement = shouldOpenAbove ? 'top' : 'bottom';
+}
+
+function positionRuleTypeHelp(picker) {
+    const { trigger, listbox, help } = ruleTypePickerElements(picker);
+    if (!trigger || !help || typeof trigger.getBoundingClientRect !== 'function') return;
+    const viewport = ruleTypePickerViewport();
+    if (!viewport.width || !viewport.height) return;
+    const triggerRect = trigger.getBoundingClientRect();
+    const listRect = listbox && !listbox.hidden && typeof listbox.getBoundingClientRect === 'function'
+        ? listbox.getBoundingClientRect()
+        : triggerRect;
+    const activeOption = !listbox?.hidden
+        ? (picker.querySelector?.('[data-constraint-rule-type-option].is-active')
+            || picker.querySelector?.('[data-constraint-rule-type-option].is-selected'))
+        : null;
+    const activeRect = activeOption && typeof activeOption.getBoundingClientRect === 'function'
+        ? activeOption.getBoundingClientRect()
+        : triggerRect;
+    const helpRect = help.getBoundingClientRect?.() || { width: 300, height: 100 };
+    const margin = RULE_TYPE_PICKER_VIEWPORT_MARGIN;
+    const sideGap = 10;
+    const width = Math.min(Math.max(260, helpRect.width || 0), Math.max(0, viewport.width - margin * 2));
+    const helpHeight = helpRect.height || 0;
+    const anchorTop = Math.min(triggerRect.top, listRect.top);
+    const anchorBottom = Math.max(triggerRect.bottom, listRect.bottom);
+    const rightLeft = listRect.right + sideGap;
+    const leftLeft = listRect.left - sideGap - width;
+    const canPlaceRight = !isCompactRuleTypePickerViewport() && rightLeft + width <= viewport.width - margin;
+    const canPlaceLeft = !isCompactRuleTypePickerViewport() && leftLeft >= margin;
+    let left;
+    let top;
+    let placement;
+    if (canPlaceRight || canPlaceLeft) {
+        left = canPlaceRight ? rightLeft : leftLeft;
+        top = Math.min(
+            Math.max(margin, activeRect.top + activeRect.height / 2 - helpHeight / 2),
+            Math.max(margin, viewport.height - helpHeight - margin),
+        );
+        placement = canPlaceRight ? 'right' : 'left';
+    } else {
+        const fitsAbove = anchorTop - helpHeight - 8 >= margin;
+        left = Math.min(
+            Math.max(margin, triggerRect.left + triggerRect.width / 2 - width / 2),
+            Math.max(margin, viewport.width - width - margin),
+        );
+        top = fitsAbove
+            ? anchorTop - helpHeight - 8
+            : Math.min(anchorBottom + 8, Math.max(margin, viewport.height - helpHeight - margin));
+        placement = fitsAbove ? 'top' : 'bottom';
+    }
+    help.style.left = `${Math.round(left)}px`;
+    help.style.top = `${Math.round(top)}px`;
+    help.style.width = `${Math.round(width)}px`;
+    help.dataset.placement = placement;
+}
+
+function showRuleTypeHelp(picker, type) {
+    const definition = getConstraintRuleDefinition(type);
+    const { help } = ruleTypePickerElements(picker);
+    if (!definition || !help) return;
+    const title = help.querySelector?.('[data-constraint-rule-help-title]');
+    const text = help.querySelector?.('[data-constraint-rule-help-text]');
+    const strength = help.querySelector?.('[data-constraint-rule-help-strength]');
+    if (title) title.textContent = definition.label;
+    if (text) text.textContent = definition.helpText || '';
+    if (strength) strength.textContent = definition.strength === 'hard' ? '硬约束 · 必须遵守' : '软约束 · 尽量满足';
+    help.dataset.strength = definition.strength;
+    help.hidden = false;
+    positionRuleTypeHelp(picker);
+}
+
+function closeRuleTypePicker(picker, { restoreFocus = false } = {}) {
+    const { trigger, listbox } = ruleTypePickerElements(picker);
+    if (!picker || !trigger || !listbox) return;
+    picker.classList.remove('is-open');
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.removeAttribute('aria-activedescendant');
+    listbox.hidden = true;
+    listbox.removeAttribute('data-placement');
+    listbox.style.removeProperty('left');
+    listbox.style.removeProperty('top');
+    listbox.style.removeProperty('width');
+    listbox.style.removeProperty('max-height');
+    hideRuleTypeHelp(picker);
+    if (restoreFocus) trigger.focus?.();
+}
+
+function closeOtherRuleTypePickers(picker) {
+    const ownerDocument = picker?.ownerDocument || (typeof document === 'undefined' ? null : document);
+    ownerDocument?.querySelectorAll?.('[data-constraint-rule-type-picker].is-open').forEach(other => {
+        if (other !== picker) closeRuleTypePicker(other);
+    });
+}
+
+function setActiveRuleTypeOption(picker, option, { showHelp = false } = {}) {
+    if (!picker || !option) return;
+    const { trigger } = ruleTypePickerElements(picker);
+    ruleTypePickerOptions(picker).forEach(candidate => candidate.classList.toggle('is-active', candidate === option));
+    picker.dataset.activeRuleType = option.dataset.constraintRuleType || '';
+    if (trigger) trigger.setAttribute('aria-activedescendant', option.id);
+    if (showHelp && !isCompactRuleTypePickerViewport()) {
+        showRuleTypeHelp(picker, option.dataset.constraintRuleType || '');
+    }
+}
+
+function openRuleTypePicker(picker) {
+    const { input, trigger, listbox } = ruleTypePickerElements(picker);
+    if (!picker || !input || !trigger || !listbox) return;
+    closeOtherRuleTypePickers(picker);
+    picker.classList.add('is-open');
+    trigger.setAttribute('aria-expanded', 'true');
+    listbox.hidden = false;
+    const selected = ruleTypePickerOptions(picker).find(option => option.dataset.constraintRuleType === input.value)
+        || ruleTypePickerOptions(picker)[0];
+    if (selected) setActiveRuleTypeOption(picker, selected);
+    positionRuleTypeListbox(picker);
+}
+
+function moveActiveRuleTypeOption(picker, direction) {
+    const options = ruleTypePickerOptions(picker);
+    if (!options.length) return;
+    const activeType = picker.dataset.activeRuleType || '';
+    const currentIndex = Math.max(0, options.findIndex(option => option.dataset.constraintRuleType === activeType));
+    const nextIndex = (currentIndex + direction + options.length) % options.length;
+    setActiveRuleTypeOption(picker, options[nextIndex], { showHelp: true });
+}
+
+function commitRuleTypePickerSelection(controller, picker, type) {
+    const { input, trigger } = ruleTypePickerElements(picker);
+    if (!input || !type) return;
+    const inputId = input.id;
+    input.value = type;
+    closeRuleTypePicker(picker);
+    if (inputId === 'tt-manual-rule-type') {
+        controller.updateManualConstraintType?.(type);
+    } else if (inputId === 'tt-edit-constraint-type') {
+        controller.updateEditingConstraintType?.(type);
+    }
+    setTimeout(() => {
+        const nextTrigger = picker.ownerDocument?.getElementById?.(`${inputId}-trigger`);
+        (nextTrigger || trigger)?.focus?.();
+    }, 0);
+}
+
+function handleRuleTypePickerKeydown(event, controller) {
+    const picker = event.target?.closest?.('[data-constraint-rule-type-picker]');
+    if (!picker) return false;
+    const { trigger } = ruleTypePickerElements(picker);
+    const isOpen = picker.classList.contains('is-open');
+    if (event.key === 'Escape') {
+        if (!isOpen) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        closeRuleTypePicker(picker, { restoreFocus: true });
+        return true;
+    }
+    if (event.target !== trigger) return false;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (!isOpen) openRuleTypePicker(picker);
+        moveActiveRuleTypeOption(picker, event.key === 'ArrowDown' ? 1 : -1);
+        return true;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        if (!isOpen) {
+            openRuleTypePicker(picker);
+            return true;
+        }
+        const active = ruleTypePickerOptions(picker).find(option => option.dataset.constraintRuleType === picker.dataset.activeRuleType);
+        if (active) commitRuleTypePickerSelection(controller, picker, active.dataset.constraintRuleType || '');
+        return true;
+    }
+    if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault();
+        if (!isOpen) openRuleTypePicker(picker);
+        const options = ruleTypePickerOptions(picker);
+        setActiveRuleTypeOption(picker, options[event.key === 'Home' ? 0 : options.length - 1], { showHelp: true });
+        return true;
+    }
+    return false;
+}
+
+function bindRuleTypePickerViewportEvents(container) {
+    if (container.__ttRuleTypePickerViewportEventsBound) return;
+    container.__ttRuleTypePickerViewportEventsBound = true;
+    const ownerWindow = container.ownerDocument?.defaultView;
+    const reposition = () => {
+        const picker = container.querySelector?.('[data-constraint-rule-type-picker].is-open');
+        if (!picker) return;
+        positionRuleTypeListbox(picker);
+        const { help } = ruleTypePickerElements(picker);
+        if (help && !help.hidden) positionRuleTypeHelp(picker);
+    };
+    ownerWindow?.addEventListener?.('resize', reposition);
+    ownerWindow?.addEventListener?.('scroll', reposition, true);
+    container.querySelectorAll?.('[data-constraint-rule-type-listbox]').forEach(listbox => {
+        if (listbox.__ttRuleTypePickerScrollBound) return;
+        listbox.__ttRuleTypePickerScrollBound = true;
+        listbox.addEventListener('scroll', () => {
+            const picker = listbox.closest?.('[data-constraint-rule-type-picker]');
+            const { help } = ruleTypePickerElements(picker);
+            if (picker && help && !help.hidden) positionRuleTypeHelp(picker);
+        });
+    });
 }
 
 export function clampInspectorPosition(position = {}, viewport = {}, size = {}, margin = INSPECTOR_POSITION_MARGIN) {
@@ -339,6 +613,53 @@ function bindDelegatedInteractions(container) {
         const state = container.__ttState;
         if (!controller || !state) return;
 
+        const typePicker = event.target.closest?.('[data-constraint-rule-type-picker]') || null;
+        const typeOption = event.target.closest?.('[data-constraint-rule-type-option]') || null;
+        const typeTrigger = event.target.closest?.('[data-constraint-rule-type-trigger]') || null;
+        const helpToggle = event.target.closest?.('[data-constraint-rule-help-toggle]') || null;
+        const openTypePicker = container.querySelector?.('[data-constraint-rule-type-picker].is-open') || null;
+        if (openTypePicker && !typePicker && !helpToggle) closeRuleTypePicker(openTypePicker);
+        const visibleTypeHelp = container.querySelector?.('[data-constraint-rule-type-help]:not([hidden])') || null;
+        if (visibleTypeHelp && !event.target.closest?.('.tt-constraint-rule-type-field')) {
+            hideRuleTypeHelp(visibleTypeHelp.closest?.('[data-constraint-rule-type-picker]'));
+            visibleTypeHelp.closest?.('.tt-constraint-rule-type-field')
+                ?.querySelector?.('[data-constraint-rule-help-toggle]')
+                ?.setAttribute('aria-expanded', 'false');
+        }
+
+        if (typeOption && typePicker) {
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            commitRuleTypePickerSelection(controller, typePicker, typeOption.dataset.constraintRuleType || '');
+            return;
+        }
+        if (typeTrigger && typePicker) {
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            if (typePicker.classList.contains('is-open')) {
+                closeRuleTypePicker(typePicker, { restoreFocus: true });
+            } else {
+                openRuleTypePicker(typePicker);
+            }
+            return;
+        }
+        if (helpToggle) {
+            const field = helpToggle.closest?.('.tt-constraint-rule-type-field');
+            const picker = field?.querySelector?.('[data-constraint-rule-type-picker]') || null;
+            const { input, help } = ruleTypePickerElements(picker);
+            event.preventDefault?.();
+            event.stopPropagation?.();
+            if (!picker || !input || !help) return;
+            if (help.hidden) {
+                showRuleTypeHelp(picker, input.value || '');
+                helpToggle.setAttribute('aria-expanded', 'true');
+            } else {
+                hideRuleTypeHelp(picker);
+                helpToggle.setAttribute('aria-expanded', 'false');
+            }
+            return;
+        }
+
         // 点击背景遮罩关闭弹窗
         if (event.target.matches('[data-smart-helper-overlay]')) {
             controller.closeSmartHelper();
@@ -608,6 +929,13 @@ function bindDelegatedInteractions(container) {
         }
     });
 
+    container.addEventListener('pointerover', event => {
+        const picker = event.target.closest?.('[data-constraint-rule-type-picker].is-open');
+        const option = event.target.closest?.('[data-constraint-rule-type-option]');
+        if (!picker || !option || isCompactRuleTypePickerViewport()) return;
+        setActiveRuleTypeOption(picker, option, { showHelp: true });
+    });
+
     container.addEventListener('change', event => {
         const controller = container.__ttController;
         if (!controller) return;
@@ -626,10 +954,6 @@ function bindDelegatedInteractions(container) {
             controller.refreshPeriodTimeGapInputsFromDom();
         } else if (event.target.matches('#tt-constraint-file-input')) {
             controller.handleConstraintFileSelect(event);
-        } else if (event.target.matches('#tt-manual-rule-type')) {
-            controller.updateManualConstraintType?.(event.target.value);
-        } else if (event.target.matches('#tt-edit-constraint-type')) {
-            controller.updateEditingConstraintType?.(event.target.value);
         }
     });
 
@@ -666,6 +990,21 @@ function bindDelegatedInteractions(container) {
 
     container.addEventListener('keydown', event => {
         const controller = container.__ttController;
+
+        if (controller && handleRuleTypePickerKeydown(event, controller)) return;
+
+        if (event.key === 'Escape' && event.target.matches?.('[data-constraint-rule-help-toggle]')) {
+            const picker = event.target.closest?.('.tt-constraint-rule-type-field')
+                ?.querySelector?.('[data-constraint-rule-type-picker]');
+            const { help } = ruleTypePickerElements(picker);
+            if (help && !help.hidden) {
+                event.preventDefault();
+                event.stopPropagation();
+                hideRuleTypeHelp(picker);
+                event.target.setAttribute('aria-expanded', 'false');
+                return;
+            }
+        }
 
         if (controller && event.target.matches('[data-duty-teacher-search]')) {
             if (event.key === 'ArrowDown') {
@@ -817,11 +1156,57 @@ function bindRosterReviewAction(container, selector, action) {
     });
 }
 
+function bindConstraintRuleScopeControls(container, controller, idPrefix, updateScope) {
+    const target = container.querySelector(`#${idPrefix}-target`);
+    const scopeClass = container.querySelector(`#${idPrefix}-scope-class`);
+    const restrictTeacher = container.querySelector(`#${idPrefix}-scope-limit-teacher`);
+    const scopeTeacher = container.querySelector(`#${idPrefix}-scope-teacher`);
+    if (!target || !updateScope) return;
+
+    target.addEventListener('change', () => updateScope({
+        targetValue: target.value,
+        scopeClassId: '',
+        restrictTeacher: false,
+        scopeTeacherId: '',
+    }));
+    scopeClass?.addEventListener('change', () => updateScope({
+        targetValue: target.value,
+        scopeClassId: scopeClass.value,
+        restrictTeacher: false,
+        scopeTeacherId: '',
+    }));
+    restrictTeacher?.addEventListener('change', () => updateScope({
+        targetValue: target.value,
+        scopeClassId: scopeClass?.value || '',
+        restrictTeacher: Boolean(restrictTeacher.checked),
+        scopeTeacherId: restrictTeacher.checked ? (scopeTeacher?.value || '') : '',
+    }));
+    scopeTeacher?.addEventListener('change', () => updateScope({
+        targetValue: target.value,
+        scopeClassId: scopeClass?.value || '',
+        restrictTeacher: true,
+        scopeTeacherId: scopeTeacher.value,
+    }));
+}
+
 export function bindGridInteractions(container, controller, state) {
     container.__ttController = controller;
     container.__ttState = state;
     bindDelegatedInteractions(container);
     bindInspectorFloatingWindow(container, state);
+    bindRuleTypePickerViewportEvents(container);
+    bindConstraintRuleScopeControls(
+        container,
+        controller,
+        'tt-manual-rule',
+        scope => controller.updateManualConstraintScope?.(scope),
+    );
+    bindConstraintRuleScopeControls(
+        container,
+        controller,
+        'tt-edit-constraint',
+        scope => controller.updateEditingConstraintScope?.(scope),
+    );
 
     container.querySelectorAll('[data-tt-section-toggle]').forEach(button => {
         button.addEventListener('click', () => controller.toggleWorkflowSection(button.dataset.ttSectionToggle));

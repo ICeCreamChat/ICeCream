@@ -739,6 +739,11 @@ public class LessonAssignment {
                     && left.getTimeSlot().getWeekday() == right.getTimeSlot().getWeekday()
                     && Math.abs(left.getTimeSlot().getLessonIndex() - right.getTimeSlot().getLessonIndex()) == 1
                     && getSubjectIds().contains(right.getSubjectId())) return 12;
+            if ("subject.spread".equals(type)
+                    && left.sharesClassWith(right)
+                    && left.getSubjectId().equals(right.getSubjectId())
+                    && left.getTimeSlot().getWeekday() == right.getTimeSlot().getWeekday()
+                    && right.getAdvancedRules().stream().anyMatch(rule -> id != null && id.equals(rule.getId()))) return 16;
             if ("class.daily_balance".equals(type) && left.sharesClassWith(right)
                     && left.getTimeSlot().getWeekday() == right.getTimeSlot().getWeekday()) return 2;
             if ("teacher.prep_group_fairness".equals(type) && left.sharesTeacherWith(right)

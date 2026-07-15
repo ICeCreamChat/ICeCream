@@ -49,8 +49,8 @@ test('persistent parse cache coalesces concurrent AI work and survives a fresh c
 
     try {
         const [first, second] = await Promise.all([
-            parseTimetableRules({ text: '数学尽量安排在上午。', project: project(), env, fetchImpl }),
-            parseTimetableRules({ text: '数学尽量安排在上午。', project: project(), env, fetchImpl }),
+            parseTimetableRules({ text: '七年级1班数学尽量安排在上午。', project: project(), env, fetchImpl }),
+            parseTimetableRules({ text: '七年级1班数学尽量安排在上午。', project: project(), env, fetchImpl }),
         ]);
         assert.equal(aiCalls, 1);
         assert.equal(first.determinism.cacheKey, second.determinism.cacheKey);
@@ -65,7 +65,7 @@ test('persistent parse cache coalesces concurrent AI work and survives a fresh c
         assert.deepEqual(diskValue.constraintIRs, first.constraintIRs);
 
         const changedSeed = await parseTimetableRules({
-            text: '数学尽量安排在上午。',
+            text: '七年级1班数学尽量安排在上午。',
             project: project(),
             env: { ...env, TIMETABLE_RULE_AI_SEED: '18' },
             fetchImpl,

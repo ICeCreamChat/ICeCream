@@ -83,6 +83,7 @@ function hasAdvancedScope(ir = {}) {
         'activityTypes',
         'avoidDayParts',
         'boundaryPeriods',
+        'classIds',
         'comparisonScope',
         'forbiddenRoomTypes',
         'gradeNames',
@@ -91,7 +92,6 @@ function hasAdvancedScope(ir = {}) {
         'preferredRoomIds',
         'requiredResourceTypes',
         'scopeQualifier',
-        'teacherNames',
     ].some(key => {
         const value = parameters[key];
         return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null && value !== '';
@@ -421,7 +421,7 @@ const CAPABILITY_DEFINITIONS = [
         solverSupport: 'full',
         machineRuleTypes: ['subject_spread'],
         fulfillmentEvaluable: true,
-        compile: compileLegacyArtifact,
+        compile: compileScopedOrLegacy,
         explain: () => '课程课时尽量均匀分布到一周。',
     },
     {

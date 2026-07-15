@@ -136,9 +136,15 @@ export function saveEditedConstraint() {
     const type = document.getElementById('tt-edit-constraint-type')?.value || '';
     const targetValue = document.getElementById('tt-edit-constraint-target')?.value || '';
     const limit = document.getElementById('tt-edit-constraint-limit')?.value || '';
+    const scopeClassId = document.getElementById('tt-edit-constraint-scope-class')?.value || '';
+    const restrictTeacher = Boolean(document.getElementById('tt-edit-constraint-scope-limit-teacher')?.checked);
+    const scopeTeacherId = restrictTeacher
+        ? (document.getElementById('tt-edit-constraint-scope-teacher')?.value || '')
+        : '';
     const slots = checkedEditSlots();
+    const formScope = { targetValue, scopeClassId, restrictTeacher, scopeTeacherId };
     const result = compileConstraintRuleArtifacts(
-        { type, targetValue, slots, limit },
+        { type, targetValue, slots, limit, ...formScope },
         this.state.project || {},
         { existing: editing },
     );
@@ -147,6 +153,7 @@ export function saveEditedConstraint() {
         this.state.constraintDialog.editingConstraint = {
             ...editing,
             formType: type,
+            formScope,
             formErrors: result.errors,
         };
         this.render();
@@ -171,6 +178,21 @@ export function updateEditingConstraintType(type = '') {
     this.state.constraintDialog.editingConstraint = {
         ...editing,
         formType: type,
+        formScope: {},
+        formErrors: {},
+    };
+    this.render();
+}
+
+export function updateEditingConstraintScope(scope = {}) {
+    const editing = this.state.constraintDialog?.editingConstraint;
+    if (!editing) return;
+    this.state.constraintDialog.editingConstraint = {
+        ...editing,
+        formScope: {
+            ...(editing.formScope || {}),
+            ...scope,
+        },
         formErrors: {},
     };
     this.render();

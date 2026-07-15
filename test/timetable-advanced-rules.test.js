@@ -9,6 +9,7 @@ import {
 } from '../gateway/services/timetable-advanced-rules.js';
 import { normalizeTimetableProject } from '../gateway/services/timetable-project.js';
 import { buildTimetableProblem } from '../gateway/services/timetable-solver-bridge.js';
+import { evaluateTimetableConstraintFulfillment } from '../gateway/services/timetable-constraint-fulfillment.js';
 
 function projectWithRule(rule) {
     return normalizeTimetableProject({
@@ -140,4 +141,78 @@ test('advanced rules match shared activity and resource aliases', () => {
         project.lessonPlans[0].requiredResourceTypes = [planResource];
         assert.equal(advancedRuleAppliesToLesson(project, rule, project.lessonPlans[0]), true, planResource);
     }
+});
+
+test('scoped course rules only match the selected class and optional teacher', () => {
+    const rule = {
+        id: 'g7-1-chinese-zhang',
+        type: 'subject.avoid_periods',
+        strength: 'soft',
+        target: { kind: 'subject', name: '语文', matchedIds: ['s_chinese'] },
+        scope: { classIds: ['c_g7_1'], teacherIds: ['t_zhang'] },
+        parameters: { classIds: ['c_g7_1'], teacherIds: ['t_zhang'], slots: ['1-1'] },
+    };
+    const project = normalizeTimetableProject({
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6],
+        teachers: [
+            { id: 't_zhang', name: '张老师' },
+            { id: 't_li', name: '李老师' },
+        ],
+        classes: [
+            { id: 'c_g7_1', grade: '七年级', name: '1班' },
+            { id: 'c_g7_2', grade: '七年级', name: '2班' },
+        ],
+        subjects: [{ id: 's_chinese', name: '语文' }],
+        lessonPlans: [
+            { id: 'p_g7_1_zhang', classId: 'c_g7_1', subjectId: 's_chinese', teacherIds: ['t_zhang'], weeklyHours: 2 },
+            { id: 'p_g7_1_li', classId: 'c_g7_1', subjectId: 's_chinese', teacherIds: ['t_li'], weeklyHours: 2 },
+            { id: 'p_g7_2_zhang', classId: 'c_g7_2', subjectId: 's_chinese', teacherIds: ['t_zhang'], weeklyHours: 2 },
+        ],
+        rules: { hardRules: {}, softRules: {}, advancedRules: [rule] },
+    });
+    const scopedPlan = project.lessonPlans[0];
+    const otherTeacherPlan = project.lessonPlans[1];
+    const otherClassPlan = project.lessonPlans[2];
+
+    assert.equal(advancedRuleAppliesToLesson(project, rule, scopedPlan), true);
+    assert.equal(advancedRuleAppliesToLesson(project, rule, otherTeacherPlan), false);
+    assert.equal(advancedRuleAppliesToLesson(project, rule, otherClassPlan), false);
+    assert.ok(advancedCandidatePenalty(project, [], { ...slot(), lessonPlanId: scopedPlan.id, classId: scopedPlan.classId, subjectId: scopedPlan.subjectId, teacherIds: ['t_zhang'], period: 1 }) > 0);
+    assert.equal(advancedCandidatePenalty(project, [], { ...slot(), lessonPlanId: otherTeacherPlan.id, classId: otherTeacherPlan.classId, subjectId: otherTeacherPlan.subjectId, teacherIds: ['t_li'], period: 1 }), 0);
+
+    const problem = buildTimetableProblem(project);
+    assert.ok(problem.lessonAssignments.filter(item => item.lessonPlanId === scopedPlan.id).every(item => item.advancedRules.some(itemRule => itemRule.id === rule.id)));
+    assert.ok(problem.lessonAssignments.filter(item => item.lessonPlanId !== scopedPlan.id).every(item => item.advancedRules.every(itemRule => itemRule.id !== rule.id)));
+
+    project.schedule = {
+        id: 'scoped-evaluation',
+        source: 'test',
+        slots: [
+            { id: 'in-scope', lessonPlanId: scopedPlan.id, classId: scopedPlan.classId, subjectId: scopedPlan.subjectId, teacherId: 't_zhang', teacherIds: ['t_zhang'], day: 1, period: 1 },
+            { id: 'other-teacher', lessonPlanId: otherTeacherPlan.id, classId: otherTeacherPlan.classId, subjectId: otherTeacherPlan.subjectId, teacherId: 't_li', teacherIds: ['t_li'], day: 1, period: 1 },
+            { id: 'other-class', lessonPlanId: otherClassPlan.id, classId: otherClassPlan.classId, subjectId: otherClassPlan.subjectId, teacherId: 't_zhang', teacherIds: ['t_zhang'], day: 1, period: 1 },
+        ],
+    };
+    const fulfillment = evaluateTimetableConstraintFulfillment(project);
+    const result = fulfillment.items.find(item => item.ruleId === rule.id);
+    assert.equal(result.status, 'violated');
+    assert.equal(result.scopeLabel, '七年级1班 · 语文 · 张老师');
+    assert.deepEqual(result.evidenceSlots.map(item => item.classId), ['c_g7_1']);
+});
+
+test('scoped subject spread counts only matching class assignments on the same day', () => {
+    const rule = {
+        id: 'g7-1-chinese-spread',
+        type: 'subject.spread',
+        strength: 'soft',
+        target: { kind: 'subject', matchedIds: ['s1'] },
+        parameters: { classIds: ['c1'] },
+    };
+    const project = projectWithRule(rule);
+    const otherClass = { ...slot({ id: 'other-class', classId: 'c2', lessonPlanId: 'p-other', period: 2 }) };
+    const sameClass = slot({ id: 'same-class', period: 2 });
+
+    assert.equal(advancedCandidatePenalty(project, [otherClass], sameClass), 0);
+    assert.ok(advancedCandidatePenalty(project, [sameClass], slot({ id: 'same-class-2', period: 3 })) > 0);
 });

@@ -3,7 +3,10 @@ import {
     getConstraintRuleDefinition,
     getConstraintRuleFormValue,
     getConstraintRuleRange,
+    getConstraintRuleScopeClassOptions,
+    getConstraintRuleScopeTeacherOptions,
     getConstraintRuleTargetOptions,
+    isCourseScopeRule,
 } from './constraint-rule-form-model.js';
 
 function escapeHtml(value) {
@@ -26,6 +29,7 @@ function slotsFromConstraint(constraint = {}) {
     return [
         ...(constraint.time?.slots || []),
         ...(constraint.slots || []),
+        ...(constraint.parameters?.slots || []),
     ].filter(Boolean);
 }
 
@@ -42,7 +46,7 @@ function constraintTimeLabel(constraint = {}) {
     if (explicit) return explicit;
     const slots = slotsFromConstraint(constraint);
     if (slots.length) return slots.map(formatSlot).join('、');
-    if (constraint.type === 'subject_morning') return '上午时段';
+    if (constraint.type === 'subject_morning' || constraint.intent === 'subject_morning') return '上午时段';
     if (constraint.limit) return `最多 ${constraint.limit} 节`;
     return '未限定时间';
 }
@@ -74,6 +78,70 @@ function renderFieldError(message = '') {
     return message ? `<span class="tt-constraint-rule-error" role="alert">${escapeHtml(message)}</span>` : '';
 }
 
+function renderConstraintRuleTypePicker({ idPrefix, type, errors = {} }) {
+    const selected = getConstraintRuleDefinition(type);
+    const listboxId = `${idPrefix}-type-options`;
+    const triggerId = `${idPrefix}-type-trigger`;
+    const helpId = `${idPrefix}-type-help`;
+    const placeholder = '请选择具体规则类型';
+    return `
+        <div class="tt-constraint-rule-field tt-constraint-rule-type-field">
+            <div class="tt-constraint-rule-label-row">
+                <span id="${escapeAttr(idPrefix)}-type-label">规则类型</span>
+                <button
+                    class="tt-constraint-rule-help-button"
+                    type="button"
+                    data-constraint-rule-help-toggle
+                    aria-label="查看当前规则类型说明"
+                    aria-controls="${escapeAttr(helpId)}"
+                    aria-expanded="false"
+                    ${selected ? '' : 'disabled'}
+                >
+                    <i data-lucide="circle-help" aria-hidden="true"></i>
+                </button>
+            </div>
+            <div class="tt-constraint-rule-type-picker" data-constraint-rule-type-picker="${escapeAttr(idPrefix)}">
+                <input id="${escapeAttr(idPrefix)}-type" data-constraint-rule-type-input type="hidden" value="${escapeAttr(type)}">
+                <button
+                    id="${escapeAttr(triggerId)}"
+                    class="tt-constraint-rule-type-trigger"
+                    data-constraint-rule-type-trigger
+                    type="button"
+                    role="combobox"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    aria-controls="${escapeAttr(listboxId)}"
+                    aria-label="规则类型：${escapeAttr(selected?.label || placeholder)}"
+                >
+                    <span>${escapeHtml(selected?.label || placeholder)}</span>
+                    <i data-lucide="chevron-down" aria-hidden="true"></i>
+                </button>
+                <div id="${escapeAttr(listboxId)}" class="tt-constraint-rule-type-listbox" data-constraint-rule-type-listbox role="listbox" aria-labelledby="${escapeAttr(idPrefix)}-type-label" hidden>
+                    ${CONSTRAINT_RULE_DEFINITIONS.map(item => `
+                        <div
+                            id="${escapeAttr(idPrefix)}-type-option-${escapeAttr(item.type)}"
+                            class="tt-constraint-rule-type-option ${item.type === type ? 'is-selected' : ''}"
+                            data-constraint-rule-type-option
+                            data-constraint-rule-type="${escapeAttr(item.type)}"
+                            role="option"
+                            aria-selected="${item.type === type ? 'true' : 'false'}"
+                        >
+                            <span>${escapeHtml(item.label)}</span>
+                            <i data-lucide="check" aria-hidden="true"></i>
+                        </div>
+                    `).join('')}
+                </div>
+                <div id="${escapeAttr(helpId)}" class="tt-constraint-rule-type-help" data-constraint-rule-type-help role="tooltip" aria-live="polite" hidden>
+                    <strong data-constraint-rule-help-title></strong>
+                    <span data-constraint-rule-help-text></span>
+                    <em data-constraint-rule-help-strength></em>
+                </div>
+            </div>
+            ${renderFieldError(errors.type)}
+        </div>
+    `;
+}
+
 export function renderConstraintRuleFormFields({
     project = {},
     value = {},
@@ -90,6 +158,15 @@ export function renderConstraintRuleFormFields({
     const selectedSlots = new Set((value.slots || []).map(String));
     const range = getConstraintRuleRange(project);
     const strengthLabel = definition?.strength === 'hard' ? '硬约束 · 必须遵守' : '软约束 · 尽量满足';
+    const hasCourseScope = definition && isCourseScopeRule(definition.type);
+    const selectedSubjectId = definition?.targetKind === 'subject'
+        ? String(selectedTargetValue || '').replace(/^subject:/, '').trim()
+        : '';
+    const selectedScopeClassId = String(value.scopeClassId || '').trim();
+    const selectedScopeTeacherId = String(value.scopeTeacherId || '').trim();
+    const restrictTeacher = Boolean(value.restrictTeacher || selectedScopeTeacherId);
+    const scopeClasses = getConstraintRuleScopeClassOptions(project, type, selectedSubjectId);
+    const scopeTeachers = getConstraintRuleScopeTeacherOptions(project, type, selectedSubjectId, selectedScopeClassId);
 
     return `
         <div class="tt-constraint-rule-form" data-constraint-rule-form="${escapeAttr(idPrefix)}">
@@ -100,16 +177,7 @@ export function renderConstraintRuleFormFields({
                 </div>
             ` : ''}
             <div class="tt-constraint-rule-main-fields">
-                <label class="tt-constraint-rule-field">
-                    <span>规则类型</span>
-                    <select id="${escapeAttr(idPrefix)}-type" data-constraint-rule-type-select>
-                        <option value="" ${type ? '' : 'selected'}>请选择具体规则类型</option>
-                        ${CONSTRAINT_RULE_DEFINITIONS.map(item => `
-                            <option value="${escapeAttr(item.type)}" ${item.type === type ? 'selected' : ''}>${escapeHtml(item.label)}</option>
-                        `).join('')}
-                    </select>
-                    ${renderFieldError(errors.type)}
-                </label>
+                ${renderConstraintRuleTypePicker({ idPrefix, type, errors })}
                 <label class="tt-constraint-rule-field">
                     <span>${escapeHtml(definition?.targetLabel || '项目对象')}</span>
                     <select id="${escapeAttr(idPrefix)}-target" ${definition ? '' : 'disabled'}>
@@ -128,6 +196,39 @@ export function renderConstraintRuleFormFields({
                     </div>
                 ` : ''}
             </div>
+            ${hasCourseScope ? `
+                <fieldset class="tt-constraint-rule-course-scope">
+                    <legend>适用范围</legend>
+                    ${value.legacyCourseGlobal ? `
+                        <div class="tt-constraint-rule-conversion tt-constraint-rule-conversion--scope" role="note">
+                            <i data-lucide="history"></i>
+                            <span>这是一条历史全校课程规则。请选择班级后保存，才会转换为精确范围。</span>
+                        </div>
+                    ` : ''}
+                    <div class="tt-constraint-rule-course-scope-grid">
+                        <label class="tt-constraint-rule-field">
+                            <span>班级</span>
+                            <select id="${escapeAttr(idPrefix)}-scope-class" data-constraint-rule-scope-class ${selectedSubjectId ? '' : 'disabled'}>
+                                <option value="">${selectedSubjectId ? '请选择该课程适用的班级' : '请先选择课程'}</option>
+                                ${scopeClasses.map(klass => `<option value="${escapeAttr(klass.id)}" ${klass.id === selectedScopeClassId ? 'selected' : ''}>${escapeHtml(klass.name)}</option>`).join('')}
+                            </select>
+                            ${renderFieldError(errors.scopeClass)}
+                        </label>
+                        <label class="tt-constraint-rule-scope-toggle">
+                            <input id="${escapeAttr(idPrefix)}-scope-limit-teacher" data-constraint-rule-scope-limit-teacher type="checkbox" ${restrictTeacher ? 'checked' : ''} ${selectedScopeClassId ? '' : 'disabled'}>
+                            <span>限定教师</span>
+                        </label>
+                        <label class="tt-constraint-rule-field">
+                            <span>教师</span>
+                            <select id="${escapeAttr(idPrefix)}-scope-teacher" data-constraint-rule-scope-teacher ${restrictTeacher && selectedScopeClassId ? '' : 'disabled'}>
+                                <option value="">${restrictTeacher ? '请选择该班该课程的任课教师' : '不限教师'}</option>
+                                ${scopeTeachers.map(teacher => `<option value="${escapeAttr(teacher.id)}" ${teacher.id === selectedScopeTeacherId ? 'selected' : ''}>${escapeHtml(teacher.name)}</option>`).join('')}
+                            </select>
+                            ${renderFieldError(errors.scopeTeacher)}
+                        </label>
+                    </div>
+                </fieldset>
+            ` : ''}
             ${definition?.parameterKind === 'slots' ? `
                 <fieldset class="tt-constraint-rule-parameter tt-constraint-rule-slots">
                     <legend>${escapeHtml(definition.parameterLabel)}</legend>
@@ -169,6 +270,11 @@ export function renderConstraintCard(constraint, state) {
     const sourceLabel = constraintSourceLabel(constraint);
     const applyItemKey = constraint.applyItemKey || '';
     const applyExcluded = Boolean(constraint.applyExcluded);
+    const scopeLabel = constraint.scopeLabel || [
+        constraint.scopeClassName,
+        constraint.targetName,
+        constraint.scopeTeacherName || (constraint.scopeClassId ? '不限教师' : ''),
+    ].filter(Boolean).join(' · ');
 
     return `
         <div class="tt-constraint-card ${constraint.hasConflict ? 'tt-constraint-card--conflict' : ''} ${applyExcluded ? 'tt-constraint-card--excluded' : ''}" data-constraint-id="${escapeAttr(constraint.id)}" ${applyItemKey ? `data-apply-item-key="${escapeAttr(applyItemKey)}"` : ''}>
@@ -190,6 +296,7 @@ export function renderConstraintCard(constraint, state) {
             </div>
             <div class="tt-constraint-meta">
                 <span><b>对象：</b>${escapeHtml(constraint.target?.name || constraint.targetName || '-')}</span>
+                ${scopeLabel ? `<span><b>范围：</b>${escapeHtml(scopeLabel)}</span>` : ''}
                 <span><b>时间：</b>${escapeHtml(timeLabel)}</span>
             </div>
             ${(constraint.warnings || []).length > 0 ? `
@@ -227,11 +334,12 @@ export function renderConstraintCard(constraint, state) {
 export function renderConstraintEditForm(constraint, state = {}) {
     const project = state.project || {};
     const sourceLabel = constraintSourceLabel(constraint);
-    const originalDefinition = getConstraintRuleDefinition(constraint.type);
+    const originalDefinition = getConstraintRuleDefinition(constraint.formType || constraint.intent || constraint.type);
     const formValue = getConstraintRuleFormValue({
         ...constraint,
-        type: constraint.formType ?? constraint.type,
+        type: constraint.formType ?? constraint.intent ?? constraint.type,
     });
+    Object.assign(formValue, constraint.formScope || {});
     return `
         <div class="tt-constraint-edit-backdrop" data-constraint-edit-backdrop>
             <section class="tt-constraint-edit-modal" role="dialog" aria-modal="true" aria-labelledby="constraint-edit-title">

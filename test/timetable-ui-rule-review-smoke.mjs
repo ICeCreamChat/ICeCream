@@ -164,13 +164,25 @@ async function main() {
         assert.match(reviewText || '', /解析结果/);
         assert.match(reviewText || '', /用户输入 1 条/);
         assert.match(reviewText || '', /子约束 1 条/);
-        assert.match(reviewText || '', /可执行规则 1 条/);
+        assert.match(reviewText || '', /可执行规则 0 条/);
+        assert.match(reviewText || '', /待补充 1 条/);
         assert.match(reviewText || '', /理解为 1 个子约束/);
-        assert.match(reviewText || '', /落地结果/);
+        assert.match(reviewText || '', /缺少班级范围.*全校/);
         assert.match(reviewText || '', /语文/);
         assert.match(reviewText || '', /上午/);
-        assert.deepEqual(await constraintFooterLabels(), ['取消', '重新理解', '应用需求 (1)']);
+        assert.deepEqual(await constraintFooterLabels(), ['取消', '重新理解']);
         assert.equal(await page.locator('.tt-constraint-dialog-actions .tt-btn--primary').count(), 1);
+        assert.equal(await page.locator('[data-action="apply-constraints"]').count(), 0);
+
+        await clearRecognizedConstraints();
+
+        await page.fill('#tt-constraint-text-input', 'G7-1班语文尽量安排到上午');
+        await clickByScript('[data-action="parse-constraints"]');
+        await page.waitForSelector('.tt-requirement-workbench', { timeout: 30000 });
+        const scopedReviewText = await recognizedText();
+        assert.match(scopedReviewText || '', /可执行规则 1 条/);
+        assert.match(scopedReviewText || '', /G7-1班\s*·\s*语文\s*·\s*不限教师/);
+        assert.deepEqual(await constraintFooterLabels(), ['取消', '重新理解', '应用需求 (1)']);
 
         await clearRecognizedConstraints();
 
@@ -178,7 +190,7 @@ async function main() {
         await page.locator('#tt-constraint-file-input').setInputFiles({
             name: 'smart-constraints.txt',
             mimeType: 'text/plain',
-            buffer: Buffer.from('物理尽量安排到上午', 'utf8'),
+            buffer: Buffer.from('G7-1班物理尽量安排到上午', 'utf8'),
         });
         await page.waitForFunction(
             () => /smart-constraints\.txt/.test(document.querySelector('[data-constraint-dialog-overlay]')?.textContent || ''),
@@ -228,7 +240,7 @@ async function main() {
             mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             buffer: buildConstraintWorkbook([
                 ['约束内容'],
-                ['英语尽量安排到上午'],
+                ['G7-1班英语尽量安排到上午'],
             ]),
         });
         await page.waitForFunction(
@@ -267,7 +279,8 @@ async function main() {
 
         const realReviewText = await recognizedText();
         assert.match(realReviewText || '', /用户输入 137 条/);
-        assert.match(realReviewText || '', /需复核\s*0/);
+        assert.match(realReviewText || '', /可执行规则 134 条/);
+        assert.match(realReviewText || '', /待补充 6 条/);
         assert.doesNotMatch(realReviewText || '', /\b(?:unsupported|need_review|needs_review|schedule_request)\b/i);
         const realRequirementCards = page.locator('.tt-requirement-row[data-requirement-id]');
         assert.equal(await realRequirementCards.count(), 137);
@@ -284,9 +297,9 @@ async function main() {
             );
         });
         await clickByScript('[data-action="filter-requirements"][data-requirement-filter="review"]');
-        assert.equal(await page.locator('.tt-requirement-row[data-requirement-id]').count(), 0);
+        assert.equal(await page.locator('.tt-requirement-row[data-requirement-id]').count(), 6);
         await clickByScript('[data-action="filter-requirements"][data-requirement-filter="rule"]');
-        assert.equal(await page.locator('.tt-requirement-row[data-requirement-id]').count(), 137);
+        assert.equal(await page.locator('.tt-requirement-row[data-requirement-id]').count(), 131);
 
         const multiClauseCard = page.locator(
             '.tt-requirement-row[data-requirement-id][title*="地理和生物尽量隔天分布"]',
@@ -403,10 +416,68 @@ async function main() {
         await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-manual-dark.png') });
         await page.setViewportSize({ width: 390, height: 844 });
         await assertManualFormLayout(1, 'rgb(241, 245, 249)');
+        await page.locator('[data-constraint-rule-help-toggle]').click();
+        await page.waitForFunction(() => {
+            const help = document.querySelector('[data-constraint-rule-type-help]');
+            return help && !help.hidden && help.textContent?.includes('所选教师在勾选节次不得安排课程');
+        });
+        const mobileRuleTypeHelp = await page.evaluate(() => {
+            const help = document.querySelector('[data-constraint-rule-type-help]').getBoundingClientRect();
+            return {
+                left: help.left,
+                right: help.right,
+                top: help.top,
+                bottom: help.bottom,
+                width: window.innerWidth,
+                height: window.innerHeight,
+            };
+        });
+        assert.equal(mobileRuleTypeHelp.left >= 0 && mobileRuleTypeHelp.right <= mobileRuleTypeHelp.width, true, JSON.stringify(mobileRuleTypeHelp));
+        assert.equal(mobileRuleTypeHelp.top >= 0 && mobileRuleTypeHelp.bottom <= mobileRuleTypeHelp.height, true, JSON.stringify(mobileRuleTypeHelp));
+        await page.locator('[data-constraint-rule-help-toggle]').press('Escape');
         await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-manual-mobile.png') });
         await page.setViewportSize({ width: 1440, height: 900 });
 
-        await page.selectOption('#tt-manual-rule-type', 'teacher_unavailable');
+        const selectRuleType = async (prefix, type) => {
+            await page.locator(`#${prefix}-type-trigger`).click();
+            await page.locator(`#${prefix}-type-option-${type}`).click();
+        };
+        await page.locator('#tt-manual-rule-type-trigger').click();
+        await page.locator('#tt-manual-rule-type-option-subject_preferred_periods').hover();
+        await page.waitForFunction(() => {
+            const help = document.querySelector('[data-constraint-rule-type-help]');
+            return help && !help.hidden && help.textContent?.includes('所选课程尽量安排在勾选节次');
+        });
+        const ruleTypePopover = await page.evaluate(() => {
+            const help = document.querySelector('[data-constraint-rule-type-help]').getBoundingClientRect();
+            const list = document.querySelector('[data-constraint-rule-type-listbox]').getBoundingClientRect();
+            const active = document.querySelector('[data-constraint-rule-type-option].is-active').getBoundingClientRect();
+            return {
+                help: { left: help.left, right: help.right, top: help.top, bottom: help.bottom },
+                list: { left: list.left, right: list.right, top: list.top, bottom: list.bottom },
+                active: { top: active.top, bottom: active.bottom },
+                viewport: { width: window.innerWidth, height: window.innerHeight },
+            };
+        });
+        assert.equal(ruleTypePopover.help.left >= 0 && ruleTypePopover.help.right <= ruleTypePopover.viewport.width, true, JSON.stringify(ruleTypePopover));
+        assert.equal(ruleTypePopover.help.top >= 0 && ruleTypePopover.help.bottom <= ruleTypePopover.viewport.height, true, JSON.stringify(ruleTypePopover));
+        assert.equal(ruleTypePopover.help.left >= ruleTypePopover.list.right || ruleTypePopover.help.right <= ruleTypePopover.list.left, true, JSON.stringify(ruleTypePopover));
+        assert.equal(Math.abs(
+            (ruleTypePopover.help.top + ruleTypePopover.help.bottom) / 2
+            - (ruleTypePopover.active.top + ruleTypePopover.active.bottom) / 2,
+        ) <= 1, true, JSON.stringify(ruleTypePopover));
+        const visibleRuleTypeChecks = await page.locator('[data-constraint-rule-type-listbox] [data-lucide="check"], [data-constraint-rule-type-listbox] svg.lucide-check')
+            .evaluateAll(icons => icons.filter(icon => getComputedStyle(icon).opacity === '1').length);
+        assert.equal(visibleRuleTypeChecks, 1);
+        await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-rule-type-help.png') });
+        await page.locator('#tt-manual-rule-type-trigger').press('Escape');
+        await page.locator('#tt-manual-rule-type-trigger').press('ArrowDown');
+        await page.waitForFunction(() => {
+            const help = document.querySelector('[data-constraint-rule-type-help]');
+            return help && !help.hidden && help.textContent?.includes('所选班级在勾选节次不得安排任何课程');
+        });
+        await page.locator('#tt-manual-rule-type-trigger').press('Escape');
+        await selectRuleType('tt-manual-rule', 'teacher_unavailable');
         const manualTeacher = await page.locator('#tt-manual-rule-target option').nth(1).evaluate(option => ({
             value: option.value,
             label: option.textContent?.trim() || '',
@@ -427,21 +498,54 @@ async function main() {
         assert.match(manualReviewText || '', new RegExp(manualTeacher.label));
         assert.match(manualReviewText || '', /周一第1节/);
 
-        await page.selectOption('#tt-manual-rule-type', 'subject_preferred_periods');
+        await selectRuleType('tt-manual-rule', 'subject_preferred_periods');
         const manualSubject = await page.locator('#tt-manual-rule-target option').nth(1).evaluate(option => ({
             value: option.value,
             label: option.textContent?.trim() || '',
         }));
         assert.ok(manualSubject.value.startsWith('subject:'));
         await page.selectOption('#tt-manual-rule-target', manualSubject.value);
+        await page.waitForFunction(() => {
+            const field = document.querySelector('#tt-manual-rule-scope-class');
+            return field && !field.disabled && field.options.length > 1;
+        });
+        const manualScopeClass = await page.locator('#tt-manual-rule-scope-class option').nth(1).evaluate(option => ({
+            value: option.value,
+            label: option.textContent?.trim() || '',
+        }));
+        await page.selectOption('#tt-manual-rule-scope-class', manualScopeClass.value);
+        await page.waitForFunction(() => !document.querySelector('#tt-manual-rule-scope-limit-teacher')?.disabled);
+        await page.check('#tt-manual-rule-scope-limit-teacher');
+        await page.waitForFunction(() => {
+            const field = document.querySelector('#tt-manual-rule-scope-teacher');
+            return field && !field.disabled && field.options.length > 1;
+        });
+        const manualScopeTeacher = await page.locator('#tt-manual-rule-scope-teacher option').nth(1).evaluate(option => ({
+            value: option.value,
+            label: option.textContent?.trim() || '',
+        }));
+        await page.selectOption('#tt-manual-rule-scope-teacher', manualScopeTeacher.value);
         await page.check('[data-manual-rule-slot][value="2-2"]');
         await clickByScript('[data-action="add-manual-constraint"]');
 
-        await page.selectOption('#tt-manual-rule-type', 'teacher_daily_limit');
+        await selectRuleType('tt-manual-rule', 'teacher_daily_limit');
         await page.selectOption('#tt-manual-rule-target', manualTeacher.value);
         await page.fill('#tt-manual-rule-limit', '4');
         await clickByScript('[data-action="add-manual-constraint"]');
         assert.deepEqual(await constraintFooterLabels(), ['取消', '添加约束', '应用需求 (3)']);
+
+        await page.locator('[data-action="edit-constraint"]').first().click();
+        await page.waitForSelector('#tt-edit-constraint-type-trigger', { timeout: 10000 });
+        await page.locator('#tt-edit-constraint-type-trigger').click();
+        await page.locator('#tt-edit-constraint-type-option-subject_avoid_periods').hover();
+        await page.waitForFunction(() => {
+            const help = document.querySelector('#tt-edit-constraint-type-help');
+            return help && !help.hidden && help.textContent?.includes('所选课程尽量避开勾选节次');
+        });
+        await page.locator('#tt-edit-constraint-type-trigger').press('Escape');
+        await selectRuleType('tt-edit-constraint', 'teacher_unavailable');
+        await page.click('[data-action="save-edit-constraint"]');
+        await page.waitForFunction(() => !document.querySelector('.tt-constraint-edit-modal'), { timeout: 10000 });
 
         await clickByScript('[data-action="apply-constraints"]');
         await page.waitForFunction(() => {
@@ -464,20 +568,33 @@ async function main() {
         });
         assert.equal(applyState.dialogOpen, false, JSON.stringify({ applyState, dialogs }, null, 2));
         assert.ok(dialogs.some(item => /已写入 1 条硬规则、2 条软规则，更新 0 个任课计划。共 3 条已生效。/.test(item.message)));
-        const persistedManualRules = await page.evaluate(({ teacherValue, subjectValue }) => {
+        const persistedManualRules = await page.evaluate(({ teacherValue, subjectValue, classValue, scopeTeacherValue }) => {
             const planner = window.ICeCream?.appLauncher?.currentToolInstance;
             const teacherId = teacherValue.split(':').slice(1).join(':');
             const subjectId = subjectValue.split(':').slice(1).join(':');
+            const subjectRule = (planner?.state?.project?.rules?.advancedRules || []).find(rule => (
+                rule.type === 'subject.preferred_periods'
+                && rule.target?.matchedIds?.includes(subjectId)
+            ));
             return {
                 teacherId,
                 subjectId,
                 unavailableSlots: planner?.state?.project?.rules?.hardRules?.teacherUnavailable?.[teacherId] || [],
-                preferredSlots: planner?.state?.project?.rules?.softRules?.subjectPreferredPeriods?.[subjectId]?.prefer || [],
+                subjectRule,
+                classId: classValue,
+                scopeTeacherId: scopeTeacherValue,
                 dailyLimit: planner?.state?.project?.rules?.softRules?.teacherLimits?.[teacherId]?.daily ?? null,
             };
-        }, { teacherValue: manualTeacher.value, subjectValue: manualSubject.value });
+        }, {
+            teacherValue: manualTeacher.value,
+            subjectValue: manualSubject.value,
+            classValue: manualScopeClass.value,
+            scopeTeacherValue: manualScopeTeacher.value,
+        });
         assert.ok(persistedManualRules.unavailableSlots.includes('1-1'));
-        assert.ok(persistedManualRules.preferredSlots.includes('2-2'));
+        assert.ok(persistedManualRules.subjectRule?.parameters?.slots?.includes('2-2'));
+        assert.deepEqual(persistedManualRules.subjectRule?.parameters?.classIds, [persistedManualRules.classId]);
+        assert.deepEqual(persistedManualRules.subjectRule?.parameters?.teacherIds, [persistedManualRules.scopeTeacherId]);
         assert.equal(persistedManualRules.dailyLimit, 4);
 
         console.log('timetable rule review smoke passed');

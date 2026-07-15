@@ -207,6 +207,22 @@ class TimetableConstraintProviderTest {
                 .penalizesBy(5);
     }
 
+    @Test
+    void scopedSubjectSpreadOnlyPenalizesAssignmentsWithTheSameInjectedRule() {
+        LessonAssignment first = lesson("a", "lp1", "c1", "math", List.of("t1"), slot("1-1", 1, 1));
+        LessonAssignment second = lesson("b", "lp2", "c1", "math", List.of("t1"), slot("1-2", 1, 2));
+        LessonAssignment outsideScope = lesson("c", "lp3", "c2", "math", List.of("t2"), slot("1-3", 1, 3));
+        first.setAdvancedRules(List.of(advancedRule("scope-g7-1", "subject.spread")));
+        second.setAdvancedRules(List.of(advancedRule("scope-g7-1", "subject.spread")));
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::advancedPairSoftRules)
+                .given(first, second)
+                .penalizesBy(32);
+        constraintVerifier.verifyThat(TimetableConstraintProvider::advancedPairSoftRules)
+                .given(first, outsideScope)
+                .hasNoImpact();
+    }
+
     private static LessonAssignment lesson(String id, String planId, String classId, String subjectId,
                                            List<String> teacherIds, TimeSlot timeSlot) {
         LessonAssignment assignment = new LessonAssignment();
@@ -246,6 +262,14 @@ class TimetableConstraintProviderTest {
         ref.setWeeklyMax(weeklyMax);
         ref.setMaxDays(maxDays);
         ref.setLoadBalanceWeight(loadBalanceWeight);
+        return ref;
+    }
+
+    private static LessonAssignment.AdvancedRuleRef advancedRule(String id, String type) {
+        LessonAssignment.AdvancedRuleRef ref = new LessonAssignment.AdvancedRuleRef();
+        ref.setId(id);
+        ref.setType(type);
+        ref.setHard(false);
         return ref;
     }
 

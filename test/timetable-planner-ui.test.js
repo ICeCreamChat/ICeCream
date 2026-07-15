@@ -1648,9 +1648,10 @@ test('constraint dialog manual entry creates an explicit requirement item', () =
   controller.state.project = createDefaultTimetableProject({
     activeWeekdays: [1, 2, 3, 4, 5],
     activePeriods: [1, 2, 3, 4, 5, 6, 7],
-    teachers: [],
-    classes: [],
+    teachers: [{ id: 'teacher_sport', name: '体育老师', subjects: ['subject_sport'], unavailableSlots: [] }],
+    classes: [{ id: 'class_1', grade: '七年级', name: '1班' }],
     subjects: [{ id: 'subject_sport', name: '体育' }],
+    lessonPlans: [{ id: 'plan_sport', classId: 'class_1', subjectId: 'subject_sport', teacherId: 'teacher_sport', weeklyHours: 2 }],
   });
   controller.state.ruleReview = { draftRows: [], requirementItems: [], semanticActions: [] };
   controller.state.constraintDialog = { open: true, requirementFilter: 'all', selectedRequirementId: '' };
@@ -1661,6 +1662,9 @@ test('constraint dialog manual entry creates an explicit requirement item', () =
         'tt-manual-rule-type': { value: 'subject_preferred_periods' },
         'tt-manual-rule-target': { value: 'subject:subject_sport' },
         'tt-manual-rule-limit': { value: '' },
+        'tt-manual-rule-scope-class': { value: 'class_1' },
+        'tt-manual-rule-scope-limit-teacher': { checked: false },
+        'tt-manual-rule-scope-teacher': { value: '' },
       }[id] || null;
     },
     querySelectorAll(selector) {
@@ -1684,8 +1688,10 @@ test('constraint dialog manual entry creates an explicit requirement item', () =
     assert.equal(requirement.rowId, row.id);
     assert.equal(requirement.object.name, '体育');
     assert.equal(requirement.intent, 'subject_preferred_periods');
-    assert.equal(requirement.source.rawText, '体育 优先安排：周一第1节');
-    assert.equal(row.type, 'subject_preferred_periods');
+    assert.equal(requirement.source.rawText, '七年级 1班 · 体育 · 不限教师 优先安排：周一第1节');
+    assert.equal(row.type, 'advanced_constraint');
+    assert.equal(row.advancedType, 'subject.preferred_periods');
+    assert.deepEqual(row.parameters.classIds, ['class_1']);
     assert.equal(row.targetId, 'subject_sport');
     assert.deepEqual(row.slots, ['1-1']);
     assert.equal(row.priority, 'soft');
@@ -2506,7 +2512,7 @@ test('constraint intake mini cards share excluded apply state with rule review t
     draftRows: [{
       id: 'rule-row',
       requirementId: 'req_rule',
-      type: 'subject_preferred_periods',
+      type: 'advanced_constraint',
       targetName: '语文',
       priority: 'soft',
       status: 'effective',
@@ -2712,7 +2718,7 @@ test('constraint intake controller calls dedicated agent API endpoints', async (
     draftRows: [{
       id: 'rule-row',
       requirementId: 'req_rule',
-      type: 'subject_preferred_periods',
+      type: 'advanced_constraint',
       targetName: 'Math',
       priority: 'soft',
       status: 'effective',
@@ -2912,7 +2918,8 @@ test('timetable constraint edit opens a compact machine-rule modal', () => {
   assert.match(html, /编辑将应用规则/);
   assert.match(html, /data-action="save-edit-constraint"/);
   assert.match(html, /data-action="cancel-edit-constraint"/);
-  assert.match(html, /value="subject_preferred_periods" selected/);
+  assert.match(html, /id="tt-edit-constraint-type"[^>]*value="subject_preferred_periods"/);
+  assert.match(html, /data-constraint-rule-type="subject_preferred_periods"[^>]*aria-selected="true"/);
   assert.match(html, /value="subject:math" selected/);
   assert.match(html, /value="1-1" checked/);
   assert.match(html, /value="1-2" checked/);
@@ -2937,9 +2944,10 @@ test('timetable constraint edit requires explicit conversion for legacy manual p
     constraintDialog: { open: true, editingConstraint: legacy },
   }));
 
-  assert.match(html, /value="" selected[^>]*>请选择具体规则类型/);
+  assert.match(html, /id="tt-edit-constraint-type"[^>]*value=""/);
+  assert.match(html, /请选择具体规则类型/);
   assert.match(html, /旧手动内容需要先选择具体规则类型和项目对象/);
-  assert.doesNotMatch(html, /value="subject_preferred_periods" selected/);
+  assert.doesNotMatch(html, /data-constraint-rule-type="subject_preferred_periods"[^>]*aria-selected="true"/);
 });
 
 test('timetable constraint edit saves business fields back to the draft rule', () => {
@@ -2960,6 +2968,7 @@ test('timetable constraint edit saves business fields back to the draft rule', (
     ],
     lessonPlans: [
       { id: 'lp_math', classId: 'c1', subjectId: 'math', teacherId: 't_math', weeklyHours: 3 },
+      { id: 'lp_english', classId: 'c1', subjectId: 'english', teacherId: 't_math', weeklyHours: 3 },
     ],
   });
   controller.state.ruleReview = {
@@ -3005,6 +3014,9 @@ test('timetable constraint edit saves business fields back to the draft rule', (
         'tt-edit-constraint-type': { value: 'subject_preferred_periods' },
         'tt-edit-constraint-target': { value: 'subject:english' },
         'tt-edit-constraint-limit': { value: '' },
+        'tt-edit-constraint-scope-class': { value: 'c1' },
+        'tt-edit-constraint-scope-limit-teacher': { checked: false },
+        'tt-edit-constraint-scope-teacher': { value: '' },
       }[id] || null;
     },
     querySelectorAll(selector) {
@@ -3036,7 +3048,7 @@ test('timetable constraint edit saves business fields back to the draft rule', (
     })), [{
       id: 'rule-row',
       requirementId: 'req_rule',
-      type: 'subject_preferred_periods',
+      type: 'advanced_constraint',
       targetType: 'subject',
       targetId: 'english',
       targetName: 'English',
@@ -12645,12 +12657,17 @@ test('timetable constraint dialog renders manual mode without old clarify questi
   }));
 
   assert.match(html, /data-constraint-dialog-overlay/);
+  assert.match(html, /data-constraint-rule-type-picker="tt-manual-rule"/);
+  assert.match(html, /data-constraint-rule-type-trigger/);
+  assert.match(html, /data-constraint-rule-type-listbox/);
+  assert.match(html, /data-constraint-rule-help-toggle/);
   assert.match(html, /id="tt-manual-rule-target"/);
   assert.match(html, /data-manual-rule-slot/);
   assert.match(html, /教师不可排/);
   assert.match(html, /课程分散安排/);
   assert.doesNotMatch(html, /id="tt-manual-target"/);
   assert.doesNotMatch(html, /id="tt-manual-time"/);
+  assert.doesNotMatch(html, /data-constraint-rule-type-select/);
   assert.match(html, /data-action="add-manual-constraint"/);
   assert.doesNotMatch(html, /data-rule-clarify-question="q_empty"/);
   assert.doesNotMatch(html, /data-rule-question-answer="q_empty"/);
@@ -12660,12 +12677,23 @@ test('structured constraint forms use isolated responsive styles and one shared 
   const dialogStyles = await readFile(constraintDialogStylePath, 'utf8');
   const componentSource = await readFile(new URL('view-constraint-dialog-components.js', moduleRoot), 'utf8');
   const advancedControllerSource = await readFile(new URL('controller-constraint-dialog-advanced.js', moduleRoot), 'utf8');
+  const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
 
   assert.match(dialogStyles, /\.tt-constraint-rule-form\s*{/);
   assert.match(dialogStyles, /\.tt-constraint-rule-main-fields\s*{[^}]*grid-template-columns:/s);
   assert.match(dialogStyles, /\.tt-constraint-rule-slot-grid\s*{[^}]*overflow-x:\s*auto/s);
   assert.match(dialogStyles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-constraint-rule-main-fields\s*{[^}]*grid-template-columns:\s*1fr/s);
+  assert.match(dialogStyles, /\.tt-constraint-rule-type-listbox\s*{[^}]*position:\s*fixed/s);
+  assert.match(dialogStyles, /\.tt-constraint-rule-type-help\s*{[^}]*position:\s*fixed/s);
+  assert.match(dialogStyles, /\.tt-constraint-rule-type-listbox\[hidden\][\s\S]*display:\s*none/s);
+  assert.match(dialogStyles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-constraint-rule-help-button\s*{[^}]*display:\s*grid/s);
   assert.doesNotMatch(componentSource, /EDITABLE_RULE_TYPES/);
+  assert.match(componentSource, /role="combobox"/);
+  assert.match(componentSource, /role="listbox"/);
+  assert.match(componentSource, /role="option"/);
+  assert.doesNotMatch(componentSource, /data-constraint-rule-type-select/);
+  assert.match(interactionSource, /handleRuleTypePickerKeydown/);
+  assert.match(interactionSource, /showRuleTypeHelp/);
   assert.doesNotMatch(advancedControllerSource, /RULE_TARGET_KIND|SLOT_RULE_TYPES|LIMIT_RULE_TYPES/);
 });
 

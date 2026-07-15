@@ -82,7 +82,7 @@ test('constraint intake rejects APPLY before explicit confirmation', async () =>
     const session = createConstraintIntakeSession({ project });
     const parsed = await handleConstraintIntakeMessage({
         sessionId: session.sessionId,
-        message: '王老师周三第3节没空，数学尽量上午。',
+        message: '王老师周三第3节没空，七年级1班数学尽量上午。',
         project,
         env: {},
     });
@@ -113,7 +113,7 @@ test('constraint intake completes local flow from INTAKE to REPORT', async () =>
 
     const parsed = await handleConstraintIntakeMessage({
         sessionId: session.sessionId,
-        message: '王老师周三第3节没空，数学尽量上午。',
+        message: '王老师周三第3节没空，七年级1班数学尽量上午。',
         project,
         env: {},
     });

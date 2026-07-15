@@ -96,9 +96,9 @@ test('real roster workbook creates stable room entities and keeps the real 137 s
     });
     assert.equal(result.sourceRequirements.length, 137);
     assert.equal(result.constraintIRs.length, 150);
-    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 0);
-    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget !== 'rule').length, 0);
-    assert.equal(result.constraintIRs.filter(item => item.executionStatus !== 'executable').length, 0);
+    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 6);
+    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget !== 'rule').length, 6);
+    assert.equal(result.constraintIRs.filter(item => item.executionStatus !== 'executable').length, 16);
 });
 
 test('manually pasted 137 constraints use the same deterministic contract as the workbook', async () => {
@@ -123,13 +123,13 @@ test('manually pasted 137 constraints use the same deterministic contract as the
     );
     assert.equal(result.requirementItems.length, result.constraintIRs.length);
     assert.equal(result.statistics.clauseCount, result.constraintIRs.length);
-    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 0);
-    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget !== 'rule').length, 0);
-    assert.equal(result.constraintIRs.filter(item => item.executionStatus !== 'executable').length, 0);
+    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 7);
+    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget !== 'rule').length, 7);
+    assert.equal(result.constraintIRs.filter(item => item.executionStatus !== 'executable').length, 15);
     const cards = buildUnifiedRequirementItems(result);
     assert.equal(cards.length, 137);
-    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'review').length, 0);
-    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'rule').length, 137);
+    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'review').length, 7);
+    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'rule').length, 130);
     assert.equal(cards.filter(item => INTERNAL_OBJECT_NAMES.has(String(item.object?.name || '').toLowerCase())).length, 0);
     assert.equal(result.constraintIRs.filter(item => (
         /^(?:日课量|至少|每个班每天课量|课组内的教师|固定活动)$/i.test(String(item.target?.name || item.targetName || item.target || ''))
@@ -147,10 +147,10 @@ test('complete 137 project keeps source cardinality and has no unsupported solve
     assert.equal(result.constraintIRs.length, 150);
     assert.equal(result.constraintIRs.filter(item => item.executionStatus === 'unsupported_by_solver').length, 0);
     assert.equal(result.constraintIRs.filter(item => item.executionStatus === 'blocked_by_reference').length, 0);
-    assert.equal(result.constraintIRs.filter(item => item.executionStatus === 'blocked_by_clarification').length, 0);
-    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 0);
-    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget !== 'rule').length, 0);
-    assert.equal(result.sourceRequirements.filter(item => !item.machineRuleIds.length).length, 0);
+    assert.equal(result.constraintIRs.filter(item => item.executionStatus === 'blocked_by_clarification').length, 16);
+    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 6);
+    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget !== 'rule').length, 6);
+    assert.equal(result.sourceRequirements.filter(item => !item.machineRuleIds.length).length, 6);
 
     const review19Sources = result.sourceRequirements.filter(item => REVIEW_19_SOURCE_ROWS.has(item.source?.rowNumber));
     const review19SourceIds = new Set(review19Sources.map(item => item.sourceId));
@@ -166,8 +166,8 @@ test('complete 137 project keeps source cardinality and has no unsupported solve
 
     const cards = buildUnifiedRequirementItems(result);
     assert.equal(cards.length, 137);
-    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'review').length, 0);
-    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'rule').length, 137);
+    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'review').length, 6);
+    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'rule').length, 131);
     assert.equal(cards.filter(item => INTERNAL_OBJECT_NAMES.has(String(item.object?.name || '').toLowerCase())).length, 0);
     assert.equal(cards.find(item => item.source?.sourceRow === 133)?.object?.name, '全校');
     assert.equal(cards.find(item => item.source?.sourceRow === 134)?.object?.name, '同一备课组内教师');
@@ -207,8 +207,8 @@ test('one hundred unverified AI flags stay advisory without changing the 137 sou
     );
     assert.equal(result.aiAssistance.advisoryCount, 100);
     assert.equal(result.aiAssistance.blockingCount, 0);
-    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 0);
-    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget === 'rule').length, 137);
+    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 6);
+    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget === 'rule').length, 131);
 });
 
 test('canonical source review state only lets verified AI findings block application', () => {

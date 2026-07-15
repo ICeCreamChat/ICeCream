@@ -2604,8 +2604,19 @@ test('timetable AI rules parser derives local suggestions from roster Excel when
     assert.equal(result.inputType, 'xlsx_roster');
     assert.equal(result.source, 'local_roster_fallback');
     assert.equal(result.contextStats.totalLessons, 12);
-    assert.deepEqual(result.draftRules.softRules.morningSubjects.sort(), ['english', 'math']);
-    assert.ok(result.previewItems.some(item => item.type === 'subject_morning' && item.status === 'ready'));
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, []);
+    assert.deepEqual(
+        result.draftRules.advancedRules
+            .filter(rule => rule.type === 'subject.preferred_day_part')
+            .map(rule => [rule.target.matchedIds[0], rule.parameters.classIds])
+            .sort(),
+        [['english', ['c1']], ['math', ['c1']]],
+    );
+    assert.ok(result.draftRows.some(item => (
+        item.advancedType === 'subject.preferred_day_part'
+        && item.targetId === 'math'
+        && item.parameters?.classIds?.includes('c1')
+    )));
     assert.ok(result.draftRows.some(item => item.type === 'advanced_constraint' && item.advancedType === 'lesson.consecutive'));
 });
 
@@ -2643,7 +2654,7 @@ test('timetable AI rules parser uses stable local roster suggestions without cal
     assert.equal(result.source, 'local_roster_fallback');
     assert.equal(result.contextStats.totalLessons, 12);
     assert.ok(result.draftRows.length > 0);
-    assert.ok(result.previewItems.some(item => item.type === 'subject_morning'));
+    assert.ok(result.draftRules.advancedRules.some(item => item.type === 'subject.preferred_day_part' && item.parameters.classIds.length === 1));
     assert.ok(result.draftRows.some(item => item.type === 'advanced_constraint' && item.advancedType === 'lesson.consecutive'));
     assert.equal(result.warnings.length, 0);
 });
@@ -2662,8 +2673,8 @@ test('timetable AI rules parser parses decisive constraint Excel rows locally', 
             filename: 'constraints.xlsx',
             buffer: makeTimetableWorkbook([
                 ['rule name', 'type', 'target', 'slots', 'natural language constraint'],
-                ['Math later', 'subject_preferred_periods', 'Math', '1-2', 'Math should be at Monday period 2.'],
-                ['PE not first', 'subject_avoid_periods', 'PE', '1-1', 'PE should avoid Monday period 1.'],
+                ['Math later', 'subject_preferred_periods', 'Math', '1-2', '七年级1班 Math should be at Monday period 2.'],
+                ['PE not first', 'subject_avoid_periods', 'PE', '1-1', '七年级2班 PE should avoid Monday period 1.'],
             ], { sheetName: 'AIConstraints' }),
         },
         project,
@@ -2688,8 +2699,16 @@ test('timetable AI rules parser parses decisive constraint Excel rows locally', 
     assert.equal(result.inputType, 'xlsx_constraints');
     assert.equal(result.source, 'local_xlsx');
     assert.equal(result.parseSource, 'local_xlsx');
-    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.math.prefer, ['1-2']);
-    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.avoid, ['1-1']);
+    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods, {});
+    assert.deepEqual(
+        result.draftRules.advancedRules
+            .map(rule => [rule.type, rule.target.matchedIds[0], rule.parameters.classIds, rule.parameters.slots])
+            .sort(),
+        [
+            ['subject.avoid_periods', 'pe', ['c2'], ['1-1']],
+            ['subject.preferred_periods', 'math', ['c1'], ['1-2']],
+        ],
+    );
     assert.ok(result.draftRows.every(row => row.parseSource === 'local_xlsx'));
 });
 
@@ -2707,7 +2726,7 @@ test('timetable AI rules parser supplements only unresolved constraint Excel row
             filename: 'constraints.xlsx',
             buffer: makeTimetableWorkbook([
                 ['rule name', 'type', 'target', 'slots', 'natural language constraint'],
-                ['Math later', 'subject_preferred_periods', 'Math', '1-2', 'Math should be at Monday period 2.'],
+                ['Math later', 'subject_preferred_periods', 'Math', '1-2', '七年级1班 Math should be at Monday period 2.'],
                 ['Load balance', '', '', '', 'High-load teachers should not teach too many consecutive periods.'],
             ], { sheetName: 'AIConstraints' }),
         },
@@ -2761,7 +2780,12 @@ test('timetable AI rules parser supplements only unresolved constraint Excel row
     assert.match(observedSupplementPrompt, /High-load teachers/);
     assert.doesNotMatch(observedSupplementPrompt, /Math should be at Monday period 2/);
     assert.match(observedReviewPrompt, /Math should be at Monday period 2/);
-    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.math.prefer, ['1-2']);
+    assert.ok(result.draftRules.advancedRules.some(rule => (
+        rule.type === 'subject.preferred_periods'
+        && rule.target.matchedIds.includes('math')
+        && rule.parameters.classIds.includes('c1')
+        && rule.parameters.slots.includes('1-2')
+    )));
     assert.ok(result.previewItems.some(item => item.type === 'teacher_load_balance' && item.status === 'ready'));
     assert.equal(result.unsupportedItems.some(item => item.type === 'teacher_load_balance'), false);
     assert.deepEqual(result.draftRules.softRules.teacherLoadBalance, { enabled: true, weight: 1, explicit: true });
@@ -2835,8 +2859,10 @@ test('timetable AI rules parser combines local AI constraint workbook rows with 
     assert.ok(result.contextStats.rowCount >= 10);
     assert.ok(result.draftRows.length >= 3);
     assert.match(observedSupplementPrompt, /同一位教师同一时间只能给一个班上课/);
-    assert.ok(result.draftRules.softRules.subjectPreferredPeriods.math.prefer.includes('1-1'));
-    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.pe.prefer, ['3-3']);
+    assert.equal(result.draftRules.advancedRules.some(rule => (
+        ['subject.preferred_periods', 'subject.avoid_periods', 'subject.preferred_day_part'].includes(rule.type)
+    )), false);
+    assert.ok(result.draftRows.some(row => row.courseScopeClarification && row.status === 'needs_review'));
     assert.ok(result.draftRows.some(row => row.status === 'effective' && row.type === 'teacher_load_balance'));
     assert.deepEqual(result.draftRules.softRules.teacherLoadBalance, { enabled: true, weight: 10, explicit: true });
     assert.deepEqual(result.draftRules.softRules.classDailyBalance, { enabled: true, mainSubjectDailyMax: 6 });
@@ -2866,8 +2892,9 @@ test('timetable AI rules parser locally extracts obvious text rules when AI is u
     assert.equal(result.inputType, 'text');
     assert.equal(result.source, 'local_text');
     assert.deepEqual(result.draftRules.hardRules.teacherUnavailable.t_math, ['3-4']);
-    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
-    assert.equal(result.draftRows.filter(row => row.status === 'effective').length, 2);
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, []);
+    assert.equal(result.draftRows.filter(row => row.status === 'effective').length, 1);
+    assert.ok(result.draftRows.some(row => row.type === 'subject_morning' && row.courseScopeClarification && row.status === 'needs_review'));
 });
 
 test('timetable smart rules accept full agent schema from the configured parser', async () => {
@@ -2989,15 +3016,17 @@ test('timetable smart rules split clear local text into auto-acceptable constrai
     const teacherRow = result.draftRows.find(row => row.type === 'teacher_unavailable');
     const subjectRow = result.draftRows.find(row => row.type === 'subject_morning');
 
-    assert.equal(result.nextAction, 'ready_to_apply');
-    assert.equal(result.autoAcceptable.length, 2);
-    assert.equal(result.needReview.length, 0);
+    assert.equal(result.nextAction, 'ask_user');
+    assert.equal(result.autoAcceptable.length, 1);
+    assert.equal(result.needReview.length, 1);
     assert.equal(teacherRow.status, 'effective');
     assert.equal(teacherRow.targetId, 't_wang');
     assert.deepEqual(teacherRow.slots, ['3-5', '3-6', '3-7', '3-8']);
     assert.equal(subjectRow.priority, 'soft');
+    assert.equal(subjectRow.courseScopeClarification, true);
+    assert.equal(subjectRow.status, 'needs_review');
     assert.deepEqual(result.draftRules.hardRules.teacherUnavailable.t_wang, ['3-5', '3-6', '3-7', '3-8']);
-    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, []);
     assert.deepEqual(result.confidenceSummary, { high: 2, medium: 0, low: 0 });
 });
 
@@ -3352,7 +3381,7 @@ test('timetable rule draft row normalization saves teacher limits and subject sp
         teachers: [{ id: 't_math', name: 'Math Teacher', subjects: ['math'], unavailableSlots: [] }],
         classes: [{ id: 'c1', grade: 'G7', name: '1' }],
         subjects: [{ id: 'pe', name: '体育', priority: 30, color: '#2563eb' }],
-        lessonPlans: [],
+        lessonPlans: [{ id: 'lp_pe', classId: 'c1', subjectId: 'pe', teacherId: 't_math', weeklyHours: 2 }],
         rules: { hardRules: {}, softRules: {} },
     });
 
@@ -3375,13 +3404,18 @@ test('timetable rule draft row normalization saves teacher limits and subject sp
             targetType: 'subject',
             targetId: 'pe',
             targetName: '体育',
+            classIds: ['c1'],
             priority: 'soft',
             status: 'effective',
         }],
     });
 
     assert.deepEqual(result.draftRules.softRules.teacherLimits.t_math, { daily: 3 });
-    assert.ok(result.draftRules.softRules.spreadSubjects.includes('pe'));
+    assert.ok(result.draftRules.advancedRules.some(rule => (
+        rule.type === 'subject.spread'
+        && rule.target.matchedIds.includes('pe')
+        && rule.parameters.classIds.includes('c1')
+    )));
     assert.equal(result.draftRows.filter(row => row.status === 'effective').length, 2);
 });
 
@@ -7590,8 +7624,8 @@ test('timetable rules parse API returns an editable AI draft without saving it',
         assert.ok(
             payload.data.constraintIRs.some(item => (
                 item.capabilityId === 'subject.preferred_day_part'
-                && item.executionStatus === 'executable'
-                && item.machineRuleIds.length > 0
+                && item.executionStatus === 'blocked_by_clarification'
+                && item.machineRuleIds.length === 0
             )),
             JSON.stringify({
                 draftRows: payload.data.draftRows,
@@ -7600,7 +7634,8 @@ test('timetable rules parse API returns an editable AI draft without saving it',
             }),
         );
         assert.deepEqual(payload.data.draftRules.hardRules.teacherUnavailable.t_math, ['3-4']);
-        assert.deepEqual(payload.data.draftRules.softRules.morningSubjects, ['math']);
+        assert.deepEqual(payload.data.draftRules.softRules.morningSubjects, []);
+        assert.ok(payload.data.draftRows.some(row => row.courseScopeClarification && row.status === 'needs_review'));
         assert.equal(payload.data.previewItems.length, 2);
         assert.equal(payload.data.parseSource, 'ai_extract');
 
@@ -7711,7 +7746,8 @@ test('timetable rules parse API accepts multipart Excel without saving the draft
         assert.equal(response.status, 200);
         assert.equal(payload.success, true);
         assert.equal(payload.data.inputType, 'xlsx_constraints');
-        assert.deepEqual(payload.data.draftRules.softRules.subjectPreferredPeriods.math.prefer, ['2-1']);
+        assert.deepEqual(payload.data.draftRules.softRules.subjectPreferredPeriods, {});
+        assert.ok(payload.data.draftRows.some(row => row.courseScopeClarification && row.status === 'needs_review'));
 
         const stored = await store.loadProject();
         assert.deepEqual(stored.rules.softRules.subjectPreferredPeriods || {}, {});

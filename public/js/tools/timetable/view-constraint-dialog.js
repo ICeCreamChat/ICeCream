@@ -1220,11 +1220,12 @@ function renderInputArea(state, mode, parsing, review) {
 
     if (mode === 'manual') {
         const manualType = state.constraintDialog?.manualRuleType || 'teacher_unavailable';
+        const manualScope = state.constraintDialog?.manualRuleScope || {};
         return `
             <div class="tt-manual-input tt-constraint-form-surface">
                 ${renderConstraintRuleFormFields({
                     project: state.project || {},
-                    value: { type: manualType, targetId: '', slots: [], limit: '' },
+                    value: { type: manualType, targetId: '', slots: [], limit: '', ...manualScope },
                     idPrefix: 'tt-manual-rule',
                     slotAttribute: 'data-manual-rule-slot',
                     errors: state.constraintDialog?.manualRuleErrors || {},

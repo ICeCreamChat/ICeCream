@@ -281,7 +281,7 @@ test('AI-first parse keeps all sources when AI omits one and rejects an invented
 });
 
 test('AI review uses source identity and rejects invented or mismatched review items', async () => {
-    const requestText = '\u6570\u5b66\u5c3d\u91cf\u5b89\u6392\u5230\u4e0a\u5348\uff01';
+    const requestText = '\u4e03\u5e74\u7ea71\u73ed\u6570\u5b66\u5c3d\u91cf\u5b89\u6392\u5230\u4e0a\u5348\uff01';
     let promptPayload = null;
     const result = await parseTimetableRules({
         text: requestText,
@@ -369,8 +369,8 @@ test('AI review uses source identity and rejects invented or mismatched review i
 });
 
 test('AI review patches stay within one source and cannot rewrite provenance', async () => {
-    const mathText = '\u6570\u5b66\u5c3d\u91cf\u5b89\u6392\u5230\u4e0a\u5348\uff01';
-    const chineseText = '\u8bed\u6587\u5c3d\u91cf\u5b89\u6392\u5230\u4e0a\u5348\uff1f';
+    const mathText = '\u4e03\u5e74\u7ea71\u73ed\u6570\u5b66\u5c3d\u91cf\u5b89\u6392\u5230\u4e0a\u5348\uff01';
+    const chineseText = '\u4e03\u5e74\u7ea71\u73ed\u8bed\u6587\u5c3d\u91cf\u5b89\u6392\u5230\u4e0a\u5348\uff1f';
     let promptPayload = null;
     const result = await parseTimetableRules({
         text: [mathText, chineseText].join('\n'),
@@ -448,7 +448,7 @@ test('AI review patches stay within one source and cannot rewrite provenance', a
 });
 
 test('AI review missed requirements inherit only verified source provenance', async () => {
-    const requestText = '\u8bed\u6587\u5c3d\u91cf\u5b89\u6392\u5230\u4e0a\u5348\u3002';
+    const requestText = '\u4e03\u5e74\u7ea71\u73ed\u8bed\u6587\u5c3d\u91cf\u5b89\u6392\u5230\u4e0a\u5348\u3002';
     let promptPayload = null;
     const result = await parseTimetableRules({
         text: requestText,
@@ -508,7 +508,7 @@ test('AI review missed requirements inherit only verified source provenance', as
 test('AI review patch/upsert stays idempotent for duplicate patches and repeated application', async () => {
     const requestText = [
         '张老师周一第1节不排课。',
-        '数学尽量安排在上午。',
+        '七年级1班数学尽量安排在上午。',
     ].join('\n');
     const timetableProject = project();
     const localResult = await parseTimetableRules({
@@ -516,7 +516,7 @@ test('AI review patch/upsert stays idempotent for duplicate patches and repeated
         project: timetableProject,
         env: { TIMETABLE_RULE_AI_REVIEW_DISABLED: 'true' },
     });
-    const mathSource = localResult.sourceRequirements.find(item => item.rawText === '数学尽量安排在上午。');
+    const mathSource = localResult.sourceRequirements.find(item => item.rawText === '七年级1班数学尽量安排在上午。');
     const mathRow = localResult.draftRows.find(item => item.sourceId === mathSource?.sourceId);
     assert.ok(mathSource);
     assert.ok(mathRow);
@@ -640,7 +640,7 @@ test('AI review blocks only when local validation reproduces the declared issue'
 
 test('complete AI missed requirements compile locally and dedupe without creating review cards', async () => {
     const timetableProject = project();
-    const requestText = '数学尽量安排在上午。';
+    const requestText = '七年级1班数学尽量安排在上午。';
     const localResult = await parseTimetableRules({
         text: requestText,
         project: timetableProject,
@@ -666,7 +666,7 @@ test('complete AI missed requirements compile locally and dedupe without creatin
                     id: 'req-complete-missed',
                     intent: 'subject_morning',
                     object: { kind: 'subject', name: '数学', matchedIds: ['math'], scope: 'explicit' },
-                    parameters: { periods: [1, 2, 3, 4] },
+                    parameters: { periods: [1, 2, 3, 4], classIds: ['c1'] },
                     strength: 'soft',
                 },
             }],
@@ -680,7 +680,12 @@ test('complete AI missed requirements compile locally and dedupe without creatin
     assert.equal(result.sourceRequirements[0].applicationTarget, 'rule');
     assert.ok(result.constraintIRs.every(item => item.executionStatus === 'executable'));
     assert.ok(result.constraintIRs.every(item => item.machineRuleIds.length > 0));
-    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, []);
+    assert.ok(result.draftRules.advancedRules.some(rule => (
+        rule.type === 'subject.preferred_day_part'
+        && rule.target.matchedIds.includes('math')
+        && rule.parameters.classIds.includes('c1')
+    )));
 });
 
 test('a review requirementId never broadens a patch to every row in the same source', async () => {

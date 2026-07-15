@@ -126,7 +126,7 @@ test('extractRequirementsWithAI returns locally resolved draft rows and semantic
     let observedBody = null;
     const result = await extractRequirementsWithAI({
         project: project(),
-        text: '数学尽量上午，音乐不要第一节',
+        text: '三1班数学尽量上午，音乐不要第一节',
         env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
         fetchImpl: async (url, options = {}) => {
             assert.equal(String(url), 'http://ai.test/chat/completions');
@@ -141,7 +141,7 @@ test('extractRequirementsWithAI returns locally resolved draft rows and semantic
                                 sourceId: source.sourceId,
                                 textHash: source.textHash,
                                 clauses: [
-                                { intent: 'subject_morning', targetKind: 'subject', targetNames: ['数学'], strength: 'soft', confidence: 0.94, evidence: '数学尽量上午' },
+                                { intent: 'subject_morning', targetKind: 'subject', targetNames: ['数学'], params: { classIds: ['c1'] }, strength: 'soft', confidence: 0.94, evidence: '三1班数学尽量上午' },
                                 { intent: 'avoid_first_period', targetKind: 'subject', targetNames: ['体育'], strength: 'soft', confidence: 0.9, evidence: '体育不要第一节' },
                                 ],
                             }],
@@ -153,8 +153,9 @@ test('extractRequirementsWithAI returns locally resolved draft rows and semantic
     });
 
     assert.equal(observedBody.temperature, 0);
-    assert.equal(result.promptVersion, 'timetable_ai_requirement_extract_v5');
+    assert.equal(result.promptVersion, 'timetable_ai_requirement_extract_v6');
     assert.ok(result.draftRows.some(row => row.type === 'subject_morning' && row.targetId === 'math'));
+    assert.ok(result.semanticRequirements.some(item => item.parameters.classIds?.includes('c1')));
     assert.ok(result.semanticRequirements.some(item => item.intent === 'avoid_first_period' && item.object.matchedIds.includes('pe')));
 });
 
@@ -1175,8 +1176,8 @@ test('incompatible intent and target kind are routed to review instead of machin
     assert.equal(resolved.draftRows.length, 0);
 });
 
-test('AI extraction prompt v5 includes target-first semantic boundaries', () => {
-    assert.equal(AI_REQUIREMENT_PROMPT_VERSION, 'timetable_ai_requirement_extract_v5');
+test('AI extraction prompt v6 includes target-first semantic boundaries and course scope requirements', () => {
+    assert.equal(AI_REQUIREMENT_PROMPT_VERSION, 'timetable_ai_requirement_extract_v6');
     assert.ok(TIMETABLE_REQUIREMENT_INTENTS.includes('teacher_avoid_periods'));
     assert.ok(TIMETABLE_REQUIREMENT_INTENT_GUIDE.some(item => item.intent === 'teacher_unavailable'));
     assert.ok(TIMETABLE_REQUIREMENT_INTENT_GUIDE.some(item => item.intent === 'course_interval'));
@@ -1188,6 +1189,7 @@ test('AI extraction prompt v5 includes target-first semantic boundaries', () => 
     assert.match(systemMessage.content, /先判断 targetKind/);
     assert.match(systemMessage.content, /领域内含糊/);
     assert.match(systemMessage.content, /隔天排/);
+    assert.match(systemMessage.content, /请补充班级或明确全校范围/);
 });
 
 test('resolveEntityRefs keeps unknown entities in review and avoids ready rows', () => {
@@ -1209,7 +1211,7 @@ test('resolveEntityRefs keeps unknown entities in review and avoids ready rows',
 
 test('parseTimetableRules uses AI-first extraction for enabled free text', async () => {
     const result = await parseTimetableRules({
-        text: '数学尽量上午，张老师周一第一节不排课',
+        text: '三1班数学尽量上午，张老师周一第一节不排课',
         project: project(),
         env: {
             DEEPSEEK_API_KEY: 'test-key',
@@ -1219,7 +1221,7 @@ test('parseTimetableRules uses AI-first extraction for enabled free text', async
         fetchImpl: async (url, options = {}) => {
             const promptPayload = JSON.parse(JSON.parse(options.body).messages[1].content);
             const clauses = [
-                { intent: 'subject_morning', targetKind: 'subject', targetNames: ['数学'], strength: 'soft', confidence: 0.95, evidence: '数学尽量上午' },
+                { intent: 'subject_morning', targetKind: 'subject', targetNames: ['数学'], params: { classNames: ['三1班'] }, strength: 'soft', confidence: 0.95, evidence: '三1班数学尽量上午' },
                 { intent: 'teacher_unavailable', targetKind: 'teacher', targetNames: ['张老师'], time: { slots: ['1-1'] }, strength: 'hard', confidence: 0.95, evidence: '张老师周一第一节不排课' },
             ];
             const resultsBySource = new Map();
@@ -1240,7 +1242,12 @@ test('parseTimetableRules uses AI-first extraction for enabled free text', async
     });
 
     assert.equal(result.parseSource, 'ai_extract');
-    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, []);
+    assert.ok(result.draftRules.advancedRules.some(rule => (
+        rule.type === 'subject.preferred_day_part'
+        && rule.target.matchedIds.includes('math')
+        && rule.parameters.classIds.includes('c1')
+    )));
     assert.deepEqual(result.draftRules.hardRules.teacherUnavailable.t_zhang, ['1-1']);
     assert.equal(result.aiReview.status, 'reviewed');
     assert.equal(result.aiAssistance.mode, 'targeted_review');
@@ -1249,7 +1256,7 @@ test('parseTimetableRules uses AI-first extraction for enabled free text', async
 test('failed targeted review discards unverified AI candidates and returns the local baseline', async () => {
     let calls = 0;
     const result = await parseTimetableRules({
-        text: '数学尽量上午',
+        text: '三1班数学尽量上午',
         project: project(),
         env: {
             DEEPSEEK_API_KEY: 'test-key',
@@ -1289,7 +1296,8 @@ test('failed targeted review discards unverified AI candidates and returns the l
     assert.equal(result.parseSource, 'local_text');
     assert.equal(result.aiReview.status, 'unavailable');
     assert.equal(result.aiAssistance.mode, 'local_fallback');
-    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, []);
+    assert.ok(result.draftRules.advancedRules.some(rule => rule.type === 'subject.preferred_day_part' && rule.parameters.classIds.includes('c1')));
     assert.equal(result.draftRows.some(row => row.targetName === '英语'), false);
 });
 
@@ -1356,7 +1364,7 @@ test('successful targeted review also discards AI-only candidates that review di
 
 test('parseTimetableRules falls back to local parsing when AI-first returns invalid JSON', async () => {
     const result = await parseTimetableRules({
-        text: '数学尽量上午',
+        text: '三1班数学尽量上午',
         project: project(),
         env: {
             DEEPSEEK_API_KEY: 'test-key',
@@ -1370,7 +1378,8 @@ test('parseTimetableRules falls back to local parsing when AI-first returns inva
     });
 
     assert.equal(result.parseSource, 'local_text');
-    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, []);
+    assert.ok(result.draftRules.advancedRules.some(rule => rule.type === 'subject.preferred_day_part' && rule.parameters.classIds.includes('c1')));
     assert.ok(result.warnings.some(warning => warning.includes('AI-first 抽取失败')));
     assert.equal(result.sourceRequirements.length, 1);
 });
@@ -1378,7 +1387,7 @@ test('parseTimetableRules falls back to local parsing when AI-first returns inva
 test('parseTimetableRules preserves all sources when AI-first extraction times out', async () => {
     let receivedAbortSignal = false;
     const result = await parseTimetableRules({
-        text: '数学尽量上午\n张老师周一第一节不排课',
+        text: '三1班数学尽量上午\n张老师周一第一节不排课',
         project: project(),
         env: {
             DEEPSEEK_API_KEY: 'test-key',
@@ -1403,14 +1412,14 @@ test('parseTimetableRules preserves all sources when AI-first extraction times o
     assert.equal(result.parseSource, 'local_text');
     assert.equal(result.sourceRequirements.length, 2);
     assert.equal(result.statistics.userInputCount, 2);
-    assert.ok(result.draftRows.some(row => row.type === 'subject_morning'));
+    assert.ok(result.draftRows.some(row => row.advancedType === 'subject.preferred_day_part' && row.scopeClassId === 'c1'));
     assert.ok(result.draftRows.some(row => row.type === 'teacher_unavailable'));
     assert.ok(result.warnings.some(warning => warning.includes('AI-first 抽取失败')));
 });
 
 test('parseTimetableRules falls back when AI-first is enabled without an API key', async () => {
     const result = await parseTimetableRules({
-        text: '数学尽量上午',
+        text: '三1班数学尽量上午',
         project: project(),
         env: {
             TIMETABLE_RULE_AI_EXTRACT: '1',
@@ -1419,7 +1428,8 @@ test('parseTimetableRules falls back when AI-first is enabled without an API key
     });
 
     assert.equal(result.parseSource, 'local_text');
-    assert.deepEqual(result.draftRules.softRules.morningSubjects, ['math']);
+    assert.deepEqual(result.draftRules.softRules.morningSubjects, []);
+    assert.ok(result.draftRules.advancedRules.some(rule => rule.type === 'subject.preferred_day_part' && rule.parameters.classIds.includes('c1')));
     assert.ok(result.warnings.some(warning => warning.includes('AI-first 抽取失败')));
     assert.equal(result.sourceRequirements.length, 1);
 });

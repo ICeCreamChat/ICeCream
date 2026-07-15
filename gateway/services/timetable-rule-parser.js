@@ -636,6 +636,8 @@ function requirementForCompiledRow(requirements = [], row = {}) {
 }
 
 function constraintArtifactFromRow(row = {}, requirement = null) {
+    const courseScopeClarification = requirement?.courseScopeClarification === true
+        || row.courseScopeClarification === true;
     return {
         ...row,
         capabilityId: row.capabilityId || requirement?.capabilityId || '',
@@ -652,6 +654,34 @@ function constraintArtifactFromRow(row = {}, requirement = null) {
         },
         strength: requirement?.strength || row.priority,
         applyTo: requirement?.applyTo || row.applyTo || '',
+        scope: requirement?.scope || row.scope || {},
+        status: courseScopeClarification && requirement?.status === 'needs_review'
+            ? 'needs_review'
+            : row.status,
+        executionStatus: courseScopeClarification
+            ? requirement?.executionStatus || row.executionStatus || ''
+            : row.executionStatus || '',
+        reviewStatus: courseScopeClarification
+            ? requirement?.reviewStatus || row.reviewStatus || ''
+            : row.reviewStatus || '',
+        support: courseScopeClarification
+            ? requirement?.support || row.support || ''
+            : row.support || '',
+        needsClarification: courseScopeClarification
+            ? requirement?.needsClarification === true || row.needsClarification === true
+            : row.needsClarification === true,
+        courseScopeClarification,
+        landing: courseScopeClarification
+            ? requirement?.landing || row.landing || []
+            : row.landing || [],
+        warnings: uniqueConstraintMessages([
+            ...asList(row.warnings),
+            ...(courseScopeClarification ? asList(requirement?.warnings) : []),
+        ]),
+        clarifications: uniqueConstraintMessages([
+            ...asList(row.clarifications),
+            ...(courseScopeClarification ? asList(requirement?.clarifications) : []),
+        ]),
         legacyClause: requirement ? { ...requirement } : null,
     };
 }
@@ -963,7 +993,9 @@ function compileArtifactsThroughCapabilityRegistry({
                 candidate.artifact.needsClarification === true
                 || candidate.artifact.executionStatus === 'unsupported_by_solver'
             )
-        ) outputRows = [];
+        ) outputRows = candidate.artifact.courseScopeClarification === true && candidate.originalRow
+            ? [candidate.originalRow]
+            : [];
         outputRows = outputRows.map(row => ({
             ...row,
             status: ['blocked_by_reference', 'blocked_by_clarification'].includes(ir.executionStatus)
@@ -1735,6 +1767,7 @@ function textFromConstraintRows(rows = []) {
 function normalizeConstraintType(value) {
     const text = String(value || '').trim().toLowerCase().replace(/-/g, '_');
     const compact = text.replace(/\s+/g, '');
+    if (['advancedconstraint', 'advanced_constraint'].includes(compact)) return 'advanced_constraint';
     if (['teacherunavailable', '教师不可排', '教师不排', '教师时间不可用', 'teacher_not_available'].includes(compact)) return 'teacher_unavailable';
     if (['classunavailable', '班级不可排', '班级不排', 'class_not_available'].includes(compact)) return 'class_unavailable';
     if (['globalunavailable', '全校不可排', '公共不可排', '全局不可排', 'school_unavailable'].includes(compact)) return 'global_unavailable';
@@ -2634,6 +2667,7 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
         clauseId: asText(row.clauseId || '', 300),
         constraintId: asText(row.constraintId || '', 300),
         capabilityId: asText(row.capabilityId || '', 160),
+        advancedType: asText(row.advancedType || '', 160),
         intent: asText(row.intent || '', 160),
         sourceId: asText(row.sourceId || '', 300),
         textHash: asText(row.textHash || '', 128),
@@ -2701,6 +2735,11 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
         support: asText(row.support || '', 20),
         landing: normalizedTextValues(80, row.landing),
         scope: row.scope && typeof row.scope === 'object' ? { ...row.scope } : {},
+        scopeClassId: asText(row.scopeClassId || row.scope?.classIds?.[0] || row.parameters?.classIds?.[0] || '', 120),
+        scopeClassName: asText(row.scopeClassName || '', 200),
+        scopeTeacherId: asText(row.scopeTeacherId || row.scope?.teacherIds?.[0] || row.parameters?.teacherIds?.[0] || '', 120),
+        scopeTeacherName: asText(row.scopeTeacherName || '', 200),
+        scopeLabel: asText(row.scopeLabel || '', 400),
         parameters: row.parameters && typeof row.parameters === 'object' ? { ...row.parameters } : {},
         aiReviewStatus: asText(row.aiReviewStatus || '', 40),
         aiReviewIssueCode: asText(row.aiReviewIssueCode || '', 80),
@@ -4487,6 +4526,224 @@ function generatedTextRequirementSupersedesRow(requirement = {}, row = {}, proje
     return semanticRequirementMatchesRow(requirement, row, project);
 }
 
+const SCOPED_COURSE_RULE_TYPES = new Set([
+    'subject_preferred_periods',
+    'subject_avoid_periods',
+    'subject_morning',
+    'subject_spread',
+]);
+
+const SCOPED_COURSE_CAPABILITIES = Object.freeze({
+    subject_preferred_periods: 'subject.preferred_periods',
+    subject_avoid_periods: 'subject.avoid_periods',
+    subject_morning: 'subject.preferred_day_part',
+    subject_spread: 'subject.spread',
+});
+
+function isExplicitSchoolCourseScope(text = '') {
+    return /(?:全校|全体班级|所有班级|全体学生|全局)/.test(asText(text, 1200));
+}
+
+function courseRuleScopeLabel(project = {}, subjectId = '', classIds = [], teacherIds = []) {
+    const classesById = new Map((project.classes || []).map(item => [item.id, item]));
+    const teachersById = new Map((project.teachers || []).map(item => [item.id, item]));
+    const subject = (project.subjects || []).find(item => item.id === subjectId);
+    const classNames = classIds.map(id => entityLabel(classesById.get(id) || { id })).filter(Boolean);
+    const teacherNames = teacherIds.map(id => entityLabel(teachersById.get(id) || { id })).filter(Boolean);
+    return [
+        ...classNames,
+        subject ? entityLabel(subject) : subjectId,
+        teacherNames.length ? teacherNames.join('、') : '不限教师',
+    ].filter(Boolean).join(' · ');
+}
+
+function courseScopeIdsFromRow(project = {}, row = {}) {
+    const parameters = row.parameters || {};
+    const scope = row.scope || {};
+    const rawText = rowSourceText(row);
+    const namedClassIds = normalizedTextValues(200, parameters.classNames, scope.classNames)
+        .flatMap(name => textClassTargets(name, project).map(item => item.id));
+    const namedTeacherIds = normalizedTextValues(200, parameters.teacherNames, scope.teacherNames)
+        .flatMap(name => textTeacherTargets(name, project).map(item => item.id));
+    const classIds = normalizedTextValues(120,
+        parameters.classIds,
+        scope.classIds,
+        row.classIds,
+        namedClassIds,
+        textClassTargets(rawText, project).map(item => item.id),
+    );
+    const teacherIds = normalizedTextValues(120,
+        parameters.teacherIds,
+        scope.teacherIds,
+        row.teacherIds,
+        namedTeacherIds,
+        textTeacherTargets(rawText, project).map(item => item.id),
+    );
+    return { classIds, teacherIds, rawText };
+}
+
+function scopeParsedCoursePreferenceRows(project = {}, rows = []) {
+    return asList(rows).map(row => {
+        const rawText = rowSourceText(row);
+        const normalizedType = normalizeConstraintType(row.type || row.intent || '');
+        const type = normalizedType === 'subject_preferred_periods'
+            && /(?:上午|早上).*(?:优先|尽量|最好)|(?:优先|尽量|最好).*(?:上午|早上)/.test(rawText)
+            ? 'subject_morning'
+            : normalizedType;
+        if (!SCOPED_COURSE_RULE_TYPES.has(type) || row.type === 'advanced_constraint') return row;
+
+        const subjectIds = normalizedTextValues(120,
+            row.targetId,
+            row.subjectId,
+            row.parameters?.subjectIds,
+            row.subjectIds,
+        );
+        const subjectId = subjectIds.length === 1 ? subjectIds[0] : '';
+        if (!subjectIds.length) return row;
+        const { classIds, teacherIds } = courseScopeIdsFromRow(project, row);
+        const scopeQualifier = asText(row.parameters?.scopeQualifier || row.scope?.scopeQualifier || '', 80).toLowerCase();
+        if (isExplicitSchoolCourseScope(rawText) || ['school', 'global', 'all_school'].includes(scopeQualifier)) {
+            return {
+                ...row,
+                legacyCourseGlobal: true,
+                scopeLabel: '历史全校范围',
+            };
+        }
+        if (!classIds.length) {
+            const clarification = '请补充班级，或明确这条课程偏好是否适用于全校。';
+            return {
+                ...row,
+                status: 'needs_review',
+                executionStatus: 'blocked_by_clarification',
+                reviewStatus: 'needs_clarification',
+                support: 'none',
+                needsClarification: true,
+                courseScopeClarification: true,
+                landing: ['clarification', 'review'],
+                clarifications: uniqueConstraintMessages([...asList(row.clarifications), clarification]),
+                warnings: uniqueConstraintMessages([...asList(row.warnings), '课程偏好缺少班级范围，系统不会自动扩大为全校规则。']),
+            };
+        }
+        if (!subjectId) {
+            return {
+                ...row,
+                status: 'needs_review',
+                executionStatus: 'blocked_by_clarification',
+                reviewStatus: 'needs_clarification',
+                support: 'none',
+                needsClarification: true,
+                courseScopeClarification: true,
+                landing: ['clarification', 'review'],
+                clarifications: uniqueConstraintMessages([...asList(row.clarifications), '请将课程范围拆分为单门课程后再指定班级。']),
+                warnings: uniqueConstraintMessages([...asList(row.warnings), '多门课程不能共享同一条精确课程范围规则，未生成机器规则。']),
+            };
+        }
+
+        const plans = (project.lessonPlans || []).filter(plan => (
+            plan.subjectId === subjectId
+            && classIds.includes(plan.classId)
+            && (!teacherIds.length || [plan.teacherId, ...asList(plan.teacherIds)].filter(Boolean).some(id => teacherIds.includes(id)))
+        ));
+        if (!plans.length) {
+            const teacherPart = teacherIds.length ? '和教师' : '';
+            return {
+                ...row,
+                status: 'needs_review',
+                executionStatus: 'blocked_by_reference',
+                reviewStatus: 'needs_clarification',
+                support: 'none',
+                needsClarification: true,
+                courseScopeClarification: true,
+                landing: ['clarification', 'review'],
+                clarifications: uniqueConstraintMessages([...asList(row.clarifications), `所选课程、班级${teacherPart}没有匹配的任课安排。`]),
+                warnings: uniqueConstraintMessages([...asList(row.warnings), '课程范围未匹配现有任课计划，未生成机器规则。']),
+            };
+        }
+
+        const scopedParameters = {
+            ...(row.parameters || {}),
+            classIds,
+            ...(teacherIds.length ? { teacherIds } : {}),
+        };
+        return {
+            ...row,
+            type: 'advanced_constraint',
+            intent: row.intent || type,
+            advancedType: SCOPED_COURSE_CAPABILITIES[type],
+            capabilityId: row.capabilityId || SCOPED_COURSE_CAPABILITIES[type],
+            targetType: 'subject',
+            targetId: subjectId,
+            subjectId,
+            parameters: scopedParameters,
+            scope: {
+                ...(row.scope || {}),
+                classIds,
+                ...(teacherIds.length ? { teacherIds } : {}),
+            },
+            scopeClassId: classIds[0] || '',
+            scopeTeacherId: teacherIds[0] || '',
+            scopeLabel: courseRuleScopeLabel(project, subjectId, classIds, teacherIds),
+        };
+    });
+}
+
+function scopeParsedCoursePreferenceRequirements(project = {}, requirements = []) {
+    return asList(requirements).map(requirement => {
+        const target = requirement.object && typeof requirement.object === 'object' ? requirement.object : {};
+        const capabilityId = asText(requirement.capabilityId || '', 120);
+        const scopedCourseType = normalizeConstraintType(requirement.intent || requirement.type || capabilityId);
+        const classIds = normalizedTextValues(120,
+            requirement.parameters?.classIds,
+            requirement.scope?.classIds,
+        );
+        const isAlreadyScopedCourseRequirement = (
+            (SCOPED_COURSE_RULE_TYPES.has(scopedCourseType)
+                || Object.values(SCOPED_COURSE_CAPABILITIES).includes(capabilityId))
+            && target.kind === 'subject'
+            && asList(target.matchedIds).length === 1
+            && classIds.length > 0
+        );
+        if (isAlreadyScopedCourseRequirement) return requirement;
+        const row = {
+            type: requirement.intent || requirement.type || requirement.capabilityId || '',
+            intent: requirement.intent || '',
+            capabilityId: requirement.capabilityId || '',
+            targetType: target.kind || '',
+            targetId: asList(target.matchedIds)[0] || '',
+            targetName: target.name || '',
+            subjectIds: target.kind === 'subject_group' ? asList(target.matchedIds) : [],
+            parameters: requirement.parameters || {},
+            scope: requirement.scope || {},
+            rawText: requirementSourceText(requirement),
+            status: requirement.status === 'actionable' ? 'effective' : requirement.status,
+            executionStatus: requirement.executionStatus || '',
+            reviewStatus: requirement.reviewStatus || '',
+            support: requirement.support || '',
+            landing: requirement.landing || requirement.applyTo || [],
+            warnings: requirement.warnings || [],
+            clarifications: requirement.clarifications || [],
+        };
+        const scoped = scopeParsedCoursePreferenceRows(project, [row])[0];
+        if (scoped === row) return requirement;
+        const needsClarification = scoped.status === 'needs_review';
+        return {
+            ...requirement,
+            parameters: scoped.parameters || requirement.parameters || {},
+            scope: scoped.scope || requirement.scope || {},
+            status: needsClarification ? 'needs_review' : requirement.status,
+            courseScopeClarification: needsClarification,
+            executionStatus: scoped.executionStatus || requirement.executionStatus || '',
+            reviewStatus: scoped.reviewStatus || requirement.reviewStatus || '',
+            support: scoped.support || requirement.support || '',
+            needsClarification: scoped.needsClarification === true || requirement.needsClarification === true,
+            landing: scoped.landing || requirement.landing || [],
+            applyTo: needsClarification ? 'review' : requirement.applyTo,
+            warnings: uniqueConstraintMessages([...asList(requirement.warnings), ...asList(scoped.warnings)]),
+            clarifications: uniqueConstraintMessages([...asList(requirement.clarifications), ...asList(scoped.clarifications)]),
+        };
+    });
+}
+
 function buildRequirementSemantics(project = {}, rows = [], {
     originalText = '',
     semanticRequirements = [],
@@ -4513,7 +4770,8 @@ function buildRequirementSemantics(project = {}, rows = [], {
         ];
     const externalRequirements = externalRequirementItems(semanticRequirements);
     const externalIds = new Set(externalRequirements.flatMap(item => [item.id, item.requirementId]).filter(Boolean));
-    const rowRequirements = asList(rows).filter(row => row && typeof row === 'object')
+    const scopedRows = scopeParsedCoursePreferenceRows(project, rows);
+    const rowRequirements = scopedRows.filter(row => row && typeof row === 'object')
         .filter(row => !row.requirementId || !externalIds.has(row.requirementId))
         .filter(row => {
             const supersedingRequirements = textRequirements
@@ -4521,16 +4779,16 @@ function buildRequirementSemantics(project = {}, rows = [], {
             return supersedingRequirements.length !== 1;
         })
         .map((row, index) => requirementFromRow(row, index, project));
-    const requirementItems = dedupeRequirements([
+    const requirementItems = scopeParsedCoursePreferenceRequirements(project, dedupeRequirements([
         ...externalRequirements,
         ...systemRequirements,
         ...textRequirements,
         ...rowRequirements,
-    ]).map(item => (item.status === 'needs_review' ? applyClarificationPolicy(project, item) : item));
+    ]).map(item => (item.status === 'needs_review' ? applyClarificationPolicy(project, item) : item)));
     const semanticActions = requirementItems
         .map((requirement, index) => actionForRequirement(project, requirement, index))
         .filter(Boolean);
-    return { requirementItems, semanticActions };
+    return { requirementItems, semanticActions, rows: scopedRows };
 }
 
 export function applyTimetableRequirementActions({
@@ -5656,7 +5914,8 @@ export function normalizeTimetableRuleDraftRows({
 
     let rows = dedupedDraftRows
         .flatMap((row, index) => expandGroupedEntityTarget(row, index, project))
-        .map((row, index) => classifyDraftRow(normalizeDraftRow(row, index, project), project))
+        .map((row, index) => classifyDraftRow(normalizeDraftRow(row, index, project), project));
+    rows = scopeParsedCoursePreferenceRows(project, rows)
         .map(row => {
             if (['ignored', 'suggestion', 'unsupported', 'invalid', 'needs_review'].includes(row.status)) {
                 if (row.status === 'needs_review' && (row.targetName || row.targetId)) {
@@ -5996,6 +6255,7 @@ export function normalizeTimetableRuleDraftRows({
         sourceRequirements: effectiveSourceRequirements,
     });
 
+    rows = semanticLayer.rows;
     rows = linkRowsToSemanticRequirements(rows, semanticLayer.requirementItems, project);
 
     const constraintLayer = compileArtifactsThroughCapabilityRegistry({
@@ -6094,17 +6354,17 @@ function buildPrompt({ project, text, inputType = 'text', contextStats = null, c
                 '- class_unavailable：某班级在某些时间不排课。需 targetId/target + slots。priority=hard。',
                 '- locked_slot：把某班某课某师固定在某个具体时间。需 class/subject/teacher + 单个 slot。priority=hard。',
                 '- global_unavailable：全校在某些时间不排常规课。需 slots。priority=hard。',
-                '- subject_morning：某课程优先排在上午。需 targetId/target（课程）。priority=soft。',
+                '- subject_morning：某班某课程优先排在上午。需课程 + 班级；可选限定教师。priority=soft。',
                 '- subject_afternoon：某课程优先排在下午。需 targetId/target（课程）。priority=soft。',
-                '- subject_preferred_periods：某课程偏好某些节次。需课程 + slots/periods。priority=soft。',
-                '- subject_avoid_periods：某课程避开某些节次。需课程 + slots/periods。priority=soft。',
+                '- subject_preferred_periods：某班某课程偏好某些节次。需课程 + 班级 + slots/periods；可选限定教师。priority=soft。',
+                '- subject_avoid_periods：某班某课程避开某些节次。需课程 + 班级 + slots/periods；可选限定教师。priority=soft。',
                 '- subject_daily_limit：某课程同一班每天最多几节。需课程 + limit。priority=hard。',
                 '- teacher_daily_limit：某教师每天最多上几节。需教师 + limit（整数）。priority=soft。',
                 '- teacher_consecutive_limit：某教师最多连续上几节。需教师 + limit（整数）。priority=soft。',
                 '- teacher_weekly_limit：某教师每周最多上几节。需教师 + limit。priority=hard。',
                 '- teacher_max_days_per_week：某教师每周最多上几天。需教师 + limit。priority=hard。',
                 '- teacher_mutual_exclusion：多位教师不能同节上课。需 teacherIds/teachers 至少两个。priority=hard。',
-                '- subject_spread：某课程一周内要分散，不要同一天扎堆。需课程。priority=soft。',
+                '- subject_spread：某班某课程一周内要分散，不要同一天扎堆。需课程 + 班级；可选限定教师。priority=soft。',
                 '- course_interval：某课程两次课之间至少间隔几天。需课程 + minGapDays。priority=soft。',
                 '- room_requirement：某课程必须使用指定教室/场地。需课程 + roomIds/roomName/requiredTags。priority=hard。',
                 '- class_daily_balance：班级每日课时尽量均衡。priority=soft。',
@@ -6134,11 +6394,12 @@ function buildPrompt({ project, text, inputType = 'text', contextStats = null, c
                 '',
                 '【示例】',
                 '输入："王老师周三下午都没空" → {"type":"teacher_unavailable","target":"王老师","days":[3],"periods":[5,6,7],"priority":"hard","reason":"王老师周三下午不可排","confidence":0.95}',
-                '输入："数学尽量排上午" → {"type":"subject_morning","target":"数学","priority":"soft","reason":"数学优先上午","confidence":0.9}',
+                '输入："高一1班数学尽量排上午" → {"type":"subject_morning","target":"数学","class":"高一1班","priority":"soft","reason":"高一1班数学优先上午","confidence":0.9}',
                 '输入："李老师必须周三第3节上高一1班数学" → {"type":"locked_slot","teacher":"李老师","class":"高一1班","subject":"数学","slots":["3-3"],"priority":"hard","reason":"固定课节","confidence":0.9}',
                 '输入："李老师每天最多上3节课" → {"type":"teacher_daily_limit","target":"李老师","limit":3,"priority":"soft","reason":"控制李老师每日工作量","confidence":0.9}',
-                '输入："体育不要连着上两节" → {"type":"teacher_consecutive_limit"或"subject_spread","target":"体育","limit":1,"priority":"soft","reason":"体育课分散","confidence":0.8}',
-                '输入："美术第一节不要排" → {"type":"subject_avoid_periods","target":"美术","periods":[1],"priority":"soft","reason":"美术避开第一节","confidence":0.85}',
+                '输入："高一1班体育尽量分散到不同天" → {"type":"subject_spread","target":"体育","class":"高一1班","priority":"soft","reason":"高一1班体育课分散","confidence":0.8}',
+                '课程优先/避开/上午优先/分散安排必须给出班级；只有原文明确“全校”时，才能保留全校课程范围。没有班级也没有全校范围时，返回 clarification，不得默认扩大到全校。',
+                '输入："高一1班美术第一节不要排" → {"type":"subject_avoid_periods","target":"美术","class":"高一1班","periods":[1],"priority":"soft","reason":"高一1班美术避开第一节","confidence":0.85}',
             ].join('\n'),
         },
         {
@@ -6763,19 +7024,83 @@ function mergeEntitiesByName(existing = [], inferred = [], labelFor = item => it
     return result;
 }
 
+function lessonPlanScopeKey(plan = {}) {
+    return [
+        plan.classId || '',
+        plan.subjectId || '',
+        ...normalizedTextValues(120, plan.teacherIds, plan.teacherId).sort(),
+    ].join('|');
+}
+
+function mergeRosterLessonPlans(existing = [], inferred = []) {
+    const result = asList(existing).filter(plan => plan && typeof plan === 'object');
+    const known = new Set(result.map(lessonPlanScopeKey));
+    for (const plan of asList(inferred).filter(item => item && typeof item === 'object')) {
+        const key = lessonPlanScopeKey(plan);
+        if (!key || known.has(key)) continue;
+        known.add(key);
+        result.push(plan);
+    }
+    return result;
+}
+
+function entityIdMap(items = [], labelFor = item => item.name || item.id || '') {
+    return new Map(asList(items)
+        .filter(item => item && item.id)
+        .map(item => [normalizeName(labelFor(item)), item.id])
+        .filter(([name]) => Boolean(name)));
+}
+
 function projectWithRosterPreview(project, preview) {
     try {
         const roster = buildTimetableRosterFromRows(preview.draftRows || [], { project });
+        const teachers = mergeEntitiesByName(project.teachers, roster.teachers, item => item.name || item.id);
+        const classes = mergeEntitiesByName(project.classes, roster.classes, entityLabel);
+        const subjects = mergeEntitiesByName(project.subjects, roster.subjects, item => item.name || item.id);
+        const rosterClasses = new Map(roster.classes.map(item => [item.id, item]));
+        const rosterSubjects = new Map(roster.subjects.map(item => [item.id, item]));
+        const rosterTeachers = new Map(roster.teachers.map(item => [item.id, item]));
+        const classIdsByName = entityIdMap(classes, entityLabel);
+        const subjectIdsByName = entityIdMap(subjects, item => item.name || item.id);
+        const teacherIdsByName = entityIdMap(teachers, item => item.name || item.id);
+        const rosterPlans = roster.lessonPlans.map(plan => {
+            const className = entityLabel(rosterClasses.get(plan.classId) || {}) || plan.className || '';
+            const subjectName = plan.subjectName || rosterSubjects.get(plan.subjectId)?.name || '';
+            const teacherIds = normalizedTextValues(120, plan.teacherIds, plan.teacherId)
+                .map(id => teacherIdsByName.get(normalizeName(rosterTeachers.get(id)?.name || id)) || id);
+            return {
+                ...plan,
+                classId: classIdsByName.get(normalizeName(className)) || plan.classId,
+                subjectId: subjectIdsByName.get(normalizeName(subjectName)) || plan.subjectId,
+                teacherId: teacherIds[0] || plan.teacherId,
+                teacherIds,
+            };
+        });
         return normalizeTimetableProject({
             ...project,
-            teachers: mergeEntitiesByName(project.teachers, roster.teachers, item => item.name || item.id),
-            classes: mergeEntitiesByName(project.classes, roster.classes, entityLabel),
-            subjects: mergeEntitiesByName(project.subjects, roster.subjects, item => item.name || item.id),
-            lessonPlans: (project.lessonPlans || []).length ? project.lessonPlans : roster.lessonPlans,
+            teachers,
+            classes,
+            subjects,
+            lessonPlans: mergeRosterLessonPlans(project.lessonPlans, rosterPlans),
         });
     } catch {
         return project;
     }
+}
+
+function scopedRosterCourseConstraints(project, subject, constraint = {}) {
+    const classIds = [...new Set((project.lessonPlans || [])
+        .filter(plan => plan.subjectId === subject.id && plan.classId)
+        .map(plan => plan.classId))];
+    return classIds.map(classId => ({
+        ...constraint,
+        targetId: subject.id,
+        target: subject.name,
+        classId,
+        classIds: [classId],
+        scope: { classIds: [classId] },
+        parameters: { ...(constraint.parameters || {}), classIds: [classId] },
+    }));
 }
 
 function localRosterConstraints(project, context) {
@@ -6786,11 +7111,10 @@ function localRosterConstraints(project, context) {
         return subjectNames.has(name) && /(语文|数学|英语|chinese|math|english)/i.test(subject.name);
     });
     mainSubjects.forEach(subject => {
-        constraints.push({
+        constraints.push(...scopedRosterCourseConstraints(project, subject, {
             type: 'subject_morning',
-            targetId: subject.id,
             reason: '主科课时较多，建议上午优先。',
-        });
+        }));
     });
 
     const later = [];
@@ -6803,13 +7127,12 @@ function localRosterConstraints(project, context) {
     }
     project.subjects
         .filter(subject => /(体育|音乐|美术|信息|劳动|pe|music|art|ict|labor)/i.test(subject.name) && subjectNames.has(normalizeName(subject.name)))
-        .forEach(subject => constraints.push({
+        .forEach(subject => constraints.push(...scopedRosterCourseConstraints(project, subject, {
             type: 'subject_preferred_periods',
-            targetId: subject.id,
             slots: later,
             priority: 'soft',
             reason: '素质课建议分布到后半天，平衡主科负载。',
-        }));
+        })));
 
     (context.mixedSubjects || []).forEach(subjectName => constraints.push({
         type: 'block_protection',
@@ -7006,6 +7329,12 @@ function textClassTargets(sentence = '', project = {}) {
         const label = entityLabel(klass);
         const index = label ? compact.indexOf(label.replace(/\s+/g, '')) : -1;
         if (index >= 0) append(klass, label, index);
+
+        // Imported administrative class names such as G7-1班 are already unique,
+        // but their grade-prefixed display label is not necessarily present in prose.
+        const rawName = String(klass.name || '').replace(/\s+/g, '');
+        const rawIndex = rawName && /^[a-z]\d/i.test(rawName) ? compact.indexOf(rawName) : -1;
+        if (rawIndex >= 0) append(klass, rawName, rawIndex);
     }
 
     const sharedGradePattern = /((?:[一二三四五六七八九十]+年级|高[一二三]|初[一二三]))(\d{1,2})班(?:和|与|及|、)(\d{1,2})班/g;

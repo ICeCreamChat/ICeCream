@@ -5179,6 +5179,7 @@ function renderConstraintFulfillmentRow(item = {}, state = {}, model = {}) {
         </span>
         <span class="tt-constraint-fulfillment-meta">
             ${(item.strength || item.priority) === 'hard' ? '<b>硬约束</b>' : '<b>软约束</b>'}
+            ${item.scopeLabel ? `<b>${escapeHtml(item.scopeLabel)}</b>` : ''}
             ${relation ? `<b>已列入${escapeHtml(relation)}</b>` : ''}
             ${locateButton}
         </span>

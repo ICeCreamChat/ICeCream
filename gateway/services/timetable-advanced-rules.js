@@ -140,6 +140,14 @@ export function advancedCandidatePenalty(project = {}, entries = [], lesson = {}
         if (rule.type === 'lesson.activity_scope_period_policy' && targetSlots(rule).has(key)) penalty += 24;
         if (rule.type === 'lesson.resource_attribute_avoid_periods' && targetSlots(rule).has(key)) penalty += 24;
         if (rule.type === 'subject.avoid_weekday_concentration' && list(params.days).map(Number).includes(Number(lesson.day))) penalty += 10;
+        if (rule.type === 'subject.spread') {
+            const sameDayCount = entries.filter(entry => (
+                Number(entry.day) === Number(lesson.day)
+                && entry.subjectId === lesson.subjectId
+                && advancedRuleAppliesToLesson(project, rule, entry)
+            )).length;
+            penalty += sameDayCount * 20;
+        }
         if (rule.type === 'teacher.compact_day') {
             const periods = entries.filter(entry => sameTeacherDay(entry, lesson)).map(entry => Number(entry.period));
             if (periods.length) penalty += Math.max(0, Math.min(...periods.map(period => Math.abs(period - Number(lesson.period)))) - 1) * 6;
@@ -206,6 +214,11 @@ export function evaluateAdvancedRule(project = {}, rule = {}, slots = []) {
         const avoidedDays = new Set(list(params.days).map(Number));
         const crowded = applicable.filter(slot => avoidedDays.has(Number(slot.day)));
         if (crowded.length > Math.floor(applicable.length / 2)) violations.push(...crowded);
+    } else if (rule.type === 'subject.spread') {
+        const byDay = groupByMap(applicable, slot => `${slot.classId || '__class__'}:${slot.day}`);
+        byDay.forEach(daySlots => {
+            if (daySlots.length > 1) violations.push(...daySlots);
+        });
     } else if (rule.type === 'room.preferred') {
         const preferred = new Set(list(params.preferredRoomIds));
         violations.push(...applicable.filter(slot => preferred.size && !preferred.has(slot.roomId)));
