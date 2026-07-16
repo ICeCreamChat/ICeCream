@@ -809,6 +809,10 @@ function bindDelegatedInteractions(container) {
             controller.switchConstraintMode(mode);
         } else if (action === 'parse-constraints') {
             controller.parseConstraintsFromDialog();
+        } else if (action === 'expand-constraint-input') {
+            controller.expandConstraintInput();
+        } else if (action === 'reparse-constraint-input') {
+            controller.reparseConstraintInput();
         } else if (action === 'rebind-constraint-entities') {
             controller.rebindConstraintEntities();
         } else if (action === 'open-roster-for-constraint-binding') {
@@ -821,6 +825,9 @@ function bindDelegatedInteractions(container) {
         } else if (action === 'select-requirement') {
             const requirementId = event.target.closest('[data-requirement-id]')?.dataset.requirementId;
             controller.selectRequirement(requirementId);
+        } else if (action === 'toggle-technical-details') {
+            const requirementId = event.target.closest('[data-requirement-id]')?.dataset.requirementId;
+            controller.toggleRequirementTechnicalDetails(requirementId);
         } else if (action === 'toggle-system-group') {
             controller.toggleSystemRequirementGroup();
         } else if (action === 'submit-requirement-clarification') {

@@ -124,6 +124,8 @@ export function createTimetablePlannerState(overrides = {}) {
             open: false,
             requirementFilter: 'all',
             selectedRequirementId: '',
+            inputExpanded: false,
+            technicalDetailsExpandedById: {},
         },
         workflowOpenSections: null,
         rangeDraft: null,

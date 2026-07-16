@@ -18,7 +18,7 @@
 /* 弹窗主体 - 与 tt-roster-import-dialog 保持一致 */
 .tt-constraint-dialog {
     --tt-dialog-width: 780px;
-    --tt-dialog-max-height: 760px;
+    --tt-dialog-max-height: 820px;
     position: relative;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
@@ -110,7 +110,7 @@
 
 .tt-constraint-dialog--semantic-review {
     --tt-dialog-width: 1120px;
-    --tt-dialog-max-height: 840px;
+    --tt-dialog-max-height: 820px;
 }
 
 .tt-constraint-dialog-body {
@@ -126,7 +126,7 @@
 }
 
 .tt-constraint-dialog-body--intake {
-    gap: var(--tt-space-md);
+    gap: 12px;
 }
 
 /* 标题栏 - 与现有 tt-dialog-header 一致 */
@@ -198,11 +198,6 @@
     background: var(--tt-bg-soft);
 }
 
-.tt-constraint-intake-panel--compact {
-    gap: 8px;
-    padding: 10px;
-}
-
 .tt-constraint-flow-wrap {
     display: grid;
     gap: 8px;
@@ -214,40 +209,13 @@
     background: var(--tt-bg-panel);
 }
 
-.tt-constraint-flow-current {
-    display: grid;
-    grid-template-columns: auto auto minmax(0, 1fr);
-    gap: 8px;
-    align-items: center;
-    min-width: 0;
-}
-
-.tt-constraint-flow-current > span {
-    color: var(--tt-muted);
-    font-size: 0.68rem;
-    font-weight: 900;
-    white-space: nowrap;
-}
-
-.tt-constraint-flow-current > b {
-    flex: 0 0 auto;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: var(--tt-primary);
-    color: #fff;
-    font-size: 0.72rem;
-    font-weight: 900;
-    line-height: 1.35;
-}
-
-.tt-constraint-flow-current small {
-    min-width: 0;
+.tt-constraint-flow-status-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
     overflow: hidden;
-    color: var(--tt-text-secondary);
-    font-size: 0.72rem;
-    font-weight: 800;
-    line-height: 1.35;
-    text-overflow: ellipsis;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
     white-space: nowrap;
 }
 
@@ -366,8 +334,25 @@
 }
 
 .tt-constraint-flow--compact .tt-constraint-flow-step {
-    min-height: 34px;
+    gap: 3px;
+    min-height: 30px;
     font-size: 0.68rem;
+}
+
+.tt-constraint-flow--compact::before,
+.tt-constraint-flow--compact::after {
+    top: 12px;
+}
+
+.tt-constraint-flow--compact .tt-constraint-flow-step b {
+    width: 20px;
+    height: 20px;
+}
+
+.tt-constraint-flow--compact .tt-constraint-flow-step.is-current b {
+    width: 22px;
+    height: 22px;
+    box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.12);
 }
 
 .tt-constraint-mode-row {
@@ -2098,38 +2083,38 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: var(--tt-space-sm);
     min-height: 36px;
     padding: 0 12px;
     border: 1px solid var(--tt-border);
-    border-radius: 10px;
+    border-radius: var(--tt-radius-md);
     background: var(--tt-bg-soft);
     color: var(--tt-text);
     font-size: 0.82rem;
     font-weight: 700;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all var(--tt-transition-fast);
 }
 
 .tt-constraint-dialog .tt-btn:hover:not(:disabled) {
     border-color: var(--tt-primary);
-    background: rgba(8, 145, 178, 0.06);
     color: var(--tt-primary);
+    box-shadow: var(--tt-primary-glow);
 }
 
 .tt-constraint-dialog .tt-btn--primary {
-    border: none;
-    background: linear-gradient(135deg, #0891b2, #0e7490);
+    border-color: var(--tt-primary);
+    background: linear-gradient(135deg, var(--tt-primary), #0e7490);
     color: white;
 }
 
 .tt-constraint-dialog .tt-btn--primary:hover:not(:disabled) {
-    background: linear-gradient(135deg, #0e7490, #155e75);
+    background: linear-gradient(135deg, var(--tt-primary-hover), var(--tt-primary));
     color: white;
 }
 
 .tt-constraint-dialog .tt-btn:disabled {
-    opacity: 0.5;
+    opacity: 0.62;
     cursor: not-allowed;
 }
 
@@ -2162,20 +2147,20 @@
 .tt-constraint-dialog .tt-icon-btn {
     display: grid;
     place-items: center;
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
     border: 1px solid var(--tt-border);
-    border-radius: 10px;
-    background: transparent;
+    border-radius: var(--tt-radius-md);
+    background: var(--tt-bg-soft);
     color: var(--tt-muted);
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all var(--tt-transition-fast);
 }
 
 .tt-constraint-dialog .tt-icon-btn:hover {
     border-color: var(--tt-primary);
-    background: rgba(8, 145, 178, 0.06);
     color: var(--tt-primary);
+    box-shadow: var(--tt-primary-glow);
 }
 
 .tt-constraint-dialog .tt-icon-btn i {
@@ -2267,14 +2252,6 @@
     .tt-constraint-flow::before,
     .tt-constraint-flow::after {
         display: none;
-    }
-
-    .tt-constraint-flow-current {
-        grid-template-columns: 1fr;
-    }
-
-    .tt-constraint-flow-current small {
-        grid-column: 1;
     }
 
     .tt-requirement-review-summary em {
@@ -2388,5 +2365,1311 @@
     .tt-constraint-dialog-actions .tt-btn[data-action="apply-constraints"] {
         order: 3;
         flex-basis: 100%;
+    }
+}
+
+/* Intelligent constraint assistant workspace */
+.tt-constraint-dialog {
+    gap: var(--tt-space-md);
+    padding: var(--tt-space-md);
+    border-radius: var(--tt-radius-lg);
+    background: var(--tt-bg-panel);
+}
+
+.tt-constraint-dialog .tt-dialog-header {
+    align-items: flex-start;
+    min-height: 0;
+    padding: 0 0 var(--tt-space-sm);
+}
+
+.tt-constraint-dialog .tt-dialog-title {
+    grid-template-columns: 32px minmax(0, 1fr);
+}
+
+.tt-constraint-dialog .tt-dialog-title h3 {
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.tt-dialog-title-icon {
+    width: 32px;
+    height: 32px;
+    border-color: color-mix(in srgb, var(--tt-primary) 24%, var(--tt-border));
+    background: color-mix(in srgb, var(--tt-primary) 7%, var(--tt-bg-panel));
+}
+
+.tt-constraint-dialog .tt-dialog-title p {
+    margin-top: 4px;
+    font-size: 0.78rem;
+}
+
+.tt-constraint-dialog-body {
+    gap: var(--tt-space-md);
+    padding: 0 2px 0 0;
+}
+
+.tt-constraint-stagebar {
+    min-width: 0;
+    padding-bottom: var(--tt-space-sm);
+    border-bottom: 1px solid var(--tt-border);
+}
+
+.tt-constraint-stagebar .tt-constraint-flow-wrap {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: center;
+    gap: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
+.tt-constraint-flow {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.tt-constraint-flow::before {
+    right: 12.5%;
+    left: 12.5%;
+}
+
+.tt-constraint-flow::after {
+    left: 12.5%;
+    max-width: 75%;
+}
+
+.tt-constraint-intake-panel {
+    gap: 12px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.tt-constraint-section-kicker {
+    color: var(--tt-primary);
+    font-size: 0.65rem;
+    font-weight: 900;
+    line-height: 1;
+}
+
+.tt-constraint-mode-row {
+    align-items: flex-start;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 8px;
+}
+
+.tt-field-label {
+    color: var(--tt-text-secondary);
+    font-size: 0.78rem;
+}
+
+.tt-constraint-input-tabs {
+    width: min(440px, 100%);
+    min-width: 0;
+    padding: 3px;
+    border-radius: 8px;
+    background: var(--tt-bg-input);
+}
+
+.tt-tab-btn {
+    min-height: 34px;
+    border-radius: 6px;
+}
+
+.tt-tab-btn.is-active {
+    border-color: color-mix(in srgb, var(--tt-primary) 26%, var(--tt-border));
+    background: var(--tt-bg-panel);
+    box-shadow: 0 1px 3px rgba(2, 6, 23, 0.08);
+}
+
+.tt-constraint-input-area {
+    padding-top: 0;
+    border-top: 0;
+}
+
+.tt-text-input textarea {
+    min-height: 124px;
+    border-color: var(--tt-border-strong);
+    border-radius: 8px;
+    background: var(--tt-bg-elevated);
+    font-size: 0.84rem;
+    line-height: 1.55;
+}
+
+.tt-text-input textarea:focus {
+    border-color: var(--tt-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--tt-primary) 13%, transparent);
+}
+
+.tt-file-upload-area,
+.tt-file-dropzone {
+    border-radius: 8px;
+    background: var(--tt-bg-elevated);
+}
+
+.tt-constraint-input-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    padding-top: 0;
+    border-top: 0;
+}
+
+.tt-constraint-input-status {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
+    color: var(--tt-muted);
+    font-size: 0.72rem;
+}
+
+.tt-constraint-input-status > span {
+    font-weight: 800;
+}
+
+.tt-constraint-input-status > b {
+    color: var(--tt-text-secondary);
+    font-weight: 700;
+}
+
+.tt-constraint-input-status > i {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--tt-muted);
+}
+
+.tt-constraint-dialog .tt-btn--primary,
+.tt-constraint-dialog .tt-btn--primary:hover:not(:disabled) {
+    border-color: var(--tt-primary);
+    background: linear-gradient(135deg, var(--tt-primary), #0e7490);
+    color: #fff;
+}
+
+.tt-constraint-dialog .tt-btn--primary:hover:not(:disabled) {
+    background: linear-gradient(135deg, var(--tt-primary-hover), var(--tt-primary));
+}
+
+.tt-requirement-workbench {
+    gap: 10px;
+    grid-template-rows: auto;
+    min-height: 0;
+    block-size: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.tt-requirement-workbench-header {
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+}
+
+.tt-requirement-workbench-title {
+    gap: 3px;
+}
+
+.tt-requirement-workbench-header strong {
+    font-size: 0.95rem;
+}
+
+.tt-requirement-workbench-meta {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    min-width: 0;
+}
+
+.tt-requirement-statistics {
+    color: var(--tt-text-secondary);
+    font-size: 0.73rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.tt-requirement-review-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding: 8px 0;
+    border-top: 1px solid var(--tt-border);
+    border-bottom: 1px solid var(--tt-border);
+}
+
+.tt-requirement-review-summary span,
+.tt-requirement-review-summary em {
+    min-height: 20px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-size: 0.68rem;
+}
+
+.tt-requirement-review-summary em {
+    margin-left: auto;
+    color: var(--tt-primary);
+}
+
+.tt-requirement-filter-bar {
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+}
+
+.tt-requirement-filter-children {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding: 0;
+    border-left: 0;
+}
+
+.tt-requirement-filter-children::before,
+.tt-requirement-filter-children-label,
+.tt-requirement-filter-entry,
+.tt-requirement-filter-icon {
+    display: none;
+}
+
+.tt-requirement-filter,
+.tt-requirement-filter--all,
+.tt-requirement-filter--child {
+    display: inline-grid;
+    grid-template-columns: auto minmax(20px, auto);
+    min-height: 32px;
+    padding: 0 10px;
+    border-radius: 7px;
+    background: var(--tt-bg-input);
+    box-shadow: none;
+    font-size: 0.72rem;
+}
+
+.tt-requirement-filter:hover,
+.tt-requirement-filter.is-active,
+.tt-requirement-filter--all.is-active {
+    border-color: color-mix(in srgb, var(--tt-primary) 36%, var(--tt-border));
+    background: color-mix(in srgb, var(--tt-primary) 8%, var(--tt-bg-panel));
+    color: var(--tt-primary);
+}
+
+.tt-requirement-review-layout {
+    grid-template-columns: minmax(0, 65fr) minmax(320px, 35fr);
+    gap: 12px;
+    min-height: 0;
+    height: auto;
+}
+
+.tt-requirement-table,
+.tt-requirement-detail {
+    border-color: var(--tt-border-strong);
+    border-radius: 8px;
+    background: var(--tt-bg-elevated);
+}
+
+.tt-requirement-table-head {
+    min-height: 38px;
+    padding-inline: 12px;
+    background: var(--tt-bg-input);
+}
+
+.tt-requirement-table-head,
+.tt-requirement-row {
+    grid-template-columns: 86px minmax(88px, 0.78fr) minmax(112px, 1fr) 92px minmax(92px, 0.85fr) minmax(88px, 0.78fr);
+    gap: 10px;
+}
+
+.tt-requirement-row {
+    min-height: 50px;
+    padding: 8px 12px;
+}
+
+.tt-requirement-row:hover {
+    background: color-mix(in srgb, var(--tt-primary) 4%, var(--tt-bg-elevated));
+}
+
+.tt-requirement-row.is-selected {
+    background: color-mix(in srgb, var(--tt-primary) 8%, var(--tt-bg-elevated));
+    box-shadow: inset 3px 0 0 var(--tt-primary);
+}
+
+.tt-requirement-status {
+    border-radius: 6px;
+}
+
+.tt-requirement-detail {
+    gap: 0;
+    padding: 0 16px 16px;
+}
+
+.tt-requirement-detail-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    justify-content: space-between;
+    min-height: 50px;
+    border-bottom: 1px solid var(--tt-border);
+    background: var(--tt-bg-elevated);
+}
+
+.tt-requirement-detail-header strong {
+    font-size: 0.88rem;
+}
+
+.tt-requirement-detail-summary {
+    gap: 4px;
+    padding: 14px 0;
+}
+
+.tt-requirement-detail-summary-title strong {
+    font-size: 0.95rem;
+}
+
+.tt-requirement-detail-section {
+    grid-template-columns: 70px minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--tt-border);
+}
+
+.tt-requirement-detail-value {
+    min-width: 0;
+    color: var(--tt-text);
+    font-size: 0.76rem;
+    font-weight: 700;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.tt-requirement-complex-detail {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.tt-requirement-complex-state {
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: color-mix(in srgb, var(--tt-primary) 9%, var(--tt-bg-panel));
+    color: var(--tt-primary);
+    font-size: 0.66rem;
+    font-weight: 800;
+}
+
+.tt-requirement-clauses {
+    margin: 12px 0 0;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+    background: transparent;
+}
+
+.tt-requirement-machine-rules,
+.tt-requirement-clarification,
+.tt-requirement-model-support,
+.tt-requirement-detail-evidence {
+    margin-top: 12px;
+}
+
+.tt-requirement-machine-rules {
+    padding-top: 12px;
+    border-top: 1px solid var(--tt-border);
+}
+
+.tt-requirement-detail .tt-constraint-card,
+.tt-semantic-action-item {
+    padding: 10px 0;
+    border: 0;
+    border-top: 1px solid var(--tt-border);
+    border-radius: 0;
+    background: transparent;
+}
+
+.tt-constraint-dialog .tt-dialog-actions {
+    min-height: 0;
+    padding: var(--tt-space-sm) 0 0;
+    border-top: 1px solid var(--tt-border);
+    background: transparent;
+}
+
+@media (max-width: 760px) {
+    .tt-dialog-overlay[data-constraint-dialog-overlay] {
+        align-items: end;
+        padding: 10px;
+    }
+
+    .tt-constraint-dialog,
+    .tt-constraint-dialog--semantic-review {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+        max-height: calc(100vh - 20px);
+        border-radius: var(--tt-radius-lg) var(--tt-radius-lg) var(--tt-radius-md) var(--tt-radius-md);
+    }
+
+    .tt-constraint-dialog .tt-dialog-header {
+        padding: 12px 14px;
+    }
+
+    .tt-constraint-dialog .tt-dialog-title {
+        grid-template-columns: 32px minmax(0, 1fr);
+    }
+
+    .tt-dialog-title-icon {
+        width: 32px;
+        height: 32px;
+    }
+
+    .tt-constraint-dialog .tt-dialog-title p {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .tt-constraint-dialog-body {
+        gap: 12px;
+        padding: 12px 14px 14px;
+    }
+
+    .tt-constraint-flow {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .tt-constraint-intake-panel {
+        padding: 0;
+        border-radius: 0;
+    }
+
+    .tt-requirement-workbench {
+        padding: 12px;
+        border-radius: 8px;
+    }
+
+    .tt-constraint-mode-row {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .tt-constraint-input-tabs {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .tt-constraint-input-footer {
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .tt-requirement-workbench-header,
+    .tt-requirement-workbench-meta {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .tt-requirement-statistics {
+        white-space: normal;
+    }
+
+    .tt-requirement-review-summary {
+        grid-template-columns: none;
+    }
+
+    .tt-requirement-review-summary em {
+        margin-left: 0;
+    }
+
+    .tt-requirement-review-layout {
+        grid-template-columns: 1fr;
+        height: auto;
+    }
+
+    .tt-requirement-table {
+        height: min(300px, 42vh);
+    }
+
+    .tt-requirement-table-body {
+        max-height: none;
+    }
+
+    .tt-requirement-detail {
+        max-height: none;
+        overflow-y: visible;
+    }
+
+    .tt-requirement-detail-section {
+        grid-template-columns: 64px minmax(0, 1fr);
+    }
+
+    .tt-constraint-dialog .tt-dialog-actions {
+        justify-content: stretch;
+        padding: 10px 14px;
+    }
+
+    .tt-constraint-dialog .tt-dialog-actions .tt-btn {
+        flex: 1 1 120px;
+    }
+
+    .tt-constraint-dialog-actions .tt-btn[data-action="apply-constraints"] {
+        order: 3;
+        flex-basis: 100%;
+    }
+}
+
+/* Parsed-result layout: compact the input and reserve the body for review. */
+.tt-constraint-dialog--semantic-review {
+    height: min(var(--tt-dialog-max-height), calc(100vh - 48px));
+}
+
+.tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    overflow: hidden;
+}
+
+.tt-constraint-input-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: 52px;
+    padding: 8px 10px;
+    border: 1px solid var(--tt-border-strong);
+    border-radius: var(--tt-radius-md);
+    background: var(--tt-bg-input);
+}
+
+.tt-constraint-input-summary-main,
+.tt-constraint-input-summary-actions {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.tt-constraint-input-summary-main {
+    gap: 10px;
+}
+
+.tt-constraint-input-summary-icon {
+    display: grid;
+    flex: 0 0 32px;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid color-mix(in srgb, var(--tt-primary) 24%, var(--tt-border));
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--tt-primary) 8%, var(--tt-bg-panel));
+    color: var(--tt-primary);
+}
+
+.tt-constraint-input-summary-icon i,
+.tt-constraint-input-summary-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.tt-constraint-input-summary-copy {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: baseline;
+    gap: 2px 8px;
+    min-width: 0;
+}
+
+.tt-constraint-input-summary-copy > span {
+    grid-column: 1 / -1;
+    color: var(--tt-primary);
+    font-size: 0.64rem;
+    font-weight: 900;
+}
+
+.tt-constraint-input-summary-copy > strong {
+    color: var(--tt-text);
+    font-size: 0.82rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.tt-constraint-input-summary-copy > small {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-constraint-input-summary-actions {
+    flex: 0 0 auto;
+    gap: 8px;
+}
+
+.tt-constraint-input-summary-actions .tt-btn {
+    min-height: 34px;
+    white-space: nowrap;
+}
+
+.tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review .tt-requirement-workbench {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+}
+
+.tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review .tt-requirement-workbench-header,
+.tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review .tt-constraint-binding-panel,
+.tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review .tt-requirement-review-summary,
+.tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review .tt-requirement-filter-bar {
+    flex: 0 0 auto;
+}
+
+.tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review .tt-requirement-filter-bar {
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review .tt-requirement-review-layout {
+    flex: 1 1 0;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: auto;
+    overflow: hidden;
+}
+
+.tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review .tt-requirement-table,
+.tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review .tt-requirement-detail {
+    min-height: 0;
+}
+
+@media (max-width: 760px) {
+    .tt-constraint-dialog--semantic-review {
+        height: calc(100vh - 20px);
+    }
+
+    .tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review {
+        grid-template-rows: auto;
+        align-content: start;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+
+    .tt-constraint-input-summary {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 10px;
+        min-height: 0;
+    }
+
+    .tt-constraint-input-summary-copy {
+        width: 100%;
+    }
+
+    .tt-constraint-input-summary-actions {
+        width: 100%;
+    }
+
+    .tt-constraint-input-summary-actions .tt-btn {
+        flex: 1 1 0;
+        min-width: 0;
+    }
+
+    .tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review .tt-requirement-workbench {
+        flex: 0 0 auto;
+        height: auto;
+        overflow: visible;
+    }
+
+    .tt-constraint-dialog--semantic-review .tt-constraint-dialog-body--review .tt-requirement-review-layout {
+        flex: 0 0 auto;
+        height: auto;
+        overflow: visible;
+    }
+
+    .tt-constraint-dialog .tt-dialog-header-actions .tt-btn {
+        display: grid;
+        flex: 0 0 36px;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+    }
+
+    .tt-constraint-dialog .tt-dialog-header-actions .tt-btn > span {
+        display: none;
+    }
+}
+
+/* Requirement review surface: user decisions first, parser artifacts on demand. */
+.tt-constraint-dialog--semantic-review .tt-requirement-review-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0;
+    border: 0;
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-review-summary > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-height: 24px;
+    padding: 0 7px;
+    border: 0;
+    border-radius: var(--tt-radius-sm);
+    background: var(--tt-bg-soft);
+    color: var(--tt-text-secondary);
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-review-summary > span b {
+    color: var(--tt-text-secondary);
+    font-size: 0.66rem;
+    white-space: nowrap;
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-review-summary > span strong {
+    color: var(--tt-text);
+    font-size: 0.72rem;
+    font-weight: 800;
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-review-summary > span small {
+    color: var(--tt-muted);
+    font-size: 0.62rem;
+    font-weight: 700;
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-review-summary > .is-applicable {
+    background: color-mix(in srgb, var(--tt-primary) 8%, var(--tt-bg-soft));
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-review-summary > .is-warning {
+    background: color-mix(in srgb, #d97706 8%, var(--tt-bg-soft));
+    color: #d97706;
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-review-summary > .is-handled {
+    background: color-mix(in srgb, #16a34a 7%, var(--tt-bg-soft));
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-review-layout {
+    grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+    align-items: stretch;
+    min-height: 0;
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-table {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-table-body {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.tt-requirement-bucket + .tt-requirement-bucket,
+.tt-system-requirement-group {
+    border-top: 1px solid var(--tt-border);
+}
+
+.tt-requirement-bucket-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 48px;
+    padding: 8px 12px;
+    background: var(--tt-bg-input);
+}
+
+.tt-requirement-bucket-header > div {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.tt-requirement-bucket-header strong {
+    color: var(--tt-text);
+    font-size: 0.76rem;
+    font-weight: 850;
+}
+
+.tt-requirement-bucket-header small {
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-size: 0.66rem;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-requirement-bucket-header > span {
+    display: grid;
+    flex: 0 0 auto;
+    place-items: center;
+    min-width: 24px;
+    height: 22px;
+    padding-inline: 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--tt-primary) 9%, var(--tt-bg-elevated));
+    color: var(--tt-primary);
+    font-size: 0.68rem;
+    font-weight: 850;
+}
+
+.tt-requirement-bucket--attention .tt-requirement-bucket-header > span {
+    background: color-mix(in srgb, #d97706 10%, var(--tt-bg-elevated));
+    color: #d97706;
+}
+
+.tt-requirement-row,
+.tt-requirement-table-head,
+.tt-constraint-dialog--semantic-review .tt-requirement-row {
+    grid-template-columns: 84px minmax(150px, 1fr) minmax(96px, 0.46fr) minmax(98px, 0.48fr);
+    gap: 10px;
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-row {
+    min-height: 68px;
+    padding: 9px 12px;
+    border-top: 1px solid var(--tt-border);
+}
+
+.tt-requirement-bucket-list .tt-requirement-row:first-child {
+    border-top: 0;
+}
+
+.tt-requirement-row-main,
+.tt-requirement-row-effect {
+    display: grid;
+    align-content: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.tt-requirement-row-main strong,
+.tt-requirement-row-effect strong {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-text);
+    font-size: 0.77rem;
+    font-weight: 800;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-requirement-row-main small,
+.tt-requirement-row-effect small,
+.tt-requirement-row-source {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-size: 0.66rem;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-requirement-row-source {
+    align-self: center;
+}
+
+.tt-requirement-destination--success {
+    color: #16a34a !important;
+}
+
+.tt-requirement-destination--warning {
+    color: #d97706 !important;
+}
+
+.tt-requirement-destination--info,
+.tt-requirement-destination--complex {
+    color: var(--tt-primary) !important;
+}
+
+.tt-requirement-destination--muted {
+    color: var(--tt-muted) !important;
+}
+
+.tt-system-requirement-toggle {
+    display: grid;
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 52px;
+    padding: 9px 12px;
+    border: 0;
+    background: var(--tt-bg-input);
+    color: var(--tt-text-secondary);
+    text-align: left;
+    cursor: pointer;
+}
+
+.tt-system-requirement-toggle > span,
+.tt-system-requirement-toggle > em {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.tt-system-requirement-toggle > span {
+    color: var(--tt-text);
+    font-size: 0.73rem;
+    font-weight: 800;
+}
+
+.tt-system-requirement-toggle > span i,
+.tt-system-requirement-toggle > span svg,
+.tt-system-requirement-toggle > em i,
+.tt-system-requirement-toggle > em svg {
+    width: 15px;
+    height: 15px;
+}
+
+.tt-system-requirement-toggle > span b {
+    color: var(--tt-primary);
+}
+
+.tt-system-requirement-toggle > small {
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-size: 0.66rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-system-requirement-toggle > em {
+    color: var(--tt-primary);
+    font-size: 0.68rem;
+    font-style: normal;
+    font-weight: 750;
+}
+
+.tt-system-requirement-group.is-expanded .tt-system-requirement-toggle > em i,
+.tt-system-requirement-group.is-expanded .tt-system-requirement-toggle > em svg {
+    transform: rotate(180deg);
+}
+
+.tt-system-requirement-list {
+    border-top: 1px solid var(--tt-border);
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-detail {
+    display: block;
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+    padding: 0 16px 16px;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.tt-constraint-dialog--semantic-review .tt-requirement-detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 64px;
+    padding-block: 10px;
+}
+
+.tt-requirement-detail-header > div {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.tt-requirement-detail-header > div > strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-requirement-detail-source {
+    flex: 0 1 auto;
+    max-width: 42%;
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-size: 0.66rem;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-requirement-user-section,
+.tt-requirement-source-evidence {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 12px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--tt-border);
+}
+
+.tt-requirement-user-section > strong,
+.tt-requirement-user-section > div > strong {
+    color: var(--tt-text);
+    font-size: 0.78rem;
+    font-weight: 800;
+    line-height: 1.5;
+}
+
+.tt-requirement-user-section p {
+    margin: 4px 0 0;
+    color: var(--tt-text-secondary);
+    font-size: 0.73rem;
+    line-height: 1.55;
+}
+
+.tt-requirement-source-evidence blockquote {
+    min-width: 0;
+    margin: 0;
+    color: var(--tt-text-secondary);
+    font-size: 0.73rem;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+}
+
+.tt-requirement-attention {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid color-mix(in srgb, #d97706 32%, var(--tt-border));
+    border-radius: 7px;
+    background: color-mix(in srgb, #d97706 6%, var(--tt-bg-input));
+}
+
+.tt-requirement-section-heading {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: #d97706;
+}
+
+.tt-requirement-section-heading i,
+.tt-requirement-section-heading svg {
+    width: 16px;
+    height: 16px;
+}
+
+.tt-requirement-section-heading strong {
+    font-size: 0.76rem;
+}
+
+.tt-requirement-attention > ul {
+    display: grid;
+    gap: 5px;
+    margin: 0;
+    padding-left: 20px;
+    color: var(--tt-text-secondary);
+    font-size: 0.72rem;
+    line-height: 1.5;
+}
+
+.tt-requirement-attention .tt-requirement-clarification,
+.tt-requirement-attention .tt-requirement-model-support {
+    margin-top: 0;
+}
+
+.tt-requirement-detail-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--tt-border);
+}
+
+.tt-requirement-detail-actions .tt-btn {
+    min-height: 32px;
+}
+
+.tt-requirement-technical {
+    margin-top: 12px;
+    border: 1px solid var(--tt-border);
+    border-radius: 7px;
+    background: var(--tt-bg-input);
+    overflow: hidden;
+}
+
+.tt-requirement-technical-toggle {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 10px;
+    border: 0;
+    background: transparent;
+    color: var(--tt-text-secondary);
+    text-align: left;
+    cursor: pointer;
+}
+
+.tt-requirement-technical-toggle > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--tt-text);
+    font-size: 0.73rem;
+    font-weight: 800;
+}
+
+.tt-requirement-technical-toggle > small {
+    overflow: hidden;
+    color: var(--tt-muted);
+    font-size: 0.66rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tt-requirement-technical-toggle i,
+.tt-requirement-technical-toggle svg {
+    width: 15px;
+    height: 15px;
+}
+
+.tt-requirement-technical.is-expanded .tt-requirement-technical-toggle > i,
+.tt-requirement-technical.is-expanded .tt-requirement-technical-toggle > svg {
+    transform: rotate(180deg);
+}
+
+.tt-requirement-technical-body {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+    padding: 0 10px 10px;
+    border-top: 1px solid var(--tt-border);
+}
+
+.tt-requirement-technical-body > :first-child {
+    margin-top: 10px;
+}
+
+.tt-requirement-technical-body .tt-requirement-clauses,
+.tt-requirement-technical-body .tt-requirement-machine-rules,
+.tt-requirement-technical-body .tt-requirement-detail-evidence {
+    margin-top: 0;
+}
+
+@media (max-width: 760px) {
+    .tt-constraint-dialog--semantic-review .tt-requirement-review-summary {
+        width: 100%;
+    }
+
+    .tt-constraint-dialog--semantic-review .tt-requirement-review-summary > span {
+        flex: 1 1 auto;
+    }
+
+    .tt-constraint-dialog--semantic-review .tt-requirement-review-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        align-items: start;
+        height: auto;
+    }
+
+    .tt-constraint-dialog--semantic-review .tt-requirement-table {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+    }
+
+    .tt-constraint-dialog--semantic-review .tt-requirement-table-body {
+        height: auto;
+        max-height: min(42vh, 340px);
+        overflow-y: auto;
+    }
+
+    .tt-constraint-dialog--semantic-review .tt-requirement-row {
+        grid-template-columns: 78px minmax(0, 1fr);
+        gap: 7px 9px;
+        min-height: 88px;
+    }
+
+    .tt-requirement-row-effect {
+        grid-column: 1;
+    }
+
+    .tt-requirement-row-source {
+        grid-column: 2;
+    }
+
+    .tt-system-requirement-toggle {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .tt-system-requirement-toggle > small {
+        grid-column: 1 / -1;
+        grid-row: 2;
+    }
+
+    .tt-constraint-dialog--semantic-review .tt-requirement-detail {
+        height: auto;
+        max-height: none;
+        padding: 0 12px 12px;
+        overflow-y: visible;
+    }
+
+    .tt-constraint-dialog--semantic-review .tt-requirement-detail-header {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .tt-requirement-detail-source {
+        max-width: 100%;
+    }
+
+    .tt-requirement-user-section,
+    .tt-requirement-source-evidence {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 6px;
+    }
+
+    .tt-requirement-technical-toggle {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .tt-requirement-technical-toggle > small {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        white-space: normal;
     }
 }

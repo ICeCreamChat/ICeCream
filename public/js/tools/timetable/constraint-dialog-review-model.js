@@ -1,3 +1,12 @@
+import {
+    normalizeStatusKey,
+    requirementApplyExplanation,
+    requirementApplyLabel,
+    requirementApplyTone,
+    requirementIntentLabel,
+    requirementStatusLabel,
+} from './constraint-status-dict.js';
+
 const REVIEW_STATUSES = new Set([
     'needs_review',
     'needs_clarification',
@@ -681,7 +690,7 @@ function promoteRequirementDisplay(item = {}) {
         applyTo: canonicalSource ? item.applicationTarget : draftRowApplyTo(rule),
         confidence: rule.confidence ?? item.confidence,
         warnings: mergeUniqueArrays(item.warnings || [], rule.warnings || []),
-        displayFromMachineRule: true,
+        displayFromMachineRule: !canonicalSource,
     });
 }
 
@@ -1382,11 +1391,169 @@ export function buildUnifiedRequirementItems(review = {}) {
     return buildLegacyUnifiedRequirementItems(review);
 }
 
+function reviewItemObjectLabel(item = {}) {
+    const machineRule = valueList(item.machineRules).find(rule => rule && typeof rule === 'object');
+    return machineRule?.targetName
+        || machineRule?.target?.name
+        || item.object?.name
+        || item.targetName
+        || '全局排课范围';
+}
+
+function reviewItemRawText(item = {}) {
+    const displayRule = item.displayFromMachineRule ? executableMachineRule(item) : null;
+    if (displayRule) {
+        const ruleText = draftRowSourceText(displayRule);
+        if (ruleText) return ruleText;
+    }
+    return item.source?.rawText
+        || item.rawText
+        || item.sourceRequirement?.rawText
+        || item.sourceRequirement?.source?.rawText
+        || '';
+}
+
+function reviewItemSourceLabel(item = {}) {
+    const displayRule = item.displayFromMachineRule ? executableMachineRule(item) : null;
+    const source = displayRule ? draftRowSource(displayRule) : (item.source || item.sourceRequirement?.source || {});
+    const origin = item.origin || source.origin || 'unknown';
+    const originLabel = origin === 'system_supplement'
+        ? '系统补充'
+        : origin === 'manual'
+            ? '手动添加'
+            : origin === 'user_input'
+                ? '我的输入'
+                : '来源未知';
+    const sheet = source.sourceSheet || source.sheet || '';
+    const row = source.sourceRow || source.row || source.lineNumber || '';
+    const location = sheet && row
+        ? `${sheet} 第 ${row} 行`
+        : row
+            ? `第 ${row} 行`
+            : sheet;
+    return [originLabel, location].filter(Boolean).join(' · ');
+}
+
+function reviewItemStatusTone(item = {}) {
+    const status = normalizeStatusKey(item.status || item.reviewStatus || item.executionStatus || '');
+    if (['handled', 'ignored', 'applied'].includes(status)) return 'handled';
+    if (['needs_clarification', 'needs_review', 'review', 'invalid'].includes(status)) return 'review';
+    if (['candidate', 'pending', 'partially_parsed', 'partially_supported', 'partially_actionable', 'partially_executable', 'understood_not_executable', 'unsupported_by_solver', 'unsupported'].includes(status)) {
+        return 'warning';
+    }
+    if (valueList(item.warnings).length) return 'warning';
+    return 'actionable';
+}
+
+function reviewItemAttentionItems(item = {}) {
+    const values = [
+        ...valueList(item.reviewReasons),
+        ...valueList(item.warnings),
+        ...valueList(item.questions),
+        item.clarification?.question,
+        item.modelSupport?.supported === false ? item.modelSupport?.message : '',
+    ].map(value => {
+        if (typeof value === 'string') return value.trim();
+        if (!value || typeof value !== 'object') return '';
+        return String(value.message || value.question || value.reason || value.label || '').trim();
+    }).filter(Boolean);
+    return [...new Set(values)];
+}
+
+function requirementReviewBucket(item = {}) {
+    const group = getRequirementGroupKey(item);
+    const status = normalizeStatusKey(item.status || item.reviewStatus || item.executionStatus || '');
+    const isHandled = item.origin === 'system_supplement'
+        || group === 'handled'
+        || ['solver_policy', 'system_policy', 'handled'].includes(normalizeStatusKey(item.applyTo || item.applicationTarget || ''));
+    if (isHandled) return 'handled';
+    if (group === 'review'
+        || item.requiresHumanReview === true
+        || REVIEW_STATUSES.has(status)
+        || valueList(item.conflicts).length
+        || item.hasConflict === true) {
+        return 'attention';
+    }
+    return 'applicable';
+}
+
+/**
+ * Converts parser artifacts into the compact, user-facing review structure.
+ * The original item is retained so existing edit/apply actions keep their identities.
+ */
+export function buildRequirementReviewViewModel(review = {}, state = {}) {
+    const dialog = state.constraintDialog || state || {};
+    const activeFilter = dialog.requirementFilter || 'all';
+    const expansionState = dialog.technicalDetailsExpandedById || {};
+    const allItems = buildUnifiedRequirementItems(review).map(item => {
+        const bucket = requirementReviewBucket(item);
+        const expandTechnicalByDefault = bucket === 'attention';
+        const hasExplicitExpansion = Object.prototype.hasOwnProperty.call(expansionState, item.id);
+        return {
+            id: item.id || '',
+            bucket,
+            statusLabel: requirementStatusLabel(item),
+            statusTone: reviewItemStatusTone(item),
+            title: requirementIntentLabel(item.intent),
+            objectLabel: reviewItemObjectLabel(item),
+            destinationLabel: requirementApplyLabel(item.applyTo || item.applicationTarget || ''),
+            destinationTone: requirementApplyTone(item.applyTo || item.applicationTarget || '', item.status || item.executionStatus || ''),
+            destinationExplanation: requirementApplyExplanation(item.applyTo || item.applicationTarget || '', item.status || item.executionStatus || ''),
+            sourceLabel: reviewItemSourceLabel(item),
+            rawText: reviewItemRawText(item),
+            attentionItems: reviewItemAttentionItems(item),
+            technicalDetails: {
+                warnings: valueList(item.warnings),
+                clauses: valueList(item.clauses),
+                machineRules: valueList(item.machineRules),
+                semanticActions: valueList(item.semanticActions),
+                parsedBy: valueList(item.parsedBy),
+                aiReviewStatus: item.aiReviewStatus || item.aiReviewValidationStatus || '',
+                modelSupport: item.modelSupport || null,
+            },
+            isSystemSupplement: item.origin === 'system_supplement',
+            isActionable: requirementItemIsActionable(item, review),
+            expandTechnicalByDefault,
+            technicalDetailsExpanded: hasExplicitExpansion
+                ? expansionState[item.id] === true
+                : expandTechnicalByDefault,
+            item,
+        };
+    });
+    const visibleItems = activeFilter === 'all'
+        ? allItems
+        : allItems.filter(viewItem => getRequirementGroupKey(viewItem.item) === activeFilter);
+    const selectableItems = dialog.systemGroupCollapsed === false
+        ? visibleItems
+        : visibleItems.filter(viewItem => !viewItem.isSystemSupplement);
+    const groups = {
+        attention: visibleItems.filter(item => item.bucket === 'attention'),
+        applicable: visibleItems.filter(item => item.bucket === 'applicable'),
+        handled: visibleItems.filter(item => item.bucket === 'handled'),
+    };
+    const selectedItem = selectableItems.find(item => item.id && item.id === dialog.selectedRequirementId)
+        || selectableItems.find(item => item.bucket === 'attention')
+        || selectableItems.find(item => item.bucket === 'applicable')
+        || selectableItems[0]
+        || null;
+    return {
+        items: allItems,
+        visibleItems,
+        groups,
+        counts: {
+            attention: groups.attention.length,
+            applicable: groups.applicable.length,
+            handled: groups.handled.length,
+        },
+        selectedId: selectedItem?.id || '',
+        selectedItem,
+    };
+}
+
 export function getDefaultRequirementId(items = [], filter = 'all') {
     const visibleItems = filterUnifiedRequirementItems(items, filter);
-    const selected = visibleItems.find(item => getRequirementGroupKey(item) === 'review')
-        || visibleItems.find(item => normalizeKey(item.status) === 'actionable')
-        || visibleItems.find(item => getRequirementGroupKey(item) !== 'handled')
+    const selected = visibleItems.find(item => requirementReviewBucket(item) === 'attention')
+        || visibleItems.find(item => requirementReviewBucket(item) === 'applicable')
         || visibleItems[0]
         || null;
     return selected?.id || '';

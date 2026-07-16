@@ -109,7 +109,16 @@ async function main() {
 
         const assertIntakeLayout = async () => {
             const layout = await page.evaluate(() => {
-                const dialog = document.querySelector('.tt-constraint-dialog').getBoundingClientRect();
+                const dialogElement = document.querySelector('.tt-constraint-dialog');
+                const dialog = dialogElement.getBoundingClientRect();
+                const stagebar = document.querySelector('.tt-constraint-stagebar').getBoundingClientRect();
+                const flowWrapElement = document.querySelector('.tt-constraint-flow-wrap');
+                const flowWrap = flowWrapElement.getBoundingClientRect();
+                const intakeElement = document.querySelector('.tt-constraint-intake-panel');
+                const intake = intakeElement.getBoundingClientRect();
+                const intakeStyle = getComputedStyle(intakeElement);
+                const modeRow = document.querySelector('.tt-constraint-mode-row').getBoundingClientRect();
+                const tabs = document.querySelector('.tt-constraint-input-tabs').getBoundingClientRect();
                 const textarea = document.querySelector('#tt-constraint-text-input').getBoundingClientRect();
                 const footer = document.querySelector('.tt-constraint-dialog-actions').getBoundingClientRect();
                 const buttons = [...document.querySelectorAll('.tt-constraint-dialog-actions .tt-btn')].map(button => {
@@ -125,15 +134,53 @@ async function main() {
                 });
                 return {
                     viewportWidth: window.innerWidth,
+                    viewportHeight: window.innerHeight,
                     documentWidth: document.documentElement.scrollWidth,
-                    dialog: { left: dialog.left, right: dialog.right },
+                    dialog: {
+                        left: dialog.left,
+                        right: dialog.right,
+                        top: dialog.top,
+                        bottom: dialog.bottom,
+                        width: dialog.width,
+                        height: dialog.height,
+                    },
+                    stagebar: { left: stagebar.left, right: stagebar.right },
+                    flowWrap: {
+                        left: flowWrap.left,
+                        right: flowWrap.right,
+                        flowCount: flowWrapElement.querySelectorAll(':scope > .tt-constraint-flow').length,
+                    },
+                    intake: {
+                        left: intake.left,
+                        right: intake.right,
+                        borderTopWidth: intakeStyle.borderTopWidth,
+                        boxShadow: intakeStyle.boxShadow,
+                        paddingTop: intakeStyle.paddingTop,
+                    },
+                    modeRow: { left: modeRow.left, right: modeRow.right },
+                    tabs: { left: tabs.left, right: tabs.right },
                     textareaBottom: textarea.bottom,
                     footerTop: footer.top,
+                    emptyStatusCount: document.querySelectorAll('.tt-constraint-input-status').length,
                     buttons,
                 };
             });
             assert.equal(layout.documentWidth <= layout.viewportWidth, true, JSON.stringify(layout));
             assert.equal(layout.footerTop >= layout.textareaBottom, true, JSON.stringify(layout));
+            assert.equal(layout.footerTop - layout.textareaBottom <= 40, true, JSON.stringify(layout));
+            assert.equal(layout.dialog.bottom <= layout.viewportHeight, true, JSON.stringify(layout));
+            assert.equal(layout.flowWrap.flowCount, 1, JSON.stringify(layout));
+            assert.equal(Math.abs(layout.flowWrap.left - layout.stagebar.left) <= 1, true, JSON.stringify(layout));
+            assert.equal(Math.abs(layout.flowWrap.right - layout.stagebar.right) <= 1, true, JSON.stringify(layout));
+            assert.equal(layout.intake.borderTopWidth, '0px', JSON.stringify(layout));
+            assert.equal(layout.intake.boxShadow, 'none', JSON.stringify(layout));
+            assert.equal(layout.intake.paddingTop, '0px', JSON.stringify(layout));
+            assert.equal(Math.abs(layout.tabs.left - layout.modeRow.left) <= 1, true, JSON.stringify(layout));
+            assert.equal(layout.tabs.right <= layout.modeRow.right + 1, true, JSON.stringify(layout));
+            assert.equal(layout.emptyStatusCount, 0, JSON.stringify(layout));
+            if (layout.viewportWidth > 760) {
+                assert.equal(layout.dialog.width <= 781, true, JSON.stringify(layout));
+            }
             assert.equal(layout.buttons.every(button => (
                 button.left >= layout.dialog.left - 1
                 && button.right <= layout.dialog.right + 1
@@ -143,10 +190,283 @@ async function main() {
             )), true, JSON.stringify(layout));
         };
 
+        const assertDesktopReviewLayout = async ({ minReviewHeight = 220 } = {}) => {
+            const layout = await page.evaluate(() => {
+                const dialog = document.querySelector('.tt-constraint-dialog').getBoundingClientRect();
+                const bodyElement = document.querySelector('.tt-constraint-dialog-body--review');
+                const body = bodyElement.getBoundingClientRect();
+                const summary = document.querySelector('[data-constraint-input-summary]').getBoundingClientRect();
+                const workbenchElement = document.querySelector('.tt-requirement-workbench');
+                const workbench = workbenchElement.getBoundingClientRect();
+                const workbenchStyle = getComputedStyle(workbenchElement);
+                const workbenchHeaderElement = document.querySelector('.tt-requirement-workbench-header');
+                const workbenchHeader = workbenchHeaderElement.getBoundingClientRect();
+                const reviewSummaryElement = document.querySelector('.tt-requirement-review-summary');
+                const reviewSummary = reviewSummaryElement.getBoundingClientRect();
+                const reviewElement = document.querySelector('.tt-requirement-review-layout');
+                const review = reviewElement.getBoundingClientRect();
+                const filterElement = document.querySelector('.tt-requirement-filter-bar');
+                const filter = filterElement.getBoundingClientRect();
+                const filterStyle = getComputedStyle(filterElement);
+                const tableElement = document.querySelector('.tt-requirement-table');
+                const table = tableElement.getBoundingClientRect();
+                const tableBodyElement = document.querySelector('.tt-requirement-table-body');
+                const detailElement = document.querySelector('.tt-requirement-detail');
+                const detail = detailElement.getBoundingClientRect();
+                const footer = document.querySelector('.tt-constraint-dialog-actions').getBoundingClientRect();
+                return {
+                    viewportWidth: window.innerWidth,
+                    viewportHeight: window.innerHeight,
+                    documentWidth: document.documentElement.scrollWidth,
+                    dialog: {
+                        left: dialog.left,
+                        right: dialog.right,
+                        top: dialog.top,
+                        bottom: dialog.bottom,
+                        width: dialog.width,
+                        height: dialog.height,
+                    },
+                    body: { top: body.top, bottom: body.bottom },
+                    summary: { left: summary.left, right: summary.right, top: summary.top, bottom: summary.bottom },
+                    workbench: {
+                        top: workbench.top,
+                        bottom: workbench.bottom,
+                        borderTopWidth: workbenchStyle.borderTopWidth,
+                        boxShadow: workbenchStyle.boxShadow,
+                    },
+                    workbenchHeader: { top: workbenchHeader.top, bottom: workbenchHeader.bottom },
+                    reviewSummary: {
+                        top: reviewSummary.top,
+                        bottom: reviewSummary.bottom,
+                        height: reviewSummary.height,
+                        parentClass: reviewSummaryElement.parentElement?.className || '',
+                    },
+                    reviewSummaryItems: [...reviewSummaryElement.children].map(item => {
+                        const rect = item.getBoundingClientRect();
+                        return {
+                            height: rect.height,
+                            clientWidth: item.clientWidth,
+                            scrollWidth: item.scrollWidth,
+                        };
+                    }),
+                    sections: [...workbenchElement.children]
+                        .filter(element => element.matches([
+                            '.tt-requirement-workbench-header',
+                            '.tt-constraint-binding-panel',
+                            '.tt-requirement-review-summary',
+                            '.tt-requirement-filter-bar',
+                            '.tt-requirement-review-layout',
+                        ].join(',')))
+                        .map(element => {
+                            const rect = element.getBoundingClientRect();
+                            return { className: element.className, top: rect.top, bottom: rect.bottom };
+                        }),
+                    filter: {
+                        top: filter.top,
+                        bottom: filter.bottom,
+                        clientHeight: filterElement.clientHeight,
+                        scrollHeight: filterElement.scrollHeight,
+                        overflowX: filterStyle.overflowX,
+                        overflowY: filterStyle.overflowY,
+                    },
+                    filterButtons: [...filterElement.querySelectorAll('.tt-requirement-filter')].map(button => {
+                        const rect = button.getBoundingClientRect();
+                        return { top: rect.top, bottom: rect.bottom };
+                    }),
+                    review: { top: review.top, bottom: review.bottom, height: review.height },
+                    table: { top: table.top, bottom: table.bottom },
+                    tableBodyOverflowY: getComputedStyle(tableBodyElement).overflowY,
+                    detail: { top: detail.top, bottom: detail.bottom },
+                    detailOverflowY: getComputedStyle(detailElement).overflowY,
+                    footerTop: footer.top,
+                };
+            });
+            assert.equal(layout.documentWidth <= layout.viewportWidth, true, JSON.stringify(layout));
+            assert.equal(layout.dialog.width <= Math.min(1120, layout.viewportWidth - 48) + 2, true, JSON.stringify(layout));
+            assert.equal(layout.dialog.height <= Math.min(820, layout.viewportHeight - 48) + 2, true, JSON.stringify(layout));
+            assert.equal(layout.dialog.left >= 23 && layout.dialog.right <= layout.viewportWidth - 23, true, JSON.stringify(layout));
+            assert.equal(layout.dialog.top >= 23 && layout.dialog.bottom <= layout.viewportHeight - 23, true, JSON.stringify(layout));
+            assert.equal(layout.summary.left >= layout.dialog.left && layout.summary.right <= layout.dialog.right, true, JSON.stringify(layout));
+            assert.equal(layout.summary.top >= layout.body.top && layout.summary.bottom < layout.workbench.top, true, JSON.stringify(layout));
+            assert.equal(layout.workbench.bottom <= layout.body.bottom + 1 && layout.workbench.bottom <= layout.footerTop + 1, true, JSON.stringify(layout));
+            assert.equal(layout.workbench.borderTopWidth, '0px', JSON.stringify(layout));
+            assert.equal(layout.workbench.boxShadow, 'none', JSON.stringify(layout));
+            assert.match(layout.reviewSummary.parentClass, /tt-requirement-workbench-meta/, JSON.stringify(layout));
+            assert.equal(layout.reviewSummary.top >= layout.workbenchHeader.top - 1, true, JSON.stringify(layout));
+            assert.equal(layout.reviewSummary.bottom <= layout.workbenchHeader.bottom + 1, true, JSON.stringify(layout));
+            assert.equal(layout.reviewSummaryItems.every(item => (
+                item.height <= 26 && item.scrollWidth <= item.clientWidth + 1
+            )), true, JSON.stringify(layout));
+            assert.equal(layout.sections.every((section, index, sections) => (
+                index === 0 || section.top >= sections[index - 1].bottom - 1
+            )), true, JSON.stringify(layout));
+            assert.equal(layout.filter.scrollHeight <= layout.filter.clientHeight + 1, true, JSON.stringify(layout));
+            assert.equal(layout.filter.overflowX === 'auto' && layout.filter.overflowY === 'hidden', true, JSON.stringify(layout));
+            assert.equal(layout.filterButtons.every(button => (
+                button.top >= layout.filter.top - 1 && button.bottom <= layout.filter.bottom + 1
+            )), true, JSON.stringify(layout));
+            assert.equal(layout.review.top >= layout.filter.bottom - 1, true, JSON.stringify(layout));
+            assert.equal(layout.review.height >= minReviewHeight, true, JSON.stringify(layout));
+            assert.equal(Math.abs(layout.table.top - layout.detail.top) <= 1, true, JSON.stringify(layout));
+            assert.equal(layout.table.bottom <= layout.review.bottom + 1, true, JSON.stringify(layout));
+            assert.equal(layout.detail.bottom <= layout.review.bottom + 1, true, JSON.stringify(layout));
+            assert.equal(layout.tableBodyOverflowY, 'auto', JSON.stringify(layout));
+            assert.equal(layout.detailOverflowY, 'auto', JSON.stringify(layout));
+        };
+
+        const assertDesktopIndependentScrolling = async () => {
+            const scrolling = await page.evaluate(() => {
+                const inspectScroller = selector => {
+                    const element = document.querySelector(selector);
+                    const originalScrollTop = element.scrollTop;
+                    element.scrollTop = element.scrollHeight;
+                    const result = {
+                        clientHeight: element.clientHeight,
+                        scrollHeight: element.scrollHeight,
+                        scrollTop: element.scrollTop,
+                        overflowY: getComputedStyle(element).overflowY,
+                    };
+                    element.scrollTop = originalScrollTop;
+                    return result;
+                };
+                return {
+                    table: inspectScroller('.tt-requirement-table-body'),
+                    detail: inspectScroller('.tt-requirement-detail'),
+                };
+            });
+            assert.equal(scrolling.table.overflowY, 'auto', JSON.stringify(scrolling));
+            assert.equal(scrolling.detail.overflowY, 'auto', JSON.stringify(scrolling));
+            assert.equal(scrolling.table.scrollHeight > scrolling.table.clientHeight, true, JSON.stringify(scrolling));
+            assert.equal(scrolling.detail.scrollHeight > scrolling.detail.clientHeight, true, JSON.stringify(scrolling));
+            assert.equal(scrolling.table.scrollTop > 0, true, JSON.stringify(scrolling));
+            assert.equal(scrolling.detail.scrollTop > 0, true, JSON.stringify(scrolling));
+        };
+
+        const assertHeaderActionTheme = async () => {
+            const theme = await page.evaluate(() => {
+                const normalizeColor = value => {
+                    const probe = document.createElement('span');
+                    probe.style.color = value;
+                    document.body.appendChild(probe);
+                    const color = getComputedStyle(probe).color;
+                    probe.remove();
+                    return color;
+                };
+                const workbenchStyle = getComputedStyle(document.querySelector('.tt-workbench'));
+                const aiButton = document.querySelector('[data-action="start-ai-chat"]');
+                const closeButton = document.querySelector('[data-action="close-constraint-dialog"]');
+                return {
+                    expectedText: normalizeColor(workbenchStyle.getPropertyValue('--tt-text')),
+                    expectedSoft: normalizeColor(workbenchStyle.getPropertyValue('--tt-bg-soft')),
+                    aiColor: aiButton ? getComputedStyle(aiButton).color : null,
+                    closeBackground: getComputedStyle(closeButton).backgroundColor,
+                };
+            });
+            const colorChannels = value => (String(value || '').match(/[\d.]+/g) || []).map(Number);
+            const maxColorDelta = (actual, expected) => {
+                const actualChannels = colorChannels(actual);
+                const expectedChannels = colorChannels(expected);
+                return Math.max(...expectedChannels.map((value, index) => Math.abs(value - (actualChannels[index] ?? value))));
+            };
+            if (theme.aiColor) assert.equal(maxColorDelta(theme.aiColor, theme.expectedText) <= 4, true, JSON.stringify(theme));
+            assert.equal(maxColorDelta(theme.closeBackground, theme.expectedSoft) <= 4, true, JSON.stringify(theme));
+        };
+
+        const assertMobileReviewLayout = async () => {
+            const layout = await page.evaluate(() => {
+                const dialog = document.querySelector('.tt-constraint-dialog').getBoundingClientRect();
+                const bodyElement = document.querySelector('.tt-constraint-dialog-body--review');
+                const body = bodyElement.getBoundingClientRect();
+                const summary = document.querySelector('[data-constraint-input-summary]').getBoundingClientRect();
+                const workbenchElement = document.querySelector('.tt-requirement-workbench');
+                const workbenchHeader = document.querySelector('.tt-requirement-workbench-header').getBoundingClientRect();
+                const reviewSummaryElement = document.querySelector('.tt-requirement-review-summary');
+                const reviewSummary = reviewSummaryElement.getBoundingClientRect();
+                const filterElement = document.querySelector('.tt-requirement-filter-bar');
+                const filter = filterElement.getBoundingClientRect();
+                const filterStyle = getComputedStyle(filterElement);
+                const footer = document.querySelector('.tt-constraint-dialog-actions').getBoundingClientRect();
+                return {
+                    viewport: { width: window.innerWidth, height: window.innerHeight },
+                    documentWidth: document.documentElement.scrollWidth,
+                    dialog: { left: dialog.left, right: dialog.right, bottom: dialog.bottom },
+                    body: {
+                        left: body.left,
+                        right: body.right,
+                        bottom: body.bottom,
+                        scrollHeight: bodyElement.scrollHeight,
+                        clientHeight: bodyElement.clientHeight,
+                    },
+                    summary: { left: summary.left, right: summary.right },
+                    workbenchHeader: { top: workbenchHeader.top, bottom: workbenchHeader.bottom },
+                    reviewSummary: {
+                        top: reviewSummary.top,
+                        bottom: reviewSummary.bottom,
+                        parentClass: reviewSummaryElement.parentElement?.className || '',
+                    },
+                    reviewSummaryItems: [...reviewSummaryElement.children].map(item => {
+                        const rect = item.getBoundingClientRect();
+                        return {
+                            height: rect.height,
+                            clientWidth: item.clientWidth,
+                            scrollWidth: item.scrollWidth,
+                        };
+                    }),
+                    sections: [...workbenchElement.children]
+                        .filter(element => element.matches([
+                            '.tt-requirement-workbench-header',
+                            '.tt-constraint-binding-panel',
+                            '.tt-requirement-review-summary',
+                            '.tt-requirement-filter-bar',
+                            '.tt-requirement-review-layout',
+                        ].join(',')))
+                        .map(element => {
+                            const rect = element.getBoundingClientRect();
+                            return { className: element.className, top: rect.top, bottom: rect.bottom };
+                        }),
+                    filter: {
+                        top: filter.top,
+                        bottom: filter.bottom,
+                        clientHeight: filterElement.clientHeight,
+                        scrollHeight: filterElement.scrollHeight,
+                        overflowX: filterStyle.overflowX,
+                        overflowY: filterStyle.overflowY,
+                    },
+                    filterButtons: [...filterElement.querySelectorAll('.tt-requirement-filter')].map(button => {
+                        const rect = button.getBoundingClientRect();
+                        return { top: rect.top, bottom: rect.bottom };
+                    }),
+                    footer: { top: footer.top, bottom: footer.bottom },
+                };
+            });
+            assert.equal(layout.documentWidth <= layout.viewport.width, true, JSON.stringify(layout));
+            assert.equal(layout.dialog.left >= 0 && layout.dialog.right <= layout.viewport.width, true, JSON.stringify(layout));
+            assert.equal(layout.summary.left >= layout.body.left && layout.summary.right <= layout.body.right, true, JSON.stringify(layout));
+            assert.match(layout.reviewSummary.parentClass, /tt-requirement-workbench-meta/, JSON.stringify(layout));
+            assert.equal(layout.reviewSummary.top >= layout.workbenchHeader.top - 1, true, JSON.stringify(layout));
+            assert.equal(layout.reviewSummary.bottom <= layout.workbenchHeader.bottom + 1, true, JSON.stringify(layout));
+            assert.equal(layout.reviewSummaryItems.every(item => (
+                item.height <= 26 && item.scrollWidth <= item.clientWidth + 1
+            )), true, JSON.stringify(layout));
+            assert.equal(layout.sections.every((section, index, sections) => (
+                index === 0 || section.top >= sections[index - 1].bottom - 1
+            )), true, JSON.stringify(layout));
+            assert.equal(layout.filter.scrollHeight <= layout.filter.clientHeight + 1, true, JSON.stringify(layout));
+            assert.equal(layout.filter.overflowX === 'auto' && layout.filter.overflowY === 'hidden', true, JSON.stringify(layout));
+            assert.equal(layout.filterButtons.every(button => (
+                button.top >= layout.filter.top - 1 && button.bottom <= layout.filter.bottom + 1
+            )), true, JSON.stringify(layout));
+            assert.equal(layout.body.bottom <= layout.footer.top + 1, true, JSON.stringify(layout));
+            assert.equal(layout.footer.bottom <= layout.viewport.height && layout.footer.bottom <= layout.dialog.bottom + 1, true, JSON.stringify(layout));
+            assert.equal(layout.body.scrollHeight >= layout.body.clientHeight, true, JSON.stringify(layout));
+        };
+
         await page.evaluate(() => document.body.classList.add('light-mode'));
+        await page.waitForTimeout(250);
         await assertIntakeLayout();
         await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-intake-light.png') });
         await page.evaluate(() => document.body.classList.remove('light-mode'));
+        await page.waitForTimeout(250);
         await assertIntakeLayout();
         await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-intake-dark.png') });
 
@@ -160,18 +480,58 @@ async function main() {
 
         await page.waitForSelector('.tt-requirement-workbench', { timeout: 30000 });
 
+        assert.equal(await page.locator('[data-constraint-input-summary]').count(), 1);
+        assert.equal(await page.locator('#tt-constraint-text-input').count(), 0);
+        await clickByScript('[data-action="expand-constraint-input"]');
+        await page.waitForSelector('#tt-constraint-text-input', { timeout: 10000 });
+        assert.equal(await page.locator('#tt-constraint-text-input').inputValue(), '语文尽量安排到上午');
+        await clickByScript('[data-action="parse-constraints"]');
+        await page.waitForFunction(() => {
+            const planner = window.ICeCream?.appLauncher?.currentToolInstance;
+            return document.querySelector('[data-constraint-input-summary]') && !planner?.state?.ruleReview?.parsing;
+        }, { timeout: 30000 });
+        const reparseResponse = page.waitForResponse(response => (
+            response.url().includes('/api/tools/timetable/rules/parse')
+            && response.request().method() === 'POST'
+        ), { timeout: 30000 });
+        await clickByScript('[data-action="reparse-constraint-input"]');
+        await reparseResponse;
+        await page.waitForFunction(() => {
+            const planner = window.ICeCream?.appLauncher?.currentToolInstance;
+            return document.querySelector('[data-constraint-input-summary]') && !planner?.state?.ruleReview?.parsing;
+        }, { timeout: 30000 });
+        await page.setViewportSize({ width: 1560, height: 950 });
+        await page.evaluate(() => document.body.classList.add('light-mode'));
+        await page.waitForTimeout(500);
+        await assertDesktopReviewLayout({ minReviewHeight: 220 });
+        await assertHeaderActionTheme();
+        await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-review-light.png') });
+        await page.evaluate(() => document.body.classList.remove('light-mode'));
+        await page.waitForTimeout(500);
+        await assertDesktopReviewLayout({ minReviewHeight: 220 });
+        await assertHeaderActionTheme();
+        await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-review-desktop.png') });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await assertDesktopReviewLayout({ minReviewHeight: 220 });
+        await page.setViewportSize({ width: 1280, height: 720 });
+        await assertDesktopReviewLayout({ minReviewHeight: 120 });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await assertMobileReviewLayout();
+        await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-review-mobile.png') });
+        await page.setViewportSize({ width: 1440, height: 900 });
+
         const reviewText = await recognizedText();
         assert.match(reviewText || '', /解析结果/);
-        assert.match(reviewText || '', /用户输入 1 条/);
-        assert.match(reviewText || '', /子约束 1 条/);
-        assert.match(reviewText || '', /可执行规则 0 条/);
-        assert.match(reviewText || '', /待补充 1 条/);
+        assert.match(reviewText || '', /已解析 1 条需求/);
+        assert.match(reviewText || '', /共 1 条需求/);
+        assert.match(reviewText || '', /可直接应用\s*0\s*项/);
+        assert.match(reviewText || '', /需要确认\s*1\s*项/);
         assert.match(reviewText || '', /理解为 1 个子约束/);
         assert.match(reviewText || '', /缺少班级范围.*全校/);
         assert.match(reviewText || '', /语文/);
         assert.match(reviewText || '', /上午/);
-        assert.deepEqual(await constraintFooterLabels(), ['取消', '重新理解']);
-        assert.equal(await page.locator('.tt-constraint-dialog-actions .tt-btn--primary').count(), 1);
+        assert.deepEqual(await constraintFooterLabels(), ['取消']);
+        assert.equal(await page.locator('.tt-constraint-dialog-actions .tt-btn--primary').count(), 0);
         assert.equal(await page.locator('[data-action="apply-constraints"]').count(), 0);
 
         await clearRecognizedConstraints();
@@ -180,9 +540,9 @@ async function main() {
         await clickByScript('[data-action="parse-constraints"]');
         await page.waitForSelector('.tt-requirement-workbench', { timeout: 30000 });
         const scopedReviewText = await recognizedText();
-        assert.match(scopedReviewText || '', /可执行规则 1 条/);
-        assert.match(scopedReviewText || '', /G7-1班\s*·\s*语文\s*·\s*不限教师/);
-        assert.deepEqual(await constraintFooterLabels(), ['取消', '重新理解', '应用需求 (1)']);
+        assert.match(scopedReviewText || '', /可直接应用\s*1\s*项/);
+        assert.match(scopedReviewText || '', /语文[｜|]\s*排课需求/);
+        assert.deepEqual(await constraintFooterLabels(), ['取消', '应用需求 (1)']);
 
         await clearRecognizedConstraints();
 
@@ -201,10 +561,10 @@ async function main() {
 
         const fileReviewText = await recognizedText();
         assert.match(fileReviewText || '', /解析结果/);
-        assert.match(fileReviewText || '', /用户输入 1 条/);
-        assert.match(fileReviewText || '', /子约束 1 条/);
-        assert.match(fileReviewText || '', /可执行规则 1 条/);
-        assert.match(fileReviewText || '', /理解为 1 个子约束/);
+        assert.match(fileReviewText || '', /已解析 1 条需求/);
+        assert.match(fileReviewText || '', /共 1 条需求/);
+        assert.match(fileReviewText || '', /可直接应用\s*1\s*项/);
+        assert.match(fileReviewText || '', /技术细节\s*查看子约束、机器规则和解析依据/);
         assert.match(fileReviewText || '', /落地结果/);
         assert.match(fileReviewText || '', /物理/);
         assert.match(fileReviewText || '', /上午/);
@@ -252,10 +612,10 @@ async function main() {
 
         const xlsxReviewText = await recognizedText();
         assert.match(xlsxReviewText || '', /解析结果/);
-        assert.match(xlsxReviewText || '', /用户输入 1 条/);
-        assert.match(xlsxReviewText || '', /子约束 1 条/);
-        assert.match(xlsxReviewText || '', /可执行规则 1 条/);
-        assert.match(xlsxReviewText || '', /理解为 1 个子约束/);
+        assert.match(xlsxReviewText || '', /已解析 1 条需求/);
+        assert.match(xlsxReviewText || '', /共 1 条需求/);
+        assert.match(xlsxReviewText || '', /可直接应用\s*1\s*项/);
+        assert.match(xlsxReviewText || '', /技术细节\s*查看子约束、机器规则和解析依据/);
         assert.match(xlsxReviewText || '', /落地结果/);
         assert.match(xlsxReviewText || '', /英语/);
         assert.match(xlsxReviewText || '', /上午/);
@@ -276,11 +636,19 @@ async function main() {
             () => document.querySelectorAll('.tt-requirement-row[data-requirement-id]').length === 137,
             { timeout: 30000 },
         );
+        await page.setViewportSize({ width: 1560, height: 950 });
+        await page.evaluate(() => document.body.classList.add('light-mode'));
+        await page.waitForTimeout(500);
+        await assertDesktopReviewLayout({ minReviewHeight: 220 });
+        await assertHeaderActionTheme();
+        await page.screenshot({ path: path.join(ARTIFACT_DIR, 'timetable-constraint-review-137-light.png') });
+        await page.evaluate(() => document.body.classList.remove('light-mode'));
+        await page.setViewportSize({ width: 1440, height: 900 });
 
         const realReviewText = await recognizedText();
-        assert.match(realReviewText || '', /用户输入 137 条/);
-        assert.match(realReviewText || '', /可执行规则 134 条/);
-        assert.match(realReviewText || '', /待补充 6 条/);
+        assert.match(realReviewText || '', /已解析 137 条需求/);
+        assert.match(realReviewText || '', /可直接应用\s*131\s*项/);
+        assert.match(realReviewText || '', /需要确认\s*6\s*项/);
         assert.doesNotMatch(realReviewText || '', /\b(?:unsupported|need_review|needs_review|schedule_request)\b/i);
         const realRequirementCards = page.locator('.tt-requirement-row[data-requirement-id]');
         assert.equal(await realRequirementCards.count(), 137);
@@ -296,6 +664,52 @@ async function main() {
                 `真实原文必须且只能对应一张一级卡片：${item.rawText}`,
             );
         });
+        const selectionAnchor = await page.evaluate(() => {
+            const list = document.querySelector('.tt-requirement-table-body');
+            if (!list) throw new Error('requirement list is unavailable');
+            const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
+            list.scrollTop = Math.round(maxScrollTop * 0.55);
+            const listRect = list.getBoundingClientRect();
+            const row = [...list.querySelectorAll('.tt-requirement-row[data-requirement-id]')]
+                .find(node => {
+                    const rect = node.getBoundingClientRect();
+                    return node.getAttribute('aria-pressed') !== 'true'
+                        && rect.top >= listRect.top + 4
+                        && rect.bottom <= listRect.bottom - 4;
+                });
+            if (!row) throw new Error('no visible requirement row is available for scroll retention');
+            return {
+                requirementId: row.dataset.requirementId,
+                scrollTop: list.scrollTop,
+            };
+        });
+        assert.ok(selectionAnchor.scrollTop > 0, JSON.stringify(selectionAnchor));
+        await page.evaluate(requirementId => {
+            const row = [...document.querySelectorAll('.tt-requirement-row[data-requirement-id]')]
+                .find(node => node.dataset.requirementId === requirementId);
+            row?.click();
+        }, selectionAnchor.requirementId);
+        await page.waitForFunction(requirementId => {
+            const row = [...document.querySelectorAll('.tt-requirement-row[data-requirement-id]')]
+                .find(node => node.dataset.requirementId === requirementId);
+            const detail = document.querySelector('.tt-requirement-detail[data-requirement-detail-id]');
+            return row?.getAttribute('aria-pressed') === 'true'
+                && detail?.dataset.requirementDetailId === requirementId;
+        }, selectionAnchor.requirementId);
+        const selectionResult = await page.evaluate(() => {
+            const list = document.querySelector('.tt-requirement-table-body');
+            const detail = document.querySelector('.tt-requirement-detail[data-requirement-detail-id]');
+            return {
+                listScrollTop: list?.scrollTop ?? -1,
+                detailScrollTop: detail?.scrollTop ?? -1,
+            };
+        });
+        assert.equal(
+            Math.abs(selectionResult.listScrollTop - selectionAnchor.scrollTop) <= 1,
+            true,
+            JSON.stringify({ selectionAnchor, selectionResult }),
+        );
+        assert.equal(selectionResult.detailScrollTop, 0, JSON.stringify(selectionResult));
         await clickByScript('[data-action="filter-requirements"][data-requirement-filter="review"]');
         assert.equal(await page.locator('.tt-requirement-row[data-requirement-id]').count(), 6);
         await clickByScript('[data-action="filter-requirements"][data-requirement-filter="rule"]');
@@ -308,11 +722,17 @@ async function main() {
         await multiClauseCard.click();
         const selectedDetail = page.locator('.tt-requirement-detail[data-requirement-detail-id]');
         await selectedDetail.waitFor({ state: 'visible', timeout: 10000 });
+        const technicalToggle = selectedDetail.locator('[data-action="toggle-technical-details"]');
+        if (await technicalToggle.getAttribute('aria-expanded') !== 'true') {
+            await technicalToggle.click();
+        }
         assert.ok(await selectedDetail.locator('.tt-requirement-clause-item').count() > 1);
         assert.match(await selectedDetail.textContent() || '', /理解为 [2-9]\d* 个子约束/);
         assert.match(await selectedDetail.textContent() || '', /执行可执行/);
         assert.doesNotMatch(await selectedDetail.textContent() || '', /当前版本只能预览这类建议/);
         await clickByScript('[data-action="filter-requirements"][data-requirement-filter="all"]');
+        await assertDesktopReviewLayout({ minReviewHeight: 220 });
+        await assertDesktopIndependentScrolling();
 
         await page.evaluate(() => {
             const planner = window.ICeCream?.appLauncher?.currentToolInstance;
@@ -338,8 +758,8 @@ async function main() {
             planner.render();
         });
         await page.waitForSelector('.tt-system-requirement-toggle', { timeout: 10000 });
-        assert.match(await recognizedText() || '', /系统补充 1 条/);
-        assert.match(await page.locator('.tt-system-requirement-toggle').textContent() || '', /系统补充的默认规则 \(1 条\)/);
+        assert.match(await recognizedText() || '', /系统已自动处理\s*1\s*项/);
+        assert.match(await page.locator('.tt-system-requirement-toggle').textContent() || '', /系统补充需求\s*1[\s\S]*默认规则/);
         assert.equal(await page.locator('[data-requirement-id="smoke-system-supplement"]').count(), 0);
         await clickByScript('[data-action="toggle-system-group"]');
         await page.waitForSelector('[data-requirement-id="smoke-system-supplement"]', { timeout: 10000 });
@@ -490,14 +910,16 @@ async function main() {
 
         const manualReviewText = await recognizedText();
         assert.match(manualReviewText || '', /解析结果/);
-        assert.match(manualReviewText || '', /用户输入 0 条/);
-        assert.match(manualReviewText || '', /子约束 1 条/);
-        assert.match(manualReviewText || '', /可执行规则 1 条/);
-        assert.match(manualReviewText || '', /理解为 1 个子约束/);
+        assert.match(manualReviewText || '', /已解析 1 条需求/);
+        assert.match(manualReviewText || '', /共 1 条需求/);
+        assert.match(manualReviewText || '', /可直接应用\s*1\s*项/);
+        assert.match(manualReviewText || '', /技术细节\s*查看子约束、机器规则和解析依据/);
         assert.match(manualReviewText || '', /落地结果/);
         assert.match(manualReviewText || '', new RegExp(manualTeacher.label));
         assert.match(manualReviewText || '', /周一第1节/);
 
+        await clickByScript('[data-action="expand-constraint-input"]');
+        await page.waitForSelector('#tt-manual-rule-type-trigger', { timeout: 10000 });
         await selectRuleType('tt-manual-rule', 'subject_preferred_periods');
         const manualSubject = await page.locator('#tt-manual-rule-target option').nth(1).evaluate(option => ({
             value: option.value,
@@ -528,12 +950,18 @@ async function main() {
         await page.check('[data-manual-rule-slot][value="2-2"]');
         await clickByScript('[data-action="add-manual-constraint"]');
 
+        await clickByScript('[data-action="expand-constraint-input"]');
+        await page.waitForSelector('#tt-manual-rule-type-trigger', { timeout: 10000 });
         await selectRuleType('tt-manual-rule', 'teacher_daily_limit');
         await page.selectOption('#tt-manual-rule-target', manualTeacher.value);
         await page.fill('#tt-manual-rule-limit', '4');
         await clickByScript('[data-action="add-manual-constraint"]');
-        assert.deepEqual(await constraintFooterLabels(), ['取消', '添加约束', '应用需求 (3)']);
+        assert.deepEqual(await constraintFooterLabels(), ['取消', '应用需求 (3)']);
 
+        const teacherUnavailableRequirement = page.locator(
+            '.tt-requirement-row[data-requirement-id]',
+        ).filter({ hasText: /不可排/ }).first();
+        await teacherUnavailableRequirement.click();
         await page.locator('[data-action="edit-constraint"]').first().click();
         await page.waitForSelector('#tt-edit-constraint-type-trigger', { timeout: 10000 });
         await page.locator('#tt-edit-constraint-type-trigger').click();
@@ -545,7 +973,7 @@ async function main() {
         await page.locator('#tt-edit-constraint-type-trigger').press('Escape');
         await selectRuleType('tt-edit-constraint', 'teacher_unavailable');
         await page.click('[data-action="save-edit-constraint"]');
-        await page.waitForFunction(() => !document.querySelector('.tt-constraint-edit-modal'), { timeout: 10000 });
+        await page.waitForFunction(() => !document.querySelector('.tt-constraint-edit-modal'), null, { timeout: 10000 });
 
         await clickByScript('[data-action="apply-constraints"]');
         await page.waitForFunction(() => {

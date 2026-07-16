@@ -33,6 +33,7 @@ function renderDialogWithRows(count) {
         html,
         durationMs: performance.now() - startTime,
         rowCount: (html.match(/class="tt-requirement-row(?:\s|")/g) || []).length,
+        detailCount: (html.match(/class="tt-requirement-detail(?:\s|")/g) || []).length,
         cardCount: (html.match(/class="tt-constraint-card(?:\s|")/g) || []).length,
     };
 }
@@ -42,7 +43,8 @@ describe('智能排课约束弹窗性能测试', () => {
         const result = renderDialogWithRows(10);
 
         assert.equal(result.rowCount, 10);
-        assert.equal(result.cardCount, 1);
+        assert.equal(result.detailCount, 1);
+        assert.equal(result.cardCount, 0);
         assert.ok(result.durationMs < 50, '10 条约束渲染应在 50ms 内完成');
     });
 
@@ -50,7 +52,8 @@ describe('智能排课约束弹窗性能测试', () => {
         const result = renderDialogWithRows(100);
 
         assert.equal(result.rowCount, 100);
-        assert.equal(result.cardCount, 1);
+        assert.equal(result.detailCount, 1);
+        assert.equal(result.cardCount, 0);
         assert.match(result.html, /tt-constraint-dialog/);
         assert.match(result.html, /tt-requirement-workbench/);
         assert.doesNotMatch(result.html, /tt-smart-workbench/);
@@ -61,7 +64,8 @@ describe('智能排课约束弹窗性能测试', () => {
         const result = renderDialogWithRows(200);
 
         assert.equal(result.rowCount, 200);
-        assert.equal(result.cardCount, 1);
+        assert.equal(result.detailCount, 1);
+        assert.equal(result.cardCount, 0);
         assert.ok(result.html.length < 260_000, '200 条约束 HTML 不应膨胀到不可维护体积');
     });
 });

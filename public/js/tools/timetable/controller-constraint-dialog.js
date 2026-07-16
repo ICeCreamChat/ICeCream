@@ -7,6 +7,7 @@ import { requestTimetable } from './api.js';
 import { compileConstraintRuleArtifacts } from './constraint-rule-form-model.js';
 import {
     buildConstraintApplyPlan,
+    buildRequirementReviewViewModel,
     buildUnifiedRequirementItems,
     draftRowApplyItemKey,
     filterUnifiedRequirementItems,
@@ -26,7 +27,7 @@ function valueList(value) {
 
 function getConstraintFlowStageFromReview(review = {}) {
     const phase = String(review.phase || '');
-    if (review.applying || phase === 'saving' || phase === 'save' || phase === 'applying' || phase === 'apply') {
+    if (review.applying || ['saving', 'save', 'applying', 'apply'].includes(phase)) {
         return 'apply';
     }
     if (review.parsing || review.loading) {
@@ -47,7 +48,9 @@ function getConstraintFlowStageFromReview(review = {}) {
 
 function getConstraintFlowStatusText(review = {}) {
     const stage = getConstraintFlowStageFromReview(review);
-    if (stage === 'apply') return '正在写入项目规则和模型设置';
+    if (review.applying || ['saving', 'save', 'applying', 'apply'].includes(String(review.phase || ''))) {
+        return '正在写入项目规则和模型设置';
+    }
     if (stage === 'review') return '请检查已理解需求和落地结果';
     if (stage === 'understand') {
         return review.phaseText || '正在本地识别需求';
@@ -492,10 +495,33 @@ export function toggleSystemRequirementGroup() {
 export function selectRequirement(requirementId) {
     const items = buildUnifiedRequirementItems(this.state.ruleReview || {});
     if (!items.some(item => item.id && item.id === requirementId)) return;
+    const requirementList = this.state.container?.querySelector?.('.tt-requirement-table-body');
+    const listScrollTop = Number(requirementList?.scrollTop);
     if (!this.state.constraintDialog) {
         this.state.constraintDialog = { open: true };
     }
     this.state.constraintDialog.selectedRequirementId = requirementId;
+    this.render();
+    const nextRequirementList = this.state.container?.querySelector?.('.tt-requirement-table-body');
+    if (nextRequirementList && Number.isFinite(listScrollTop)) {
+        nextRequirementList.scrollTop = Math.max(0, listScrollTop);
+    }
+}
+
+export function toggleRequirementTechnicalDetails(requirementId) {
+    const id = String(requirementId || '').trim();
+    if (!id) return;
+    const dialog = this.state.constraintDialog || { open: true };
+    const viewModel = buildRequirementReviewViewModel(this.state.ruleReview || {}, dialog);
+    const requirement = viewModel.items.find(item => item.id === id);
+    if (!requirement) return;
+    this.state.constraintDialog = {
+        ...dialog,
+        technicalDetailsExpandedById: {
+            ...(dialog.technicalDetailsExpandedById || {}),
+            [id]: !requirement.technicalDetailsExpanded,
+        },
+    };
     this.render();
 }
 
@@ -589,6 +615,30 @@ export function switchConstraintMode(mode) {
         this.state.ruleReview.fileName = '';
     }
     this.render();
+}
+
+export function expandConstraintInput() {
+    this.state.constraintDialog = {
+        ...(this.state.constraintDialog || {}),
+        inputExpanded: true,
+    };
+    this.render();
+}
+
+export function reparseConstraintInput() {
+    const mode = this.state.ruleReview?.inputMode || 'text';
+    this.state.constraintDialog = {
+        ...(this.state.constraintDialog || {}),
+        inputExpanded: true,
+    };
+    this.render();
+    if (mode === 'text') {
+        setTimeout(() => {
+            if (this.state.constraintDialog?.open && this.state.constraintDialog?.inputExpanded) {
+                this.parseConstraintsFromDialog();
+            }
+        }, 0);
+    }
 }
 
 /**
@@ -708,8 +758,10 @@ export async function parseConstraintsFromDialog() {
             ...(this.state.constraintDialog || {}),
             requirementFilter: reviewState.filter,
             selectedRequirementId: reviewState.selectedId,
+            inputExpanded: false,
         };
         if (mode === 'file') {
+            this.state.ruleReview.parsedFileName = inputData.file?.name || this.state.ruleReview.fileName || '';
             this.constraintDialogFile = null;
             this.state.ruleReview.fileName = '';
         }
@@ -807,6 +859,7 @@ export function addManualConstraint() {
         manualRuleType: type,
         manualRuleScope: {},
         manualRuleErrors: {},
+        inputExpanded: false,
     };
     this.render();
 }
@@ -896,6 +949,7 @@ export function clearAllConstraints() {
     if (this.state.constraintDialog) {
         this.state.constraintDialog.requirementFilter = 'all';
         this.state.constraintDialog.selectedRequirementId = '';
+        this.state.constraintDialog.inputExpanded = true;
     }
     this.render();
 }

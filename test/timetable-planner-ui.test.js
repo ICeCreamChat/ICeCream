@@ -280,13 +280,13 @@ test('timetable constraint dialog keeps mode actions in one compact footer', () 
       warnings: [],
     }],
   });
-  assert.match(reviewHtml, /重新理解/);
-  assert.doesNotMatch(actionTag(reviewHtml, 'parse-constraints'), /tt-btn--primary/);
+  assert.match(reviewHtml, /tt-constraint-input-summary/);
+  assert.match(reviewHtml, /已解析 1 条需求/);
+  assert.match(reviewHtml, /data-action="expand-constraint-input"/);
+  assert.match(reviewHtml, /data-action="reparse-constraint-input"/);
+  assert.doesNotMatch(reviewHtml, /data-action="parse-constraints"/);
   assert.match(actionTag(reviewHtml, 'apply-constraints'), /tt-btn--primary/);
-  assert.equal([
-    actionTag(reviewHtml, 'parse-constraints'),
-    actionTag(reviewHtml, 'apply-constraints'),
-  ].filter(tag => /tt-btn--primary/.test(tag)).length, 1);
+  assert.equal([actionTag(reviewHtml, 'apply-constraints')].filter(tag => /tt-btn--primary/.test(tag)).length, 1);
   assert.doesNotMatch(reviewHtml, /<small>将写入排课规则，立即参与下次排课<\/small>/);
   assert.match(actionTag(reviewHtml, 'apply-constraints'), /title="将写入排课规则，立即参与下次排课"/);
 
@@ -388,7 +388,7 @@ test('timetable constraint dialog renders object-first requirements as a review 
   assert.match(html, /输入需求[\s\S]*智能理解[\s\S]*人工复核[\s\S]*应用到项目/);
   assert.match(html, /把自然语言排课需求转换为可复核、可应用的规则和模型设置/);
   assert.match(html, /tt-requirement-review-summary/);
-  assert.match(html, /当前筛选可应用 2 项/);
+  assert.match(html, /可直接应用<\/b><strong>3<\/strong><small>项/);
   assert.match(html, /tt-requirement-filter-bar/);
   assert.match(html, /tt-requirement-filter--all/);
   assert.match(html, /tt-requirement-filter-children/);
@@ -408,9 +408,8 @@ test('timetable constraint dialog renders object-first requirements as a review 
   assert.match(html, /全部[\s\S]*5/);
   assert.match(html, /data-action="filter-requirements"/);
   assert.match(html, /data-action="select-requirement"/);
-  assert.match(html, /<span>数学<\/span>/);
-  assert.match(html, /<span>连堂设置<\/span>/);
-  assert.match(html, /<span>高负载教师<\/span>/);
+  assert.match(html, /<strong>数学｜连堂设置<\/strong>/);
+  assert.match(html, /<strong>高负载教师｜高负载教师保护<\/strong>/);
   assert.match(html, /AI 复审提示/);
   assert.match(html, /对象未唯一匹配/);
   assert.match(html, /未知课程第1节优先/);
@@ -453,7 +452,11 @@ test('timetable constraint dialog renders AI review as lightweight detail copy',
       semanticActions: [],
       aiReview: { status: 'reviewed' },
     },
-    constraintDialog: { open: true, selectedRequirementId: 'req_ai_review_copy' },
+    constraintDialog: {
+      open: true,
+      selectedRequirementId: 'req_ai_review_copy',
+      technicalDetailsExpandedById: { req_ai_review_copy: true },
+    },
   }));
   const dialogStyles = await readFile(constraintDialogStylePath, 'utf8');
   const aiReviewBlock = html.match(/<div class="tt-requirement-ai-review[\s\S]*?<\/div>/)?.[0] || '';
@@ -469,7 +472,8 @@ test('timetable constraint dialog renders AI review as lightweight detail copy',
   assert.match(dialogStyles, /\.tt-requirement-ai-review--warning\s*{/);
   assert.match(dialogStyles, /\.tt-requirement-ai-review p\s*{[\s\S]*color:\s*var\(--tt-text-secondary\);[\s\S]*font-weight:\s*400;/);
   assert.match(dialogStyles, /\.tt-requirement-ai-review small\s*{[\s\S]*color:\s*var\(--tt-muted\);[\s\S]*font-weight:\s*400;/);
-  assert.match(html, /tt-requirement-detail-summary[\s\S]*刘书涵[\s\S]*教师不可排[\s\S]*周一第2节[\s\S]*置信度 95%/);
+  assert.match(html, /tt-requirement-detail-header[\s\S]*刘书涵｜教师不可排/);
+  assert.match(html, /系统理解[\s\S]*刘书涵[\s\S]*教师不可排[\s\S]*周一第2节/);
   assert.match(html, /将应用的规则[\s\S]*识别依据/);
   assert.match(html, /tt-requirement-detail-evidence[\s\S]*AI 已复审/);
   assert.match(html, /tt-requirement-detail-evidence[\s\S]*刘书涵老师周一第2节不要排课/);
@@ -525,7 +529,11 @@ test('timetable constraint dialog coalesces one natural-language rule into one r
       semanticActions: [],
       warnings: [],
     },
-    constraintDialog: { open: true, selectedRequirementId: 'req_unavailable_time' },
+    constraintDialog: {
+      open: true,
+      selectedRequirementId: 'req_unavailable_time',
+      technicalDetailsExpandedById: { req_unavailable_time: true },
+    },
   }));
   const constraintStyles = await readFile(constraintDialogStylePath, 'utf8');
   const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
@@ -537,10 +545,10 @@ test('timetable constraint dialog coalesces one natural-language rule into one r
   assert.match(requirementRows[0], /周一第2节/);
   assert.doesNotMatch(requirementRows[0], /排课需求|不可排时间/);
   assert.match(html, /来自你的输入 1 条/);
-  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /可直接应用<\/b><strong>1<\/strong><small>项/);
   assert.match(html, /应用需求 \(1\)/);
   assert.doesNotMatch(detailHtml, /相关理解|排课需求|不可排时间/);
-  assert.match(detailHtml, /识别依据[\s\S]*刘书涵老师周一第2节/);
+  assert.match(detailHtml, /原文依据[\s\S]*刘书涵老师周一第2节/);
   assert.match(html, /将应用的规则[\s\S]*规则草稿/);
   assert.doesNotMatch(html, /<details class="tt-requirement-detail-disclosure">[\s\S]*<summary>原文与相关理解<\/summary>/);
   assert.doesNotMatch(constraintStyles, /\.tt-requirement-params,\s*\.tt-requirement-related,\s*\.tt-requirement-raw\s*{/s);
@@ -595,10 +603,10 @@ test('timetable constraint dialog coalesces full-sentence understanding with a s
   assert.match(requirementRows[0], /周一第2节/);
   assert.doesNotMatch(requirementRows[0], /排课需求/);
   assert.match(html, /全部[\s\S]*1/);
-  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /可直接应用<\/b><strong>1<\/strong><small>项/);
   assert.match(html, /应用需求 \(1\)/);
   assert.doesNotMatch(detailHtml, /相关理解|排课需求/);
-  assert.match(detailHtml, /识别依据[\s\S]*刘书涵老师周一第2节/);
+  assert.match(detailHtml, /原文依据[\s\S]*刘书涵老师周一第2节/);
 });
 
 test('timetable constraint dialog coalesces schedule request shells with time parameters into matching rules', () => {
@@ -645,7 +653,7 @@ test('timetable constraint dialog coalesces schedule request shells with time pa
   assert.match(requirementRows[0], /周一第2节/);
   assert.doesNotMatch(requirementRows[0], /排课需求/);
   assert.doesNotMatch(detailHtml, /相关理解|排课需求/);
-  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /可直接应用<\/b><strong>1<\/strong><small>项/);
   assert.match(html, /应用需求 \(1\)/);
 });
 
@@ -694,8 +702,8 @@ test('timetable constraint dialog coalesces schedule request shells with source 
   assert.match(requirementRows[0], /周一第2节/);
   assert.doesNotMatch(requirementRows[0], /排课需求/);
   assert.doesNotMatch(detailHtml, /相关理解|排课需求/);
-  assert.match(detailHtml, /识别依据[\s\S]*刘书涵老师周一第2节/);
-  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(detailHtml, /原文依据[\s\S]*刘书涵老师周一第2节/);
+  assert.match(html, /可直接应用<\/b><strong>1<\/strong><small>项/);
   assert.match(html, /应用需求 \(1\)/);
 });
 
@@ -743,7 +751,7 @@ test('timetable constraint dialog drops generic empty schedule request shells wh
   assert.doesNotMatch(requirementRows[0], /排课需求|全局/);
   assert.match(html, /全部[\s\S]*1/);
   assert.match(html, /需复核[\s\S]*0/);
-  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /可直接应用<\/b><strong>1<\/strong><small>项/);
   assert.match(html, /应用需求 \(1\)/);
 });
 
@@ -791,7 +799,7 @@ test('timetable constraint dialog drops named empty schedule request shells when
   assert.doesNotMatch(requirementRows[0], /排课需求/);
   assert.match(html, /全部[\s\S]*1/);
   assert.match(html, /需复核[\s\S]*0/);
-  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /可直接应用<\/b><strong>1<\/strong><small>项/);
   assert.match(html, /应用需求 \(1\)/);
 });
 
@@ -847,7 +855,7 @@ test('timetable constraint dialog drops named placeholder-only schedule request 
   assert.doesNotMatch(requirementRows[0], /排课需求/);
   assert.match(html, /全部[\s\S]*1/);
   assert.match(html, /需复核[\s\S]*0/);
-  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /可直接应用<\/b><strong>1<\/strong><small>项/);
   assert.match(html, /应用需求 \(1\)/);
 });
 
@@ -904,7 +912,11 @@ test('timetable constraint dialog hides covered redundant review hints from merg
       warnings: [],
       aiReview: { status: 'reviewed' },
     },
-    constraintDialog: { open: true, selectedRequirementId: 'req_redundant_shell' },
+    constraintDialog: {
+      open: true,
+      selectedRequirementId: 'req_redundant_shell',
+      technicalDetailsExpandedById: { req_redundant_shell: true },
+    },
   }));
   const requirementRows = html.match(/<button data-action="select-requirement"[\s\S]*?<\/button>/g) || [];
 
@@ -916,7 +928,7 @@ test('timetable constraint dialog hides covered redundant review hints from merg
   assert.match(html, /需求已正确解析为教师不可用时段规则/);
   assert.doesNotMatch(html, /待补充信息/);
   assert.doesNotMatch(html, /冗余需求/);
-  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /可直接应用<\/b><strong>1<\/strong><small>项/);
   assert.match(html, /应用需求 \(1\)/);
 });
 
@@ -1018,7 +1030,7 @@ test('timetable constraint dialog keeps separate same-teacher demands at differe
   assert.equal(requirementRows.length, 2);
   assert.match(requirementRows[0] + requirementRows[1], /周一第2节/);
   assert.match(requirementRows[0] + requirementRows[1], /周二第3节/);
-  assert.match(html, /当前筛选可应用 2 项/);
+  assert.match(html, /可直接应用<\/b><strong>2<\/strong><small>项/);
   assert.match(html, /应用需求 \(2\)/);
 });
 
@@ -1071,7 +1083,7 @@ test('timetable constraint dialog groups one demand with multiple same-slot mach
   assert.equal(requirementRows.length, 1);
   assert.match(requirementRows[0], /教师不可排/);
   assert.match(requirementRows[0], /周一第2节/);
-  assert.match(html, /当前筛选可应用 1 项/);
+  assert.match(html, /可直接应用<\/b><strong>1<\/strong><small>项/);
   assert.match(html, /应用需求 \(1\)/);
 });
 
@@ -1109,7 +1121,11 @@ test('timetable constraint dialog does not count rules_patch bridge actions as e
         target: { rowIds: ['rule-row'] },
       }],
     },
-    constraintDialog: { open: true, selectedRequirementId: 'req_rule' },
+    constraintDialog: {
+      open: true,
+      selectedRequirementId: 'req_rule',
+      technicalDetailsExpandedById: { req_rule: true },
+    },
   }));
 
   assert.match(html, /将应用的规则[\s\S]{0,80}1 项/);
@@ -1160,13 +1176,16 @@ test('timetable constraint dialog keeps requirement detail source aligned with i
         target: { rowIds: ['subject-rule-row'] },
       }],
     },
-    constraintDialog: { open: true, selectedRequirementId: 'req_subject_prefer' },
+    constraintDialog: {
+      open: true,
+      selectedRequirementId: 'req_subject_prefer',
+      technicalDetailsExpandedById: { req_subject_prefer: true },
+    },
   }));
 
-  assert.match(html, /<span>语文<\/span>/);
-  assert.match(html, /<strong>语文<\/strong>/);
-  assert.match(html, /原文[\s\S]{0,160}语文尽量安排在上午前四节/);
-  assert.match(html, /来源[\s\S]{0,120}AI约束建议 第 2 行/);
+  assert.match(html, /<strong>语文｜优先节次<\/strong>/);
+  assert.match(html, /原文依据[\s\S]{0,160}语文尽量安排在上午前四节/);
+  assert.match(html, /来源未知 · AI约束建议 第 2 行/);
   assert.doesNotMatch(html, /原文[\s\S]{0,160}同一位教师同一时间只能给一个班上课/);
 });
 
@@ -1243,7 +1262,7 @@ test('timetable constraint dialog localizes semantic enum aliases in requirement
   assert.match(html, /避开节次/);
   assert.match(html, /教师不可排/);
   assert.match(html, /双连堂/);
-  assert.match(requirementDetailMarkup(html), /识别依据[\s\S]*语文尽量上午/);
+  assert.match(requirementDetailMarkup(html), /原文依据[\s\S]*语文尽量上午/);
   assert.match(html, /建议/);
   assert.doesNotMatch(html, />candidate</);
   assert.doesNotMatch(html, />morning_preference</);
@@ -1798,9 +1817,9 @@ test('timetable constraint dialog filters semantic requirements by destination',
 
   assert.match(html, /data-requirement-filter="lesson_plan"[\s\S]*aria-pressed="true"/);
   assert.match(html, /data-requirement-id="req_block"[\s\S]*is-selected/);
-  assert.match(html, /<span>数学<\/span>/);
+  assert.match(html, /<strong>数学｜连堂设置<\/strong>/);
   assert.match(html, /双连堂/);
-  assert.doesNotMatch(html, /<span>语文<\/span>/);
+  assert.doesNotMatch(html, /<strong>语文｜优先节次<\/strong>/);
 });
 
 test('timetable constraint dialog applies only the current filtered requirements', async () => {
@@ -1852,7 +1871,7 @@ test('timetable constraint dialog applies only the current filtered requirements
   assert.match(html, /data-requirement-filter="lesson_plan"[\s\S]*aria-pressed="true"/);
   assert.match(html, /data-action="toggle-constraint-apply-item"/);
   assert.match(html, /data-apply-item-key="action:act_block"/);
-  assert.match(html, /暂停应用/);
+  assert.match(html, /暂不应用/);
   assert.match(html, /应用当前分类 \(1\)/);
   assert.doesNotMatch(html, /应用需求 \(2\)/);
 
@@ -2150,7 +2169,7 @@ test('timetable constraint dialog treats missing origin as unknown and excludes 
   }));
 
   assert.match(html, /用户输入 1 条/);
-  assert.match(html, /data-requirement-id="src:missing-origin"[\s\S]*?<small>来源未知<\/small>/);
+  assert.match(html, /data-requirement-id="src:missing-origin"[\s\S]*?<span class="tt-requirement-row-source">来源未知<\/span>/);
   assert.doesNotMatch(
     html.match(/data-requirement-id="src:missing-origin"[\s\S]*?<\/button>/)?.[0] || '',
     /我的输入/
@@ -2311,6 +2330,7 @@ test('timetable constraint dialog uses source statistics and renders clauses wit
       requirementFilter: 'all',
       selectedRequirementId: 'src:market-language',
       systemGroupCollapsed: false,
+      technicalDetailsExpandedById: { 'src:market-language': true },
     },
   }));
 
@@ -2321,13 +2341,13 @@ test('timetable constraint dialog uses source statistics and renders clauses wit
   assert.match(html, /待绑定 1 条/);
   assert.match(html, /待补充 1 条/);
   assert.match(html, /真正不支持 1 条/);
-  assert.equal((html.match(/data-requirement-id="src:market-language"/g) || []).length, 1);
+  assert.equal((html.match(/<button data-action="select-requirement" data-requirement-id="src:market-language"/g) || []).length, 1);
   assert.match(html, /data-requirement-id="src:market-language"[^>]*title="地理和生物尽量隔天分布，不要都挤在周四周五。"/);
-  assert.match(html, /data-requirement-id="src:market-language"[\s\S]*?<small>我的输入<\/small>/);
+  assert.match(html, /data-requirement-id="src:market-language"[\s\S]*?<span class="tt-requirement-row-source">我的输入<\/span>/);
   assert.match(html, /本地 \+ AI 解析/);
   assert.match(html, /理解为 2 个子约束/);
   assert.match(html, /已理解，但当前求解器暂不支持/);
-  assert.match(html, /系统补充的默认规则/);
+  assert.match(html, /data-requirement-id="supplement:teacher-conflict"/);
 });
 test('timetable smart helper summary counts source requirements instead of expanded machine rows', () => {
   const sourceRequirements = Array.from({ length: 137 }, (_, index) => ({
@@ -2416,16 +2436,26 @@ test('timetable constraint dialog can remove and restore one apply item without 
   };
   const initialHtml = renderWorkbench(sampleWorkbenchState({
     ruleReview,
-    constraintDialog: { open: true, requirementFilter: 'rule', selectedRequirementId: 'req_rule' },
+    constraintDialog: {
+      open: true,
+      requirementFilter: 'rule',
+      selectedRequirementId: 'req_rule',
+      technicalDetailsExpandedById: { req_rule: true },
+    },
   }));
   assert.match(initialHtml, /data-apply-item-key="rule:rule-row"/);
-  assert.match(initialHtml, /暂停应用/);
+  assert.match(initialHtml, /暂不应用/);
   assert.match(initialHtml, /应用当前分类 \(1\)/);
 
   const controller = new TimetablePlannerController();
   controller.render = () => {};
   controller.state.ruleReview = JSON.parse(JSON.stringify(ruleReview));
-  controller.state.constraintDialog = { open: true, requirementFilter: 'rule', selectedRequirementId: 'req_rule' };
+  controller.state.constraintDialog = {
+    open: true,
+    requirementFilter: 'rule',
+    selectedRequirementId: 'req_rule',
+    technicalDetailsExpandedById: { req_rule: true },
+  };
 
   controller.toggleConstraintApplyItem('rule:rule-row');
 
@@ -2446,7 +2476,7 @@ test('timetable constraint dialog can remove and restore one apply item without 
     ruleReview: controller.state.ruleReview,
     constraintDialog: controller.state.constraintDialog,
   }));
-  assert.match(restoredHtml, /暂停应用/);
+  assert.match(restoredHtml, /暂不应用/);
   assert.match(restoredHtml, /应用当前分类 \(1\)/);
 });
 
@@ -2539,7 +2569,12 @@ test('constraint intake mini cards share excluded apply state with rule review t
 
   const html = renderWorkbench(sampleWorkbenchState({
     ruleReview: controller.state.ruleReview,
-    constraintDialog: { open: true, requirementFilter: 'rule', selectedRequirementId: 'req_rule' },
+    constraintDialog: {
+      open: true,
+      requirementFilter: 'rule',
+      selectedRequirementId: 'req_rule',
+      technicalDetailsExpandedById: { req_rule: true },
+    },
     constraintAgent: {
       sessionId: 'agent-session',
       stage: 'CONFIRM',
@@ -3222,18 +3257,23 @@ test('timetable constraint dialog reserves semantic review height before legacy 
 
   assert.match(html, /tt-requirement-workbench/);
   assert.match(html, /解析结果/);
+  assert.match(html, /tt-constraint-flow--compact/);
   assert.match(html, /来自你的输入 1 条 · 系统补充 0 条/);
   assert.match(html, /落地结果/);
   assert.match(html, /data-constraint-id="legacy-draft-1"/);
   assert.match(html, /data-action="edit-constraint"/);
   assert.match(html, /data-action="delete-constraint"/);
   assert.doesNotMatch(html, /已识别约束/);
-  assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*--tt-requirement-review-height:\s*clamp/);
-  assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*grid-template-rows:\s*auto auto auto var\(--tt-requirement-review-height\)/);
-  assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*block-size:\s*calc\(var\(--tt-requirement-review-height\) \+ 118px\)/);
-  assert.match(dialogStyles, /\.tt-requirement-review-layout\s*{[\s\S]*height:\s*var\(--tt-requirement-review-height\)/);
-  assert.match(dialogStyles, /\.tt-requirement-table\s*{[\s\S]*grid-template-rows:\s*auto minmax\(0,\s*1fr\)/);
-  assert.match(dialogStyles, /@media \(max-width:\s*640px\)[\s\S]*\.tt-requirement-workbench\s*{[\s\S]*block-size:\s*auto/);
+  assert.match(dialogStyles, /\.tt-constraint-dialog--semantic-review\s*{[\s\S]*--tt-dialog-width:\s*1120px;[\s\S]*--tt-dialog-max-height:\s*820px;/);
+  assert.match(dialogStyles, /\.tt-requirement-workbench\s*{[\s\S]*padding:\s*0;[\s\S]*border:\s*0;[\s\S]*box-shadow:\s*none;/);
+  assert.match(dialogStyles, /\.tt-constraint-dialog--semantic-review \.tt-requirement-review-summary\s*{[\s\S]*display:\s*flex;[\s\S]*gap:\s*4px;/);
+  assert.match(dialogStyles, /\.tt-constraint-dialog--semantic-review \.tt-constraint-dialog-body--review \.tt-requirement-workbench\s*{[\s\S]*min-height:\s*0;[\s\S]*height:\s*100%;/);
+  assert.match(dialogStyles, /\.tt-constraint-dialog--semantic-review \.tt-constraint-dialog-body--review \.tt-requirement-review-layout\s*{[\s\S]*height:\s*auto;/);
+  assert.match(dialogStyles, /\.tt-constraint-dialog--semantic-review \.tt-requirement-review-layout\s*{[\s\S]*grid-template-columns:\s*minmax\(0,\s*0\.92fr\) minmax\(0,\s*1\.08fr\);[\s\S]*align-items:\s*stretch;/);
+  assert.match(dialogStyles, /\.tt-constraint-dialog--semantic-review \.tt-requirement-table\s*{[\s\S]*grid-template-rows:\s*minmax\(0,\s*1fr\);[\s\S]*overflow:\s*hidden;/);
+  assert.match(dialogStyles, /\.tt-constraint-dialog--semantic-review \.tt-requirement-table-body\s*{[\s\S]*min-height:\s*0;[\s\S]*overflow-y:\s*auto;/);
+  assert.match(dialogStyles, /@media \(max-width:\s*760px\)[\s\S]*\.tt-constraint-dialog--semantic-review \.tt-requirement-table-body\s*{[\s\S]*height:\s*auto;[\s\S]*max-height:\s*min\(42vh,\s*340px\);/);
+  assert.match(dialogStyles, /@media \(max-width:\s*760px\)[\s\S]*\.tt-constraint-dialog--semantic-review \.tt-requirement-detail\s*{[\s\S]*height:\s*auto;[\s\S]*overflow-y:\s*visible;/);
 });
 
 test('timetable constraint dialog folds draft-only constraints into understood requirements', () => {
@@ -3287,7 +3327,18 @@ test('timetable constraint dialog folds draft-only constraints into understood r
 
 test('timetable constraint dialog can select synthesized draft requirement rows', () => {
   const controller = new TimetablePlannerController();
-  controller.render = () => {};
+  const previousList = { scrollTop: 286 };
+  const nextList = { scrollTop: 0 };
+  let rendered = false;
+  controller.state.container = {
+    querySelector(selector) {
+      if (selector !== '.tt-requirement-table-body') return null;
+      return rendered ? nextList : previousList;
+    },
+  };
+  controller.render = () => {
+    rendered = true;
+  };
   controller.state.ruleReview = {
     draftRows: [{
       id: 'draft-select-1',
@@ -3311,6 +3362,7 @@ test('timetable constraint dialog can select synthesized draft requirement rows'
   controller.selectRequirement('draft_req_draft-select-1');
 
   assert.equal(controller.state.constraintDialog.selectedRequirementId, 'draft_req_draft-select-1');
+  assert.equal(nextList.scrollTop, 286);
 });
 
 test('timetable constraint dialog preserves legacy fallback when parse response omits sourceRequirements', async () => {
@@ -3566,6 +3618,8 @@ test('timetable constraint dialog controller exposes the current dialog actions'
   assert.match(dialogControllerSource, /closeConstraintDialog\(/);
   assert.match(dialogControllerSource, /parseConstraintsFromDialog\(/);
   assert.match(dialogControllerSource, /applyConstraintsFromDialog\(/);
+  assert.match(dialogControllerSource, /expandConstraintInput\(/);
+  assert.match(dialogControllerSource, /reparseConstraintInput\(/);
   assert.match(dialogControllerSource, /filterRequirements\(/);
   assert.match(dialogControllerSource, /selectRequirement\(/);
   assert.match(dialogControllerSource, /result\.draftRows/);
@@ -3576,6 +3630,8 @@ test('timetable constraint dialog controller exposes the current dialog actions'
   assert.match(interactionSource, /close-constraint-dialog/);
   assert.match(interactionSource, /switch-constraint-mode/);
   assert.match(interactionSource, /parse-constraints/);
+  assert.match(interactionSource, /expand-constraint-input/);
+  assert.match(interactionSource, /reparse-constraint-input/);
   assert.match(interactionSource, /apply-constraints/);
   assert.match(interactionSource, /filter-requirements/);
   assert.match(interactionSource, /select-requirement/);
@@ -11737,11 +11793,14 @@ test('timetable constraint dialog shows parse progress feedback', async () => {
     },
   }));
 
-  assert.match(initialHtml, /tt-constraint-flow-current/);
-  assert.match(initialHtml, /当前进度/);
+  assert.doesNotMatch(initialHtml, /tt-constraint-flow-current/);
+  assert.doesNotMatch(initialHtml, /当前进度/);
   assert.match(initialHtml, /data-constraint-flow-current-index[^>]*>1 \/ 4</);
   assert.doesNotMatch(initialHtml, /data-constraint-flow-current-title/);
-  assert.match(initialHtml, /等待输入文本、文件或手动补充/);
+  assert.match(initialHtml, /tt-constraint-flow-status-sr[^>]*[\s\S]*等待输入文本、文件或手动补充/);
+  assert.doesNotMatch(initialHtml, /告诉我你的排课要求/);
+  assert.doesNotMatch(initialHtml, /输入状态/);
+  assert.doesNotMatch(initialHtml, /已输入 0 条/);
   assert.match(initialHtml, /data-flow-step="input"[^>]*aria-current="step"/);
   assert.match(initialHtml, /tt-constraint-flow-step[^"]*is-current[\s\S]*?输入需求/);
   assert.match(fileHtml, /data-constraint-dialog-overlay/);
@@ -11750,7 +11809,6 @@ test('timetable constraint dialog shows parse progress feedback', async () => {
   assert.match(fileHtml, /data-lucide="loader-2"[^>]*class="tt-spin"/);
   assert.match(fileHtml, /正在解析/);
   assert.match(fileHtml, /data-flow-step="understand"[^>]*aria-current="step"/);
-  assert.match(fileHtml, /data-constraint-flow-current-index[^>]*>2 \/ 4</);
   assert.match(fileHtml, /data-flow-step="input"[^>]*is-complete/);
   assert.match(fileHtml, /tt-constraint-flow[^>]*--tt-flow-percent:/);
   assert.match(fileHtml, /data-action="switch-constraint-mode"[\s\S]*?disabled/);
@@ -11760,9 +11818,8 @@ test('timetable constraint dialog shows parse progress feedback', async () => {
   assert.match(aiReviewHtml, /data-flow-step="understand"[^>]*aria-current="step"/);
   assert.match(aiReviewHtml, /正在让 AI 复审识别结果/);
   assert.match(reviewHtml, /data-flow-step="review"[^>]*aria-current="step"/);
-  assert.match(reviewHtml, /data-constraint-flow-current-index[^>]*>3 \/ 4</);
   assert.match(reviewHtml, /data-flow-step="understand"[^>]*is-complete/);
-  assert.match(reviewHtml, /请检查已理解需求和落地结果/);
+  assert.match(reviewHtml, /tt-constraint-flow-status-sr[^>]*[\s\S]*请检查已理解需求和落地结果/);
 
   const textHtml = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
@@ -11793,13 +11850,16 @@ test('timetable constraint dialog shows parse progress feedback', async () => {
   assert.doesNotMatch(dialogStyles, /\.tt-constraint-command-row\s*{/);
   assert.doesNotMatch(dialogStyles, /\.tt-quick-examples\s*{/);
   assert.doesNotMatch(dialogStyles, /\.tt-constraint-intake-note\s*{/);
-  assert.match(dialogStyles, /\.tt-constraint-flow-current\s*{/);
+  assert.doesNotMatch(dialogStyles, /\.tt-constraint-flow-current\s*{/);
+  assert.match(dialogStyles, /\.tt-constraint-flow-status-sr\s*{[^}]*position:\s*absolute;[^}]*clip-path:\s*inset\(50%\)/);
+  assert.match(dialogStyles, /\.tt-constraint-stagebar \.tt-constraint-flow-wrap\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(dialogStyles, /\.tt-constraint-intake-panel\s*{[^}]*padding:\s*0;[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*box-shadow:\s*none;/);
+  assert.match(dialogStyles, /\.tt-constraint-mode-row\s*{[^}]*align-items:\s*flex-start;[^}]*flex-direction:\s*column;[^}]*justify-content:\s*flex-start;/);
   assert.match(dialogStyles, /\.tt-constraint-flow::before\s*{/);
   assert.match(dialogStyles, /\.tt-constraint-flow::after\s*{/);
   assert.match(dialogStyles, /\.tt-constraint-flow-step\.is-current\s*{/);
   assert.match(dialogStyles, /\.tt-constraint-flow-step\.is-complete\s*{/);
   assert.match(dialogStyles, /\.tt-constraint-flow-step\.is-upcoming\s*{/);
-  assert.match(dialogStyles, /\.tt-constraint-flow-current\s+small\s*{/);
   assert.match(dialogStyles, /\.tt-tab-btn\s+span\s*{[^}]*white-space:\s*nowrap/);
   assert.match(dialogStyles, /\.tt-tab-btn\.is-active\s*{[^}]*background:\s*var\(--tt-bg-panel\)/);
   assert.doesNotMatch(dialogStyles, /\.tt-tab-btn\.is-active\s*{[^}]*background:\s*var\(--tt-primary\)/);
@@ -11903,6 +11963,7 @@ test('timetable constraint AI chat is embedded inside the constraint dialog', as
   assert.doesNotMatch(indexHtml, /css\/timetable-smart-workbench\.css/);
   assert.match(dialogStyles, /\.tt-constraint-dialog\s*{/);
   assert.match(dialogStyles, /--tt-dialog-width:\s*780px/);
+  assert.match(dialogStyles, /--tt-dialog-max-height:\s*820px/);
   assert.match(dialogStyles, /\.tt-constraint-dialog-body\s*{/);
   assert.match(dialogStyles, /\.tt-constraint-dialog--with-ai\s*{[\s\S]*--tt-dialog-width:\s*960px/);
   assert.match(dialogStyles, /@media\s*\(max-width:\s*640px\)[\s\S]*\.tt-constraint-dialog/);
@@ -12002,15 +12063,15 @@ test('timetable constraint dialog locks inputs while rules are being written', (
     },
   }));
 
-  assert.match(html, /正在解析/);
+  assert.match(html, /tt-constraint-input-summary/);
+  assert.doesNotMatch(html, /id="tt-constraint-file-input"/);
   assert.match(html, /data-flow-step="apply"[^>]*aria-current="step"/);
   assert.match(html, /data-constraint-flow-current-index[^>]*>4 \/ 4</);
   assert.match(html, /data-flow-step="review"[^>]*is-complete/);
   assert.match(html, /正在写入项目规则和模型设置/);
-  assert.match(html, /data-action="parse-constraints"[^>]*disabled/);
   assert.match(html, /data-action="apply-constraints"[^>]*disabled/);
-  assert.match(html, /data-lucide="loader-2"[^>]*class="tt-spin"/);
-  assert.match(html, /data-action="switch-constraint-mode"[\s\S]*?disabled/);
+  assert.doesNotMatch(html, /data-action="parse-constraints"/);
+  assert.doesNotMatch(html, /data-action="switch-constraint-mode"/);
   assert.match(html, /data-constraint-id="draft-1"/);
   assert.doesNotMatch(html, /data-action="smart-workbench-preview-rules"/);
   assert.doesNotMatch(html, /data-rule-review-field="rawText"/);
@@ -12073,7 +12134,11 @@ test('timetable constraint dialog explains card warnings and source text separat
       advancedOpen: true,
       loading: false,
     },
-    constraintDialog: { open: true, selectedRequirementId: 'draft_req_draft-source-1' },
+    constraintDialog: {
+      open: true,
+      selectedRequirementId: 'draft_req_draft-source-1',
+      technicalDetailsExpandedById: { 'draft_req_draft-source-1': true },
+    },
   }));
 
   assert.match(html, /data-constraint-dialog-overlay/);
@@ -12808,6 +12873,11 @@ test('timetable constraint dialog disables apply when blocking conflicts exist',
       warnings: [],
       unsupportedItems: [],
     },
+    constraintDialog: {
+      open: true,
+      selectedRequirementId: 'draft_req_auto-1',
+      technicalDetailsExpandedById: { 'draft_req_auto-1': true },
+    },
   }));
 
   assert.match(html, /data-action="apply-constraints"[^>]*disabled/);
@@ -12999,6 +13069,11 @@ test('timetable constraint dialog card aligns controls and helper text without t
       warnings: [],
       advancedOpen: true,
       loading: false,
+    },
+    constraintDialog: {
+      open: true,
+      selectedRequirementId: 'draft_req_draft-align-1',
+      technicalDetailsExpandedById: { 'draft_req_draft-align-1': true },
     },
   }));
 

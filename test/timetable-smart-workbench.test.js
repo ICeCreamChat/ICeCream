@@ -32,6 +32,8 @@ test('constraint dialog state replaces the removed smart workbench by default', 
         open: false,
         requirementFilter: 'all',
         selectedRequirementId: '',
+        inputExpanded: false,
+        technicalDetailsExpandedById: {},
     });
     assert.deepEqual(state.ruleReview.sourceRequirements, []);
     assert.deepEqual(state.ruleReview.systemSupplements, []);
@@ -133,7 +135,11 @@ test('constraint dialog formats recognized constraint time, source row and revie
     };
     const slotHtml = renderConstraintDialog(createTimetablePlannerState({
         ...baseState,
-        constraintDialog: { open: true, selectedRequirementId: 'draft_req_rule_slots' },
+        constraintDialog: {
+            open: true,
+            selectedRequirementId: 'draft_req_rule_slots',
+            technicalDetailsExpandedById: { draft_req_rule_slots: true },
+        },
     }));
     const weekHtml = renderConstraintDialog(createTimetablePlannerState({
         ...baseState,
@@ -145,7 +151,7 @@ test('constraint dialog formats recognized constraint time, source row and revie
     }));
 
     assert.match(slotHtml, /周一第1节、周一第2节/);
-    assert.match(slotHtml, /来源：AI约束建议 第 2 行/);
+    assert.match(slotHtml, /来源未知 · AI约束建议 第 2 行/);
     assert.match(slotHtml, /AI约束建议 第 2 行 · 本地识别/);
     assert.match(weekHtml, /单双周/);
     assert.match(morningHtml, /上午时段/);

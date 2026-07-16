@@ -25,6 +25,7 @@ import {
     renderAIChatPanel,
 } from './view-constraint-dialog-components.js';
 import {
+    buildRequirementReviewViewModel,
     buildUnifiedRequirementItems,
     draftRowApplyItemKey,
     filterUnifiedRequirementItems,
@@ -330,9 +331,6 @@ function renderRequirementDetailSummary(item = {}) {
     return `
         <div class="tt-requirement-detail-summary">
             <div class="tt-requirement-detail-summary-title">
-                <span class="tt-requirement-status tt-requirement-status--${escapeAttr(requirementStatusTone(item))}">
-                    ${escapeHtml(requirementStatusLabel(item))}
-                </span>
                 <strong>${escapeHtml(objectName)}</strong>
             </div>
             <p>${escapeHtml(summaryLine || intentLabel || '已理解需求')}</p>
@@ -403,7 +401,7 @@ function requirementComplexBadges(item = {}) {
 
 function constraintFlowStage(review = {}, requirements = []) {
     const phase = String(review.phase || '');
-    if (review.applying || phase === 'saving' || phase === 'save' || phase === 'applying' || phase === 'apply') {
+    if (review.applying || ['saving', 'save', 'applying', 'apply'].includes(phase)) {
         return 'apply';
     }
     if (review.parsing || review.loading) {
@@ -421,7 +419,9 @@ function constraintFlowStage(review = {}, requirements = []) {
 }
 
 function constraintFlowStatusText(review = {}, stage = 'input') {
-    if (stage === 'apply') return '正在写入项目规则和模型设置';
+    if (review.applying || ['saving', 'save', 'applying', 'apply'].includes(String(review.phase || ''))) {
+        return '正在写入项目规则和模型设置';
+    }
     if (stage === 'review') return '请检查已理解需求和落地结果';
     if (stage === 'understand') {
         return review.phaseText || '正在本地识别需求';
@@ -443,11 +443,10 @@ function renderConstraintFlow(compact = false, review = {}, requirements = []) {
     const statusText = constraintFlowStatusText(review, currentStage);
     return `
         <div class="tt-constraint-flow-wrap" data-current-flow-step="${escapeAttr(currentStage)}">
-            <div class="tt-constraint-flow-current">
-                <span>当前进度</span>
+            <span class="tt-constraint-flow-status-sr" aria-live="polite">
                 <b data-constraint-flow-current-index>${escapeHtml(`${currentIndex + 1} / ${steps.length}`)}</b>
-                <small data-constraint-flow-status>${escapeHtml(statusText)}</small>
-            </div>
+                <span data-constraint-flow-status>${escapeHtml(statusText)}</span>
+            </span>
             <div class="tt-constraint-flow ${compact ? 'tt-constraint-flow--compact' : ''}" aria-label="智能约束处理流程" style="--tt-flow-percent: ${flowPercent}%; --tt-flow-fill: ${flowFill}%">
                 ${steps.map((step, index) => {
                     const stepState = index < currentIndex ? 'is-complete' : index === currentIndex ? 'is-current' : 'is-upcoming';
@@ -521,24 +520,54 @@ function requirementReviewSummary(requirements = [], activeFilter = 'all', revie
     };
 }
 
-function renderRequirementReviewSummary(requirements = [], activeFilter = 'all', review = {}) {
-    const summary = requirementReviewSummary(requirements, activeFilter, review);
-    const executableLabel = summary.usesStatistics ? '可执行规则' : '可应用';
-    const executableUnit = summary.usesStatistics ? '条' : '项';
+function renderRequirementReviewSummary(viewModel = {}) {
+    const counts = viewModel.counts || {};
     return `
         <div class="tt-requirement-review-summary" aria-label="需求复核概览">
-            <span><b>${executableLabel}</b>${escapeHtml(summary.usesStatistics ? summary.executableRuleCount : summary.applicable)} ${executableUnit}</span>
-            <span class="${summary.bindingCount ? 'is-warning' : ''}"><b>待绑定</b>${escapeHtml(summary.bindingCount)} 项</span>
-            <span class="${summary.clarificationCount ? 'is-warning' : ''}"><b>待补充</b>${escapeHtml(summary.clarificationCount)} 项</span>
-            <span class="${summary.unsupportedCount ? 'is-warning' : ''}"><b>真正不支持</b>${escapeHtml(summary.unsupportedCount)} 项</span>
-            <span><b>已处理</b>${escapeHtml(summary.handledCount)} 项</span>
-            <span class="${summary.complexCount ? 'is-complex' : ''}"><b>复杂模型</b>${escapeHtml(summary.complexCount)} 项</span>
-            <em>当前筛选可应用 ${escapeHtml(summary.applicable)} 项</em>
+            <span class="is-applicable"><b>可直接应用</b><strong>${escapeHtml(counts.applicable || 0)}</strong><small>项</small></span>
+            <span class="${counts.attention ? 'is-warning' : ''}"><b>需要确认</b><strong>${escapeHtml(counts.attention || 0)}</strong><small>项</small></span>
+            <span class="is-handled"><b>系统已自动处理</b><strong>${escapeHtml(counts.handled || 0)}</strong><small>项</small></span>
         </div>
     `;
 }
 
+function renderRequirementDetailField(label, value, className = '') {
+    return `
+        <section class="tt-requirement-detail-section ${className}">
+            <span class="tt-requirement-detail-label">${escapeHtml(label)}</span>
+            <strong class="tt-requirement-detail-value">${escapeHtml(value || '-')}</strong>
+        </section>
+    `;
+}
+
+function renderRequirementComplexSection(item = {}) {
+    const badges = requirementComplexBadges(item);
+    const support = item.modelSupport;
+    const supportLabel = support?.supported === true
+        ? '已启用'
+        : support?.supported === false
+            ? '待启用'
+            : '';
+    const value = badges.length ? badges.join(' · ') : '常规排课规则';
+    return `
+        <section class="tt-requirement-detail-section tt-requirement-detail-complex">
+            <span class="tt-requirement-detail-label">复杂能力</span>
+            <div class="tt-requirement-complex-detail">
+                <strong class="tt-requirement-detail-value">${escapeHtml(value)}</strong>
+                ${supportLabel ? `<span class="tt-requirement-complex-state">${escapeHtml(supportLabel)}</span>` : ''}
+            </div>
+        </section>
+    `;
+}
+
 function renderRequirementStatisticsLine(summary = {}) {
+    if (!summary.usesStatistics) {
+        return `用户输入 ${summary.userInputCount} 条 · 系统补充 ${summary.systemSupplementCount} 条 · 本次可写入排课 ${summary.applicable} 条`;
+    }
+    return `用户输入 ${summary.userInputCount} 条 · 系统补充 ${summary.systemSupplementCount} 条 · 子约束 ${summary.clauseCount} 条 · 可执行规则 ${summary.executableRuleCount} 条 · 待绑定 ${summary.bindingCount} 条 · 待补充 ${summary.clarificationCount} 条 · 真正不支持 ${summary.unsupportedCount} 条`;
+}
+
+function renderLegacyRequirementStatisticsLine(summary = {}) {
     if (!summary.usesStatistics) {
         return `来自你的输入 ${summary.userInputCount} 条 · 系统补充 ${summary.systemSupplementCount} 条 · 本次可写入排课 ${summary.applicable} 条`;
     }
@@ -624,30 +653,29 @@ function renderRequirementFilterBar(requirements = [], activeFilter = 'all') {
     `;
 }
 
-function renderRequirementRow(item = {}, selectedId = '') {
-    const sourceText = requirementRawText(item);
-    const objectName = requirementObjectName(item);
+function renderRequirementRow(viewItem = {}, selectedId = '') {
+    const item = viewItem.item || {};
     const parameterLabel = requirementParameterLabel(item);
-    const isSelected = item.id && item.id === selectedId;
-    const hasWarning = (item.warnings || []).length > 0;
-    const complexBadges = requirementComplexBadges(item);
-    const applyTone = requirementApplyTone(item.applyTo, item.status);
+    const isSelected = viewItem.id && viewItem.id === selectedId;
+    const hasWarning = viewItem.bucket === 'attention';
+    const title = [viewItem.objectLabel, viewItem.title].filter(Boolean).join('｜');
+    const effectLabel = String(viewItem.destinationLabel || '').replace(/^[→✓⚠○]\s*/, '');
     return `
-        <button data-action="select-requirement" data-requirement-id="${escapeAttr(item.id || '')}"
+        <button data-action="select-requirement" data-requirement-id="${escapeAttr(viewItem.id || '')}"
             class="tt-requirement-row ${isSelected ? 'is-selected' : ''} ${hasWarning ? 'has-warning' : ''}" type="button" aria-pressed="${isSelected ? 'true' : 'false'}"
-            title="${escapeAttr(sourceText || requirementIntentLabel(item.intent))}">
-            <span class="tt-requirement-status tt-requirement-status--${escapeAttr(requirementStatusTone(item))}">
-                ${escapeHtml(requirementStatusLabel(item))}
-                <small>${escapeHtml(requirementOriginLabel(item))}</small>
+            title="${escapeAttr(viewItem.rawText || title)}">
+            <span class="tt-requirement-status tt-requirement-status--${escapeAttr(viewItem.statusTone)}">
+                ${escapeHtml(viewItem.statusLabel)}
             </span>
-            <span>${escapeHtml(objectName)}</span>
-            <span>${escapeHtml(requirementIntentLabel(item.intent))}</span>
-            <span class="tt-requirement-destination tt-requirement-destination--${escapeAttr(applyTone)}">${escapeHtml(requirementApplyLabel(item.applyTo))}</span>
-            <span>
-                ${escapeHtml(parameterLabel || '-')}
-                ${complexBadges.length ? `<small>${complexBadges.map(badge => escapeHtml(badge)).join(' · ')}</small>` : ''}
+            <span class="tt-requirement-row-main">
+                <strong>${escapeHtml(title || '排课需求')}</strong>
+                <small>${escapeHtml(parameterLabel || viewItem.destinationExplanation)}</small>
             </span>
-            <span>${escapeHtml(requirementSourceLabel(item))}</span>
+            <span class="tt-requirement-row-effect tt-requirement-destination--${escapeAttr(viewItem.destinationTone)}">
+                <small>将应用到</small>
+                <strong>${escapeHtml(effectLabel || '待确认')}</strong>
+            </span>
+            <span class="tt-requirement-row-source">${escapeHtml(viewItem.sourceLabel)}</span>
         </button>
     `;
 }
@@ -817,9 +845,9 @@ function renderRequirementMachineRules(item = {}, state = {}) {
     `;
 }
 
-function renderRequirementEvidenceSection(item = {}, review = {}) {
+function renderRequirementEvidenceSection(item = {}, review = {}, includeSourceText = true) {
     const aiReview = renderRequirementAiReview(item, review);
-    const evidenceText = renderRequirementEvidenceText(item, aiReview);
+    const evidenceText = includeSourceText ? renderRequirementEvidenceText(item, aiReview) : '';
     if (!aiReview && !evidenceText) return '';
     return `
         <section class="tt-requirement-detail-section tt-requirement-detail-evidence">
@@ -940,8 +968,82 @@ function renderRequirementModelSupport(item = {}) {
     `;
 }
 
-function renderRequirementDetail(item = null, state = {}) {
-    if (!item) {
+function renderRequirementActions(viewItem = {}, state = {}) {
+    const item = viewItem.item || {};
+    const rules = (item.machineRules || []).filter(Boolean);
+    const actions = (item.semanticActions || []).filter(action => !isRulePatchBridgeAction(action));
+    const primaryRule = rules[0] || null;
+    const primaryAction = !primaryRule ? (actions[0] || null) : null;
+    const applyItem = primaryRule || primaryAction;
+    if (!applyItem) return '';
+    const applyItemKey = primaryRule ? draftRowApplyItemKey(primaryRule) : semanticActionApplyItemKey(primaryAction);
+    const excluded = isApplyItemExcluded(state.ruleReview || {}, applyItemKey);
+    return `
+        <div class="tt-requirement-detail-actions" aria-label="需求操作">
+            <button class="tt-btn tt-btn--sm tt-btn--ghost" data-action="toggle-constraint-apply-item"
+                data-apply-item-key="${escapeAttr(applyItemKey)}" type="button">
+                <i data-lucide="${excluded ? 'rotate-ccw' : 'pause'}"></i>
+                <span>${escapeHtml(excluded ? '恢复应用' : '暂不应用')}</span>
+            </button>
+            ${primaryRule ? `
+                <button class="tt-btn tt-btn--sm tt-btn--ghost" data-action="edit-constraint" data-constraint-id="${escapeAttr(primaryRule.id || '')}" type="button">
+                    <i data-lucide="pencil"></i><span>编辑规则</span>
+                </button>
+                <button class="tt-btn tt-btn--sm tt-btn--ghost tt-btn--danger" data-action="delete-constraint" data-constraint-id="${escapeAttr(primaryRule.id || '')}" type="button">
+                    <i data-lucide="trash-2"></i><span>删除规则</span>
+                </button>
+            ` : ''}
+        </div>
+    `;
+}
+
+function renderRequirementAttention(viewItem = {}) {
+    if (viewItem.bucket !== 'attention') return '';
+    const item = viewItem.item || {};
+    const messages = viewItem.attentionItems || [];
+    return `
+        <section class="tt-requirement-attention" aria-label="需要你处理的问题">
+            <div class="tt-requirement-section-heading">
+                <i data-lucide="circle-alert"></i>
+                <strong>需要你处理的问题</strong>
+            </div>
+            ${messages.length ? `<ul>${messages.map(message => `<li>${escapeHtml(message)}</li>`).join('')}</ul>` : ''}
+            ${renderRequirementClarification(item)}
+            ${renderRequirementModelSupport(item)}
+        </section>
+    `;
+}
+
+function renderRequirementTechnicalDetails(viewItem = {}, state = {}) {
+    const item = viewItem.item || {};
+    const expanded = viewItem.technicalDetailsExpanded === true;
+    const review = state.ruleReview?.aiReview || {};
+    return `
+        <section class="tt-requirement-technical ${expanded ? 'is-expanded' : ''}">
+            <button class="tt-requirement-technical-toggle" data-action="toggle-technical-details"
+                data-requirement-id="${escapeAttr(viewItem.id)}" type="button" aria-expanded="${expanded ? 'true' : 'false'}">
+                <span><i data-lucide="code-2"></i>技术细节</span>
+                <small>${expanded ? '收起' : '查看子约束、机器规则和解析依据'}</small>
+                <i data-lucide="chevron-down"></i>
+            </button>
+            ${expanded ? `
+                <div class="tt-requirement-technical-body">
+                    ${viewItem.technicalDetails.warnings.length
+                        ? renderRequirementDetailField('解析提示', viewItem.technicalDetails.warnings.join('；'), 'tt-requirement-detail-warning')
+                        : ''}
+                    ${renderRequirementComplexSection(item)}
+                    ${renderRequirementClauses(item)}
+                    ${renderRequirementMachineRules(item, state)}
+                    ${renderRequirementEvidenceSection(item, review, false)}
+                    ${viewItem.technicalDetails.parsedBy.length ? renderRequirementDetailField('解析方式', requirementParsedByLabel(item)) : ''}
+                </div>
+            ` : ''}
+        </section>
+    `;
+}
+
+function renderRequirementDetail(viewItem = null, state = {}) {
+    if (!viewItem) {
         return `
             <aside class="tt-requirement-detail tt-requirement-detail--empty">
                 <i data-lucide="info"></i>
@@ -949,23 +1051,56 @@ function renderRequirementDetail(item = null, state = {}) {
             </aside>
         `;
     }
-    const warnings = item.warnings || [];
-    const review = state.ruleReview?.aiReview || {};
+    const item = viewItem.item || {};
+    const parameterLabel = requirementParameterLabel(item);
+    const sourceText = viewItem.rawText || '未保留原始输入文本';
+    const effectLabel = String(viewItem.destinationLabel || '').replace(/^[→✓⚠○]\s*/, '');
     return `
-        <aside class="tt-requirement-detail" data-requirement-detail-id="${escapeAttr(item.id || '')}">
-            ${renderRequirementDetailSummary(item)}
-            ${renderRequirementClauses(item)}
-            ${renderRequirementMachineRules(item, state)}
-            ${renderRequirementEvidenceSection(item, review)}
-            ${renderRequirementClarification(item)}
-            ${renderRequirementModelSupport(item)}
-            ${warnings.length ? `
-                <div class="tt-constraint-warning">
-                    <i data-lucide="alert-circle"></i>
-                    <span>${escapeHtml(warnings[0])}</span>
+        <aside class="tt-requirement-detail" data-requirement-detail-id="${escapeAttr(viewItem.id || '')}">
+            <div class="tt-requirement-detail-header">
+                <div>
+                    <span class="tt-requirement-status tt-requirement-status--${escapeAttr(viewItem.statusTone)}">${escapeHtml(viewItem.statusLabel)}</span>
+                    <strong>${escapeHtml(viewItem.objectLabel)}｜${escapeHtml(viewItem.title)}</strong>
                 </div>
-            ` : ''}
+                <span class="tt-requirement-detail-source">${escapeHtml(viewItem.sourceLabel)}</span>
+            </div>
+            <section class="tt-requirement-user-section">
+                <span class="tt-requirement-detail-label">系统理解</span>
+                <strong>${escapeHtml([viewItem.objectLabel, viewItem.title, parameterLabel].filter(Boolean).join(' · '))}</strong>
+            </section>
+            <section class="tt-requirement-user-section tt-requirement-user-section--effect">
+                <span class="tt-requirement-detail-label">将如何生效</span>
+                <div>
+                    <strong class="tt-requirement-destination--${escapeAttr(viewItem.destinationTone)}">${escapeHtml(effectLabel || '待确认')}</strong>
+                    <p>${escapeHtml(viewItem.destinationExplanation)}</p>
+                </div>
+            </section>
+            ${renderRequirementAttention(viewItem)}
+            <section class="tt-requirement-source-evidence">
+                <span class="tt-requirement-detail-label">原文依据</span>
+                <blockquote>${escapeHtml(sourceText)}</blockquote>
+            </section>
+            ${renderRequirementActions(viewItem, state)}
+            ${renderRequirementTechnicalDetails(viewItem, state)}
         </aside>
+    `;
+}
+
+function renderRequirementBucket(title, description, items = [], selectedId = '', tone = '') {
+    if (!items.length) return '';
+    return `
+        <section class="tt-requirement-bucket tt-requirement-bucket--${escapeAttr(tone || 'default')}">
+            <header class="tt-requirement-bucket-header">
+                <div>
+                    <strong>${escapeHtml(title)}</strong>
+                    <small>${escapeHtml(description)}</small>
+                </div>
+                <span>${escapeHtml(items.length)}</span>
+            </header>
+            <div class="tt-requirement-bucket-list">
+                ${items.map(item => renderRequirementRow(item, selectedId)).join('')}
+            </div>
+        </section>
     `;
 }
 
@@ -974,58 +1109,54 @@ function renderRequirementGroups(requirements = [], dialog = {}, state = {}) {
     const activeFilter = REQUIREMENT_FILTERS.some(filter => filter.key === dialog.requirementFilter)
         ? dialog.requirementFilter
         : 'all';
-    const visibleCandidates = filteredRequirements(requirements, activeFilter);
-    const userVisibleRequirements = visibleCandidates.filter(item => item.origin !== 'system_supplement');
-    const systemVisibleRequirements = visibleCandidates.filter(item => item.origin === 'system_supplement');
+    const viewModel = buildRequirementReviewViewModel(state.ruleReview || {}, {
+        ...dialog,
+        requirementFilter: activeFilter,
+    });
+    const userAttention = viewModel.groups.attention.filter(item => !item.isSystemSupplement);
+    const userApplicable = viewModel.groups.applicable.filter(item => !item.isSystemSupplement);
+    const userHandled = viewModel.groups.handled.filter(item => !item.isSystemSupplement);
+    const systemVisibleRequirements = viewModel.groups.handled.filter(item => item.isSystemSupplement);
     const systemCollapsed = dialog.systemGroupCollapsed !== false;
-    const visibleRequirements = systemCollapsed
-        ? userVisibleRequirements
-        : [...userVisibleRequirements, ...systemVisibleRequirements];
-    const currentSelection = selectedRequirement(visibleRequirements, dialog.selectedRequirementId || '');
     const review = state.ruleReview || {};
     const summary = requirementReviewSummary(requirements, activeFilter, review);
     const systemToggle = systemVisibleRequirements.length ? `
         <div class="tt-system-requirement-group ${systemCollapsed ? 'is-collapsed' : 'is-expanded'}">
-            <button class="tt-system-requirement-toggle" data-action="toggle-system-group" type="button">
-                <span>${systemCollapsed ? '▸' : '▾'} 系统补充的默认规则 (${systemVisibleRequirements.length} 条)</span>
-                <small>时间冲突检查、连堂保护等，系统会自动遵守</small>
-                <em>${systemCollapsed ? '展开' : '收起'}</em>
+            <button class="tt-system-requirement-toggle" data-action="toggle-system-group" type="button" aria-expanded="${systemCollapsed ? 'false' : 'true'}">
+                <span><i data-lucide="shield-check"></i>系统补充需求 <b>${systemVisibleRequirements.length}</b></span>
+                <small>冲突检查、连堂保护等默认规则</small>
+                <em>${systemCollapsed ? '展开' : '收起'} <i data-lucide="chevron-down"></i></em>
             </button>
+            ${!systemCollapsed ? `<div class="tt-system-requirement-list">${systemVisibleRequirements.map(item => renderRequirementRow(item, viewModel.selectedId)).join('')}</div>` : ''}
         </div>
     ` : '';
+    const hasUserRows = userAttention.length || userApplicable.length || userHandled.length;
     return `
         <div class="tt-requirement-workbench">
             <div class="tt-requirement-workbench-header">
                 <div class="tt-requirement-workbench-title">
+                    <span class="tt-constraint-section-kicker">复核</span>
                     <strong>解析结果</strong>
-                    <span>${renderRequirementStatisticsLine(summary)}</span>
                 </div>
-                <button class="tt-btn-link" data-action="clear-all-constraints" type="button">清空全部</button>
+                <div class="tt-requirement-workbench-meta">
+                    <span class="tt-requirement-statistics" title="${escapeAttr(renderLegacyRequirementStatisticsLine(summary))}">共 ${escapeHtml(viewModel.visibleItems.length)} 条需求</span>
+                    ${renderRequirementReviewSummary(viewModel)}
+                    <button class="tt-btn-link" data-action="clear-all-constraints" type="button">清空全部</button>
+                </div>
             </div>
             ${renderEntityBindingPanel(review)}
-            ${renderRequirementReviewSummary(requirements, activeFilter, review)}
             ${renderRequirementFilterBar(requirements, activeFilter)}
             <div class="tt-requirement-review-layout">
-                <div class="tt-requirement-table" role="table" aria-label="已理解需求">
-                    <div class="tt-requirement-table-head" role="row">
-                        <span>状态</span>
-                        <span>对象</span>
-                        <span>需求</span>
-                        <span>落点</span>
-                        <span>参数</span>
-                        <span>来源</span>
-                    </div>
-                    <div class="tt-requirement-table-body" role="rowgroup">
-                        ${userVisibleRequirements.length
-                            ? userVisibleRequirements.map(item => renderRequirementRow(item, currentSelection?.id || '')).join('')
-                            : (!systemVisibleRequirements.length ? '<div class="tt-requirement-empty">当前分组没有需求</div>' : '')}
+                <div class="tt-requirement-table tt-requirement-review-main" aria-label="已理解需求">
+                    <div class="tt-requirement-table-body">
+                        ${renderRequirementBucket('需要确认', '补充信息或确认范围后再应用', userAttention, viewModel.selectedId, 'attention')}
+                        ${renderRequirementBucket('可直接应用', '这些需求已准备好写入项目', userApplicable, viewModel.selectedId, 'applicable')}
+                        ${renderRequirementBucket('系统已自动处理', '排课引擎已内置处理，无需重复应用', userHandled, viewModel.selectedId, 'handled')}
+                        ${!hasUserRows && !systemVisibleRequirements.length ? '<div class="tt-requirement-empty">当前分类没有需求</div>' : ''}
                         ${systemToggle}
-                        ${!systemCollapsed && systemVisibleRequirements.length
-                            ? systemVisibleRequirements.map(item => renderRequirementRow(item, currentSelection?.id || '')).join('')
-                            : ''}
                     </div>
                 </div>
-                ${renderRequirementDetail(currentSelection, state)}
+                ${renderRequirementDetail(viewModel.selectedItem, state)}
             </div>
         </div>
     `;
@@ -1039,7 +1170,7 @@ export function renderConstraintDialog(state) {
     if (!dialog.open) return '';
 
     const review = state.ruleReview || {};
-    const mode = review.inputMode || 'text';
+    const mode = ['text', 'file', 'manual'].includes(review.inputMode) ? review.inputMode : 'text';
     const constraints = review.draftRows || [];
     const requirements = buildUnifiedRequirementItems(review);
     const activeFilter = REQUIREMENT_FILTERS.some(filter => filter.key === dialog.requirementFilter)
@@ -1048,6 +1179,9 @@ export function renderConstraintDialog(state) {
     const actionableRequirementCount = getActionableRequirementCount(review, activeFilter);
     const applyButtonLabel = activeFilter === 'all' ? '应用需求' : '应用当前分类';
     const parsing = review.parsing || false;
+    const hasResults = requirements.length > 0;
+    const inputExpanded = !hasResults || dialog.inputExpanded === true;
+    const inputStatusHtml = inputExpanded ? renderConstraintInputStatus(mode, review, requirements) : '';
     const editingConstraint = dialog.editingConstraint;
     const aiChat = dialog.aiChat;
     const hasBlockingConflict = constraints.some(c => c.hasConflict)
@@ -1055,31 +1189,39 @@ export function renderConstraintDialog(state) {
     const aiActive = Boolean(aiChat?.active);
     const bodyHtml = aiActive ? `
         <div class="tt-constraint-dialog-body tt-constraint-dialog-body--ai">
+            <div class="tt-constraint-stagebar">
+                ${renderConstraintFlow(true, review, requirements)}
+            </div>
             ${renderAIChatPanel(state, aiChat)}
         </div>
     ` : `
-        <div class="tt-constraint-dialog-body tt-constraint-dialog-body--intake">
-            <div class="tt-constraint-intake-panel ${requirements.length > 0 ? 'tt-constraint-intake-panel--compact' : ''}">
-                ${renderConstraintFlow(requirements.length > 0, review, requirements)}
-                <div class="tt-constraint-mode-row">
-                    <span class="tt-field-label">规则来源</span>
-                    <div class="tt-constraint-input-tabs" role="tablist" aria-label="规则来源">
-                        ${renderInputTabs(mode, parsing)}
-                    </div>
-                </div>
-
-                <div class="tt-constraint-input-area">
-                    ${renderInputArea(state, mode, parsing, review)}
-                </div>
+        <div class="tt-constraint-dialog-body tt-constraint-dialog-body--intake ${hasResults && !inputExpanded ? 'tt-constraint-dialog-body--review' : ''}">
+            <div class="tt-constraint-stagebar">
+                ${renderConstraintFlow(true, review, requirements)}
             </div>
-            ${requirements.length > 0 ? renderRequirementGroups(requirements, dialog, state) : ''}
+            ${inputExpanded ? `
+                <div class="tt-constraint-intake-panel">
+                    <div class="tt-constraint-mode-row">
+                        <span class="tt-field-label">规则来源</span>
+                        <div class="tt-constraint-input-tabs" role="tablist" aria-label="规则来源">
+                            ${renderInputTabs(mode, parsing)}
+                        </div>
+                    </div>
+
+                    <div class="tt-constraint-input-area">
+                        ${renderInputArea(state, mode, parsing, review)}
+                    </div>
+                    ${inputStatusHtml ? `<div class="tt-constraint-input-footer">${inputStatusHtml}</div>` : ''}
+                </div>
+            ` : renderConstraintInputSummary(mode, review, requirements)}
+            ${hasResults ? renderRequirementGroups(requirements, dialog, state) : ''}
         </div>
     `;
     const actionsHtml = aiActive ? '' : `
         <!-- 操作按钮 -->
         <div class="tt-dialog-actions tt-constraint-dialog-actions">
             <button class="tt-btn" data-action="close-constraint-dialog" type="button">取消</button>
-            ${renderInputModeAction(mode, parsing, review, requirements.length > 0, actionableRequirementCount === 0)}
+            ${inputExpanded ? renderInputModeAction(mode, parsing, review, hasResults, actionableRequirementCount === 0) : ''}
             ${actionableRequirementCount > 0 ? `
                 <button class="tt-btn tt-btn--primary" data-action="apply-constraints" type="button" title="将写入排课规则，立即参与下次排课" ${parsing || hasBlockingConflict ? 'disabled' : ''}>
                     <i data-lucide="check"></i>
@@ -1091,7 +1233,7 @@ export function renderConstraintDialog(state) {
 
     return `
         <div class="tt-dialog-overlay" data-constraint-dialog-overlay>
-            <section class="tt-constraint-dialog ${aiActive ? 'tt-constraint-dialog--with-ai' : ''} ${requirements.length > 0 && !aiActive ? 'tt-constraint-dialog--semantic-review' : ''}" role="dialog" aria-modal="true" aria-labelledby="constraint-dialog-title">
+            <section class="tt-constraint-dialog ${aiActive ? 'tt-constraint-dialog--with-ai' : ''} ${hasResults && !aiActive ? 'tt-constraint-dialog--semantic-review' : ''}" role="dialog" aria-modal="true" aria-labelledby="constraint-dialog-title">
                 <!-- 标题栏 -->
                 <div class="tt-dialog-header">
                     <div class="tt-dialog-title">
@@ -1125,7 +1267,7 @@ function renderInputTabs(mode, parsing) {
     const tabs = [
         { key: 'text', icon: 'message-square', label: '对话输入' },
         { key: 'file', icon: 'upload', label: '上传文件' },
-        { key: 'manual', icon: 'list-plus', label: '手动填写' },
+        { key: 'manual', icon: 'sliders-horizontal', label: '手动规则' },
     ];
 
     return tabs.map(tab => `
@@ -1142,6 +1284,55 @@ function renderInputTabs(mode, parsing) {
             <span>${tab.label}</span>
         </button>
     `).join('');
+}
+
+function renderConstraintInputStatus(mode, review = {}, requirements = []) {
+    const userRequirementCount = requirements.filter(item => item.origin !== 'system_supplement').length;
+    const textLineCount = String(review.text || '').split(/\r?\n/).filter(line => line.trim()).length;
+    const inputCount = userRequirementCount || (mode === 'file' ? Number(Boolean(review.fileName)) : textLineCount);
+    if (inputCount === 0 && requirements.length === 0) return '';
+    return `
+        <div class="tt-constraint-input-status" aria-live="polite">
+            <span>输入状态</span>
+            <b>已输入 ${escapeHtml(inputCount)} 条</b>
+            <i aria-hidden="true"></i>
+            <b>已识别 ${escapeHtml(requirements.length)} 条规则</b>
+        </div>
+    `;
+}
+
+function renderConstraintInputSummary(mode, review = {}, requirements = []) {
+    const source = mode === 'file'
+        ? (review.parsedFileName || review.fileName || '上传文件')
+        : mode === 'manual'
+            ? '手动填写'
+            : '对话输入';
+    const icon = mode === 'file' ? 'file-spreadsheet' : mode === 'manual' ? 'sliders-horizontal' : 'message-square';
+    const editLabel = mode === 'file' ? '重新选择文件' : mode === 'manual' ? '继续填写' : '编辑输入';
+    return `
+        <div class="tt-constraint-input-summary" data-constraint-input-summary aria-live="polite">
+            <div class="tt-constraint-input-summary-main">
+                <span class="tt-constraint-input-summary-icon" aria-hidden="true"><i data-lucide="${icon}"></i></span>
+                <div class="tt-constraint-input-summary-copy">
+                    <span>解析完成</span>
+                    <strong>已解析 ${escapeHtml(requirements.length)} 条需求</strong>
+                    <small title="${escapeAttr(source)}">来源 · ${escapeHtml(source)}</small>
+                </div>
+            </div>
+            <div class="tt-constraint-input-summary-actions">
+                <button class="tt-btn tt-btn--sm" data-action="expand-constraint-input" type="button">
+                    <i data-lucide="${mode === 'file' ? 'upload' : 'pencil'}"></i>
+                    <span>${editLabel}</span>
+                </button>
+                ${mode === 'text' ? `
+                    <button class="tt-btn tt-btn--sm" data-action="reparse-constraint-input" type="button">
+                        <i data-lucide="refresh-cw"></i>
+                        <span>重新解析</span>
+                    </button>
+                ` : ''}
+            </div>
+        </div>
+    `;
 }
 
 function renderInputModeAction(mode, parsing, review, hasResults, isPrimary) {
