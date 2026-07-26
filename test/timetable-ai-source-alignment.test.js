@@ -289,6 +289,7 @@ test('AI review uses source identity and rejects invented or mismatched review i
         env: {
             DEEPSEEK_API_KEY: 'test-key',
             DEEPSEEK_API_BASE: 'http://ai.test',
+            TIMETABLE_RULE_AI_MODE: 'off',
         },
         fetchImpl: async (_url, options = {}) => {
             const request = JSON.parse(options.body || '{}');
@@ -378,6 +379,7 @@ test('AI review patches stay within one source and cannot rewrite provenance', a
         env: {
             DEEPSEEK_API_KEY: 'test-key',
             DEEPSEEK_API_BASE: 'http://ai.test',
+            TIMETABLE_RULE_AI_MODE: 'off',
         },
         fetchImpl: async (_url, options = {}) => {
             const request = JSON.parse(options.body || '{}');
@@ -456,6 +458,7 @@ test('AI review missed requirements inherit only verified source provenance', as
         env: {
             DEEPSEEK_API_KEY: 'test-key',
             DEEPSEEK_API_BASE: 'http://ai.test',
+            TIMETABLE_RULE_AI_MODE: 'off',
         },
         fetchImpl: async (_url, options = {}) => {
             const request = JSON.parse(options.body || '{}');

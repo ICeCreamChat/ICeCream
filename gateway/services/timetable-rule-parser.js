@@ -68,10 +68,15 @@ import {
     buildEntityResolution,
     resolveConstraintIRReferences,
 } from './timetable-constraints/entity-resolution.js';
+import {
+    resolveSemanticAiMode,
+    sourceNeedsSemanticPlanning,
+    validateSemanticRelationGraph,
+} from './timetable-constraints/semantic-planning.js';
 import { getTimetableConstraintParseCache } from './timetable-constraints/parse-cache.js';
 
 const MAX_RULE_FILE_BYTES = 5 * 1024 * 1024;
-const PARSER_VERSION = 'timetable_rule_parser_constraint_ir_v9';
+const PARSER_VERSION = 'timetable_rule_parser_constraint_ir_v11';
 const AI_REVIEW_PROMPT_VERSION = 'timetable_ai_review_v4';
 const CAPABILITY_VERSION = 'timetable_capability_registry_v6';
 const AI_CANDIDATE_VALIDATION_VERSION = 'timetable_ai_candidate_validation_v1';
@@ -503,6 +508,26 @@ function aggregateSourceWarnings(sourceRequirements = [], rows = [], warningItem
     }));
 }
 
+function semanticRationalesFromText(rawText = '') {
+    const value = asText(rawText, 2000);
+    const candidates = [];
+    const patterns = [
+        /避免新生下午后段学习压力过大/g,
+        /不占上午主科黄金时段/g,
+        /方便实践材料领取和课后整理/g,
+        /避免[^，。；]{2,60}/g,
+        /方便[^，。；]{2,60}/g,
+        /以便[^，。；]{2,60}/g,
+    ];
+    for (const pattern of patterns) {
+        for (const match of value.matchAll(pattern)) {
+            const rationale = asText(match[0], 300).replace(/[。；]+$/, '');
+            if (rationale) candidates.push({ text: rationale, kind: 'rationale' });
+        }
+    }
+    return [...new Map(candidates.map(item => [item.text, item])).values()];
+}
+
 function buildWarningItems({ warnings = [], warningItems: existingItems = [], sourceRequirements = [], requirements = [], rows = [], actors = [] } = {}) {
     const sourcesById = new Map(sourceRequirements.map(source => [source.sourceId, source]));
     const result = [];
@@ -638,6 +663,16 @@ function requirementForCompiledRow(requirements = [], row = {}) {
 function constraintArtifactFromRow(row = {}, requirement = null) {
     const courseScopeClarification = requirement?.courseScopeClarification === true
         || row.courseScopeClarification === true;
+    const scope = requirement?.scope || row.scope || {};
+    const applyTo = requirement?.applyTo || row.applyTo || '';
+    const landing = applyTo === 'model_extension' && row.weekPattern
+        ? normalizedTextValues(80, 'rule', 'model_extension', row.landing, requirement?.landing)
+        : courseScopeClarification
+            ? requirement?.landing || row.landing || []
+            : row.landing || [];
+    const scopeClassIds = normalizedTextValues(120, requirement?.parameters?.classIds, row.parameters?.classIds, row.classIds, scope.classIds);
+    const scopeTeacherIds = normalizedTextValues(120, requirement?.parameters?.teacherIds, row.parameters?.teacherIds, row.teacherIds, scope.teacherIds);
+    const scopeGradeNames = normalizedTextValues(40, requirement?.parameters?.gradeNames, row.parameters?.gradeNames, row.gradeNames, scope.gradeNames);
     return {
         ...row,
         capabilityId: row.capabilityId || requirement?.capabilityId || '',
@@ -650,11 +685,19 @@ function constraintArtifactFromRow(row = {}, requirement = null) {
         parameters: {
             ...(requirement?.parameters || {}),
             ...(row.parameters || {}),
+            ...(scopeClassIds.length ? { classIds: scopeClassIds } : {}),
+            ...(scopeTeacherIds.length ? { teacherIds: scopeTeacherIds } : {}),
+            ...(scopeGradeNames.length ? { gradeNames: scopeGradeNames } : {}),
             legacyRow: { ...row },
         },
         strength: requirement?.strength || row.priority,
-        applyTo: requirement?.applyTo || row.applyTo || '',
-        scope: requirement?.scope || row.scope || {},
+        applyTo,
+        scope,
+        relation: requirement?.relation || row.relation || {},
+        quantifier: normalizedRequirementQuantifier(
+            Object.keys(requirement?.quantifier || {}).length ? requirement.quantifier : row.quantifier,
+            requirement?.parameters?.minOccurrences ?? row.minOccurrences ?? row.parameters?.minOccurrences,
+        ),
         status: courseScopeClarification && requirement?.status === 'needs_review'
             ? 'needs_review'
             : row.status,
@@ -671,9 +714,7 @@ function constraintArtifactFromRow(row = {}, requirement = null) {
             ? requirement?.needsClarification === true || row.needsClarification === true
             : row.needsClarification === true,
         courseScopeClarification,
-        landing: courseScopeClarification
-            ? requirement?.landing || row.landing || []
-            : row.landing || [],
+        landing,
         warnings: uniqueConstraintMessages([
             ...asList(row.warnings),
             ...(courseScopeClarification ? asList(requirement?.warnings) : []),
@@ -734,11 +775,23 @@ function fallbackConstraintArtifact(sourceRequirement = {}) {
 
 function mergeConstraintIR(left = {}, right = {}) {
     const preferred = left.parameters?.legacyRow ? left : right.parameters?.legacyRow ? right : left;
+    const aggregate = aggregateConstraintIRStatuses([left, right]);
     return normalizeConstraintIR({
         ...preferred,
+        ...aggregate,
+        parameters: {
+            ...(left.parameters || {}),
+            ...(right.parameters || {}),
+            ...(preferred.parameters || {}),
+            legacyRow: preferred.parameters?.legacyRow
+                || left.parameters?.legacyRow
+                || right.parameters?.legacyRow,
+        },
         warnings: uniqueConstraintMessages([...asList(left.warnings), ...asList(right.warnings)]),
         clarifications: uniqueConstraintMessages([...asList(left.clarifications), ...asList(right.clarifications)]),
-        machineRuleIds: uniqueConstraintMessages([...asList(left.machineRuleIds), ...asList(right.machineRuleIds)]),
+        machineRuleIds: ['executable', 'partially_executable'].includes(aggregate.executionStatus)
+            ? uniqueConstraintMessages([...asList(left.machineRuleIds), ...asList(right.machineRuleIds)])
+            : [],
         parsedBy: normalizedParsedBy(left.parsedBy || [], right.parsedBy || []),
         legacyClause: preferred.legacyClause || left.legacyClause || right.legacyClause || null,
     });
@@ -746,19 +799,38 @@ function mergeConstraintIR(left = {}, right = {}) {
 
 function compactCapabilityIRs(irs = [], rows = []) {
     const removedClauseIds = new Set();
+    const clauseIdRemap = new Map();
     const semanticallyUnique = [];
     const semanticIndexes = new Map();
     const semanticKey = ir => {
         const { legacyRow, selectorCurrentlyUnmatched, ...parameters } = ir.parameters || {};
         void legacyRow;
         void selectorCurrentlyUnmatched;
+        const time = { ...(ir.time || {}) };
+        if (asList(time.slots).length) {
+            delete time.days;
+            delete time.periods;
+        }
+        delete parameters.slots;
+        delete parameters.days;
+        delete parameters.periods;
+        delete parameters.weekPattern;
+        if ([
+            'subject.preferred_day_part',
+            'subject.preferred_periods',
+            'subject.avoid_periods',
+            'subject.spread',
+        ].includes(ir.capabilityId)) {
+            delete parameters.classIds;
+            delete parameters.teacherIds;
+            delete parameters.gradeNames;
+        }
         return stableJson({
             sourceId: ir.sourceId,
             capabilityId: ir.capabilityId,
-            intent: ir.intent,
             target: ir.target,
             scope: ir.scope,
-            time: ir.time,
+            time,
             relation: ir.relation,
             parameters,
             strength: ir.strength,
@@ -774,11 +846,13 @@ function compactCapabilityIRs(irs = [], rows = []) {
         }
         const existing = semanticallyUnique[existingIndex];
         removedClauseIds.add(ir.clauseId);
+        clauseIdRemap.set(ir.clauseId, existing.clauseId);
+        const merged = mergeConstraintIR(existing, ir);
         semanticallyUnique[existingIndex] = normalizeConstraintIR({
-            ...mergeConstraintIR(existing, ir),
+            ...merged,
             constraintId: existing.constraintId,
             clauseId: existing.clauseId,
-            machineRuleIds: existing.machineRuleIds,
+            machineRuleIds: merged.machineRuleIds,
             aiReviewStatus: ir.aiReviewStatus || existing.aiReviewStatus || '',
             aiReviewIssueCode: ir.aiReviewIssueCode || existing.aiReviewIssueCode || '',
             aiReviewValidationStatus: ir.aiReviewValidationStatus || existing.aiReviewValidationStatus || '',
@@ -793,8 +867,24 @@ function compactCapabilityIRs(irs = [], rows = []) {
             ]),
         });
     }
+    const resolvedSemanticIRs = semanticallyUnique.map(ir => {
+        let parentClauseId = ir.relation?.parentClauseId || '';
+        const visited = new Set();
+        while (parentClauseId && clauseIdRemap.has(parentClauseId) && !visited.has(parentClauseId)) {
+            visited.add(parentClauseId);
+            parentClauseId = clauseIdRemap.get(parentClauseId);
+        }
+        if (!parentClauseId || parentClauseId === ir.relation?.parentClauseId) return ir;
+        return normalizeConstraintIR({
+            ...ir,
+            relation: {
+                ...(ir.relation || {}),
+                parentClauseId,
+            },
+        });
+    });
     const kept = [];
-    const sourcesWithSpecializedRoomRules = new Set(semanticallyUnique
+    const sourcesWithSpecializedRoomRules = new Set(resolvedSemanticIRs
         .filter(ir => ['room.preferred', 'room.forbidden_type'].includes(ir.capabilityId))
         .map(ir => ir.sourceId));
     const specificity = ir => {
@@ -807,7 +897,7 @@ function compactCapabilityIRs(irs = [], rows = []) {
             ...(parameters.requiredTags || []),
         ].length;
     };
-    for (const ir of semanticallyUnique) {
+    for (const ir of resolvedSemanticIRs) {
         if (
             ir.capabilityId === 'room.required'
             && sourcesWithSpecializedRoomRules.has(ir.sourceId)
@@ -860,6 +950,14 @@ const OBSOLETE_EXECUTABLE_WARNING_PATTERNS = [
     /当前版本只能预览这类建议，暂不会写入排课规则/,
 ];
 
+function warningsForConstraintExecution(warnings = [], ir = {}) {
+    const values = asList(warnings);
+    if (ir.executionStatus !== 'executable' || ir.support !== 'full') return values;
+    return values.filter(warning => (
+        !OBSOLETE_EXECUTABLE_WARNING_PATTERNS.some(pattern => pattern.test(String(warning || '')))
+    ));
+}
+
 function usableSemanticObject(object = null) {
     if (!object || typeof object !== 'object') return false;
     const name = asText(object.name || object.label || '', 120).trim().toLowerCase().replace(/[\s-]+/g, '_');
@@ -890,6 +988,56 @@ function staleResolvedReferenceReview(row = {}, ir = {}) {
         && !aiReviewBlocksAutomaticApplication(row);
 }
 
+function dedupeCapabilityCandidateRows(rows = []) {
+    const statusRank = status => ({
+        effective: 5,
+        ready: 5,
+        actionable: 4,
+        suggestion: 3,
+        needs_review: 2,
+        unsupported: 1,
+    }[status] || 0);
+    const result = [];
+    const indexes = new Map();
+    for (const row of asList(rows)) {
+        const sourceIdentity = row.sourceId
+            || (row.sourceRow ? `${row.sourceSheet || ''}:${row.sourceRow}` : '')
+            || (row.lineNumber ? `line:${row.lineNumber}` : '')
+            || row.textHash
+            || '';
+        const capability = resolveConstraintCapability(TIMETABLE_CAPABILITY_REGISTRY, {
+            capabilityId: row.capabilityId || row.advancedType || '',
+            intent: row.intent || row.type || '',
+            type: row.type || '',
+        });
+        const semanticType = capability?.id
+            || row.capabilityId
+            || row.advancedType
+            || normalizeRequirementIntentAlias(row.intent || row.type || 'unknown');
+        const key = stableJson([
+            sourceIdentity,
+            row.clauseId || row.requirementId || '',
+            semanticType,
+            row.targetType || '',
+            row.targetId || row.teacherId || row.classId || row.subjectId || row.targetName || '',
+            normalizeSlotList(row.slots || []),
+            row.limit ?? row.minGapDays ?? null,
+            row.parameters || {},
+            row.scope || {},
+            row.relation || {},
+            row.priority || row.strength || '',
+        ]);
+        const existingIndex = indexes.get(key);
+        if (existingIndex === undefined) {
+            indexes.set(key, result.length);
+            result.push(row);
+        } else if (statusRank(row.status) > statusRank(result[existingIndex].status)) {
+            result[existingIndex] = row;
+        }
+    }
+    return result;
+}
+
 function compileArtifactsThroughCapabilityRegistry({
     project = {},
     rows = [],
@@ -898,7 +1046,9 @@ function compileArtifactsThroughCapabilityRegistry({
 } = {}) {
     const requirements = asList(requirementItems)
         .filter(requirement => requirement && typeof requirement === 'object' && requirement.origin !== 'system_supplement');
-    const rowList = asList(rows).filter(row => row && typeof row === 'object');
+    const rowList = dedupeCapabilityCandidateRows(
+        asList(rows).filter(row => row && typeof row === 'object'),
+    );
     const sourceList = asList(sourceRequirements).filter(item => item && typeof item === 'object');
     const representedRequirements = new Set();
     const rowCandidates = rowList.map((row, index) => {
@@ -998,6 +1148,10 @@ function compileArtifactsThroughCapabilityRegistry({
             : [];
         outputRows = outputRows.map(row => ({
             ...row,
+            parameters: {
+                ...(candidate.artifact.legacyClause?.parameters || {}),
+                ...(row.parameters || {}),
+            },
             status: ['blocked_by_reference', 'blocked_by_clarification'].includes(ir.executionStatus)
                 ? 'needs_review'
                 : ir.executionStatus === 'unsupported_by_solver'
@@ -1014,12 +1168,19 @@ function compileArtifactsThroughCapabilityRegistry({
             support: ir.support,
             landing: ir.landing,
             clarifications: uniqueConstraintMessages([...asList(row.clarifications), ...compileClarifications]),
-            warnings: uniqueConstraintMessages([...asList(row.warnings), ...rowCompileWarnings]),
+            warnings: uniqueConstraintMessages(warningsForConstraintExecution([
+                ...asList(row.warnings),
+                ...rowCompileWarnings,
+            ], ir)),
         }));
         compiledRows.push(...outputRows);
 
         ir = normalizeConstraintIR({
             ...ir,
+            parameters: {
+                ...(candidate.artifact.legacyClause?.parameters || {}),
+                ...(ir.parameters || {}),
+            },
             legacyClause: candidate.artifact.legacyClause || ir.legacyClause || null,
             warnings: uniqueConstraintMessages([...asList(ir.warnings), ...compileWarnings]),
             clarifications: uniqueConstraintMessages([...asList(ir.clarifications), ...compileClarifications]),
@@ -1036,18 +1197,17 @@ function compileArtifactsThroughCapabilityRegistry({
 
 function publicConstraintIR(input = {}, machineRuleIds = input.machineRuleIds || []) {
     const ir = normalizeConstraintIR(input);
-    const { legacyRow, ...parameters } = ir.parameters || {};
+    const { legacyRow, ...parameters } = {
+        ...(ir.legacyClause?.parameters || {}),
+        ...(ir.parameters || {}),
+    };
     const { legacyClause, ...publicFields } = ir;
     void legacyRow;
     void legacyClause;
     return normalizeConstraintIR({
         ...publicFields,
         parameters,
-        warnings: ir.executionStatus === 'executable' && ir.support === 'full'
-            ? asList(ir.warnings).filter(warning => (
-                !OBSOLETE_EXECUTABLE_WARNING_PATTERNS.some(pattern => pattern.test(String(warning || '')))
-            ))
-            : ir.warnings,
+        warnings: warningsForConstraintExecution(ir.warnings, ir),
         machineRuleIds: ['executable', 'partially_executable'].includes(ir.executionStatus)
             ? normalizedTextValues(300, machineRuleIds)
             : [],
@@ -1323,6 +1483,8 @@ function sourceAwareParseResult(result = {}, sourceRequirements = [], { parsedBy
             row.sourceId || '', row.clauseId || '', row.type || '',
             row.targetId || row.teacherId || row.classId || row.subjectId || row.targetName || '',
             [...new Set(asList(row.slots))].sort(), row.limit ?? row.minGapDays ?? null,
+            stableJson(row.scope || {}),
+            stableJson(row.relation || {}),
         ]);
         const existingIndex = finalRowIndexes.get(key);
         if (existingIndex === undefined) {
@@ -1377,6 +1539,10 @@ function sourceAwareParseResult(result = {}, sourceRequirements = [], { parsedBy
                 ...asList(sourceRequirement.questions),
                 ...sourceIRs.flatMap(ir => ir.clarifications || []),
             ]),
+            rationales: [
+                ...asList(sourceRequirement.rationales),
+                ...semanticRationalesFromText(sourceRequirement.source?.rawText || sourceRequirement.rawText || ''),
+            ],
         };
     });
     const finalSources = aggregateSourceWarnings(statusAwareSources, finalRows, result.warningItems || [])
@@ -1773,7 +1939,9 @@ function normalizeConstraintType(value) {
     if (['globalunavailable', '全校不可排', '公共不可排', '全局不可排', 'school_unavailable'].includes(compact)) return 'global_unavailable';
     if (['subjectmorning', '课程上午优先', '主科上午', '上午优先', 'morning_subject', 'subject_prefer_morning'].includes(compact)) return 'subject_morning';
     if (['subjectafternoon', '课程下午优先', '下午优先', 'afternoon_subject', 'subject_prefer_afternoon'].includes(compact)) return 'subject_afternoon';
+    if (compact === 'preferred_periods') return 'subject_preferred_periods';
     if (['subjectpreferperiods', 'subjectpreferredperiods', '课程偏好节次', '课程优先节次', 'subject_prefer_periods', 'subject_preferred_slots'].includes(compact)) return 'subject_preferred_periods';
+    if (compact === 'avoid_periods') return 'subject_avoid_periods';
     if (['subjectavoidperiods', '课程避开节次', 'subject_avoid_slots'].includes(compact)) return 'subject_avoid_periods';
     if (/课程.*每[天日].*(最多|上限|不超过)|subject.*dail?y?.*(limit|max)/.test(text)) return 'subject_daily_limit';
     if (/教师.*每[天日].*(最多|上限|不超过)|teacher.*dail?y?.*(limit|max)/.test(text)) return 'teacher_daily_limit';
@@ -2629,6 +2797,16 @@ function parseFirstSlot(slots = []) {
     };
 }
 
+function normalizedRequirementQuantifier(quantifier = {}, minOccurrences = undefined) {
+    if (quantifier && typeof quantifier === 'object' && Object.keys(quantifier).length) {
+        return { ...quantifier };
+    }
+    const minimum = Number.parseInt(minOccurrences, 10);
+    return Number.isInteger(minimum) && minimum > 0
+        ? { unit: 'occurrences_per_week', min: minimum }
+        : {};
+}
+
 function findLockedLessonPlan(project, { classId, subjectId, teacherId }) {
     return (project.lessonPlans || []).find(plan => (
         plan.classId === classId
@@ -2735,6 +2913,8 @@ function normalizeDraftRow(row = {}, index = 0, project = {}) {
         support: asText(row.support || '', 20),
         landing: normalizedTextValues(80, row.landing),
         scope: row.scope && typeof row.scope === 'object' ? { ...row.scope } : {},
+        relation: row.relation && typeof row.relation === 'object' ? { ...row.relation } : {},
+        quantifier: normalizedRequirementQuantifier(row.quantifier, row.minOccurrences ?? row.parameters?.minOccurrences),
         scopeClassId: asText(row.scopeClassId || row.scope?.classIds?.[0] || row.parameters?.classIds?.[0] || '', 120),
         scopeClassName: asText(row.scopeClassName || '', 200),
         scopeTeacherId: asText(row.scopeTeacherId || row.scope?.teacherIds?.[0] || row.parameters?.teacherIds?.[0] || '', 120),
@@ -3348,6 +3528,8 @@ function requirementFromRow(row = {}, index = 0, project = {}) {
         reviewStatus: row.reviewStatus || '',
         support: row.support || '',
         scope: row.scope && typeof row.scope === 'object' ? { ...row.scope } : {},
+        relation: row.relation && typeof row.relation === 'object' ? { ...row.relation } : {},
+        quantifier: normalizedRequirementQuantifier(row.quantifier, row.minOccurrences ?? row.parameters?.minOccurrences),
         applyTo: applyToForRow(row, project),
         landing: row.landing || [],
         confidence: row.confidence,
@@ -3464,6 +3646,7 @@ function requirementTargetMatchesRow(item = {}, row = {}) {
     const reqNames = requirementTargetNames(item).map(normalizedEntityName).filter(Boolean);
     const names = rowTargetNames(row).map(normalizedEntityName).filter(Boolean);
     if (reqNames.length && names.some(name => reqNames.includes(name))) return true;
+    if (reqIds.length || reqNames.length) return false;
     const source = normalizedEntityName(requirementSourceText(item));
     return Boolean(source && names.some(name => name && source.includes(name)));
 }
@@ -4266,6 +4449,9 @@ function externalRequirementItems(items = []) {
             intent: normalizeRequirementIntentAlias(item.intent || item.type || 'unknown'),
             condition: item.condition && typeof item.condition === 'object' ? item.condition : {},
             parameters: item.parameters && typeof item.parameters === 'object' ? item.parameters : {},
+            scope: item.scope && typeof item.scope === 'object' ? { ...item.scope } : {},
+            relation: item.relation && typeof item.relation === 'object' ? { ...item.relation } : {},
+            quantifier: normalizedRequirementQuantifier(item.quantifier, item.parameters?.minOccurrences),
             strength: asText(item.strength || item.priority || 'soft', 40),
             status: normalizeRequirementStatusAlias(item.status || 'needs_review'),
             applyTo: normalizeRequirementApplyToAlias(item.applyTo || 'review'),
@@ -4325,6 +4511,9 @@ function dedupeRequirements(items = []) {
             asList(item.object?.matchedIds).map(String).sort(),
             item.condition || {},
             item.parameters || {},
+            item.scope || {},
+            item.relation || {},
+            item.quantifier || {},
             item.strength || item.priority || 'soft',
         ]);
         if (seen.has(key)) continue;
@@ -4345,8 +4534,9 @@ function actionForRequirement(project = {}, requirement = {}, index = 0) {
         };
     }
     if (requirement.status !== 'actionable') return null;
+    const intent = normalizeRequirementIntentAlias(requirement.intent);
     const matchedIds = normalizedTextValues(120, requirement.object?.matchedIds);
-    if (requirement.applyTo === 'lesson_plan' && requirement.intent === 'block_preference') {
+    if (requirement.applyTo === 'lesson_plan' && intent === 'block_preference') {
         const explicitLessonPlanIds = normalizedTextValues(120, requirement.parameters?.lessonPlanIds);
         const lessonPlanIds = explicitLessonPlanIds.length
             ? explicitLessonPlanIds
@@ -4364,7 +4554,7 @@ function actionForRequirement(project = {}, requirement = {}, index = 0) {
             requiresConfirmation: true,
         };
     }
-    if (requirement.applyTo === 'optimization' && requirement.intent === 'teacher_load_protection') {
+    if (requirement.applyTo === 'optimization' && intent === 'teacher_load_protection') {
         const teacherLimits = { consecutive: requirement.parameters?.maxConsecutive || 3 };
         const dailyLimit = Number(requirement.parameters?.maxDaily || requirement.parameters?.dailyLimit);
         if (Number.isFinite(dailyLimit) && dailyLimit > 0) teacherLimits.daily = dailyLimit;
@@ -4385,7 +4575,7 @@ function actionForRequirement(project = {}, requirement = {}, index = 0) {
         if (!complexModelIsEnabled(project) || requirement.modelSupport?.supported === false) {
             return null;
         }
-        if (requirement.intent === 'preferred_periods' && requirement.parameters?.weekPattern) {
+        if (intent === 'preferred_periods' && requirement.parameters?.weekPattern) {
             const subjectIds = matchedIds;
             return {
                 id: `act_${requirement.id || index + 1}`,
@@ -4400,7 +4590,7 @@ function actionForRequirement(project = {}, requirement = {}, index = 0) {
                 requiresConfirmation: true,
             };
         }
-        if (requirement.intent === 'avoid_periods' && requirement.parameters?.weekPattern) {
+        if (intent === 'avoid_periods' && requirement.parameters?.weekPattern) {
             const subjectIds = matchedIds;
             return {
                 id: `act_${requirement.id || index + 1}`,
@@ -4415,7 +4605,7 @@ function actionForRequirement(project = {}, requirement = {}, index = 0) {
                 requiresConfirmation: true,
             };
         }
-        if (requirement.intent === 'campus_commute_gap') {
+        if (intent === 'campus_commute_gap') {
             const teacherIds = requirement.object?.kind === 'teacher' ? matchedIds : [];
             const maxConsecutive = Number.parseInt(requirement.parameters?.maxConsecutiveAcrossCampus, 10);
             const gap = Number.isInteger(maxConsecutive) ? Math.max(0, maxConsecutive) : 1;
@@ -4434,7 +4624,7 @@ function actionForRequirement(project = {}, requirement = {}, index = 0) {
                 requiresConfirmation: true,
             };
         }
-        if (requirement.intent === 'teaching_group_session') {
+        if (intent === 'teaching_group_session') {
             const classIds = normalizedTextValues(120, requirement.parameters?.classIds, matchedIds);
             const subjectIds = normalizedTextValues(120, requirement.parameters?.subjectIds);
             return {
@@ -4454,7 +4644,7 @@ function actionForRequirement(project = {}, requirement = {}, index = 0) {
                 requiresConfirmation: true,
             };
         }
-        if (requirement.intent === 'room_requirement') {
+        if (intent === 'room_requirement') {
             const subjectIds = normalizedTextValues(120, requirement.parameters?.subjectIds, matchedIds);
             const roomName = asText(requirement.parameters?.roomName, 120);
             return {
@@ -4488,7 +4678,20 @@ function actionForRequirement(project = {}, requirement = {}, index = 0) {
 
 function requirementWithSourceProvenance(requirement = {}, sourceRequirement = {}, disambiguateId = false) {
     const source = sourceRequirement.source || {};
-    const baseId = asText(requirement.id || '', 160) || 'req_text';
+    const baseId = asText(requirement.id || '', 160) || `req_text_${hashValue({
+        capabilityId: requirement.capabilityId || '',
+        intent: requirement.intent || requirement.type || '',
+        object: requirement.object || null,
+        targetType: requirement.targetType || '',
+        targetId: requirement.targetId || '',
+        targetName: requirement.targetName || requirement.target || '',
+        condition: requirement.condition || null,
+        parameters: requirement.parameters || {},
+        scope: requirement.scope || {},
+        relation: requirement.relation || {},
+        quantifier: requirement.quantifier || {},
+        strength: requirement.strength || requirement.priority || 'soft',
+    }, 20)}`;
     const id = disambiguateId ? `${baseId}_${hashValue(sourceRequirement.sourceId || source.rawText || baseId, 12)}` : baseId;
     const parsedBy = normalizedParsedBy(requirement.parsedBy, sourceRequirement.parsedBy);
     return {
@@ -4519,6 +4722,59 @@ function requirementWithSourceProvenance(requirement = {}, sourceRequirement = {
     };
 }
 
+function resolveSemanticRequirementRelations(requirements = []) {
+    const items = asList(requirements).filter(item => item && typeof item === 'object');
+    const clauseIdBySemanticKey = new Map();
+    items.forEach(requirement => {
+        const semanticKey = asText(requirement.relation?.semanticKey || '', 240);
+        if (!semanticKey || !requirement.sourceId) return;
+        const { semanticKey: ignoredSemanticKey, parentSemanticKey: ignoredParentSemanticKey, ...relation } = requirement.relation || {};
+        void ignoredSemanticKey;
+        void ignoredParentSemanticKey;
+        const ir = legacyArtifactToConstraintIR({ ...requirement, relation }, {
+            registry: TIMETABLE_CAPABILITY_REGISTRY,
+            parsedBy: requirement.parsedBy || [],
+        });
+        clauseIdBySemanticKey.set(`${requirement.sourceId}|${semanticKey}`, ir.clauseId);
+    });
+    return items.map(requirement => {
+        const { semanticKey: ignoredSemanticKey, parentSemanticKey: ignoredParentSemanticKey, ...relation } = requirement.relation || {};
+        void ignoredSemanticKey;
+        void ignoredParentSemanticKey;
+        const parentSemanticKey = asText(requirement.relation?.parentSemanticKey || '', 240);
+        const parentClauseId = parentSemanticKey && requirement.sourceId
+            ? clauseIdBySemanticKey.get(`${requirement.sourceId}|${parentSemanticKey}`) || ''
+            : asText(requirement.relation?.parentClauseId || '', 300);
+        const related = {
+            ...requirement,
+            relation: {
+                ...relation,
+                ...(parentClauseId ? { parentClauseId } : {}),
+            },
+        };
+        const ir = legacyArtifactToConstraintIR(related, {
+            registry: TIMETABLE_CAPABILITY_REGISTRY,
+            parsedBy: related.parsedBy || [],
+        });
+        return {
+            ...related,
+            clauseId: ir.clauseId,
+            constraintId: ir.constraintId,
+        };
+    });
+}
+
+function preciseSemanticRequirementsFromText(project = {}, text = '') {
+    return preciseSemanticConstraintsFromText(project, text).map((row, index) => {
+        const normalizedRow = normalizeDraftRow(row, index, project);
+        return {
+            ...requirementFromRow(normalizedRow, index, project),
+            type: normalizedRow.type,
+            intent: normalizedRow.intent || normalizedRow.type,
+        };
+    });
+}
+
 function generatedTextRequirementSupersedesRow(requirement = {}, row = {}, project = {}) {
     const intent = normalizeRequirementIntentAlias(requirement.intent || requirement.type || '');
     const rowIntent = normalizeRequirementIntentAlias(row.intent || row.type || '');
@@ -4526,10 +4782,20 @@ function generatedTextRequirementSupersedesRow(requirement = {}, row = {}, proje
     return semanticRequirementMatchesRow(requirement, row, project);
 }
 
+function scopedRowSupersedesGeneratedRequirement(row = {}, generated = {}, project = {}) {
+    if (artifactSourceIdentityConflicts(row, generated)) return false;
+    if (row.capabilityId !== 'subject.avoid_periods' || generated.capabilityId !== row.capabilityId) return false;
+    const sourceText = `${rowSourceText(row)} ${requirementSourceText(generated)}`;
+    if (!/(?:最后一节|末节|收尾)/.test(sourceText)) return false;
+    if (!requirementTargetMatchesRow(generated, row)) return false;
+    return !requirementTimeMatchesRow(generated, row, project);
+}
+
 const SCOPED_COURSE_RULE_TYPES = new Set([
     'subject_preferred_periods',
     'subject_avoid_periods',
     'subject_morning',
+    'subject_afternoon',
     'subject_spread',
 ]);
 
@@ -4537,6 +4803,7 @@ const SCOPED_COURSE_CAPABILITIES = Object.freeze({
     subject_preferred_periods: 'subject.preferred_periods',
     subject_avoid_periods: 'subject.avoid_periods',
     subject_morning: 'subject.preferred_day_part',
+    subject_afternoon: 'subject.preferred_day_part',
     subject_spread: 'subject.spread',
 });
 
@@ -4565,31 +4832,103 @@ function courseScopeIdsFromRow(project = {}, row = {}) {
         .flatMap(name => textClassTargets(name, project).map(item => item.id));
     const namedTeacherIds = normalizedTextValues(200, parameters.teacherNames, scope.teacherNames)
         .flatMap(name => textTeacherTargets(name, project).map(item => item.id));
-    const classIds = normalizedTextValues(120,
+    const textMatchedTeacherIds = textTeacherTargets(rawText, project).map(item => item.id);
+    const explicitClassIds = normalizedTextValues(120,
         parameters.classIds,
         scope.classIds,
         row.classIds,
         namedClassIds,
         textClassTargets(rawText, project).map(item => item.id),
     );
+    const scopeQualifier = asText(parameters.scopeQualifier || scope.scopeQualifier || scope.qualifier || '', 80).toLowerCase();
+    const hasTeacherScope = scopeQualifier === 'teacher_covered_classes'
+        || normalizedTextValues(120, parameters.teacherIds, scope.teacherIds, row.teacherIds).length > 0
+        || normalizedTextValues(120, parameters.teacherNames, scope.teacherNames).length > 0
+        || textMatchedTeacherIds.length > 0;
     const teacherIds = normalizedTextValues(120,
         parameters.teacherIds,
         scope.teacherIds,
         row.teacherIds,
         namedTeacherIds,
-        textTeacherTargets(rawText, project).map(item => item.id),
+        hasTeacherScope ? textMatchedTeacherIds : [],
     );
-    return { classIds, teacherIds, rawText };
+    const gradeNames = normalizedTextValues(40,
+        parameters.gradeNames,
+        scope.gradeNames,
+        row.gradeNames,
+        gradeNamesFromText(rawText),
+    );
+    return { explicitClassIds, teacherIds, gradeNames, rawText };
+}
+
+function normalizedGradeScopeName(value = '') {
+    const aliases = {
+        初一: '7', 七: '7', '7': '7', G7: '7',
+        初二: '8', 八: '8', '8': '8', G8: '8',
+        初三: '9', 九: '9', '9': '9', G9: '9',
+        高一: '10', 十: '10', '10': '10', G10: '10',
+        高二: '11', 十一: '11', '11': '11', G11: '11',
+        高三: '12', 十二: '12', '12': '12', G12: '12',
+    };
+    const compact = asText(value, 80).toUpperCase().replace(/年级|GRADE|\s+/g, '');
+    if (aliases[compact]) return aliases[compact];
+    const number = compact.match(/\d{1,2}/)?.[0];
+    return number || compact;
+}
+
+function classGradeScopeName(klass = {}) {
+    return normalizedGradeScopeName(klass.grade || klass.gradeName || klass.name || '');
+}
+
+function derivedCourseScope(project = {}, row = {}, subjectId = '') {
+    const { explicitClassIds, teacherIds, gradeNames, rawText } = courseScopeIdsFromRow(project, row);
+    const scopeQualifier = asText(row.parameters?.scopeQualifier || row.scope?.scopeQualifier || row.scope?.qualifier || '', 80).toLowerCase();
+    const explicitSchool = isExplicitSchoolCourseScope(rawText) || ['school', 'global', 'all_school'].includes(scopeQualifier);
+    const teacherCovered = scopeQualifier === 'teacher_covered_classes' || teacherIds.length > 0;
+    const normalizedGrades = new Set(gradeNames.map(normalizedGradeScopeName).filter(Boolean));
+    const classesById = new Map(asList(project.classes).map(item => [item.id, item]));
+    let plans = asList(project.lessonPlans).filter(plan => plan.subjectId === subjectId);
+    if (explicitClassIds.length) plans = plans.filter(plan => explicitClassIds.includes(plan.classId));
+    if (normalizedGrades.size) {
+        plans = plans.filter(plan => normalizedGrades.has(classGradeScopeName(classesById.get(plan.classId))));
+    }
+    if (teacherIds.length) {
+        plans = plans.filter(plan => [plan.teacherId, ...asList(plan.teacherIds)]
+            .filter(Boolean)
+            .some(id => teacherIds.includes(id)));
+    }
+    const classIds = normalizedTextValues(120, plans.map(plan => plan.classId));
+    const kind = explicitClassIds.length
+        ? 'explicit_classes'
+        : normalizedGrades.size
+            ? 'grade_classes'
+            : teacherCovered
+                ? 'teacher_covered_classes'
+                : explicitSchool
+                    ? 'school'
+                    : 'subject_offering_classes';
+    return {
+        classIds,
+        teacherIds,
+        gradeNames,
+        rawText,
+        kind,
+        scopeQualifier: scopeQualifier || kind,
+        explicitClassIds,
+    };
 }
 
 function scopeParsedCoursePreferenceRows(project = {}, rows = []) {
     return asList(rows).map(row => {
         const rawText = rowSourceText(row);
         const normalizedType = normalizeConstraintType(row.type || row.intent || '');
-        const type = normalizedType === 'subject_preferred_periods'
+        const preferredDayPart = asText(row.parameters?.dayPart || row.dayPart || '', 40).toLowerCase();
+        const type = normalizedType === 'preferred_day_part'
+            ? (preferredDayPart === 'afternoon' || /(?:下午|午后)/.test(rawText) ? 'subject_afternoon' : 'subject_morning')
+            : normalizedType === 'subject_preferred_periods'
             && /(?:上午|早上).*(?:优先|尽量|最好)|(?:优先|尽量|最好).*(?:上午|早上)/.test(rawText)
-            ? 'subject_morning'
-            : normalizedType;
+                ? 'subject_morning'
+                : normalizedType;
         if (!SCOPED_COURSE_RULE_TYPES.has(type) || row.type === 'advanced_constraint') return row;
 
         const subjectIds = normalizedTextValues(120,
@@ -4600,28 +4939,23 @@ function scopeParsedCoursePreferenceRows(project = {}, rows = []) {
         );
         const subjectId = subjectIds.length === 1 ? subjectIds[0] : '';
         if (!subjectIds.length) return row;
-        const { classIds, teacherIds } = courseScopeIdsFromRow(project, row);
-        const scopeQualifier = asText(row.parameters?.scopeQualifier || row.scope?.scopeQualifier || '', 80).toLowerCase();
-        if (isExplicitSchoolCourseScope(rawText) || ['school', 'global', 'all_school'].includes(scopeQualifier)) {
-            return {
-                ...row,
-                legacyCourseGlobal: true,
-                scopeLabel: '历史全校范围',
-            };
-        }
+        const derivedScope = derivedCourseScope(project, row, subjectId);
+        const { classIds, teacherIds, gradeNames, kind, scopeQualifier, explicitClassIds } = derivedScope;
         if (!classIds.length) {
-            const clarification = '请补充班级，或明确这条课程偏好是否适用于全校。';
+            const clarification = asList(project.lessonPlans).length
+                ? '当前项目中没有与课程范围条件匹配的任课计划。'
+                : '项目尚未提供可用于派生课程范围的任课计划。';
             return {
                 ...row,
                 status: 'needs_review',
-                executionStatus: 'blocked_by_clarification',
+                executionStatus: 'blocked_by_reference',
                 reviewStatus: 'needs_clarification',
                 support: 'none',
                 needsClarification: true,
                 courseScopeClarification: true,
                 landing: ['clarification', 'review'],
                 clarifications: uniqueConstraintMessages([...asList(row.clarifications), clarification]),
-                warnings: uniqueConstraintMessages([...asList(row.warnings), '课程偏好缺少班级范围，系统不会自动扩大为全校规则。']),
+                warnings: uniqueConstraintMessages([...asList(row.warnings), '课程范围无法从当前任课计划安全派生，未生成机器规则。']),
             };
         }
         if (!subjectId) {
@@ -4663,6 +4997,8 @@ function scopeParsedCoursePreferenceRows(project = {}, rows = []) {
         const scopedParameters = {
             ...(row.parameters || {}),
             classIds,
+            ...(gradeNames.length ? { gradeNames } : {}),
+            scopeQualifier,
             ...(teacherIds.length ? { teacherIds } : {}),
         };
         return {
@@ -4677,12 +5013,18 @@ function scopeParsedCoursePreferenceRows(project = {}, rows = []) {
             parameters: scopedParameters,
             scope: {
                 ...(row.scope || {}),
+                kind,
                 classIds,
+                ...(gradeNames.length ? { gradeNames } : {}),
                 ...(teacherIds.length ? { teacherIds } : {}),
             },
             scopeClassId: classIds[0] || '',
             scopeTeacherId: teacherIds[0] || '',
-            scopeLabel: courseRuleScopeLabel(project, subjectId, classIds, teacherIds),
+            scopeLabel: gradeNames.length
+                ? `${gradeNames.join('、')} · ${classIds.length}个班`
+                : explicitClassIds.length <= 3
+                    ? courseRuleScopeLabel(project, subjectId, classIds, teacherIds)
+                    : `${classIds.length}个开课班级`,
         };
     });
 }
@@ -4703,7 +5045,28 @@ function scopeParsedCoursePreferenceRequirements(project = {}, requirements = []
             && asList(target.matchedIds).length === 1
             && classIds.length > 0
         );
-        if (isAlreadyScopedCourseRequirement) return requirement;
+        if (isAlreadyScopedCourseRequirement) {
+            const teacherIds = normalizedTextValues(120,
+                requirement.parameters?.teacherIds,
+                requirement.scope?.teacherIds,
+            );
+            const gradeNames = normalizedTextValues(40,
+                requirement.parameters?.gradeNames,
+                requirement.scope?.gradeNames,
+            );
+            return {
+                ...requirement,
+                parameters: {
+                    ...(requirement.parameters || {}),
+                    classIds,
+                    ...(teacherIds.length ? { teacherIds } : {}),
+                    ...(gradeNames.length ? { gradeNames } : {}),
+                    scopeQualifier: requirement.parameters?.scopeQualifier
+                        || requirement.scope?.qualifier
+                        || requirement.scope?.kind,
+                },
+            };
+        }
         const row = {
             type: requirement.intent || requirement.type || requirement.capabilityId || '',
             intent: requirement.intent || '',
@@ -4714,6 +5077,8 @@ function scopeParsedCoursePreferenceRequirements(project = {}, requirements = []
             subjectIds: target.kind === 'subject_group' ? asList(target.matchedIds) : [],
             parameters: requirement.parameters || {},
             scope: requirement.scope || {},
+            relation: requirement.relation || {},
+            quantifier: requirement.quantifier || {},
             rawText: requirementSourceText(requirement),
             status: requirement.status === 'actionable' ? 'effective' : requirement.status,
             executionStatus: requirement.executionStatus || '',
@@ -4753,13 +5118,16 @@ function buildRequirementSemantics(project = {}, rows = [], {
     const systemText = asText(originalText, 100000)
         || sources.map(item => item.source?.rawText || item.rawText || '').filter(Boolean).join('\\n');
     const systemRequirements = systemRequirementsFromText(systemText);
-    const textRequirements = sources.length
+    const generatedTextRequirements = sources.length
         ? sources.flatMap(sourceRequirement => {
             const sourceText = sourceRequirement.source?.rawText || sourceRequirement.rawText || '';
-            const generated = [
+            const generated = sourceRequirement.semanticAuthoritative === true ? [] : [
                 ...blockPreferenceRequirementsFromText(project, sourceText),
                 ...optimizationRequirementsFromText(project, sourceText),
                 ...complexRequirementsFromText(project, sourceText),
+                ...(sourceNeedsSemanticPlanning({ rawText: sourceText })
+                    ? preciseSemanticRequirementsFromText(project, sourceText)
+                    : []),
             ];
             return generated.map(requirement => requirementWithSourceProvenance(requirement, sourceRequirement, sources.length > 1));
         })
@@ -4767,24 +5135,32 @@ function buildRequirementSemantics(project = {}, rows = [], {
             ...blockPreferenceRequirementsFromText(project, originalText),
             ...optimizationRequirementsFromText(project, originalText),
             ...complexRequirementsFromText(project, originalText),
+            ...(sourceNeedsSemanticPlanning({ rawText: originalText })
+                ? preciseSemanticRequirementsFromText(project, originalText)
+                : []),
         ];
     const externalRequirements = externalRequirementItems(semanticRequirements);
-    const externalIds = new Set(externalRequirements.flatMap(item => [item.id, item.requirementId]).filter(Boolean));
+    const externalIds = new Set(externalRequirements
+        .flatMap(item => [item.id, item.requirementId, item.clauseId, item.constraintId])
+        .filter(Boolean));
     const scopedRows = scopeParsedCoursePreferenceRows(project, rows);
+    const textRequirements = generatedTextRequirements.filter(requirement => !scopedRows.some(
+        row => scopedRowSupersedesGeneratedRequirement(row, requirement, project),
+    ));
     const rowRequirements = scopedRows.filter(row => row && typeof row === 'object')
         .filter(row => !row.requirementId || !externalIds.has(row.requirementId))
         .filter(row => {
-            const supersedingRequirements = textRequirements
+            const supersedingRequirements = [...externalRequirements, ...textRequirements]
                 .filter(requirement => generatedTextRequirementSupersedesRow(requirement, row, project));
             return supersedingRequirements.length !== 1;
         })
         .map((row, index) => requirementFromRow(row, index, project));
-    const requirementItems = scopeParsedCoursePreferenceRequirements(project, dedupeRequirements([
+    const requirementItems = resolveSemanticRequirementRelations(scopeParsedCoursePreferenceRequirements(project, dedupeRequirements([
         ...externalRequirements,
         ...systemRequirements,
         ...textRequirements,
         ...rowRequirements,
-    ]).map(item => (item.status === 'needs_review' ? applyClarificationPolicy(project, item) : item)));
+    ]).map(item => (item.status === 'needs_review' ? applyClarificationPolicy(project, item) : item))));
     const semanticActions = requirementItems
         .map((requirement, index) => actionForRequirement(project, requirement, index))
         .filter(Boolean);
@@ -5902,6 +6278,8 @@ export function normalizeTimetableRuleDraftRows({
             row.targetId || row.teacherId || row.classId || row.subjectId || row.targetName || '',
             [...new Set(asList(row.slots))].sort(),
             row.limit ?? row.minGapDays ?? null,
+            stableJson(row.scope || {}),
+            stableJson(row.relation || {}),
         ]);
         const existingIndex = draftRowIndexes.get(key);
         if (existingIndex === undefined) {
@@ -6034,6 +6412,15 @@ export function normalizeTimetableRuleDraftRows({
                     strength: row.priority || 'soft',
                     sourceId: row.sourceId || '',
                     clauseId: row.clauseId || '',
+                    rawText: row.rawText || row.sourceText || row.source?.rawText || row.originalText || '',
+                    sourceText: row.sourceText || row.rawText || row.source?.rawText || row.originalText || '',
+                    source: row.source && typeof row.source === 'object'
+                        ? { ...row.source, rawText: row.source.rawText || row.rawText || '' }
+                        : {
+                            sourceId: row.sourceId || '',
+                            clauseId: row.clauseId || '',
+                            rawText: row.rawText || row.sourceText || row.originalText || '',
+                        },
                     target: {
                         kind: row.targetType || 'global',
                         name: row.targetName || '',
@@ -6185,17 +6572,14 @@ export function normalizeTimetableRuleDraftRows({
                     warnings.push(reason);
                     return { ...row, status: 'needs_review', targetType: 'teacher', warnings: [...row.warnings, reason] };
                 }
-                const reason = `已理解 ${teacher.name || row.targetName || teacher.id} 的指定教师少空堂偏好，但当前求解器只支持全部教师级空堂权重；本次不会扩大为全部教师。`;
-                warnings.push(reason);
                 return {
                     ...row,
+                    capabilityId: 'teacher.compact_day',
                     targetType: 'teacher',
                     targetId: teacher.id,
                     targetName: teacher.name || row.targetName,
                     priority: 'soft',
-                    status: 'unsupported',
-                    executionStatus: 'unsupported_by_solver',
-                    warnings: [...row.warnings, reason],
+                    status: 'effective',
                 };
             }
 
@@ -6303,6 +6687,327 @@ export function rebindTimetableRuleResult({
         initialWarnings: previousResult.warningItems || previousResult.warnings || [],
         rejected: previousResult.rejected || [],
         originalText: previousResult.originalText || '',
+    });
+}
+
+function artifactSourceId(item = {}) {
+    return asText(item.sourceId || item.source?.sourceId || '', 300);
+}
+
+function editedSourceRationales(values = [], rawText = '') {
+    return asList(values).map((item, index) => {
+        const value = item && typeof item === 'object' ? item : { text: item };
+        const rationaleText = asText(value.text || value.reason || value.rationale || '', 1000);
+        const evidence = asText(value.evidence?.quote || value.evidence || '', 1000);
+        if (!rationaleText) return null;
+        if (evidence && !rawText.includes(evidence)) {
+            throw new TimetableRuleParseError(
+                `第 ${index + 1} 条原因说明的证据不在来源原文中。`,
+                'source_rationale_evidence_mismatch',
+                400,
+            );
+        }
+        return {
+            id: asText(value.id || '', 240) || `rationale_${index + 1}`,
+            text: rationaleText,
+            ...(evidence ? { evidence } : {}),
+        };
+    }).filter(Boolean);
+}
+
+const EDITED_SOURCE_SCOPE_PARAMETER_KEYS = [
+    'classIds',
+    'teacherIds',
+    'teacherNames',
+    'gradeNames',
+    'scopeQualifier',
+];
+
+const EDITED_SOURCE_PARAMETER_KEYS = new Map([
+    ['teacher.unavailable', ['days', 'periods', 'slots']],
+    ['teacher.avoid_periods', ['days', 'periods', 'slots']],
+    ['class.fixed_activity', ['days', 'periods', 'slots']],
+    ['school.unavailable', ['days', 'periods', 'slots']],
+    ['lesson.locked_slot', ['days', 'periods', 'slots', 'lessonPlanId', 'roomId', 'weekPattern']],
+    ['teacher.daily_lesson_limit', ['limit']],
+    ['teacher.consecutive_lesson_limit', ['limit']],
+    ['teacher.weekly_lesson_limit', ['limit']],
+    ['teacher.max_teaching_days', ['limit']],
+    ['teacher.compact_day', ['weight', 'maxGaps']],
+    ['teacher.mutual_exclusion', ['teacherIds']],
+    ['subject.preferred_day_part', ['dayPart', 'days', 'periods', 'slots']],
+    ['subject.preferred_periods', ['days', 'periods', 'slots', 'minOccurrences']],
+    ['subject.avoid_periods', ['days', 'periods', 'slots']],
+    ['class.subject_daily_limit', ['limit']],
+    ['subject.spread', ['weight']],
+    ['subject.minimum_day_gap', ['minGapDays']],
+    ['subject.not_same_day', ['subjectIds']],
+    ['subject.sequence', ['beforeSubjectId', 'afterSubjectId']],
+    ['room.preferred', ['preferredRoomIds', 'activityTypes', 'teacherIds', 'weight']],
+    ['room.forbidden_type', ['forbiddenRoomTypes', 'activityTypes', 'teacherIds']],
+    ['room.required', ['roomRequirement', 'roomIds', 'requiredTags', 'activityTypes', 'teacherIds']],
+    ['lesson.consecutive', ['blockSize', 'minBlockSize', 'maxBlockSize', 'activityTypes', 'weight']],
+    ['class.subject_spread', ['weight']],
+    ['subject.later_preference', ['days', 'periods', 'slots', 'weight']],
+    ['teacher.load_balance', ['teacherIds', 'weight']],
+    ['class.daily_balance', ['classIds', 'weight']],
+    ['subject.avoid_weekday_concentration', ['days', 'weight']],
+    ['subject.avoid_day_part_concentration', ['dayPart']],
+    ['schedule.cross_venue_boundary', ['boundaryPeriods', 'activityTypes']],
+    ['subject.not_consecutive_with', ['subjectIds', 'subjectNames', 'sameDay']],
+    ['lesson.activity_scope_period_policy', ['subjectIds', 'subjectNames', 'activityTypes', 'preferredActivityTypes', 'periods']],
+    ['lesson.resource_attribute_avoid_periods', ['requiredResourceTypes', 'periods']],
+    ['teacher.prep_group_fairness', ['teacherIds', 'weight']],
+]);
+
+function editedSourceParameterKeys(clause = {}) {
+    return new Set([
+        ...EDITED_SOURCE_SCOPE_PARAMETER_KEYS,
+        ...(EDITED_SOURCE_PARAMETER_KEYS.get(asText(clause.capabilityId || '', 160)) || []),
+    ]);
+}
+
+function mergeEditedObject(original = {}, edited = {}, allowedKeys = new Set()) {
+    const next = { ...(original && typeof original === 'object' ? original : {}) };
+    allowedKeys.forEach(key => {
+        if (Object.hasOwn(edited || {}, key)) next[key] = cloneValue(edited[key]);
+        else delete next[key];
+    });
+    return next;
+}
+
+function sanitizeEditedSourceClause(project = {}, clause = {}, sourceRequirement = {}, index = 0, originalClause = {}) {
+    const source = sourceRequirement.source || {};
+    const rawText = source.rawText || sourceRequirement.rawText || '';
+    const trustedClause = originalClause && typeof originalClause === 'object' ? originalClause : clause;
+    const allowedParameterKeys = editedSourceParameterKeys(trustedClause);
+    const parameters = mergeEditedObject(
+        trustedClause.parameters,
+        clause.parameters && typeof clause.parameters === 'object' ? clause.parameters : {},
+        allowedParameterKeys,
+    );
+    const allowedScopeKeys = new Set(['kind', 'classIds', 'teacherIds', 'teacherNames', 'gradeNames']);
+    const scope = mergeEditedObject(
+        trustedClause.scope,
+        clause.scope && typeof clause.scope === 'object' ? clause.scope : {},
+        allowedScopeKeys,
+    );
+    const teacherNamesById = new Map(asList(project.teachers).map(item => [item.id, entityLabel(item)]));
+    const derivedScopeKind = asText(scope.kind || parameters.scopeQualifier || '', 80);
+    if (derivedScopeKind === 'teacher_covered_classes') {
+        const teacherNames = normalizedTextValues(160,
+            scope.teacherNames,
+            parameters.teacherNames,
+            normalizedTextValues(120, scope.teacherIds, parameters.teacherIds)
+                .map(id => teacherNamesById.get(id)),
+        );
+        delete scope.classIds;
+        delete scope.teacherIds;
+        delete parameters.classIds;
+        delete parameters.teacherIds;
+        if (teacherNames.length) {
+            scope.teacherNames = teacherNames;
+            parameters.teacherNames = teacherNames;
+        }
+    } else if (['grade_classes', 'subject_offering_classes', 'school'].includes(derivedScopeKind)) {
+        delete scope.classIds;
+        delete parameters.classIds;
+    } else if (derivedScopeKind === 'explicit_classes') {
+        const validClassIds = new Set(asList(project.classes).map(item => item.id));
+        const classIds = normalizedTextValues(120, scope.classIds, parameters.classIds)
+            .filter(id => validClassIds.has(id));
+        scope.classIds = classIds;
+        parameters.classIds = classIds;
+    }
+
+    const originalObject = trustedClause.object && typeof trustedClause.object === 'object' ? trustedClause.object : {};
+    const editedObject = clause.object && typeof clause.object === 'object' ? clause.object : {};
+    const object = {
+        ...originalObject,
+        name: asText(editedObject.name || originalObject.name || '', 300),
+        matchedIds: normalizedTextValues(160, editedObject.matchedIds),
+    };
+    const objectKind = asText(object.kind || '', 80).toLowerCase();
+    const hasTypedObjectCatalog = objectKind.includes('teacher')
+        || objectKind.includes('class')
+        || objectKind.includes('room')
+        || objectKind.includes('subject')
+        || objectKind.includes('course');
+    const objectEntities = objectKind.includes('teacher')
+        ? asList(project.teachers)
+        : objectKind.includes('class')
+            ? asList(project.classes)
+            : objectKind.includes('room')
+                ? asList(project.rooms)
+                : (objectKind.includes('subject') || objectKind.includes('course'))
+                    ? asList(project.subjects)
+                    : [];
+    const requestedTargetIds = normalizedTextValues(160, object.matchedIds);
+    if (requestedTargetIds.length && hasTypedObjectCatalog) {
+        const entitiesById = new Map(objectEntities.map(item => [String(item.id), item]));
+        const invalidTargetIds = requestedTargetIds.filter(id => !entitiesById.has(id));
+        if (invalidTargetIds.length) {
+            throw new TimetableRuleParseError(
+                `第 ${index + 1} 个子约束选择的对象与“${object.kind || '当前对象类型'}”不匹配。`,
+                'source_clause_object_mismatch',
+                400,
+            );
+        }
+        object.matchedIds = requestedTargetIds;
+        object.name = requestedTargetIds
+            .map(id => entityLabel(entitiesById.get(id)))
+            .filter(Boolean)
+            .join('、');
+    } else if (requestedTargetIds.length) {
+        const validTargetIds = new Set([
+            ...asList(project.teachers).map(item => String(item.id)),
+            ...asList(project.classes).map(item => String(item.id)),
+            ...asList(project.subjects).map(item => String(item.id)),
+            ...asList(project.rooms).map(item => String(item.id)),
+        ]);
+        const invalidTargetIds = requestedTargetIds.filter(id => !validTargetIds.has(id));
+        if (invalidTargetIds.length) {
+            throw new TimetableRuleParseError(
+                `第 ${index + 1} 个子约束包含当前项目中不存在的对象。`,
+                'source_clause_object_mismatch',
+                400,
+            );
+        }
+        object.matchedIds = requestedTargetIds;
+    }
+
+    const clauseId = asText(trustedClause.clauseId || trustedClause.constraintId || trustedClause.id || '', 300);
+    const allowedTimeKeys = new Set(['days', 'periods', 'slots', 'dayPart', 'weekPattern']);
+    const condition = mergeEditedObject(
+        trustedClause.condition,
+        clause.condition && typeof clause.condition === 'object' ? clause.condition : {},
+        allowedTimeKeys,
+    );
+    const time = mergeEditedObject(
+        trustedClause.time,
+        clause.time && typeof clause.time === 'object' ? clause.time : {},
+        allowedTimeKeys,
+    );
+    const quantifier = mergeEditedObject(
+        trustedClause.quantifier,
+        clause.quantifier && typeof clause.quantifier === 'object' ? clause.quantifier : {},
+        new Set(['unit', 'min', 'max']),
+    );
+    const relation = mergeEditedObject(
+        trustedClause.relation,
+        clause.relation && typeof clause.relation === 'object' ? clause.relation : {},
+        new Set(['kind', 'parentClauseId']),
+    );
+    return {
+        ...trustedClause,
+        id: asText(trustedClause.id || trustedClause.requirementId || clauseId, 300) || `edited_clause_${index + 1}`,
+        requirementId: asText(trustedClause.requirementId || trustedClause.id || clauseId, 300) || `edited_clause_${index + 1}`,
+        ...(clauseId ? { clauseId, constraintId: clauseId } : {}),
+        sourceId: sourceRequirement.sourceId,
+        textHash: source.textHash || sourceRequirement.textHash || '',
+        origin: sourceRequirement.origin || 'user_input',
+        parsedBy: normalizedParsedBy(trustedClause.parsedBy, sourceRequirement.parsedBy, 'manual_semantic_edit'),
+        rawText,
+        source: {
+            ...(clause.source && typeof clause.source === 'object' ? clause.source : {}),
+            sourceId: sourceRequirement.sourceId,
+            textHash: source.textHash || sourceRequirement.textHash || '',
+            origin: sourceRequirement.origin || 'user_input',
+            rawText,
+            sourceSheet: source.sheetName || source.sourceSheet || '',
+            sourceRow: source.rowNumber || source.sourceRow || null,
+            lineNumber: source.lineNumber || null,
+        },
+        object,
+        parameters,
+        scope,
+        ...(Object.keys(condition).length ? { condition } : { condition: undefined }),
+        ...(Object.keys(time).length ? { time } : { time: undefined }),
+        ...(Object.keys(quantifier).length ? { quantifier } : { quantifier: undefined }),
+        ...(Object.keys(relation).length ? { relation } : { relation: undefined }),
+        strength: clause.strength === 'hard' ? 'hard' : clause.strength === 'soft' ? 'soft' : trustedClause.strength,
+    };
+}
+
+export function recompileTimetableSourceRequirement({
+    project: inputProject = {},
+    previousResult = {},
+    sourceId = '',
+    textHash = '',
+    clauses = [],
+    rationales = [],
+} = {}) {
+    const project = normalizeTimetableProject(inputProject);
+    const sourceRequirements = cloneValue(asList(previousResult.sourceRequirements)
+        .filter(item => item && typeof item === 'object'));
+    const target = sourceRequirements.find(item => item.sourceId === sourceId);
+    if (!target) {
+        throw new TimetableRuleParseError('没有找到要重编译的来源需求。', 'source_requirement_not_found', 404);
+    }
+    const expectedHash = asText(target.source?.textHash || target.textHash || '', 128);
+    if (!textHash || textHash !== expectedHash) {
+        throw new TimetableRuleParseError('来源文本已变化，请重新解析后再编辑。', 'source_text_hash_mismatch', 409);
+    }
+    const rawText = target.source?.rawText || target.rawText || '';
+    const originalClausesById = new Map(asList(target.clauses).map(clause => [
+        asText(clause.clauseId || clause.constraintId || clause.id || '', 300),
+        clause,
+    ]));
+    const submittedClauseIds = new Set();
+    const editedClauses = asList(clauses)
+        .filter(item => item && typeof item === 'object')
+        .map((clause, index) => {
+            const clauseId = asText(clause.clauseId || clause.constraintId || clause.id || '', 300);
+            const originalClause = originalClausesById.get(clauseId);
+            if (!clauseId || !originalClause || submittedClauseIds.has(clauseId)) {
+                throw new TimetableRuleParseError(
+                    `第 ${index + 1} 个子约束不是当前来源中的可编辑子约束。`,
+                    'source_clause_identity_mismatch',
+                    400,
+                );
+            }
+            submittedClauseIds.add(clauseId);
+            return sanitizeEditedSourceClause(project, clause, target, index, originalClause);
+        });
+    const relationValidation = validateSemanticRelationGraph(rawText, editedClauses.map((clause, index) => ({
+        id: clause.clauseId || clause.id || `edited_clause_${index + 1}`,
+        evidence: clause.evidence?.quote || clause.reviewEvidence?.quote || '',
+        relation: {
+            ...(clause.relation || {}),
+            parentId: clause.relation?.parentClauseId || clause.relation?.parentId || '',
+        },
+    })));
+    if (!relationValidation.valid) {
+        const error = relationValidation.errors[0];
+        throw new TimetableRuleParseError(error?.message || '来源语义关系无效。', error?.code || 'invalid_semantic_relation', 400);
+    }
+    const nextRationales = editedSourceRationales(rationales, rawText);
+    const nextSources = sourceRequirements.map(item => item.sourceId === sourceId
+        ? {
+            ...item,
+            semanticAuthoritative: true,
+            clauses: [],
+            machineRuleIds: [],
+            rationales: nextRationales,
+            parsedBy: normalizedParsedBy(item.parsedBy, 'manual_semantic_edit'),
+        }
+        : { ...item, semanticAuthoritative: true });
+    const semanticRequirements = [
+        ...asList(previousResult.requirementItems).filter(item => artifactSourceId(item) !== sourceId),
+        ...editedClauses,
+    ];
+    return normalizeTimetableRuleDraftRows({
+        project,
+        draftRows: asList(previousResult.draftRows).filter(item => artifactSourceId(item) !== sourceId),
+        semanticRequirements,
+        sourceRequirements: nextSources,
+        source: 'source_recompile',
+        inputType: previousResult.inputType || 'source_recompile',
+        contextStats: previousResult.contextStats || null,
+        initialWarnings: asList(previousResult.warningItems || previousResult.warnings)
+            .filter(item => artifactSourceId(item) !== sourceId),
+        rejected: asList(previousResult.rejected).filter(item => artifactSourceId(item) !== sourceId),
+        originalText: previousResult.originalText || rawText,
     });
 }
 
@@ -8215,27 +8920,53 @@ function preciseSemanticConstraintsFromText(project = {}, text = '', sourceMeta 
         && /(?:优先|尽量|最好|希望).{0,16}(?:上午|早上)|(?:上午|早上).{0,16}(?:优先|尽量|最好|希望)/.test(rawText)
     ) {
         const scopeQualifier = 'teacher_covered_classes';
-        return subjectTargets.map(subject => unsupportedSemanticConstraint({
-            type: 'subject_morning',
-            capabilityId: 'subject.preferred_day_part',
-            targetType: 'subject',
-            targetId: subject.id,
-            target: subject.name,
-            subjectId: subject.id,
-            subjectName: subject.name,
-            days: activeDays,
-            periods,
-            parameters: {
+        return subjectTargets.flatMap(subject => {
+            const semanticKey = `preferred-morning:${subject.id || subject.name}`;
+            const base = unsupportedSemanticConstraint({
+                type: 'subject_morning',
+                capabilityId: 'subject.preferred_day_part',
+                targetType: 'subject',
+                targetId: subject.id,
+                target: subject.name,
+                subjectId: subject.id,
+                subjectName: subject.name,
                 days: activeDays,
                 periods,
-                teacherNames,
-                scopeQualifier,
-            },
-            scope: { qualifier: scopeQualifier, teacherNames },
-            priority: 'soft',
-            reason: rawText,
-            weekPattern,
-        }, sourceMeta));
+                parameters: {
+                    days: activeDays,
+                    periods,
+                    scopeQualifier: 'subject_offering_classes',
+                },
+                scope: { kind: 'subject_offering_classes' },
+                relation: { kind: 'independent', semanticKey },
+                priority: 'soft',
+                reason: rawText,
+                weekPattern,
+            }, sourceMeta);
+            const emphasis = unsupportedSemanticConstraint({
+                type: 'subject_morning',
+                capabilityId: 'subject.preferred_day_part',
+                targetType: 'subject',
+                targetId: subject.id,
+                target: subject.name,
+                subjectId: subject.id,
+                subjectName: subject.name,
+                days: activeDays,
+                periods,
+                parameters: {
+                    days: activeDays,
+                    periods,
+                    teacherNames,
+                    scopeQualifier,
+                },
+                scope: { kind: scopeQualifier, qualifier: scopeQualifier, teacherNames },
+                relation: { kind: 'emphasis', parentSemanticKey: semanticKey },
+                priority: 'soft',
+                reason: rawText,
+                weekPattern,
+            }, sourceMeta);
+            return [base, emphasis];
+        });
     }
 
     const hasScopedRequiredExperimentRoom = subjectTargets.length === 1
@@ -8455,16 +9186,13 @@ function preciseSemanticConstraintsFromText(project = {}, text = '', sourceMeta 
     const minOccurrences = minimumWeeklyOccurrencesFromText(rawText);
     if (
         gradeNames.length
-        && subjectTargets.length >= 2
+        && subjectTargets.length >= 1
         && periods.length
         && minOccurrences
         && /(?:排在|安排在|放在|优先|尽量)/.test(rawText)
     ) {
-        const avoidDayParts = /(?:不要|避免|不宜|尽量不).{0,16}(?:下午|午后)|(?:下午|午后).{0,12}(?:不要|避免|不集中)/.test(rawText)
-            ? ['afternoon']
-            : [];
-        return subjectTargets.map(subject => {
-            const parameters = { gradeNames, days, periods, minOccurrences, avoidDayParts };
+        const preferred = subjectTargets.map(subject => {
+            const parameters = { gradeNames, days, periods, minOccurrences };
             return unsupportedSemanticConstraint({
                 type: 'subject_preferred_periods',
                 capabilityId: 'subject.preferred_periods',
@@ -8477,14 +9205,36 @@ function preciseSemanticConstraintsFromText(project = {}, text = '', sourceMeta 
                 days,
                 periods,
                 minOccurrences,
-                avoidDayParts,
                 parameters,
-                scope: { gradeNames },
+                quantifier: { unit: 'occurrences_per_week', min: minOccurrences },
+                scope: { kind: 'grade_classes', gradeNames },
+                relation: { kind: 'independent' },
                 priority: 'soft',
                 reason: rawText,
                 weekPattern,
             }, sourceMeta);
         });
+        const concentration = /(?:不要|避免|不宜|尽量不).{0,16}(?:集中|扎堆|挤在).{0,12}(?:下午|午后)|(?:下午|午后).{0,12}(?:不要|避免|不集中)/.test(rawText)
+            ? [unsupportedSemanticConstraint({
+                type: 'subject_day_part_concentration',
+                intent: 'avoid_day_part_concentration',
+                capabilityId: 'subject.avoid_day_part_concentration',
+                targetType: subjectTargets.length > 1 ? 'subject_group' : 'subject',
+                targetId: subjectTargets.length === 1 ? subjectTargets[0].id : '',
+                target: subjectNames.join('、'),
+                subjectIds,
+                subjectNames,
+                gradeNames,
+                parameters: { subjectIds, subjectNames, gradeNames, dayPart: 'afternoon', comparison: 'avoid_concentration' },
+                scope: { kind: 'grade_classes', gradeNames },
+                relation: { kind: 'independent' },
+                priority: 'soft',
+                reason: rawText,
+                landing: ['optimization', 'review'],
+                weekPattern,
+            }, sourceMeta)]
+            : [];
+        return [...preferred, ...concentration];
     }
 
     if (
@@ -9159,6 +9909,8 @@ function localTextConstraints(project, text, sourceMeta = {}) {
             const effectiveDayPart = dayPartName(sentence)
                 || (continuation && context.dayPart && !hasExplicitPeriodExpression(sentence) ? context.dayPart : '');
             const broadDayPartOnly = Boolean(effectiveDayPart) && !hasExplicitPeriodExpression(sentence);
+            const hasDayPartConcentration = effectiveSubjectTargets.length > 0
+                && /(?:不要|避免|不宜|尽量不).{0,16}(?:集中|扎堆|挤在).{0,12}(?:下午|午后)|(?:下午|午后).{0,12}(?:不要|避免|不集中)/.test(sentence);
 
             const boundaryPeriods = crossVenueBoundaryPeriods(project, sentence);
             if (boundaryPeriods.length) {
@@ -9431,7 +10183,7 @@ function localTextConstraints(project, text, sourceMeta = {}) {
                     confidence: subject.id ? 0.9 : 0.64,
                     weekPattern,
                     }, tracedSourceMeta));
-                } else if (slots.length && hasAvoid) {
+                } else if (slots.length && hasAvoid && !hasDayPartConcentration) {
                     constraints.push(withSource({
                     type: 'subject_avoid_periods',
                     intent: /(?:最后一节|末节|收尾)/.test(sentence)
@@ -9800,12 +10552,8 @@ function shouldUseLocalFirst(inputType = '') {
 }
 
 function shouldUseAiExtraction(inputType = '', env = {}) {
-    if (!['text', 'txt', 'csv_text'].includes(inputType)) return false;
-    const configured = String(env.TIMETABLE_RULE_AI_EXTRACT || '').trim().toLowerCase();
-    if (['0', 'false', 'no', 'off'].includes(configured)) return false;
-    if (['1', 'true', 'yes', 'on'].includes(configured)) return true;
-    // The HTTP runtime passes process.env. Injected environments remain opt-in so offline callers stay deterministic.
-    return env === process.env && hasConfiguredAi(env);
+    if (!['text', 'txt', 'csv_text', 'xlsx_constraints'].includes(inputType)) return false;
+    return resolveSemanticAiMode(env) !== 'off';
 }
 
 function candidateSemanticSignature(row = {}) {
@@ -10316,9 +11064,10 @@ function reviewPatchAlreadyApplied(row = {}, item = {}) {
 }
 
 function validatedReviewPatchRow(project = {}, row = {}, patch = {}, { inputType = '', contextStats = null, originalText = '' } = {}) {
+    const sanitizedPatch = sanitizedReviewPatch(patch);
     const candidate = {
         ...row,
-        ...sanitizedReviewPatch(patch),
+        ...sanitizedPatch,
         id: row.id,
         stableKey: row.stableKey,
         sourceId: row.sourceId,
@@ -10335,6 +11084,31 @@ function validatedReviewPatchRow(project = {}, row = {}, patch = {}, { inputType
         ambiguity: null,
         ambiguities: [],
     };
+    const patchedTargetType = asText(sanitizedPatch.targetType || candidate.targetType || '', 40).toLowerCase();
+    const entityCollections = {
+        teacher: asList(project.teachers),
+        class: asList(project.classes),
+        subject: asList(project.subjects),
+    };
+    const patchedTargetName = asText(
+        sanitizedPatch.targetName
+        || sanitizedPatch.teacherName
+        || sanitizedPatch.className
+        || sanitizedPatch.subjectName
+        || '',
+        160,
+    );
+    const patchedTargetId = asText(
+        sanitizedPatch.targetId
+        || sanitizedPatch.teacherId
+        || sanitizedPatch.classId
+        || sanitizedPatch.subjectId
+        || '',
+        160,
+    );
+    const targetEntities = entityCollections[patchedTargetType] || [];
+    if (patchedTargetName && !targetEntities.some(entity => entityNamesForMatch(entity, patchedTargetType).includes(patchedTargetName))) return null;
+    if (patchedTargetId && !targetEntities.some(entity => entity.id === patchedTargetId)) return null;
     const normalized = normalizeTimetableRuleDraftRows({
         project,
         draftRows: [candidate],
@@ -10653,21 +11427,110 @@ async function reviewTimetableParseResult({
     }
 }
 
+function mergeSourceSemanticRationales(sourceRequirements = [], rationales = []) {
+    const bySource = new Map();
+    asList(rationales).forEach(rationale => {
+        const sourceId = artifactSourceId(rationale);
+        if (!sourceId) return;
+        if (!bySource.has(sourceId)) bySource.set(sourceId, []);
+        bySource.get(sourceId).push({
+            id: rationale.id || '',
+            text: rationale.text || rationale.reason || '',
+            evidence: rationale.evidence || '',
+            parsedBy: normalizedParsedBy(rationale.parsedBy, 'ai'),
+        });
+    });
+    return asList(sourceRequirements).map(sourceRequirement => {
+        const additions = bySource.get(sourceRequirement.sourceId) || [];
+        if (!additions.length) return sourceRequirement;
+        return {
+            ...sourceRequirement,
+            rationales: [...new Map([
+                ...asList(sourceRequirement.rationales),
+                ...additions,
+            ].map(item => [stableJson(item), item])).values()],
+        };
+    });
+}
+
+function withSemanticAssistance(result = {}, {
+    mode = 'off',
+    sourceIds = [],
+    status = 'skipped',
+    reason = '',
+    model = '',
+} = {}) {
+    const targeted = new Set(sourceIds);
+    return {
+        ...result,
+        sourceRequirements: asList(result.sourceRequirements).map(source => targeted.has(source.sourceId)
+            ? {
+                ...source,
+                semanticAssistance: { mode, status, reason, model },
+            }
+            : source),
+        semanticAssistance: {
+            mode,
+            status,
+            reason,
+            model,
+            targetedSourceIds: [...targeted],
+            targetedSourceCount: targeted.size,
+        },
+    };
+}
+
 async function parseAiOrLocal({ project, text, inputType, contextStats = null, constraintRows = [], fileName = '', env, fetchImpl }) {
     const preparedSources = prepareSourceInputs({ text, inputType, constraintRows, fileName, origin: 'user_input' });
     const sourceRequirements = preparedSources.sourceRequirements;
     constraintRows = preparedSources.sourceRows;
     const aiExtractWarnings = [];
-    if (shouldUseAiExtraction(inputType, env)) {
+    const semanticAiMode = resolveSemanticAiMode(env);
+    const aiExtractionEnabled = shouldUseAiExtraction(inputType, env);
+    let routedLocalConstraints = null;
+    let routedLocalConversion = null;
+    let routedLocalBaselineResult = null;
+    if (aiExtractionEnabled && semanticAiMode === 'targeted') {
+        routedLocalConstraints = localTextConstraintsFromInput(project, text, constraintRows, {
+            preferStructuredRows: inputType === 'xlsx_constraints',
+        });
+        routedLocalConversion = rowsFromAiConstraints(routedLocalConstraints, {
+            source: localParseSourceForInput(inputType),
+            project,
+        });
+        routedLocalBaselineResult = normalizeTimetableRuleDraftRows({
+            project,
+            draftRows: routedLocalConversion.rows,
+            source: localParseSourceForInput(inputType),
+            inputType,
+            contextStats,
+            originalText: text,
+            sourceRequirements,
+        });
+    }
+    const routedSourceById = new Map(asList(routedLocalBaselineResult?.sourceRequirements)
+        .map(source => [source.sourceId, source]));
+    const semanticTargetSources = semanticAiMode === 'all'
+        ? sourceRequirements
+        : sourceRequirements.filter(source => {
+            const localSource = routedSourceById.get(source.sourceId);
+            return sourceNeedsSemanticPlanning({
+                rawText: source.source?.rawText || source.rawText || '',
+                understandingStatus: localSource?.understandingStatus || 'unrecognized',
+                executionStatus: localSource?.executionStatus || 'unsupported_by_solver',
+            });
+        });
+    const semanticTargetSourceIds = semanticTargetSources.map(source => source.sourceId);
+    if (aiExtractionEnabled && semanticTargetSources.length) {
         try {
-            const localConstraints = localTextConstraintsFromInput(project, text, constraintRows, {
+            const localConstraints = routedLocalConstraints || localTextConstraintsFromInput(project, text, constraintRows, {
                 preferStructuredRows: inputType === 'xlsx_constraints',
             });
-            const localConversion = rowsFromAiConstraints(localConstraints, {
+            const localConversion = routedLocalConversion || rowsFromAiConstraints(localConstraints, {
                 source: localParseSourceForInput(inputType),
                 project,
             });
-            const localBaselineResult = normalizeTimetableRuleDraftRows({
+            const localBaselineResult = routedLocalBaselineResult || normalizeTimetableRuleDraftRows({
                 project,
                 draftRows: localConversion.rows,
                 source: localParseSourceForInput(inputType),
@@ -10678,14 +11541,15 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
             });
             const extracted = await extractRequirementsWithAI({
                 project,
-                text,
+                text: semanticTargetSources.map(source => source.source?.rawText || '').filter(Boolean).join('\n'),
                 contextStats,
-                sourceRequirements,
+                sourceRequirements: semanticTargetSources,
                 env,
                 fetchImpl,
             });
+            const enrichedSourceRequirements = mergeSourceSemanticRationales(sourceRequirements, extracted.sourceRationales);
             const reviewSourceIds = targetedReviewSourceIds(
-                sourceRequirements,
+                semanticTargetSources,
                 extracted.draftRows,
                 localConversion.rows,
             );
@@ -10702,11 +11566,11 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
                 },
                 originalText: text,
                 semanticRequirements: extracted.semanticRequirements,
-                sourceRequirements,
+                sourceRequirements: enrichedSourceRequirements,
                 initialWarnings: [...asList(extracted.warningItems), ...asList(extracted.warnings)],
                 rejected: extracted.rejected || [],
             });
-            const aiFirstResult = {
+            const aiFirstResult = withSemanticAssistance({
                 ...normalized,
                 parseSource: 'ai_extract',
                 aiAssistance: {
@@ -10722,9 +11586,15 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
                     model: extracted.model || '',
                     warnings: [],
                 }),
-            };
-            const formalBaselineResult = {
+            }, {
+                mode: semanticAiMode,
+                sourceIds: semanticTargetSourceIds,
+                status: 'completed',
+                model: extracted.model || '',
+            });
+            const formalBaselineResult = withSemanticAssistance({
                 ...localBaselineResult,
+                sourceRequirements: mergeSourceSemanticRationales(localBaselineResult.sourceRequirements, extracted.sourceRationales),
                 parseSource: 'ai_extract',
                 aiAssistance: {
                     mode: 'ai_first',
@@ -10739,7 +11609,12 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
                     model: extracted.model || '',
                     warnings: [],
                 }),
-            };
+            }, {
+                mode: semanticAiMode,
+                sourceIds: semanticTargetSourceIds,
+                status: 'completed',
+                model: extracted.model || '',
+            });
             if (reviewSourceIds.length) {
                 const reviewed = await reviewTimetableParseResult({
                     project,
@@ -10802,7 +11677,23 @@ async function parseAiOrLocal({ project, text, inputType, contextStats = null, c
                 initialWarnings: [...aiExtractWarnings, ...(hasConfiguredAi(env) ? [] : ['智能解析不可用，已仅提取明确规则：ai_not_configured'])],
             });
             if (aiExtractWarnings.length) {
-                return withAiReviewUnavailable(localResult, 'ai_extract_failed', aiExtractWarnings[0]);
+                return withSemanticAssistance(
+                    withAiReviewUnavailable(localResult, 'ai_extract_failed', aiExtractWarnings[0]),
+                    {
+                        mode: semanticAiMode,
+                        sourceIds: semanticTargetSourceIds,
+                        status: 'degraded',
+                        reason: 'ai_extract_failed',
+                    },
+                );
+            }
+            if (semanticAiMode === 'targeted' && !semanticTargetSources.length) {
+                return withSemanticAssistance(localResult, {
+                    mode: semanticAiMode,
+                    sourceIds: [],
+                    status: 'skipped',
+                    reason: 'simple_sources',
+                });
             }
             if (!hasConfiguredAi(env)) {
                 return reviewTimetableParseResult({ project, text, inputType, contextStats, constraintRows, result: localResult, env, fetchImpl });

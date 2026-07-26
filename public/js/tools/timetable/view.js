@@ -30,16 +30,12 @@ import { renderConstraintChatDock } from './view-chat.js';
 import { renderFixPreview, renderSmartHelperDialog } from './view-smart-helper.js';
 import { renderConstraintDialog } from './view-constraint-dialog.js';
 import {
-    buildUnifiedRequirementItems,
-    draftRowApplyItemKey,
-    getActionableRequirementCount,
-    getRequirementGroupKey,
-    isApplyItemExcluded,
-    semanticActionApplyItemKey,
+    buildRequirementReviewViewModel,
 } from './constraint-dialog-review-model.js';
 import { buildDutyTeacherSearchModel } from './duty-teacher-search.js';
 import {
     plannerRuleTypeLabel as ruleTypeLabel,
+    requirementIntentLabel,
 } from './constraint-status-dict.js';
 
 function escapeHtml(value) {
@@ -178,6 +174,194 @@ function ruleStatusLabel(status) {
 
 function timetableReviewLabel(type = '') {
     return TIMETABLE_REVIEW_LABELS[type] || (type ? '审查项' : '提醒');
+}
+
+// Inspector content is user-facing. Keep machine identifiers available for
+// actions and stable keys, but never expose them as the visible explanation.
+const INSPECTOR_MACHINE_LABELS = {
+    timefold_solver: 'Timefold 求解器',
+    fast_constructed: '快速构造',
+    manual_adjusted: '手动调整',
+    published_history_restored: '恢复发布版',
+    queued: '排队等待',
+    running: '正在求解',
+    completed: '已完成',
+    failed: '求解失败',
+    skipped: '已跳过',
+    search_exhausted: '求解预算已用尽',
+    input_infeasible: '输入条件不可行',
+    hard_score_violation: '存在硬约束冲突',
+    advanced: '高级排课规则',
+    advanced_constraint: '高级排课规则',
+    'advanced:room.required': '教室要求',
+    'advanced:room.preferred': '优先使用指定教室',
+    'advanced:room.forbidden_type': '禁用教室类型',
+    'advanced:teacher.compact_day': '教师集中授课',
+    'advanced:teacher.prep_group_fairness': '教师备课组均衡',
+    'advanced:lesson.consecutive': '连续课节',
+    'advanced:subject.avoid_weekday_concentration': '课程避免集中在同一天',
+    'advanced:subject.not_consecutive_with': '课程不连续安排',
+    'advanced:schedule.cross_venue_boundary': '跨场地换课限制',
+    'advanced:lesson.activity_scope_period_policy': '活动类型节次策略',
+    'advanced:lesson.resource_attribute_avoid_periods': '资源属性避开节次',
+};
+
+function inspectorMachineTypeCandidates(item = {}) {
+    const values = [
+        item.advancedRule?.type,
+        item.advancedRule?.capabilityId,
+        item.advancedType,
+        item.capabilityId,
+        item.primitive,
+        item.intent,
+        item.type,
+    ].filter(Boolean).map(value => String(value).trim());
+    const title = String(item.title || '').trim();
+    const titleCandidates = title.match(/(?:advanced:)?[a-z][a-z0-9_]*\.[a-z0-9_]+/gi) || [];
+    return [...new Set([...values, ...titleCandidates].flatMap(value => [
+        value,
+        value.replace(/^advanced:/i, ''),
+    ]).filter(Boolean))];
+}
+
+function inspectorRuleTypeLabelForItem(item = {}) {
+    const candidate = inspectorMachineTypeCandidates(item).find(value => (
+        value !== 'advanced_constraint'
+        && value !== 'advanced'
+        && isInspectorMachineIdentifier(value)
+    ));
+    return inspectorRuleTypeLabel(candidate || item.type || item.capabilityId || item.intent);
+}
+
+function humanizeInspectorText(value = '') {
+    let text = String(value || '');
+    const aliases = [
+        ...Object.entries(INSPECTOR_MACHINE_LABELS).flatMap(([key, label]) => (
+            key.startsWith('advanced:')
+                ? [[key, label], [key.slice('advanced:'.length), label]]
+                : [[key, label]]
+        )),
+        ['teacher.compact_day', '教师集中授课'],
+        ['teacher.prep_group_fairness', '教师备课组均衡'],
+        ['lesson.consecutive', '连续课节'],
+        ['subject.avoid_weekday_concentration', '课程避免集中在同一天'],
+        ['subject.not_consecutive_with', '课程不连续安排'],
+        ['violated', '未满足'],
+        ['unmet', '未满足'],
+        ['not_evaluable', '暂不可评估'],
+        ['not_applicable', '未参与'],
+        ['needs_review', '需要检查'],
+        ['effective', '已应用'],
+    ]
+        .sort(([left], [right]) => right.length - left.length);
+    aliases.forEach(([machine, label]) => {
+        const escaped = machine.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        text = text.replace(new RegExp(`(^|[^A-Za-z0-9_])${escaped}(?=$|[^A-Za-z0-9_])`, 'gi'), `$1${label}`);
+    });
+    return text;
+}
+
+function isInspectorMachineIdentifier(value = '') {
+    return /^[a-z][a-z0-9]*(?::[a-z][a-z0-9]*)?(?:[._][a-z0-9]+)+$/i.test(String(value || '').trim())
+        || /^(?:advanced:)?[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+$/i.test(String(value || '').trim());
+}
+
+function inspectorRuleTypeLabel(type = '') {
+    const value = String(type || '').trim();
+    if (!value) return '未分类规则';
+    if (INSPECTOR_MACHINE_LABELS[value]) return INSPECTOR_MACHINE_LABELS[value];
+    const advancedKey = value.startsWith('advanced:') ? value : `advanced:${value}`;
+    if (INSPECTOR_MACHINE_LABELS[advancedKey]) return INSPECTOR_MACHINE_LABELS[advancedKey];
+    const plannerLabel = ruleTypeLabel(value);
+    if (plannerLabel && plannerLabel !== value) return plannerLabel;
+    const reviewLabel = timetableReviewLabel(value);
+    if (reviewLabel && reviewLabel !== '审查项') return reviewLabel;
+    const intentLabel = requirementIntentLabel(value);
+    if (intentLabel && intentLabel !== value && intentLabel !== '排课需求') return intentLabel;
+    return isInspectorMachineIdentifier(value) ? '未分类规则' : value;
+}
+
+function inspectorStatusLabel(status = '') {
+    const value = String(status || '').trim();
+    return INSPECTOR_MACHINE_LABELS[value] || ({
+        effective: '已应用',
+        ready: '可应用',
+        needs_review: '需要检查',
+        unsupported: '暂不支持',
+        invalid: '无效',
+        ignored: '已忽略',
+        satisfied: '已满足',
+        partial: '部分满足',
+        violated: '未满足',
+        unmet: '未满足',
+        not_evaluable: '暂不可评估',
+        not_applicable: '未参与',
+    })[value] || (isInspectorMachineIdentifier(value) ? '待评估' : value || '待评估');
+}
+
+function inspectorOriginalText(item = {}, state = {}) {
+    const ruleId = item.ruleId || item.id || '';
+    const sourceId = item.sourceId || item.advancedRule?.sourceId || '';
+    const clauseId = item.clauseId || item.advancedRule?.clauseId || '';
+    const sourceRule = ruleId
+        ? getSavedRuleItems(state.project || {}).find(rule => String(rule.id || '') === String(ruleId))
+        : null;
+    const advancedRules = Array.isArray(state.project?.rules?.advancedRules) ? state.project.rules.advancedRules : [];
+    const projectAdvancedRule = advancedRules.find(rule => (
+        (ruleId && String(rule.id || '') === String(ruleId))
+        || (sourceId && String(rule.sourceId || '') === String(sourceId) && (!clauseId || String(rule.clauseId || '') === String(clauseId)))
+    ));
+    const sourceRequirements = [
+        ...(Array.isArray(state.ruleReview?.sourceRequirements) ? state.ruleReview.sourceRequirements : []),
+        ...(Array.isArray(state.ruleReview?.items) ? state.ruleReview.items : []),
+        ...(Array.isArray(state.project?.sourceRequirements) ? state.project.sourceRequirements : []),
+    ];
+    const sourceRequirement = ruleId
+        ? sourceRequirements.find(source => {
+            const ids = [
+                ...(Array.isArray(source.machineRuleIds) ? source.machineRuleIds : []),
+                ...(Array.isArray(source.applicableMachineRuleIds) ? source.applicableMachineRuleIds : []),
+                ...(Array.isArray(source.clauses) ? source.clauses.flatMap(clause => clause.machineRuleIds || []) : []),
+            ].map(String);
+            return ids.includes(String(ruleId))
+                || (sourceId && String(source.sourceId || source.id || '') === String(sourceId))
+                || (clauseId && (source.clauses || []).some(clause => String(clause.clauseId || clause.id || '') === String(clauseId)));
+        })
+        : sourceRequirements.find(source => (
+            (sourceId && String(source.sourceId || source.id || '') === String(sourceId))
+            || (clauseId && (source.clauses || []).some(clause => String(clause.clauseId || clause.id || '') === String(clauseId)))
+        )) || null;
+    const rawText = item.rawText
+        || item.sourceText
+        || item.source?.rawText
+        || item.advancedRule?.rawText
+        || item.advancedRule?.sourceText
+        || item.advancedRule?.source?.rawText
+        || item.advancedRule?.originalText
+        || item.sourceRequirement?.source?.rawText
+        || sourceRequirement?.source?.rawText
+        || sourceRequirement?.rawText
+        || sourceRule?.rawText
+        || sourceRule?.sourceText
+        || sourceRule?.source?.rawText
+        || projectAdvancedRule?.rawText
+        || projectAdvancedRule?.sourceText
+        || projectAdvancedRule?.source?.rawText
+        || projectAdvancedRule?.originalText
+        || '';
+    return String(rawText || '').trim();
+}
+
+function inspectorRuleTitle(item = {}, state = {}) {
+    const rawTitle = String(item.title || '').trim();
+    const typeLabel = inspectorRuleTypeLabelForItem(item);
+    const rawTypeValues = inspectorMachineTypeCandidates(item);
+    const titleContainsMachineType = rawTypeValues.some(value => rawTitle === value || rawTitle.includes(value));
+    if (rawTitle && !isInspectorMachineIdentifier(rawTitle) && !titleContainsMachineType) {
+        return rawTitle;
+    }
+    const target = String(item.targetName || '').trim();
+    return [target, typeLabel].filter(Boolean).join(' · ') || '未分类规则';
 }
 
 const WEEKDAY_OPTIONS = [
@@ -411,18 +595,26 @@ export function renderWorkbench(state) {
     state.selectedOwnerId = ensureOwnerSelection(state);
     const inspectorModel = buildInspectorViewModel(state);
     const inspectorSummary = inspectorHeaderSummary(inspectorModel);
-    const inspectorOpen = Boolean(state.inspectorOpen || state.selectedSlotId || state.lastFailure || state.solverJob);
+    const inspectorOpen = !state.inspectorDismissed && Boolean(state.inspectorOpen || state.selectedSlotId || state.lastFailure || state.solverJob);
+    const inspectorVisible = !state.inspectorDismissed;
     const constraintOpen = Boolean(state.constraintDialog?.open);
     const inspectorPosition = state.inspectorPosition || null;
+    const inspectorSize = state.inspectorSize || null;
     const hasInspectorPosition = Number.isFinite(inspectorPosition?.x) && Number.isFinite(inspectorPosition?.y);
+    const hasInspectorSize = Number.isFinite(inspectorSize?.width) && Number.isFinite(inspectorSize?.height);
     const inspectorClass = [
         'tt-inspector',
         inspectorOpen ? 'is-open' : 'is-collapsed',
         hasInspectorPosition ? 'is-positioned' : '',
     ].filter(Boolean).join(' ');
-    const inspectorStyle = hasInspectorPosition
-        ? ` style="--tt-inspector-x:${Math.round(inspectorPosition.x)}px;--tt-inspector-y:${Math.round(inspectorPosition.y)}px"`
-        : '';
+    const inspectorStyleValues = [
+        hasInspectorPosition ? `--tt-inspector-x:${Math.round(inspectorPosition.x)}px` : '',
+        hasInspectorPosition ? `--tt-inspector-y:${Math.round(inspectorPosition.y)}px` : '',
+        hasInspectorSize ? `--tt-inspector-width:${Math.round(inspectorSize.width)}px` : '',
+        hasInspectorSize ? `--tt-inspector-height:${Math.round(inspectorSize.height)}px` : '',
+    ].filter(Boolean);
+    const inspectorStyle = inspectorStyleValues.length ? ` style="${inspectorStyleValues.join(';')}"` : '';
+    const inspectorTone = inspectorModel.verdict?.tone === 'ok' ? 'tt-chip--ok' : 'tt-chip--warn';
     return `
         <div class="tt-workbench ${constraintOpen ? 'is-constraint-dialog-open' : ''}">
             ${renderTopbar(state)}
@@ -432,19 +624,24 @@ export function renderWorkbench(state) {
             <section class="tt-schedule-panel">
                 ${renderSchedulePanel(state)}
             </section>
-            <aside class="${inspectorClass}" data-inspector-floating-window${inspectorStyle}>
+            <aside class="${inspectorClass}" data-inspector-floating-window${inspectorStyle}${inspectorVisible ? '' : ' hidden aria-hidden="true"'}>
                 <details class="tt-inspector-drawer" id="tt-inspector-drawer" ${inspectorOpen ? 'open' : ''}>
                     <summary class="tt-inspector-summary" data-inspector-drag-handle>
-                        <span class="tt-inspector-summary-main"><i data-lucide="panel-right-open"></i><strong>排课审查</strong></span>
-                        <em>${escapeHtml(inspectorSummary)}</em>
+                        <span class="tt-inspector-summary-main">
+                            <i data-lucide="clipboard-check"></i>
+                            <span class="tt-inspector-summary-copy"><strong>排课审查</strong><em>当前课表${inspectorModel.metrics?.total ? ` · ${escapeHtml(inspectorModel.metrics.total)} 课时` : ''} · ${escapeHtml(inspectorSummary)}</em></span>
+                        </span>
+                        <span class="tt-inspector-summary-status tt-chip ${inspectorTone}">${escapeHtml(inspectorModel.verdict?.title || '待审查')}</span>
                         <span class="tt-inspector-summary-action" data-inspector-toggle-icon aria-hidden="true">
                             <i data-lucide="${inspectorOpen ? 'chevron-up' : 'chevron-down'}"></i>
                         </span>
+                        <button class="tt-inspector-close" data-action="close-inspector" type="button" aria-label="关闭排课审查" title="关闭排课审查"><i data-lucide="x"></i></button>
                     </summary>
                     <div class="tt-inspector-body">
                         ${renderInspector(state, inspectorModel)}
                     </div>
                 </details>
+                <span class="tt-inspector-resize-handle" data-inspector-resize-handle aria-hidden="true"></span>
             </aside>
             ${renderRangeFloatingPopover(state)}
             ${renderRosterImportDialog(state)}
@@ -2150,33 +2347,52 @@ function timeBlockKindLabel(kind = 'teaching') {
     return '附加时段';
 }
 
-function smartHelperPendingRequirementCount(review = {}, pendingRules = []) {
-    if (Array.isArray(review.sourceRequirements)) {
-        return review.sourceRequirements.filter(item => (
-            (item?.origin || item?.source?.origin || 'unknown') !== 'system_supplement'
-        )).length;
+function smartHelperSidebarSummary(state = {}, savedTotal = 0) {
+    const viewModel = buildRequirementReviewViewModel(state.ruleReview || {}, {
+        requirementFilter: 'all',
+        systemGroupCollapsed: true,
+    });
+    let userItems = viewModel.items.filter(viewItem => (
+        !viewItem.isSystemSupplement
+        && (viewItem.item?.origin || viewItem.item?.source?.origin || 'unknown') !== 'system_supplement'
+    ));
+    if (!userItems.length && (state.pendingRules || []).length) {
+        const legacyViewModel = buildRequirementReviewViewModel({ draftRows: state.pendingRules }, {
+            requirementFilter: 'all',
+            systemGroupCollapsed: true,
+        });
+        userItems = legacyViewModel.items.filter(viewItem => !viewItem.isSystemSupplement);
     }
-
-    const legacyRequirementCount = buildUnifiedRequirementItems(review)
-        .filter(item => (item?.origin || item?.source?.origin || 'unknown') !== 'system_supplement')
-        .length;
-    return legacyRequirementCount
-        || (review.draftRows || []).length
-        || pendingRules.length;
+    const counts = userItems.reduce((result, viewItem) => {
+        if (viewItem.bucket === 'attention') result.attention += 1;
+        else if (viewItem.bucket === 'handled') result.handled += 1;
+        else result.applicable += 1;
+        return result;
+    }, { applicable: 0, attention: 0, handled: 0 });
+    const total = counts.applicable + counts.attention + counts.handled;
+    if (total) {
+        return {
+            total,
+            label: `${total} 条需求 · ${counts.applicable} 可应用 · ${counts.attention} 需确认 · ${counts.handled} 已处理`,
+        };
+    }
+    if (savedTotal) {
+        return {
+            total: 0,
+            label: `已应用 ${savedTotal} 条约束`,
+        };
+    }
+    return {
+        total: 0,
+        label: '还没有约束需求',
+    };
 }
 
 function smartHelperSidebarChip(state = {}, savedTotal = 0) {
-    const review = state.ruleReview || {};
-    const pendingRequirementCount = smartHelperPendingRequirementCount(review, state.pendingRules || []);
-    const requirements = buildUnifiedRequirementItems(review);
-    const semanticCount = Math.max(
-        getActionableRequirementCount(review, 'all'),
-        requirements.length
-    );
-    if (pendingRequirementCount) return `${pendingRequirementCount} 条`;
-    if (semanticCount) return `${semanticCount} 项`;
+    const summary = smartHelperSidebarSummary(state, savedTotal);
+    if (summary.total) return `${summary.total} 条`;
     if (savedTotal) return `${savedTotal} 条`;
-    return '待处理';
+    return '待输入';
 }
 
 function normalizeTimetableUiKey(value = '') {
@@ -2206,198 +2422,41 @@ function projectHasComplexSignals(project = {}) {
     return Boolean(project.commuteRules && Object.keys(project.commuteRules).length);
 }
 
-function smartHelperStats(state = {}, savedCount = 0, draftCount = 0, warningCount = 0) {
-    const review = state.ruleReview || {};
-    const requirements = buildUnifiedRequirementItems(review);
-    const reviewCount = requirements.filter(item => getRequirementGroupKey(item) === 'review').length;
-    const handledCount = requirements.filter(item => getRequirementGroupKey(item) === 'handled').length;
-    return {
-        actionableCount: getActionableRequirementCount(review, 'all'),
-        reviewCount,
-        handledCount,
-        complexCount: requirements.filter(requirementHasComplexSignal).length,
-        savedCount,
-        draftCount,
-        warningCount,
-        publicationOk: Boolean(state.project?.schedule?.publication?.ok),
-        hasSchedule: Boolean(state.project?.schedule?.slots?.length),
-        complexProject: projectHasComplexSignals(state.project || {}),
-    };
-}
-
-function renderSmartHelperFlow(stats = {}) {
-    const steps = ['理解需求', '补充信息', '生成规则', '发布校验'];
-    const activeIndex = stats.publicationOk ? 3 : stats.hasSchedule ? 3 : stats.actionableCount || stats.savedCount ? 2 : stats.reviewCount || stats.warningCount ? 1 : 0;
-    return `
-        <div class="tt-smart-helper-flow" aria-label="智能约束助手流程">
-            ${steps.map((label, index) => `
-                <span class="${index <= activeIndex ? 'is-active' : ''}">
-                    <b>${escapeHtml(label)}</b>
-                </span>
-            `).join('')}
-        </div>
-    `;
-}
-
-function renderSmartHelperMetrics(stats = {}) {
-    const reviewCount = stats.warningCount || stats.reviewCount || 0;
-    const handledCount = stats.handledCount || stats.savedCount || 0;
-    const metrics = [
-        ['可应用', stats.actionableCount || 0, ''],
-        ['需复核', reviewCount, reviewCount ? 'is-warning' : ''],
-        ['已处理', handledCount, ''],
-    ];
-    return `
-        <div class="tt-smart-helper-metrics" aria-label="智能约束助手状态">
-            ${metrics.map(([label, value, className]) => `
-                <span class="${escapeAttr(className)}">
-                    <b>${escapeHtml(label)}</b>
-                    <strong>${escapeHtml(value)}</strong>
-                    <em>项</em>
-                </span>
-            `).join('')}
-        </div>
-    `;
-}
-
-function renderConstraintAgentMessage(message = {}, index = 0) {
-    const role = message.role === 'user' ? 'user' : 'assistant';
-    return `
-        <div class="tt-constraint-agent-message tt-constraint-agent-message--${escapeAttr(role)}" data-agent-message-index="${escapeAttr(index)}">
-            <span>${escapeHtml(role === 'user' ? '你' : '助手')}</span>
-            <p>${escapeHtml(message.content || '')}</p>
-        </div>
-    `;
-}
-
-function renderConstraintAgentMiniCard({ title = '', subtitle = '', applyItemKey = '', excluded = false } = {}) {
-    return `
-        <div class="tt-constraint-agent-mini-card ${excluded ? 'is-excluded' : ''}" data-apply-item-key="${escapeAttr(applyItemKey)}">
-            <div>
-                <strong>${escapeHtml(title || '排课需求')}</strong>
-                <span>${escapeHtml(subtitle || (excluded ? '已暂停应用' : '将随确认一起应用'))}</span>
-            </div>
-            <button class="tt-btn tt-btn--sm tt-btn--ghost" data-action="toggle-constraint-apply-item" data-apply-item-key="${escapeAttr(applyItemKey)}" type="button">
-                <i data-lucide="${excluded ? 'rotate-ccw' : 'pause-circle'}"></i>
-                <span>${escapeHtml(excluded ? '恢复' : '暂停')}</span>
-            </button>
-        </div>
-    `;
-}
-
-function renderConstraintAgentMiniCards(state = {}) {
-    const review = state.ruleReview || {};
-    const rows = (review.draftRows || []).slice(0, 4).map(row => {
-        const key = draftRowApplyItemKey(row);
-        return renderConstraintAgentMiniCard({
-            title: row.understanding || row.description || row.rawText || ruleTypeLabel(row.type || row.intent || 'rule'),
-            subtitle: `${ruleTypeLabel(row.type || row.intent || 'rule')} · ${row.priority === 'hard' || row.strength === 'hard' ? '硬约束' : '软约束'}`,
-            applyItemKey: key,
-            excluded: isApplyItemExcluded(review, key),
-        });
-    });
-    const actions = (review.semanticActions || []).slice(0, Math.max(0, 4 - rows.length)).map(action => {
-        const key = semanticActionApplyItemKey(action);
-        return renderConstraintAgentMiniCard({
-            title: action.title || action.description || action.target?.name || action.targetName || '模型动作',
-            subtitle: action.kind || action.type || 'semantic_action',
-            applyItemKey: key,
-            excluded: isApplyItemExcluded(review, key),
-        });
-    });
-    const cards = [...rows, ...actions];
-    if (!cards.length) return '';
-    return `
-        <div class="tt-constraint-agent-mini-cards" aria-label="对话排课需求卡">
-            ${cards.join('')}
-        </div>
-    `;
-}
-
-function renderConstraintAgentPanel(state = {}) {
-    const agent = state.constraintAgent || {};
-    const messages = (agent.messages || []).slice(-4);
-    const loading = Boolean(agent.loading);
-    const stage = agent.stage || 'INTAKE';
-    const canConfirm = stage === 'CONFIRM' && (agent.confirmationToken || agent.highRiskToken) && !(agent.confirmed || agent.highRiskConfirmed);
-    const canApply = stage === 'CONFIRM' && (agent.confirmed || agent.highRiskConfirmed);
-    const canSolve = stage === 'APPLY';
-    const statusLine = agent.statusLine || '[已理解 0 · 待澄清 0 · 待确认 0]';
-    return `
-        <section class="tt-constraint-agent-panel" data-constraint-agent-stage="${escapeAttr(stage)}">
-            <div class="tt-constraint-agent-header">
-                <div>
-                    <strong><i data-lucide="messages-square"></i><span>对话排课</span></strong>
-                    <em>${escapeHtml(statusLine)}</em>
-                </div>
-                <button class="tt-icon-btn tt-icon-btn--sm" data-action="constraint-agent-start" type="button" title="新建对话排课会话" aria-label="新建对话排课会话">
-                    <i data-lucide="refresh-cw"></i>
-                </button>
-            </div>
-            ${messages.length ? `
-                <div class="tt-constraint-agent-thread" aria-live="polite">
-                    ${messages.map(renderConstraintAgentMessage).join('')}
-                </div>
-            ` : ''}
-            ${renderConstraintAgentMiniCards(state)}
-            ${agent.error ? `<p class="tt-constraint-agent-error">${escapeHtml(agent.error)}</p>` : ''}
-            <label class="tt-constraint-agent-input">
-                <span>排课要求</span>
-                <textarea id="tt-constraint-agent-message" rows="3" ${loading ? 'disabled' : ''} placeholder="例如：张老师周三下午不排，数学尽量上午，确认后直接生成课表">${escapeHtml(agent.input || '')}</textarea>
-            </label>
-            <div class="tt-constraint-agent-actions">
-                <button class="tt-btn tt-btn--primary" data-action="constraint-agent-send" type="button" ${loading ? 'disabled' : ''}>
-                    <i data-lucide="${loading ? 'loader-2' : 'send'}" ${loading ? 'class="tt-spin"' : ''}></i><span>发送</span>
-                </button>
-                <button class="tt-btn" data-action="constraint-agent-confirm" type="button" ${!canConfirm || loading ? 'disabled' : ''}>
-                    <i data-lucide="check-circle-2"></i><span>确认</span>
-                </button>
-                <button class="tt-btn" data-action="constraint-agent-apply" type="button" ${!canApply || loading ? 'disabled' : ''}>
-                    <i data-lucide="file-check-2"></i><span>应用</span>
-                </button>
-                <button class="tt-btn" data-action="constraint-agent-solve" type="button" ${!canSolve || loading ? 'disabled' : ''}>
-                    <i data-lucide="play"></i><span>求解</span>
-                </button>
-            </div>
-        </section>
-    `;
-}
-
 function renderRulesSection(state) {
     const { project } = state;
     const savedItems = getSavedRuleItems(project);
-    const review = state.ruleReview || {};
-    const draftRows = (review.draftRows || []).length ? (review.draftRows || []) : (state.pendingRules || []);
     const savedCount = savedItems.length;
-    const draftCount = draftRows.length;
-    const pendingRequirementCount = smartHelperPendingRequirementCount(review, state.pendingRules || []);
-    const warningCount = (review.warnings || state.ruleWarnings || []).length + (review.unsupportedItems || []).length;
-    const helperStats = smartHelperStats(state, savedCount, draftCount, warningCount);
-    const cardTitle = '智能约束助手';
-    const cardDescription = pendingRequirementCount
-        ? `${pendingRequirementCount} 条要求待处理${warningCount ? ` / ${warningCount} 条需注意` : ''}，继续完成理解、复核和落地。`
-        : savedCount
-            ? `已有 ${savedCount} 条要求应用，可继续检查、调整并生成课表。`
-            : '自然语言需求理解、复核与落地。';
+    const summary = smartHelperSidebarSummary(state, savedCount);
+    const menuOpen = state.constraintDialog?.sidebarMenuOpen === true;
 
     return `
         <div class="tt-rule-stack tt-rules-setup-card tt-workflow-subsection" data-workflow-step="rules">
             <div class="tt-rules-setup-body">
-                <button class="tt-empty-card tt-roster-entry tt-rule-entry tt-smart-helper-entry" id="tt-open-rule-review" type="button" data-action="open-constraint-dialog">
-                    <i data-lucide="brain-circuit"></i>
-                    <strong>${escapeHtml(cardTitle)}</strong>
-                    <span class="tt-smart-helper-entry-subtitle">自然语言需求理解、复核与落地</span>
-                    <span class="tt-smart-helper-entry-status">${escapeHtml(cardDescription)}</span>
-                </button>
-                ${renderConstraintAgentPanel(state)}
-                ${renderSmartHelperFlow(helperStats)}
-                ${renderSmartHelperMetrics(helperStats)}
-                ${(savedCount || draftCount || warningCount) ? `
-                    <div class="tt-action-row tt-action-row--compact">
-                        <button class="tt-btn" id="tt-reparse-rule-review" type="button"><i data-lucide="upload"></i><span>重新解析</span></button>
-                        <button class="tt-btn tt-btn--danger" id="tt-clear-rules" type="button"><i data-lucide="trash-2"></i><span>清空约束</span></button>
-                    </div>
-                ` : ''}
+                <div class="tt-smart-helper-entry-shell">
+                    <button class="tt-empty-card tt-roster-entry tt-rule-entry tt-smart-helper-entry" id="tt-open-rule-review" type="button" data-action="open-constraint-dialog">
+                        <i data-lucide="brain-circuit"></i>
+                        <span class="tt-smart-helper-entry-copy">
+                            <strong>智能约束助手</strong>
+                            <span class="tt-smart-helper-entry-status">${escapeHtml(summary.label)}</span>
+                        </span>
+                        <i class="tt-smart-helper-entry-arrow" data-lucide="chevron-right"></i>
+                    </button>
+                    <button class="tt-icon-btn tt-smart-helper-menu-trigger" data-action="toggle-constraint-sidebar-menu" type="button" aria-label="智能约束更多操作" aria-haspopup="menu" aria-expanded="${menuOpen ? 'true' : 'false'}">
+                        <i data-lucide="ellipsis"></i>
+                    </button>
+                    ${menuOpen ? `
+                        <div class="tt-smart-helper-menu" role="menu" aria-label="智能约束更多操作">
+                            <button data-action="reenter-constraint-input" role="menuitem" type="button">
+                                <i data-lucide="refresh-cw"></i><span>重新输入需求</span>
+                            </button>
+                            ${savedCount ? `
+                                <button class="is-danger" data-action="clear-applied-constraints" role="menuitem" type="button">
+                                    <i data-lucide="trash-2"></i><span>清空已应用约束</span>
+                                </button>
+                            ` : ''}
+                        </div>
+                    ` : ''}
+                </div>
             </div>
         </div>
     `;
@@ -3029,6 +3088,50 @@ function ruleReviewRowSourceLabel(row = {}, status = '') {
     return `<span class="tt-rule-row-source" title="${escapeAttr(`${sourceLabel} · ${stateLabel}`)}">${escapeHtml(`${sourceLabel} · ${stateLabel}`)}</span>`;
 }
 
+function isSolverJobActive(state = {}) {
+    return Boolean(state.solverJob && ['queued', 'running'].includes(state.solverJob.status));
+}
+
+function solverFastAttempt(state = {}) {
+    const attempt = state.solverJob?.solverStats?.fastAttempt
+        || state.lastFailure?.fastAttempt
+        || state.lastFailure?.solverStats?.fastAttempt
+        || state.fastScheduleAttempt
+        || null;
+    if (!attempt) return null;
+    if (attempt.score) {
+        return {
+            placedLessons: Number(attempt.score.placedLessons || 0),
+            totalLessons: Number(attempt.score.totalLessons || 0),
+            unplacedLessons: Number(attempt.score.unplacedLessons || 0),
+            hardConflicts: Number(attempt.score.hardConflicts || 0),
+        };
+    }
+    return attempt;
+}
+
+function solverProgressText(state = {}) {
+    if (state.loading) return state.solvePhaseText || '正在启动求解';
+    const job = state.solverJob || null;
+    if (!job) return '';
+    if (!['queued', 'running'].includes(job.status)) return '';
+    const stats = job.solverStats || {};
+    const stage = stats.stage || (job.status === 'queued' ? 'queued' : 'timefold_solving');
+    const fastAttempt = solverFastAttempt(state);
+    if (stage === 'queued') return '求解任务排队中';
+    if (stage === 'fast_construct') return '正在快速构造';
+    if (stage === 'timefold_submit') {
+        return fastAttempt?.totalLessons
+            ? `快速构造 ${fastAttempt.placedLessons || 0}/${fastAttempt.totalLessons}，正在交给 Timefold`
+            : '正在交给 Timefold';
+    }
+    if (stage === 'timefold_solving' || stage === 'timefold_finished') {
+        const hasHardScore = Number.isFinite(Number(stats.hardScore));
+        return `Timefold 求解中${hasHardScore ? `，当前 hard score ${stats.hardScore}` : ''}`;
+    }
+    return job.mode === 'solve' ? 'Timefold 求解中' : 'Timefold 优化中';
+}
+
 function renderSolveSection(state) {
     const { project } = state;
     const readiness = getPreparedness(project);
@@ -3039,7 +3142,8 @@ function renderSolveSection(state) {
     const placed = score.placedLessons ?? 0;
     const total = score.totalLessons ?? totalPlannedLessons(project);
     const scaleMessage = solveScaleMessage(project, state.solveScaleHint);
-    const runLabel = state.loading ? (state.solvePhaseText || '快速生成中') : '';
+    const solverActive = isSolverJobActive(state);
+    const runLabel = solverProgressText(state);
     return `
         <section class="tt-section tt-section--solve tt-solve-setup-card tt-workflow-subsection" data-workflow-step="solve">
             <div class="tt-section-title">
@@ -3060,8 +3164,8 @@ function renderSolveSection(state) {
                     <span class="tt-process-chip tt-process-chip--muted">生成课表</span>
                 </div>
             ` : ''}
-            <button class="tt-btn tt-btn--primary" data-run-schedule type="button" ${state.loading || !readiness.ready ? 'disabled' : ''}>
-                <i data-lucide="${state.loading ? 'loader-2' : 'play'}" class="${state.loading ? 'tt-spin' : ''}"></i><span>${state.loading ? '快速生成中' : '快速生成'}</span>
+            <button class="tt-btn tt-btn--primary" data-run-schedule type="button" ${state.loading || solverActive || !readiness.ready ? 'disabled' : ''}>
+                <i data-lucide="${state.loading || solverActive ? 'loader-2' : 'play'}" class="${state.loading || solverActive ? 'tt-spin' : ''}"></i><span>${solverActive ? '求解中' : state.loading ? '正在启动' : '生成课表'}</span>
             </button>
         </section>
     `;
@@ -3070,16 +3174,16 @@ function renderSolveSection(state) {
 function solveScaleMessage(project, hint = null) {
     if (hint?.message) return hint.message;
     const classCount = (project?.classes || []).length;
-    if (classCount >= 30) return `${classCount} 个班，预计需要数分钟；当前 Timefold 超时上限 300 秒。`;
     const total = totalPlannedLessons(project);
+    if (classCount >= 30 || total >= 600) return `${classCount} 个班、${total} 课时，正在读取求解器配置。`;
     if (total >= 300) return `${total} 课时，可能需要数分钟。`;
     return '';
 }
 
 function optimizationStatusLabel(job) {
     if (!job) return '';
-    if (job.status === 'queued' || job.status === 'running') return 'Timefold 优化中';
-    if (job.status === 'completed' && job.accepted) return 'Timefold 已优化';
+    if (job.status === 'queued' || job.status === 'running') return solverProgressText({ solverJob: job });
+    if (job.status === 'completed' && job.accepted) return job.mode === 'solve' ? 'Timefold 已生成' : 'Timefold 已优化';
     if (job.status === 'completed') return '已保留快速课表';
     if (job.status === 'failed') return 'Timefold 未完成';
     if (job.status === 'skipped') return '已保留当前课表';
@@ -3095,6 +3199,8 @@ function solverReasonLabel(reason = '') {
         manual_adjustment_unplaced: '手动调整后仍有未排课时',
         pinned_slot_moved: '锁定课节被移动，优化结果已拒绝',
         hard_score_violation: '优化结果存在硬约束冲突',
+        search_exhausted: '当前求解预算内未找到零硬冲突课表',
+        input_infeasible: '输入硬约束已证明不可行',
         incomplete_solution: '优化结果未排满全部课时',
         hard_conflicts: '优化结果存在硬冲突',
         timeout: '后台优化超时',
@@ -3180,6 +3286,7 @@ function normalizeInspectorIssueEntries(items = [], options = {}) {
             targetId: item.targetId || '',
             targetName: item.targetName || '',
             slot,
+            rawText: item.rawText || item.sourceText || item.source?.rawText || item.sourceRequirement?.source?.rawText || '',
         });
     };
     items.forEach(add);
@@ -3628,12 +3735,13 @@ function pushUniqueInspectorModelItem(target, seen, item) {
         severity: item.severity || 'info',
         category: item.category || '',
         type: item.type || '',
-        title: item.title || item.targetName || timetableReviewLabel(item.type) || '审查项',
+        title: item.title || item.targetName || inspectorRuleTypeLabel(item.type) || '审查项',
         message: item.message || item.title || '需要复核。',
         targetKind: item.targetKind || '',
         targetId: item.targetId || '',
         targetName: item.targetName || '',
         slot: inspectorSlotLabel(item.slot),
+        rawText: item.rawText || item.sourceText || item.source?.rawText || item.sourceRequirement?.source?.rawText || '',
     };
     const key = inspectorModelItemKey(normalized);
     if (seen.has(key)) return;
@@ -3651,8 +3759,9 @@ function issueEntryToInspectorModelItem(entry = {}, source = 'diagnostic') {
             : entry.severity === 'warning'
                 ? 'warning'
                 : 'info',
-        title: entry.title || entry.targetName || timetableReviewLabel(entry.type) || '审查项',
-        message: entry.message || entry.title || timetableReviewLabel(entry.type) || '需要复核。',
+        title: entry.title || entry.targetName || inspectorRuleTypeLabel(entry.type) || '审查项',
+        message: entry.message || entry.title || (entry.type ? `规则：${inspectorRuleTypeLabel(entry.type)}` : '需要复核。'),
+        rawText: entry.rawText || entry.sourceText || entry.source?.rawText || entry.sourceRequirement?.source?.rawText || '',
     };
 }
 
@@ -3664,12 +3773,13 @@ function conflictToInspectorModelItem(conflict = {}, index = 0) {
         severity,
         category: conflict.category || '',
         type: conflict.type || '',
-        title: conflict.title || conflict.targetName || timetableReviewLabel(conflict.type) || '冲突',
-        message: conflict.message || conflict.reason || conflict.type || '存在课表冲突。',
+        title: conflict.title || conflict.targetName || inspectorRuleTypeLabel(conflict.type) || '冲突',
+        message: conflict.message || conflict.reason || (conflict.type ? `规则：${inspectorRuleTypeLabel(conflict.type)}` : '存在课表冲突。'),
         targetKind: conflict.targetKind || 'schedule',
         targetId: conflict.targetId || '',
         targetName: conflict.targetName || '',
         slot: inspectorSlotLabel(conflict.slot),
+        rawText: conflict.rawText || conflict.sourceText || conflict.source?.rawText || '',
     };
 }
 
@@ -3680,12 +3790,13 @@ function qualityIssueToInspectorModelItem(issue = {}, index = 0) {
         severity: issue.severity === 'error' ? 'error' : issue.severity === 'warning' ? 'warning' : 'info',
         category: issue.category || '',
         type: issue.type || '',
-        title: issue.title || issue.targetName || timetableReviewLabel(issue.type) || '质量建议',
-        message: issue.message || issue.title || timetableReviewLabel(issue.type) || '建议复核课表质量。',
+        title: issue.title || issue.targetName || inspectorRuleTypeLabel(issue.type) || '质量建议',
+        message: issue.message || issue.title || (issue.type ? `规则：${inspectorRuleTypeLabel(issue.type)}` : '建议复核课表质量。'),
         targetKind: issue.targetKind || 'schedule',
         targetId: issue.targetId || '',
         targetName: issue.targetName || '',
         slot: inspectorSlotLabel(issue.slot),
+        rawText: issue.rawText || issue.sourceText || issue.source?.rawText || '',
     };
 }
 
@@ -3702,6 +3813,7 @@ function diagnosticSuggestionToInspectorModelItem(suggestion = {}, index = 0) {
         targetId: suggestion.targetId || '',
         targetName: suggestion.targetName || '',
         slot: inspectorSlotLabel(suggestion.slot),
+        rawText: suggestion.rawText || suggestion.sourceText || suggestion.source?.rawText || '',
     };
 }
 
@@ -4105,12 +4217,16 @@ function renderExportSection(state) {
     const publication = schedule?.publication || null;
     const published = schedule?.published || null;
     const archiveOnly = archiveOnlyDraftState(state.project);
-    const canPublish = Boolean(schedule?.slots?.length && publication?.ok);
+    const solverActive = isSolverJobActive(state);
+    const solverFailed = state.solverJob?.status === 'failed' || Boolean(state.lastFailure);
+    const solverFailureMessage = state.lastFailure?.message
+        || (solverFailed ? solverReasonLabel(state.solverJob?.reason || state.solverJob?.solverStats?.reason || 'failed') : '');
+    const canPublish = Boolean(schedule?.slots?.length && publication?.ok && !solverActive && !solverFailed);
     const officialExportDisabled = publishedDraftChanged(state.project);
     const officialExportRequiresPublish = schedule?.published?.status !== 'published';
     const hasPublishedSnapshot = Boolean(schedule?.published?.snapshot?.slots?.length);
     const publishedSnapshotMismatch = hasPublicationFingerprintMismatch(publication, '发布快照');
-    const officialExportBlocked = officialExportDisabled || officialExportRequiresPublish || publishedSnapshotMismatch;
+    const officialExportBlocked = solverActive || solverFailed || officialExportDisabled || officialExportRequiresPublish || publishedSnapshotMismatch;
     const publishedExportTitle = publishedSnapshotMismatch
         ? PUBLICATION_FINGERPRINT_MISMATCH_MESSAGE
         : '导出已发布课表';
@@ -4129,7 +4245,11 @@ function renderExportSection(state) {
             : officialExportRequiresPublish
                 ? '请先发布课表后导出正式课表'
             : '导出正式课表';
-    const officialExportCopy = publishedSnapshotMismatch
+    const officialExportCopy = solverActive
+        ? `${solverProgressText(state)}，完成后才能发布或导出正式课表。`
+        : solverFailed
+            ? (solverFailureMessage || '生成失败，请查看排课审查。')
+        : publishedSnapshotMismatch
         ? PUBLICATION_FINGERPRINT_MISMATCH_MESSAGE
         : archiveOnly && hasPublishedSnapshot
             ? '当前工作草稿已清空，仍可恢复或导出已发布版本。'
@@ -4146,7 +4266,7 @@ function renderExportSection(state) {
         <section class="tt-section tt-export-setup-card tt-workflow-subsection" data-workflow-step="review">
             <div class="tt-section-title">
                 <h3><i data-lucide="download"></i><span>发布导出</span></h3>
-                <span class="tt-chip ${publishStatusTone(schedule)}">${escapeHtml(publishStatusLabel(schedule))}</span>
+                <span class="tt-chip ${solverFailed ? 'tt-chip--warn' : publishStatusTone(schedule)}">${escapeHtml(solverActive ? '求解中' : solverFailed ? '求解失败' : publishStatusLabel(schedule))}</span>
             </div>
             <div class="tt-export-setup-body">
                 <div class="tt-publication-actions">
@@ -4154,6 +4274,7 @@ function renderExportSection(state) {
                     <button class="tt-btn tt-btn--primary" id="tt-publish-schedule" data-publish-schedule type="button" title="${escapeAttr(publishTitle)}" ${canPublish ? '' : 'disabled'}>
                         <i data-lucide="send"></i><span>发布课表</span>
                     </button>
+                    ${solverFailed ? '<button class="tt-btn tt-btn--ghost" data-action="open-solver-review" type="button"><i data-lucide="clipboard-check"></i><span>查看排课审查</span></button>' : ''}
                 </div>
                 ${renderComplexModelStrip(state.project || {})}
                 ${renderExportWeekViewControl(state)}
@@ -4183,7 +4304,8 @@ export function renderSchedulePanel(state) {
     const owners = getOwners(state.project, state.viewMode);
     const readiness = getPreparedness(state.project);
     const optimizationLabel = optimizationStatusLabel(state.solverJob);
-    const runLabel = state.loading ? (state.solvePhaseText || '快速生成中') : '';
+    const solverActive = isSolverJobActive(state);
+    const runLabel = solverProgressText(state);
     return `
         <div class="tt-schedule-toolbar">
             <div class="tt-schedule-view-controls">
@@ -4206,8 +4328,8 @@ export function renderSchedulePanel(state) {
                 ` : ''}
                 ${solveScaleMessage(state.project, state.solveScaleHint) ? `<span class="tt-chip tt-chip--warn">${escapeHtml(solveScaleMessage(state.project, state.solveScaleHint))}</span>` : ''}
                 <span class="tt-chip ${readiness.ready || isArchiveOnlyReadyState(state.project) ? 'tt-chip--ok' : 'tt-chip--warn'}">${readiness.ready ? '可生成' : isArchiveOnlyReadyState(state.project) ? '可恢复' : '待准备'}</span>
-                <button class="tt-run-btn" id="tt-run-schedule" type="button" ${state.loading || !readiness.ready ? 'disabled' : ''}>
-                    <i data-lucide="${state.loading ? 'loader-2' : 'play'}" class="${state.loading ? 'tt-spin' : ''}"></i><span>${state.loading ? '快速生成中' : '快速生成'}</span>
+                <button class="tt-run-btn" id="tt-run-schedule" type="button" ${state.loading || solverActive || !readiness.ready ? 'disabled' : ''}>
+                    <i data-lucide="${state.loading || solverActive ? 'loader-2' : 'play'}" class="${state.loading || solverActive ? 'tt-spin' : ''}"></i><span>${solverActive ? '求解中' : state.loading ? '正在启动' : '生成课表'}</span>
                 </button>
             </div>
         </div>
@@ -4766,10 +4888,13 @@ function inspectorIssueGroupKey(item = {}) {
 }
 
 function inspectorIssueGroupTitle(item = {}) {
-    const title = String(item.title || '').trim();
+    const rawTitle = String(item.title || '').trim();
+    const machineValues = inspectorMachineTypeCandidates(item);
+    const title = machineValues.some(value => rawTitle === value || rawTitle.includes(value)) ? '' : rawTitle;
     const message = String(item.message || '').trim();
-    const typeLabel = timetableReviewLabel(item.type);
-    if (item.type && typeLabel && typeLabel !== '审查项') return typeLabel;
+    const typeLabel = inspectorRuleTypeLabelForItem(item);
+    if (item.type && typeLabel && typeLabel !== '未分类规则') return typeLabel;
+    if (item.type && isInspectorMachineIdentifier(title)) return typeLabel;
     if (item.source === 'suggestion' && title) return title;
     if (title && title !== item.targetName && title !== inspectorIssueSourceLabel(item.source)) return title;
     return message || title || inspectorIssueSourceLabel(item.source);
@@ -4804,7 +4929,7 @@ function inspectorIssueTargetLabel(item = {}, target = null) {
         || '审查项';
 }
 
-function inspectorIssueCompactMeta(item = {}, label = '') {
+function inspectorIssueCompactMeta(item = {}, label = '', state = {}) {
     const parts = [];
     const kindLabel = inspectorIssueTargetKindLabel(item.targetKind);
     if (kindLabel && item.targetName && item.targetName !== label && item.targetName !== item.title) {
@@ -4817,6 +4942,10 @@ function inspectorIssueCompactMeta(item = {}, label = '') {
     }
     const slotLabel = inspectorSlotLabel(item.slot);
     if (slotLabel) parts.push(`课节 ${slotLabel}`);
+    const originalText = inspectorOriginalText(item, state);
+    if (originalText && originalText !== message && originalText !== item.title) {
+        parts.push(`原始需求：${originalText}`);
+    }
     return parts.join(' · ');
 }
 
@@ -4841,16 +4970,16 @@ function groupInspectorIssuesByProblem(items = []) {
 function renderInspectorIssueCompactRow(item = {}, state = {}) {
     const locateTarget = resolveInspectorIssueLocateTarget(state.project || {}, item);
     const issueKey = locateTarget ? inspectorIssueStableKey(item) : '';
-    const label = inspectorIssueTargetLabel(item, locateTarget);
-    const meta = inspectorIssueCompactMeta(item, label);
+    const label = inspectorIssueTargetLabel({ ...item, title: inspectorRuleTitle(item, state) }, locateTarget);
+    const meta = inspectorIssueCompactMeta(item, label, state);
     const rowClass = [
         'tt-inspector-target-row',
         locateTarget ? 'tt-inspector-target-row--locatable tt-inspector-issue-item--locatable' : '',
         issueKey && state.inspectorLocatedIssueKey === issueKey ? 'is-inspector-located-source' : '',
     ].filter(Boolean).join(' ');
     const content = `
-        <span class="tt-inspector-target-main">${escapeHtml(label)}</span>
-        ${meta ? `<span class="tt-inspector-target-meta">${escapeHtml(meta)}</span>` : ''}
+        <span class="tt-inspector-target-main">${escapeHtml(humanizeInspectorText(label))}</span>
+        ${meta ? `<span class="tt-inspector-target-meta">${escapeHtml(humanizeInspectorText(meta))}</span>` : ''}
         ${locateTarget ? '<span class="tt-inspector-locate-hint" aria-hidden="true">定位</span>' : ''}
     `;
     if (locateTarget) {
@@ -4896,9 +5025,9 @@ function renderInspectorIssueItem(item = {}, state = {}) {
         issueKey && state.inspectorLocatedIssueKey === issueKey ? 'is-inspector-located-source' : '',
     ].filter(Boolean).join(' ');
     const content = `
-        <strong>${escapeHtml(item.title || inspectorIssueSourceLabel(item.source))}</strong>
-        <span>${escapeHtml(item.message || '需要复核。')}</span>
-        ${meta ? `<em>${escapeHtml(meta)}</em>` : ''}
+        <strong>${escapeHtml(inspectorRuleTitle(item, state) || item.title || inspectorIssueSourceLabel(item.source))}</strong>
+        <span>${escapeHtml(humanizeInspectorText(item.message || '需要复核。'))}</span>
+        ${meta ? `<em>${escapeHtml(humanizeInspectorText(meta))}</em>` : ''}
         ${locateTarget ? '<span class="tt-inspector-locate-hint">定位</span>' : ''}
     `;
     if (locateTarget) {
@@ -4943,9 +5072,12 @@ const CONSTRAINT_FULFILLMENT_STATUS_LABELS = {
     not_applicable: '未参与',
 };
 
-const CONSTRAINT_FULFILLMENT_FILTERS = [
+const CONSTRAINT_FULFILLMENT_PRIMARY_FILTERS = [
     { key: 'attention', label: '需关注' },
     { key: 'all', label: '全部' },
+];
+
+const CONSTRAINT_FULFILLMENT_STATUS_FILTERS = [
     { key: 'violated', label: '未满足' },
     { key: 'partial', label: '部分满足' },
     { key: 'satisfied', label: '已满足' },
@@ -5000,26 +5132,42 @@ function getConstraintFulfillment(state = {}) {
     return state.constraintFulfillment || fallbackConstraintFulfillment(state.project || {});
 }
 
-function constraintFulfillmentSummaryText(summary = {}) {
-    const total = Number(summary.total || 0);
-    const satisfied = Number(summary.satisfied || 0);
-    const partial = Number(summary.partiallySatisfied ?? summary.partial ?? 0);
-    const violated = Number(summary.violated ?? summary.unmet ?? 0);
-    const notEvaluable = Number(summary.notEvaluable ?? summary.notApplicable ?? 0);
-    return `约束 ${total}：满足 ${satisfied} / 部分 ${partial} / 未满足 ${violated} / 暂不可评估 ${notEvaluable}`;
+function constraintFulfillmentCounts(items = []) {
+    const counts = {
+        total: items.length,
+        attention: 0,
+        satisfied: 0,
+        other: 0,
+        violated: 0,
+        partial: 0,
+        not_evaluable: 0,
+    };
+    items.forEach(item => {
+        const status = normalizeFulfillmentStatus(item?.status);
+        if (status === 'violated') {
+            counts.violated += 1;
+            counts.attention += 1;
+        } else if (status === 'partial') {
+            counts.partial += 1;
+            counts.attention += 1;
+        } else if (status === 'satisfied') {
+            counts.satisfied += 1;
+        } else {
+            counts.not_evaluable += 1;
+            counts.other += 1;
+        }
+    });
+    return counts;
 }
 
 function normalizeConstraintFulfillmentFilter(state = {}, fulfillment = {}) {
     const requested = state.constraintFulfillmentFilter || '';
-    if (CONSTRAINT_FULFILLMENT_FILTERS.some(item => item.key === requested)) return requested;
-    const summary = fulfillment.summary || {};
-    return Number(summary.violated ?? summary.unmet ?? 0) || Number(summary.partiallySatisfied ?? summary.partial ?? 0) ? 'attention' : 'all';
-}
-
-function constraintFulfillmentFilterCount(filter, items = []) {
-    if (filter === 'all') return items.length;
-    if (filter === 'attention') return items.filter(item => ['violated', 'partial'].includes(normalizeFulfillmentStatus(item.status))).length;
-    return items.filter(item => normalizeFulfillmentStatus(item.status) === filter).length;
+    if ([
+        ...CONSTRAINT_FULFILLMENT_PRIMARY_FILTERS,
+        ...CONSTRAINT_FULFILLMENT_STATUS_FILTERS,
+    ].some(item => item.key === requested)) return requested;
+    const counts = constraintFulfillmentCounts(Array.isArray(fulfillment.items) ? fulfillment.items : []);
+    return counts.attention ? 'attention' : 'all';
 }
 
 function filterConstraintFulfillmentItems(items = [], filter = 'attention') {
@@ -5083,12 +5231,11 @@ function constraintFulfillmentStableKey(item = {}) {
     ]);
 }
 
-function renderConstraintFulfillmentFilters(activeFilter = 'attention', items = []) {
+function renderConstraintFulfillmentFilters(activeFilter = 'attention') {
     return `
         <div class="tt-constraint-fulfillment-filters" role="tablist" aria-label="约束达成度筛选">
-            ${CONSTRAINT_FULFILLMENT_FILTERS.map(filter => {
+            ${CONSTRAINT_FULFILLMENT_PRIMARY_FILTERS.map(filter => {
                 const active = filter.key === activeFilter;
-                const count = constraintFulfillmentFilterCount(filter.key, items);
                 return `
                     <button class="tt-constraint-fulfillment-filter ${active ? 'is-active' : ''}" type="button"
                         data-action="filter-constraint-fulfillment"
@@ -5096,10 +5243,39 @@ function renderConstraintFulfillmentFilters(activeFilter = 'attention', items = 
                         role="tab"
                         aria-pressed="${active ? 'true' : 'false'}">
                         <span>${escapeHtml(filter.label)}</span>
-                        <em>${escapeHtml(count)}</em>
                     </button>
                 `;
             }).join('')}
+        </div>
+    `;
+}
+
+function renderConstraintFulfillmentStatusMenu(activeFilter = 'attention', open = false) {
+    const activeStatus = CONSTRAINT_FULFILLMENT_STATUS_FILTERS.find(item => item.key === activeFilter);
+    const label = activeStatus?.label || '状态';
+    return `
+        <div class="tt-constraint-fulfillment-status-menu">
+            <button class="tt-btn tt-btn--sm tt-btn--subtle tt-constraint-fulfillment-status-trigger" type="button"
+                data-action="toggle-constraint-fulfillment-filter-menu"
+                aria-haspopup="menu"
+                aria-expanded="${open ? 'true' : 'false'}">
+                <span>${escapeHtml(label)}</span>
+                <i data-lucide="chevron-down"></i>
+            </button>
+            <div class="tt-constraint-fulfillment-status-options" role="menu"${open ? '' : ' hidden'}>
+                ${CONSTRAINT_FULFILLMENT_STATUS_FILTERS.map(filter => {
+                    const active = filter.key === activeFilter;
+                    return `
+                        <button class="tt-constraint-fulfillment-status-option" type="button"
+                            data-action="filter-constraint-fulfillment"
+                            data-constraint-fulfillment-filter="${escapeAttr(filter.key)}"
+                            role="menuitemradio"
+                            aria-checked="${active ? 'true' : 'false'}">
+                            <span>${escapeHtml(filter.label)}</span>
+                        </button>
+                    `;
+                }).join('')}
+            </div>
         </div>
     `;
 }
@@ -5113,15 +5289,19 @@ function constraintFulfillmentSuggestionLabel(suggestion = {}) {
     })[suggestion.kind] || '处理';
 }
 
-function renderConstraintFulfillmentSuggestions(item = {}) {
+function renderConstraintFulfillmentSuggestions(item = {}, expanded = false) {
+    if (!expanded) return '';
     const suggestions = (item.suggestions || []).slice(0, 3);
     if (!suggestions.length) return '';
     return `
         <span class="tt-constraint-fulfillment-actions">
             ${suggestions.map(suggestion => {
                 const autoSupported = suggestion.kind === 'delete_rule';
+                if (!autoSupported) {
+                    return `<span class="tt-constraint-fulfillment-action-note">${escapeHtml(constraintFulfillmentSuggestionLabel(suggestion))}（需人工处理）</span>`;
+                }
                 return `
-                    <button class="tt-btn tt-btn--sm ${autoSupported ? 'tt-btn--ghost' : 'tt-btn--subtle'}" type="button"
+                    <button class="tt-btn tt-btn--sm tt-btn--ghost" type="button"
                         data-action="constraint-fulfillment-suggestion"
                         data-constraint-fulfillment-row="${escapeAttr(item.ruleId || item.id || '')}"
                         data-constraint-fulfillment-suggestion="${escapeAttr(suggestion.kind || '')}">
@@ -5160,8 +5340,16 @@ function renderConstraintFulfillmentRow(item = {}, state = {}, model = {}) {
     const issueKey = locateTarget ? constraintFulfillmentStableKey(item) : '';
     const normalizedStatus = normalizeFulfillmentStatus(item.status);
     const tone = constraintFulfillmentTone(normalizedStatus);
-    const statusLabel = item.statusLabel || CONSTRAINT_FULFILLMENT_STATUS_LABELS[normalizedStatus] || normalizedStatus || '待评估';
-    const detail = item.detail || item.evidence || '暂无评估证据。';
+    const providedStatusLabel = String(item.statusLabel || '').trim();
+    const statusLabel = providedStatusLabel
+        ? inspectorStatusLabel(providedStatusLabel)
+        : CONSTRAINT_FULFILLMENT_STATUS_LABELS[normalizedStatus] || inspectorStatusLabel(normalizedStatus);
+    const detail = humanizeInspectorText(item.detail || item.evidence || '暂无评估证据。');
+    const title = inspectorRuleTitle(item, state);
+    const sourceText = inspectorOriginalText(item, state);
+    const originalText = sourceText || '原始需求未保存';
+    const rowId = String(item.id || item.ruleId || '');
+    const expanded = state.constraintFulfillmentExpandedRowId === rowId;
     const rowClass = [
         'tt-constraint-fulfillment-row',
         `tt-constraint-fulfillment-row--${tone}`,
@@ -5169,37 +5357,48 @@ function renderConstraintFulfillmentRow(item = {}, state = {}, model = {}) {
         issueKey && state.inspectorLocatedIssueKey === issueKey ? 'is-inspector-located-source' : '',
     ].filter(Boolean).join(' ');
     const locateButton = locateTarget
-        ? `<button type="button" class="tt-inspector-locate-hint" ${renderInspectorIssueLocateAttrs(locateTarget, issueKey)} aria-label="${escapeAttr(`定位：${item.title || statusLabel}`)}">定位</button>`
+        ? `<button type="button" class="tt-inspector-locate-hint" ${renderInspectorIssueLocateAttrs(locateTarget, issueKey)} aria-label="${escapeAttr(`定位：${title || statusLabel}`)}">定位</button>`
         : '';
-    const content = `
-        <span class="tt-constraint-fulfillment-status">${escapeHtml(statusLabel)}</span>
-        <span class="tt-constraint-fulfillment-main">
-            <strong>${escapeHtml(item.title || item.typeLabel || ruleTypeLabel(item.type))}</strong>
-            <em>${escapeHtml(detail)}</em>
-        </span>
-        <span class="tt-constraint-fulfillment-meta">
-            ${(item.strength || item.priority) === 'hard' ? '<b>硬约束</b>' : '<b>软约束</b>'}
-            ${item.scopeLabel ? `<b>${escapeHtml(item.scopeLabel)}</b>` : ''}
-            ${relation ? `<b>已列入${escapeHtml(relation)}</b>` : ''}
-            ${locateButton}
-        </span>
-        ${renderConstraintFulfillmentSuggestions(item)}
-    `;
     return `
-        <div class="${rowClass}" data-constraint-fulfillment-row="${escapeAttr(item.id || '')}">
-            ${content}
+        <div class="${rowClass} ${expanded ? 'is-expanded' : ''}" data-constraint-fulfillment-row="${escapeAttr(rowId)}">
+            <div class="tt-constraint-fulfillment-row-summary" data-action="toggle-constraint-fulfillment-row"
+                data-constraint-fulfillment-row="${escapeAttr(rowId)}"
+                role="button" tabindex="0" aria-expanded="${expanded ? 'true' : 'false'}"
+                aria-controls="constraint-fulfillment-detail-${escapeAttr(rowId)}">
+                <span class="tt-constraint-fulfillment-status">${escapeHtml(statusLabel)}</span>
+                <span class="tt-constraint-fulfillment-main">
+                    <strong>${escapeHtml(title)}</strong>
+                    <em>${escapeHtml(detail)}</em>
+                </span>
+                <span class="tt-constraint-fulfillment-meta">
+                    ${(item.strength || item.priority) === 'hard' ? '<b>硬约束</b>' : '<b>软约束</b>'}
+                    ${item.scopeLabel ? `<b>${escapeHtml(item.scopeLabel)}</b>` : ''}
+                    ${relation ? `<b>已列入${escapeHtml(relation)}</b>` : ''}
+                </span>
+            </div>
+            ${expanded ? `
+                <div class="tt-constraint-fulfillment-detail" id="constraint-fulfillment-detail-${escapeAttr(rowId)}">
+                    <p class="tt-constraint-fulfillment-evidence">${escapeHtml(detail)}</p>
+                    <details class="tt-inspector-original-source">
+                        <summary>原始需求</summary>
+                        <blockquote class="${sourceText ? '' : 'is-missing'}">${escapeHtml(originalText)}</blockquote>
+                    </details>
+                    ${locateButton ? `<div class="tt-constraint-fulfillment-locate">${locateButton}</div>` : ''}
+                    ${renderConstraintFulfillmentSuggestions(item, true)}
+                </div>
+            ` : ''}
         </div>
     `;
 }
 
 function renderConstraintFulfillmentSection(state = {}, model = {}) {
-    const fulfillment = getConstraintFulfillment(state);
-    if (!fulfillment?.summary?.total) return '';
+    const fulfillment = getConstraintFulfillment(state) || {};
     const items = Array.isArray(fulfillment.items) ? fulfillment.items : [];
+    if (!items.length) return '';
     const activeFilter = normalizeConstraintFulfillmentFilter(state, fulfillment);
     const visibleItems = filterConstraintFulfillmentItems(items, activeFilter);
-    const hasAttention = Number(fulfillment.summary?.violated ?? fulfillment.summary?.unmet ?? 0)
-        || Number(fulfillment.summary?.partiallySatisfied ?? fulfillment.summary?.partial ?? 0);
+    const counts = constraintFulfillmentCounts(items);
+    const hasAttention = counts.attention > 0;
     const open = Boolean(hasAttention || state.constraintFulfillmentOpen);
     const loading = Boolean(state.constraintFulfillmentLoading);
     const error = state.constraintFulfillmentError || '';
@@ -5208,20 +5407,20 @@ function renderConstraintFulfillmentSection(state = {}, model = {}) {
             <details class="tt-inspector-collapsible" data-inspector-section="constraint-fulfillment"${open ? ' open' : ''}>
                 <summary class="tt-section-title">
                     <h3><i data-lucide="check-check"></i><span>约束满足度报告</span></h3>
-                    <span class="tt-chip ${hasAttention ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(fulfillment.summary.total)}</span>
                 </summary>
                 <div class="tt-constraint-fulfillment-panel">
                     <div class="tt-constraint-fulfillment-summary">
-                        <strong>${escapeHtml(constraintFulfillmentSummaryText(fulfillment.summary))}</strong>
+                        <div class="tt-constraint-fulfillment-stats" aria-label="约束满足度统计">
+                            <span class="tt-constraint-fulfillment-stat tt-constraint-fulfillment-stat--attention">需关注 <b>${counts.attention}</b></span>
+                            <span class="tt-constraint-fulfillment-stat tt-constraint-fulfillment-stat--ok">已满足 <b>${counts.satisfied}</b></span>
+                            <span class="tt-constraint-fulfillment-stat tt-constraint-fulfillment-stat--muted">其他 <b>${counts.other}</b></span>
+                        </div>
                         <span>${escapeHtml(fulfillment.evaluated ? '基于当前课表评估' : '等待生成课表后评估')}</span>
-                        <button class="tt-btn tt-btn--sm tt-btn--ghost" data-action="rerun-constraint-fulfillment" type="button">
-                            <i data-lucide="refresh-cw"></i>
-                            <span>重新排课</span>
-                        </button>
+                        ${renderConstraintFulfillmentStatusMenu(activeFilter, Boolean(state.constraintFulfillmentFilterMenuOpen))}
                     </div>
                     ${loading ? '<span class="tt-muted">正在刷新约束达成度...</span>' : ''}
                     ${error ? `<span class="tt-muted">${escapeHtml(error)}</span>` : ''}
-                    ${renderConstraintFulfillmentFilters(activeFilter, items)}
+                    ${renderConstraintFulfillmentFilters(['attention', 'all'].includes(activeFilter) ? activeFilter : '')}
                     <div class="tt-constraint-fulfillment-list">
                         ${visibleItems.length
                             ? visibleItems.map(item => renderConstraintFulfillmentRow(item, state, model)).join('')
@@ -5531,8 +5730,8 @@ function renderAuditPanel(state) {
                 <div class="tt-rule-preview tt-rule-preview--compact">
                     ${preview.slice(0, 4).map(item => `
                         <div class="tt-rule-preview-item">
-                            <strong>${escapeHtml(item.targetName || item.targetId || item.type)}</strong>
-                            <span>${escapeHtml(item.type)} · ${escapeHtml((item.slots || []).join(', ') || '全局')}</span>
+                            <strong>${escapeHtml(item.targetName || inspectorRuleTypeLabel(item.type))}</strong>
+                            <span>${escapeHtml(inspectorRuleTypeLabel(item.type))} · ${escapeHtml((item.slots || []).join(', ') || '全局')}</span>
                         </div>
                     `).join('')}
                 </div>
@@ -5541,8 +5740,8 @@ function renderAuditPanel(state) {
                 <div class="tt-rule-preview tt-rule-preview--compact">
                     ${unsupported.slice(0, 3).map(item => `
                         <div class="tt-rule-preview-item">
-                            <strong>${escapeHtml(item.targetName || item.targetId || item.type)}</strong>
-                            <span>${escapeHtml(item.type)} 路 ${escapeHtml(item.description || '仅作建议展示')}</span>
+                            <strong>${escapeHtml(item.targetName || inspectorRuleTypeLabel(item.type))}</strong>
+                            <span>${escapeHtml(inspectorRuleTypeLabel(item.type))} · ${escapeHtml(item.description || '已理解，当前暂不能自动执行')}</span>
                         </div>
                     `).join('')}
                 </div>
@@ -5627,6 +5826,7 @@ function renderOptimizationPanel(state) {
     const schedule = state.project?.schedule || null;
     const persistedStats = schedule?.solverStats || null;
     const detail = job || persistedStats;
+    const fastAttempt = state.fastScheduleAttempt || state.lastFailure?.fastAttempt || null;
     if (schedule?.published?.status === 'published' && !job) return '';
     const restoredPublishedDraft = schedule?.source === 'published_history_restored'
         || persistedStats?.phase === 'published_history_restore'
@@ -5651,13 +5851,14 @@ function renderOptimizationPanel(state) {
         <section class="tt-inspector-section">
             <div class="tt-section-title">
                 <h3><i data-lucide="refresh-cw"></i><span>后台优化</span></h3>
-                ${detail ? `<span class="tt-chip ${detail.status === 'failed' ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(detail.status)}</span>` : ''}
+                ${detail ? `<span class="tt-chip ${detail.status === 'failed' ? 'tt-chip--warn' : 'tt-chip--ok'}">${escapeHtml(inspectorStatusLabel(detail.status))}</span>` : ''}
             </div>
             <div class="tt-detail-list">
                 <span><b>当前课表</b>${escapeHtml(sourceText)}</span>
                 <span><b>优化状态</b>${escapeHtml(statusText)}</span>
                 ${reasonLabel ? `<span class="is-warning"><b>处理结果</b>${escapeHtml(reasonLabel)}</span>` : ''}
                 ${(job?.solverStats?.lessonCount || persistedStats?.lessonCount) ? `<span><b>课时数</b>${escapeHtml(job?.solverStats?.lessonCount || persistedStats?.lessonCount)}</span>` : ''}
+                ${fastAttempt?.score ? `<span><b>快速构造</b>${escapeHtml(`${fastAttempt.score.placedLessons || 0}/${fastAttempt.score.totalLessons || 0} 已排 · ${fastAttempt.score.unplacedLessons || 0} 未排`)}</span>` : ''}
             </div>
         </section>
     `;
@@ -5740,7 +5941,7 @@ function renderConflictPanel(state) {
                 ${conflicts.slice(0, 5).map(conflict => `
                     <div class="tt-conflict">
                         <i data-lucide="alert-circle"></i>
-                        <span>${escapeHtml(conflict.message || conflict.reason || conflict.type)}</span>
+                        <span>${escapeHtml(conflict.message || conflict.reason || (conflict.type ? `规则：${inspectorRuleTypeLabel(conflict.type)}` : '存在课表冲突。'))}</span>
                     </div>
                 `).join('') || '<span class="tt-muted">当前课表没有冲突。</span>'}
             </div>

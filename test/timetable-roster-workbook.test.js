@@ -128,8 +128,9 @@ test('real school roster workbook keeps exact provenance and deterministic basel
     assert.equal(imported.lessonPlans.length, 360);
     assert.equal(imported.rooms.length, 43);
     assert.equal(imported.lessonPlans.filter(plan => plan.activityTypes.includes('实验课')).length, 50);
-    assert.equal(imported.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('实验室')).length, 50);
-    assert.equal(imported.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('计算机教室')).length, 30);
+    // Room names are identifiers only; resource contracts must be explicit.
+    assert.equal(imported.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('实验室')).length, 0);
+    assert.equal(imported.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('计算机教室')).length, 0);
     assert.equal(imported.lessonPlans[179].allowedRoomIds.length, 2);
 });
 
@@ -187,8 +188,8 @@ test('real school roster natural-language text matches the workbook baseline wit
         ],
     );
     assert.equal(preview.draftRows.filter(row => row.activityTypes.includes('实验课')).length, 50);
-    assert.equal(preview.draftRows.filter(row => row.requiredResourceTypes.includes('实验室')).length, 50);
-    assert.equal(preview.draftRows.filter(row => row.requiredResourceTypes.includes('计算机教室')).length, 30);
+    assert.equal(preview.draftRows.filter(row => row.requiredResourceTypes.includes('实验室')).length, 0);
+    assert.equal(preview.draftRows.filter(row => row.requiredResourceTypes.includes('计算机教室')).length, 0);
 });
 
 test('long unrecognized roster text is sent to AI in bounded line batches without truncation', async () => {
@@ -469,7 +470,7 @@ test('roster preview and confirm APIs preserve the real workbook baseline in an 
         assert.equal(importPayload.data.project.lessonPlans.length, 360);
         assert.equal(importPayload.data.project.rooms.length, 43);
         assert.equal(importPayload.data.project.lessonPlans.filter(plan => plan.activityTypes.includes('实验课')).length, 50);
-        assert.equal(importPayload.data.project.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('计算机教室')).length, 30);
+        assert.equal(importPayload.data.project.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('计算机教室')).length, 0);
     } finally {
         await new Promise(resolve => server.close(resolve));
         await rm(dataDir, { recursive: true, force: true });

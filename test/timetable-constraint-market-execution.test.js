@@ -95,10 +95,10 @@ test('real roster workbook creates stable room entities and keeps the real 137 s
         env: { TIMETABLE_RULE_AI_REVIEW_DISABLED: 'true' },
     });
     assert.equal(result.sourceRequirements.length, 137);
-    assert.equal(result.constraintIRs.length, 150);
-    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 6);
-    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget !== 'rule').length, 6);
-    assert.equal(result.constraintIRs.filter(item => item.executionStatus !== 'executable').length, 16);
+    assert.equal(result.constraintIRs.length, 154);
+    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 1);
+    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget !== 'rule').length, 0);
+    assert.equal(result.constraintIRs.filter(item => item.executionStatus !== 'executable').length, 1);
 });
 
 test('manually pasted 137 constraints use the same deterministic contract as the workbook', async () => {
@@ -115,7 +115,7 @@ test('manually pasted 137 constraints use the same deterministic contract as the
 
     assert.equal(result.sourceRequirements.length, 137);
     assert.equal(new Set(result.sourceRequirements.map(item => item.sourceId)).size, 137);
-    assert.equal(result.constraintIRs.length, 150);
+    assert.equal(result.constraintIRs.length, 154);
     assert.equal(
         result.sourceRequirements.reduce((count, item) => count + item.clauses.length, 0),
         result.constraintIRs.length,
@@ -123,20 +123,20 @@ test('manually pasted 137 constraints use the same deterministic contract as the
     );
     assert.equal(result.requirementItems.length, result.constraintIRs.length);
     assert.equal(result.statistics.clauseCount, result.constraintIRs.length);
-    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 7);
-    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget !== 'rule').length, 7);
-    assert.equal(result.constraintIRs.filter(item => item.executionStatus !== 'executable').length, 15);
+    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 1);
+    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget !== 'rule').length, 0);
+    assert.equal(result.constraintIRs.filter(item => item.executionStatus !== 'executable').length, 1);
     const cards = buildUnifiedRequirementItems(result);
     assert.equal(cards.length, 137);
-    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'review').length, 7);
-    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'rule').length, 130);
+    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'review').length, 1);
+    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'rule').length, 136);
     assert.equal(cards.filter(item => INTERNAL_OBJECT_NAMES.has(String(item.object?.name || '').toLowerCase())).length, 0);
     assert.equal(result.constraintIRs.filter(item => (
         /^(?:日课量|至少|每个班每天课量|课组内的教师|固定活动)$/i.test(String(item.target?.name || item.targetName || item.target || ''))
     )).length, 0);
 });
 
-test('complete 137 project keeps source cardinality and has no unsupported solver capability', async () => {
+test('complete 137 project keeps source cardinality and exposes the one intentional unsupported semantic clause', async () => {
     const result = await parseTimetableRules({
         file: { filename: path.basename(workbookPath), buffer: fs.readFileSync(workbookPath) },
         project: createCompleteNaturalLanguage137Project(),
@@ -144,13 +144,17 @@ test('complete 137 project keeps source cardinality and has no unsupported solve
     });
     assert.equal(result.sourceRequirements.length, 137);
     assert.equal(new Set(result.sourceRequirements.map(item => item.sourceId)).size, 137);
-    assert.equal(result.constraintIRs.length, 150);
-    assert.equal(result.constraintIRs.filter(item => item.executionStatus === 'unsupported_by_solver').length, 0);
+    assert.equal(result.constraintIRs.length, 154);
+    assert.equal(result.constraintIRs.filter(item => item.executionStatus === 'unsupported_by_solver').length, 1);
     assert.equal(result.constraintIRs.filter(item => item.executionStatus === 'blocked_by_reference').length, 0);
-    assert.equal(result.constraintIRs.filter(item => item.executionStatus === 'blocked_by_clarification').length, 16);
-    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 6);
-    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget !== 'rule').length, 6);
-    assert.equal(result.sourceRequirements.filter(item => !item.machineRuleIds.length).length, 6);
+    assert.equal(result.constraintIRs.filter(item => item.executionStatus === 'blocked_by_clarification').length, 0);
+    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 1);
+    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget !== 'rule').length, 0);
+    assert.equal(result.sourceRequirements.filter(item => !item.machineRuleIds.length).length, 0);
+    const partial = result.sourceRequirements.find(item => item.source?.rowNumber === 115);
+    assert.equal(partial.partiallyApplicable, true);
+    assert.equal(partial.applicableMachineRuleIds.length, 3);
+    assert.equal(partial.unresolvedClauseIds.length, 1);
 
     const review19Sources = result.sourceRequirements.filter(item => REVIEW_19_SOURCE_ROWS.has(item.source?.rowNumber));
     const review19SourceIds = new Set(review19Sources.map(item => item.sourceId));
@@ -166,8 +170,8 @@ test('complete 137 project keeps source cardinality and has no unsupported solve
 
     const cards = buildUnifiedRequirementItems(result);
     assert.equal(cards.length, 137);
-    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'review').length, 6);
-    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'rule').length, 131);
+    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'review').length, 1);
+    assert.equal(cards.filter(item => getRequirementGroupKey(item) === 'rule').length, 136);
     assert.equal(cards.filter(item => INTERNAL_OBJECT_NAMES.has(String(item.object?.name || '').toLowerCase())).length, 0);
     assert.equal(cards.find(item => item.source?.sourceRow === 133)?.object?.name, '全校');
     assert.equal(cards.find(item => item.source?.sourceRow === 134)?.object?.name, '同一备课组内教师');
@@ -197,7 +201,7 @@ test('one hundred unverified AI flags stay advisory without changing the 137 sou
     });
 
     assert.equal(result.sourceRequirements.length, 137);
-    assert.equal(result.constraintIRs.length, 150);
+    assert.equal(result.constraintIRs.length, 154);
     assert.deepEqual(result.draftRows, local.draftRows);
     assert.deepEqual(result.constraintIRs, local.constraintIRs);
     assert.deepEqual(result.sourceRequirements, local.sourceRequirements);
@@ -207,8 +211,8 @@ test('one hundred unverified AI flags stay advisory without changing the 137 sou
     );
     assert.equal(result.aiAssistance.advisoryCount, 100);
     assert.equal(result.aiAssistance.blockingCount, 0);
-    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 6);
-    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget === 'rule').length, 131);
+    assert.equal(result.sourceRequirements.filter(item => item.requiresHumanReview).length, 1);
+    assert.equal(result.sourceRequirements.filter(item => item.applicationTarget === 'rule').length, 137);
 });
 
 test('canonical source review state only lets verified AI findings block application', () => {
@@ -236,9 +240,22 @@ test('canonical source review state only lets verified AI findings block applica
         understandingStatus: 'parsed',
         executionStatus: 'partially_executable',
         machineRuleIds: ['rule-2'],
-        clauses: [],
+        clauses: [{
+            id: 'clause-2a',
+            executionStatus: 'executable',
+            understandingStatus: 'parsed',
+            machineRuleIds: ['rule-2'],
+        }, {
+            id: 'clause-2b',
+            executionStatus: 'unsupported_by_solver',
+            understandingStatus: 'parsed',
+            machineRuleIds: [],
+        }],
     });
-    assert.equal(partial.applicationTarget, 'review');
+    assert.equal(partial.applicationTarget, 'rule');
+    assert.equal(partial.partiallyApplicable, true);
+    assert.deepEqual(partial.applicableMachineRuleIds, ['rule-2']);
+    assert.deepEqual(partial.unresolvedClauseIds, ['clause-2b']);
     assert.ok(partial.reviewReasons.some(reason => reason.code === 'partially_executable'));
 
     const flagged = finalizeSourceRequirementPresentation({
@@ -393,7 +410,7 @@ test('local recompile unblocks an eighth-period rule after timetable configurati
     assert.equal(rebound.sourceRequirements[0].textHash, previous.sourceRequirements[0].textHash);
 });
 
-test('HTTP parse readiness and rebind endpoints preserve the public binding contract', async () => {
+test('HTTP parse readiness, rebind and source recompile endpoints preserve the public contracts', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     process.env.TIMETABLE_DATA_DIR = await fs.promises.mkdtemp(path.join(tmpdir(), 'icecream-constraint-binding-'));
     const store = createTimetableStore();
@@ -437,6 +454,46 @@ test('HTTP parse readiness and rebind endpoints preserve the public binding cont
         assert.equal(rebindPayload.data.constraintIRs[0].executionStatus, 'executable');
         assert.equal(rebindPayload.data.sourceRequirements[0].sourceId, previous.sourceRequirements[0].sourceId);
         assert.equal(rebindPayload.data.sourceRequirements[0].textHash, previous.sourceRequirements[0].textHash);
+
+        const complexPrevious = await parseTimetableRules({
+            text: '九年级语文每周尽量有3次以上排在第1到第3节，不要集中到下午。',
+            project,
+            env: { TIMETABLE_RULE_AI_MODE: 'off' },
+        });
+        const complexSource = complexPrevious.sourceRequirements[0];
+        const executableClauses = complexSource.clauses.filter(clause => clause.executionStatus === 'executable');
+        const recompileResponse = await fetch(`${baseUrl}/api/tools/timetable/requirements/recompile`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                previousResult: complexPrevious,
+                sourceId: complexSource.sourceId,
+                textHash: complexSource.source.textHash,
+                clauses: executableClauses,
+                rationales: [],
+            }),
+        });
+        const recompilePayload = await recompileResponse.json();
+        assert.equal(recompileResponse.status, 200);
+        assert.equal(recompilePayload.data.sourceRequirements.length, 1);
+        assert.equal(recompilePayload.data.sourceRequirements[0].sourceId, complexSource.sourceId);
+        assert.equal(recompilePayload.data.sourceRequirements[0].partiallyApplicable, false);
+        assert.equal(recompilePayload.data.sourceRequirements[0].unresolvedClauseIds.length, 0);
+        assert.ok(recompilePayload.data.draftRows.length > 0);
+
+        const staleResponse = await fetch(`${baseUrl}/api/tools/timetable/requirements/recompile`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                previousResult: complexPrevious,
+                sourceId: complexSource.sourceId,
+                textHash: 'stale-text-hash',
+                clauses: executableClauses,
+            }),
+        });
+        const stalePayload = await staleResponse.json();
+        assert.equal(staleResponse.status, 409);
+        assert.equal(stalePayload.data.reason, 'source_text_hash_mismatch');
     } finally {
         await new Promise(resolve => server.close(resolve));
         if (previousDataDir === undefined) delete process.env.TIMETABLE_DATA_DIR;

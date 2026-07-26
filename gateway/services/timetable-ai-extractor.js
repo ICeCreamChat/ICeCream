@@ -22,6 +22,9 @@ import {
     alignAiArtifactsToSources,
     sourceRequirementsToAiInputs,
 } from './timetable-constraints/ai-source-alignment.js';
+import {
+    validateSemanticRelationGraph,
+} from './timetable-constraints/semantic-planning.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const INTENT_SET = new Set(TIMETABLE_REQUIREMENT_INTENTS);
@@ -364,6 +367,9 @@ function requirementDedupeKey(item = {}) {
         strength: item.strength || '',
         time: item.time || {},
         params: item.params || {},
+        scope: item.scope || {},
+        relation: item.relation || {},
+        quantifier: item.quantifier || {},
         evidence: normalizedEvidence(item.evidence || item.rawText || item.text || ''),
     });
 }
@@ -374,6 +380,7 @@ function mergeBatchExtractionResults(project = {}, results = [], sentenceCount =
     const warningItems = [];
     const unrecognized = [];
     const rejected = [];
+    const sourceRationales = [];
     const seen = new Set();
     const seenWarningItems = new Set();
     let cacheHitCount = 0;
@@ -397,6 +404,7 @@ function mergeBatchExtractionResults(project = {}, results = [], sentenceCount =
         });
         unrecognized.push(...asList(result.unrecognized));
         rejected.push(...asList(result.rejected));
+        sourceRationales.push(...asList(result.sourceRationales));
     });
     const resolved = resolveEntityRefs(project, rawRequirements);
     return {
@@ -405,6 +413,7 @@ function mergeBatchExtractionResults(project = {}, results = [], sentenceCount =
         warningItems,
         unrecognized,
         rejected,
+        sourceRationales,
         model: results[0]?.model || '',
         promptVersion: AI_REQUIREMENT_PROMPT_VERSION,
         rawRequirements,
@@ -1596,6 +1605,8 @@ export function validateExtractionPayload(payload = {}, { sourceRequirements = [
     const parsed = parseJsonContent(payload);
     const warnings = [];
     const unrecognized = [];
+    const rationales = [];
+    const validationRejected = [];
     let rawRequirements = [];
 
     if (Object.prototype.hasOwnProperty.call(parsed, 'results')) {
@@ -1624,15 +1635,80 @@ export function validateExtractionPayload(payload = {}, { sourceRequirements = [
             const clauses = result.clauses !== undefined
                 ? asList(result.clauses)
                 : asList(result.requirements);
+            const hasSemanticRelations = clauses.some(clause => (
+                clause?.relation?.parentId
+                || clause?.relation?.parentClauseId
+                || (clause?.relation?.kind && clause.relation.kind !== 'independent')
+            ));
+            if (hasSemanticRelations) {
+                const relationValidation = validateSemanticRelationGraph(resultRawText, clauses.map((clause, clauseIndex) => ({
+                    id: text(clause?.id || '', 300) || `clause_${clauseIndex + 1}`,
+                    evidence: text(clause?.evidence || '', 1000),
+                    relation: clause?.relation || {},
+                })));
+                if (!relationValidation.valid) {
+                    validationRejected.push(...clauses.map((clause, clauseIndex) => ({
+                        ...sourceIdentity,
+                        artifactKind: 'requirement',
+                        index: clauseIndex,
+                        reason: 'invalid_semantic_relation',
+                        errors: relationValidation.errors,
+                        artifact: clause,
+                    })));
+                    warnings.push(...relationValidation.errors.map(error => error.message));
+                    return;
+                }
+            }
             clauses.forEach(clause => {
                 if (!clause || typeof clause !== 'object') {
                     warnings.push(`第 ${resultIndex + 1} 个 AI source result 含非对象 clause，已忽略。`);
                     return;
                 }
+                const clauseEvidence = text(clause.evidence || '', 1000);
+                if (matchedSource && clauseEvidence && !resultRawText.includes(clauseEvidence)) {
+                    validationRejected.push({
+                        ...sourceIdentity,
+                        artifactKind: 'requirement',
+                        reason: 'evidence_mismatch',
+                        artifact: clause,
+                    });
+                    warnings.push(`第 ${resultIndex + 1} 个 AI source result 的 clause 证据不在来源原文中，已拒绝。`);
+                    return;
+                }
+                const modelTargetIds = unique(clause.targetIds || clause.targetId || []);
+                if (modelTargetIds.length) {
+                    warnings.push(`第 ${resultIndex + 1} 个 AI source result 返回了项目实体 ID，已丢弃并改由本地名称绑定。`);
+                }
                 rawRequirements.push({
                     ...clause,
+                    targetIds: [],
                     ...sourceIdentity,
                     rawText: text(resultRawText || clause.rawText || clause.source?.rawText, 1000),
+                    origin: 'unknown',
+                    parsedBy: ['ai'],
+                });
+            });
+            asList(result.rationales).forEach((rationale, rationaleIndex) => {
+                const value = rationale && typeof rationale === 'object' ? rationale : { text: rationale };
+                const rationaleText = text(value.text || value.reason || '', 1000);
+                const evidence = text(value.evidence || '', 1000);
+                if (!rationaleText) return;
+                if (matchedSource && evidence && !resultRawText.includes(evidence)) {
+                    validationRejected.push({
+                        ...sourceIdentity,
+                        artifactKind: 'rationale',
+                        reason: 'evidence_mismatch',
+                        artifact: rationale,
+                    });
+                    warnings.push(`第 ${resultIndex + 1} 个 AI source result 的原因证据不在来源原文中，已拒绝。`);
+                    return;
+                }
+                rationales.push({
+                    id: text(value.id || '', 240) || `ai_rationale_${resultIndex + 1}_${rationaleIndex + 1}`,
+                    ...sourceIdentity,
+                    text: rationaleText,
+                    evidence,
+                    rawText: resultRawText,
                     origin: 'unknown',
                     parsedBy: ['ai'],
                 });
@@ -1705,6 +1781,9 @@ export function validateExtractionPayload(payload = {}, { sourceRequirements = [
             strength: /hard|硬|必须|不能|不可|固定/.test(text(canonical.strength || canonical.priority, 80).toLowerCase()) ? 'hard' : 'soft',
             time: canonical.time && typeof canonical.time === 'object' ? canonical.time : {},
             params: canonical.params && typeof canonical.params === 'object' ? canonical.params : canonical.parameters && typeof canonical.parameters === 'object' ? canonical.parameters : {},
+            scope: canonical.scope && typeof canonical.scope === 'object' ? canonical.scope : {},
+            relation: canonical.relation && typeof canonical.relation === 'object' ? canonical.relation : {},
+            quantifier: canonical.quantifier && typeof canonical.quantifier === 'object' ? canonical.quantifier : {},
             confidence: confidenceOf(canonical.confidence),
             needsClarification: Boolean(canonical.needsClarification || canonical.clarify),
             clarification: canonical.clarification && typeof canonical.clarification === 'object' ? canonical.clarification : null,
@@ -1733,14 +1812,27 @@ export function validateExtractionPayload(payload = {}, { sourceRequirements = [
             allowLegacyEvidence: true,
         })
         : { artifacts: unrecognized, rejected: [], warnings: [] };
-    const alignmentWarnings = [...alignedRequirements.warnings, ...alignedUnrecognized.warnings];
+    const alignedRationales = sourceRequirements.length
+        ? alignAiArtifactsToSources(rationales, sourceRequirements, {
+            artifactKind: 'rationale',
+            parsedBy: 'ai',
+            allowLegacyEvidence: true,
+        })
+        : { artifacts: rationales, rejected: [], warnings: [] };
+    const alignmentWarnings = [...alignedRequirements.warnings, ...alignedUnrecognized.warnings, ...alignedRationales.warnings];
 
     return {
         requirements: alignedRequirements.artifacts,
         unrecognized: alignedUnrecognized.artifacts,
+        rationales: alignedRationales.artifacts,
         warnings: [...warnings, ...unique(parsed.warnings || []), ...alignmentWarnings.map(item => item.message)],
         warningItems: alignmentWarnings,
-        rejected: [...alignedRequirements.rejected, ...alignedUnrecognized.rejected],
+        rejected: [
+            ...validationRejected,
+            ...alignedRequirements.rejected,
+            ...alignedUnrecognized.rejected,
+            ...alignedRationales.rejected,
+        ],
     };
 }
 
@@ -1933,6 +2025,13 @@ function buildResolvedRequirement(project = {}, requirement = {}) {
     const sourceRow = requirement.sourceRow ?? requirement.source?.sourceRow ?? requirement.source?.rowNumber ?? null;
     const lineNumber = requirement.lineNumber ?? requirement.source?.lineNumber ?? null;
     const rawText = requirement.rawText || requirement.source?.rawText || requirement.evidence || requirement.notes || '';
+    const relation = {
+        ...(requirement.relation || {}),
+        semanticKey: requirement.id || '',
+        ...(requirement.relation?.parentId
+            ? { parentSemanticKey: requirement.relation.parentId }
+            : {}),
+    };
     const source = {
         sourceId,
         textHash,
@@ -1958,6 +2057,9 @@ function buildResolvedRequirement(project = {}, requirement = {}) {
         intent,
         condition: requirement.time || {},
         parameters: params,
+        scope: requirement.scope && typeof requirement.scope === 'object' ? { ...requirement.scope } : {},
+        relation,
+        quantifier: requirement.quantifier && typeof requirement.quantifier === 'object' ? { ...requirement.quantifier } : {},
         strength: requirement.strength,
         status,
         applyTo: status === 'actionable' ? 'rule' : 'review',
@@ -2177,6 +2279,7 @@ async function extractRequirementsWithAISingle({
         model,
         promptVersion: AI_REQUIREMENT_PROMPT_VERSION,
         rawRequirements: asList(validated.requirements),
+        sourceRationales: asList(validated.rationales),
         unrecognized: asList(validated.unrecognized),
         cache: { hit: false, key: cacheKey },
         entityCandidates: {

@@ -41,6 +41,21 @@ const TYPE_LABELS = {
     teacher_gap_preference: '教师少空堂',
     teacher_load_balance: '教师负载均衡',
     subject_sequence: '课程顺序',
+    'teacher.compact_day': '教师集中授课',
+    'teacher.prep_group_fairness': '教师备课组均衡',
+    'lesson.consecutive': '连续课节',
+    'subject.preferred_day_part': '课程优先时段',
+    'subject.preferred_periods': '课程偏好节次',
+    'subject.avoid_periods': '课程避开节次',
+    'subject.spread': '课程分散安排',
+    'subject.avoid_weekday_concentration': '课程避免集中在同一天',
+    'subject.not_consecutive_with': '课程不连续安排',
+    'schedule.cross_venue_boundary': '跨场地换课限制',
+    'lesson.activity_scope_period_policy': '活动类型节次策略',
+    'lesson.resource_attribute_avoid_periods': '资源属性避开节次',
+    'room.preferred': '优先使用指定教室',
+    'room.required': '教室要求',
+    'room.forbidden_type': '禁用教室类型',
 };
 
 const FULFILLMENT_PRIMITIVES = [
@@ -220,6 +235,7 @@ function suggestionsForResult(rule = {}, status = '') {
 
 function makeResult(rule, status, evidence, locateTargets = []) {
     const v2Status = LEGACY_STATUS_TO_V2[status] || status;
+    const semanticType = rule.advancedType || rule.capabilityId || rule.advancedRule?.type || rule.primitive || rule.type;
     const normalizedLocateTargets = locateTargets.filter(Boolean);
     const evidenceSlots = normalizedLocateTargets
         .map(evidenceSlotFromLocate)
@@ -229,7 +245,9 @@ function makeResult(rule, status, evidence, locateTargets = []) {
         ruleId: rule.id,
         type: rule.type,
         primitive: PRIMITIVE_ALIASES[rule.type] || rule.type,
-        typeLabel: TYPE_LABELS[rule.type] || rule.description || rule.type,
+        advancedType: rule.advancedType || rule.advancedRule?.type || (rule.type === 'advanced_constraint' ? rule.primitive : ''),
+        capabilityId: rule.capabilityId || rule.advancedRule?.capabilityId || (rule.type === 'advanced_constraint' ? rule.primitive : ''),
+        typeLabel: TYPE_LABELS[rule.type] || TYPE_LABELS[semanticType] || rule.description || semanticType || '约束规则',
         source: rule.source,
         origin: rule.source || 'project.rules',
         priority: rule.priority,
@@ -237,11 +255,22 @@ function makeResult(rule, status, evidence, locateTargets = []) {
         targetKind: rule.targetKind,
         targetId: rule.targetId,
         targetName: rule.targetName,
+        sourceId: rule.sourceId || rule.advancedRule?.sourceId || '',
+        clauseId: rule.clauseId || rule.advancedRule?.clauseId || '',
         scopeLabel: rule.scopeLabel || '',
         legacyCourseGlobal: rule.legacyCourseGlobal === true,
         slots: rule.slots || [],
         title: rule.title || `${rule.targetName || ''}${rule.description ? ` ${rule.description}` : ''}`.trim(),
         description: rule.description,
+        rawText: rule.rawText
+            || rule.sourceText
+            || rule.source?.rawText
+            || rule.originalText
+            || rule.advancedRule?.rawText
+            || rule.advancedRule?.sourceText
+            || rule.advancedRule?.source?.rawText
+            || rule.advancedRule?.originalText
+            || '',
         status: v2Status,
         legacyStatus: status,
         statusLabel: STATUS_LABELS[v2Status] || STATUS_LABELS[status] || status,
@@ -634,6 +663,10 @@ function savedConstraintItems(project) {
             id: rule.id,
             type: 'advanced_constraint',
             primitive: rule.type,
+            capabilityId: rule.capabilityId || rule.type,
+            advancedType: rule.type,
+            sourceId: rule.sourceId || '',
+            clauseId: rule.clauseId || '',
             source: 'advancedRules',
             targetKind: rule.target?.kind || 'global',
             targetId: (rule.target?.matchedIds || []).join('|'),
@@ -643,6 +676,7 @@ function savedConstraintItems(project) {
             description: scopeLabel || rule.type,
             title: scopeLabel || (rule.target?.name ? `${rule.target.name} ${rule.type}` : rule.type),
             scopeLabel,
+            rawText: rule.rawText || rule.sourceText || rule.source?.rawText || rule.originalText || '',
             legacyCourseGlobal: scopeLabel === '历史全校范围',
             advancedRule: rule,
         });

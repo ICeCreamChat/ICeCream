@@ -3,8 +3,44 @@
         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:schemaLocation="https://timefold.ai/xsd/solver https://timefold.ai/xsd/solver/solver.xsd">
     <solutionClass>com.icecream.timetable.domain.TimetableSolution</solutionClass>
-    <entityClass>com.icecream.timetable.domain.LessonAssignment</entityClass>
+    <entityClass>com.icecream.timetable.domain.SchedulingUnit</entityClass>
     <scoreDirectorFactory>
         <constraintProviderClass>com.icecream.timetable.solver.TimetableConstraintProvider</constraintProviderClass>
     </scoreDirectorFactory>
+    <constructionHeuristic/>
+    <localSearch>
+        <termination>
+            <bestScoreFeasible>true</bestScoreFeasible>
+        </termination>
+        <unionMoveSelector>
+            <moveIteratorFactory>
+                <fixedProbabilityWeight>1.0</fixedProbabilityWeight>
+                <moveIteratorFactoryClass>com.icecream.timetable.solver.CompatiblePlacementSwapMoveIteratorFactory</moveIteratorFactoryClass>
+            </moveIteratorFactory>
+            <moveIteratorFactory>
+                <fixedProbabilityWeight>100.0</fixedProbabilityWeight>
+                <moveIteratorFactoryClass>com.icecream.timetable.solver.CompatiblePlacementChainMoveIteratorFactory</moveIteratorFactoryClass>
+            </moveIteratorFactory>
+            <changeMoveSelector>
+                <fixedProbabilityWeight>1.0</fixedProbabilityWeight>
+                <entitySelector>
+                    <filterClass>com.icecream.timetable.solver.HardRepairSchedulingUnitSelectionFilter</filterClass>
+                </entitySelector>
+            </changeMoveSelector>
+        </unionMoveSelector>
+        <acceptor>
+            <acceptorType>ENTITY_TABU</acceptorType>
+            <entityTabuSize>7</entityTabuSize>
+        </acceptor>
+    </localSearch>
+    <localSearch>
+        <unionMoveSelector>
+            <changeMoveSelector/>
+            <swapMoveSelector/>
+        </unionMoveSelector>
+        <acceptor>
+            <acceptorType>LATE_ACCEPTANCE</acceptorType>
+            <lateAcceptanceSize>400</lateAcceptanceSize>
+        </acceptor>
+    </localSearch>
 </solver>

@@ -7,6 +7,7 @@ import {
 } from './timetable-conflicts.js';
 import {
     classIdsForPlan,
+    getDayPartPeriods,
     getActivePeriods,
     getActiveWeekdays,
     getTimetableEntityMaps,
@@ -39,6 +40,8 @@ import {
     attachTimetableDiagnostics,
 } from './timetable-diagnostics.js';
 
+const DEFAULT_TIMETABLE_TIE_BREAK_SEED = 'timetable-generic-v1';
+
 function attachPublication(project, schedule) {
     schedule.publication = validateTimetablePublication({ ...project, schedule });
     attachTimetableDiagnostics(project, schedule, { publication: schedule.publication });
@@ -69,12 +72,8 @@ function seededHash(seed, value) {
 }
 
 function seededCompare(seed, leftKey, rightKey) {
-    if (!seed) return 0;
-    return seededHash(seed, leftKey) - seededHash(seed, rightKey);
-}
-
-function seededUnit(seed, key) {
-    return seededHash(seed || 'legacy-default-seed', key) / 0x100000000;
+    const effectiveSeed = seed || DEFAULT_TIMETABLE_TIE_BREAK_SEED;
+    return seededHash(effectiveSeed, leftKey) - seededHash(effectiveSeed, rightKey);
 }
 
 function candidateTieKey(candidate = {}) {
@@ -109,24 +108,6 @@ function repairConfig(taskCount = 0) {
 
 function isMorning(project, period) {
     return isMorningPeriod(project, period);
-}
-
-function subjectProfile(subject = {}, subjectId = '') {
-    return [subject.category, subject.type, ...(subject.tags || []), subjectId, subject.name]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-}
-
-function isMainSubject(subject = {}, subjectId = '', morningSubjects = new Set()) {
-    if (morningSubjects.has(subjectId)) return true;
-    return /\b(main|core|chinese|math|english|language)\b|语文|数学|英语|外语|主科/.test(subjectProfile(subject, subjectId));
-}
-
-function prefersLaterSubject(subject = {}, subjectId = '', afternoonSubjects = new Set()) {
-    if (afternoonSubjects.has(subjectId)) return true;
-    if (afternoonSubjects.size > 0) return false;
-    return /\b(pe|sport|physical|music|art|labor|lab|experiment)\b|体育|美术|音乐|劳动|实验|信息/.test(subjectProfile(subject, subjectId));
 }
 
 function getActiveSlotPairs(project) {
@@ -177,6 +158,14 @@ function roomCandidatesForTask(task = {}, project = null) {
             .filter(room => requiredTags.every(tag => (room.tags || []).includes(tag)))
             .map(room => room.id);
     }
+    const hasExplicitRoomConstraint = Boolean(
+        task.roomId
+        || (task.allowedRoomIds || []).length
+        || (requirement.preferredRoomIds || []).length
+        || (requirement.allowedRoomIds || []).length
+        || requiredTags.length,
+    );
+    if (!rooms.length && hasExplicitRoomConstraint) return [];
     return rooms.length ? rooms : [null];
 }
 
@@ -217,7 +206,6 @@ function courseIntervalPenalty(project, slots, task, day) {
 
 function candidateScore(project, usage, slots, task, candidate) {
     const subject = project.subjects.find(item => item.id === task.subjectId);
-    const subjectName = subject?.name || '';
     const morningSubjects = new Set(project.rules.softRules.morningSubjects || []);
     const afternoonSubjects = new Set(project.rules.softRules.afternoonSubjects || []);
     const preferredPeriods = project.rules.softRules.subjectPreferredPeriods?.[task.subjectId] || null;
@@ -225,10 +213,10 @@ function candidateScore(project, usage, slots, task, candidate) {
     const preferenceWeight = Math.max(1, Math.min(100, Number.parseInt(preferredPeriods?.weight, 10) || 20));
     let score = candidate.day * 0.2 + candidate.period * 0.1;
 
-    if (morningSubjects.has(task.subjectId) || /语文|数学|英语|外语/.test(subjectName)) {
+    if (morningSubjects.has(task.subjectId)) {
         score += isMorning(project, candidate.period) ? -18 : 14;
     }
-    if (afternoonSubjects.has(task.subjectId) || (!afternoonSubjects.size && /体育|美术|音乐|劳动|实验/.test(subjectName))) {
+    if (afternoonSubjects.has(task.subjectId)) {
         score += isMorning(project, candidate.period) ? 8 : -8;
     }
 
@@ -298,10 +286,10 @@ function candidateScoreV2(project, usage, slots, task, candidate) {
     const teacherGapWeight = Number.parseInt(project.rules.softRules.teacherGapWeight, 10) || 0;
     let score = candidate.day * 0.2 + candidate.period * 0.1;
 
-    if (isMainSubject(subject, task.subjectId, morningSubjects)) {
+    if (morningSubjects.has(task.subjectId)) {
         score += isMorning(project, candidate.period) ? -18 : 14;
     }
-    if (prefersLaterSubject(subject, task.subjectId, afternoonSubjects)) {
+    if (afternoonSubjects.has(task.subjectId)) {
         score += isMorning(project, candidate.period) ? 8 : -8;
     }
 
@@ -330,6 +318,10 @@ function candidateScoreV2(project, usage, slots, task, candidate) {
     return score;
 }
 
+function candidateTimeWindowCount(candidates = []) {
+    return new Set(candidates.map(candidate => `${candidate.day}-${candidate.period}`)).size;
+}
+
 function buildCandidatePressureContext(project, usage, tasks = []) {
     const taskCandidateCounts = new Map();
     const slotPressure = new Map();
@@ -342,8 +334,15 @@ function buildCandidatePressureContext(project, usage, tasks = []) {
 
     for (const task of tasks) {
         const candidates = getCandidateBlocks(project, usage, task);
-        taskCandidateCounts.set(task.id, candidates.length);
-        minCandidateCount = Math.min(minCandidateCount, candidates.length);
+        const candidatesByTime = new Map();
+        for (const candidate of candidates) {
+            const timeKey = `${candidate.day}-${candidate.period}`;
+            if (!candidatesByTime.has(timeKey)) candidatesByTime.set(timeKey, []);
+            candidatesByTime.get(timeKey).push(candidate);
+        }
+        const timeWindowCount = candidateTimeWindowCount(candidates);
+        taskCandidateCounts.set(task.id, timeWindowCount);
+        minCandidateCount = Math.min(minCandidateCount, timeWindowCount);
 
         const subject = project.subjects.find(item => item.id === task.subjectId);
         const priority = Number(subject?.priority ?? 50);
@@ -353,7 +352,7 @@ function buildCandidatePressureContext(project, usage, tasks = []) {
             + (teacherCount - 1) * 0.5
             + (task.roomId || (task.allowedRoomIds || []).length ? 0.35 : 0);
         taskWork.set(task.id, workMetric);
-        const contribution = workMetric / Math.max(1, candidates.length);
+        const contribution = workMetric / Math.max(1, timeWindowCount);
 
         bumpCount(classDemand, task.classId, Math.max(1, task.blockSize || 1));
         for (const teacherId of slotTeacherIds(task)) bumpCount(teacherDemand, teacherId, Math.max(1, task.blockSize || 1));
@@ -361,9 +360,12 @@ function buildCandidatePressureContext(project, usage, tasks = []) {
             if (roomId) bumpCount(roomDemand, roomId, Math.max(1, task.blockSize || 1));
         }
 
-        for (const candidate of candidates) {
-            bumpCount(slotPressure, candidateTieKey(candidate), contribution);
-            bumpCount(timePressure, `${candidate.day}-${candidate.period}`, contribution);
+        for (const [timeKey, timeCandidates] of candidatesByTime) {
+            bumpCount(timePressure, timeKey, contribution);
+            const placementContribution = contribution / Math.max(1, timeCandidates.length);
+            for (const candidate of timeCandidates) {
+                bumpCount(slotPressure, candidateTieKey(candidate), placementContribution);
+            }
         }
     }
 
@@ -421,16 +423,13 @@ function candidateBlockKeys(task, candidate) {
 
 function softRuleChecks(project, usage, task, candidate) {
     const softRules = project.rules?.softRules || {};
-    const subject = project.subjects.find(item => item.id === task.subjectId);
     const morningSubjects = new Set(softRules.morningSubjects || []);
     const afternoonSubjects = new Set(softRules.afternoonSubjects || []);
     const preferredPeriods = softRules.subjectPreferredPeriods?.[task.subjectId] || null;
     const candidateKeys = candidateBlockKeys(task, candidate);
     const checks = [];
 
-    const explicitMorningSubject = morningSubjects.has(task.subjectId)
-        || /\b(main|core)\b|主科/.test(subjectProfile(subject, task.subjectId));
-    if (explicitMorningSubject) {
+    if (morningSubjects.has(task.subjectId)) {
         checks.push({
             code: 'morning_subject',
             weight: 80,
@@ -499,34 +498,15 @@ function softRuleChecks(project, usage, task, candidate) {
     return checks.filter(check => check.violated);
 }
 
-function shouldEnforceSoft({ seed, mode, task, candidate, check }) {
-    if (check.weight < 0) return false;
-    if (check.weight >= 100) return true;
-    if (mode === 'relaxed_soft' || mode === 'hard_only') return false;
-    if (check.code === 'preferred_period' || check.code === 'avoid_period') return true;
-    const rollKey = `${task.id}:${candidateTieKey(candidate)}:${check.code}`;
-    return seededUnit(seed, rollKey) * 100 < check.weight;
-}
-
-function evaluateSoftEnforcement(project, usage, task, candidate, { mode, seed, stats }) {
-    if (mode === 'hard_only') return { ok: true, penalty: 0, rejected: 0 };
+function evaluateSoftEnforcement(project, usage, task, candidate, { stats }) {
     const checks = softRuleChecks(project, usage, task, candidate);
-    let penalty = 0;
-    let rejected = 0;
     for (const check of checks) {
         stats.evaluations += 1;
-        if (check.weight >= 100) stats.mandatory += 1;
-        const enforced = shouldEnforceSoft({ seed, mode, task, candidate, check });
-        if (enforced) {
-            stats.enforced += 1;
-            rejected += 1;
-        } else {
-            stats.skipped += 1;
-            penalty += Math.max(1, check.weight) / 5;
-        }
+        // Soft rules are scoring signals only; they never remove an otherwise
+        // valid candidate from the hard scheduling domain.
+        stats.skipped += 1;
     }
-    if (rejected) stats.rejected += 1;
-    return { ok: rejected === 0, penalty, rejected };
+    return { ok: true, penalty: 0, rejected: 0 };
 }
 
 function chooseWeightedCandidate(candidates, seed, taskId, passName) {
@@ -540,7 +520,7 @@ function chooseWeightedCandidate(candidates, seed, taskId, passName) {
         weight: 1 / (1 + Math.max(0, candidate.score - minScore)),
     }));
     const total = weighted.reduce((sum, item) => sum + item.weight, 0);
-    let cursor = seededUnit(seed, `${taskId}:${passName}:weighted-choice`) * total;
+    let cursor = (seededHash(seed || DEFAULT_TIMETABLE_TIE_BREAK_SEED, `${taskId}:${passName}:weighted-choice`) / 0x100000000) * total;
     for (const item of weighted) {
         cursor -= item.weight;
         if (cursor <= 0) return item.candidate;
@@ -666,6 +646,266 @@ function expandLessonPlanTasks(project, placedCountByPlan) {
     return tasks;
 }
 
+function occupiedKeysForCandidate(task = {}, candidate = {}) {
+    return Array.from({ length: Math.max(1, Number(task.blockSize) || 1) }, (_, offset) => (
+        `${candidate.day}-${Number(candidate.period) + offset}`
+    ));
+}
+
+/**
+ * A SchedulingUnit is the hard-domain view of a single lesson or an entire
+ * consecutive block. It is intentionally independent of display labels.
+ */
+export function buildSchedulingUnits(input = {}) {
+    const project = normalizeTimetableProject(input);
+    const tasks = expandLessonPlanTasks(project, new Map());
+    const emptyUsage = createTimetableUsage();
+    return tasks.map(task => {
+        const candidates = getCandidateBlocks(project, emptyUsage, task)
+            .map(candidate => ({
+                ...candidate,
+                occupiedKeys: occupiedKeysForCandidate(task, candidate),
+            }));
+        return {
+            id: task.id,
+            lessonPlanId: task.lessonPlanId,
+            classIds: [...new Set(task.classIds || [task.classId].filter(Boolean))],
+            teacherIds: [...new Set(slotTeacherIds(task))],
+            blockId: task.blockId || null,
+            blockSize: Math.max(1, Number(task.blockSize) || 1),
+            allowedRoomIds: roomCandidatesForTask(task, project).filter(Boolean),
+            candidates,
+        };
+    });
+}
+
+function feasibilityIssue(code, message, unit = {}, extra = {}) {
+    return {
+        code,
+        severity: 'hard',
+        message,
+        lessonPlanId: unit.lessonPlanId || null,
+        taskId: unit.id || null,
+        classIds: unit.classIds || [],
+        teacherIds: unit.teacherIds || [],
+        blockSize: unit.blockSize || 1,
+        suggestion: extra.suggestion || '检查相关硬约束或增加可用时段、教师、班级或教室容量。',
+        ...extra,
+    };
+}
+
+function capacityIssuesForUnits(units = []) {
+    const resources = new Map();
+    const register = (kind, id, unit) => {
+        if (!id) return;
+        const key = `${kind}:${id}`;
+        if (!resources.has(key)) resources.set(key, { kind, id, units: [] });
+        resources.get(key).units.push(unit);
+    };
+    for (const unit of units) {
+        unit.classIds.forEach(id => register('class', id, unit));
+        unit.teacherIds.forEach(id => register('teacher', id, unit));
+        if (unit.allowedRoomIds.length === 1) register('room', unit.allowedRoomIds[0], unit);
+    }
+    const issues = [];
+    for (const resource of resources.values()) {
+        const demand = resource.units.reduce((sum, unit) => sum + unit.blockSize, 0);
+        const available = new Set(resource.units.flatMap(unit => unit.candidates.flatMap(candidate => candidate.occupiedKeys))).size;
+        if (demand <= available) continue;
+        issues.push({
+            code: 'resource_capacity_exceeded',
+            severity: 'hard',
+            resourceKind: resource.kind,
+            resourceId: resource.id,
+            demand,
+            available,
+            message: `${resource.kind} ${resource.id} 需要 ${demand} 个课时，但显式规则下最多只有 ${available} 个可用时隙。`,
+            suggestion: '放宽该资源的不可排或固定安排，或增加可用时段/可替代资源。',
+        });
+    }
+    return issues;
+}
+
+function lockedRuleMatchesPlan(rule = {}, plan = {}) {
+    if (rule.lessonPlanId) return rule.lessonPlanId === plan.id;
+    return rule.classId === plan.classId
+        && rule.subjectId === plan.subjectId
+        && (!rule.teacherId || slotTeacherIds(plan).includes(rule.teacherId));
+}
+
+function lockedSlotIssues(project = {}, units = []) {
+    const rules = project.rules?.hardRules?.lockedSlots || [];
+    const issues = [];
+    const occupied = new Map();
+    const seenPlanSlots = new Set();
+    for (const rule of rules) {
+        const day = Number(rule.day);
+        const period = Number(rule.period);
+        const key = `${day}-${period}`;
+        const plan = (project.lessonPlans || []).find(item => lockedRuleMatchesPlan(rule, item));
+        if (!plan) {
+            issues.push({
+                code: 'fixed_slot_unmatched',
+                severity: 'hard',
+                slot: key,
+                message: `固定课 ${key} 找不到匹配的任课计划。`,
+                suggestion: '检查固定课的班级、课程、教师或任课计划 ID。',
+            });
+            continue;
+        }
+        if (!isActiveTimetableSlot(project, day, period)) {
+            issues.push({
+                code: 'fixed_slot_unavailable',
+                lessonPlanId: plan.id,
+                slot: key,
+                message: `任课计划 ${plan.id} 被固定到未启用的时隙 ${key}。`,
+                suggestion: '启用该星期/节次，或把固定课移到有效时隙。',
+            });
+        }
+        const unit = units.find(item => item.lessonPlanId === plan.id);
+        const sameSlotKey = `${plan.id}|${key}`;
+        if (seenPlanSlots.has(sameSlotKey)) continue;
+        seenPlanSlots.add(sameSlotKey);
+
+        const existing = occupied.get(key) || [];
+        for (const other of existing) {
+            const sameClass = other.classId && other.classId === plan.classId;
+            const sameTeacher = other.teacherId && other.teacherId === plan.teacherId;
+            const sameRoom = rule.roomId && other.roomId && rule.roomId === other.roomId;
+            if (sameClass || sameTeacher || sameRoom) {
+                issues.push({
+                    code: 'fixed_slot_conflict',
+                    slot: key,
+                    lessonPlanId: plan.id,
+                    conflictsWith: other.lessonPlanId,
+                    message: `固定课 ${key} 同时占用了冲突的班级、教师或教室资源。`,
+                    suggestion: '移动其中一条固定课，或取消其中一条固定安排。',
+                });
+            }
+        }
+        if (!occupied.has(key)) occupied.set(key, []);
+        occupied.get(key).push({
+            lessonPlanId: plan.id,
+            classId: plan.classId,
+            teacherId: plan.teacherId,
+            roomId: rule.roomId || null,
+            unitId: unit?.id || null,
+        });
+    }
+    return issues;
+}
+
+export function analyzeTimetableFeasibility(input = {}) {
+    const project = normalizeTimetableProject(input);
+    const units = buildSchedulingUnits(project);
+    const issues = [];
+    for (const unit of units) {
+        if (unit.candidates.length) continue;
+        issues.push(feasibilityIssue(
+            'candidate_domain_empty',
+            `任课计划 ${unit.lessonPlanId} 的 ${unit.blockSize} 节排课单元没有满足硬约束的候选时段。`,
+            unit,
+            { suggestion: '检查不可排、固定课、连续课长度及教室范围；至少保留一个完整可用时段。' },
+        ));
+    }
+    issues.push(...lockedSlotIssues(project, units));
+
+    const teacherDemand = new Map();
+    for (const unit of units) {
+        for (const teacherId of unit.teacherIds) {
+            teacherDemand.set(teacherId, (teacherDemand.get(teacherId) || 0) + unit.blockSize);
+        }
+    }
+    for (const [teacherId, demand] of teacherDemand) {
+        const limit = Number.parseInt(project.rules?.hardRules?.teacherWeeklyLimit?.[teacherId], 10);
+        if (!Number.isInteger(limit) || limit <= 0 || demand <= limit) continue;
+        issues.push({
+            code: 'teacher_weekly_limit_exceeded',
+            severity: 'hard',
+            teacherId,
+            demand,
+            limit,
+            message: `教师 ${teacherId} 有 ${demand} 节任课需求，超过显式每周上限 ${limit}。`,
+            suggestion: '提高该教师周课时上限、调整任课分配，或减少对应课时。',
+        });
+    }
+    // Capacity is a proof only for the simple, empty-schedule model. Existing
+    // protected placements and alternate-week teaching groups require the full
+    // constraint model; treating this coarse count as a proof there would reject
+    // otherwise feasible projects before repair or Timefold can run.
+    if (!isComplexTimetableModel(project) && !(project.schedule?.slots || []).length) {
+        issues.push(...capacityIssuesForUnits(units));
+    }
+
+    const candidateCounts = units.map(unit => unit.candidates.length);
+    return {
+        status: issues.length ? 'input_infeasible' : 'feasible',
+        issues,
+        units,
+        candidateDomainStats: {
+            unitCount: units.length,
+            emptyUnitCount: candidateCounts.filter(count => count === 0).length,
+            minCandidateCount: candidateCounts.length ? Math.min(...candidateCounts) : 0,
+            maxCandidateCount: candidateCounts.length ? Math.max(...candidateCounts) : 0,
+        },
+    };
+}
+
+function infeasibleSchedule(project, audit, feasibility, startedAt, seed) {
+    const unplaced = feasibility.units.map(unit => ({
+        taskId: unit.id,
+        lessonPlanId: unit.lessonPlanId,
+        classIds: unit.classIds,
+        teacherIds: unit.teacherIds,
+        blockSize: unit.blockSize,
+        lessonHours: unit.blockSize,
+        reason: '输入硬约束不存在可行候选域或资源容量不足',
+        reasonCode: 'input_infeasible',
+    }));
+    const conflicts = [
+        ...feasibility.issues.map(issue => ({
+            type: issue.code,
+            severity: 'hard',
+            message: issue.message,
+            issue,
+        })),
+        ...buildUnplacedConflicts(unplaced),
+    ];
+    const schedule = {
+        id: `schedule_preflight_${Date.now()}`,
+        generatedAt: new Date().toISOString(),
+        source: 'preflight_rejected',
+        slots: [],
+        lockedSlots: [],
+        conflicts,
+        unplaced,
+        audit,
+        qualityIssues: [],
+        score: buildTimetableScore(project, [], unplaced, conflicts),
+        solverStats: {
+            solverUsed: false,
+            phase: 'feasibility_preflight',
+            status: 'failed',
+            strategy: 'data_derived_domain',
+            ...scheduleSeedPatch(seed),
+            lessonCount: project.lessonPlans.reduce((sum, plan) => sum + plan.weeklyHours, 0),
+            placedLessons: 0,
+            unplacedLessons: unplaced.reduce((sum, item) => sum + item.lessonHours, 0),
+            hardConflicts: feasibility.issues.length,
+            accepted: false,
+            reason: 'input_infeasible',
+            solveMs: Date.now() - startedAt,
+            feasibility: {
+                status: feasibility.status,
+                issues: feasibility.issues,
+                candidateDomainStats: feasibility.candidateDomainStats,
+            },
+        },
+    };
+    attachPublication(project, schedule);
+    return { success: false, project: { ...project, schedule }, schedule };
+}
+
 function taskDifficulty(project, usage, task, pressureContext = null) {
     const candidates = pressureContext?.taskCandidateCounts?.get(task.id) ?? getCandidateBlocks(project, usage, task).length;
     const subject = project.subjects.find(item => item.id === task.subjectId);
@@ -696,6 +936,16 @@ function taskDifficulty(project, usage, task, pressureContext = null) {
 
 function taskPreferenceRank(project, task) {
     return project.rules?.softRules?.subjectPreferredPeriods?.[task.subjectId] ? 0 : 1;
+}
+
+function taskResourcePressure(project, pressureContext, task) {
+    const classDemand = pressureContext?.classDemand?.get(task.classId) || 0;
+    const teacherDemand = slotTeacherIds(task)
+        .reduce((sum, teacherId) => sum + (pressureContext?.teacherDemand?.get(teacherId) || 0), 0);
+    const roomDemand = roomCandidatesForTask(task, project)
+        .filter(Boolean)
+        .reduce((sum, roomId) => sum + (pressureContext?.roomDemand?.get(roomId) || 0), 0);
+    return classDemand + teacherDemand + roomDemand;
 }
 
 function makeSlot(task, day, period, index = 0, locked = false, roomId = undefined) {
@@ -737,28 +987,96 @@ function hasSimpleEdgeColoringShape(project) {
     if ((project.teachers || []).some(teacher => (teacher.unavailableSlots || []).length > 0)) return false;
     if ((project.lessonPlans || []).some(plan => slotTeacherIds(plan).length !== 1)) return false;
     if ((project.lessonPlans || []).some(plan => plan.roomId || (plan.allowedRoomIds || []).length > 0)) return false;
+    const classIds = new Set((project.classes || []).map(item => item.id));
+    const subjectIds = new Set((project.subjects || []).map(item => item.id));
+    const teacherIds = new Set((project.teachers || []).map(item => item.id));
+    if ((project.lessonPlans || []).some(plan => (
+        !classIds.has(plan.classId)
+        || !subjectIds.has(plan.subjectId)
+        || !teacherIds.has(plan.teacherId)
+    ))) return false;
     // Edge-coloring assigns each lesson an independent colour (time slot); it cannot
     // keep the two halves of a 连堂/double block adjacent, so defer block plans to greedy.
     if ((project.lessonPlans || []).some(plan => plan.blockPreference !== 'single')) return false;
     return true;
 }
 
+function simpleEdgeFeasibility(project) {
+    const activeWeekdays = getActiveWeekdays(project);
+    const activePeriods = getActivePeriods(project);
+    const periodCount = activeWeekdays.length * activePeriods.length;
+    const classDemand = new Map();
+    const teacherDemand = new Map();
+    let unitCount = 0;
+    for (const plan of project.lessonPlans || []) {
+        const hours = Math.max(0, Number.parseInt(plan.weeklyHours, 10) || 0);
+        unitCount += hours;
+        classDemand.set(plan.classId, (classDemand.get(plan.classId) || 0) + hours);
+        teacherDemand.set(plan.teacherId, (teacherDemand.get(plan.teacherId) || 0) + hours);
+    }
+    const issues = [];
+    for (const [classId, demand] of classDemand) {
+        if (demand > periodCount) {
+            issues.push({
+                code: 'class_capacity_overload',
+                severity: 'hard',
+                classId,
+                demand,
+                capacity: periodCount,
+                message: `班级 ${classId} 的课时需求 ${demand} 超过可用时段容量 ${periodCount}。`,
+                suggestion: '增加可用工作日或节次，或减少该班级的周课时。',
+            });
+        }
+    }
+    for (const [teacherId, demand] of teacherDemand) {
+        if (demand > periodCount) {
+            issues.push({
+                code: 'teacher_capacity_overload',
+                severity: 'hard',
+                teacherId,
+                demand,
+                capacity: periodCount,
+                message: `教师 ${teacherId} 的课时需求 ${demand} 超过可用时段容量 ${periodCount}。`,
+                suggestion: '增加可用工作日或节次，或调整任课分配。',
+            });
+        }
+    }
+    return {
+        status: issues.length ? 'input_infeasible' : 'feasible',
+        issues,
+        units: issues.length ? buildSchedulingUnits(project) : [],
+        candidateDomainStats: {
+            unitCount,
+            emptyUnitCount: issues.length ? 0 : 0,
+            minCandidateCount: unitCount ? periodCount : 0,
+            maxCandidateCount: unitCount ? periodCount : 0,
+        },
+    };
+}
+
 // Soft-rule affinity of placing a task at (day, period). Higher = more desirable.
 // Mirrors candidateScore's soft signals but as a positive "goodness" used to
 // assign edge-coloring colours to concrete time slots.
-function taskSlotAffinity(project, task, day, period) {
-    const subject = project.subjects.find(item => item.id === task.subjectId);
-    const morningSubjects = new Set(project.rules.softRules.morningSubjects || []);
-    const afternoonSubjects = new Set(project.rules.softRules.afternoonSubjects || []);
-    const preferred = project.rules.softRules.subjectPreferredPeriods?.[task.subjectId] || null;
+function taskSlotAffinity(project, task, day, period, context = null) {
+    const affinityContext = context || {
+        subjectById: new Map((project.subjects || []).map(subject => [subject.id, subject])),
+        morningSubjects: new Set(project.rules.softRules.morningSubjects || []),
+        afternoonSubjects: new Set(project.rules.softRules.afternoonSubjects || []),
+        preferred: project.rules.softRules.subjectPreferredPeriods || {},
+        morningPeriods: new Set(getDayPartPeriods(project, 'morning')),
+    };
+    const subject = affinityContext.subjectById.get(task.subjectId);
+    const morningSubjects = affinityContext.morningSubjects;
+    const afternoonSubjects = affinityContext.afternoonSubjects;
+    const preferred = affinityContext.preferred?.[task.subjectId] || null;
     const key = `${day}-${period}`;
-    const morning = isMorning(project, period);
+    const morning = affinityContext.morningPeriods.has(Number(period));
     let affinity = 0;
 
-    if (isMainSubject(subject, task.subjectId, morningSubjects)) {
+    if (morningSubjects.has(task.subjectId)) {
         affinity += morning ? 18 : -14;
     }
-    if (prefersLaterSubject(subject, task.subjectId, afternoonSubjects)) {
+    if (afternoonSubjects.has(task.subjectId)) {
         affinity += morning ? -8 : 8;
     }
     if (preferred?.prefer?.includes(key)) affinity += Math.max(1, Math.min(100, preferred.weight || 20));
@@ -774,8 +1092,15 @@ function taskSlotAffinity(project, task, day, period) {
 // and deterministic.
 function assignColorsToSlots(project, colorGroups, timetableSlots, seed = null) {
     const colorCount = colorGroups.length;
+    const affinityContext = {
+        subjectById: new Map((project.subjects || []).map(subject => [subject.id, subject])),
+        morningSubjects: new Set(project.rules.softRules.morningSubjects || []),
+        afternoonSubjects: new Set(project.rules.softRules.afternoonSubjects || []),
+        preferred: project.rules.softRules.subjectPreferredPeriods || {},
+        morningPeriods: new Set(getDayPartPeriods(project, 'morning')),
+    };
     const groupScore = (group, slot) => group.reduce(
-        (sum, entry) => sum + taskSlotAffinity(project, entry.task, slot.day, slot.period),
+        (sum, entry) => sum + taskSlotAffinity(project, entry.task, slot.day, slot.period, affinityContext),
         0,
     );
     const pairs = [];
@@ -1213,23 +1538,25 @@ function isProtectedGroup(group = []) {
     return group.some(slot => slot.locked || slot.manuallyAdjusted);
 }
 
-function taskFromSlotGroup(group = []) {
+function taskFromSlotGroup(group = [], project = null) {
     const first = group[0] || {};
+    const plan = project?.lessonPlans?.find(item => item.id === first.lessonPlanId) || null;
+    const metadata = plan ? taskMetadataForPlan(project, plan) : null;
     return {
         id: slotGroupKey(first) || first.id,
         lessonPlanId: first.lessonPlanId || null,
-        classId: first.classId || null,
-        subjectId: first.subjectId || null,
-        teacherId: first.teacherId || null,
-        teacherIds: slotTeacherIds(first),
-        roomId: first.roomId || null,
-        allowedRoomIds: first.roomId ? [first.roomId] : [],
-        roomRequirement: first.roomRequirement || { preferredRoomIds: [], allowedRoomIds: [], requiredTags: [] },
-        weekPattern: first.weekPattern || 'every',
-        campusId: first.campusId || '',
-        teachingGroupId: first.teachingGroupId || '',
-        teachingGroupName: first.teachingGroupName || '',
-        classIds: slotClassIds(first),
+        classId: first.classId || metadata?.classId || null,
+        subjectId: first.subjectId || plan?.subjectId || null,
+        teacherId: first.teacherId || metadata?.teacherId || null,
+        teacherIds: slotTeacherIds(first).length ? slotTeacherIds(first) : (metadata?.teacherIds || []),
+        roomId: metadata?.roomId || first.roomId || null,
+        allowedRoomIds: metadata?.allowedRoomIds || (first.roomId ? [first.roomId] : []),
+        roomRequirement: metadata?.roomRequirement || first.roomRequirement || { preferredRoomIds: [], allowedRoomIds: [], requiredTags: [] },
+        weekPattern: first.weekPattern || metadata?.weekPattern || 'every',
+        campusId: first.campusId || metadata?.campusId || '',
+        teachingGroupId: first.teachingGroupId || metadata?.teachingGroupId || '',
+        teachingGroupName: first.teachingGroupName || metadata?.teachingGroupName || '',
+        classIds: slotClassIds(first).length ? slotClassIds(first) : (metadata?.classIds || []),
         blockId: first.blockId || null,
         blockSize: Math.max(1, group.length || first.blockSize || 1),
     };
@@ -1254,7 +1581,7 @@ function describeBlockingGroups(groups = []) {
 }
 
 function groupHasHardAlternative(project, group = [], forbiddenKeys = new Set()) {
-    const task = taskFromSlotGroup(group);
+    const task = taskFromSlotGroup(group, project);
     const emptyUsage = createTimetableUsage();
     for (const day of getActiveWeekdays(project)) {
         for (const period of getActivePeriods(project)) {
@@ -1387,6 +1714,123 @@ function moveExistingGroup(slots, usage, groupKey, day, period, roomId) {
     return moved.size;
 }
 
+function resourceKeysForTask(project, task = {}) {
+    const keys = new Set();
+    for (const classId of slotClassIds(task)) {
+        if (classId) keys.add(`class:${classId}`);
+    }
+    for (const teacherId of slotTeacherIds(task)) {
+        if (teacherId) keys.add(`teacher:${teacherId}`);
+    }
+    for (const roomId of roomCandidatesForTask(task, project)) {
+        if (roomId) keys.add(`room:${roomId}`);
+    }
+    return keys;
+}
+
+export function buildConflictComponent(project, slots, targetTask, maxGroups) {
+    const groups = new Map();
+    const targetKeys = resourceKeysForTask(project, targetTask);
+    const preferredKeys = [...targetKeys].filter(key => key.startsWith('room:'));
+    const componentKeys = preferredKeys.length
+        ? new Set(preferredKeys)
+        : new Set([...targetKeys].filter(key => key.startsWith('teacher:')));
+    if (!componentKeys.size) {
+        for (const key of targetKeys) componentKeys.add(key);
+    }
+    const grouped = new Map();
+    for (const slot of slots) {
+        const groupKey = slotGroupKey(slot);
+        if (!grouped.has(groupKey)) grouped.set(groupKey, []);
+        grouped.get(groupKey).push(slot);
+    }
+    for (const [groupKey, group] of grouped) {
+        if (isProtectedGroup(group)) continue;
+        const groupTask = taskFromSlotGroup(group, project);
+        const groupKeys = resourceKeysForTask(project, groupTask);
+        if (![...groupKeys].some(key => componentKeys.has(key))) continue;
+        groups.set(groupKey, group);
+        if (groups.size > maxGroups) return null;
+    }
+    return [...groups.values()];
+}
+
+function appendExistingGroupAt(slots, usage, group, task, candidate) {
+    const roomId = candidate.roomId === undefined ? group[0]?.roomId || null : candidate.roomId;
+    for (const [index, slot] of group.entries()) {
+        const relative = Number.isInteger(Number(slot.blockIndex)) ? Number(slot.blockIndex) : index;
+        const next = {
+            ...slot,
+            day: candidate.day,
+            period: candidate.period + relative,
+            roomId,
+        };
+        slots.push(next);
+        addUsage(usage, next);
+    }
+}
+
+function repairUnplacedByComponent(project, slots, usage, entry) {
+    const targetTask = entry?.task;
+    if (!targetTask) return { ok: false, reasonCode: 'no_task' };
+    const maxGroups = intEnv('TIMETABLE_COMPONENT_REPAIR_MAX_GROUPS', 12, { min: 1, max: 256 });
+    const maxNodes = intEnv('TIMETABLE_COMPONENT_REPAIR_MAX_NODES', 4000, { min: 1, max: 50000 });
+    const component = buildConflictComponent(project, slots, targetTask, maxGroups);
+    if (!component) return { ok: false, reasonCode: 'component_too_large' };
+
+    const removedIds = new Set(component.flatMap(group => group.map(slot => slot.id)));
+    const baseSlots = slots.filter(slot => !removedIds.has(slot.id));
+    const baseUsage = buildUsageExcluding(slots, removedIds);
+    const entities = [
+        { task: targetTask, group: null },
+        ...component.map(group => ({ task: taskFromSlotGroup(group, project), group })),
+    ];
+    let nodes = 0;
+    const search = (remaining, workingSlots, workingUsage) => {
+        if (!remaining.length) return true;
+        if (++nodes > maxNodes) return false;
+
+        let selectedIndex = -1;
+        let selectedCandidates = null;
+        for (let index = 0; index < remaining.length; index += 1) {
+            const entity = remaining[index];
+            const candidates = candidateListForRepair(project, workingUsage, entity.task, workingSlots)
+                .filter(candidate => candidate.check?.ok && !(candidate.blockers || []).length)
+                .slice(0, 24);
+            if (selectedCandidates === null || candidates.length < selectedCandidates.length) {
+                selectedIndex = index;
+                selectedCandidates = candidates;
+                if (!candidates.length) break;
+            }
+        }
+        if (selectedIndex < 0 || !selectedCandidates?.length) return false;
+
+        const [entity] = remaining.splice(selectedIndex, 1);
+        for (const candidate of selectedCandidates) {
+            const slotSnapshot = workingSlots.slice();
+            const usageSnapshot = cloneUsage(workingUsage);
+            if (entity.group) appendExistingGroupAt(workingSlots, workingUsage, entity.group, entity.task, candidate);
+            else addTaskPlacement(workingSlots, workingUsage, entity.task, candidate.day, candidate.period, candidate.roomId);
+            if (search(remaining, workingSlots, workingUsage)) {
+                remaining.splice(selectedIndex, 0, entity);
+                return true;
+            }
+            workingSlots.splice(0, workingSlots.length, ...slotSnapshot);
+            restoreUsage(workingUsage, usageSnapshot);
+        }
+        remaining.splice(selectedIndex, 0, entity);
+        return false;
+    };
+
+    const workingSlots = baseSlots.slice();
+    const workingUsage = cloneUsage(baseUsage);
+    const ok = search(entities.slice(), workingSlots, workingUsage);
+    if (!ok) return { ok: false, reasonCode: nodes > maxNodes ? 'component_budget_exhausted' : 'component_no_solution', nodes, componentSize: component.length };
+    slots.splice(0, slots.length, ...workingSlots);
+    restoreUsage(usage, workingUsage);
+    return { ok: true, nodes, componentSize: component.length };
+}
+
 // Bounded local repair: for each unplaced single lesson, try to free a target
 // slot by moving a small number of blockers. Failed branches restore both slots
 // and usage before trying the next candidate.
@@ -1407,6 +1851,10 @@ function repairUnplaced(project, usage, slots, unplaced, pressureContext = null,
         maxCalls: config.maxCalls,
         shallowLimit: config.shallowLimit,
         maxBlockers: config.maxBlockers,
+        componentAttempts: 0,
+        componentRepaired: 0,
+        componentNodes: 0,
+        componentFailures: {},
         bestSnapshotUsed: false,
         failures: {},
     };
@@ -1466,7 +1914,7 @@ function repairUnplaced(project, usage, slots, unplaced, pressureContext = null,
                 return { ok: false, code: 'blocker_unmovable', detail: entity.groupKey };
             }
             effectiveTask = {
-                ...taskFromSlotGroup(currentGroup),
+                ...taskFromSlotGroup(currentGroup, project),
                 roomId: candidate.roomId === undefined ? currentGroup[0]?.roomId || null : candidate.roomId,
             };
             activeExcluded.add(entity.groupKey);
@@ -1492,7 +1940,7 @@ function repairUnplaced(project, usage, slots, unplaced, pressureContext = null,
         childPath.add(moveKey);
         for (const blockerGroup of blockers) {
             const latestGroup = slotsForGroup(slots, slotGroupKey(blockerGroup[0]));
-            const blockerTask = taskFromSlotGroup(latestGroup);
+            const blockerTask = taskFromSlotGroup(latestGroup, project);
             const blockerKey = slotGroupKey(latestGroup[0]);
             const childCandidates = candidateListForRepair(
                 project,
@@ -1591,6 +2039,26 @@ function repairUnplaced(project, usage, slots, unplaced, pressureContext = null,
             unplaced.splice(u, 1);
             u -= 1;
         }
+    }
+
+    // When a single blocker chain cycles, rebuild its connected class/teacher/
+    // room component with bounded MRV backtracking instead of retrying the same
+    // recursive branch in a different order.
+    for (let index = unplaced.length - 1; index >= 0; index -= 1) {
+        const entry = unplaced[index];
+        stats.componentAttempts += 1;
+        const result = repairUnplacedByComponent(project, slots, usage, entry);
+        stats.componentNodes += result.nodes || 0;
+        if (!result.ok) {
+            stats.componentFailures[result.reasonCode || 'unknown'] =
+                (stats.componentFailures[result.reasonCode || 'unknown'] || 0) + 1;
+        }
+        if (!result.ok) continue;
+        stats.componentRepaired += 1;
+        entry.repairStatus = 'repaired_by_component';
+        entry.repairReasonCode = null;
+        entry.repairReason = null;
+        unplaced.splice(index, 1);
     }
     stats.steps = steps;
     return stats;
@@ -1987,12 +2455,25 @@ export function runTimetableScheduler(input = {}, options = {}) {
     const project = normalizeTimetableProject(input);
     const seed = normalizeSolveSeed(options.seed);
     const audit = auditTimetableProject(project);
+    const feasibility = hasSimpleEdgeColoringShape(project)
+        ? simpleEdgeFeasibility(project)
+        : analyzeTimetableFeasibility(project);
+    if (feasibility.status === 'input_infeasible') {
+        return infeasibleSchedule(project, audit, feasibility, startedAt, seed);
+    }
 
     // Edge-coloring (when the project shape is simple) yields a globally feasible,
     // soft-rule-aware assignment far more reliably than greedy, so try it first and
     // fall back to the greedy constructor + local repair otherwise.
     const edgeColored = buildFastEdgeColoredSchedule(project, { seed });
-    if (edgeColored?.success) return edgeColored;
+    if (edgeColored?.success) {
+        edgeColored.schedule.solverStats.feasibility = {
+            status: feasibility.status,
+            issues: feasibility.issues,
+            candidateDomainStats: feasibility.candidateDomainStats,
+        };
+        return edgeColored;
+    }
 
     const maps = getTimetableEntityMaps(project);
     const usage = createTimetableUsage();
@@ -2013,6 +2494,7 @@ export function runTimetableScheduler(input = {}, options = {}) {
             classId: plan.classId,
             subjectId: plan.subjectId,
             teacherId: plan.teacherId,
+            lessonHours: Math.max(1, Number.parseInt(plan.weeklyHours, 10) || 1),
             reason: '任课信息引用了不存在的班级、课程或教师',
         });
     }
@@ -2067,24 +2549,66 @@ export function runTimetableScheduler(input = {}, options = {}) {
     };
     // Most-constrained-first: tasks with fewer candidates, stronger shared
     // resource pressure and larger blocks are placed earliest.
-    tasks.sort((left, right) => taskPreferenceRank(project, left) - taskPreferenceRank(project, right)
+    tasks.sort((left, right) => (pressureContext.taskCandidateCounts.get(left.id) || 0)
+        - (pressureContext.taskCandidateCounts.get(right.id) || 0)
+        || taskResourcePressure(project, pressureContext, right)
+            - taskResourcePressure(project, pressureContext, left)
         || taskDifficulty(project, usage, left, pressureContext) - taskDifficulty(project, usage, right, pressureContext)
+        || taskPreferenceRank(project, left) - taskPreferenceRank(project, right)
         || seededCompare(seed, left.id, right.id)
         || left.id.localeCompare(right.id));
 
     let pendingTasks = [...tasks];
+    const constructionReorderInterval = intEnv(
+        'TIMETABLE_CONSTRUCTION_REORDER_INTERVAL',
+        256,
+        { min: 1, max: 256 },
+    );
+    const constructionReorderWindow = intEnv(
+        'TIMETABLE_CONSTRUCTION_REORDER_WINDOW',
+        16,
+        { min: 1, max: 512 },
+    );
+    strategyStats.constructionReorderInterval = constructionReorderInterval;
+    strategyStats.constructionReorderWindow = constructionReorderWindow;
     for (const pass of constructionPasses) {
         if (!pendingTasks.length) break;
+        const passPending = [...pendingTasks];
         const nextPending = [];
-        for (const task of pendingTasks) {
+        let placementsSinceReorder = constructionReorderInterval;
+        let hasRanked = false;
+        while (passPending.length) {
+            if (placementsSinceReorder >= constructionReorderInterval || !hasRanked) {
+                const rankCount = Math.min(constructionReorderWindow, passPending.length);
+                const ranked = passPending.slice(0, rankCount).map((task, index) => {
+                    const candidates = getCandidateBlocks(project, usage, task);
+                    return {
+                        task,
+                        index,
+                        windowCount: candidateTimeWindowCount(candidates),
+                    };
+                }).sort((left, right) => left.windowCount - right.windowCount
+                    || taskResourcePressure(project, pressureContext, right.task)
+                        - taskResourcePressure(project, pressureContext, left.task)
+                    || taskDifficulty(project, usage, left.task, pressureContext)
+                        - taskDifficulty(project, usage, right.task, pressureContext)
+                    || taskPreferenceRank(project, left.task) - taskPreferenceRank(project, right.task)
+                    || seededCompare(seed, left.task.id, right.task.id)
+                    || left.task.id.localeCompare(right.task.id)
+                    || left.index - right.index);
+                passPending.splice(0, rankCount, ...ranked.map(item => item.task));
+                placementsSinceReorder = 0;
+                hasRanked = true;
+            }
+            const task = passPending.shift();
+            const candidates = getCandidateBlocks(project, usage, task);
             pass.attempts += 1;
             strategyStats.constructorAttempts += 1;
-            const candidates = getCandidateBlocks(project, usage, task);
             pass.candidateChecks += candidates.length;
             strategyStats.candidateChecks += candidates.length;
             const scored = candidates
                 .map(candidate => {
-                    const soft = evaluateSoftEnforcement(project, usage, task, candidate, { mode: pass.name, seed, stats: softEnforcement });
+                    const soft = evaluateSoftEnforcement(project, usage, task, candidate, { stats: softEnforcement });
                     if (!soft.ok) {
                         pass.softRejected += 1;
                         return null;
@@ -2115,6 +2639,7 @@ export function runTimetableScheduler(input = {}, options = {}) {
             }
             pass.placed += task.blockSize;
             strategyStats.constructorPlaced += task.blockSize;
+            placementsSinceReorder += task.blockSize;
         }
         pendingTasks = nextPending;
         rememberSnapshot('constructor');
@@ -2128,6 +2653,8 @@ export function runTimetableScheduler(input = {}, options = {}) {
             classId: task.classId,
             subjectId: task.subjectId,
             teacherId: task.teacherId,
+            blockSize: Math.max(1, Number.parseInt(task.blockSize, 10) || 1),
+            lessonHours: Math.max(1, Number.parseInt(task.blockSize, 10) || 1),
             reason: '没有可用节次：教师或班级被占用/不可排',
             reasonCode: 'no_candidate_after_constructor',
             task,
@@ -2153,7 +2680,7 @@ export function runTimetableScheduler(input = {}, options = {}) {
 
     const scheduleScore = buildTimetableScore(project, finalSlots, cleanUnplaced, conflicts);
     strategyStats.finalPlacedCount = finalSlots.length;
-    strategyStats.finalUnplacedCount = cleanUnplaced.length;
+    strategyStats.finalUnplacedCount = scheduleScore.unplacedLessons;
     strategyStats.finalHardConflicts = conflicts.filter(conflict => conflict.severity === 'hard').length;
     strategyStats.finalSoftScore = scheduleScore.softScore;
     strategyStats.finalSoftSatisfaction = scheduleScore.softSatisfaction;
@@ -2182,13 +2709,18 @@ export function runTimetableScheduler(input = {}, options = {}) {
             ...scheduleSeedPatch(seed),
             lessonCount: project.lessonPlans.reduce((sum, plan) => sum + plan.weeklyHours, 0),
             placedLessons: finalSlots.length,
-            unplacedLessons: cleanUnplaced.length,
+            unplacedLessons: scheduleScore.unplacedLessons,
             hardConflicts: conflicts.filter(conflict => conflict.severity === 'hard').length,
             softScore: null,
             localImproveMs: localImprovement.stats.localImproveMs,
             solveMs: strategyStats.solveMs,
             accepted: !(conflicts.some(conflict => conflict.severity === 'hard') || cleanUnplaced.length),
             reason: hasPreflightBlocking ? 'preflight_blocking_issues' : null,
+            feasibility: {
+                status: feasibility.status,
+                issues: feasibility.issues,
+                candidateDomainStats: feasibility.candidateDomainStats,
+            },
             strategyStats,
             constructionPasses,
             pressureStats: pressureContext.stats,

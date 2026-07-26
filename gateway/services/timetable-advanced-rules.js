@@ -4,6 +4,8 @@ import {
     timetableResourceTypeKey,
 } from '../../shared/timetable/lesson-metadata.js';
 
+const PROJECT_CONTEXTS = new WeakMap();
+
 function list(value) {
     return Array.isArray(value) ? value : value === undefined || value === null || value === '' ? [] : [value];
 }
@@ -17,6 +19,62 @@ function idsByName(items = [], names = []) {
     return items.filter(item => wanted.has(norm(item.name)) || wanted.has(norm(item.id))).map(item => item.id);
 }
 
+function lessonPlanLookupKey(classId, subjectId, teacherId) {
+    return `${classId || ''}:${subjectId || ''}:${teacherId || ''}`;
+}
+
+function projectContext(project = {}) {
+    const cached = PROJECT_CONTEXTS.get(project);
+    if (cached) return cached;
+    const plansById = new Map();
+    const plansByAssignment = new Map();
+    for (const plan of project.lessonPlans || []) {
+        plansById.set(plan.id, plan);
+        for (const teacherId of slotTeacherIds(plan)) {
+            plansByAssignment.set(lessonPlanLookupKey(plan.classId, plan.subjectId, teacherId), plan);
+        }
+    }
+    const context = {
+        plansById,
+        plansByAssignment,
+        classesById: new Map((project.classes || []).map(item => [item.id, item])),
+        roomsById: new Map((project.rooms || []).map(item => [item.id, item])),
+        ruleContexts: new WeakMap(),
+    };
+    PROJECT_CONTEXTS.set(project, context);
+    return context;
+}
+
+function compiledRuleContext(project = {}, rule = {}) {
+    const context = projectContext(project);
+    const cached = context.ruleContexts.get(rule);
+    if (cached) return cached;
+    const params = rule.parameters || {};
+    const target = rule.target || {};
+    const compiled = {
+        subjectIds: new Set([
+            ...list(target.kind === 'subject' ? target.matchedIds : []),
+            ...list(params.subjectIds),
+            ...idsByName(project.subjects || [], params.subjectNames),
+        ]),
+        classIds: new Set([...list(params.classIds), ...list(rule.scope?.classIds)]),
+        grades: new Set(list(params.gradeNames).map(norm)),
+        teacherIds: new Set([
+            ...list(target.kind === 'teacher' ? target.matchedIds : []),
+            ...list(params.teacherIds),
+            ...idsByName(project.teachers || [], params.teacherNames),
+        ]),
+        activities: list(params.activityTypes).map(timetableActivityTypeKey).filter(Boolean),
+        resources: list(params.requiredResourceTypes).map(timetableResourceTypeKey).filter(Boolean),
+        targetSlots: new Set(list(params.slots)),
+        allowedRoomIds: new Set([...list(params.roomIds), ...list(params.roomRequirement?.roomIds)]),
+        requiredRoomTags: list(params.requiredTags || params.roomRequirement?.requiredTags).map(timetableResourceTypeKey),
+        forbiddenRoomTypes: list(params.forbiddenRoomTypes).map(timetableResourceTypeKey),
+    };
+    context.ruleContexts.set(rule, compiled);
+    return compiled;
+}
+
 function groupByMap(items = [], keyFor) {
     const groups = new Map();
     for (const item of items) {
@@ -27,18 +85,19 @@ function groupByMap(items = [], keyFor) {
 }
 
 function planFor(project, lesson = {}) {
-    return (project.lessonPlans || []).find(item => item.id === lesson.lessonPlanId)
-        || (project.lessonPlans || []).find(item => (
-            item.classId === lesson.classId
-            && item.subjectId === lesson.subjectId
-            && slotTeacherIds(item).some(id => slotTeacherIds(lesson).includes(id))
-        ))
-        || null;
+    const context = projectContext(project);
+    const byId = context.plansById.get(lesson.lessonPlanId || lesson.id);
+    if (byId) return byId;
+    for (const teacherId of slotTeacherIds(lesson)) {
+        const plan = context.plansByAssignment.get(lessonPlanLookupKey(lesson.classId, lesson.subjectId, teacherId));
+        if (plan) return plan;
+    }
+    return null;
 }
 
 function metadata(project, lesson = {}) {
     const plan = planFor(project, lesson) || lesson;
-    const klass = (project.classes || []).find(item => item.id === plan.classId || item.id === lesson.classId);
+    const klass = projectContext(project).classesById.get(plan.classId || lesson.classId);
     return {
         plan,
         classId: plan.classId || lesson.classId,
@@ -53,28 +112,13 @@ function metadata(project, lesson = {}) {
 export function advancedRuleAppliesToLesson(project = {}, rule = {}, lesson = {}) {
     if (rule.enabled === false) return false;
     const data = metadata(project, lesson);
-    const params = rule.parameters || {};
-    const target = rule.target || {};
-    const subjectIds = new Set([
-        ...list(target.kind === 'subject' ? target.matchedIds : []),
-        ...list(params.subjectIds),
-        ...idsByName(project.subjects || [], params.subjectNames),
-    ]);
-    if (subjectIds.size && !subjectIds.has(data.subjectId)) return false;
-    const classIds = new Set([...list(params.classIds), ...list(rule.scope?.classIds)]);
-    if (classIds.size && !classIds.has(data.classId)) return false;
-    const grades = new Set(list(params.gradeNames).map(norm));
-    if (grades.size && !grades.has(norm(data.grade))) return false;
-    const teacherIds = new Set([
-        ...list(target.kind === 'teacher' ? target.matchedIds : []),
-        ...list(params.teacherIds),
-        ...idsByName(project.teachers || [], params.teacherNames),
-    ]);
-    if (teacherIds.size && !data.teacherIds.some(id => teacherIds.has(id))) return false;
-    const activities = list(params.activityTypes).map(timetableActivityTypeKey).filter(Boolean);
-    if (activities.length && !activities.some(value => data.activityTypes.includes(value))) return false;
-    const resources = list(params.requiredResourceTypes).map(timetableResourceTypeKey).filter(Boolean);
-    if (resources.length && !resources.some(value => data.resourceTypes.includes(value))) return false;
+    const compiled = compiledRuleContext(project, rule);
+    if (compiled.subjectIds.size && !compiled.subjectIds.has(data.subjectId)) return false;
+    if (compiled.classIds.size && !compiled.classIds.has(data.classId)) return false;
+    if (compiled.grades.size && !compiled.grades.has(norm(data.grade))) return false;
+    if (compiled.teacherIds.size && !data.teacherIds.some(id => compiled.teacherIds.has(id))) return false;
+    if (compiled.activities.length && !compiled.activities.some(value => data.activityTypes.includes(value))) return false;
+    if (compiled.resources.length && !compiled.resources.some(value => data.resourceTypes.includes(value))) return false;
     return true;
 }
 
@@ -83,26 +127,29 @@ function targetSlots(rule = {}) {
 }
 
 function roomTags(project, roomId) {
-    return new Set((project.rooms || []).find(item => item.id === roomId)?.tags?.map(timetableResourceTypeKey) || []);
+    return new Set(projectContext(project).roomsById.get(roomId)?.tags?.map(timetableResourceTypeKey) || []);
 }
 
 export function advancedHardBlocker(project = {}, entries = [], lesson = {}) {
     for (const rule of project.rules?.advancedRules || []) {
         if (rule.enabled === false || rule.strength !== 'hard' || !advancedRuleAppliesToLesson(project, rule, lesson)) continue;
         const params = rule.parameters || {};
+        const compiled = compiledRuleContext(project, rule);
         const key = slotKey(lesson.day, lesson.period);
-        if (rule.type === 'subject.avoid_periods' && targetSlots(rule).has(key)) return '高级规则：学科禁排时段';
-        if (rule.type === 'lesson.resource_attribute_avoid_periods' && targetSlots(rule).has(key)) return '高级规则：资源课程禁排时段';
+        if (rule.type === 'subject.avoid_periods' && compiled.targetSlots.has(key)) return '高级规则：学科禁排时段';
+        if (rule.type === 'lesson.resource_attribute_avoid_periods' && compiled.targetSlots.has(key)) return '高级规则：资源课程禁排时段';
         if (rule.type === 'room.required') {
-            const allowed = new Set([...list(params.roomIds), ...list(params.roomRequirement?.roomIds)]);
-            const requiredTags = list(params.requiredTags || params.roomRequirement?.requiredTags).map(timetableResourceTypeKey);
-            if (allowed.size && !allowed.has(lesson.roomId)) return '高级规则：必须使用指定教室';
             const tags = roomTags(project, lesson.roomId);
-            if (requiredTags.length && !requiredTags.every(tag => tags.has(tag))) return '高级规则：教室资源不匹配';
+            const roomIdMatch = compiled.allowedRoomIds.size > 0 && compiled.allowedRoomIds.has(lesson.roomId);
+            const roomTagsMatch = compiled.requiredRoomTags.length > 0
+                && compiled.requiredRoomTags.every(tag => tags.has(tag));
+            if ((compiled.allowedRoomIds.size || compiled.requiredRoomTags.length) && !roomIdMatch && !roomTagsMatch) {
+                return compiled.allowedRoomIds.size ? '高级规则：必须使用指定教室或匹配资源' : '高级规则：教室资源不匹配';
+            }
         }
         if (rule.type === 'room.forbidden_type') {
             const tags = roomTags(project, lesson.roomId);
-            if (list(params.forbiddenRoomTypes).map(timetableResourceTypeKey).some(tag => tags.has(tag))) return '高级规则：禁止该教室类型';
+            if (compiled.forbiddenRoomTypes.some(tag => tags.has(tag))) return '高级规则：禁止该教室类型';
         }
         if (rule.type === 'schedule.cross_venue_boundary') {
             const boundary = list(params.boundaryPeriods).map(Number);
@@ -110,8 +157,7 @@ export function advancedHardBlocker(project = {}, entries = [], lesson = {}) {
             const otherPeriod = boundary.find(value => value !== Number(lesson.period));
             const conflicting = entries.find(entry => Number(entry.day) === Number(lesson.day)
                 && Number(entry.period) === otherPeriod
-                && (slotClassIds(entry).some(id => slotClassIds(lesson).includes(id))
-                    || slotTeacherIds(entry).some(id => slotTeacherIds(lesson).includes(id)))
+                && slotClassIds(entry).some(id => slotClassIds(lesson).includes(id))
                 && (entry.roomId || campusIdForSlot(project, entry))
                 && (entry.roomId !== lesson.roomId || campusIdForSlot(project, entry) !== campusIdForSlot(project, lesson)));
             if (conflicting) return '高级规则：课节边界禁止跨场地';
@@ -130,15 +176,16 @@ export function advancedCandidatePenalty(project = {}, entries = [], lesson = {}
     for (const rule of project.rules?.advancedRules || []) {
         if (rule.enabled === false || rule.strength === 'hard' || !advancedRuleAppliesToLesson(project, rule, lesson)) continue;
         const params = rule.parameters || {};
+        const compiled = compiledRuleContext(project, rule);
         const key = slotKey(lesson.day, lesson.period);
         if (['subject.preferred_day_part', 'subject.preferred_periods'].includes(rule.type)) {
-            const preferred = targetSlots(rule);
+            const preferred = compiled.targetSlots;
             if (preferred.size && !preferred.has(key)) penalty += 20;
             if (list(params.avoidDayParts).includes('afternoon') && Number(lesson.period) >= 5) penalty += 12;
         }
-        if (rule.type === 'subject.avoid_periods' && targetSlots(rule).has(key)) penalty += 30;
-        if (rule.type === 'lesson.activity_scope_period_policy' && targetSlots(rule).has(key)) penalty += 24;
-        if (rule.type === 'lesson.resource_attribute_avoid_periods' && targetSlots(rule).has(key)) penalty += 24;
+        if (rule.type === 'subject.avoid_periods' && compiled.targetSlots.has(key)) penalty += 30;
+        if (rule.type === 'lesson.activity_scope_period_policy' && compiled.targetSlots.has(key)) penalty += 24;
+        if (rule.type === 'lesson.resource_attribute_avoid_periods' && compiled.targetSlots.has(key)) penalty += 24;
         if (rule.type === 'subject.avoid_weekday_concentration' && list(params.days).map(Number).includes(Number(lesson.day))) penalty += 10;
         if (rule.type === 'subject.spread') {
             const sameDayCount = entries.filter(entry => (
@@ -171,11 +218,10 @@ export function advancedCandidatePenalty(project = {}, entries = [], lesson = {}
             penalty += Math.max(0, lessonLoad - minimum) * 5;
         }
         if (rule.type === 'subject.not_consecutive_with') {
-            const subjects = new Set([...list(params.subjectIds), ...idsByName(project.subjects || [], params.subjectNames)]);
             if (entries.some(entry => Number(entry.day) === Number(lesson.day)
                 && Math.abs(Number(entry.period) - Number(lesson.period)) === 1
                 && slotClassIds(entry).includes(lesson.classId)
-                && subjects.has(entry.subjectId))) penalty += 18;
+                && compiled.subjectIds.has(entry.subjectId))) penalty += 18;
         }
         if (rule.type === 'room.preferred') {
             const preferred = new Set(list(params.preferredRoomIds));

@@ -1,5 +1,8 @@
 package com.icecream.timetable.domain;
 
+import java.util.List;
+import java.util.Map;
+
 public class TimetableSolverJob {
 
     private String jobId;
@@ -9,6 +12,11 @@ public class TimetableSolverJob {
     private String score;
     private String solverStatus;
     private int assignmentCount;
+    private String stage;
+    private Long elapsedMs;
+    private boolean initialized;
+    private List<Map<String, Object>> constraintAnalysis = List.of();
+    private Map<String, Object> failureSummary = Map.of();
 
     public TimetableSolverJob() {
     }
@@ -90,5 +98,45 @@ public class TimetableSolverJob {
 
     public void setAssignmentCount(int assignmentCount) {
         this.assignmentCount = assignmentCount;
+    }
+
+    public String getStage() {
+        return stage;
+    }
+
+    public void setStage(String stage) {
+        this.stage = stage;
+    }
+
+    public Long getElapsedMs() {
+        return elapsedMs;
+    }
+
+    public void setElapsedMs(Long elapsedMs) {
+        this.elapsedMs = elapsedMs;
+    }
+
+    public boolean isInitialized() {
+        return initialized;
+    }
+
+    public void setInitialized(boolean initialized) {
+        this.initialized = initialized;
+    }
+
+    public List<Map<String, Object>> getConstraintAnalysis() {
+        return constraintAnalysis;
+    }
+
+    public void setConstraintAnalysis(List<Map<String, Object>> constraintAnalysis) {
+        this.constraintAnalysis = constraintAnalysis == null ? List.of() : List.copyOf(constraintAnalysis);
+    }
+
+    public Map<String, Object> getFailureSummary() {
+        return failureSummary;
+    }
+
+    public void setFailureSummary(Map<String, Object> failureSummary) {
+        this.failureSummary = failureSummary == null ? Map.of() : Map.copyOf(failureSummary);
     }
 }

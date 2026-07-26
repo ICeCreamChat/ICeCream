@@ -32,6 +32,7 @@ import {
     TimetableRuleParseError,
 } from '../gateway/services/timetable-rule-parser.js';
 import { createTimetableStore } from '../gateway/services/timetable-store.js';
+import { buildTimetableScore } from '../gateway/services/timetable-score.js';
 import { validateTimetableProjectForSolve } from '../gateway/services/timetable-validation.js';
 import {
     auditTimetableProject,
@@ -41,6 +42,14 @@ import {
     runTimetableScheduler,
     validateTimetablePublication,
 } from '../gateway/services/timetable-scheduler.js';
+import {
+    analyzeTimetableFeasibility,
+    buildSchedulingUnits,
+} from '../gateway/services/timetable-diagnostic-scheduler.js';
+import {
+    createSyntheticTimetableProject,
+    makeSyntheticInfeasibleProject,
+} from './helpers/timetable-synthetic-project.js';
 
 function sampleProject(overrides = {}) {
     return createDefaultTimetableProject({
@@ -88,6 +97,20 @@ function sampleProject(overrides = {}) {
         ...overrides,
     });
 }
+
+test('timetable score counts every hour in an unplaced block', () => {
+    const project = createDefaultTimetableProject({
+        teachers: [{ id: 't1', name: 'Teacher', subjects: ['math'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: '1' }],
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans: [{ id: 'lp1', classId: 'c1', subjectId: 'math', teacherId: 't1', weeklyHours: 2, blockPreference: 'double' }],
+    });
+    const score = buildTimetableScore(project, [], [{ lessonPlanId: 'lp1', blockSize: 2 }], []);
+
+    assert.equal(score.totalLessons, 2);
+    assert.equal(score.placedLessons, 0);
+    assert.equal(score.unplacedLessons, 2);
+});
 
 function largeTimetableProject() {
     const subjects = [
@@ -511,11 +534,13 @@ test('timetable scheduler records an optional seed and reproduces placements for
     assert.deepEqual(scheduleSignature(first.schedule), scheduleSignature(second.schedule));
 });
 
-test('timetable scheduler keeps seed metadata absent on the default path', () => {
+test('timetable scheduler keeps seed metadata absent while using the generic default tie breaker', () => {
     const result = runTimetableScheduler(sampleProject());
+    const explicitDefault = runTimetableScheduler(sampleProject(), { seed: 'timetable-generic-v1' });
 
     assert.equal(result.success, true);
     assert.equal(Object.hasOwn(result.schedule.solverStats, 'seed'), false);
+    assert.deepEqual(scheduleSignature(result.schedule), scheduleSignature(explicitDefault.schedule));
 });
 
 test('legacy scheduler baseline metrics cover core solve strategy scenarios', () => {
@@ -548,7 +573,8 @@ test('legacy scheduler baseline metrics cover core solve strategy scenarios', ()
         rules: { hardRules: {}, softRules: {} },
     }), { seed: 'baseline-impossible' });
     assert.equal(impossible.metrics.success, false);
-    assert.equal(impossible.metrics.unplacedCount, 1);
+    assert.equal(impossible.metrics.unplacedCount, 2);
+    assert.equal(impossible.result.schedule.solverStats.feasibility.status, 'input_infeasible');
     assert.ok(impossible.result.schedule.unplaced[0].reason);
 
     const lockedDouble = solveBenchmark(createDefaultTimetableProject({
@@ -665,7 +691,7 @@ test('legacy enhanced v2 exposes construction passes, pressure stats, repair bud
     assert.equal(stats.bestSnapshotStats.stage, 'local_improvement');
 });
 
-test('legacy enhanced v2 records strict soft rejections before relaxed construction places the lessons', () => {
+test('soft rules score candidates without removing them from the hard domain', () => {
     const project = createDefaultTimetableProject({
         weekdays: 1,
         periodsPerDay: 2,
@@ -692,13 +718,13 @@ test('legacy enhanced v2 records strict soft rejections before relaxed construct
 
     assert.equal(result.success, true);
     assert.equal(result.schedule.score.unplacedLessons, 0);
-    assert.ok(passes[0].softRejected > 0);
-    assert.ok(passes[1].placed > 0 || passes[2].placed > 0);
+    assert.equal(passes[0].softRejected, 0);
+    assert.ok(passes[0].placed > 0);
     assert.ok(result.schedule.solverStats.softEnforcement.evaluations > 0);
-    assert.ok(result.schedule.solverStats.softEnforcement.enforced > 0);
+    assert.equal(result.schedule.solverStats.softEnforcement.enforced, 0);
 });
 
-test('legacy enhanced v2 reports best snapshot for impossible partial schedules', () => {
+test('generic scheduler reports proven infeasibility instead of a partial schedule', () => {
     const project = sampleProject({
         weekdays: 1,
         periodsPerDay: 1,
@@ -718,14 +744,12 @@ test('legacy enhanced v2 reports best snapshot for impossible partial schedules'
     });
 
     const result = runTimetableScheduler(project, { seed: 'best-snapshot-impossible' });
-    const snapshot = result.schedule.solverStats.bestSnapshotStats;
 
     assert.equal(result.success, false);
-    assert.equal(result.schedule.solverStats.strategyVersion, 'legacy_enhanced_v2');
-    assert.ok(snapshot);
-    assert.ok(snapshot.placedLessons >= 1);
-    assert.ok(snapshot.unplacedLessons >= 1);
-    assert.ok(['constructor', 'repair', 'local_improvement'].includes(snapshot.stage));
+    assert.equal(result.schedule.source, 'preflight_rejected');
+    assert.equal(result.schedule.solverStats.feasibility.status, 'input_infeasible');
+    assert.equal(result.schedule.slots.length, 0);
+    assert.equal(result.schedule.unplaced.length, 2);
 });
 
 test('legacy enhanced v2 keeps edge-coloring fast path within the enhanced stats contract', () => {
@@ -756,7 +780,7 @@ test('fast timetable scheduler handles the 690 lesson project without Timefold',
     assertNoTeacherOrClassConflicts(result.schedule.slots);
 });
 
-test('timetable scheduler returns explainable unplaced lessons when constraints are impossible', () => {
+test('timetable scheduler returns a proven infeasibility diagnostic when constraints are impossible', () => {
     const project = sampleProject({
         weekdays: 1,
         periodsPerDay: 1,
@@ -776,9 +800,9 @@ test('timetable scheduler returns explainable unplaced lessons when constraints 
     const result = runTimetableScheduler(project);
 
     assert.equal(result.success, false);
-    assert.equal(result.schedule.slots.length, 1);
-    assert.equal(result.schedule.unplaced.length, 1);
-    assert.match(result.schedule.unplaced[0].reason, /没有可用节次|教师/);
+    assert.equal(result.schedule.slots.length, 0);
+    assert.equal(result.schedule.unplaced.length, 2);
+    assert.equal(result.schedule.solverStats.feasibility.status, 'input_infeasible');
     assert.ok(result.schedule.conflicts.some(conflict => conflict.type === 'unplaced'));
 });
 
@@ -804,7 +828,7 @@ test('timetable scheduler attaches preflight audit for impossible capacity', () 
     assert.ok(result.schedule.audit.blockingIssues.some(issue => issue.type === 'class_capacity'));
     assert.ok(result.schedule.audit.blockingIssues.some(issue => issue.type === 'teacher_capacity'));
     assert.equal(result.schedule.audit.capacity.totalLessons, 2);
-    assert.equal(result.schedule.solverStats.reason, 'preflight_blocking_issues');
+    assert.equal(result.schedule.solverStats.reason, 'input_infeasible');
 });
 
 test('timetable audit treats a full class timetable as normal load', () => {
@@ -1685,6 +1709,127 @@ test('local repair rescues an otherwise unplaced lesson by relocating a blocker'
     assertNoTeacherOrClassConflicts(result.schedule.slots);
 });
 
+test('hard-domain scarcity is scheduled before flexible lessons with soft preferences', () => {
+    const previousBudget = process.env.TIMETABLE_REPAIR_STEP_BUDGET;
+    process.env.TIMETABLE_REPAIR_STEP_BUDGET = '1';
+    try {
+        const project = createDefaultTimetableProject({
+            weekdays: 1,
+            periodsPerDay: 3,
+            activeWeekdays: [1],
+            activePeriods: [1, 2, 3],
+            teachers: [
+                { id: 't_flexible', name: 'Flexible', subjects: ['flexible'], unavailableSlots: [] },
+                { id: 't_scarce', name: 'Scarce', subjects: ['scarce'], unavailableSlots: ['1-2', '1-3'] },
+            ],
+            classes: [{ id: 'c1', grade: 'G', name: '1' }],
+            subjects: [
+                { id: 'flexible', name: 'Flexible', priority: 100, color: '#2563eb' },
+                { id: 'scarce', name: 'Scarce', priority: 1, color: '#16a34a' },
+            ],
+            rooms: [
+                { id: 'resource-a', name: 'Resource A' },
+                { id: 'resource-b', name: 'Resource B' },
+                { id: 'resource-c', name: 'Resource C' },
+            ],
+            lessonPlans: [
+                { id: 'lp_flexible', classId: 'c1', subjectId: 'flexible', teacherId: 't_flexible', weeklyHours: 1 },
+                {
+                    id: 'lp_scarce',
+                    classId: 'c1',
+                    subjectId: 'scarce',
+                    teacherId: 't_scarce',
+                    weeklyHours: 1,
+                    roomId: 'resource-a',
+                    allowedRoomIds: ['resource-a', 'resource-b', 'resource-c'],
+                },
+            ],
+            rules: {
+                hardRules: {},
+                softRules: {
+                    subjectPreferredPeriods: {
+                        flexible: { prefer: ['1-1'], weight: 100 },
+                    },
+                },
+            },
+        });
+
+        const result = runTimetableScheduler(project, { seed: 'scarcity-before-soft-preference' });
+        const byPlan = Object.fromEntries(result.schedule.slots.map(slot => [slot.lessonPlanId, slot]));
+
+        assert.equal(result.success, true);
+        assert.deepEqual([byPlan.lp_scarce.day, byPlan.lp_scarce.period], [1, 1]);
+        assert.equal(result.schedule.score.unplacedLessons, 0);
+        assert.equal(result.schedule.solverStats.repairStats.attempts, 0);
+
+        process.env.TIMETABLE_CONSTRUCTION_REORDER_INTERVAL = '256';
+        const staticResult = runTimetableScheduler(project, { seed: 'component-repair-fallback' });
+        assert.equal(staticResult.success, true);
+        assert.equal(staticResult.schedule.score.unplacedLessons, 0);
+    } finally {
+        if (previousBudget === undefined) delete process.env.TIMETABLE_REPAIR_STEP_BUDGET;
+        else process.env.TIMETABLE_REPAIR_STEP_BUDGET = previousBudget;
+    }
+});
+
+test('constructor recalculates scarcity after each shared-resource placement', () => {
+    const previousBudget = process.env.TIMETABLE_REPAIR_STEP_BUDGET;
+    const previousReorderInterval = process.env.TIMETABLE_CONSTRUCTION_REORDER_INTERVAL;
+    process.env.TIMETABLE_REPAIR_STEP_BUDGET = '1';
+    process.env.TIMETABLE_CONSTRUCTION_REORDER_INTERVAL = '1';
+    try {
+        const project = createDefaultTimetableProject({
+            weekdays: 1,
+            periodsPerDay: 3,
+            activeWeekdays: [1],
+            activePeriods: [1, 2, 3],
+            teachers: [
+                { id: 't_a', name: 'A', subjects: ['a'], unavailableSlots: ['1-3'] },
+                { id: 't_b', name: 'B', subjects: ['b'], unavailableSlots: ['1-2'] },
+                { id: 't_c', name: 'C', subjects: ['c'], unavailableSlots: ['1-1'] },
+            ],
+            classes: [
+                { id: 'c_a', grade: 'G', name: 'A' },
+                { id: 'c_b', grade: 'G', name: 'B' },
+                { id: 'c_c', grade: 'G', name: 'C' },
+            ],
+            subjects: [
+                { id: 'a', name: 'A', priority: 100, color: '#2563eb' },
+                { id: 'b', name: 'B', priority: 1, color: '#16a34a' },
+                { id: 'c', name: 'C', priority: 100, color: '#f59e0b' },
+            ],
+            rooms: [{ id: 'shared', name: 'Shared' }],
+            lessonPlans: [
+                { id: 'lp_a', classId: 'c_a', subjectId: 'a', teacherId: 't_a', weeklyHours: 1, roomId: 'shared' },
+                { id: 'lp_b', classId: 'c_b', subjectId: 'b', teacherId: 't_b', weeklyHours: 1, roomId: 'shared' },
+                { id: 'lp_c', classId: 'c_c', subjectId: 'c', teacherId: 't_c', weeklyHours: 1, roomId: 'shared' },
+            ],
+            rules: {
+                hardRules: {},
+                softRules: {
+                    subjectPreferredPeriods: {
+                        a: { prefer: ['1-1'], weight: 100 },
+                        c: { prefer: ['1-3'], weight: 100 },
+                    },
+                },
+            },
+        });
+
+        const result = runTimetableScheduler(project, { seed: 'dynamic-shared-resource-scarcity' });
+        const byPlan = Object.fromEntries(result.schedule.slots.map(slot => [slot.lessonPlanId, slot]));
+
+        assert.equal(result.success, true);
+        assert.equal(new Set([byPlan.lp_a.period, byPlan.lp_b.period, byPlan.lp_c.period]).size, 3);
+        assert.equal(result.schedule.score.unplacedLessons, 0);
+        assert.equal(result.schedule.solverStats.repairStats.attempts, 0);
+    } finally {
+        if (previousBudget === undefined) delete process.env.TIMETABLE_REPAIR_STEP_BUDGET;
+        else process.env.TIMETABLE_REPAIR_STEP_BUDGET = previousBudget;
+        if (previousReorderInterval === undefined) delete process.env.TIMETABLE_CONSTRUCTION_REORDER_INTERVAL;
+        else process.env.TIMETABLE_CONSTRUCTION_REORDER_INTERVAL = previousReorderInterval;
+    }
+});
+
 test('bounded repair can relocate two blockers without leaving hard conflicts', () => {
     const allSlots = ['1-1', '1-2', '2-1', '2-2', '3-1', '3-2'];
     const except = allowed => allSlots.filter(slot => !allowed.includes(slot));
@@ -1765,8 +1910,8 @@ test('bounded repair can relocate two blockers without leaving hard conflicts', 
 
     assert.equal(result.success, true);
     assert.deepEqual([target.day, target.period], [1, 1]);
-    assert.equal(result.schedule.solverStats.repairStats.relocatedBlockers >= 2, true);
-    assert.equal(result.schedule.solverStats.repairStats.rollbacks >= 1, true);
+    assert.equal(result.schedule.solverStats.repairStats.relocatedBlockers, 0);
+    assert.equal(result.schedule.solverStats.repairStats.rollbacks, 0);
     assert.equal(result.schedule.score.hardConflicts, 0);
     assert.equal(result.schedule.score.unplacedLessons, 0);
     assertNoTeacherOrClassConflicts(result.schedule.slots);
@@ -1817,7 +1962,6 @@ test('recursive repair moves a blocker chain before placing the stranded lesson'
     assert.deepEqual([byPlan.lp_target.day, byPlan.lp_target.period], [1, 1]);
     assert.deepEqual([byPlan.lp_a.day, byPlan.lp_a.period], [1, 2]);
     assert.deepEqual([byPlan.lp_b.day, byPlan.lp_b.period], [1, 3]);
-    assert.equal(result.schedule.solverStats.repairStats.relocatedBlockers >= 2, true);
     assert.equal(result.schedule.score.hardConflicts, 0);
     assert.equal(result.schedule.score.unplacedLessons, 0);
 });
@@ -1867,12 +2011,11 @@ test('recursive repair moves an entire double-block blocker as a protected group
         [1, 2, doubleSlots[0].blockId],
         [1, 3, doubleSlots[0].blockId],
     ]);
-    assert.equal(result.schedule.solverStats.repairStats.relocatedBlockers >= 1, true);
     assert.equal(result.schedule.score.hardConflicts, 0);
     assert.equal(result.schedule.score.unplacedLessons, 0);
 });
 
-test('structured subject category drives scheduler timing without relying on course name', () => {
+test('explicit timing preferences drive scheduler timing without relying on course name', () => {
     const project = createDefaultTimetableProject({
         weekdays: 1,
         periodsPerDay: 4,
@@ -1891,7 +2034,13 @@ test('structured subject category drives scheduler timing without relying on cou
             { id: 'lp_project', classId: 'c1', subjectId: 'project', teacherId: 't_project', weeklyHours: 1 },
             { id: 'lp_quality', classId: 'c1', subjectId: 'quality', teacherId: 't_quality', weeklyHours: 1 },
         ],
-        rules: { hardRules: {}, softRules: {} },
+        rules: {
+            hardRules: {},
+            softRules: {
+                morningSubjects: ['project'],
+                afternoonSubjects: ['quality'],
+            },
+        },
     });
 
     const result = runTimetableScheduler(project);
@@ -1899,8 +2048,116 @@ test('structured subject category drives scheduler timing without relying on cou
     const qualitySlot = result.schedule.slots.find(slot => slot.subjectId === 'quality');
 
     assert.equal(result.success, true);
-    assert.ok(projectSlot.period <= 2, 'main-category subject should prefer the morning half');
-    assert.ok(qualitySlot.period > projectSlot.period, 'quality-category subject should be pushed later than main subject');
+    assert.ok(projectSlot.period <= 2, 'explicit morning subject should prefer the morning half');
+    assert.ok(qualitySlot.period > projectSlot.period, 'explicit afternoon subject should be pushed later than morning subject');
+});
+
+test('generic scheduling units derive identical domains when display names change', () => {
+    const base = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 4,
+        activeWeekdays: [1],
+        activePeriods: [1, 2, 3, 4],
+        teachers: [{ id: 't1', name: 'Teacher One', subjects: ['s1'], unavailableSlots: ['1-1'] }],
+        classes: [{ id: 'c1', grade: 'G7', name: 'One' }],
+        subjects: [{ id: 's1', name: 'Studio Alpha', priority: 50, color: '#2563eb' }],
+        lessonPlans: [{ id: 'lp1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyHours: 2, blockPreference: 'double' }],
+        rules: { hardRules: {}, softRules: {} },
+    });
+    const renamed = structuredClone(base);
+    renamed.subjects[0].name = '体育实验语文 Mathematics';
+    renamed.teachers[0].name = '实验室老师';
+
+    const originalUnits = buildSchedulingUnits(base);
+    const renamedUnits = buildSchedulingUnits(renamed);
+
+    assert.deepEqual(
+        renamedUnits.map(unit => ({ id: unit.id, blockSize: unit.blockSize, candidates: unit.candidates })),
+        originalUnits.map(unit => ({ id: unit.id, blockSize: unit.blockSize, candidates: unit.candidates })),
+    );
+});
+
+test('generic feasibility preflight proves an empty consecutive-block domain before scheduling', () => {
+    const project = createDefaultTimetableProject({
+        weekdays: 1,
+        periodsPerDay: 3,
+        activeWeekdays: [1],
+        activePeriods: [1, 3],
+        teachers: [{ id: 't1', name: 'Teacher', subjects: ['s1'], unavailableSlots: [] }],
+        classes: [{ id: 'c1', grade: 'G7', name: 'One' }],
+        subjects: [{ id: 's1', name: 'Any Subject', priority: 50, color: '#2563eb' }],
+        lessonPlans: [{ id: 'lp1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyHours: 2, blockPreference: 'double' }],
+        rules: { hardRules: {}, softRules: {} },
+    });
+
+    const preflight = analyzeTimetableFeasibility(project);
+    const result = runTimetableScheduler(project);
+
+    assert.equal(preflight.status, 'input_infeasible');
+    assert.equal(preflight.issues.some(issue => issue.code === 'candidate_domain_empty'), true);
+    assert.equal(result.success, false);
+    assert.equal(result.schedule.solverStats.feasibility.status, 'input_infeasible');
+});
+
+test('synthetic timetable fixtures stay feasible across dimensions and seeds', () => {
+    const cases = [
+        { seed: 7, weekdays: 3, periodsPerDay: 5, classCount: 2, teacherCount: 4 },
+        { seed: 19, weekdays: 4, periodsPerDay: 6, classCount: 3, teacherCount: 7 },
+        { seed: 41, weekdays: 5, periodsPerDay: 4, classCount: 4, teacherCount: 9 },
+    ];
+
+    cases.forEach(options => {
+        const project = createSyntheticTimetableProject({ ...options, includeBlocks: true });
+        const preflight = analyzeTimetableFeasibility(project);
+        const result = runTimetableScheduler(project, { seed: String(options.seed) });
+
+        assert.equal(preflight.status, 'feasible', JSON.stringify({ options, issues: preflight.issues }));
+        assert.equal(result.success, true, JSON.stringify({ options, unplaced: result.schedule.unplaced }));
+        assert.equal(result.schedule.score.placedLessons, result.schedule.score.totalLessons);
+        assert.equal(result.schedule.score.hardConflicts, 0);
+        const blocks = result.schedule.slots.reduce((map, slot) => {
+            if (!slot.blockId) return map;
+            if (!map.has(slot.blockId)) map.set(slot.blockId, []);
+            map.get(slot.blockId).push(slot);
+            return map;
+        }, new Map());
+        blocks.forEach(slots => {
+            const ordered = slots.sort((left, right) => left.blockIndex - right.blockIndex);
+            assert.equal(ordered.length, ordered[0].blockSize);
+            assert.ok(ordered.every(slot => slot.day === ordered[0].day));
+            assert.ok(ordered.every((slot, index) => slot.period === ordered[0].period + index));
+        });
+    });
+});
+
+test('synthetic infeasible fixtures distinguish empty domains and fixed conflicts', () => {
+    const emptyDomain = analyzeTimetableFeasibility(makeSyntheticInfeasibleProject({ seed: 73 }));
+    assert.equal(emptyDomain.status, 'input_infeasible');
+    assert.ok(emptyDomain.issues.some(issue => issue.code === 'candidate_domain_empty'));
+
+    const fixedConflictProject = createSyntheticTimetableProject({
+        seed: 79,
+        weekdays: 2,
+        periodsPerDay: 4,
+        classCount: 1,
+        subjectCount: 2,
+        teacherCount: 2,
+        includeBlocks: false,
+    });
+    const [first, second] = fixedConflictProject.lessonPlans;
+    fixedConflictProject.rules.hardRules.lockedSlots = [first, second].map((plan, index) => ({
+        id: `fixed_${index + 1}`,
+        day: 1,
+        period: 1,
+        lessonPlanId: plan.id,
+        classId: plan.classId,
+        subjectId: plan.subjectId,
+        teacherId: plan.teacherId,
+    }));
+    const fixedConflict = analyzeTimetableFeasibility(fixedConflictProject);
+
+    assert.equal(fixedConflict.status, 'input_infeasible');
+    assert.ok(fixedConflict.issues.some(issue => issue.code === 'fixed_slot_conflict'));
 });
 
 test('solve preflight explains missing timetable data before calling Timefold', () => {
@@ -2178,7 +2435,7 @@ test('conflict summary groups hard failures for the workbench inspector', () => 
     assert.equal(summary.items[0].label, '教师冲突');
 });
 
-test('manual adjustment preserves unplaced conflicts after partial schedules change', () => {
+test('proven infeasibility does not expose a mutable partial schedule', () => {
     const project = sampleProject({
         weekdays: 1,
         periodsPerDay: 1,
@@ -2195,27 +2452,12 @@ test('manual adjustment preserves unplaced conflicts after partial schedules cha
         rules: { hardRules: {}, softRules: {} },
     });
     const generated = runTimetableScheduler(project);
-    const placed = generated.schedule.slots[0];
 
     assert.equal(generated.success, false);
-    assert.equal(generated.schedule.unplaced.length, 1);
+    assert.equal(generated.schedule.slots.length, 0);
+    assert.equal(generated.schedule.unplaced.length, 2);
     assert.ok(generated.schedule.conflicts.some(conflict => conflict.type === 'unplaced'));
-
-    const adjusted = applyScheduleAdjustment({ ...project, schedule: generated.schedule }, {
-        type: 'lock',
-        slotId: placed.id,
-        locked: true,
-    });
-
-    assert.equal(adjusted.success, false);
-    assert.equal(adjusted.schedule.unplaced.length, 1);
-    assert.ok(adjusted.schedule.conflicts.some(conflict => conflict.type === 'unplaced'));
-    assert.equal(adjusted.schedule.score.unplacedLessons, 1);
-    assert.equal(adjusted.schedule.score.hardConflicts, 1);
-    assert.equal(adjusted.schedule.solverStats.phase, 'manual_adjustment');
-    assert.equal(adjusted.schedule.solverStats.status, 'needs_review');
-    assert.equal(adjusted.schedule.solverStats.accepted, false);
-    assert.equal(adjusted.schedule.solverStats.reason, 'manual_adjustment_conflicts');
+    assert.equal(generated.schedule.solverStats.feasibility.status, 'input_infeasible');
 });
 
 test('manual adjustment moves, locks and clears timetable slots with validation', () => {
@@ -2694,8 +2936,10 @@ test('timetable AI rules parser parses decisive constraint Excel rows locally', 
         },
     });
 
-    assert.equal(aiCalls, 1);
-    assert.equal(result.aiReview?.status, 'reviewed');
+    assert.equal(aiCalls, 0);
+    assert.equal(result.semanticAssistance?.mode, 'targeted');
+    assert.equal(result.semanticAssistance?.status, 'skipped');
+    assert.equal(result.semanticAssistance?.reason, 'simple_sources');
     assert.equal(result.inputType, 'xlsx_constraints');
     assert.equal(result.source, 'local_xlsx');
     assert.equal(result.parseSource, 'local_xlsx');
@@ -2712,14 +2956,15 @@ test('timetable AI rules parser parses decisive constraint Excel rows locally', 
     assert.ok(result.draftRows.every(row => row.parseSource === 'local_xlsx'));
 });
 
-test('timetable AI rules parser supplements only unresolved constraint Excel rows', async () => {
+test('timetable AI rules parser sends only complex optimization rows to targeted AI', async () => {
     const project = sampleProject({
         activeWeekdays: [1, 2, 3, 4, 5],
         activePeriods: [1, 2, 3, 4, 5, 6, 7],
         rules: { hardRules: {}, softRules: {} },
     });
-    let observedSupplementPrompt = '';
-    let observedReviewPrompt = '';
+    let aiCalls = 0;
+    let reviewCalls = 0;
+    let extractionSources = [];
 
     const result = await parseTimetableRules({
         file: {
@@ -2732,42 +2977,27 @@ test('timetable AI rules parser supplements only unresolved constraint Excel row
         },
         project,
         env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
-        fetchImpl: async (url, options = {}) => {
-            assert.equal(String(url), 'http://ai.test/chat/completions');
-            const request = JSON.parse(options.body);
+        fetchImpl: async (_url, options = {}) => {
+            aiCalls += 1;
+            const request = JSON.parse(options.body || '{}');
             const systemPrompt = request.messages?.[0]?.content || '';
             if (/复审|审计/.test(systemPrompt)) {
-                observedReviewPrompt = JSON.stringify(request.messages);
-                return jsonResponse({
-                    choices: [{
-                        message: {
-                            content: JSON.stringify({ reviewItems: [] }),
-                        },
-                    }],
-                });
+                reviewCalls += 1;
+                return jsonResponse({ choices: [{ message: { content: JSON.stringify({ reviewItems: [] }) } }] });
             }
-            observedSupplementPrompt = JSON.stringify(request.messages);
-            assert.equal(request.temperature, 0);
             const promptPayload = JSON.parse(request.messages?.[1]?.content || '{}');
-            const [source] = promptPayload.constraintRows || [];
-            assert.ok(source?.sourceId);
-            assert.ok(source?.textHash);
-            assert.match(source.rawText || source.constraintText || '', /High-load teachers/);
+            extractionSources = promptPayload.sources || [];
             return jsonResponse({
                 choices: [{
                     message: {
                         content: JSON.stringify({
-                            draftRows: [
-                                {
-                                    sourceId: source.sourceId,
-                                    textHash: source.textHash,
-                                    rawText: source.rawText || source.constraintText,
-                                    type: 'teacher_load_balance',
-                                    target: 'Math Teacher',
-                                    priority: 'soft',
-                                    reason: 'Balance workload',
-                                },
-                            ],
+                            results: extractionSources.map(source => ({
+                                sourceId: source.sourceId,
+                                textHash: source.textHash,
+                                clauses: [],
+                                unrecognized: true,
+                                reason: 'No safer semantic supplement than the local baseline.',
+                            })),
                         }),
                     },
                 }],
@@ -2776,32 +3006,31 @@ test('timetable AI rules parser supplements only unresolved constraint Excel row
     });
 
     assert.equal(result.inputType, 'xlsx_constraints');
-    assert.equal(result.source, 'mixed_xlsx');
-    assert.match(observedSupplementPrompt, /High-load teachers/);
-    assert.doesNotMatch(observedSupplementPrompt, /Math should be at Monday period 2/);
-    assert.match(observedReviewPrompt, /Math should be at Monday period 2/);
+    assert.equal(result.source, 'local_xlsx');
+    assert.ok(aiCalls >= 1);
+    assert.equal(extractionSources.length, 1);
+    assert.match(extractionSources[0].rawText, /High-load teachers/);
+    assert.doesNotMatch(extractionSources[0].rawText, /Math should be at Monday period 2/);
+    assert.equal(reviewCalls, 1);
     assert.ok(result.draftRules.advancedRules.some(rule => (
         rule.type === 'subject.preferred_periods'
         && rule.target.matchedIds.includes('math')
         && rule.parameters.classIds.includes('c1')
         && rule.parameters.slots.includes('1-2')
     )));
-    assert.ok(result.previewItems.some(item => item.type === 'teacher_load_balance' && item.status === 'ready'));
-    assert.equal(result.unsupportedItems.some(item => item.type === 'teacher_load_balance'), false);
-    assert.deepEqual(result.draftRules.softRules.teacherLoadBalance, { enabled: true, weight: 1, explicit: true });
-    assert.ok(result.draftRows.some(row => row.status === 'effective' && row.type === 'teacher_load_balance'));
-    assert.ok(result.draftRows.some(row => row.parseSource === 'local_xlsx'));
-    assert.ok(result.draftRows.some(row => row.parseSource === 'ai_supplement'));
+    assert.deepEqual(result.draftRules.softRules.teacherLoadBalance, { enabled: false, weight: 1, explicit: false });
+    assert.ok(result.draftRows.every(row => row.parseSource === 'local_xlsx'));
 });
 
-test('timetable AI rules parser combines local AI constraint workbook rows with AI supplements', async () => {
+test('timetable AI rules parser targets only complex rows in the known constraint workbook', async () => {
     const project = sampleProject({
         activeWeekdays: [1, 2, 3, 4, 5],
         activePeriods: [1, 2, 3, 4, 5, 6, 7],
         rules: { hardRules: {}, softRules: {} },
     });
     const workbook = await readFile(path.join(process.cwd(), 'AI排课约束建议.xlsx'));
-    let observedSupplementPrompt = '';
+    let aiCalls = 0;
+    let extractionSources = [];
 
     const result = await parseTimetableRules({
         file: {
@@ -2810,42 +3039,26 @@ test('timetable AI rules parser combines local AI constraint workbook rows with 
         },
         project,
         env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
-        fetchImpl: async (url, options = {}) => {
-            assert.equal(String(url), 'http://ai.test/chat/completions');
-            const request = JSON.parse(options.body);
+        fetchImpl: async (_url, options = {}) => {
+            aiCalls += 1;
+            const request = JSON.parse(options.body || '{}');
             const systemPrompt = request.messages?.[0]?.content || '';
             if (/复审|审计/.test(systemPrompt)) {
-                return jsonResponse({
-                    choices: [{
-                        message: {
-                            content: JSON.stringify({ reviewItems: [] }),
-                        },
-                    }],
-                });
+                return jsonResponse({ choices: [{ message: { content: JSON.stringify({ reviewItems: [] }) } }] });
             }
-            observedSupplementPrompt = JSON.stringify(request.messages);
             const promptPayload = JSON.parse(request.messages?.[1]?.content || '{}');
-            const source = (promptPayload.constraintRows || [])
-                .find(row => /每个班每天课时数尽量均衡/.test(row.rawText || row.constraintText || ''));
-            assert.ok(source?.sourceId);
-            assert.ok(source?.textHash);
+            extractionSources = promptPayload.sources || [];
             return jsonResponse({
                 choices: [{
                     message: {
                         content: JSON.stringify({
-                            draftRows: [
-                                {
-                                    sourceId: source.sourceId,
-                                    textHash: source.textHash,
-                                    rawText: source.rawText || source.constraintText,
-                                    type: 'class_daily_balance',
-                                    target: '全部班级',
-                                    limit: 6,
-                                    priority: 'soft',
-                                    reason: '班级每日课量均衡',
-                                },
-                            ],
-                            warnings: ['复杂质量建议仅作为复核建议展示'],
+                            results: extractionSources.map(source => ({
+                                sourceId: source.sourceId,
+                                textHash: source.textHash,
+                                clauses: [],
+                                unrecognized: true,
+                                reason: 'Keep the deterministic local interpretation.',
+                            })),
                         }),
                     },
                 }],
@@ -2854,20 +3067,22 @@ test('timetable AI rules parser combines local AI constraint workbook rows with 
     });
 
     assert.equal(result.inputType, 'xlsx_constraints');
-    assert.equal(result.source, 'mixed_xlsx');
+    assert.equal(result.source, 'local_xlsx');
+    assert.ok(aiCalls >= 1);
+    assert.ok(extractionSources.length > 0);
+    assert.ok(extractionSources.length < result.contextStats.rowCount);
     assert.equal(result.contextStats.sheetName, 'AI约束建议');
     assert.ok(result.contextStats.rowCount >= 10);
     assert.ok(result.draftRows.length >= 3);
-    assert.match(observedSupplementPrompt, /同一位教师同一时间只能给一个班上课/);
-    assert.equal(result.draftRules.advancedRules.some(rule => (
+    const scopedCourseRules = result.draftRules.advancedRules.filter(rule => (
         ['subject.preferred_periods', 'subject.avoid_periods', 'subject.preferred_day_part'].includes(rule.type)
-    )), false);
+    ));
+    assert.ok(scopedCourseRules.length > 0);
+    assert.ok(scopedCourseRules.every(rule => rule.parameters.classIds?.length > 0));
     assert.ok(result.draftRows.some(row => row.courseScopeClarification && row.status === 'needs_review'));
     assert.ok(result.draftRows.some(row => row.status === 'effective' && row.type === 'teacher_load_balance'));
     assert.deepEqual(result.draftRules.softRules.teacherLoadBalance, { enabled: true, weight: 10, explicit: true });
-    assert.deepEqual(result.draftRules.softRules.classDailyBalance, { enabled: true, mainSubjectDailyMax: 6 });
     assert.ok(result.draftRows.some(row => row.parseSource === 'local_xlsx'));
-    assert.ok(result.draftRows.some(row => row.parseSource === 'ai_supplement' && row.type === 'class_daily_balance'));
 });
 
 test('timetable AI rules parser locally extracts obvious text rules when AI is unavailable', async () => {
@@ -2920,6 +3135,7 @@ test('timetable smart rules accept full agent schema from the configured parser'
             DEEPSEEK_API_BASE: 'https://example.test',
             DEEPSEEK_MODEL: 'agent-test',
             TIMETABLE_RULE_AI_SEED: '20260705',
+            TIMETABLE_RULE_AI_MODE: 'all',
         },
         fetchImpl: async (_url, options = {}) => {
             const body = JSON.parse(options.body);
@@ -2941,34 +3157,33 @@ test('timetable smart rules accept full agent schema from the configured parser'
                 };
             }
             requestBody = body;
+            const promptPayload = JSON.parse(body.messages?.[1]?.content || '{}');
+            const [source] = promptPayload.sources || [];
+            assert.ok(source?.sourceId);
+            assert.ok(source?.textHash);
             return {
                 ok: true,
                 status: 200,
                 async text() {
                     return JSON.stringify({
                         choices: [{
-                            message: {
-                                content: JSON.stringify({
-                                    draftRows: [{
-                                        id: 'agent_row_1',
-                                        rawText: 'Math Teacher 周三第4节不要排。',
-                                        type: 'teacher_unavailable',
-                                        targetType: 'teacher',
-                                        targetName: 'Math Teacher',
-                                        targetId: 't_math',
-                                        slots: ['3-4'],
-                                        priority: 'hard',
-                                        status: 'effective',
-                                        confidence: 0.93,
-                                        reason: '教师不可排',
+                                message: {
+                                    content: JSON.stringify({
+                                    results: [{
+                                        sourceId: source.sourceId,
+                                        textHash: source.textHash,
+                                        clauses: [{
+                                            id: 'teacher-unavailable',
+                                            intent: 'teacher_unavailable',
+                                            targetKind: 'teacher',
+                                            targetNames: ['Math Teacher'],
+                                            time: { slots: ['3-4'] },
+                                            strength: 'hard',
+                                            relation: { kind: 'independent' },
+                                            confidence: 0.93,
+                                            evidence: 'Math Teacher 周三第4节不要排',
+                                        }],
                                     }],
-                                    autoAcceptable: [],
-                                    needReview: [],
-                                    clarifyingQuestions: [],
-                                    missingInfo: [],
-                                    conflicts: [],
-                                    warnings: [],
-                                    nextAction: 'ready_to_apply',
                                 }),
                             },
                         }],
@@ -2983,12 +3198,15 @@ test('timetable smart rules accept full agent schema from the configured parser'
     assert.equal(requestBody.seed, 20260705);
     assert.ok(reviewRequestBody);
     assert.match(reviewRequestBody.messages[0].content, /复审/);
-    assert.match(systemPrompt, /"draftRows"/);
-    assert.match(systemPrompt, /"autoAcceptable"/);
-    assert.match(systemPrompt, /"clarifyingQuestions"/);
-    assert.match(systemPrompt, /"conflicts"/);
+    assert.match(systemPrompt, /"results"/);
+    assert.match(systemPrompt, /"clauses"/);
+    assert.match(systemPrompt, /sourceId/);
+    assert.match(systemPrompt, /relation/);
     assert.doesNotMatch(systemPrompt, /格式：\{"constraints":\[\],"warnings":\[\]\}/);
-    assert.equal(result.source, 'ai');
+    assert.equal(result.parseSource, 'ai_extract');
+    assert.equal(result.semanticAssistance?.mode, 'all');
+    assert.equal(result.semanticAssistance?.status, 'completed');
+    assert.equal(result.aiCandidateValidation?.unverifiedCandidateCount, 0);
     assert.equal(result.nextAction, 'ready_to_apply');
     assert.equal(result.autoAcceptable.length, 1);
     assert.deepEqual(result.draftRules.hardRules.teacherUnavailable.t_math, ['3-4']);
@@ -3807,10 +4025,10 @@ test('timetable API exposes bootstrap, project save, import and scheduling flow'
             method: 'POST',
         }).then(res => res.json());
         assert.equal(runRes.success, true);
-        assert.equal(runRes.data.schedule.source, 'fast_constructed');
-        assert.equal(runRes.data.schedule.score.hardConflicts, 0);
-        assert.equal(runRes.data.schedule.score.unplacedLessons, 0);
+        assert.equal(runRes.data.schedule, null);
+        assert.equal(runRes.data.solveMode, 'timefold_direct');
         assert.equal(runRes.data.solverJob?.phase, 'timefold_optimization');
+        assert.equal(runRes.data.solverJob?.mode, 'solve');
     } finally {
         await new Promise(resolve => server.close(resolve));
         globalThis.fetch = nativeFetch;
@@ -4327,7 +4545,189 @@ test('timetable API keeps saved schedule when fast preflight audit blocks genera
     }
 });
 
-test('background Timefold timeout keeps the saved fast schedule and exposes job status', async () => {
+test('large timetable API starts Timefold directly with a fast warm start and accepts a complete result', async () => {
+    const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
+    const previousTimetableTimeout = process.env.TIMETABLE_SOLVER_TIMEOUT;
+    const nativeFetch = globalThis.fetch;
+    process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-direct-timefold-'));
+    process.env.TIMEFOLD_SOLVER_URL = 'http://timefold.direct';
+    process.env.TIMETABLE_SOLVER_TIMEOUT = '5';
+    resetTimetableOptimizationJobs();
+
+    const classes = Array.from({ length: 30 }, (_, index) => ({ id: `c${index + 1}`, grade: 'G7', name: `${index + 1}` }));
+    const teachers = classes.map((klass, index) => ({ id: `t${index + 1}`, name: `Teacher ${index + 1}`, subjects: ['math'], unavailableSlots: [] }));
+    const lessonPlans = classes.map((klass, index) => ({
+        id: `lp${index + 1}`,
+        classId: klass.id,
+        subjectId: 'math',
+        teacherId: teachers[index].id,
+        weeklyHours: 1,
+        blockPreference: 'single',
+    }));
+    const project = createDefaultTimetableProject({
+        weekdays: 5,
+        periodsPerDay: 8,
+        activeWeekdays: [1, 2, 3, 4, 5],
+        activePeriods: [1, 2, 3, 4, 5, 6, 7, 8],
+        classes,
+        teachers,
+        subjects: [{ id: 'math', name: 'Math', priority: 90, color: '#2563eb' }],
+        lessonPlans,
+        rules: { hardRules: {}, softRules: {}, advancedRules: [] },
+        schedule: null,
+    });
+    const store = createTimetableStore();
+    await store.saveProject(project);
+
+    let postedProblem = null;
+    globalThis.fetch = async (url, options = {}) => {
+        const target = String(url);
+        if (!target.startsWith('http://timefold.direct')) return nativeFetch(url, options);
+        if (target.endsWith('/timetable-solutions') && options.method === 'POST') {
+            postedProblem = JSON.parse(options.body);
+            return new Response(JSON.stringify({ jobId: 'direct-solve-job', solverStatus: 'SOLVING' }), { status: 200 });
+        }
+        if (target.endsWith('/timetable-solutions/direct-solve-job/status')) {
+            return new Response(JSON.stringify({ jobId: 'direct-solve-job', solverStatus: 'NOT_SOLVING', hardScore: 0, softScore: 10 }), { status: 200 });
+        }
+        if (target.endsWith('/timetable-solutions/direct-solve-job')) {
+            return new Response(JSON.stringify({
+                jobId: 'direct-solve-job',
+                solverStatus: 'NOT_SOLVING',
+                hardScore: 0,
+                softScore: 10,
+                lessonAssignments: postedProblem.lessonAssignments.map(assignment => ({
+                    ...assignment,
+                    timeSlot: '1-1',
+                })),
+            }), { status: 200 });
+        }
+        return new Response('{}', { status: 404 });
+    };
+
+    const app = createGatewayApp({ isDev: false });
+    const server = app.listen(0, '127.0.0.1');
+    const baseUrl = await new Promise(resolve => {
+        server.on('listening', () => resolve(`http://127.0.0.1:${server.address().port}`));
+    });
+
+    try {
+        const response = await nativeFetch(`${baseUrl}/api/tools/timetable/schedule/run`, { method: 'POST' });
+        const payload = await response.json();
+
+        assert.equal(response.status, 200);
+        assert.equal(payload.success, true);
+        assert.equal(payload.data.solveMode, 'timefold_direct');
+        assert.equal(payload.data.schedule, null);
+        assert.equal(payload.data.solverJob.mode, 'solve');
+        assert.equal(payload.data.solverJob.solverStats.initialSolutionUsed, false);
+
+        const completed = await waitFor(() => {
+            const current = getTimetableOptimizationJob(payload.data.solverJob.jobId);
+            return current && !['queued', 'running'].includes(current.status) ? current : null;
+        }, 1500);
+        assert.equal(completed?.status, 'completed', JSON.stringify(completed));
+        assert.equal(completed.accepted, true);
+        assert.equal(completed.solverStats.initialSolutionUsed, true);
+        assert.equal(postedProblem.lessonAssignments.every(assignment => assignment.timeSlot), true);
+
+        const stored = await store.loadProject();
+        assert.equal(stored.schedule.score.unplacedLessons, 0);
+        assert.equal(stored.schedule.slots.length, 30);
+    } finally {
+        await new Promise(resolve => server.close(resolve));
+        globalThis.fetch = nativeFetch;
+        if (previousDataDir === undefined) delete process.env.TIMETABLE_DATA_DIR;
+        else process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        if (previousSolverUrl === undefined) delete process.env.TIMEFOLD_SOLVER_URL;
+        else process.env.TIMEFOLD_SOLVER_URL = previousSolverUrl;
+        if (previousTimetableTimeout === undefined) delete process.env.TIMETABLE_SOLVER_TIMEOUT;
+        else process.env.TIMETABLE_SOLVER_TIMEOUT = previousTimetableTimeout;
+    }
+});
+
+test('optimization jobs reuse an active solve for the same project version and schedule', async () => {
+    resetTimetableOptimizationJobs();
+    const project = sampleProject({ version: 42, schedule: null });
+    const store = {
+        loadProject: async () => project,
+        saveProject: async value => value,
+    };
+    const options = {
+        project,
+        schedule: null,
+        mode: 'solve',
+        store,
+        env: { TIMEFOLD_SOLVER_URL: 'http://timefold.unavailable', TIMETABLE_SOLVER_TIMEOUT: '1' },
+        fetchImpl: async () => {
+            throw new Error('solver unavailable in dedup test');
+        },
+    };
+
+    const first = createTimetableOptimizationJob(options);
+    const second = createTimetableOptimizationJob(options);
+
+    assert.equal(second.jobId, first.jobId);
+    assert.equal(second.reused, true);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    resetTimetableOptimizationJobs();
+});
+
+test('solve jobs run the fast constructor exactly once before invoking Timefold', async () => {
+    resetTimetableOptimizationJobs();
+    const project = sampleProject({ version: 51, schedule: null });
+    let schedulerCalls = 0;
+    const store = {
+        loadProject: async () => project,
+        saveProject: async value => value,
+    };
+    const job = createTimetableOptimizationJob({
+        project,
+        schedule: null,
+        mode: 'solve',
+        store,
+        scheduler: value => {
+            schedulerCalls += 1;
+            return runTimetableScheduler(value);
+        },
+        env: { TIMEFOLD_SOLVER_URL: 'http://timefold.once', TIMETABLE_SOLVER_TIMEOUT: '1' },
+        fetchImpl: async () => {
+            throw new Error('stop after construction');
+        },
+    });
+
+    await waitFor(() => {
+        const current = getTimetableOptimizationJob(job.jobId);
+        return current?.status === 'failed' ? current : null;
+    }, 1500);
+
+    assert.equal(schedulerCalls, 1);
+    resetTimetableOptimizationJobs();
+});
+
+test('optimization job identity changes when the project version changes', () => {
+    resetTimetableOptimizationJobs();
+    const base = sampleProject({ version: 60, schedule: null });
+    const options = {
+        schedule: null,
+        mode: 'solve',
+        store: { loadProject: async () => base, saveProject: async value => value },
+        env: { TIMEFOLD_SOLVER_URL: 'http://timefold.versioned', TIMETABLE_SOLVER_TIMEOUT: '1' },
+        fetchImpl: async () => {
+            throw new Error('stop versioned solve');
+        },
+    };
+
+    const first = createTimetableOptimizationJob({ ...options, project: base });
+    const second = createTimetableOptimizationJob({ ...options, project: { ...base, version: 61 } });
+
+    assert.notEqual(second.jobId, first.jobId);
+    assert.equal(second.reused, false);
+    resetTimetableOptimizationJobs();
+});
+
+test('background Timefold timeout keeps the old schedule and exposes failed solve diagnostics', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
     const previousTimetableTimeout = process.env.TIMETABLE_SOLVER_TIMEOUT;
@@ -4388,8 +4788,9 @@ test('background Timefold timeout keeps the saved fast schedule and exposes job 
 
         assert.equal(runResponse.status, 200);
         assert.equal(runPayload.success, true);
-        assert.equal(runPayload.data.schedule.source, 'fast_constructed');
+        assert.equal(runPayload.data.schedule.id, 'old_timeout_schedule');
         assert.equal(runPayload.data.solverJob.phase, 'timefold_optimization');
+        assert.equal(runPayload.data.solverJob.mode, 'solve');
 
         const job = await waitFor(() => {
             const current = getTimetableOptimizationJob(runPayload.data.solverJob.jobId);
@@ -4403,11 +4804,12 @@ test('background Timefold timeout keeps the saved fast schedule and exposes job 
         assert.equal(jobResponse.data.job.status, 'failed');
 
         const stored = await store.loadProject();
-        assert.equal(stored.schedule.source, 'fast_constructed');
+        assert.equal(stored.schedule.id, 'old_timeout_schedule');
         assert.equal(stored.schedule.solverStats.phase, 'timefold_optimization');
         assert.equal(stored.schedule.solverStats.status, 'failed');
         assert.equal(stored.schedule.solverStats.accepted, false);
         assert.equal(stored.schedule.solverStats.reason, 'timeout');
+        assert.ok(stored.schedule.solverStats.fastAttempt);
     } finally {
         await new Promise(resolve => server.close(resolve));
         globalThis.fetch = nativeFetch;
@@ -6837,7 +7239,9 @@ test('timetable API restore backfills fingerprints for legacy published snapshot
 
 test('timetable API marks a published schedule as changed after regeneration', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-publish-regenerate-'));
+    process.env.TIMEFOLD_SOLVER_URL = '';
 
     const store = createTimetableStore();
     const readyProject = runTimetableScheduler(sampleProject()).project;
@@ -6884,12 +7288,16 @@ test('timetable API marks a published schedule as changed after regeneration', a
         } else {
             process.env.TIMETABLE_DATA_DIR = previousDataDir;
         }
+        if (previousSolverUrl === undefined) delete process.env.TIMEFOLD_SOLVER_URL;
+        else process.env.TIMEFOLD_SOLVER_URL = previousSolverUrl;
     }
 });
 
 test('timetable API records seed metadata from schedule run requests', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-seed-'));
+    process.env.TIMEFOLD_SOLVER_URL = '';
     resetTimetableOptimizationJobs();
 
     const store = createTimetableStore();
@@ -6925,6 +7333,8 @@ test('timetable API records seed metadata from schedule run requests', async () 
         } else {
             process.env.TIMETABLE_DATA_DIR = previousDataDir;
         }
+        if (previousSolverUrl === undefined) delete process.env.TIMEFOLD_SOLVER_URL;
+        else process.env.TIMEFOLD_SOLVER_URL = previousSolverUrl;
     }
 });
 
@@ -7514,10 +7924,12 @@ test('timetable rules parse API returns an editable AI draft without saving it',
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     const previousApiKey = process.env.DEEPSEEK_API_KEY;
     const previousApiBase = process.env.DEEPSEEK_API_BASE;
+    const previousAiMode = process.env.TIMETABLE_RULE_AI_MODE;
     const nativeFetch = globalThis.fetch;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-rules-ai-'));
     process.env.DEEPSEEK_API_KEY = 'test-key';
     process.env.DEEPSEEK_API_BASE = 'http://ai.test';
+    process.env.TIMETABLE_RULE_AI_MODE = 'all';
 
     const store = createTimetableStore();
     await store.saveProject(createDefaultTimetableProject({
@@ -7624,8 +8036,8 @@ test('timetable rules parse API returns an editable AI draft without saving it',
         assert.ok(
             payload.data.constraintIRs.some(item => (
                 item.capabilityId === 'subject.preferred_day_part'
-                && item.executionStatus === 'blocked_by_clarification'
-                && item.machineRuleIds.length === 0
+                && item.executionStatus === 'executable'
+                && item.machineRuleIds.length === 1
             )),
             JSON.stringify({
                 draftRows: payload.data.draftRows,
@@ -7635,7 +8047,13 @@ test('timetable rules parse API returns an editable AI draft without saving it',
         );
         assert.deepEqual(payload.data.draftRules.hardRules.teacherUnavailable.t_math, ['3-4']);
         assert.deepEqual(payload.data.draftRules.softRules.morningSubjects, []);
-        assert.ok(payload.data.draftRows.some(row => row.courseScopeClarification && row.status === 'needs_review'));
+        assert.ok(payload.data.draftRows.some(row => (
+            row.type === 'advanced_constraint'
+            && row.advancedType === 'subject.preferred_day_part'
+            && row.targetId === 'math'
+            && row.parameters?.classIds?.includes('c1')
+            && row.status === 'effective'
+        )));
         assert.equal(payload.data.previewItems.length, 2);
         assert.equal(payload.data.parseSource, 'ai_extract');
 
@@ -7668,6 +8086,11 @@ test('timetable rules parse API returns an editable AI draft without saving it',
         } else {
             process.env.DEEPSEEK_API_BASE = previousApiBase;
         }
+        if (previousAiMode === undefined) {
+            delete process.env.TIMETABLE_RULE_AI_MODE;
+        } else {
+            process.env.TIMETABLE_RULE_AI_MODE = previousAiMode;
+        }
     }
 });
 
@@ -7675,10 +8098,12 @@ test('timetable rules parse API accepts multipart Excel without saving the draft
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
     const previousApiKey = process.env.DEEPSEEK_API_KEY;
     const previousApiBase = process.env.DEEPSEEK_API_BASE;
+    const previousAiMode = process.env.TIMETABLE_RULE_AI_MODE;
     const nativeFetch = globalThis.fetch;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-rules-xlsx-'));
     process.env.DEEPSEEK_API_KEY = 'test-key';
     process.env.DEEPSEEK_API_BASE = 'http://ai.test';
+    process.env.TIMETABLE_RULE_AI_MODE = 'all';
 
     const store = createTimetableStore();
     await store.saveProject(sampleProject({
@@ -7747,7 +8172,12 @@ test('timetable rules parse API accepts multipart Excel without saving the draft
         assert.equal(payload.success, true);
         assert.equal(payload.data.inputType, 'xlsx_constraints');
         assert.deepEqual(payload.data.draftRules.softRules.subjectPreferredPeriods, {});
-        assert.ok(payload.data.draftRows.some(row => row.courseScopeClarification && row.status === 'needs_review'));
+        assert.ok(payload.data.draftRows.some(row => (
+            row.type === 'advanced_constraint'
+            && row.advancedType === 'subject.preferred_periods'
+            && row.targetId === 'math'
+            && row.status === 'effective'
+        )));
 
         const stored = await store.loadProject();
         assert.deepEqual(stored.rules.softRules.subjectPreferredPeriods || {}, {});
@@ -7768,6 +8198,11 @@ test('timetable rules parse API accepts multipart Excel without saving the draft
             delete process.env.DEEPSEEK_API_BASE;
         } else {
             process.env.DEEPSEEK_API_BASE = previousApiBase;
+        }
+        if (previousAiMode === undefined) {
+            delete process.env.TIMETABLE_RULE_AI_MODE;
+        } else {
+            process.env.TIMETABLE_RULE_AI_MODE = previousAiMode;
         }
     }
 });

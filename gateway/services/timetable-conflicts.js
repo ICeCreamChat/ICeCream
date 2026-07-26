@@ -22,13 +22,27 @@ export function createTimetableUsage() {
 }
 
 function normalizedSlot(project, slot = {}) {
+    const classIds = slotClassIds(slot);
+    const teacherIds = slotTeacherIds(slot);
     return {
         ...slot,
         weekPattern: weekPatternForSlot(project, slot),
         campusId: campusIdForSlot(project, slot),
-        classIds: slotClassIds(slot),
-        teacherIds: slotTeacherIds(slot),
+        classIds,
+        teacherIds,
     };
+}
+
+function cachedTeacherIds(slot = {}) {
+    return Array.isArray(slot.teacherIds) ? slot.teacherIds : slotTeacherIds(slot);
+}
+
+function cachedClassIds(slot = {}) {
+    return Array.isArray(slot.classIds) ? slot.classIds : slotClassIds(slot);
+}
+
+function cachedWeekPattern(project, slot = {}) {
+    return slot.weekPattern || weekPatternForSlot(project, slot);
 }
 
 function sameCell(left = {}, right = {}) {
@@ -306,13 +320,15 @@ export function detectScheduleConflicts(project, slots = []) {
     for (const rawSlot of slots) {
         const slot = normalizedSlot(project, rawSlot);
         normalizedSlots.push(slot);
-        const classIds = slotClassIds(slot);
-        const weekPattern = weekPatternForSlot(project, slot);
+        const classIds = cachedClassIds(slot);
+        const teacherIds = cachedTeacherIds(slot);
+        const weekPattern = cachedWeekPattern(project, slot);
 
-        for (const teacherId of slotTeacherIds(slot)) {
+        for (const teacherId of teacherIds) {
             const match = seen.find(entry => (
-                slotTeacherIds(entry).includes(teacherId)
-                && entryOverlaps(project, entry, slot)
+                cachedTeacherIds(entry).includes(teacherId)
+                && sameCell(entry, slot)
+                && weekPatternsOverlap(cachedWeekPattern(project, entry), weekPattern)
             ));
             if (match) {
                 conflicts.push({
@@ -326,11 +342,12 @@ export function detectScheduleConflicts(project, slots = []) {
         }
         for (const classId of classIds) {
             const match = seen.find(entry => (
-                slotClassIds(entry).includes(classId)
-                && entryOverlaps(project, entry, slot)
+                cachedClassIds(entry).includes(classId)
+                && sameCell(entry, slot)
+                && weekPatternsOverlap(cachedWeekPattern(project, entry), weekPattern)
             ));
             if (match) {
-                const groupConflict = Boolean(slot.teachingGroupId || match.teachingGroupId || classIds.length > 1 || slotClassIds(match).length > 1);
+                const groupConflict = Boolean(slot.teachingGroupId || match.teachingGroupId || classIds.length > 1 || cachedClassIds(match).length > 1);
                 conflicts.push({
                     type: groupConflict ? 'teaching_group_conflict' : match.weekPattern !== weekPattern ? 'week_pattern_conflict' : 'class-conflict',
                     severity: 'hard',
@@ -360,9 +377,9 @@ export function detectScheduleConflicts(project, slots = []) {
             const gap = commuteGapForTeacher(project, teacherId);
             if (!campusId || gap <= 0) continue;
             const commute = seen.find(entry => (
-                slotTeacherIds(entry).includes(teacherId)
+                cachedTeacherIds(entry).includes(teacherId)
                 && Number(entry.day) === Number(slot.day)
-                && weekPatternsOverlap(weekPatternForSlot(project, entry), weekPattern)
+                && weekPatternsOverlap(cachedWeekPattern(project, entry), weekPattern)
                 && campusIdForSlot(project, entry)
                 && campusIdForSlot(project, entry) !== campusId
                 && Math.abs(Number(entry.period) - Number(slot.period)) > 0

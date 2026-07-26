@@ -90,20 +90,9 @@ function parseBlockPreferenceInfo(value) {
 }
 
 function roomTagsFromName(value = '') {
-    const name = cleanCell(value);
-    const tags = [];
-    if (/实验室/.test(name)) tags.push('实验室');
-    if (/物理实验室/.test(name)) tags.push('物理实验室');
-    if (/化学实验室/.test(name)) tags.push('化学实验室');
-    if (/生物实验室/.test(name)) tags.push('生物实验室');
-    if (/计算机教室|机房|电脑房/.test(name)) tags.push('计算机教室', '机房');
-    if (/操场/.test(name)) tags.push('操场');
-    if (/体育馆/.test(name)) tags.push('体育馆');
-    if (/音乐/.test(name)) tags.push('音乐教室');
-    if (/美术/.test(name)) tags.push('美术教室');
-    if (/劳动|实践/.test(name)) tags.push('劳动实践室');
-    if (/本班教室|普通教室/.test(name)) tags.push('普通教室');
-    return [...new Set(tags)];
+    // A room label is not a resource contract. Tags must arrive through an
+    // explicit column or a confirmed rule, never through name guessing.
+    return [];
 }
 
 function rosterRoomId(name = '') {
@@ -481,7 +470,7 @@ function normalizeDraftRow(row = {}, index = 0) {
     const teacherName = splitEntityNames(row.teacherName).join('、');
     const roomName = splitEntityNames(row.roomName || row.roomId || row.allowedRoomIds).join('、');
     const explicitSubjectCategory = cleanCell(row.subjectCategory || row.category || row.subjectType);
-    const subjectCategory = normalizeSubjectCategory(explicitSubjectCategory, row.subjectName);
+    const subjectCategory = normalizeSubjectCategory(explicitSubjectCategory);
     const subjectTags = normalizeSubjectTags(row.subjectTags || row.tags);
     const blockPreference = parseBlockPreferenceInfo(row.blockPreference);
     return {
@@ -658,7 +647,7 @@ export function buildTimetableRosterFromRows(rows = [], { project = {} } = {}) {
         const roomNames = splitEntityNames(row.roomName);
         const roomIds = roomNames.map(name => existingRoomIdsByName.get(name) || rosterRoomId(name));
         const roomTags = roomNames.flatMap(roomTagsFromName);
-        const subjectCategory = normalizeSubjectCategory(row.subjectCategory, row.subjectName);
+        const subjectCategory = normalizeSubjectCategory(row.subjectCategory);
         const subjectTags = normalizeSubjectTags(row.subjectTags);
 
         pushUnique(classes, classId, { id: classId, grade: row.grade, name: row.className });

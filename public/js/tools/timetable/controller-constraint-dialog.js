@@ -4,7 +4,10 @@
  */
 
 import { requestTimetable } from './api.js';
-import { compileConstraintRuleArtifacts } from './constraint-rule-form-model.js';
+import {
+    compileConstraintRuleArtifacts,
+    getEducationSoftRuleTemplate,
+} from './constraint-rule-form-model.js';
 import {
     buildConstraintApplyPlan,
     buildRequirementReviewViewModel,
@@ -12,6 +15,7 @@ import {
     draftRowApplyItemKey,
     filterUnifiedRequirementItems,
     getDefaultRequirementId,
+    getRequirementApplyItemKeys,
     getRequirementGroupKey,
     semanticActionApplyItemKey,
 } from './constraint-dialog-review-model.js';
@@ -413,13 +417,14 @@ function removeSemanticActionsForDraftRow(review = {}, constraintId = '', ownerI
  * 打开智能约束助手弹窗
  */
 export function openConstraintDialog(mode = null) {
-    const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : null;
+    const nextMode = ['text', 'file', 'manual', 'agent'].includes(mode) ? mode : null;
     const currentReview = this.state.ruleReview || {};
     const currentDialog = this.state.constraintDialog || {};
     const reviewState = normalizeRequirementReviewState(currentDialog, buildUnifiedRequirementItems(currentReview));
     this.state.constraintDialog = {
         ...currentDialog,
         open: true,
+        sidebarMenuOpen: false,
         requirementFilter: reviewState.filter,
         selectedRequirementId: reviewState.selectedId,
         systemGroupCollapsed: currentDialog.systemGroupCollapsed !== false,
@@ -466,6 +471,7 @@ export function closeConstraintDialog() {
     }
     this.state.constraintDialog = {
         open: false,
+        sidebarMenuOpen: false,
     };
     this.render();
 }
@@ -525,17 +531,335 @@ export function toggleRequirementTechnicalDetails(requirementId) {
     this.render();
 }
 
-export function toggleConstraintApplyItem(applyItemKey) {
+function cloneEditorValue(value) {
+    return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+}
+
+function captureSourceEditScrollAnchor(controller) {
+    const container = controller?.state?.container;
+    const listScrollTop = Number(container?.querySelector?.('.tt-requirement-table-body')?.scrollTop);
+    const detailScrollTop = Number(container?.querySelector?.('.tt-requirement-detail')?.scrollTop);
+    return {
+        ...(Number.isFinite(listScrollTop) ? { listScrollTop: Math.max(0, listScrollTop) } : {}),
+        ...(Number.isFinite(detailScrollTop) ? { detailScrollTop: Math.max(0, detailScrollTop) } : {}),
+    };
+}
+
+function restoreSourceEditScrollAnchor(controller, anchor = {}) {
+    const container = controller?.state?.container;
+    const requirementList = container?.querySelector?.('.tt-requirement-table-body');
+    const requirementDetail = container?.querySelector?.('.tt-requirement-detail');
+    if (requirementList && Number.isFinite(anchor.listScrollTop)) {
+        requirementList.scrollTop = Math.max(0, anchor.listScrollTop);
+    }
+    if (requirementDetail && Number.isFinite(anchor.detailScrollTop)) {
+        requirementDetail.scrollTop = Math.max(0, anchor.detailScrollTop);
+    }
+}
+
+function sourceEditorSelectedValues(root, field) {
+    const node = root?.querySelector?.(`[data-source-field="${field}"]`);
+    if (!node) return [];
+    const scopeField = node.closest?.('[data-source-scope-field]');
+    if (scopeField?.hidden || scopeField?.hasAttribute?.('hidden')) return [];
+    if (node.tagName === 'SELECT') return [...node.selectedOptions].map(option => option.value).filter(Boolean);
+    return [...root.querySelectorAll(`[data-source-field="${field}"]:checked`)]
+        .map(input => input.value)
+        .filter(Boolean);
+}
+
+function sourceEditorSelectedLabels(root, field) {
+    return [...root?.querySelectorAll?.(`[data-source-field="${field}"]:checked`) || []]
+        .map(input => input.closest?.('label')?.querySelector?.('span')?.textContent?.trim() || '')
+        .filter(Boolean);
+}
+
+function setSourceEditorArray(target, field, values, original = {}) {
+    if (values.length || Array.isArray(original?.[field])) target[field] = values;
+    else delete target[field];
+}
+
+function collectSourceEditorTime(original, values, presentFields = new Set()) {
+    if (!original || typeof original !== 'object') return undefined;
+    const next = { ...original };
+    if (presentFields.has('days')) setSourceEditorArray(next, 'days', values.days, original);
+    if (presentFields.has('periods')) setSourceEditorArray(next, 'periods', values.periods, original);
+    if (presentFields.has('days') || presentFields.has('periods')) setSourceEditorArray(next, 'slots', values.slots, original);
+    return next;
+}
+
+function collectSourceRequirementEditor(editor = {}) {
+    const doc = typeof document === 'undefined' ? null : document;
+    const root = doc?.querySelector?.('[data-source-requirement-editor-form]');
+    if (!root) return null;
+    const omittedClauseIds = [];
+    const clauses = valueList(editor.clauses).map((original, index) => {
+        const section = root.querySelector(`[data-source-clause-index="${index}"]`);
+        if (!section) return original;
+        const clauseId = original.clauseId || original.id || String(index);
+        if (!section.querySelector('[data-source-field="keep"]')?.checked) omittedClauseIds.push(clauseId);
+        const presentFields = new Set([...section.querySelectorAll?.('[data-source-field]') || []]
+            .map(node => node.dataset.sourceField)
+            .filter(Boolean));
+        const targetIds = sourceEditorSelectedValues(section, 'targetIds');
+        const classIds = sourceEditorSelectedValues(section, 'classIds');
+        const teacherIds = sourceEditorSelectedValues(section, 'teacherIds');
+        const gradeNames = sourceEditorSelectedValues(section, 'gradeNames');
+        const days = sourceEditorSelectedValues(section, 'days').map(Number).filter(Number.isInteger);
+        const periods = sourceEditorSelectedValues(section, 'periods').map(Number).filter(Number.isInteger);
+        const slots = days.flatMap(day => periods.map(period => `${day}-${period}`));
+        const targetName = sourceEditorSelectedLabels(section, 'targetIds').join('、')
+            || section.querySelector('[data-source-field="targetName"]')?.value?.trim()
+            || original.object?.name
+            || original.target?.name
+            || '';
+        const originalParameters = original.parameters || {};
+        const originalScopeKind = original.scope?.kind || originalParameters.scopeQualifier || 'unresolved';
+        const scopeKind = section.querySelector('[data-source-field="scopeKind"]')?.value || originalScopeKind;
+        const strength = presentFields.has('strength')
+            ? (section.querySelector('[data-source-field="strength"]')?.value === 'hard' ? 'hard' : 'soft')
+            : original.strength;
+        const relationKind = section.querySelector('[data-source-field="relationKind"]')?.value
+            || original.relation?.kind
+            || 'independent';
+        const parentClauseId = section.querySelector('[data-source-field="parentClauseId"]')?.value
+            || original.relation?.parentClauseId
+            || '';
+        const quantifierMin = Number.parseInt(section.querySelector('[data-source-field="quantifierMin"]')?.value, 10);
+        const parameters = { ...originalParameters };
+        if (presentFields.has('days')) setSourceEditorArray(parameters, 'days', days, originalParameters);
+        if (presentFields.has('periods')) setSourceEditorArray(parameters, 'periods', periods, originalParameters);
+        if (presentFields.has('days') || presentFields.has('periods')) setSourceEditorArray(parameters, 'slots', slots, originalParameters);
+        if (presentFields.has('classIds')) setSourceEditorArray(parameters, 'classIds', classIds, originalParameters);
+        if (presentFields.has('teacherIds')) setSourceEditorArray(parameters, 'teacherIds', teacherIds, originalParameters);
+        if (presentFields.has('gradeNames')) setSourceEditorArray(parameters, 'gradeNames', gradeNames, originalParameters);
+        if (presentFields.has('scopeKind') && (scopeKind !== originalScopeKind || Object.hasOwn(originalParameters, 'scopeQualifier'))) {
+            parameters.scopeQualifier = scopeKind;
+        } else if (presentFields.has('scopeKind')) {
+            delete parameters.scopeQualifier;
+        }
+        if (presentFields.has('quantifierMin')) {
+            if (Number.isInteger(quantifierMin) && quantifierMin > 0) parameters.minOccurrences = quantifierMin;
+            else delete parameters.minOccurrences;
+        }
+        const object = { ...(original.object || original.target || {}), name: targetName };
+        if (presentFields.has('targetIds')) setSourceEditorArray(object, 'matchedIds', targetIds, original.object || original.target || {});
+        const scope = { ...(original.scope || {}) };
+        if (presentFields.has('scopeKind')) {
+            if (scopeKind !== originalScopeKind || Object.hasOwn(original.scope || {}, 'kind')) scope.kind = scopeKind;
+            else delete scope.kind;
+        }
+        if (presentFields.has('classIds')) setSourceEditorArray(scope, 'classIds', classIds, original.scope || {});
+        if (presentFields.has('teacherIds')) setSourceEditorArray(scope, 'teacherIds', teacherIds, original.scope || {});
+        if (presentFields.has('gradeNames')) setSourceEditorArray(scope, 'gradeNames', gradeNames, original.scope || {});
+        const originalQuantifierMin = Number.parseInt(
+            original.quantifier?.min ?? originalParameters.minOccurrences,
+            10,
+        );
+        const quantifier = !presentFields.has('quantifierMin') || quantifierMin === originalQuantifierMin
+            ? original.quantifier
+            : (Number.isInteger(quantifierMin) && quantifierMin > 0
+                ? { ...(original.quantifier || {}), unit: 'occurrences_per_week', min: quantifierMin }
+                : undefined);
+        const originalRelation = original.relation && typeof original.relation === 'object'
+            ? original.relation
+            : undefined;
+        const originalRelationKind = originalRelation?.kind || 'independent';
+        const originalParentClauseId = originalRelation?.parentClauseId || '';
+        const relation = !presentFields.has('relationKind') || (relationKind === originalRelationKind && parentClauseId === originalParentClauseId)
+            ? originalRelation
+            : {
+                ...(originalRelation || {}),
+                kind: relationKind,
+                parentClauseId: relationKind === 'independent' ? '' : parentClauseId,
+            };
+        const next = {
+            ...original,
+            object,
+            condition: collectSourceEditorTime(original.condition, { days, periods, slots }, presentFields),
+            time: collectSourceEditorTime(original.time, { days, periods, slots }, presentFields),
+            parameters,
+            scope,
+            quantifier,
+            strength,
+            relation,
+        };
+        if (next.condition === undefined) delete next.condition;
+        if (next.time === undefined) delete next.time;
+        if (next.quantifier === undefined) delete next.quantifier;
+        if (next.relation === undefined) delete next.relation;
+        return next;
+    });
+    const rationales = valueList(editor.rationales).map((original, index) => ({
+        ...(original && typeof original === 'object' ? original : {}),
+        text: root.parentElement?.querySelector?.(`[data-source-rationale-index="${index}"]`)?.value?.trim()
+            || (original && typeof original === 'object' ? original.text || original.reason : original)
+            || '',
+    })).filter(item => item.text);
+    return { clauses, rationales, omittedClauseIds };
+}
+
+export function updateSourceRequirementDraftFromDom() {
+    const editor = this.state.constraintDialog?.editingSourceRequirement;
+    if (!editor || editor.saving) return false;
+    const collected = collectSourceRequirementEditor(editor);
+    if (!collected) return false;
+    this.state.constraintDialog.editingSourceRequirement = {
+        ...editor,
+        ...collected,
+        errors: [],
+    };
+    return true;
+}
+
+function focusSourceRequirementEditorError(field = '') {
+    setTimeout(() => {
+        const doc = typeof document === 'undefined' ? null : document;
+        const target = field
+            ? doc?.querySelector?.(`.tt-source-requirement-edit-modal [data-source-field="${field}"]`)
+            : null;
+        (target || doc?.querySelector?.('.tt-source-requirement-edit-modal .tt-source-editor-errors'))?.focus?.({ preventScroll: false });
+    }, 0);
+}
+
+function restoreSourceEditTrigger(sourceId = '') {
+    if (!sourceId) return;
+    setTimeout(() => {
+        const doc = typeof document === 'undefined' ? null : document;
+        doc?.querySelector?.(`[data-action="edit-source-requirement"][data-source-id="${String(sourceId).replace(/"/g, '\\"')}"]`)?.focus?.({ preventScroll: true });
+    }, 0);
+}
+
+export function editSourceRequirement(sourceId) {
+    const sourceRequirement = valueList(this.state.ruleReview?.sourceRequirements)
+        .find(item => item.sourceId === sourceId);
+    if (!sourceRequirement) return;
+    const scrollAnchor = captureSourceEditScrollAnchor(this);
+    this.state.constraintDialog = {
+        ...(this.state.constraintDialog || {}),
+        editingSourceRequirement: {
+            sourceId,
+            sourceRequirement: cloneEditorValue(sourceRequirement),
+            clauses: cloneEditorValue(sourceRequirement.clauses || []),
+            rationales: cloneEditorValue(sourceRequirement.rationales || []),
+            errors: [],
+            saving: false,
+        },
+        editReturnFocusSourceId: sourceId,
+        sourceEditScrollAnchor: scrollAnchor,
+    };
+    this.render();
+    restoreSourceEditScrollAnchor(this, scrollAnchor);
+    setTimeout(() => {
+        const doc = typeof document === 'undefined' ? null : document;
+        const modal = doc?.querySelector?.('.tt-source-requirement-edit-modal');
+        (modal?.querySelector?.('select, input, textarea, button') || modal)?.focus?.();
+    }, 0);
+}
+
+export async function saveSourceRequirementEdit() {
+    const dialog = this.state.constraintDialog || {};
+    const editor = dialog.editingSourceRequirement;
+    if (!editor || editor.saving) return;
+    const scrollAnchor = dialog.sourceEditScrollAnchor || captureSourceEditScrollAnchor(this);
+    const omittedClauseIds = new Set(valueList(editor.omittedClauseIds).map(String));
+    const collected = {
+        clauses: valueList(editor.clauses).filter(clause => !omittedClauseIds.has(String(clause.clauseId || clause.id || ''))),
+        rationales: valueList(editor.rationales),
+    };
+    if (!collected.clauses.length) {
+        this.state.constraintDialog.editingSourceRequirement = { ...editor, errors: ['至少保留一个子约束。'] };
+        this.render();
+        restoreSourceEditScrollAnchor(this, scrollAnchor);
+        focusSourceRequirementEditorError();
+        return;
+    }
+    const clauseIds = new Set(collected.clauses.map(clause => clause.clauseId || clause.id).filter(Boolean));
+    const invalidRelation = collected.clauses.find(clause => clause.relation?.parentClauseId && !clauseIds.has(clause.relation.parentClauseId));
+    if (invalidRelation) {
+        this.state.constraintDialog.editingSourceRequirement = { ...editor, clauses: collected.clauses, rationales: collected.rationales, errors: ['父子句必须引用当前来源中保留的子约束。'] };
+        this.render();
+        restoreSourceEditScrollAnchor(this, scrollAnchor);
+        focusSourceRequirementEditorError('parentClauseId');
+        return;
+    }
+    const currentReview = this.state.ruleReview || {};
+    const excludedApplyItemKeys = valueList(currentReview.excludedApplyItemKeys);
+    this.state.constraintDialog.editingSourceRequirement = { ...editor, ...collected, errors: [], saving: true };
+    this.render();
+    restoreSourceEditScrollAnchor(this, scrollAnchor);
+    try {
+        const result = await requestTimetable('/requirements/recompile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                previousResult: currentReview,
+                sourceId: editor.sourceId,
+                textHash: editor.sourceRequirement?.source?.textHash || editor.sourceRequirement?.textHash || '',
+                clauses: collected.clauses,
+                rationales: collected.rationales,
+            }),
+        });
+        this.state.ruleReview = mergeRuleReviewResult(currentReview, result, { replace: true });
+        this.state.ruleReview.excludedApplyItemKeys = excludedApplyItemKeys;
+        this.state.pendingRules = valueList(result.draftRows);
+        this.state.constraintDialog = {
+            ...this.state.constraintDialog,
+            editingSourceRequirement: null,
+            selectedRequirementId: editor.sourceId,
+            sourceEditScrollAnchor: null,
+        };
+        this.render();
+        restoreSourceEditScrollAnchor(this, scrollAnchor);
+        restoreSourceEditTrigger(editor.sourceId);
+    } catch (error) {
+        this.state.constraintDialog.editingSourceRequirement = {
+            ...editor,
+            ...collected,
+            saving: false,
+            errors: [error?.message || '保存理解结果失败。'],
+        };
+        this.render();
+        restoreSourceEditScrollAnchor(this, scrollAnchor);
+        focusSourceRequirementEditorError();
+    }
+}
+
+export function cancelSourceRequirementEdit() {
+    const dialog = this.state.constraintDialog || {};
+    const sourceId = dialog.editReturnFocusSourceId
+        || dialog.editingSourceRequirement?.sourceId;
+    const scrollAnchor = dialog.sourceEditScrollAnchor || captureSourceEditScrollAnchor(this);
+    this.state.constraintDialog = {
+        ...dialog,
+        editingSourceRequirement: null,
+        sourceEditScrollAnchor: null,
+    };
+    this.render();
+    restoreSourceEditScrollAnchor(this, scrollAnchor);
+    restoreSourceEditTrigger(sourceId);
+}
+
+export function toggleConstraintApplyItem(applyItemKey, requirementId = '') {
     const key = String(applyItemKey || '').trim();
     if (!key) return;
     if (!this.state.ruleReview) {
         this.state.ruleReview = {};
     }
     const keys = new Set(valueList(this.state.ruleReview.excludedApplyItemKeys).map(String).filter(Boolean));
-    if (keys.has(key)) {
-        keys.delete(key);
+    const requirementKey = String(requirementId || '').trim();
+    const requirement = requirementKey
+        ? buildUnifiedRequirementItems(this.state.ruleReview)
+            .find(item => item.id === requirementKey || item.sourceId === requirementKey)
+        : null;
+    const requirementApplyItemKeys = getRequirementApplyItemKeys(requirement);
+    const targetKeys = requirementApplyItemKeys.length
+        ? requirementApplyItemKeys
+        : [key];
+    if (targetKeys.every(itemKey => keys.has(itemKey))) {
+        targetKeys.forEach(itemKey => keys.delete(itemKey));
     } else {
-        keys.add(key);
+        targetKeys.forEach(itemKey => keys.add(itemKey));
     }
     this.state.ruleReview.excludedApplyItemKeys = [...keys];
     this.render();
@@ -607,14 +931,107 @@ export function switchConstraintMode(mode) {
     if (!this.state.ruleReview) {
         this.state.ruleReview = {};
     }
-    const nextMode = ['text', 'file', 'manual'].includes(mode) ? mode : 'text';
+    const nextMode = ['text', 'file', 'manual', 'agent'].includes(mode) ? mode : 'text';
     this.state.ruleReview.inputMode = nextMode;
     this.state.ruleReview.mode = nextMode;
+    if (nextMode === 'agent') {
+        const requirements = buildUnifiedRequirementItems(this.state.ruleReview);
+        const stage = String(this.state.constraintAgent?.stage || 'INTAKE').toUpperCase();
+        this.state.constraintDialog = {
+            ...(this.state.constraintDialog || {}),
+            agentConversationExpanded: !requirements.length || ['INTAKE', 'CLARIFY'].includes(stage),
+        };
+    }
     if (nextMode !== 'file') {
         this.constraintDialogFile = null;
         this.state.ruleReview.fileName = '';
     }
     this.render();
+}
+
+export function toggleConstraintAgentConversation() {
+    this.state.constraintDialog = {
+        ...(this.state.constraintDialog || {}),
+        agentConversationExpanded: this.state.constraintDialog?.agentConversationExpanded !== true,
+    };
+    this.render();
+}
+
+export function resetConstraintAgentSessionForReview() {
+    this.state.constraintAgent = {
+        sessionId: null,
+        stage: 'INTAKE',
+        messages: [],
+        statusLine: '[已理解 0 · 待澄清 0 · 待确认 0]',
+        review: null,
+        questions: [],
+        confirmationToken: '',
+        highRiskToken: '',
+        highRiskAction: null,
+        confirmed: false,
+        highRiskConfirmed: false,
+        appliedSummary: null,
+        solveResult: null,
+        fulfillment: null,
+        loading: false,
+        error: '',
+        input: '',
+        nextAction: '',
+    };
+}
+
+export function prepareConstraintAgentReviewReplacement() {
+    const review = this.state.ruleReview || {};
+    const artifactKeys = [
+        'sourceRequirements',
+        'systemSupplements',
+        'manualRequirements',
+        'constraintIRs',
+        'warningItems',
+        'draftRows',
+        'previewItems',
+        'requirementItems',
+        'semanticActions',
+        'autoAcceptable',
+        'needReview',
+        'clarifyingQuestions',
+        'missingInfo',
+        'conflicts',
+        'warnings',
+        'unsupportedItems',
+        'excludedApplyItemKeys',
+    ];
+    const hasArtifacts = artifactKeys.some(key => valueList(review[key]).length > 0);
+    const currentAgentStage = String(this.state.constraintAgent?.stage || 'INTAKE').toUpperCase();
+    if (
+        hasArtifacts
+        && !['APPLY', 'REPORT'].includes(currentAgentStage)
+        && typeof confirm === 'function'
+        && !confirm('开始新的智能对话会替换当前尚未应用的理解结果，是否继续？')
+    ) {
+        return false;
+    }
+    artifactKeys.forEach(key => {
+        review[key] = [];
+    });
+    review.draftRules = null;
+    review.ruleReport = null;
+    review.confidenceSummary = null;
+    review.statistics = null;
+    review.nextAction = '';
+    review.step = 'input';
+    review.uiStep = 'input';
+    review.inputMode = 'agent';
+    review.mode = 'agent';
+    this.state.ruleReview = review;
+    this.state.constraintDialog = {
+        ...(this.state.constraintDialog || {}),
+        open: true,
+        requirementFilter: 'all',
+        selectedRequirementId: '',
+        agentConversationExpanded: true,
+    };
+    return true;
 }
 
 export function expandConstraintInput() {
@@ -693,6 +1110,8 @@ export async function parseConstraintsFromDialog() {
         this.openRosterImport?.('file');
         return;
     }
+
+    this.resetConstraintAgentSessionForReview?.();
 
     // 设置解析状态
     this.state.ruleReview.parsing = true;
@@ -861,6 +1280,26 @@ export function addManualConstraint() {
         manualRuleErrors: {},
         inputExpanded: false,
     };
+    this.render();
+}
+
+/**
+ * Select an optional education preference without applying it implicitly.
+ * The existing manual form remains the only path that creates the review row.
+ */
+export function applyEducationSoftRuleTemplate(templateKey = '') {
+    const template = getEducationSoftRuleTemplate(templateKey, this.state.project || {});
+    if (!template) return;
+
+    this.state.constraintDialog = {
+        ...(this.state.constraintDialog || {}),
+        manualRuleType: template.type,
+        manualRuleScope: {
+            ...(template.formValues || {}),
+        },
+        manualRuleErrors: {},
+    };
+    this.setMessage?.(`已选择“${template.label}”，请选择具体对象后添加约束。`);
     this.render();
 }
 

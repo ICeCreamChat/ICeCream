@@ -173,7 +173,9 @@ test('timetable diagnostics keeps actionable suggestions and deduplicates them a
 
 test('timetable schedule run API persists diagnostics with the legacy response fields', async () => {
     const previousDataDir = process.env.TIMETABLE_DATA_DIR;
+    const previousSolverUrl = process.env.TIMEFOLD_SOLVER_URL;
     process.env.TIMETABLE_DATA_DIR = await mkdtemp(path.join(tmpdir(), 'icecream-timetable-diagnostics-'));
+    delete process.env.TIMEFOLD_SOLVER_URL;
 
     const store = createTimetableStore();
     await store.saveProject(createDefaultTimetableProject({
@@ -189,6 +191,7 @@ test('timetable schedule run API persists diagnostics with the legacy response f
     }));
 
     const app = createGatewayApp({ isDev: false });
+    delete process.env.TIMEFOLD_SOLVER_URL;
     const server = app.listen(0, '127.0.0.1');
     const baseUrl = await new Promise(resolve => {
         server.on('listening', () => {
@@ -219,6 +222,11 @@ test('timetable schedule run API persists diagnostics with the legacy response f
             delete process.env.TIMETABLE_DATA_DIR;
         } else {
             process.env.TIMETABLE_DATA_DIR = previousDataDir;
+        }
+        if (previousSolverUrl === undefined) {
+            delete process.env.TIMEFOLD_SOLVER_URL;
+        } else {
+            process.env.TIMEFOLD_SOLVER_URL = previousSolverUrl;
         }
     }
 });

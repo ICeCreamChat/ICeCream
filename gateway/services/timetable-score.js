@@ -51,14 +51,13 @@ export function evaluateSoftScore(project, slots = []) {
     const activePeriods = getActivePeriods(project);
     const activeWeekdays = getActiveWeekdays(project);
     const softRules = project.rules?.softRules || {};
-    const subjectMap = new Map((project.subjects || []).map(subject => [subject.id, subject]));
     const morningSubjects = new Set(softRules.morningSubjects || []);
     const afternoonSubjects = new Set(softRules.afternoonSubjects || []);
     const preferred = softRules.subjectPreferredPeriods || {};
     const teacherLimits = softRules.teacherLimits || {};
     const spreadSubjects = new Set(softRules.spreadSubjects || []);
     const spreadSubjectGaps = softRules.spreadSubjectGaps || {};
-    const balanceTeacherLoad = softRules.teacherLoadBalance?.enabled !== false && softRules.balancedTeacherLoad !== false;
+    const balanceTeacherLoad = softRules.teacherLoadBalance?.enabled === true || softRules.balancedTeacherLoad === true;
     const teacherGapWeight = Number.parseInt(softRules.teacherGapWeight, 10) || 0;
 
     const breakdown = {};
@@ -73,10 +72,7 @@ export function evaluateSoftScore(project, slots = []) {
     let morningTotal = 0;
     let morningHit = 0;
     for (const slot of slots) {
-        const subject = subjectMap.get(slot.subjectId);
-        const isMorningSubject = morningSubjects.has(slot.subjectId)
-            || /语文|数学|英语|外语/.test(subject?.name || '');
-        if (!isMorningSubject) continue;
+        if (!morningSubjects.has(slot.subjectId)) continue;
         morningTotal += 1;
         if (isMorningPeriod(project, slot.period)) morningHit += 1;
     }
@@ -256,12 +252,15 @@ export function evaluateSoftScore(project, slots = []) {
 export function buildTimetableScore(project, slots, unplaced, conflicts) {
     const totalLessons = project.lessonPlans.reduce((sum, plan) => sum + plan.weeklyHours, 0);
     const placedLessons = slots.length;
+    const unplacedLessons = unplaced.reduce((sum, item) => (
+        sum + Math.max(1, Number.parseInt(item.lessonHours ?? item.blockSize, 10) || 1)
+    ), 0);
     const hardConflicts = conflicts.filter(conflict => conflict.severity === 'hard').length;
     const completeness = totalLessons ? Math.round((placedLessons / totalLessons) * 100) : 0;
     const soft = evaluateSoftScore(project, slots);
     // softScore now reflects real soft-rule satisfaction, but a schedule with
     // hard conflicts or unplaced lessons must never out-rank a clean one.
-    const penalty = unplaced.length * 12 + hardConflicts * 20;
+    const penalty = unplacedLessons * 12 + hardConflicts * 20;
     const softScore = Math.max(0, Math.round(soft.score - penalty));
     return {
         hardConflicts,
@@ -270,7 +269,7 @@ export function buildTimetableScore(project, slots, unplaced, conflicts) {
         softBreakdown: soft.breakdown,
         placedLessons,
         totalLessons,
-        unplacedLessons: unplaced.length,
+        unplacedLessons,
         completeness,
     };
 }

@@ -113,7 +113,21 @@ test('normalizeTimetableProject adds empty rules v2 fields for legacy projects',
     assert.deepEqual(project.rules.softRules.subjectSequence, []);
     assert.equal(project.rules.softRules.teacherGapWeight, 0);
     assert.deepEqual(project.rules.softRules.classDailyBalance, { enabled: false, mainSubjectDailyMax: 0 });
-    assert.deepEqual(project.rules.softRules.teacherLoadBalance, { enabled: true, weight: 1, explicit: false });
+    assert.deepEqual(project.rules.softRules.teacherLoadBalance, { enabled: false, weight: 1, explicit: false });
+});
+
+test('subject labels do not infer categories or default soft scheduling rules', () => {
+    const project = normalizeTimetableProject({
+        subjects: [
+            { id: 'named-main', name: '数学' },
+            { id: 'named-resource', name: '物理实验' },
+            { id: 'explicit-main', name: 'Any course', category: 'main' },
+        ],
+    });
+
+    assert.deepEqual(project.subjects.map(subject => subject.category), ['normal', 'normal', 'main']);
+    assert.equal(project.rules.softRules.balancedTeacherLoad, false);
+    assert.equal(project.rules.softRules.teacherLoadBalance.enabled, false);
 });
 
 test('normalizeTimetableProject sanitizes rules v2 values', () => {

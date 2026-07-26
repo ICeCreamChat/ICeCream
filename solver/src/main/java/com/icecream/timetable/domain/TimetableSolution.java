@@ -6,6 +6,7 @@ import ai.timefold.solver.core.api.domain.solution.PlanningSolution;
 import ai.timefold.solver.core.api.domain.solution.ProblemFactCollectionProperty;
 import ai.timefold.solver.core.api.domain.valuerange.ValueRangeProvider;
 import ai.timefold.solver.core.api.score.HardSoftScore;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,8 +25,12 @@ public class TimetableSolution {
     @ValueRangeProvider(id = "roomRange")
     private List<Room> rooms = new ArrayList<>();
 
-    @PlanningEntityCollectionProperty
+    @ProblemFactCollectionProperty
     private List<LessonAssignment> lessonAssignments = new ArrayList<>();
+
+    @PlanningEntityCollectionProperty
+    @JsonIgnore
+    private List<SchedulingUnit> schedulingUnits = new ArrayList<>();
 
     @PlanningScore
     private HardSoftScore score;
@@ -73,6 +78,14 @@ public class TimetableSolution {
 
     public void setLessonAssignments(List<LessonAssignment> lessonAssignments) {
         this.lessonAssignments = lessonAssignments == null ? new ArrayList<>() : lessonAssignments;
+    }
+
+    public List<SchedulingUnit> getSchedulingUnits() {
+        return schedulingUnits;
+    }
+
+    public void setSchedulingUnits(List<SchedulingUnit> schedulingUnits) {
+        this.schedulingUnits = schedulingUnits == null ? new ArrayList<>() : schedulingUnits;
     }
 
     public HardSoftScore getScore() {

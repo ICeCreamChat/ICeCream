@@ -81,7 +81,7 @@ test('137 spreadsheet inputs remain 137 top-level source requirements while mach
     });
 
     assert.equal(result.schemaVersion, 2);
-    assert.equal(result.parserVersion, 'timetable_rule_parser_constraint_ir_v9');
+    assert.equal(result.parserVersion, 'timetable_rule_parser_constraint_ir_v11');
     assert.equal(result.sourceRequirements.length, 137);
     assert.equal(new Set(result.sourceRequirements.map(item => item.sourceId)).size, 137);
     assert.equal(result.statistics.userInputCount, 137);
@@ -106,14 +106,14 @@ test('137 spreadsheet inputs remain 137 top-level source requirements while mach
 
     const expandedMorningSource = findSourceByRow(result, 114);
     assert.ok(expandedMorningSource);
-    assert.equal(expandedMorningSource.clauses.length, 3);
+    assert.equal(expandedMorningSource.clauses.length, 6);
     assert.equal(
         expandedMorningSource.machineRuleIds.length,
         0,
         '指定教师覆盖班级的上午偏好不得扩大编译为全校学科机器规则',
     );
 
-    for (const [sourceRow, expectedClauses] of [[115, 3], [116, 2], [138, 1]]) {
+    for (const [sourceRow, expectedClauses] of [[115, 4], [116, 2], [138, 1]]) {
         const source = findSourceByRow(result, sourceRow);
         assert.ok(source, `missing source requirement at sourceRow ${sourceRow}`);
         assert.equal(source.clauses.length, expectedClauses);
@@ -136,7 +136,7 @@ test('137 spreadsheet inputs remain 137 top-level source requirements while mach
     });
     assert.equal(cached.cacheHit, true);
     assert.equal(cached.schemaVersion, 2);
-    assert.equal(cached.parserVersion, 'timetable_rule_parser_constraint_ir_v9');
+    assert.equal(cached.parserVersion, 'timetable_rule_parser_constraint_ir_v11');
     assert.equal(cached.sourceRequirements.length, 137);
 });
 

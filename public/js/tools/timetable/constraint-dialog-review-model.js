@@ -1173,6 +1173,11 @@ function buildSourceRequirementCard(sourceRequirement = {}, context = {}) {
         applicationTarget: sourceRequirement.applicationTarget || '',
         requiresHumanReview: sourceRequirement.requiresHumanReview,
         reviewReasons: valueList(sourceRequirement.reviewReasons),
+        rationales: valueList(sourceRequirement.rationales),
+        partiallyApplicable: sourceRequirement.partiallyApplicable === true,
+        applicableMachineRuleIds: uniqueValues(sourceRequirement.applicableMachineRuleIds || []),
+        unresolvedClauseIds: uniqueValues(sourceRequirement.unresolvedClauseIds || []),
+        semanticAssistance: sourceRequirement.semanticAssistance || null,
         applyTo: sourceRequirement.applicationTarget || primary.applyTo || primary.landing?.[0] || 'review',
         origin,
         parsedBy,
@@ -1457,7 +1462,16 @@ function reviewItemAttentionItems(item = {}) {
         if (!value || typeof value !== 'object') return '';
         return String(value.message || value.question || value.reason || value.label || '').trim();
     }).filter(Boolean);
-    return [...new Set(values)];
+    const seen = new Set();
+    return values.filter(value => {
+        const fingerprint = value
+            .normalize('NFKC')
+            .toLowerCase()
+            .replace(/[\s,，.。;；:：!?！？、'"“”‘’()（）\[\]【】]+/g, '');
+        if (!fingerprint || seen.has(fingerprint)) return false;
+        seen.add(fingerprint);
+        return true;
+    });
 }
 
 function requirementReviewBucket(item = {}) {
@@ -1544,6 +1558,9 @@ export function buildRequirementReviewViewModel(review = {}, state = {}) {
             attention: groups.attention.length,
             applicable: groups.applicable.length,
             handled: groups.handled.length,
+            partiallyApplicable: groups.attention.filter(({ item }) => (
+                item.partiallyApplicable === true && requirementItemIsActionable(item, review)
+            )).length,
         },
         selectedId: selectedItem?.id || '',
         selectedItem,
@@ -1577,7 +1594,7 @@ function fallbackKey(prefix, item = {}) {
 }
 
 export function draftRowApplyItemKey(row = {}) {
-    return fallbackKey('rule', row);
+    return fallbackKey('rule', { ...row, id: row.machineRuleId || row.id });
 }
 
 export function semanticActionApplyItemKey(action = {}) {
@@ -1590,6 +1607,24 @@ function excludedApplyItemKeySet(review = {}) {
 
 export function isApplyItemExcluded(review = {}, key = '') {
     return excludedApplyItemKeySet(review).has(String(key || ''));
+}
+
+export function getRequirementApplyItemKeys(item = {}) {
+    const requirement = item && typeof item === 'object' ? item : {};
+    return [...new Set([
+        ...valueList(requirement.machineRules)
+            .filter(isDraftRowActionable)
+            .map(draftRowApplyItemKey),
+        ...valueList(requirement.semanticActions)
+            .filter(isSemanticActionApplicable)
+            .map(semanticActionApplyItemKey),
+    ].filter(Boolean))];
+}
+
+export function areApplyItemsExcluded(review = {}, keys = []) {
+    const normalizedKeys = valueList(keys).map(String).filter(Boolean);
+    return normalizedKeys.length > 0
+        && normalizedKeys.every(key => isApplyItemExcluded(review, key));
 }
 
 function requirementItemIsActionable(item = {}, review = {}) {

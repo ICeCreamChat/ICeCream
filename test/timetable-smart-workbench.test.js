@@ -33,7 +33,10 @@ test('constraint dialog state replaces the removed smart workbench by default', 
         requirementFilter: 'all',
         selectedRequirementId: '',
         inputExpanded: false,
+        agentConversationExpanded: true,
+        sidebarMenuOpen: false,
         technicalDetailsExpandedById: {},
+        editingSourceRequirement: null,
     });
     assert.deepEqual(state.ruleReview.sourceRequirements, []);
     assert.deepEqual(state.ruleReview.systemSupplements, []);

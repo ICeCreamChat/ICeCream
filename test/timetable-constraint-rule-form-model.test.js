@@ -1,12 +1,22 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 
-import { normalizeTimetableRuleDraftRows } from '../gateway/services/timetable-rule-parser.js';
+import {
+    normalizeTimetableRuleDraftRows,
+    parseTimetableRules,
+} from '../gateway/services/timetable-rule-parser.js';
+import { createCompleteNaturalLanguage137Project } from './fixtures/timetable-natural-language-137-project.js';
 import {
     CONSTRAINT_RULE_DEFINITIONS,
+    CONSTRAINT_RULE_EDITOR_DEFINITIONS,
+    EDUCATION_SOFT_RULE_TEMPLATES,
     compileConstraintRuleArtifacts,
+    getEducationSoftRuleTemplate,
+    getConstraintRuleEditorDefinition,
     getConstraintRuleFormValue,
     getConstraintRuleScopeClassOptions,
+    resolveConstraintRuleEditorKey,
     validateConstraintRuleForm,
 } from '../public/js/tools/timetable/constraint-rule-form-model.js';
 
@@ -30,6 +40,18 @@ const project = {
         { id: 'lp_g7_2_li', classId: 'class_g7_2', subjectId: 'subject_chinese', teacherIds: ['teacher_li'] },
     ],
 };
+
+test('education soft-rule templates are opt-in and derive boundary slots from the project', () => {
+    assert.equal(EDUCATION_SOFT_RULE_TEMPLATES.length >= 4, true);
+    assert.equal(getEducationSoftRuleTemplate('subject_morning', project).type, 'subject_morning');
+
+    const last = getEducationSoftRuleTemplate('subject_avoid_last_period', project);
+    assert.equal(last.type, 'subject_avoid_periods');
+    assert.deepEqual(last.formValues.slots, ['1-7', '2-7', '3-7', '4-7', '5-7']);
+    assert.equal(last.formValues.targetValue, '');
+
+    assert.equal(getEducationSoftRuleTemplate('unknown-template', project), null);
+});
 
 function courseScopeFor(definition, { restrictTeacher = false } = {}) {
     if (!definition.type.startsWith('subject_')) return {};
@@ -65,6 +87,132 @@ test('manual constraint model exposes exactly the eight persistable rule types',
         '限制所选教师每天承担的最大课节数。',
         '限制所选教师连续上课的最大课节数。',
     ]);
+});
+
+test('parsed machine type takes precedence over a semantic intent alias', () => {
+    const row = {
+        type: 'teacher_unavailable',
+        intent: 'unavailable_periods',
+        targetType: 'teacher',
+        targetId: 'teacher_zhang',
+        slots: ['1-2'],
+    };
+
+    assert.equal(resolveConstraintRuleEditorKey(row), 'teacher_unavailable');
+    assert.equal(getConstraintRuleEditorDefinition(row)?.type, 'teacher_unavailable');
+    assert.deepEqual(getConstraintRuleFormValue(row), {
+        formKey: 'teacher_unavailable',
+        type: 'teacher_unavailable',
+        targetKind: 'teacher',
+        targetId: 'teacher_zhang',
+        targetValue: 'teacher:teacher_zhang',
+        slots: ['1-2'],
+        limit: '',
+        scopeClassId: '',
+        scopeTeacherId: '',
+        restrictTeacher: false,
+        legacyCourseGlobal: false,
+    });
+});
+
+test('rule editor registry covers every currently applicable machine and advanced rule type', () => {
+    const machineTypes = new Set(CONSTRAINT_RULE_EDITOR_DEFINITIONS.map(item => item.type));
+    const advancedTypes = new Set(CONSTRAINT_RULE_EDITOR_DEFINITIONS.map(item => item.advancedType).filter(Boolean));
+    const expectedMachineTypes = [
+        'advanced_constraint',
+        'teacher_unavailable',
+        'class_unavailable',
+        'locked_slot',
+        'global_unavailable',
+        'subject_morning',
+        'subject_afternoon',
+        'subject_preferred_periods',
+        'subject_avoid_periods',
+        'subject_daily_limit',
+        'teacher_daily_limit',
+        'teacher_consecutive_limit',
+        'teacher_weekly_limit',
+        'teacher_max_days_per_week',
+        'teacher_mutual_exclusion',
+        'subject_spread',
+        'course_interval',
+        'room_requirement',
+        'class_daily_balance',
+        'teacher_gap_preference',
+        'teacher_load_balance',
+        'subject_not_same_day',
+        'subject_sequence',
+    ];
+    const expectedAdvancedTypes = [
+        'teacher.compact_day',
+        'teacher.prep_group_fairness',
+        'subject.preferred_day_part',
+        'subject.preferred_periods',
+        'subject.avoid_periods',
+        'subject.spread',
+        'room.preferred',
+        'room.required',
+        'room.forbidden_type',
+        'lesson.consecutive',
+        'class.daily_balance',
+        'subject.avoid_weekday_concentration',
+        'schedule.cross_venue_boundary',
+        'subject.not_consecutive_with',
+        'lesson.activity_scope_period_policy',
+        'lesson.resource_attribute_avoid_periods',
+    ];
+
+    expectedMachineTypes.forEach(type => assert.equal(machineTypes.has(type), true, type));
+    expectedAdvancedTypes.forEach(type => assert.equal(advancedTypes.has(type), true, type));
+    assert.deepEqual(
+        CONSTRAINT_RULE_EDITOR_DEFINITIONS.filter(item => item.manualAvailable).map(item => item.type),
+        CONSTRAINT_RULE_DEFINITIONS.map(item => item.type),
+    );
+});
+
+test('all editable 137-fixture machine rules open with populated forms and compile without losing identities', async () => {
+    const fullProject = createCompleteNaturalLanguage137Project();
+    const parsed = await parseTimetableRules({
+        file: {
+            filename: '真实学校排课约束需求.xlsx',
+            buffer: fs.readFileSync(new URL('../真实学校排课约束需求.xlsx', import.meta.url)),
+        },
+        project: fullProject,
+        env: {},
+    });
+    const rows = parsed.draftRows.filter(row => row.machineRuleId);
+    const sourceMachineRuleIds = new Set(parsed.sourceRequirements.flatMap(item => item.machineRuleIds || []));
+    const sourceEditedIds = new Set(parsed.sourceRequirements
+        .filter(sourceRequirement => {
+            const clauses = sourceRequirement.clauses || [];
+            return clauses.length > 1
+                || sourceRequirement.partiallyApplicable === true
+                || clauses.some(clause => ['inherits', 'emphasis', 'exception'].includes(clause.relation?.kind));
+        })
+        .map(sourceRequirement => sourceRequirement.sourceId));
+    const editableRows = rows.filter(row => !sourceEditedIds.has(row.sourceId));
+    const compiledSourceRows = rows.filter(row => sourceEditedIds.has(row.sourceId));
+
+    assert.equal(rows.length, sourceMachineRuleIds.size);
+    assert.ok(rows.length >= 134);
+    assert.ok(compiledSourceRows.length > 0);
+    assert.ok(editableRows.length > 0);
+    for (const row of editableRows) {
+        const formKey = resolveConstraintRuleEditorKey(row);
+        const definition = getConstraintRuleEditorDefinition(row);
+        const form = getConstraintRuleFormValue(row);
+        assert.ok(formKey, `${row.type}:${row.advancedType || row.intent || ''}`);
+        assert.ok(definition, formKey);
+        assert.equal(form.formKey, formKey, row.id);
+        const compiled = compileConstraintRuleArtifacts(form, fullProject, { existing: row });
+        assert.equal(compiled.ok, true, `${formKey}: ${JSON.stringify(compiled.errors || {})}`);
+        assert.equal(compiled.draftRow.id, row.id);
+        assert.equal(compiled.draftRow.sourceId, row.sourceId);
+        assert.equal(compiled.draftRow.clauseId, row.clauseId);
+        assert.equal(compiled.draftRow.machineRuleId, row.machineRuleId);
+        assert.equal(compiled.draftRow.requirementId, row.requirementId);
+        assert.equal(compiled.draftRow.compilerVersion, row.compilerVersion);
+    }
 });
 
 test('manual constraint model compiles every supported type into linked review artifacts', () => {

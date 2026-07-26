@@ -105,4 +105,6 @@ TIMETABLE_V2_PHASE1_7_FIX_REPORT.md
 
 .playwright-cli
 test-results
-.playwright-mcp/
+.playwright-mcp/# Commit draft and debug artifacts
+.commit-msg-draft.txt
+artifacts/

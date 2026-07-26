@@ -315,7 +315,7 @@ test('teacher role-group period preferences stay understood but unsupported inst
         rawText: '班主任第一节尽量不要有课方便晨检',
     }, { registry });
 
-    assert.equal(capabilities.length, 33);
+    assert.equal(capabilities.length, 34);
     assert.deepEqual(capabilities.filter(item => item.id === 'teacher.avoid_periods').map(item => ({
         solverSupport: item.solverSupport,
         machineRuleTypes: item.machineRuleTypes,

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { parseTimetableRules } from '../gateway/services/timetable-rule-parser.js';
+import { createCompleteNaturalLanguage137Project } from '../test/fixtures/timetable-natural-language-137-project.js';
 import {
     buildSourceId,
     buildTextHash,
@@ -9,7 +10,16 @@ import {
 import { buildRequirementStatistics } from '../gateway/services/timetable-constraints/statistics.js';
 
 const EXPECTED_SOURCE_COUNT = 137;
-const EXPECTED_CONSTRAINT_IR_COUNT = 150;
+const EXPECTED_CONSTRAINT_IR_COUNT = 154;
+const COMPLEX_SEMANTIC_BASELINE = new Map([
+    [114, { clauseCount: 6, machineRuleCount: 6, explanation: '3 条课程上午偏好 + 3 条教师覆盖 emphasis 子句。' }],
+    [115, { clauseCount: 4, machineRuleCount: 3, unresolvedCount: 1, explanation: '3 条每周至少 3 次的课程偏好 + 1 条暂未落地的下午集中度语义。' }],
+    [116, { clauseCount: 2, machineRuleCount: 2, rationaleCount: 1, explanation: '七年级数学、英语分别形成动态末节避让，学习压力说明保留为 rationale。' }],
+    [117, { clauseCount: 2, machineRuleCount: 2, explanation: '体育第 1 节硬避让和第 5 节软避让分开编译。' }],
+    [118, { clauseCount: 1, machineRuleCount: 1, rationaleCount: 1, explanation: '音乐第 6-8 节下午偏好，黄金时段说明保留为 rationale。' }],
+    [120, { clauseCount: 1, machineRuleCount: 1, rationaleCount: 1, explanation: '劳动第 6、7 节偏好，材料领取与整理说明保留为 rationale。' }],
+    [132, { clauseCount: 5, machineRuleCount: 5, explanation: '九年级五门考试学科分别继承周五第 8 节硬避让。' }],
+]);
 const EXPECTED_SHEET = '自然语言约束';
 const root = process.cwd();
 const workbookPath = path.join(root, '真实学校排课约束需求.xlsx');
@@ -127,8 +137,11 @@ async function main() {
             filename: path.basename(workbookPath),
             buffer: fs.readFileSync(workbookPath),
         },
-        project: {},
-        env: {},
+        project: createCompleteNaturalLanguage137Project(),
+        env: {
+            TIMETABLE_RULE_AI_MODE: 'off',
+            TIMETABLE_RULE_AI_REVIEW_DISABLED: 'true',
+        },
     });
 
     const sources = asArray(parseResult.sourceRequirements);
@@ -157,7 +170,7 @@ async function main() {
     recordCheck(sourceIds.every(Boolean), 'missing_source_id', '每个顶层来源都必须有 sourceId。');
     recordCheck(parseResult.statistics?.sourceRequirementCount === EXPECTED_SOURCE_COUNT, 'statistics_source_count_mismatch', 'statistics.sourceRequirementCount 必须为 137.', { actual: parseResult.statistics?.sourceRequirementCount });
     recordCheck(parseResult.statistics?.userInputCount === EXPECTED_SOURCE_COUNT, 'statistics_user_count_mismatch', 'statistics.userInputCount 必须为 137。', { actual: parseResult.statistics?.userInputCount });
-    recordCheck(constraintIRs.length === EXPECTED_CONSTRAINT_IR_COUNT, 'constraint_ir_count_mismatch', '137 条基线必须稳定拆分为 150 个 ConstraintIR。', { actual: constraintIRs.length });
+    recordCheck(constraintIRs.length === EXPECTED_CONSTRAINT_IR_COUNT, 'constraint_ir_count_mismatch', `137 条基线必须稳定拆分为 ${EXPECTED_CONSTRAINT_IR_COUNT} 个 ConstraintIR。`, { actual: constraintIRs.length });
 
     for (const fixtureItem of fixture) {
         const source = sourceByRow.get(fixtureItem.sourceRow);
@@ -199,6 +212,37 @@ async function main() {
             const clauseId = clause.clauseId || clause.constraintId || clause.id;
             recordCheck(clauseIdSet.has(clauseId), 'source_clause_missing_ir', `来源 ${source.sourceId} 的 clause 未出现在 constraintIRs。`, { clauseId });
             recordCheck(clause.sourceId === source.sourceId, 'source_clause_provenance_mismatch', `来源 ${source.sourceId} 的 clause sourceId 不一致。`, { clauseId, actual: clause.sourceId });
+        }
+    }
+
+    for (const [sourceRow, expected] of COMPLEX_SEMANTIC_BASELINE) {
+        const source = sourceByRow.get(sourceRow);
+        const clauses = asArray(source?.clauses);
+        recordCheck(Boolean(source), 'complex_semantic_source_missing', `复杂语义基线缺少第 ${sourceRow} 行。`);
+        if (!source) continue;
+        recordCheck(clauses.length === expected.clauseCount, 'complex_semantic_clause_count_mismatch', `第 ${sourceRow} 行子句数量与复杂语义基线不一致。`, {
+            expected: expected.clauseCount,
+            actual: clauses.length,
+            explanation: expected.explanation,
+        });
+        recordCheck(asArray(source.machineRuleIds).length === expected.machineRuleCount, 'complex_semantic_machine_count_mismatch', `第 ${sourceRow} 行机器规则数量与复杂语义基线不一致。`, {
+            expected: expected.machineRuleCount,
+            actual: asArray(source.machineRuleIds).length,
+            explanation: expected.explanation,
+        });
+        if (expected.unresolvedCount !== undefined) {
+            recordCheck(asArray(source.unresolvedClauseIds).length === expected.unresolvedCount, 'complex_semantic_unresolved_count_mismatch', `第 ${sourceRow} 行未落地语义数量与基线不一致。`, {
+                expected: expected.unresolvedCount,
+                actual: asArray(source.unresolvedClauseIds).length,
+                explanation: expected.explanation,
+            });
+        }
+        if (expected.rationaleCount !== undefined) {
+            recordCheck(asArray(source.rationales).length === expected.rationaleCount, 'complex_semantic_rationale_count_mismatch', `第 ${sourceRow} 行原因说明数量与基线不一致。`, {
+                expected: expected.rationaleCount,
+                actual: asArray(source.rationales).length,
+                explanation: expected.explanation,
+            });
         }
     }
 
@@ -280,6 +324,11 @@ async function main() {
             reviewStatus: source.reviewStatus || '',
             warnings: asArray(source.warnings),
             questions: asArray(source.questions),
+            rationales: asArray(source.rationales),
+            partiallyApplicable: source.partiallyApplicable === true,
+            applicableMachineRuleIds: asArray(source.applicableMachineRuleIds),
+            unresolvedClauseIds: asArray(source.unresolvedClauseIds),
+            semanticBaselineExplanation: COMPLEX_SEMANTIC_BASELINE.get(source.source?.rowNumber)?.explanation || '',
             clauses: asArray(source.clauses).map(compactClause),
             constraintIRs: irsBySourceId.get(source.sourceId) || [],
             machineRuleIds: asArray(source.machineRuleIds),
@@ -293,6 +342,7 @@ async function main() {
             workbookPath: path.relative(root, workbookPath),
             fixturePath: path.relative(root, fixturePath),
             expectedSourceCount: EXPECTED_SOURCE_COUNT,
+            expectedConstraintIrCount: EXPECTED_CONSTRAINT_IR_COUNT,
         },
         parser: {
             schemaVersion: parseResult.schemaVersion,

@@ -116,24 +116,31 @@ body.light-mode .tt-workbench {
 }
 
 .tt-inspector {
+    --tt-inspector-width: 540px;
+    --tt-inspector-height: 720px;
     position: fixed;
     top: 88px;
     right: 24px;
     z-index: 45;
-    width: min(360px, calc(100vw - 48px));
+    width: min(var(--tt-inspector-width), calc(100vw - 32px));
     max-width: none;
     min-height: 0;
     pointer-events: none;
 }
 
+.tt-inspector[hidden] {
+    display: none;
+}
+
 .tt-inspector.is-positioned {
-    top: var(--tt-inspector-y);
+    top: 0;
     right: auto;
-    left: var(--tt-inspector-x);
+    left: 0;
+    transform: translate3d(var(--tt-inspector-x), var(--tt-inspector-y), 0);
 }
 
 .tt-inspector.is-open {
-    width: min(360px, calc(100vw - 48px));
+    width: min(var(--tt-inspector-width), calc(100vw - 32px));
 }
 
 .tt-inspector.is-collapsed {
@@ -142,12 +149,19 @@ body.light-mode .tt-workbench {
 
 .tt-inspector.is-dragging {
     user-select: none;
+    will-change: transform;
+}
+
+.tt-inspector.is-resizing {
+    user-select: none;
+    will-change: width, height;
 }
 
 .tt-inspector-drawer {
     margin-left: auto;
     overflow: hidden;
     width: 100%;
+    max-height: min(var(--tt-inspector-height), calc(100vh - 32px));
     background: var(--tt-bg-inspector);
     border: 1px solid var(--tt-border);
     border-radius: var(--tt-radius-lg);
@@ -168,9 +182,9 @@ body.light-mode .tt-workbench {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--tt-space-sm);
-    min-height: 42px;
-    padding: 9px 11px;
+    gap: 8px;
+    min-height: 58px;
+    padding: 10px 12px;
     color: var(--tt-text);
     cursor: grab;
     list-style: none;
@@ -200,13 +214,22 @@ body.light-mode .tt-workbench {
 }
 
 .tt-inspector-summary strong {
-    font-size: 0.82rem;
+    font-size: 0.9rem;
+    line-height: 1.25;
 }
 
 .tt-inspector-summary em {
     color: var(--tt-muted);
-    font-size: 0.7rem;
+    font-size: 0.72rem;
     font-style: normal;
+}
+
+.tt-inspector-summary-status {
+    flex: 0 0 auto;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .tt-inspector.is-collapsed .tt-inspector-summary em {
@@ -237,9 +260,33 @@ body.light-mode .tt-workbench {
     color: currentColor;
 }
 
+.tt-inspector-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--tt-radius-sm);
+    background: transparent;
+    color: var(--tt-muted);
+    cursor: pointer;
+}
+
+.tt-inspector-close:hover,
+.tt-inspector-close:focus-visible {
+    border-color: var(--tt-border);
+    background: var(--tt-bg-input);
+    color: var(--tt-text);
+}
+
 .tt-inspector-body {
     max-height: calc(100vh - 150px);
+    max-height: min(calc(var(--tt-inspector-height) - 58px), calc(100vh - 90px));
     overflow: auto;
+    min-width: 0;
     padding: var(--tt-space-md);
     border-top: 1px solid var(--tt-border);
 }
@@ -460,6 +507,32 @@ button.tt-section-title {
 .tt-rule-stack .tt-rule-block + .tt-rule-block {
     padding-top: var(--tt-space-md);
     border-top: 1px solid var(--tt-border);
+}
+
+.tt-inspector-resize-handle {
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    width: 18px;
+    height: 18px;
+    cursor: nwse-resize;
+    pointer-events: auto;
+}
+
+.tt-inspector.is-collapsed .tt-inspector-resize-handle {
+    display: none;
+}
+
+.tt-inspector-resize-handle::after {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--tt-muted);
+    border-bottom: 2px solid var(--tt-muted);
+    content: '';
+    opacity: 0.65;
 }
 
 .tt-workflow-subsection {
@@ -2695,18 +2768,103 @@ body.light-mode .tt-inspector-problem-group {
     border-top: 1px solid rgba(148, 163, 184, 0.12);
 }
 
-.tt-constraint-fulfillment-summary strong {
-    color: var(--tt-text);
-    font-size: 0.78rem;
-    font-weight: 650;
+.tt-constraint-fulfillment-stats {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.tt-constraint-fulfillment-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--tt-text-secondary);
+    font-size: 0.74rem;
+    font-weight: 600;
     line-height: 1.4;
 }
 
-.tt-constraint-fulfillment-summary span {
+.tt-constraint-fulfillment-stat b {
+    color: var(--tt-text);
+    font-weight: 750;
+}
+
+.tt-constraint-fulfillment-stat--attention b {
+    color: #b45309;
+}
+
+.tt-constraint-fulfillment-stat--ok b {
+    color: #15803d;
+}
+
+.tt-constraint-fulfillment-summary > span:not(.tt-constraint-fulfillment-stat) {
     flex: 1 1 180px;
     color: var(--tt-muted);
     font-size: 0.7rem;
     line-height: 1.4;
+}
+
+.tt-constraint-fulfillment-status-menu {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.tt-constraint-fulfillment-status-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 26px;
+    white-space: nowrap;
+}
+
+.tt-constraint-fulfillment-status-trigger svg {
+    width: 13px;
+    height: 13px;
+}
+
+.tt-constraint-fulfillment-status-options {
+    position: absolute;
+    z-index: 4;
+    top: calc(100% + 5px);
+    right: 0;
+    display: grid;
+    min-width: 150px;
+    max-width: min(220px, calc(100vw - 32px));
+    padding: 4px;
+    border: 1px solid var(--tt-border);
+    border-radius: 8px;
+    background: var(--tt-surface);
+    box-shadow: var(--tt-shadow-md);
+}
+
+.tt-constraint-fulfillment-status-options[hidden] {
+    display: none;
+}
+
+.tt-constraint-fulfillment-status-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--tt-text-secondary);
+    font: inherit;
+    font-size: 0.72rem;
+    text-align: left;
+    cursor: pointer;
+}
+
+.tt-constraint-fulfillment-status-option:hover,
+.tt-constraint-fulfillment-status-option:focus-visible {
+    background: rgba(37, 99, 235, 0.08);
+    color: var(--tt-primary);
+    outline: none;
 }
 
 .tt-constraint-fulfillment-filters {
@@ -2748,21 +2906,21 @@ body.light-mode .tt-inspector-problem-group {
 
 .tt-constraint-fulfillment-list {
     display: grid;
-    max-height: 300px;
-    overflow: auto;
+    grid-auto-rows: max-content;
+    align-content: start;
+    min-width: 0;
+    max-width: 100%;
     border-top: 1px solid rgba(148, 163, 184, 0.12);
 }
 
 .tt-constraint-fulfillment-row {
-    appearance: none;
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-    gap: 8px;
-    align-items: center;
-    min-height: 42px;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    max-width: 100%;
     position: relative;
     width: 100%;
-    padding: 7px 10px;
+    padding: 0;
     border: 0;
     border-top: 1px solid rgba(148, 163, 184, 0.12);
     background: transparent;
@@ -2773,6 +2931,22 @@ body.light-mode .tt-inspector-problem-group {
 
 .tt-constraint-fulfillment-row:first-child {
     border-top: 0;
+}
+
+.tt-constraint-fulfillment-row-summary {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    min-width: 0;
+    max-width: 100%;
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.tt-constraint-fulfillment-row-summary:focus-visible {
+    outline: 2px solid var(--tt-primary);
+    outline-offset: -2px;
 }
 
 .tt-constraint-fulfillment-status {
@@ -2810,67 +2984,121 @@ body.light-mode .tt-inspector-problem-group {
 
 .tt-constraint-fulfillment-main strong {
     min-width: 0;
-    overflow: hidden;
+    overflow: visible;
     color: var(--tt-text);
     font-size: 0.78rem;
     font-weight: 600;
     line-height: 1.35;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
 }
 
 .tt-constraint-fulfillment-main em {
     min-width: 0;
+    display: -webkit-box;
     overflow: hidden;
     color: var(--tt-muted);
     font-size: 0.69rem;
     font-style: normal;
     line-height: 1.35;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
 }
 
 .tt-constraint-fulfillment-meta {
-    display: inline-flex;
+    display: flex;
+    grid-column: 1 / -1;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: 5px;
     min-width: 0;
+    max-width: 100%;
     color: var(--tt-muted);
     font-size: 0.68rem;
     line-height: 1.35;
-    white-space: nowrap;
+    flex-wrap: wrap;
+    overflow-wrap: anywhere;
 }
 
 .tt-constraint-fulfillment-actions {
     display: flex;
+    grid-column: 1 / -1;
     flex-wrap: wrap;
     gap: 6px;
-    justify-content: flex-end;
-    min-width: 150px;
+    justify-content: flex-start;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
 }
 
 .tt-constraint-fulfillment-actions .tt-btn {
     min-height: 28px;
+    min-width: 0;
+    max-width: 100%;
     padding: 4px 8px;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.tt-constraint-fulfillment-action-note {
+    max-width: 100%;
+    color: var(--tt-muted);
+    font-size: 0.7rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.tt-constraint-fulfillment-detail {
+    display: grid;
+    grid-column: 1 / -1;
+    gap: 7px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0 10px 10px;
+}
+
+.tt-constraint-fulfillment-evidence {
+    margin: 0;
+    color: var(--tt-text-secondary);
+    font-size: 0.72rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.tt-inspector-original-source {
+    min-width: 0;
+    max-width: 100%;
+    padding: 7px 9px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 6px;
+    background: rgba(148, 163, 184, 0.06);
+}
+
+.tt-inspector-original-source summary {
+    cursor: pointer;
+    color: var(--tt-text-secondary);
+    font-size: 0.72rem;
+    font-weight: 650;
+}
+
+.tt-inspector-original-source blockquote {
+    margin: 7px 0 0;
+    color: var(--tt-text);
+    font-size: 0.76rem;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.tt-constraint-fulfillment-locate {
+    display: flex;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .tt-constraint-fulfillment-actions .tt-btn--subtle {
     border-color: rgba(148, 163, 184, 0.18);
     background: rgba(148, 163, 184, 0.08);
-}
-
-@media (max-width: 760px) {
-    .tt-constraint-fulfillment-row {
-        grid-template-columns: auto minmax(0, 1fr);
-    }
-
-    .tt-constraint-fulfillment-meta,
-    .tt-constraint-fulfillment-actions {
-        grid-column: 1 / -1;
-        justify-content: flex-start;
-    }
 }
 
 .tt-constraint-fulfillment-meta b {
@@ -2881,10 +3109,86 @@ body.light-mode .tt-inspector-problem-group {
     font-weight: 650;
 }
 
-.tt-constraint-fulfillment-row:hover,
-.tt-constraint-fulfillment-row:focus-visible {
+.tt-constraint-fulfillment-row-summary:hover,
+.tt-constraint-fulfillment-row.is-expanded .tt-constraint-fulfillment-row-summary {
     background: rgba(37, 99, 235, 0.06);
-    outline: none;
+}
+
+.tt-inspector .tt-constraint-fulfillment-row {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.tt-inspector .tt-constraint-fulfillment-main,
+.tt-inspector .tt-constraint-fulfillment-meta,
+.tt-inspector .tt-constraint-fulfillment-actions {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.tt-inspector .tt-constraint-fulfillment-main strong,
+.tt-inspector .tt-constraint-fulfillment-main em {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+}
+
+.tt-inspector .tt-constraint-fulfillment-row:not(.is-expanded) .tt-constraint-fulfillment-main em {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+}
+
+.tt-inspector .tt-constraint-fulfillment-row.is-expanded .tt-constraint-fulfillment-main em {
+    display: block;
+    overflow: visible;
+}
+
+.tt-inspector .tt-constraint-fulfillment-meta,
+.tt-inspector .tt-constraint-fulfillment-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    white-space: normal;
+}
+
+.tt-inspector .tt-constraint-fulfillment-actions {
+    min-width: 0;
+}
+
+.tt-inspector .tt-constraint-fulfillment-detail,
+.tt-inspector .tt-constraint-fulfillment-evidence,
+.tt-inspector .tt-constraint-fulfillment-locate {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+.tt-inspector .tt-constraint-fulfillment-actions .tt-btn {
+    min-width: 0;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.tt-inspector .tt-inspector-problem-head strong,
+.tt-inspector .tt-inspector-target-main,
+.tt-inspector .tt-inspector-target-meta {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+}
+
+.tt-inspector .tt-detail-list span {
+    align-items: flex-start;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
 }
 
 .tt-rule-file-entry {
@@ -2924,7 +3228,7 @@ body.light-mode .tt-inspector-problem-group {
 
 .tt-rules-setup-card .tt-rule-entry {
     display: grid;
-    grid-template-columns: 38px minmax(0, 1fr);
+    grid-template-columns: 38px minmax(0, 1fr) 16px;
     align-items: center;
     justify-items: start;
     gap: 2px 10px;
@@ -2941,7 +3245,7 @@ body.light-mode .tt-rules-setup-card .tt-rule-entry {
     background: rgba(255, 255, 255, 0.82);
 }
 
-.tt-rules-setup-card .tt-rule-entry .lucide {
+.tt-rules-setup-card .tt-rule-entry > .lucide:first-child {
     box-sizing: border-box;
     grid-row: 1 / span 3;
     width: 38px;
@@ -2973,339 +3277,110 @@ body.light-mode .tt-rules-setup-card .tt-rule-entry {
     line-height: 1.35;
 }
 
-.tt-smart-helper-entry-subtitle {
-    color: var(--tt-text-secondary);
-    font-weight: 700;
-}
-
-.tt-smart-helper-entry-status {
-    color: var(--tt-muted);
-}
-
-.tt-constraint-agent-panel {
+.tt-smart-helper-entry-shell {
+    position: relative;
     display: grid;
-    gap: 10px;
+    grid-template-columns: minmax(0, 1fr) 36px;
+    align-items: center;
+    gap: 6px;
     min-width: 0;
+}
+
+.tt-rules-setup-card .tt-smart-helper-entry {
+    box-sizing: border-box;
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 8px;
+    min-height: 64px;
     padding: 10px;
-    border: 1px solid rgba(20, 184, 166, 0.2);
-    border-radius: var(--tt-radius-md);
-    background: var(--tt-bg-input);
 }
 
-.tt-constraint-agent-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 8px;
-    min-width: 0;
+.tt-rules-setup-card .tt-smart-helper-entry > .lucide:first-child {
+    grid-row: 1;
+    width: 28px;
+    height: 28px;
+    padding: 5px;
 }
 
-.tt-constraint-agent-header > div {
-    display: grid;
-    gap: 3px;
-    min-width: 0;
-}
-
-.tt-constraint-agent-header strong {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    color: var(--tt-text);
-    font-size: 0.82rem;
-    font-weight: 900;
-}
-
-.tt-constraint-agent-header strong .lucide {
-    width: 16px;
-    height: 16px;
-    color: var(--tt-primary);
-}
-
-.tt-constraint-agent-header em {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--tt-muted);
-    font-size: 0.68rem;
-    font-style: normal;
-    font-weight: 800;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.tt-constraint-agent-thread {
-    display: grid;
-    gap: 6px;
-    max-height: 168px;
-    min-width: 0;
-    overflow-y: auto;
-}
-
-.tt-constraint-agent-message {
-    display: grid;
-    gap: 3px;
-    padding: 7px 8px;
-    border: 1px solid var(--tt-border);
-    border-radius: var(--tt-radius-sm);
-    background: var(--tt-bg-panel);
-}
-
-.tt-constraint-agent-message--user {
-    border-color: rgba(20, 184, 166, 0.24);
-    background: rgba(20, 184, 166, 0.08);
-}
-
-.tt-constraint-agent-message span {
-    color: var(--tt-muted);
-    font-size: 0.66rem;
-    font-weight: 900;
-}
-
-.tt-constraint-agent-message p {
-    margin: 0;
-    color: var(--tt-text-secondary);
-    font-size: 0.72rem;
-    line-height: 1.45;
-    white-space: pre-wrap;
-}
-
-.tt-constraint-agent-mini-cards {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
-}
-
-.tt-constraint-agent-mini-card {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    padding: 8px;
-    border: 1px solid var(--tt-border);
-    border-radius: var(--tt-radius-sm);
-    background: rgba(148, 163, 184, 0.08);
-}
-
-.tt-constraint-agent-mini-card.is-excluded {
-    border-style: dashed;
-    opacity: 0.72;
-}
-
-.tt-constraint-agent-mini-card > div {
+.tt-smart-helper-entry-copy {
     display: grid;
     gap: 2px;
     min-width: 0;
 }
 
-.tt-constraint-agent-mini-card strong,
-.tt-constraint-agent-mini-card span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.tt-constraint-agent-mini-card strong {
-    color: var(--tt-text);
-    font-size: 0.74rem;
-    font-weight: 800;
-}
-
-.tt-constraint-agent-mini-card span {
+.tt-smart-helper-entry-status {
+    display: block;
     color: var(--tt-muted);
     font-size: 0.66rem;
-    font-weight: 700;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
 }
 
-.tt-constraint-agent-error {
-    margin: 0;
-    padding: 7px 8px;
-    border-left: 3px solid var(--tt-warning);
-    border-radius: var(--tt-radius-sm);
-    background: rgba(245, 158, 11, 0.1);
-    color: var(--tt-text);
-    font-size: 0.72rem;
-    font-weight: 800;
+.tt-rules-setup-card .tt-rule-entry > .tt-smart-helper-entry-arrow {
+    display: none;
 }
 
-.tt-constraint-agent-input {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
-}
-
-.tt-constraint-agent-input span {
-    color: var(--tt-muted);
-    font-size: 0.68rem;
-    font-weight: 900;
-}
-
-.tt-constraint-agent-input textarea {
+.tt-smart-helper-entry-shell > .tt-smart-helper-menu-trigger {
     box-sizing: border-box;
-    width: 100%;
-    min-height: 78px;
-    padding: 9px 10px;
-    border: 1px solid var(--tt-border);
-    border-radius: var(--tt-radius-sm);
-    background: var(--tt-bg-panel);
-    color: var(--tt-text);
-    font: inherit;
-    font-size: 0.76rem;
-    line-height: 1.45;
-    resize: vertical;
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+    border-color: var(--tt-border);
+    background: var(--tt-bg-input);
+    color: var(--tt-muted);
 }
 
-.tt-constraint-agent-input textarea:focus {
-    outline: none;
-    border-color: rgba(20, 184, 166, 0.42);
-    box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.1);
-}
-
-.tt-constraint-agent-actions {
+.tt-smart-helper-menu {
+    position: absolute;
+    z-index: 20;
+    top: 42px;
+    right: 0;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 6px;
+    width: min(210px, calc(100vw - 48px));
+    padding: 4px;
+    border: 1px solid var(--tt-border-strong);
+    border-radius: var(--tt-radius-md);
+    background: var(--tt-bg-elevated);
+    box-shadow: 0 12px 28px rgba(2, 6, 23, 0.22);
 }
 
-.tt-constraint-agent-actions .tt-btn {
-    min-width: 0;
-    padding-inline: 8px;
+.tt-smart-helper-menu button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 7px 9px;
+    border: 0;
+    border-radius: var(--tt-radius-sm);
+    background: transparent;
+    color: var(--tt-text-secondary);
+    font: inherit;
+    font-size: 0.74rem;
+    font-weight: 700;
+    text-align: left;
+    cursor: pointer;
 }
 
-.tt-constraint-agent-actions .tt-btn span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.tt-smart-helper-menu button:hover,
+.tt-smart-helper-menu button:focus-visible {
+    outline: none;
+    background: var(--tt-bg-soft);
+    color: var(--tt-text);
+}
+
+.tt-smart-helper-menu button.is-danger {
+    color: var(--tt-danger);
+}
+
+.tt-smart-helper-menu button .lucide {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 15px;
 }
 
 .tt-rules-setup-card .tt-rule-entry:hover,
 .tt-rules-setup-card .tt-rule-entry:focus-visible {
     border-color: rgba(8, 145, 178, 0.42);
     box-shadow: 0 10px 24px rgba(8, 145, 178, 0.12);
-}
-
-.tt-smart-helper-flow,
-.tt-smart-helper-metrics {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
-}
-
-.tt-smart-helper-flow {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    align-items: center;
-    padding: 7px 8px;
-    border: 1px solid rgba(8, 145, 178, 0.16);
-    border-radius: var(--tt-radius-sm);
-    background: var(--tt-bg-input);
-}
-
-.tt-smart-helper-flow span {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    min-width: 0;
-    color: var(--tt-muted);
-}
-
-.tt-smart-helper-flow span::before {
-    content: "";
-    width: 6px;
-    height: 6px;
-    flex: 0 0 6px;
-    border-radius: 999px;
-    background: var(--tt-border-strong);
-}
-
-.tt-smart-helper-flow span.is-active {
-    color: var(--tt-text-secondary);
-}
-
-.tt-smart-helper-flow span.is-active::before {
-    background: var(--tt-primary);
-}
-
-.tt-smart-helper-flow b,
-.tt-smart-helper-metrics b {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--tt-muted);
-    font-size: 0.66rem;
-    font-weight: 800;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.tt-smart-helper-metrics {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.tt-rules-setup-card .tt-smart-helper-flow {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.tt-rules-setup-card .tt-smart-helper-flow span {
-    justify-content: center;
-}
-
-.tt-rules-setup-card .tt-smart-helper-flow b,
-.tt-rules-setup-card .tt-smart-helper-metrics b {
-    overflow: visible;
-    text-overflow: clip;
-    white-space: normal;
-}
-
-.tt-rules-setup-card .tt-smart-helper-metrics {
-    grid-template-columns: minmax(0, 1fr);
-}
-
-.tt-smart-helper-metrics span {
-    display: grid;
-    min-height: 34px;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    align-items: center;
-    padding: 6px 8px;
-    border: 1px solid rgba(8, 145, 178, 0.18);
-    border-radius: var(--tt-radius-sm);
-    background: var(--tt-bg-input);
-    color: var(--tt-text);
-    font-size: 0.72rem;
-    font-weight: 800;
-}
-
-.tt-rules-setup-card .tt-smart-helper-metrics span {
-    min-height: 32px;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 4px;
-}
-
-.tt-smart-helper-metrics strong {
-    color: var(--tt-text);
-    font-size: 0.86rem;
-    font-weight: 900;
-}
-
-.tt-rules-setup-card .tt-smart-helper-metrics strong {
-    justify-self: end;
-}
-
-.tt-smart-helper-metrics em {
-    color: var(--tt-muted);
-    font-size: 0.66rem;
-    font-style: normal;
-    font-weight: 800;
-}
-
-.tt-smart-helper-metrics .is-warning {
-    color: var(--tt-warning);
-}
-
-.tt-smart-helper-metrics .is-complex {
-    color: var(--tt-primary);
 }
 
 .tt-rule-summary {
@@ -4020,8 +4095,15 @@ body.light-mode .tt-rules-setup-card .tt-rule-summary {
 .tt-roster-sheet-review-head strong {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 9px;
     min-width: 0;
+    flex: 1 1 auto;
+}
+
+.tt-inspector-summary-copy {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
 }
 
 .tt-roster-sheet-review-head {
@@ -6477,16 +6559,23 @@ button.tt-duty-cell:focus-visible span {
         width: 100%;
         max-width: none;
         pointer-events: auto;
+        transform: none;
+        will-change: auto;
     }
 
     .tt-inspector-drawer,
     .tt-inspector-drawer:not([open]),
     .tt-inspector-drawer[open] {
         width: 100%;
+        max-height: none;
     }
 
     .tt-inspector-body {
         max-height: none;
+    }
+
+    .tt-inspector-resize-handle {
+        display: none;
     }
 
     .tt-inspector-stack {
@@ -6752,8 +6841,6 @@ button.tt-duty-cell:focus-visible span {
         min-width: 0;
     }
 
-    .tt-smart-helper-flow,
-    .tt-smart-helper-metrics,
     .tt-complex-model-strip {
         grid-template-columns: minmax(0, 1fr);
     }

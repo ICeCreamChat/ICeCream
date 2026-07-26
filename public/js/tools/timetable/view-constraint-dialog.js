@@ -25,11 +25,17 @@ import {
     renderAIChatPanel,
 } from './view-constraint-dialog-components.js';
 import {
+    EDUCATION_SOFT_RULE_TEMPLATES,
+    getConstraintRuleEditorDefinition,
+} from './constraint-rule-form-model.js';
+import {
+    areApplyItemsExcluded,
     buildRequirementReviewViewModel,
     buildUnifiedRequirementItems,
     draftRowApplyItemKey,
     filterUnifiedRequirementItems,
     getActionableRequirementCount,
+    getRequirementApplyItemKeys,
     getRequirementGroupKey,
     isApplyItemExcluded,
     semanticActionApplyItemKey,
@@ -87,6 +93,16 @@ function blockPreferenceLabel(value = '') {
 }
 
 function requirementParameterLabel(item = {}) {
+    const semanticParameters = item.parameters || {};
+    if (
+        item.quantifier
+        || (Array.isArray(semanticParameters.periods) && semanticParameters.periods.length)
+        || (Array.isArray(semanticParameters.days) && semanticParameters.days.length)
+        || Number.isFinite(Number(semanticParameters.minOccurrences))
+    ) {
+        const semanticTags = sourceClauseSemanticTags(item);
+        if (semanticTags.length) return semanticTags.join(' · ');
+    }
     const rule = (item.machineRules || [])[0];
     if (rule) {
         const slots = rule.slots || rule.time?.slots || [];
@@ -110,6 +126,103 @@ function requirementParameterLabel(item = {}) {
     }
     if (params.balancedTeacherLoad) return '启用负载均衡';
     return '';
+}
+
+function uniqueTextValues(values = []) {
+    return [...new Set(values.map(value => String(value || '').trim()).filter(Boolean))];
+}
+
+function compactNumberRange(values = []) {
+    const numbers = [...new Set(values.map(Number).filter(Number.isInteger))].sort((left, right) => left - right);
+    if (!numbers.length) return '';
+    const ranges = [];
+    let start = numbers[0];
+    let end = numbers[0];
+    const pushRange = () => ranges.push(start === end ? String(start) : `${start}–${end}`);
+    numbers.slice(1).forEach(value => {
+        if (value === end + 1) {
+            end = value;
+            return;
+        }
+        pushRange();
+        start = value;
+        end = value;
+    });
+    pushRange();
+    return ranges.join('、');
+}
+
+function sourceClauseObjectNames(clause = {}) {
+    const object = clause.object || clause.target || {};
+    return String(object.name || clause.targetName || '')
+        .split(/[、，,]/)
+        .map(value => value.trim())
+        .filter(Boolean);
+}
+
+function sourceClauseScopeSummary(clause = {}) {
+    const scope = clause.scope || {};
+    const parameters = clause.parameters || {};
+    const gradeNames = uniqueTextValues([
+        ...(Array.isArray(scope.gradeNames) ? scope.gradeNames : []),
+        ...(Array.isArray(parameters.gradeNames) ? parameters.gradeNames : []),
+    ]);
+    const classIds = uniqueTextValues([
+        ...(Array.isArray(scope.classIds) ? scope.classIds : []),
+        ...(Array.isArray(parameters.classIds) ? parameters.classIds : []),
+    ]);
+    const teacherIds = uniqueTextValues([
+        ...(Array.isArray(scope.teacherIds) ? scope.teacherIds : []),
+        ...(Array.isArray(parameters.teacherIds) ? parameters.teacherIds : []),
+    ]);
+    const labels = [];
+    if (gradeNames.length) labels.push(gradeNames.join('、'));
+    if (classIds.length) labels.push(`${classIds.length} 个班级`);
+    if (!classIds.length && teacherIds.length) labels.push(`${teacherIds.length} 位教师覆盖`);
+    return labels.join(' · ');
+}
+
+function sourceClauseSemanticTags(clause = {}) {
+    const parameters = clause.parameters || {};
+    const quantifierMin = Number.parseInt(clause.quantifier?.min ?? parameters.minOccurrences, 10);
+    const { days, periods } = sourceClauseTimeValues(clause);
+    const tags = [];
+    if (Number.isInteger(quantifierMin) && quantifierMin > 0) tags.push(`每周至少 ${quantifierMin} 次`);
+    if (periods.length) {
+        const periodLabel = `第${compactNumberRange(periods)}节`;
+        tags.push(days.length === 1 ? `${requirementDayLabel(days[0])}${periodLabel}` : periodLabel);
+    } else if (days.length && days.length < 5) {
+        tags.push(days.map(requirementDayLabel).join('、'));
+    }
+    const scopeLabel = sourceClauseScopeSummary(clause);
+    if (scopeLabel) tags.push(scopeLabel);
+    return uniqueTextValues(tags);
+}
+
+function sourceRequirementDisplaySummary(item = {}, fallback = {}) {
+    const clauses = Array.isArray(item.clauses) ? item.clauses.filter(Boolean) : [];
+    if (clauses.length <= 1) {
+        return {
+            objectLabel: fallback.objectLabel || requirementObjectName(item),
+            title: fallback.title || requirementIntentLabel(item.intent),
+            parameterLabel: fallback.parameterLabel ?? requirementParameterLabel(item),
+        };
+    }
+
+    const objectNames = uniqueTextValues(clauses.flatMap(sourceClauseObjectNames));
+    const intentLabels = uniqueTextValues(clauses.map(clause => requirementIntentLabel(clause.intent || clause.capabilityId)));
+    const semanticTags = uniqueTextValues(clauses.flatMap(sourceClauseSemanticTags));
+    const compactSemanticTags = semanticTags.filter(tag => !semanticTags.some(other => (
+        other !== tag && other.startsWith(`${tag} · `)
+    )));
+    const allSubjects = clauses.every(clause => String((clause.object || clause.target || {}).kind || '').includes('subject'));
+    return {
+        objectLabel: objectNames.join('、') || fallback.objectLabel || '复合排课范围',
+        title: intentLabels.length === 1
+            ? intentLabels[0]
+            : (allSubjects ? '复合课程要求' : '复合排课需求'),
+        parameterLabel: compactSemanticTags.join(' · ') || fallback.parameterLabel || '',
+    };
 }
 
 function normalizedRequirementApplyTo(applyTo = '') {
@@ -399,7 +512,20 @@ function requirementComplexBadges(item = {}) {
     return [...new Set(badges)];
 }
 
-function constraintFlowStage(review = {}, requirements = []) {
+function constraintAgentFlowStage(agent = null) {
+    if (!agent) return '';
+    const stage = String(agent.stage || 'INTAKE').toUpperCase();
+    if (['APPLY', 'SOLVE', 'REPORT'].includes(stage)) return 'apply';
+    if (stage === 'CONFIRM') {
+        return agent.confirmed || agent.highRiskConfirmed ? 'apply' : 'review';
+    }
+    if (stage === 'CLARIFY') return 'understand';
+    return 'input';
+}
+
+function constraintFlowStage(review = {}, requirements = [], agent = null) {
+    const agentStage = constraintAgentFlowStage(agent);
+    if (agentStage) return agentStage;
     const phase = String(review.phase || '');
     if (review.applying || ['saving', 'save', 'applying', 'apply'].includes(phase)) {
         return 'apply';
@@ -418,7 +544,21 @@ function constraintFlowStage(review = {}, requirements = []) {
     return 'input';
 }
 
-function constraintFlowStatusText(review = {}, stage = 'input') {
+function constraintFlowStatusText(review = {}, stage = 'input', agent = null) {
+    if (agent) {
+        const agentStage = String(agent.stage || 'INTAKE').toUpperCase();
+        if (agent.loading) return '智能助手正在处理当前对话';
+        if (agentStage === 'CLARIFY') return '请补充助手需要确认的信息';
+        if (agentStage === 'CONFIRM') {
+            return agent.confirmed || agent.highRiskConfirmed
+                ? '理解结果已确认，等待应用到项目'
+                : '请检查并确认当前理解结果';
+        }
+        if (agentStage === 'APPLY') return '约束已应用，可以生成课表';
+        if (agentStage === 'SOLVE') return '正在生成课表并检查约束满足情况';
+        if (agentStage === 'REPORT') return '课表已生成，约束满足度报告已更新';
+        return '输入排课需求并发送给智能助手';
+    }
     if (review.applying || ['saving', 'save', 'applying', 'apply'].includes(String(review.phase || ''))) {
         return '正在写入项目规则和模型设置';
     }
@@ -429,18 +569,18 @@ function constraintFlowStatusText(review = {}, stage = 'input') {
     return '等待输入文本、文件或手动补充';
 }
 
-function renderConstraintFlow(compact = false, review = {}, requirements = []) {
+function renderConstraintFlow(compact = false, review = {}, requirements = [], agent = null) {
     const steps = [
         { key: 'input', label: '输入需求' },
         { key: 'understand', label: '智能理解' },
         { key: 'review', label: '人工复核' },
         { key: 'apply', label: '应用到项目' },
     ];
-    const currentStage = constraintFlowStage(review, requirements);
+    const currentStage = constraintFlowStage(review, requirements, agent);
     const currentIndex = Math.max(0, steps.findIndex(step => step.key === currentStage));
     const flowPercent = steps.length > 1 ? Math.round((currentIndex / (steps.length - 1)) * 10000) / 100 : 0;
     const flowFill = Math.round(flowPercent * 0.75 * 100) / 100;
-    const statusText = constraintFlowStatusText(review, currentStage);
+    const statusText = constraintFlowStatusText(review, currentStage, agent);
     return `
         <div class="tt-constraint-flow-wrap" data-current-flow-step="${escapeAttr(currentStage)}">
             <span class="tt-constraint-flow-status-sr" aria-live="polite">
@@ -525,7 +665,7 @@ function renderRequirementReviewSummary(viewModel = {}) {
     return `
         <div class="tt-requirement-review-summary" aria-label="需求复核概览">
             <span class="is-applicable"><b>可直接应用</b><strong>${escapeHtml(counts.applicable || 0)}</strong><small>项</small></span>
-            <span class="${counts.attention ? 'is-warning' : ''}"><b>需要确认</b><strong>${escapeHtml(counts.attention || 0)}</strong><small>项</small></span>
+            <span class="${counts.attention ? 'is-warning' : ''}"><b>需要确认</b><strong>${escapeHtml(counts.attention || 0)}</strong><small>项${counts.partiallyApplicable ? ` · ${escapeHtml(counts.partiallyApplicable)} 项可部分应用` : ''}</small></span>
             <span class="is-handled"><b>系统已自动处理</b><strong>${escapeHtml(counts.handled || 0)}</strong><small>项</small></span>
         </div>
     `;
@@ -655,10 +795,14 @@ function renderRequirementFilterBar(requirements = [], activeFilter = 'all') {
 
 function renderRequirementRow(viewItem = {}, selectedId = '') {
     const item = viewItem.item || {};
-    const parameterLabel = requirementParameterLabel(item);
+    const display = sourceRequirementDisplaySummary(item, {
+        objectLabel: viewItem.objectLabel,
+        title: viewItem.title,
+        parameterLabel: requirementParameterLabel(item),
+    });
     const isSelected = viewItem.id && viewItem.id === selectedId;
     const hasWarning = viewItem.bucket === 'attention';
-    const title = [viewItem.objectLabel, viewItem.title].filter(Boolean).join('｜');
+    const title = [display.objectLabel, display.title].filter(Boolean).join('｜');
     const effectLabel = String(viewItem.destinationLabel || '').replace(/^[→✓⚠○]\s*/, '');
     return `
         <button data-action="select-requirement" data-requirement-id="${escapeAttr(viewItem.id || '')}"
@@ -669,7 +813,7 @@ function renderRequirementRow(viewItem = {}, selectedId = '') {
             </span>
             <span class="tt-requirement-row-main">
                 <strong>${escapeHtml(title || '排课需求')}</strong>
-                <small>${escapeHtml(parameterLabel || viewItem.destinationExplanation)}</small>
+                <small>${escapeHtml(display.parameterLabel || viewItem.destinationExplanation)}</small>
             </span>
             <span class="tt-requirement-row-effect tt-requirement-destination--${escapeAttr(viewItem.destinationTone)}">
                 <small>将应用到</small>
@@ -682,6 +826,12 @@ function renderRequirementRow(viewItem = {}, selectedId = '') {
 
 function normalizeMachineRuleForRender(rule = {}, state = {}) {
     const typeKey = String(rule.type || '').trim().toLowerCase().replace(/[-\s]+/g, '_');
+    const editorDefinition = getConstraintRuleEditorDefinition(rule);
+    const editorLabel = editorDefinition?.label || '';
+    const typeLabel = editorLabel
+        || rule.typeLabel
+        || RULE_TYPE_LABELS[typeKey]
+        || (typeKey === 'advanced_constraint' ? '高级排课规则' : '约束规则');
     const confidence = typeof rule.confidence === 'number'
         ? (rule.confidence <= 1 ? rule.confidence * 100 : rule.confidence)
         : null;
@@ -692,10 +842,10 @@ function normalizeMachineRuleForRender(rule = {}, state = {}) {
     const applyItemKey = draftRowApplyItemKey(rule);
     return {
         ...rule,
-        typeLabel: rule.typeLabel || RULE_TYPE_LABELS[typeKey] || '约束规则',
+        typeLabel,
         confidenceTone,
         confidenceLabel,
-        understanding: rule.understanding || rule.description || requirementIntentLabel(rule.intent || rule.type),
+        understanding: rule.understanding || rule.description || editorLabel || requirementIntentLabel(rule.intent || rule.type),
         applyItemKey,
         applyExcluded: isApplyItemExcluded(state.ruleReview || {}, applyItemKey),
     };
@@ -806,6 +956,16 @@ function renderRequirementClauses(item = {}) {
         </details>
     `;
 }
+
+function requiresSourceSemanticEditor(item = {}) {
+    const clauses = Array.isArray(item.clauses) ? item.clauses.filter(Boolean) : [];
+    return Boolean(item.sourceId) && (
+        clauses.length > 1
+        || item.partiallyApplicable === true
+        || clauses.some(clause => ['inherits', 'emphasis', 'exception'].includes(clause.relation?.kind))
+    );
+}
+
 function renderRequirementMachineRules(item = {}, state = {}) {
     const rules = item.machineRules || [];
     const actions = (item.semanticActions || []).filter(action => !isRulePatchBridgeAction(action));
@@ -832,7 +992,10 @@ function renderRequirementMachineRules(item = {}, state = {}) {
             ${itemCount ? `
                 ${rules.length ? `
                     <div class="tt-machine-rule-list">
-                        ${rules.map(rule => renderConstraintCard(normalizeMachineRuleForRender(rule, state), state)).join('')}
+                        ${rules.map(rule => renderConstraintCard({
+                            ...normalizeMachineRuleForRender(rule, state),
+                            semanticReadOnly: requiresSourceSemanticEditor(item),
+                        }, state)).join('')}
                     </div>
                 ` : ''}
                 ${actions.length ? `
@@ -976,16 +1139,24 @@ function renderRequirementActions(viewItem = {}, state = {}) {
     const primaryAction = !primaryRule ? (actions[0] || null) : null;
     const applyItem = primaryRule || primaryAction;
     if (!applyItem) return '';
-    const applyItemKey = primaryRule ? draftRowApplyItemKey(primaryRule) : semanticActionApplyItemKey(primaryAction);
-    const excluded = isApplyItemExcluded(state.ruleReview || {}, applyItemKey);
+    const applyItemKeys = getRequirementApplyItemKeys({ machineRules: rules, semanticActions: actions });
+    const applyItemKey = applyItemKeys[0]
+        || (primaryRule ? draftRowApplyItemKey(primaryRule) : semanticActionApplyItemKey(primaryAction));
+    const requirementId = item.id || item.sourceId || '';
+    const excluded = areApplyItemsExcluded(state.ruleReview || {}, applyItemKeys);
+    const sourceEditor = requiresSourceSemanticEditor(item);
     return `
         <div class="tt-requirement-detail-actions" aria-label="需求操作">
             <button class="tt-btn tt-btn--sm tt-btn--ghost" data-action="toggle-constraint-apply-item"
-                data-apply-item-key="${escapeAttr(applyItemKey)}" type="button">
+                data-apply-item-key="${escapeAttr(applyItemKey)}" data-requirement-id="${escapeAttr(requirementId)}" type="button">
                 <i data-lucide="${excluded ? 'rotate-ccw' : 'pause'}"></i>
                 <span>${escapeHtml(excluded ? '恢复应用' : '暂不应用')}</span>
             </button>
-            ${primaryRule ? `
+            ${sourceEditor ? `
+                <button class="tt-btn tt-btn--sm tt-btn--ghost" data-action="edit-source-requirement" data-source-id="${escapeAttr(item.sourceId || '')}" type="button">
+                    <i data-lucide="pencil-line"></i><span>编辑理解结果</span>
+                </button>
+            ` : primaryRule ? `
                 <button class="tt-btn tt-btn--sm tt-btn--ghost" data-action="edit-constraint" data-constraint-id="${escapeAttr(primaryRule.id || '')}" type="button">
                     <i data-lucide="pencil"></i><span>编辑规则</span>
                 </button>
@@ -1052,7 +1223,11 @@ function renderRequirementDetail(viewItem = null, state = {}) {
         `;
     }
     const item = viewItem.item || {};
-    const parameterLabel = requirementParameterLabel(item);
+    const display = sourceRequirementDisplaySummary(item, {
+        objectLabel: viewItem.objectLabel,
+        title: viewItem.title,
+        parameterLabel: requirementParameterLabel(item),
+    });
     const sourceText = viewItem.rawText || '未保留原始输入文本';
     const effectLabel = String(viewItem.destinationLabel || '').replace(/^[→✓⚠○]\s*/, '');
     return `
@@ -1060,13 +1235,13 @@ function renderRequirementDetail(viewItem = null, state = {}) {
             <div class="tt-requirement-detail-header">
                 <div>
                     <span class="tt-requirement-status tt-requirement-status--${escapeAttr(viewItem.statusTone)}">${escapeHtml(viewItem.statusLabel)}</span>
-                    <strong>${escapeHtml(viewItem.objectLabel)}｜${escapeHtml(viewItem.title)}</strong>
+                    <strong>${escapeHtml(display.objectLabel)}｜${escapeHtml(display.title)}</strong>
                 </div>
                 <span class="tt-requirement-detail-source">${escapeHtml(viewItem.sourceLabel)}</span>
             </div>
             <section class="tt-requirement-user-section">
                 <span class="tt-requirement-detail-label">系统理解</span>
-                <strong>${escapeHtml([viewItem.objectLabel, viewItem.title, parameterLabel].filter(Boolean).join(' · '))}</strong>
+                <strong>${escapeHtml([display.objectLabel, display.title, display.parameterLabel].filter(Boolean).join(' · '))}</strong>
             </section>
             <section class="tt-requirement-user-section tt-requirement-user-section--effect">
                 <span class="tt-requirement-detail-label">将如何生效</span>
@@ -1075,11 +1250,23 @@ function renderRequirementDetail(viewItem = null, state = {}) {
                     <p>${escapeHtml(viewItem.destinationExplanation)}</p>
                 </div>
             </section>
+            ${item.partiallyApplicable ? `
+                <div class="tt-requirement-partial-summary" role="status">
+                    <i data-lucide="split"></i>
+                    <span>部分可应用：${escapeHtml((item.applicableMachineRuleIds || []).length)} 条已可执行，${escapeHtml((item.unresolvedClauseIds || []).length)} 条已理解但暂未落地</span>
+                </div>
+            ` : ''}
             ${renderRequirementAttention(viewItem)}
             <section class="tt-requirement-source-evidence">
                 <span class="tt-requirement-detail-label">原文依据</span>
                 <blockquote>${escapeHtml(sourceText)}</blockquote>
             </section>
+            ${(item.rationales || []).length ? `
+                <details class="tt-requirement-rationales">
+                    <summary>原因说明 (${escapeHtml(item.rationales.length)})</summary>
+                    <ul>${item.rationales.map(rationale => `<li>${escapeHtml(rationale.text || rationale.reason || rationale)}</li>`).join('')}</ul>
+                </details>
+            ` : ''}
             ${renderRequirementActions(viewItem, state)}
             ${renderRequirementTechnicalDetails(viewItem, state)}
         </aside>
@@ -1162,6 +1349,411 @@ function renderRequirementGroups(requirements = [], dialog = {}, state = {}) {
     `;
 }
 
+function sourceEditorEntityLabel(item = {}, kind = '') {
+    if (kind === 'class') return [item.grade, item.name].filter(Boolean).join('') || item.name || item.id || '';
+    return item.name || item.label || item.id || '';
+}
+
+function renderSourceEditorOptionGrid(items = [], selected = [], kind = '', field = '', selectedLabels = {}, accessibleLabel = '') {
+    const selectedIds = new Set((selected || []).map(value => String(value)));
+    const records = (items || [])
+        .filter(item => item?.id !== undefined && item?.id !== null && String(item.id))
+        .map(item => ({
+            id: String(item.id),
+            label: sourceEditorEntityLabel(item, kind),
+            historical: false,
+        }));
+    const knownIds = new Set(records.map(item => item.id));
+    selectedIds.forEach(id => {
+        if (knownIds.has(id)) return;
+        records.unshift({
+            id,
+            label: selectedLabels[id] || `${id}（历史值）`,
+            historical: true,
+        });
+    });
+    return `
+        <div class="tt-source-option-grid" data-source-option-group="${escapeAttr(field)}" role="group" aria-label="${escapeAttr(accessibleLabel || '可选对象')}">
+            ${records.length ? records.map(item => `
+                <label class="tt-source-option ${item.historical ? 'is-historical' : ''}">
+                    <input type="checkbox" data-source-field="${escapeAttr(field)}" value="${escapeAttr(item.id)}" ${selectedIds.has(item.id) ? 'checked' : ''}>
+                    <span>${escapeHtml(item.label)}</span>
+                </label>
+            `).join('') : '<span class="tt-source-option-empty">当前项目暂无可选对象</span>'}
+        </div>
+    `;
+}
+
+function sourceClauseTimeValues(clause = {}) {
+    const parameters = clause.parameters || {};
+    const candidates = [clause.condition || {}, clause.time || {}, parameters];
+    const explicitValues = key => candidates
+        .map(candidate => Array.isArray(candidate[key]) ? candidate[key] : [])
+        .find(values => values.length) || [];
+    const slots = [...new Set(candidates
+        .flatMap(candidate => Array.isArray(candidate.slots) ? candidate.slots : [])
+        .map(String)
+        .filter(Boolean))];
+    const slotParts = slots.map(slot => slot.split('-').map(Number));
+    const normalizeNumbers = values => [...new Set(values.map(Number).filter(Number.isInteger))];
+    return {
+        days: normalizeNumbers(explicitValues('days').length ? explicitValues('days') : slotParts.map(parts => parts[0])),
+        periods: normalizeNumbers(explicitValues('periods').length ? explicitValues('periods') : slotParts.map(parts => parts[1])),
+    };
+}
+
+const SOURCE_EDITOR_DAY_CAPABILITIES = new Set([
+    'teacher.unavailable',
+    'teacher.avoid_periods',
+    'class.fixed_activity',
+    'school.unavailable',
+    'lesson.locked_slot',
+    'subject.preferred_periods',
+    'subject.avoid_periods',
+    'subject.avoid_weekday_concentration',
+]);
+
+const SOURCE_EDITOR_PERIOD_CAPABILITIES = new Set([
+    'teacher.unavailable',
+    'teacher.avoid_periods',
+    'class.fixed_activity',
+    'school.unavailable',
+    'lesson.locked_slot',
+    'subject.preferred_day_part',
+    'subject.preferred_periods',
+    'subject.avoid_periods',
+    'lesson.activity_scope_period_policy',
+    'lesson.resource_attribute_avoid_periods',
+]);
+
+function sourceClauseEditorProfile(clause = {}, clauses = []) {
+    const capabilityId = clause.capabilityId || '';
+    const objectKind = clause.object?.kind || clause.target?.kind || 'global';
+    const { days, periods } = sourceClauseTimeValues(clause);
+    const parameters = clause.parameters || {};
+    const relationKind = clause.relation?.kind || 'independent';
+    const sourceHasRelations = clauses.some(item => (
+        item.relation?.kind && item.relation.kind !== 'independent'
+    ));
+    const unsupportedConcentration = capabilityId === 'subject.avoid_day_part_concentration';
+    return {
+        target: objectKind !== 'global',
+        scope: objectKind.includes('subject')
+            || objectKind.includes('course')
+            || ['explicit_classes', 'grade_classes', 'teacher_covered_classes', 'subject_offering_classes', 'school', 'unresolved']
+                .includes(clause.scope?.kind || parameters.scopeQualifier || ''),
+        strength: true,
+        days: !unsupportedConcentration && (days.length > 0 || SOURCE_EDITOR_DAY_CAPABILITIES.has(capabilityId)),
+        periods: !unsupportedConcentration && (periods.length > 0 || SOURCE_EDITOR_PERIOD_CAPABILITIES.has(capabilityId)),
+        quantifier: !unsupportedConcentration && (
+            Number.isFinite(Number(clause.quantifier?.min ?? parameters.minOccurrences))
+            || capabilityId === 'subject.preferred_periods'
+        ),
+        relation: sourceHasRelations || relationKind !== 'independent',
+        semanticSummary: unsupportedConcentration
+            ? `语义参数：${parameters.dayPart === 'afternoon' ? '下午集中度' : '时段集中度'}（当前求解器暂未支持）`
+            : '',
+    };
+}
+
+function sourceClauseDerivedClassIds(project = {}, clause = {}) {
+    const scope = clause.scope || {};
+    const parameters = clause.parameters || {};
+    const scopeKind = scope.kind || parameters.scopeQualifier || 'unresolved';
+    const classes = project.classes || [];
+    const classIds = new Set(classes.map(item => String(item.id)));
+    const existingClassIds = [...new Set([
+        ...(Array.isArray(scope.classIds) ? scope.classIds : []),
+        ...(Array.isArray(parameters.classIds) ? parameters.classIds : []),
+    ].map(String).filter(id => classIds.has(id)))];
+    const gradeNames = new Set([
+        ...(Array.isArray(scope.gradeNames) ? scope.gradeNames : []),
+        ...(Array.isArray(parameters.gradeNames) ? parameters.gradeNames : []),
+    ].map(String));
+    const targetIds = new Set((clause.object?.matchedIds || clause.target?.matchedIds || []).map(String));
+    const teacherIds = new Set([
+        ...(Array.isArray(scope.teacherIds) ? scope.teacherIds : []),
+        ...(Array.isArray(parameters.teacherIds) ? parameters.teacherIds : []),
+    ].map(String));
+    const offeringPlans = (project.lessonPlans || []).filter(plan => (
+        (!targetIds.size || targetIds.has(String(plan.subjectId)))
+        && (!teacherIds.size || teacherIds.has(String(plan.teacherId)))
+    ));
+    const offeringClassIds = [...new Set(offeringPlans.map(plan => String(plan.classId)).filter(id => classIds.has(id)))];
+
+    if (scopeKind === 'explicit_classes') return existingClassIds;
+    if (scopeKind === 'grade_classes') {
+        return classes.filter(item => gradeNames.has(String(item.grade))).map(item => String(item.id));
+    }
+    if (scopeKind === 'teacher_covered_classes') return offeringClassIds.length ? offeringClassIds : existingClassIds;
+    if (scopeKind === 'subject_offering_classes' || scopeKind === 'school') {
+        return offeringClassIds.length ? offeringClassIds : existingClassIds;
+    }
+    return existingClassIds;
+}
+
+function renderSourceClauseEditor(clause = {}, index = 0, clauses = [], project = {}, omittedClauseIds = []) {
+    const object = clause.object || clause.target || {};
+    const objectKind = object.kind || 'global';
+    const targetItems = objectKind.includes('teacher') ? (project.teachers || [])
+        : objectKind.includes('class') ? (project.classes || [])
+            : objectKind.includes('room') ? (project.rooms || [])
+                : objectKind.includes('subject') || objectKind.includes('course') ? (project.subjects || [])
+                    : [];
+    const scope = clause.scope || {};
+    const parameters = clause.parameters || {};
+    const { days, periods } = sourceClauseTimeValues(clause);
+    const activeDays = project.activeWeekdays || [1, 2, 3, 4, 5];
+    const activePeriods = project.activePeriods || [1, 2, 3, 4, 5, 6, 7, 8];
+    const scopeKind = scope.kind || parameters.scopeQualifier || 'unresolved';
+    const selectedGradeNames = [
+        ...(Array.isArray(scope.gradeNames) ? scope.gradeNames : []),
+        ...(Array.isArray(parameters.gradeNames) ? parameters.gradeNames : []),
+    ].filter(Boolean);
+    const gradeOptions = [...new Set([
+        ...(project.classes || []).map(item => item.grade).filter(Boolean),
+        ...selectedGradeNames,
+    ])];
+    const executionStatus = clause.executionStatus || '';
+    const selectedTargetIds = Array.isArray(object.matchedIds) ? object.matchedIds : [];
+    const selectedClassIds = (Array.isArray(scope.classIds) && scope.classIds.length ? scope.classIds : parameters.classIds) || [];
+    const selectedTeacherIds = (Array.isArray(scope.teacherIds) && scope.teacherIds.length ? scope.teacherIds : parameters.teacherIds) || [];
+    const clauseObjectLabel = sourceClauseObjectNames(clause).join('、') || object.name || '全局范围';
+    const clauseIntentLabel = requirementIntentLabel(clause.intent || clause.capabilityId);
+    const clauseTags = sourceClauseSemanticTags(clause);
+    const editorProfile = sourceClauseEditorProfile(clause, clauses);
+    const kept = !new Set((omittedClauseIds || []).map(String)).has(String(clause.clauseId || clause.id || index));
+    const scopeVisible = field => ({
+        explicit_classes: ['classIds'],
+        grade_classes: ['gradeNames'],
+        teacher_covered_classes: ['teacherIds'],
+    }[scopeKind] || []).includes(field);
+    const targetLabels = Object.fromEntries(selectedTargetIds.map(id => {
+        const entity = targetItems.find(item => String(item.id) === String(id));
+        return [String(id), entity ? sourceEditorEntityLabel(entity, objectKind) : object.name];
+    }));
+    const derivedClassIds = sourceClauseDerivedClassIds(project, clause);
+    const scopeClassPreview = derivedClassIds.length
+        ? ` · ${derivedClassIds.slice(0, 6).map(id => sourceEditorEntityLabel((project.classes || []).find(item => String(item.id) === String(id)) || { id }, 'class')).join('、')}`
+        : '';
+    return `
+        <details class="tt-source-clause-editor" data-source-clause-index="${index}">
+            <summary class="tt-source-clause-summary">
+                <span class="tt-source-clause-main">
+                    <b>${escapeHtml(index + 1)}</b>
+                    <span><strong>${escapeHtml(clauseObjectLabel)}</strong><small>${escapeHtml(clauseIntentLabel)}</small></span>
+                </span>
+                <span class="tt-source-clause-tags">
+                    ${clauseTags.map(tag => `<em>${escapeHtml(tag)}</em>`).join('')}
+                    <em>${escapeHtml(requirementStrengthLabel(clause.strength))}</em>
+                    <em class="${executionStatus === 'unsupported_by_solver' ? 'is-unsupported' : 'is-executable'}">${escapeHtml(executionStatus === 'unsupported_by_solver' ? '已理解，暂未落地' : '可重新编译')}</em>
+                </span>
+                <i data-lucide="chevron-down" aria-hidden="true"></i>
+            </summary>
+            <div class="tt-source-clause-editor-body">
+                <div class="tt-source-clause-controls">
+                    <span>子约束 ${escapeHtml(index + 1)}</span>
+                    <label><input type="checkbox" data-source-field="keep" ${kept ? 'checked' : ''}>保留此子约束</label>
+                </div>
+                <div class="tt-source-editor-grid">
+                ${editorProfile.target ? `<div class="tt-constraint-field tt-source-editor-span-2">
+                    <span>适用对象</span>
+                    ${renderSourceEditorOptionGrid(targetItems, selectedTargetIds, objectKind.includes('class') ? 'class' : objectKind, 'targetIds', targetLabels, '适用对象')}
+                    ${selectedTargetIds.length ? '' : `<input class="tt-input" data-source-field="targetName" value="${escapeAttr(object.name || '')}" aria-label="对象名称或历史值" placeholder="输入对象名称">`}
+                </div>` : ''}
+                ${editorProfile.scope ? `<label class="tt-constraint-field">
+                    <span>适用范围</span>
+                    <select class="tt-select" data-source-field="scopeKind">
+                        ${[['explicit_classes', '指定班级'], ['grade_classes', '年级班级'], ['teacher_covered_classes', '教师任教班级'], ['subject_offering_classes', '课程实际开课班级'], ['school', '全校实际开课班级'], ['unresolved', '待确认']]
+                            .map(([value, label]) => `<option value="${value}" ${scopeKind === value ? 'selected' : ''}>${label}</option>`).join('')}
+                    </select>
+                </label>` : ''}
+                ${editorProfile.strength ? `<label class="tt-constraint-field">
+                    <span>强度</span>
+                    <select class="tt-select" data-source-field="strength">
+                        <option value="soft" ${clause.strength !== 'hard' ? 'selected' : ''}>软约束</option>
+                        <option value="hard" ${clause.strength === 'hard' ? 'selected' : ''}>硬约束</option>
+                    </select>
+                </label>` : ''}
+                ${editorProfile.scope ? `<div class="tt-constraint-field tt-source-editor-span-2" data-source-scope-field="classIds" ${scopeVisible('classIds') ? '' : 'hidden'}>
+                    <span>指定班级</span>
+                    ${renderSourceEditorOptionGrid(project.classes || [], selectedClassIds, 'class', 'classIds', {}, '指定班级')}
+                </div>
+                <div class="tt-constraint-field" data-source-scope-field="gradeNames" ${scopeVisible('gradeNames') ? '' : 'hidden'}>
+                    <span>年级</span>
+                    ${renderSourceEditorOptionGrid(gradeOptions.map(grade => ({ id: grade, name: grade })), selectedGradeNames, 'grade', 'gradeNames', {}, '适用年级')}
+                </div>
+                <div class="tt-constraint-field" data-source-scope-field="teacherIds" ${scopeVisible('teacherIds') ? '' : 'hidden'}>
+                    <span>限定教师</span>
+                    ${renderSourceEditorOptionGrid(project.teachers || [], selectedTeacherIds, 'teacher', 'teacherIds', {}, '限定教师')}
+                </div>` : ''}
+                ${editorProfile.days ? `<fieldset class="tt-source-editor-checks">
+                    <legend>星期</legend>
+                    ${activeDays.map(day => `<label><input type="checkbox" data-source-field="days" value="${day}" ${days.includes(day) ? 'checked' : ''}>周${'一二三四五六日'[day - 1]}</label>`).join('')}
+                </fieldset>` : ''}
+                ${editorProfile.periods ? `<fieldset class="tt-source-editor-checks">
+                    <legend>节次</legend>
+                    ${activePeriods.map(period => `<label><input type="checkbox" data-source-field="periods" value="${period}" ${periods.includes(period) ? 'checked' : ''}>第${period}节</label>`).join('')}
+                </fieldset>` : ''}
+                ${editorProfile.quantifier ? `<label class="tt-constraint-field">
+                    <span>每周最少次数</span>
+                    <input class="tt-input" type="number" min="1" data-source-field="quantifierMin" value="${escapeAttr(clause.quantifier?.min ?? parameters.minOccurrences ?? '')}">
+                </label>` : ''}
+                ${editorProfile.relation ? `<label class="tt-constraint-field">
+                    <span>与其他子约束</span>
+                    <select class="tt-select" data-source-field="relationKind">${[['independent', '独立'], ['inherits', '继承'], ['emphasis', '强调'], ['exception', '例外']]
+                        .map(([value, label]) => `<option value="${value}" ${clause.relation?.kind === value || (!clause.relation?.kind && value === 'independent') ? 'selected' : ''}>${label}</option>`).join('')}</select>
+                </label>
+                <label class="tt-constraint-field tt-source-editor-span-2">
+                    <span>关联的子约束</span>
+                    <select class="tt-select" data-source-field="parentClauseId">
+                        <option value="">无</option>
+                        ${clauses.map((candidate, candidateIndex) => candidateIndex === index ? '' : `<option value="${escapeAttr(candidate.clauseId || candidate.id || '')}" ${clause.relation?.parentClauseId === (candidate.clauseId || candidate.id) ? 'selected' : ''}>${escapeHtml(candidateIndex + 1)}. ${escapeHtml(requirementIntentLabel(candidate.intent || candidate.capabilityId))}</option>`).join('')}
+                    </select>
+                </label>` : ''}
+                ${editorProfile.semanticSummary ? `<p class="tt-source-semantic-parameter tt-source-editor-span-2">${escapeHtml(editorProfile.semanticSummary)}</p>` : ''}
+            </div>
+                ${editorProfile.scope ? `<p class="tt-source-derived-preview">当前派生范围：${escapeHtml(derivedClassIds.length)} 个班级${escapeHtml(scopeClassPreview)}</p>` : ''}
+            </div>
+        </details>
+    `;
+}
+
+function renderSourceRequirementEditForm(editor = {}, state = {}) {
+    const sourceRequirement = editor.sourceRequirement || {};
+    const clauses = editor.clauses || sourceRequirement.clauses || [];
+    const rationales = editor.rationales || sourceRequirement.rationales || [];
+    const rawText = sourceRequirement.source?.rawText || sourceRequirement.rawText || '';
+    const display = sourceRequirementDisplaySummary({ ...sourceRequirement, clauses });
+    return `
+        <div class="tt-dialog-overlay tt-constraint-edit-backdrop" data-source-requirement-edit-backdrop>
+            <section class="tt-constraint-edit-modal tt-source-requirement-edit-modal" role="dialog" aria-modal="true" aria-labelledby="source-requirement-edit-title" tabindex="-1">
+                <div class="tt-dialog-header">
+                    <div><span class="tt-eyebrow">来源语义复核</span><h3 id="source-requirement-edit-title">编辑理解结果</h3><p>${escapeHtml(display.objectLabel)} · ${escapeHtml(clauses.length)} 个子约束 · 保存后重新派生范围</p></div>
+                    <button class="tt-icon-btn tt-constraint-edit-close" data-action="cancel-source-requirement-edit" title="关闭编辑" aria-label="关闭编辑" type="button"><i data-lucide="x"></i></button>
+                </div>
+                <div class="tt-constraint-edit-body">
+                    ${(editor.errors || []).length ? `<div class="tt-source-editor-errors" role="alert" tabindex="-1">${escapeHtml(editor.errors[0])}</div>` : ''}
+                    <section class="tt-source-editor-original"><span>原文</span><blockquote>${escapeHtml(rawText)}</blockquote></section>
+                    <form class="tt-source-requirement-editor-form" data-source-requirement-editor-form>${clauses.map((clause, index) => renderSourceClauseEditor(clause, index, clauses, state.project || {}, editor.omittedClauseIds || [])).join('')}</form>
+                    <details class="tt-source-editor-rationales"><summary>原因说明 (${escapeHtml(rationales.length)})</summary><div>
+                        ${rationales.map((rationale, index) => `<label class="tt-constraint-field"><span>原因 ${index + 1}</span><textarea data-source-rationale-index="${index}">${escapeHtml(rationale.text || rationale.reason || rationale)}</textarea></label>`).join('') || '<p>当前没有单独保留的原因说明。</p>'}
+                    </div></details>
+                </div>
+                <div class="tt-dialog-actions">
+                    <button class="tt-btn" data-action="cancel-source-requirement-edit" type="button">取消</button>
+                    <button class="tt-btn tt-btn--primary" data-action="save-source-requirement-edit" type="button" ${editor.saving ? 'disabled' : ''}><i data-lucide="${editor.saving ? 'loader-2' : 'check'}" class="${editor.saving ? 'tt-spin' : ''}"></i><span>${editor.saving ? '重新编译中' : '保存理解结果'}</span></button>
+                </div>
+            </section>
+        </div>
+    `;
+}
+
+function renderConstraintAgentMessage(message = {}, index = 0) {
+    const role = message.role === 'user' ? 'user' : 'assistant';
+    return `
+        <div class="tt-constraint-agent-message tt-constraint-agent-message--${escapeAttr(role)}" data-agent-message-index="${escapeAttr(index)}">
+            <span>${escapeHtml(role === 'user' ? '你' : '助手')}</span>
+            <p>${escapeHtml(message.content || '')}</p>
+        </div>
+    `;
+}
+
+function renderConstraintAgentPanel(state = {}, { collapsed = false } = {}) {
+    const agent = state.constraintAgent || {};
+    const messages = Array.isArray(agent.messages) ? agent.messages : [];
+    const questions = Array.isArray(agent.questions) ? agent.questions : [];
+    const loading = Boolean(agent.loading);
+    const stage = String(agent.stage || 'INTAKE').toUpperCase();
+    const canCompose = ['INTAKE', 'CLARIFY'].includes(stage);
+    const statusLine = agent.statusLine || '[已理解 0 · 待澄清 0 · 待确认 0]';
+    return `
+        <section class="tt-constraint-agent-panel ${collapsed ? 'is-collapsed' : 'is-expanded'}" data-constraint-agent-stage="${escapeAttr(stage)}">
+            <div class="tt-constraint-agent-header">
+                <div>
+                    <span class="tt-constraint-section-kicker">智能对话</span>
+                    <strong>${escapeHtml(statusLine)}</strong>
+                </div>
+                <div class="tt-constraint-agent-header-actions">
+                    ${collapsed ? `
+                        <button class="tt-btn tt-btn--sm tt-btn--ghost" data-action="toggle-constraint-agent-conversation" type="button">
+                            <i data-lucide="messages-square"></i><span>继续对话</span>
+                        </button>
+                    ` : ''}
+                    <button class="tt-icon-btn tt-icon-btn--sm" data-action="constraint-agent-start" type="button" title="新建智能对话" aria-label="新建智能对话" ${loading ? 'disabled' : ''}>
+                        <i data-lucide="refresh-cw"></i>
+                    </button>
+                </div>
+            </div>
+            ${collapsed ? '' : `
+                <div class="tt-constraint-agent-thread" aria-live="polite" aria-label="智能对话记录">
+                    ${messages.length
+                        ? messages.map(renderConstraintAgentMessage).join('')
+                        : '<div class="tt-constraint-agent-empty"><i data-lucide="messages-square"></i><strong>描述你的排课目标</strong><span>助手会整理需求、提出必要问题，并生成可复核的约束。</span></div>'}
+                </div>
+                ${questions.length ? `
+                    <div class="tt-constraint-agent-questions">
+                        <strong>需要补充</strong>
+                        <ul>${questions.map(question => `<li>${escapeHtml(question.question || question.message || question)}</li>`).join('')}</ul>
+                    </div>
+                ` : ''}
+                ${agent.error ? `<p class="tt-constraint-agent-error" role="alert">${escapeHtml(agent.error)}</p>` : ''}
+                ${canCompose ? `
+                    <label class="tt-constraint-agent-input">
+                        <span>排课要求</span>
+                        <textarea id="tt-constraint-agent-message" rows="4" ${loading ? 'disabled' : ''} placeholder="例如：张老师周三下午不排，数学尽量上午，确认后直接生成课表">${escapeHtml(agent.input || '')}</textarea>
+                        <small>Enter 发送，Shift + Enter 换行</small>
+                    </label>
+                ` : ''}
+                ${state.ruleReview && buildUnifiedRequirementItems(state.ruleReview).length ? `
+                    <button class="tt-btn tt-btn--sm tt-constraint-agent-review-toggle" data-action="toggle-constraint-agent-conversation" type="button">
+                        <i data-lucide="list-checks"></i><span>查看复核结果</span>
+                    </button>
+                ` : ''}
+            `}
+        </section>
+    `;
+}
+
+function renderConstraintAgentActions(state = {}) {
+    const agent = state.constraintAgent || {};
+    const loading = Boolean(agent.loading);
+    const solverActive = Boolean(state.solverJob && ['queued', 'running'].includes(state.solverJob.status));
+    const stage = String(agent.stage || 'INTAKE').toUpperCase();
+    const confirmed = Boolean(agent.confirmed || agent.highRiskConfirmed);
+    let action = 'constraint-agent-send';
+    let icon = 'send';
+    let label = '发送';
+    let enabled = true;
+    if (stage === 'CONFIRM' && !confirmed) {
+        action = 'constraint-agent-confirm';
+        icon = 'check-circle-2';
+        label = '确认理解结果';
+        enabled = Boolean(agent.confirmationToken || agent.highRiskToken);
+    } else if (stage === 'CONFIRM') {
+        action = 'constraint-agent-apply';
+        icon = 'file-check-2';
+        label = '应用到项目';
+    } else if (stage === 'APPLY') {
+        action = 'constraint-agent-solve';
+        icon = 'play';
+        label = '生成课表';
+    } else if (stage === 'REPORT') {
+        action = 'close-constraint-dialog';
+        icon = 'check';
+        label = '完成';
+    }
+    return `
+        <div class="tt-dialog-actions tt-constraint-dialog-actions tt-constraint-agent-footer">
+            ${stage === 'REPORT' ? '' : `<button class="tt-btn" data-action="close-constraint-dialog" type="button">${stage === 'APPLY' ? '关闭' : '取消'}</button>`}
+            <button class="tt-btn tt-btn--primary" data-action="${escapeAttr(action)}" type="button" ${loading || !enabled || (action === 'constraint-agent-solve' && solverActive) ? 'disabled' : ''}>
+                <i data-lucide="${loading || (action === 'constraint-agent-solve' && solverActive) ? 'loader-2' : icon}" ${loading || (action === 'constraint-agent-solve' && solverActive) ? 'class="tt-spin"' : ''}></i>
+                <span>${escapeHtml(action === 'constraint-agent-solve' && solverActive ? '求解中' : loading ? '处理中' : label)}</span>
+            </button>
+        </div>
+    `;
+}
+
 /**
  * 渲染智能约束助手弹窗
  */
@@ -1170,7 +1762,7 @@ export function renderConstraintDialog(state) {
     if (!dialog.open) return '';
 
     const review = state.ruleReview || {};
-    const mode = ['text', 'file', 'manual'].includes(review.inputMode) ? review.inputMode : 'text';
+    const mode = ['text', 'file', 'manual', 'agent'].includes(review.inputMode) ? review.inputMode : 'text';
     const constraints = review.draftRows || [];
     const requirements = buildUnifiedRequirementItems(review);
     const activeFilter = REQUIREMENT_FILTERS.some(filter => filter.key === dialog.requirementFilter)
@@ -1183,7 +1775,17 @@ export function renderConstraintDialog(state) {
     const inputExpanded = !hasResults || dialog.inputExpanded === true;
     const inputStatusHtml = inputExpanded ? renderConstraintInputStatus(mode, review, requirements) : '';
     const editingConstraint = dialog.editingConstraint;
+    const editingSourceRequirement = dialog.editingSourceRequirement;
     const aiChat = dialog.aiChat;
+    const agent = state.constraintAgent || {};
+    const agentMode = mode === 'agent';
+    const agentStage = String(agent.stage || 'INTAKE').toUpperCase();
+    const agentConversationExpanded = agentMode && (
+        dialog.agentConversationExpanded === true
+        || !hasResults
+        || agentStage === 'CLARIFY'
+    );
+    const showAgentReview = agentMode && hasResults && !agentConversationExpanded;
     const hasBlockingConflict = constraints.some(c => c.hasConflict)
         || (review.conflicts || []).some(item => item.level === 'blocking');
     const aiActive = Boolean(aiChat?.active);
@@ -1193,6 +1795,20 @@ export function renderConstraintDialog(state) {
                 ${renderConstraintFlow(true, review, requirements)}
             </div>
             ${renderAIChatPanel(state, aiChat)}
+        </div>
+    ` : agentMode ? `
+        <div class="tt-constraint-dialog-body tt-constraint-dialog-body--agent ${showAgentReview ? 'tt-constraint-dialog-body--review' : ''}">
+            <div class="tt-constraint-stagebar">
+                ${renderConstraintFlow(true, review, requirements, agent)}
+            </div>
+            <div class="tt-constraint-agent-mode-row">
+                <span class="tt-field-label">规则来源</span>
+                <div class="tt-constraint-input-tabs" role="tablist" aria-label="规则来源">
+                    ${renderInputTabs(mode, false)}
+                </div>
+            </div>
+            ${renderConstraintAgentPanel(state, { collapsed: showAgentReview })}
+            ${showAgentReview ? renderRequirementGroups(requirements, dialog, state) : ''}
         </div>
     ` : `
         <div class="tt-constraint-dialog-body tt-constraint-dialog-body--intake ${hasResults && !inputExpanded ? 'tt-constraint-dialog-body--review' : ''}">
@@ -1217,7 +1833,7 @@ export function renderConstraintDialog(state) {
             ${hasResults ? renderRequirementGroups(requirements, dialog, state) : ''}
         </div>
     `;
-    const actionsHtml = aiActive ? '' : `
+    const actionsHtml = aiActive ? '' : agentMode ? renderConstraintAgentActions(state) : `
         <!-- 操作按钮 -->
         <div class="tt-dialog-actions tt-constraint-dialog-actions">
             <button class="tt-btn" data-action="close-constraint-dialog" type="button">取消</button>
@@ -1233,7 +1849,7 @@ export function renderConstraintDialog(state) {
 
     return `
         <div class="tt-dialog-overlay" data-constraint-dialog-overlay>
-            <section class="tt-constraint-dialog ${aiActive ? 'tt-constraint-dialog--with-ai' : ''} ${hasResults && !aiActive ? 'tt-constraint-dialog--semantic-review' : ''}" role="dialog" aria-modal="true" aria-labelledby="constraint-dialog-title">
+            <section class="tt-constraint-dialog ${aiActive ? 'tt-constraint-dialog--with-ai' : ''} ${agentMode ? 'tt-constraint-dialog--agent' : ''} ${(hasResults && !aiActive && !agentMode) || showAgentReview ? 'tt-constraint-dialog--semantic-review' : ''}" role="dialog" aria-modal="true" aria-labelledby="constraint-dialog-title">
                 <!-- 标题栏 -->
                 <div class="tt-dialog-header">
                     <div class="tt-dialog-title">
@@ -1244,7 +1860,7 @@ export function renderConstraintDialog(state) {
                         </div>
                     </div>
                     <div class="tt-dialog-header-actions">
-                        ${constraints.length > 0 && !aiActive ? `
+                        ${constraints.length > 0 && !aiActive && !agentMode ? `
                             <button class="tt-btn tt-btn--sm tt-btn--ghost" data-action="start-ai-chat" type="button" title="AI 优化约束">
                                 <i data-lucide="sparkles"></i>
                                 <span>AI 优化</span>
@@ -1257,6 +1873,7 @@ export function renderConstraintDialog(state) {
                 </div>
                 ${bodyHtml}
                 ${editingConstraint && !aiActive ? renderConstraintEditForm(editingConstraint, state) : ''}
+                ${editingSourceRequirement && !aiActive ? renderSourceRequirementEditForm(editingSourceRequirement, state) : ''}
                 ${actionsHtml}
             </section>
         </div>
@@ -1265,9 +1882,10 @@ export function renderConstraintDialog(state) {
 
 function renderInputTabs(mode, parsing) {
     const tabs = [
-        { key: 'text', icon: 'message-square', label: '对话输入' },
+        { key: 'text', icon: 'text-cursor-input', label: '文本输入' },
         { key: 'file', icon: 'upload', label: '上传文件' },
         { key: 'manual', icon: 'sliders-horizontal', label: '手动规则' },
+        { key: 'agent', icon: 'messages-square', label: '智能对话' },
     ];
 
     return tabs.map(tab => `
@@ -1414,6 +2032,26 @@ function renderInputArea(state, mode, parsing, review) {
         const manualScope = state.constraintDialog?.manualRuleScope || {};
         return `
             <div class="tt-manual-input tt-constraint-form-surface">
+                <div class="tt-education-soft-templates" role="group" aria-label="可选教育软规则模板">
+                    <div class="tt-education-soft-templates-head">
+                        <strong>可选软规则模板</strong>
+                        <span>仅预填已有规则，选择对象并添加后才会进入复核。</span>
+                    </div>
+                    <div class="tt-education-soft-templates-list">
+                        ${EDUCATION_SOFT_RULE_TEMPLATES.map(template => `
+                            <button
+                                class="tt-btn tt-btn--sm ${manualType === template.type && (template.slotMode ? Boolean(manualScope.slots?.length) : true) ? 'is-active' : ''}"
+                                data-action="apply-education-soft-template"
+                                data-education-template="${escapeAttr(template.key)}"
+                                type="button"
+                                title="${escapeAttr(template.description)}"
+                            >
+                                <i data-lucide="${escapeAttr(template.icon)}"></i>
+                                <span>${escapeHtml(template.label)}</span>
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
                 ${renderConstraintRuleFormFields({
                     project: state.project || {},
                     value: { type: manualType, targetId: '', slots: [], limit: '', ...manualScope },

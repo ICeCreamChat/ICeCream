@@ -1,0 +1,315 @@
+- generic [active] [ref=f31e1]:
+  - generic:
+    - generic:
+      - link "跳到主要内容" [ref=f31e2] [cursor=pointer]
+      - link "无障碍功能帮助" [ref=f31e3] [cursor=pointer]:
+        - /url: https://support.google.com/websearch/answer/181196?hl=zh-CN
+  - generic [ref=f31e8]:
+    - search [ref=f31e9]:
+      - generic [ref=f31e11]:
+        - link "Google 首页" [ref=f31e13] [cursor=pointer]:
+          - /url: https://www.google.com.hk/webhp?hl=zh-CN&sa=X&ved=0ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQPAgI
+        - generic [ref=f31e21]:
+          - generic [ref=f31e22]:
+            - combobox "搜索" [ref=f31e25]: site:scimagojr.com SJR Scopus coverage journals 1999 site:scimagojr.com SJR Scopus coverage journals 1999
+            - generic [ref=f31e26]:
+              - button "清除" [ref=f31e28] [cursor=pointer]
+              - generic [ref=f31e33]:
+                - button "按语音搜索" [ref=f31e34] [cursor=pointer]
+                - button "按图搜索" [ref=f31e37] [cursor=pointer]
+          - button "搜索" [ref=f31e40] [cursor=pointer]
+    - generic [ref=f31e45]:
+      - button "设置" [ref=f31e47] [cursor=pointer]
+      - button "分享" [ref=f31e53] [cursor=pointer]
+      - generic [ref=f31e59]:
+        - button "Google 应用" [ref=f31e61] [cursor=pointer]
+        - link "登录" [ref=f31e66] [cursor=pointer]:
+          - /url: https://accounts.google.com/ServiceLogin?hl=zh-CN&passive=true&continue=https://www.google.com.hk/search%3Fq%3Dsite%253Ascimagojr.com%2BSJR%2BScopus%2Bcoverage%2Bjournals%2B1999%26sei%3DsuRgatuyB5vj2roP2Pr02QE&ec=futura_srp_og_si_72236_p
+  - generic [ref=f31e68]:
+    - navigation [ref=f31e74]:
+      - generic [ref=f31e80]:
+        - list [ref=f31e81]:
+          - listitem [ref=f31e82]:
+            - link "全部" [disabled] [ref=f31e83]
+          - listitem [ref=f31e86]:
+            - link "图片" [ref=f31e87] [cursor=pointer]:
+              - /url: /search?newwindow=1&sca_esv=80e3327b61e6e700&udm=2&fbs=ABfTbFUhNGvvPEUFOvrsPMHwBXgOm668fbRC_a7Vhb8DCgbMq5qkXH1ll5RuIouPLh5wQpsjSPZ1jCO3RTEOVjBrKAX5aHAyKPiwK339FbCDoQhaMDsJKH7j47k_p-57zERSWrhIcfgX2gUnvgXMiDK2YNGG-EDnjKnvuhtsgQ0e9vtvdp3xshxIDPw5jgly6CtZY5dat9H5&q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&sa=X&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQtKgLegQIFBAB
+          - listitem [ref=f31e90]:
+            - link "视频" [ref=f31e91] [cursor=pointer]:
+              - /url: /search?newwindow=1&sca_esv=80e3327b61e6e700&udm=7&fbs=ABfTbFUhNGvvPEUFOvrsPMHwBXgOm668fbRC_a7Vhb8DCgbMq5qkXH1ll5RuIouPLh5wQpsjSPZ1jCO3RTEOVjBrKAX5aHAyKPiwK339FbCDoQhaMDsJKH7j47k_p-57zERSWrhIcfgX2gUnvgXMiDK2YNGG-EDnjKnvuhtsgQ0e9vtvdp3xshxIDPw5jgly6CtZY5dat9H5&q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&sa=X&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQtKgLegQIFRAB
+          - listitem [ref=f31e94]:
+            - link "短视频" [ref=f31e95] [cursor=pointer]:
+              - /url: /search?newwindow=1&sca_esv=80e3327b61e6e700&udm=39&fbs=ABfTbFUhNGvvPEUFOvrsPMHwBXgOm668fbRC_a7Vhb8DCgbMq5qkXH1ll5RuIouPLh5wQpsjSPZ1jCO3RTEOVjBrKAX5aHAyKPiwK339FbCDoQhaMDsJKH7j47k_p-57zERSWrhIcfgX2gUnvgXMiDK2YNGG-EDnjKnvuhtsgQ0e9vtvdp3xshxIDPw5jgly6CtZY5dat9H5&q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&sa=X&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQs6gLegQIEBAB
+          - listitem [ref=f31e98]:
+            - link "新闻" [ref=f31e99] [cursor=pointer]:
+              - /url: /search?newwindow=1&sca_esv=80e3327b61e6e700&q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&tbm=nws&source=lnms&fbs=ABfTbFUhNGvvPEUFOvrsPMHwBXgOm668fbRC_a7Vhb8DCgbMq5qkXH1ll5RuIouPLh5wQpsjSPZ1jCO3RTEOVjBrKAX5aHAyKPiwK339FbCDoQhaMDsJKH7j47k_p-57zERSWrhIcfgX2gUnvgXMiDK2YNGG-EDnjKnvuhtsgQ0e9vtvdp3xshxIDPw5jgly6CtZY5dat9H5&sa=X&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQ0pQJegQIERAB
+          - listitem [ref=f31e102]:
+            - link "网页" [ref=f31e103] [cursor=pointer]:
+              - /url: /search?newwindow=1&sca_esv=80e3327b61e6e700&udm=web&fbs=ABfTbFUhNGvvPEUFOvrsPMHwBXgOm668fbRC_a7Vhb8DCgbMq5qkXH1ll5RuIouPLh5wQpsjSPZ1jCO3RTEOVjBrKAX5aHAyKPiwK339FbCDoQhaMDsJKH7j47k_p-57zERSWrhIcfgX2gUnvgXMiDK2YNGG-EDnjKnvuhtsgQ0e9vtvdp3xshxIDPw5jgly6CtZY5dat9H5&q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&sa=X&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQs6gLegQIEhAB
+          - listitem [ref=f31e106]:
+            - link "图书" [ref=f31e107] [cursor=pointer]:
+              - /url: /search?newwindow=1&sca_esv=80e3327b61e6e700&q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&udm=36&source=lnms&fbs=ABfTbFUhNGvvPEUFOvrsPMHwBXgOm668fbRC_a7Vhb8DCgbMq5qkXH1ll5RuIouPLh5wQpsjSPZ1jCO3RTEOVjBrKAX5aHAyKPiwK339FbCDoQhaMDsJKH7j47k_p-57zERSWrhIcfgX2gUnvgXMiDK2YNGG-EDnjKnvuhtsgQ0e9vtvdp3xshxIDPw5jgly6CtZY5dat9H5&sa=X&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQ0pQJegQIExAB
+          - listitem [ref=f31e110]:
+            - button [ref=f31e111] [cursor=pointer]:
+              - generic "更多过滤条件" [ref=f31e112]: 更多
+        - button "工具" [ref=f31e119] [cursor=pointer]
+    - heading "搜索结果" [level=1] [ref=f31e126]
+    - main [ref=f31e132]:
+      - generic [ref=f31e136]:
+        - generic [ref=f31e139]:
+          - heading "Web results" [level=2] [ref=f31e140]
+          - generic [ref=f31e141]:
+            - generic [ref=f31e144]:
+              - link "Search SCImago https://www.scimagojr.com › journalsearch" [ref=f31e146] [cursor=pointer]:
+                - /url: https://www.scimagojr.com/journalsearch.php?q=95814&tip=sid&clean=0
+                - heading "Search" [level=3] [ref=f31e147]
+                - generic [ref=f31e153]:
+                  - generic [ref=f31e154]: SCImago
+                  - generic [ref=f31e156]: https://www.scimagojr.com › journalsearch
+              - generic [ref=f31e158]:
+                - generic [ref=f31e159]: ·
+                - link "翻译此页" [ref=f31e160] [cursor=pointer]:
+                  - /url: https://www.scimagojr.com/journalsearch.php?q=95814&tip=sid&clean=0
+              - button "关于这条结果的详细信息" [ref=f31e163] [cursor=pointer]
+            - generic [ref=f31e170]:
+              - text: The
+              - emphasis [ref=f31e171]: SJR
+              - text: is a size-independent prestige indicator that ranks
+              - emphasis [ref=f31e172]: journals
+              - text: by their 'average prestige per article'. It is based on the idea that 'all citations are ...
+        - generic [ref=f31e176]:
+          - generic [ref=f31e179]:
+            - link "Information Research SCImago https://www.scimagojr.com › journalsearch" [ref=f31e181] [cursor=pointer]:
+              - /url: https://www.scimagojr.com/journalsearch.php?q=12690&tip=sid
+              - heading "Information Research" [level=3] [ref=f31e182]
+              - generic [ref=f31e188]:
+                - generic [ref=f31e189]: SCImago
+                - generic [ref=f31e191]: https://www.scimagojr.com › journalsearch
+            - generic [ref=f31e193]:
+              - generic [ref=f31e194]: ·
+              - link "翻译此页" [ref=f31e195] [cursor=pointer]:
+                - /url: https://www.scimagojr.com/journalsearch.php?q=12690&tip=sid
+            - button "关于这条结果的详细信息" [ref=f31e198] [cursor=pointer]
+          - generic [ref=f31e205]:
+            - text: The
+            - emphasis [ref=f31e206]: SJR
+            - text: is a size-independent prestige indicator that ranks
+            - emphasis [ref=f31e207]: journals
+            - text: by their 'average prestige per article'. It is based on the idea that 'all citations are ...
+        - generic [ref=f31e211]:
+          - generic [ref=f31e214]:
+            - link "SJR - Help SCImago https://www.scimagojr.com › help" [ref=f31e216] [cursor=pointer]:
+              - /url: https://www.scimagojr.com/help.php
+              - heading "SJR - Help" [level=3] [ref=f31e217]
+              - generic [ref=f31e223]:
+                - generic [ref=f31e224]: SCImago
+                - generic [ref=f31e226]: https://www.scimagojr.com › help
+            - generic [ref=f31e228]:
+              - generic [ref=f31e229]: ·
+              - link "翻译此页" [ref=f31e230] [cursor=pointer]:
+                - /url: https://www.scimagojr.com/help.php
+            - button "关于这条结果的详细信息" [ref=f31e233] [cursor=pointer]
+          - generic [ref=f31e240]:
+            - emphasis [ref=f31e241]: Scopus
+            - text: "® Subject Areas and Subject Categories:"
+            - emphasis [ref=f31e242]: Journals
+            - text: are categorized ... The set of
+            - emphasis [ref=f31e243]: journals
+            - text: are ranked according to their
+            - emphasis [ref=f31e244]: SJR
+            - text: and divided into four ...
+        - generic [ref=f31e248]:
+          - generic [ref=f31e251]:
+            - link "Journal of the Social Sciences SCImago https://www.scimagojr.com › journalsearch" [ref=f31e253] [cursor=pointer]:
+              - /url: https://www.scimagojr.com/journalsearch.php?q=60824&tip=sid
+              - heading "Journal of the Social Sciences" [level=3] [ref=f31e254]
+              - generic [ref=f31e260]:
+                - generic [ref=f31e261]: SCImago
+                - generic [ref=f31e263]: https://www.scimagojr.com › journalsearch
+            - generic [ref=f31e265]:
+              - generic [ref=f31e266]: ·
+              - link "翻译此页" [ref=f31e267] [cursor=pointer]:
+                - /url: https://www.scimagojr.com/journalsearch.php?q=60824&tip=sid
+            - button "关于这条结果的详细信息" [ref=f31e270] [cursor=pointer]
+          - generic [ref=f31e277]:
+            - emphasis [ref=f31e278]: SJR
+            - text: is a portal with scientometric indicators of
+            - emphasis [ref=f31e279]: journals
+            - text: indexed in
+            - emphasis [ref=f31e280]: Scopus
+            - text: . ... It's showing that
+            - emphasis [ref=f31e281]: Scopus coverage
+            - text: years from
+            - emphasis [ref=f31e282]: "1999"
+            - text: "- 2019.kindly provide, me ..."
+        - generic [ref=f31e286]:
+          - generic [ref=f31e289]:
+            - link "Annual Review of Information Science and Technology SCImago https://www.scimagojr.com › journalsearch" [ref=f31e291] [cursor=pointer]:
+              - /url: https://www.scimagojr.com/journalsearch.php?q=12124&tip=sid&clean=0
+              - heading "Annual Review of Information Science and Technology" [level=3] [ref=f31e292]
+              - generic [ref=f31e298]:
+                - generic [ref=f31e299]: SCImago
+                - generic [ref=f31e301]: https://www.scimagojr.com › journalsearch
+            - generic [ref=f31e303]:
+              - generic [ref=f31e304]: ·
+              - link "翻译此页" [ref=f31e305] [cursor=pointer]:
+                - /url: https://www.scimagojr.com/journalsearch.php?q=12124&tip=sid&clean=0
+            - button "关于这条结果的详细信息" [ref=f31e308] [cursor=pointer]
+          - generic [ref=f31e315]:
+            - text: The
+            - emphasis [ref=f31e316]: SJR
+            - text: is a size-independent prestige indicator that ranks
+            - emphasis [ref=f31e317]: journals
+            - text: by their 'average prestige per article'. It is based on the idea that 'all citations are ...
+        - generic [ref=f31e321]:
+          - generic [ref=f31e324]:
+            - link "Information Services and Use SCImago https://www.scimagojr.com › journalsearch" [ref=f31e326] [cursor=pointer]:
+              - /url: https://www.scimagojr.com/journalsearch.php?q=15135&tip=sid
+              - heading "Information Services and Use" [level=3] [ref=f31e327]
+              - generic [ref=f31e333]:
+                - generic [ref=f31e334]: SCImago
+                - generic [ref=f31e336]: https://www.scimagojr.com › journalsearch
+            - generic [ref=f31e338]:
+              - generic [ref=f31e339]: ·
+              - link "翻译此页" [ref=f31e340] [cursor=pointer]:
+                - /url: https://www.scimagojr.com/journalsearch.php?q=15135&tip=sid
+            - button "关于这条结果的详细信息" [ref=f31e343] [cursor=pointer]
+          - generic [ref=f31e350]:
+            - text: The
+            - emphasis [ref=f31e351]: SJR
+            - text: is a size-independent prestige indicator that ranks
+            - emphasis [ref=f31e352]: journals
+            - text: by their 'average prestige per article'. It is based on the idea that 'all citations are ...
+        - generic [ref=f31e356]:
+          - generic [ref=f31e359]:
+            - link "Research Policy SCImago https://www.scimagojr.com › journalsearch" [ref=f31e361] [cursor=pointer]:
+              - /url: https://www.scimagojr.com/journalsearch.php?q=22900&tip=sid&clean=0
+              - heading "Research Policy" [level=3] [ref=f31e362]
+              - generic [ref=f31e368]:
+                - generic [ref=f31e369]: SCImago
+                - generic [ref=f31e371]: https://www.scimagojr.com › journalsearch
+            - generic [ref=f31e373]:
+              - generic [ref=f31e374]: ·
+              - link "翻译此页" [ref=f31e375] [cursor=pointer]:
+                - /url: https://www.scimagojr.com/journalsearch.php?q=22900&tip=sid&clean=0
+            - button "关于这条结果的详细信息" [ref=f31e378] [cursor=pointer]
+          - generic [ref=f31e385]:
+            - text: The
+            - emphasis [ref=f31e386]: SJR
+            - text: is a size-independent prestige indicator that ranks
+            - emphasis [ref=f31e387]: journals
+            - text: by their 'average prestige per article'. It is based on the idea that 'all citations are ...
+        - generic [ref=f31e391]:
+          - generic [ref=f31e394]:
+            - link "Annals of Science SCImago https://www.scimagojr.com › journalsearch" [ref=f31e396] [cursor=pointer]:
+              - /url: https://www.scimagojr.com/journalsearch.php?q=19321&tip=sid
+              - heading "Annals of Science" [level=3] [ref=f31e397]
+              - generic [ref=f31e403]:
+                - generic [ref=f31e404]: SCImago
+                - generic [ref=f31e406]: https://www.scimagojr.com › journalsearch
+            - generic [ref=f31e408]:
+              - generic [ref=f31e409]: ·
+              - link "翻译此页" [ref=f31e410] [cursor=pointer]:
+                - /url: https://www.scimagojr.com/journalsearch.php?q=19321&tip=sid
+            - button "关于这条结果的详细信息" [ref=f31e413] [cursor=pointer]
+          - generic [ref=f31e420]:
+            - text: 1999, Q3.
+            - emphasis [ref=f31e421]: History and Philosophy of Science
+            - text: ", 2000, Q2. History and ... SJR is a portal with scientometric indicators of journals indexed in Elsevier/Scopus."
+        - generic [ref=f31e425]:
+          - generic [ref=f31e428]:
+            - link "Resources Policy SCImago https://www.scimagojr.com › journalsearch" [ref=f31e430] [cursor=pointer]:
+              - /url: https://www.scimagojr.com/journalsearch.php?q=110031&tip=sid&clean=0
+              - heading "Resources Policy" [level=3] [ref=f31e431]
+              - generic [ref=f31e437]:
+                - generic [ref=f31e438]: SCImago
+                - generic [ref=f31e440]: https://www.scimagojr.com › journalsearch
+            - generic [ref=f31e442]:
+              - generic [ref=f31e443]: ·
+              - link "翻译此页" [ref=f31e444] [cursor=pointer]:
+                - /url: https://www.scimagojr.com/journalsearch.php?q=110031&tip=sid&clean=0
+            - button "关于这条结果的详细信息" [ref=f31e447] [cursor=pointer]
+          - generic [ref=f31e454]:
+            - emphasis [ref=f31e455]: SJR
+            - text: is a portal with scientometric indicators of
+            - emphasis [ref=f31e456]: journals
+            - text: indexed in Elsevier/
+            - emphasis [ref=f31e457]: Scopus
+            - text: . We suggest you visit the
+            - emphasis [ref=f31e458]: journal's
+            - text: homepage (See submission/author ...
+        - generic [ref=f31e462]:
+          - generic [ref=f31e465]:
+            - link "Quality and Quantity SCImago https://www.scimagojr.com › journalsearch" [ref=f31e467] [cursor=pointer]:
+              - /url: https://www.scimagojr.com/journalsearch.php?q=19372&tip=sid&clean=0
+              - heading "Quality and Quantity" [level=3] [ref=f31e468]
+              - generic [ref=f31e474]:
+                - generic [ref=f31e475]: SCImago
+                - generic [ref=f31e477]: https://www.scimagojr.com › journalsearch
+            - generic [ref=f31e479]:
+              - generic [ref=f31e480]: ·
+              - link "翻译此页" [ref=f31e481] [cursor=pointer]:
+                - /url: https://www.scimagojr.com/journalsearch.php?q=19372&tip=sid&clean=0
+            - button "关于这条结果的详细信息" [ref=f31e484] [cursor=pointer]
+          - generic [ref=f31e491]:
+            - text: The set of
+            - emphasis [ref=f31e492]: journals
+            - text: have been ranked according to their
+            - emphasis [ref=f31e493]: SJR
+            - text: and divided into four equal groups, four quartiles. Q1 (green) comprises the quarter of the
+            - emphasis [ref=f31e494]: journals
+            - text: ...
+      - navigation [ref=f31e497]:
+        - heading "网页导航" [level=1] [ref=f31e498]
+        - text: "1"
+        - link "Page 2" [ref=f31e501] [cursor=pointer]:
+          - /url: /search?q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&newwindow=1&sca_esv=80e3327b61e6e700&ei=suRgaoKNJuPj2roP762moQ4&start=10&sa=N&sstk=AU9db-Caglmsv1as6SBjTeRdrpZd721bNEgZoOOqYbzY6GeNoVd8thMeeygXUUm5Vqj6YJqnTbjoDhi5Lyq-vqa-XXcfhi9Q2iZlUQ&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQ8tMDegQINBAE
+          - text: "2"
+        - link "Page 3" [ref=f31e503] [cursor=pointer]:
+          - /url: /search?q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&newwindow=1&sca_esv=80e3327b61e6e700&ei=suRgaoKNJuPj2roP762moQ4&start=20&sa=N&sstk=AU9db-Caglmsv1as6SBjTeRdrpZd721bNEgZoOOqYbzY6GeNoVd8thMeeygXUUm5Vqj6YJqnTbjoDhi5Lyq-vqa-XXcfhi9Q2iZlUQ&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQ8tMDegQINBAG
+          - text: "3"
+        - link "Page 4" [ref=f31e505] [cursor=pointer]:
+          - /url: /search?q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&newwindow=1&sca_esv=80e3327b61e6e700&ei=suRgaoKNJuPj2roP762moQ4&start=30&sa=N&sstk=AU9db-Caglmsv1as6SBjTeRdrpZd721bNEgZoOOqYbzY6GeNoVd8thMeeygXUUm5Vqj6YJqnTbjoDhi5Lyq-vqa-XXcfhi9Q2iZlUQ&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQ8tMDegQINBAI
+          - text: "4"
+        - link "Page 5" [ref=f31e507] [cursor=pointer]:
+          - /url: /search?q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&newwindow=1&sca_esv=80e3327b61e6e700&ei=suRgaoKNJuPj2roP762moQ4&start=40&sa=N&sstk=AU9db-Caglmsv1as6SBjTeRdrpZd721bNEgZoOOqYbzY6GeNoVd8thMeeygXUUm5Vqj6YJqnTbjoDhi5Lyq-vqa-XXcfhi9Q2iZlUQ&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQ8tMDegQINBAK
+          - text: "5"
+        - link "Page 6" [ref=f31e509] [cursor=pointer]:
+          - /url: /search?q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&newwindow=1&sca_esv=80e3327b61e6e700&ei=suRgaoKNJuPj2roP762moQ4&start=50&sa=N&sstk=AU9db-Caglmsv1as6SBjTeRdrpZd721bNEgZoOOqYbzY6GeNoVd8thMeeygXUUm5Vqj6YJqnTbjoDhi5Lyq-vqa-XXcfhi9Q2iZlUQ&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQ8tMDegQINBAM
+          - text: "6"
+        - link "Page 7" [ref=f31e511] [cursor=pointer]:
+          - /url: /search?q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&newwindow=1&sca_esv=80e3327b61e6e700&ei=suRgaoKNJuPj2roP762moQ4&start=60&sa=N&sstk=AU9db-Caglmsv1as6SBjTeRdrpZd721bNEgZoOOqYbzY6GeNoVd8thMeeygXUUm5Vqj6YJqnTbjoDhi5Lyq-vqa-XXcfhi9Q2iZlUQ&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQ8tMDegQINBAO
+          - text: "7"
+        - link "Page 8" [ref=f31e513] [cursor=pointer]:
+          - /url: /search?q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&newwindow=1&sca_esv=80e3327b61e6e700&ei=suRgaoKNJuPj2roP762moQ4&start=70&sa=N&sstk=AU9db-Caglmsv1as6SBjTeRdrpZd721bNEgZoOOqYbzY6GeNoVd8thMeeygXUUm5Vqj6YJqnTbjoDhi5Lyq-vqa-XXcfhi9Q2iZlUQ&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQ8tMDegQINBAQ
+          - text: "8"
+        - link "Page 9" [ref=f31e515] [cursor=pointer]:
+          - /url: /search?q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&newwindow=1&sca_esv=80e3327b61e6e700&ei=suRgaoKNJuPj2roP762moQ4&start=80&sa=N&sstk=AU9db-Caglmsv1as6SBjTeRdrpZd721bNEgZoOOqYbzY6GeNoVd8thMeeygXUUm5Vqj6YJqnTbjoDhi5Lyq-vqa-XXcfhi9Q2iZlUQ&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQ8tMDegQINBAS
+          - text: "9"
+        - link "Page 10" [ref=f31e517] [cursor=pointer]:
+          - /url: /search?q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&newwindow=1&sca_esv=80e3327b61e6e700&ei=suRgaoKNJuPj2roP762moQ4&start=90&sa=N&sstk=AU9db-Caglmsv1as6SBjTeRdrpZd721bNEgZoOOqYbzY6GeNoVd8thMeeygXUUm5Vqj6YJqnTbjoDhi5Lyq-vqa-XXcfhi9Q2iZlUQ&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQ8tMDegQINBAU
+          - text: "10"
+        - heading [level=2] [ref=f31e519]:
+          - link "下一页" [ref=f31e520] [cursor=pointer]:
+            - /url: /search?q=site:scimagojr.com+SJR+Scopus+coverage+journals+1999&newwindow=1&sca_esv=80e3327b61e6e700&ei=suRgaoKNJuPj2roP762moQ4&start=10&sa=N&sstk=AU9db-Caglmsv1as6SBjTeRdrpZd721bNEgZoOOqYbzY6GeNoVd8thMeeygXUUm5Vqj6YJqnTbjoDhi5Lyq-vqa-XXcfhi9Q2iZlUQ&ved=2ahUKEwiCrprNz-aVAxXjsVYBHe-WKeQQ8NMDegQINBAW
+      - navigation
+    - contentinfo [ref=f31e523]:
+      - heading "页脚链接" [level=1] [ref=f31e524]
+      - generic [ref=f31e528]:
+        - generic [ref=f31e532]:
+          - button "东京都 日本 - 是根据您的 IP 地址推断出来的" [ref=f31e534] [cursor=pointer]:
+            - generic [ref=f31e535]: 东京都 日本
+            - generic [ref=f31e537]:
+              - text: "-"
+              - generic [ref=f31e538]: 是根据您的 IP 地址推断出来的
+          - text: "-"
+          - button "更新位置信息" [ref=f31e540] [cursor=pointer]
+        - generic [ref=f31e543]:
+          - link "帮助" [ref=f31e544] [cursor=pointer]:
+            - /url: https://support.google.com/websearch/?p=ws_results_help&hl=zh-CN&fg=1
+          - link "发送反馈" [ref=f31e545] [cursor=pointer]:
+            - /url: "#"
+          - link "隐私权" [ref=f31e546] [cursor=pointer]:
+            - /url: https://policies.google.com/privacy?hl=zh-CN&fg=1
+          - link "条款" [ref=f31e547] [cursor=pointer]:
+            - /url: https://policies.google.com/terms?hl=zh-CN&fg=1

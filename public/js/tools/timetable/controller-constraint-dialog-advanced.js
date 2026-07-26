@@ -4,12 +4,90 @@
  */
 
 import { requestTimetable } from './api.js';
-import { compileConstraintRuleArtifacts } from './constraint-rule-form-model.js';
+import {
+    compileConstraintRuleArtifacts,
+    getConstraintRuleEditorDefinition,
+    getConstraintRuleFormValue,
+    getConstraintRuleRange,
+    summarizeConstraintRuleForm,
+} from './constraint-rule-form-model.js';
 
 function checkedEditSlots() {
     return Array.from(document.querySelectorAll?.('[data-edit-slot]:checked') || [])
         .map(input => String(input.value || '').trim())
         .filter(Boolean);
+}
+
+function collectConstraintRuleEditorForm(editing = {}) {
+    const root = document.querySelector?.('[data-constraint-rule-editor-form]');
+    if (!root) return null;
+    const values = {
+        ...(editing.formValues || {}),
+        formKey: root.dataset.formKey || document.getElementById('tt-edit-constraint-type')?.value || editing.formKey || '',
+    };
+    const fields = [...root.querySelectorAll?.('[data-rule-field]') || []];
+    const multipleNames = new Set(fields.filter(node => node.hasAttribute('data-rule-field-multiple')).map(node => node.dataset.ruleField));
+    multipleNames.forEach(name => {
+        values[name] = fields.filter(node => node.dataset.ruleField === name && node.checked)
+            .map(node => node.value)
+            .filter(Boolean);
+    });
+    fields.filter(node => !node.hasAttribute('data-rule-field-multiple')).forEach(node => {
+        const name = node.dataset.ruleField;
+        if (!name) return;
+        if (node.type === 'radio') {
+            if (node.checked) values[name] = node.value;
+        } else if (node.type === 'checkbox') {
+            values[name] = Boolean(node.checked);
+        } else {
+            values[name] = node.value;
+        }
+    });
+    return values;
+}
+
+function defaultEditorFormValues(definition = {}, project = {}) {
+    const range = getConstraintRuleRange(project);
+    const values = {
+        formKey: definition.key || '',
+        type: definition.type || '',
+        slots: [],
+        limit: '',
+        scopeMode: 'school',
+        scopeClassId: '',
+        scopeTeacherId: '',
+        restrictTeacher: false,
+    };
+    (definition.fields || []).forEach(field => {
+        if (field.kind === 'weekdays') values[field.name] = [...range.weekdays];
+        else if (field.kind === 'entity_multi' || field.kind === 'token_multi' || field.kind === 'period_pair') values[field.name] = [];
+        else if (field.kind === 'boolean') values[field.name] = true;
+        else if (field.name === 'weight') values[field.name] = 1;
+        else if (field.name === 'blockSize') values[field.name] = 2;
+        else if (field.name === 'maxConsecutiveFullAfternoons') values[field.name] = 1;
+        else if (field.name === 'dayPart') values[field.name] = 'morning';
+        else if (field.kind === 'enum') values[field.name] = field.options?.[0]?.value || '';
+        else if (!(field.name in values) && field.kind !== 'course_scope') values[field.name] = '';
+    });
+    return values;
+}
+
+function focusFirstEditorError() {
+    setTimeout(() => {
+        const doc = typeof document === 'undefined' ? null : document;
+        const error = doc?.querySelector?.('.tt-constraint-edit-modal [role="alert"]');
+        const field = error?.closest?.('label, fieldset, .tt-constraint-rule-field')
+            ?.querySelector?.('input:not([type="hidden"]), select, button, summary');
+        (field || error)?.focus?.();
+    }, 0);
+}
+
+function restoreConstraintEditTrigger(constraintId = '') {
+    if (!constraintId) return;
+    setTimeout(() => {
+        const doc = typeof document === 'undefined' ? null : document;
+        doc?.querySelector?.(`[data-action="edit-constraint"][data-constraint-id="${String(constraintId).replace(/"/g, '\\"')}"]`)?.focus?.();
+    }, 0);
 }
 
 function replaceLinkedArtifacts(review = {}, editing = {}, result = {}) {
@@ -115,14 +193,20 @@ export function editConstraint(constraintId) {
     this.state.constraintDialog.editingConstraint = {
         ...constraint,
         originalId: constraint.id,
+        formKey: getConstraintRuleFormValue(constraint).formKey,
+        formValues: getConstraintRuleFormValue(constraint),
+        formErrors: {},
     };
+    this.state.constraintDialog.editReturnFocusConstraintId = constraint.id;
 
     this.render();
 
     // 聚焦到编辑表单
     setTimeout(() => {
-        const firstInput = document.querySelector('.tt-constraint-edit-modal input, .tt-constraint-edit-modal select, .tt-constraint-edit-modal textarea');
-        firstInput?.focus();
+        const doc = typeof document === 'undefined' ? null : document;
+        const modal = doc?.querySelector?.('.tt-constraint-edit-modal');
+        const firstInput = modal?.querySelector('input:not([type="hidden"]), select, textarea, button');
+        (firstInput || modal)?.focus?.();
     }, 0);
 }
 
@@ -133,18 +217,17 @@ export function saveEditedConstraint() {
     const editing = this.state.constraintDialog?.editingConstraint;
     if (!editing) return;
 
+    const editorForm = collectConstraintRuleEditorForm(editing);
     const type = document.getElementById('tt-edit-constraint-type')?.value || '';
     const targetValue = document.getElementById('tt-edit-constraint-target')?.value || '';
     const limit = document.getElementById('tt-edit-constraint-limit')?.value || '';
     const scopeClassId = document.getElementById('tt-edit-constraint-scope-class')?.value || '';
     const restrictTeacher = Boolean(document.getElementById('tt-edit-constraint-scope-limit-teacher')?.checked);
-    const scopeTeacherId = restrictTeacher
-        ? (document.getElementById('tt-edit-constraint-scope-teacher')?.value || '')
-        : '';
-    const slots = checkedEditSlots();
-    const formScope = { targetValue, scopeClassId, restrictTeacher, scopeTeacherId };
+    const scopeTeacherId = restrictTeacher ? (document.getElementById('tt-edit-constraint-scope-teacher')?.value || '') : '';
+    const legacyForm = { type, targetValue, slots: checkedEditSlots(), limit, scopeClassId, restrictTeacher, scopeTeacherId };
+    const form = editorForm || legacyForm;
     const result = compileConstraintRuleArtifacts(
-        { type, targetValue, slots, limit, ...formScope },
+        form,
         this.state.project || {},
         { existing: editing },
     );
@@ -152,11 +235,14 @@ export function saveEditedConstraint() {
     if (!result.ok) {
         this.state.constraintDialog.editingConstraint = {
             ...editing,
-            formType: type,
-            formScope,
+            formKey: form.formKey || editing.formKey || '',
+            formType: editorForm ? undefined : type,
+            formValues: editorForm || editing.formValues,
+            formScope: editorForm ? undefined : { targetValue, scopeClassId, restrictTeacher, scopeTeacherId },
             formErrors: result.errors,
         };
         this.render();
+        focusFirstEditorError();
         return;
     }
 
@@ -167,21 +253,59 @@ export function saveEditedConstraint() {
     replaceLinkedArtifacts(this.state.ruleReview, editing, result);
     this.refreshReviewStatistics?.(this.state.ruleReview);
 
+    const returnFocusId = this.state.constraintDialog.editReturnFocusConstraintId || editing.originalId;
     this.state.constraintDialog.editingConstraint = null;
     this.detectConstraintConflicts();
     this.render();
+    restoreConstraintEditTrigger(returnFocusId);
 }
 
 export function updateEditingConstraintType(type = '') {
     const editing = this.state.constraintDialog?.editingConstraint;
     if (!editing) return;
+    const current = collectConstraintRuleEditorForm(editing) || editing.formValues || {};
+    const definition = getConstraintRuleEditorDefinition(type);
+    if (!definition) return;
+    const next = defaultEditorFormValues(definition, this.state.project || {});
+    const supportedFields = new Set((definition.fields || []).map(field => field.name));
+    supportedFields.add('scopeMode');
+    supportedFields.add('scopeClassId');
+    supportedFields.add('scopeTeacherId');
+    supportedFields.add('restrictTeacher');
+    supportedFields.forEach(name => {
+        if (current[name] !== undefined && current[name] !== '') next[name] = current[name];
+    });
+    const currentTargetDefinition = getConstraintRuleEditorDefinition(current.formKey || editing.formKey || '');
+    const currentTarget = currentTargetDefinition?.fields?.find(field => field.name === 'targetValue');
+    const nextTarget = definition.fields?.find(field => field.name === 'targetValue');
+    if (!currentTarget || !nextTarget || currentTarget.entityKind !== nextTarget.entityKind) next.targetValue = '';
     this.state.constraintDialog.editingConstraint = {
         ...editing,
-        formType: type,
-        formScope: {},
+        formKey: definition.key,
+        formValues: next,
         formErrors: {},
     };
     this.render();
+}
+
+export function updateEditingConstraintDraftFromDom({ rerender = false } = {}) {
+    const editing = this.state.constraintDialog?.editingConstraint;
+    if (!editing) return;
+    const formValues = collectConstraintRuleEditorForm(editing);
+    if (!formValues) return;
+    this.state.constraintDialog.editingConstraint = {
+        ...editing,
+        formKey: formValues.formKey || editing.formKey,
+        formValues,
+        formErrors: {},
+    };
+    if (rerender) {
+        this.render();
+        return;
+    }
+    const summary = summarizeConstraintRuleForm(formValues, this.state.project || {});
+    document.querySelectorAll?.('.tt-constraint-edit-modal .tt-dialog-header p')
+        .forEach(node => { node.textContent = summary; });
 }
 
 export function updateEditingConstraintScope(scope = {}) {
@@ -202,8 +326,11 @@ export function updateEditingConstraintScope(scope = {}) {
  * 取消编辑约束
  */
 export function cancelEditConstraint() {
+    const returnFocusId = this.state.constraintDialog?.editReturnFocusConstraintId
+        || this.state.constraintDialog?.editingConstraint?.originalId;
     this.state.constraintDialog.editingConstraint = null;
     this.render();
+    restoreConstraintEditTrigger(returnFocusId);
 }
 
 /**

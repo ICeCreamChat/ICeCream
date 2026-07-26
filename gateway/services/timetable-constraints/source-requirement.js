@@ -99,6 +99,7 @@ function sourceReviewReasons(item = {}, executionStatus = '', understandingStatu
 }
 
 function sourceApplicationTarget(item = {}, executionStatus = '', reviewReasons = []) {
+    if (executionStatus === 'partially_executable' && asArray(item.machineRuleIds).length) return 'rule';
     if (reviewReasons.length) return 'review';
     if (executionStatus === 'disabled' || item.origin === 'system_supplement') return 'handled';
     if (executionStatus !== 'executable') return 'review';
@@ -126,15 +127,25 @@ export function finalizeSourceRequirementPresentation(rawItem = {}) {
         reviewReasons.push(reviewReason('missing_application_artifact', '已理解约束，但尚未生成可应用的排课制品。'));
         applicationTarget = 'review';
     }
-    const requiresHumanReview = applicationTarget === 'review';
+    const applicableMachineRuleIds = uniqueStrings(item.clauses
+        .filter(clause => ['executable', 'partially_executable'].includes(clause.executionStatus))
+        .flatMap(clause => clause.machineRuleIds));
+    const unresolvedClauseIds = uniqueStrings(item.clauses
+        .filter(clause => !['executable', 'disabled'].includes(clause.executionStatus))
+        .map(clause => clause.clauseId || clause.constraintId || clause.id));
+    const partiallyApplicable = applicableMachineRuleIds.length > 0 && unresolvedClauseIds.length > 0;
+    const requiresHumanReview = applicationTarget === 'review' || unresolvedClauseIds.length > 0;
     return {
         ...item,
         understandingStatus,
         executionStatus,
         status: displayStatus(understandingStatus, executionStatus),
-        reviewStatus: requiresHumanReview ? 'needs_review' : 'understood',
+        reviewStatus: partiallyApplicable ? 'partially_supported' : requiresHumanReview ? 'needs_review' : 'understood',
         applicationTarget,
         requiresHumanReview,
+        partiallyApplicable,
+        applicableMachineRuleIds,
+        unresolvedClauseIds,
         reviewReasons,
         warnings: uniqueStrings(asArray(item.warnings).filter(warning => (
             executionStatus !== 'executable'

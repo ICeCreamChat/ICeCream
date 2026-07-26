@@ -19,6 +19,7 @@ import {
     bindRuleReviewInteractions,
     handleTimetableEscape,
     loadInspectorPosition,
+    loadInspectorSize,
 } from './grid-interactions.js';
 import {
     ensureOwnerSelection,
@@ -50,6 +51,13 @@ import {
     resolveInspectorIssueLocateTarget,
 } from './view.js';
 import { PRESET_TEMPLATES } from './preset-templates.js';
+
+const SOLVER_POLL_INTERVAL_MS = 1200;
+const SOLVER_POLL_RETRY_DELAYS_MS = [1200, 2500, 5000];
+
+function isActiveSolverJob(job = null) {
+    return Boolean(job && ['queued', 'running'].includes(job.status));
+}
 
 function valueList(value) {
     if (Array.isArray(value)) return value;
@@ -87,16 +95,17 @@ function buildSmartDataAudit(project = {}) {
 
 function buildClientSolveScaleHint(project = {}) {
     const classCount = (project.classes || []).length;
-    if (classCount < 30) return null;
     const lessonCount = (project.lessonPlans || [])
         .reduce((sum, plan) => sum + (Number.parseInt(plan.weeklyHours, 10) || 0), 0);
+    if (classCount < 30 && lessonCount < 600) return null;
     return {
         largeProject: true,
+        solverAvailable: false,
         classCount,
         lessonCount,
-        timeoutSeconds: 300,
-        estimatedSeconds: 300,
-        message: `${classCount} 个班，预计需要数分钟；当前 Timefold 超时上限 300 秒。`,
+        timeoutSeconds: null,
+        estimatedSeconds: null,
+        message: `${classCount} 个班、${lessonCount} 课时；正在读取求解器配置。`,
     };
 }
 
@@ -233,6 +242,7 @@ export class TimetablePlannerController {
     async init(container) {
         this.state.container = container;
         this.state.inspectorPosition = loadInspectorPosition();
+        this.state.inspectorSize = loadInspectorSize();
         this.timetableToolHost = container?.closest?.('.tool-container') || null;
         this.timetableToolHost?.classList?.add('tool-container--timetable');
         await this.load();
@@ -269,6 +279,31 @@ export class TimetablePlannerController {
         const rosterReviewScroll = rosterReviewWrap
             ? { left: rosterReviewWrap.scrollLeft, top: rosterReviewWrap.scrollTop }
             : null;
+        const sidebar = container.querySelector?.('.tt-sidebar');
+        const sidebarScroll = sidebar
+            ? { left: sidebar.scrollLeft, top: sidebar.scrollTop }
+            : null;
+        const constraintScroll = [
+            '.tt-inspector-body',
+            '.tt-requirement-table-body',
+            '.tt-requirement-detail',
+            '.tt-constraint-edit-body',
+        ].map(selector => {
+            const element = container.querySelector?.(selector);
+            return element ? { selector, left: element.scrollLeft, top: element.scrollTop } : null;
+        }).filter(Boolean);
+        const constraintEditFocus = (() => {
+            const active = typeof document === 'undefined' ? null : document.activeElement;
+            if (!active?.closest?.('.tt-constraint-edit-modal')) return null;
+            if (active.id) return { selector: `#${active.id}` };
+            if (active.dataset?.ruleField) {
+                return {
+                    selector: `[data-rule-field="${String(active.dataset.ruleField).replace(/"/g, '\\"')}"]`,
+                    value: active.value,
+                };
+            }
+            return null;
+        })();
         container.innerHTML = renderWorkbench(this.state);
         bindGridInteractions(container, this, this.state);
         this.syncRangePopoverViewportListeners();
@@ -281,6 +316,24 @@ export class TimetablePlannerController {
         if (nextRosterReviewWrap && rosterReviewScroll) {
             nextRosterReviewWrap.scrollLeft = rosterReviewScroll.left;
             nextRosterReviewWrap.scrollTop = rosterReviewScroll.top;
+        }
+        const nextSidebar = container.querySelector?.('.tt-sidebar');
+        if (nextSidebar && sidebarScroll) {
+            nextSidebar.scrollLeft = sidebarScroll.left;
+            nextSidebar.scrollTop = sidebarScroll.top;
+        }
+        constraintScroll.forEach(item => {
+            const element = container.querySelector?.(item.selector);
+            if (!element) return;
+            element.scrollLeft = item.left;
+            element.scrollTop = item.top;
+        });
+        if (constraintEditFocus) {
+            const candidates = [...container.querySelectorAll?.(constraintEditFocus.selector) || []];
+            const target = constraintEditFocus.value === undefined
+                ? candidates[0]
+                : candidates.find(item => item.value === constraintEditFocus.value) || candidates[0];
+            target?.focus?.();
         }
         this.restorePeriodTimeFocus(container, periodTimeFocus);
         window.lucide?.createIcons();
@@ -400,9 +453,9 @@ export class TimetablePlannerController {
         if (scrollTop !== null) body.scrollTop = Math.max(0, scrollTop);
     }
 
-    setMessage(message, failure = null) {
+    setMessage(message, failure = undefined) {
         this.state.message = message || '';
-        this.state.lastFailure = failure;
+        if (failure !== undefined) this.state.lastFailure = failure;
         if (this.state.smartWorkbench?.open) {
             this.renderSmartWorkbenchSurface();
         } else if (this.state.ruleReview?.open) {
@@ -412,8 +465,68 @@ export class TimetablePlannerController {
         }
     }
 
+    solverJobStorageKey(project = this.state.project) {
+        const identity = String(project?.id || project?.projectId || project?.schoolName || 'default')
+            .trim()
+            .slice(0, 120);
+        return `icecream:timetable:solver-job:${identity}:${Number(project?.version || 0)}`;
+    }
+
+    solverJobStorage() {
+        const ownerWindow = this.state.container?.ownerDocument?.defaultView || globalThis.window;
+        try {
+            return ownerWindow?.sessionStorage || globalThis.sessionStorage || null;
+        } catch {
+            return null;
+        }
+    }
+
+    rememberOptimizationJob(job = this.state.solverJob) {
+        if (!job?.jobId) return;
+        try {
+            this.solverJobStorage()?.setItem(this.solverJobStorageKey(), JSON.stringify({ jobId: job.jobId }));
+        } catch {
+            // Storage is optional; the current page can still poll normally.
+        }
+    }
+
+    forgetStoredOptimizationJob() {
+        try {
+            this.solverJobStorage()?.removeItem(this.solverJobStorageKey());
+        } catch {
+            // Storage may be disabled by the browser.
+        }
+    }
+
+    async restoreStoredOptimizationJob() {
+        let stored = null;
+        try {
+            stored = JSON.parse(this.solverJobStorage()?.getItem(this.solverJobStorageKey()) || 'null');
+        } catch {
+            this.forgetStoredOptimizationJob();
+            return false;
+        }
+        if (!stored?.jobId) return false;
+        this.state.solverJob = { jobId: stored.jobId, status: 'queued', mode: 'solve' };
+        this.state.inspectorDismissed = false;
+        try {
+            await this.refreshOptimizationJob(stored.jobId);
+            return true;
+        } catch {
+            this.forgetStoredOptimizationJob();
+            this.state.solverJob = null;
+            this.state.lastFailure = {
+                reason: 'solver_job_expired',
+                message: '上次求解状态已过期；项目数据未被修改。',
+            };
+            this.state.message = this.state.lastFailure.message;
+            return false;
+        }
+    }
+
     locateInspectorIssue(rawPayload = {}) {
         const payload = normalizeInspectorLocatePayload(rawPayload);
+        this.state.inspectorDismissed = false;
         const inspectorAnchor = {
             issueKey: payload.inspectorIssueKey,
             scrollTop: payload.inspectorAnchorScrollTop,
@@ -756,8 +869,8 @@ export class TimetablePlannerController {
             open: Boolean(current.open),
             step: 'review',
             uiStep: hasReviewItems ? 'issues' : current.uiStep || 'input',
-            mode: current.mode || 'text',
-            inputMode: current.inputMode || 'text',
+            mode: 'agent',
+            inputMode: 'agent',
             text: current.text || response.originalText || '',
             schemaVersion: review.schemaVersion || '',
             ...(sourceRequirements === undefined ? {} : { sourceRequirements }),
@@ -818,15 +931,30 @@ export class TimetablePlannerController {
             loading: false,
             error: '',
         };
+        const stage = String(this.state.constraintAgent.stage || 'INTAKE').toUpperCase();
+        const hasReviewItems = valueList(this.state.ruleReview?.sourceRequirements).length
+            || valueList(this.state.ruleReview?.draftRows).length
+            || valueList(this.state.ruleReview?.requirementItems).length
+            || valueList(this.state.ruleReview?.semanticActions).length;
+        this.state.constraintDialog = {
+            ...(this.state.constraintDialog || {}),
+            open: true,
+            sidebarMenuOpen: false,
+            agentConversationExpanded: !hasReviewItems || ['INTAKE', 'CLARIFY'].includes(stage),
+        };
         if (response.fulfillment) {
             this.state.constraintFulfillment = response.fulfillment;
             this.state.constraintFulfillmentFilter = 'attention';
+            this.state.constraintFulfillmentExpandedRowId = '';
+            this.state.constraintFulfillmentFilterMenuOpen = false;
         }
         this.state.message = response.reply || this.state.message;
         this.render();
     }
 
     async startConstraintIntakeAgentSession() {
+        if (!this.prepareConstraintAgentReviewReplacement?.()) return;
+        this.resetConstraintAgentSessionForReview?.();
         this.state.constraintAgent = {
             ...(this.state.constraintAgent || {}),
             loading: true,
@@ -874,6 +1002,10 @@ export class TimetablePlannerController {
         if (!content) {
             this.setMessage('请先输入排课要求。');
             return;
+        }
+        if (!this.state.constraintAgent?.sessionId) {
+            if (!this.prepareConstraintAgentReviewReplacement?.()) return;
+            this.resetConstraintAgentSessionForReview?.();
         }
         this.state.constraintAgent = {
             ...(this.state.constraintAgent || {}),
@@ -977,6 +1109,10 @@ export class TimetablePlannerController {
     async solveConstraintIntakeAgent() {
         const agent = this.state.constraintAgent || {};
         if (!agent.sessionId) return;
+        if (isActiveSolverJob(this.state.solverJob)) {
+            this.setMessage('当前课表仍在求解中，请等待完成后再生成。');
+            return;
+        }
         this.state.constraintAgent = { ...agent, loading: true, error: '' };
         this.render();
         try {
@@ -1049,6 +1185,8 @@ export class TimetablePlannerController {
             this.state.constraintFulfillment = null;
             this.state.constraintFulfillmentLoading = false;
             this.state.constraintFulfillmentError = '';
+            this.state.constraintFulfillmentExpandedRowId = '';
+            this.state.constraintFulfillmentFilterMenuOpen = false;
             return null;
         }
         this.state.constraintFulfillmentLoading = true;
@@ -1062,6 +1200,8 @@ export class TimetablePlannerController {
             this.state.constraintFulfillment = result.fulfillment || null;
             this.state.constraintFulfillmentLoading = false;
             this.state.constraintFulfillmentError = '';
+            this.state.constraintFulfillmentExpandedRowId = '';
+            this.state.constraintFulfillmentFilterMenuOpen = false;
             this.render();
             return this.state.constraintFulfillment;
         } catch (error) {
@@ -1069,6 +1209,8 @@ export class TimetablePlannerController {
             const normalized = normalizeApiError(error);
             this.state.constraintFulfillmentLoading = false;
             this.state.constraintFulfillmentError = normalized.message || '约束达成度暂时无法评估。';
+            this.state.constraintFulfillmentExpandedRowId = '';
+            this.state.constraintFulfillmentFilterMenuOpen = false;
             this.render();
             return null;
         }
@@ -1106,6 +1248,8 @@ export class TimetablePlannerController {
             if (result.project) this.applyProject(result.project);
             this.state.constraintFulfillment = result.fulfillment || null;
             this.state.constraintFulfillmentFilter = 'attention';
+            this.state.constraintFulfillmentExpandedRowId = '';
+            this.state.constraintFulfillmentFilterMenuOpen = false;
             this.state.constraintFulfillmentOpen = true;
             this.setMessage('已删除该约束。请重新排课查看新的满足度报告。');
         } catch (error) {
@@ -1252,6 +1396,7 @@ export class TimetablePlannerController {
         const current = new Set(Array.isArray(this.state.workflowOpenSections)
             ? this.state.workflowOpenSections
             : this.defaultWorkflowOpenSections());
+        const opening = !current.has(section);
         if (current.has(section)) {
             current.delete(section);
         } else {
@@ -1259,6 +1404,17 @@ export class TimetablePlannerController {
         }
         this.state.workflowOpenSections = [...current];
         this.render();
+        if (opening && typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => {
+                const sidebar = this.state.container?.querySelector?.('.tt-sidebar');
+                const target = sidebar?.querySelector?.(`.tt-workflow-panel[data-workflow-step="${section}"]`);
+                if (!sidebar || !target) return;
+                const sidebarRect = sidebar.getBoundingClientRect?.();
+                const targetRect = target.getBoundingClientRect?.();
+                if (!sidebarRect || !targetRect) return;
+                sidebar.scrollTop = Math.max(0, sidebar.scrollTop + targetRect.top - sidebarRect.top);
+            });
+        }
     }
 
     rangePopoverRectFromTrigger(trigger) {
@@ -4049,16 +4205,77 @@ export class TimetablePlannerController {
         this.render();
     }
 
-    startOptimizationPolling(job) {
+    startOptimizationPolling(job, delayMs = SOLVER_POLL_INTERVAL_MS) {
         this.clearOptimizationPolling();
         if (!job?.jobId || !['queued', 'running'].includes(job.status)) return;
+        this.rememberOptimizationJob(job);
         this.jobPollTimer = setTimeout(() => {
             this.refreshOptimizationJob(job.jobId);
-        }, 1200);
+        }, delayMs);
     }
 
     isCurrentOptimizationJob(jobId) {
         return Boolean(jobId && this.state.solverJob?.jobId === jobId);
+    }
+
+    solverFailureFromJob(job = {}) {
+        const solverStats = job.solverStats || {};
+        const feasibility = solverStats.feasibility || null;
+        if (job.reason === 'input_infeasible' || feasibility?.status === 'input_infeasible') {
+            const issue = feasibility?.issues?.[0] || null;
+            return {
+                status: 422,
+                reason: 'input_infeasible',
+                message: `生成失败：${issue?.message || '输入硬约束不存在可行排课域。'}`,
+                solverStats,
+                fastAttempt: solverStats.fastAttempt || null,
+                failureSummary: feasibility,
+            };
+        }
+        const fastAttempt = solverStats.fastAttempt || job.fastAttempt || null;
+        const placed = Number(fastAttempt?.placedLessons || 0);
+        const total = Number(fastAttempt?.totalLessons || 0);
+        const unplaced = Number(fastAttempt?.unplacedLessons || 0);
+        const hardScore = Number(solverStats.hardScore || 0);
+        const hardConflicts = Math.max(
+            Math.abs(Math.min(0, hardScore)),
+            Number(solverStats.failureSummary?.hardConflicts || 0),
+            Number(solverStats.failureSummary?.hardViolationCount || 0),
+        );
+        const details = [];
+        if (total) {
+            details.push(`快速构造 ${placed}/${total}${unplaced ? `，剩余 ${unplaced} 节` : ''}`);
+        }
+        if (hardConflicts) {
+            details.push(`Timefold 最终还有 ${hardConflicts} 个硬冲突`);
+        } else if (job.reason === 'search_exhausted') {
+            details.push('在当前求解预算内未找到零硬冲突课表');
+        } else if (job.reason === 'timeout') {
+            details.push('Timefold 求解超时');
+        } else if (job.reason === 'endpoint_missing') {
+            details.push('Timefold 服务版本不匹配');
+        } else if (job.reason === 'not_configured') {
+            details.push('Timefold 服务未配置');
+        } else if (job.reason === 'http_error') {
+            details.push('无法连接 Timefold 服务');
+        } else if (job.reason === 'incomplete_solution') {
+            details.push('Timefold 未排满全部课时');
+        }
+        const topConstraint = solverStats.failureSummary?.topConstraints?.[0]
+            || solverStats.constraintAnalysis?.[0]
+            || null;
+        if (topConstraint?.constraintId) details.push(`主要阻塞约束：${topConstraint.constraintId}`);
+        const message = details.length
+            ? `生成失败：${details.join('，')}。${this.state.project?.schedule ? '旧课表已保留。' : ''}`
+            : `生成失败：${job.reason ? 'Timefold 未能生成可用课表' : '求解未完成'}。${this.state.project?.schedule ? '旧课表已保留。' : ''}`;
+        return {
+            status: 422,
+            reason: job.reason || solverStats.reason || 'failed',
+            message,
+            solverStats,
+            fastAttempt,
+            failureSummary: solverStats.failureSummary || null,
+        };
     }
 
     async refreshOptimizationJob(jobId) {
@@ -4066,19 +4283,29 @@ export class TimetablePlannerController {
         try {
             const result = await requestTimetable(`/schedule/jobs/${encodeURIComponent(jobId)}`);
             if (!this.isCurrentOptimizationJob(jobId) || result.job?.jobId !== jobId) return;
+            this.state.solverPollRetryCount = 0;
             this.state.solverJob = result.job;
+            this.state.inspectorDismissed = false;
+            this.rememberOptimizationJob(result.job);
             if (result.job.status === 'completed' && result.job.accepted) {
                 const data = await requestTimetable('/bootstrap');
                 if (!this.isCurrentOptimizationJob(jobId)) return;
                 this.applyProject(data.project);
-                this.state.message = 'Timefold 优化已应用。';
+                this.state.solveScaleHint = data.solverScaleHint || this.state.solveScaleHint;
+                this.state.fastScheduleAttempt = null;
+                this.state.message = result.job.mode === 'solve'
+                    ? 'Timefold 课表已生成。'
+                    : 'Timefold 优化已应用。';
                 this.state.lastFailure = null;
+                this.forgetStoredOptimizationJob();
             } else if (result.job.status === 'completed') {
-                this.state.message = '快速课表已保留。';
+                this.state.message = result.job.mode === 'solve'
+                    ? '当前课表已保留。'
+                    : '快速课表已保留。';
                 this.state.lastFailure = null;
             } else if (result.job.status === 'failed') {
-                this.state.message = 'Timefold 优化未完成，快速课表已保留。';
-                this.state.lastFailure = null;
+                this.state.lastFailure = this.solverFailureFromJob(result.job);
+                this.state.message = this.state.lastFailure.message;
             } else if (result.job.status === 'skipped') {
                 this.state.message = result.job.reason === 'stale_schedule'
                     ? '课表已变化，已丢弃旧优化结果。'
@@ -4087,10 +4314,34 @@ export class TimetablePlannerController {
             }
             this.render();
             this.startOptimizationPolling(result.job);
-        } catch {
-            if (this.isCurrentOptimizationJob(jobId)) {
-                this.clearOptimizationPolling();
+        } catch (error) {
+            if (!this.isCurrentOptimizationJob(jobId)) return;
+            const retryIndex = Number(this.state.solverPollRetryCount || 0);
+            if (retryIndex < SOLVER_POLL_RETRY_DELAYS_MS.length) {
+                const delayMs = SOLVER_POLL_RETRY_DELAYS_MS[retryIndex];
+                this.state.solverPollRetryCount = retryIndex + 1;
+                this.state.message = `求解状态连接暂时中断，正在第 ${retryIndex + 1} 次重试。`;
+                this.render();
+                this.startOptimizationPolling(this.state.solverJob, delayMs);
+                return;
             }
+            const normalized = normalizeApiError(error);
+            this.clearOptimizationPolling();
+            this.state.solverJob = {
+                ...(this.state.solverJob || {}),
+                status: 'failed',
+                accepted: false,
+                reason: 'status_connection_lost',
+            };
+            this.state.lastFailure = {
+                ...normalized,
+                reason: 'status_connection_lost',
+                message: '求解状态连接中断，无法继续跟踪任务；可以重新生成。',
+                solverStats: this.state.solverJob.solverStats || null,
+            };
+            this.state.message = this.state.lastFailure.message;
+            this.rememberOptimizationJob(this.state.solverJob);
+            this.render();
         }
     }
 
@@ -4100,8 +4351,10 @@ export class TimetablePlannerController {
         try {
             const data = await requestTimetable('/bootstrap');
             this.applyProject(data.project);
+            this.state.solveScaleHint = data.solverScaleHint || buildClientSolveScaleHint(data.project);
             this.state.message = '';
             this.state.lastFailure = null;
+            await this.restoreStoredOptimizationJob();
         } catch (error) {
             const normalized = normalizeApiError(error);
             this.state.message = normalized.message || '加载失败';
@@ -4123,6 +4376,8 @@ export class TimetablePlannerController {
             this.state.solverJob = null;
             this.state.lastFailure = null;
             this.state.selectedSlotId = '';
+            this.state.constraintFulfillmentExpandedRowId = '';
+            this.state.constraintFulfillmentFilterMenuOpen = false;
             this.clearRuleDraft();
             this.setMessage('项目已保存。');
         } catch (error) {
@@ -5130,6 +5385,8 @@ export class TimetablePlannerController {
             this.state.solverJob = null;
             this.state.lastFailure = null;
             this.state.selectedSlotId = '';
+            this.state.constraintFulfillmentExpandedRowId = '';
+            this.state.constraintFulfillmentFilterMenuOpen = false;
             this.clearRuleDraft();
             this.setMessage('约束已保存。');
         } catch (error) {
@@ -5618,7 +5875,17 @@ export class TimetablePlannerController {
             error: '',
         };
         this.renderSmartWorkbenchSurface();
-        await this.runSchedule();
+        const runResult = await this.runSchedule();
+        if (runResult?.solverJob && isActiveSolverJob(this.state.solverJob)) {
+            this.state.smartWorkbench = {
+                ...(this.state.smartWorkbench || createSmartWorkbenchState()),
+                stage: 'solving',
+                busy: true,
+                diagnosis: null,
+            };
+            this.renderSmartWorkbenchSurface();
+            return;
+        }
         const candidate = this.smartCandidateFromProject();
         if (candidate) {
             this.mergeSmartWorkbenchCandidate(candidate);
@@ -5805,6 +6072,9 @@ export class TimetablePlannerController {
     }
 
     async clearRules() {
+        if (typeof confirm === 'function' && !confirm('确定要清空所有已应用约束吗？已识别但尚未应用的需求不会被删除。')) {
+            return;
+        }
         try {
             const result = await requestTimetable('/rules', {
                 method: 'POST',
@@ -5815,6 +6085,8 @@ export class TimetablePlannerController {
             this.state.solverJob = null;
             this.state.lastFailure = null;
             this.state.selectedSlotId = '';
+            this.state.constraintFulfillmentExpandedRowId = '';
+            this.state.constraintFulfillmentFilterMenuOpen = false;
             this.clearRuleDraft();
             this.setMessage('约束已清空。');
         } catch (error) {
@@ -5866,27 +6138,22 @@ export class TimetablePlannerController {
     }
 
     async runSchedule() {
+        if (isActiveSolverJob(this.state.solverJob)) {
+            this.state.message = '课表正在求解中，请等待当前任务完成。';
+            this.render();
+            return { solverJob: this.state.solverJob, reused: true };
+        }
         this.state.loading = true;
-        this.state.solveScaleHint = buildClientSolveScaleHint(this.state.project);
-        this.state.solvePhaseText = this.state.solveScaleHint?.message || '检查数据中';
-        const phaseTimers = [
-            setTimeout(() => {
-                if (!this.state.loading) return;
-                this.state.solvePhaseText = this.state.solveScaleHint?.largeProject
-                    ? `快速生成中 · ${this.state.solveScaleHint.message}`
-                    : '快速生成中';
-                if (this.state.smartWorkbench?.open) this.renderSmartWorkbenchSurface();
-                else this.render();
-            }, 80),
-            setTimeout(() => {
-                if (!this.state.loading) return;
-                this.state.solvePhaseText = this.state.solveScaleHint?.largeProject
-                    ? `局部优化中 · ${this.state.solveScaleHint.message}`
-                    : '局部优化中';
-                if (this.state.smartWorkbench?.open) this.renderSmartWorkbenchSurface();
-                else this.render();
-            }, 500),
-        ];
+        const clientHint = buildClientSolveScaleHint(this.state.project);
+        const currentHint = this.state.solveScaleHint;
+        this.state.solveScaleHint = currentHint
+            && currentHint.classCount === clientHint?.classCount
+            && currentHint.lessonCount === clientHint?.lessonCount
+            ? currentHint
+            : clientHint;
+        this.state.solvePhaseText = this.state.solveScaleHint?.solverAvailable
+            ? '正在启动求解'
+            : '正在快速构造';
         if (this.state.smartWorkbench?.open) this.renderSmartWorkbenchSurface();
         else this.render();
         try {
@@ -5896,18 +6163,38 @@ export class TimetablePlannerController {
             this.state.selectedOwnerId = this.state.project.classes[0]?.id || this.state.project.teachers[0]?.id || '';
             this.state.selectedSlotId = '';
             this.state.solverJob = result.solverJob || null;
+            this.state.inspectorDismissed = false;
+            this.state.solverPollRetryCount = 0;
+            this.state.fastScheduleAttempt = result.fastAttempt || null;
             this.state.solveScaleHint = result.solverScaleHint || this.state.solveScaleHint || null;
-            this.state.message = result.schedule.score.unplacedLessons
-                ? `快速生成完成，还有 ${result.schedule.score.unplacedLessons} 节未排。`
-                : result.solverJob
-                    ? '快速课表已生成，Timefold 正在后台优化。'
-                    : '快速课表已生成。';
-            this.state.lastFailure = null;
+            const schedule = result.schedule || result.project?.schedule || null;
+            if (result.solverJob) {
+                this.state.message = result.solverJob.reused
+                    ? '已继续跟踪当前求解任务。'
+                    : '求解任务已开始。';
+            } else if (schedule?.score?.unplacedLessons) {
+                this.state.message = `生成失败：还有 ${schedule.score.unplacedLessons} 节未排。`;
+                if (schedule?.solverStats?.feasibility?.status === 'input_infeasible') {
+                    this.state.lastFailure = {
+                        reason: 'input_infeasible',
+                        message: this.state.message,
+                        solverStats: schedule.solverStats,
+                        failureSummary: schedule.solverStats.feasibility,
+                    };
+                }
+            } else {
+                this.state.message = '课表已生成。';
+            }
+            if (result.solverJob || schedule?.solverStats?.feasibility?.status !== 'input_infeasible') {
+                this.state.lastFailure = null;
+            }
+            this.rememberOptimizationJob(result.solverJob);
             this.startOptimizationPolling(result.solverJob);
+            return result;
         } catch (error) {
             this.handleError(error, { keepFailure: true });
+            return null;
         } finally {
-            phaseTimers.forEach(timer => clearTimeout(timer));
             this.state.loading = false;
             this.state.solvePhaseText = '';
             if (this.state.smartWorkbench?.open) this.renderSmartWorkbenchSurface();

@@ -126,7 +126,7 @@ test('extractRequirementsWithAI returns locally resolved draft rows and semantic
     let observedBody = null;
     const result = await extractRequirementsWithAI({
         project: project(),
-        text: '三1班数学尽量上午，音乐不要第一节',
+        text: '三1班数学尽量上午，体育不要第一节',
         env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
         fetchImpl: async (url, options = {}) => {
             assert.equal(String(url), 'http://ai.test/chat/completions');
@@ -153,7 +153,7 @@ test('extractRequirementsWithAI returns locally resolved draft rows and semantic
     });
 
     assert.equal(observedBody.temperature, 0);
-    assert.equal(result.promptVersion, 'timetable_ai_requirement_extract_v6');
+    assert.equal(result.promptVersion, 'timetable_ai_requirement_extract_v7');
     assert.ok(result.draftRows.some(row => row.type === 'subject_morning' && row.targetId === 'math'));
     assert.ok(result.semanticRequirements.some(item => item.parameters.classIds?.includes('c1')));
     assert.ok(result.semanticRequirements.some(item => item.intent === 'avoid_first_period' && item.object.matchedIds.includes('pe')));
@@ -1176,8 +1176,8 @@ test('incompatible intent and target kind are routed to review instead of machin
     assert.equal(resolved.draftRows.length, 0);
 });
 
-test('AI extraction prompt v6 includes target-first semantic boundaries and course scope requirements', () => {
-    assert.equal(AI_REQUIREMENT_PROMPT_VERSION, 'timetable_ai_requirement_extract_v6');
+test('AI extraction prompt v7 includes semantic planning relations and derived course scopes', () => {
+    assert.equal(AI_REQUIREMENT_PROMPT_VERSION, 'timetable_ai_requirement_extract_v7');
     assert.ok(TIMETABLE_REQUIREMENT_INTENTS.includes('teacher_avoid_periods'));
     assert.ok(TIMETABLE_REQUIREMENT_INTENT_GUIDE.some(item => item.intent === 'teacher_unavailable'));
     assert.ok(TIMETABLE_REQUIREMENT_INTENT_GUIDE.some(item => item.intent === 'course_interval'));
@@ -1189,7 +1189,137 @@ test('AI extraction prompt v6 includes target-first semantic boundaries and cour
     assert.match(systemMessage.content, /先判断 targetKind/);
     assert.match(systemMessage.content, /领域内含糊/);
     assert.match(systemMessage.content, /隔天排/);
-    assert.match(systemMessage.content, /请补充班级或明确全校范围/);
+    assert.match(systemMessage.content, /subject_offering_classes/);
+    assert.match(systemMessage.content, /relation\.parentId/);
+    assert.match(systemMessage.content, /result\.rationales/);
+});
+
+test('AI extraction v7 preserves semantic planning fields and discards model entity ids', () => {
+    const rawText = '数学每周至少3次安排在第1到第3节，尤其是张老师任教的班级，为了保障学习效率。';
+    const [source] = buildSourceRequirements([{ lineNumber: 1, rawText }], {
+        inputType: 'semantic_planning_test',
+        origin: 'manual',
+    });
+    const result = validateExtractionPayload({
+        results: [{
+            sourceId: source.sourceId,
+            textHash: source.textHash,
+            rationales: [{ text: '保障学习效率。', evidence: '为了保障学习效率' }],
+            clauses: [
+                {
+                    id: 'base',
+                    intent: 'subject_preferred_periods',
+                    targetKind: 'subject',
+                    targetNames: ['数学'],
+                    targetIds: ['fabricated-subject-id'],
+                    scope: { kind: 'subject_offering_classes' },
+                    time: { periods: [1, 2, 3] },
+                    params: { minOccurrences: 3 },
+                    quantifier: { unit: 'occurrences_per_week', min: 3 },
+                    strength: 'soft',
+                    relation: { kind: 'independent' },
+                    evidence: '数学每周至少3次安排在第1到第3节',
+                },
+                {
+                    id: 'focus',
+                    intent: 'subject_preferred_periods',
+                    targetKind: 'subject',
+                    targetNames: ['数学'],
+                    targetIds: ['fabricated-subject-id'],
+                    scope: { kind: 'teacher_covered_classes', teacherNames: ['张老师'] },
+                    time: { periods: [1, 2, 3] },
+                    params: { minOccurrences: 3 },
+                    quantifier: { unit: 'occurrences_per_week', min: 3 },
+                    strength: 'soft',
+                    relation: { kind: 'emphasis', parentId: 'base' },
+                    evidence: '尤其是张老师任教的班级',
+                },
+            ],
+        }],
+    }, { sourceRequirements: [source], project: project() });
+
+    assert.equal(result.requirements.length, 2);
+    assert.equal(result.requirements[0].scope.kind, 'subject_offering_classes');
+    assert.equal(result.requirements[1].scope.kind, 'teacher_covered_classes');
+    assert.deepEqual(result.requirements[0].quantifier, { unit: 'occurrences_per_week', min: 3 });
+    assert.deepEqual(result.requirements[1].relation, { kind: 'emphasis', parentId: 'base' });
+    assert.deepEqual(result.requirements.flatMap(item => item.targetIds || []), []);
+    assert.equal(result.rationales.length, 1);
+    assert.equal(result.rationales[0].sourceId, source.sourceId);
+    assert.ok(result.warnings.some(warning => /实体 ID.*已丢弃/.test(warning)));
+});
+
+test('AI extraction v7 rejects evidence mismatches and invalid relation graphs', () => {
+    const rawText = '数学尽量安排在上午，尤其是张老师任教的班级。';
+    const [source] = buildSourceRequirements([{ lineNumber: 1, rawText }], {
+        inputType: 'semantic_planning_test',
+        origin: 'manual',
+    });
+    const result = validateExtractionPayload({
+        results: [{
+            sourceId: source.sourceId,
+            textHash: source.textHash,
+            clauses: [
+                {
+                    id: 'base', intent: 'subject_morning', targetKind: 'subject', targetNames: ['数学'],
+                    strength: 'soft', relation: { kind: 'emphasis', parentId: 'missing' }, evidence: '数学尽量安排在上午',
+                },
+                {
+                    id: 'focus', intent: 'subject_morning', targetKind: 'subject', targetNames: ['数学'],
+                    strength: 'soft', relation: { kind: 'independent' }, evidence: '模型编造的原文证据',
+                },
+            ],
+            rationales: [{ text: '不存在的原因', evidence: '不存在的原因' }],
+        }],
+    }, { sourceRequirements: [source], project: project() });
+
+    assert.equal(result.requirements.length, 0);
+    assert.equal(result.rationales.length, 0);
+    assert.ok(result.rejected.some(item => item.reason === 'invalid_semantic_relation'));
+    assert.ok(result.warnings.some(warning => /父子句|证据/.test(warning)));
+});
+
+test('targeted semantic planning sends only complex sources to the model', async () => {
+    const extractionSources = [];
+    await parseTimetableRules({
+        text: [
+            '张老师周一第1节不能上课。',
+            '数学每周至少3次安排在第1到第3节，不要集中到下午。',
+        ].join('\n'),
+        project: project(),
+        env: {
+            DEEPSEEK_API_KEY: 'test-key',
+            DEEPSEEK_API_BASE: 'http://ai.test',
+            TIMETABLE_RULE_AI_MODE: 'targeted',
+        },
+        fetchImpl: async (_url, options = {}) => {
+            const body = JSON.parse(options.body || '{}');
+            const system = body.messages?.[0]?.content || '';
+            const user = JSON.parse(body.messages?.[1]?.content || '{}');
+            if (system.includes('复审核查员')) {
+                return jsonResponse({
+                    choices: [{ message: { content: JSON.stringify({ reviewItems: [] }) } }],
+                });
+            }
+            extractionSources.push(...(user.sources || []));
+            const source = user.sources[0];
+            return jsonResponse({
+                choices: [{ message: { content: JSON.stringify({
+                    results: [{
+                        sourceId: source.sourceId,
+                        textHash: source.textHash,
+                        clauses: [],
+                        unrecognized: true,
+                        reason: '保留本地复杂语义结果',
+                    }],
+                }) } }],
+            });
+        },
+    });
+
+    assert.equal(extractionSources.length, 1);
+    assert.match(extractionSources[0].rawText, /每周至少3次/);
+    assert.doesNotMatch(extractionSources[0].rawText, /张老师周一第1节/);
 });
 
 test('resolveEntityRefs keeps unknown entities in review and avoids ready rows', () => {

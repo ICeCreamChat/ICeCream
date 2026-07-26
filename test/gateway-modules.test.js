@@ -165,7 +165,12 @@ test('gateway mounts legacy timetable APIs', async () => {
         assert.equal(ruleReviewResponse.status, 200);
         const ruleReviewPayload = await ruleReviewResponse.json();
         assert.equal(ruleReviewPayload.success, true);
-        assert.ok(ruleReviewPayload.data.draftRows.some(row => row.type === 'subject_morning' && row.targetId === 's1'));
+        assert.ok(ruleReviewPayload.data.draftRows.some(row => (
+            row.type === 'advanced_constraint'
+            && row.advancedType === 'subject.preferred_day_part'
+            && row.targetId === 's1'
+            && row.parameters?.classIds?.includes('c1')
+        )));
 
         const workbook = buildConstraintWorkbook([
             ['约束内容'],
@@ -183,7 +188,12 @@ test('gateway mounts legacy timetable APIs', async () => {
         assert.match(xlsxRuleReviewResponse.headers.get('content-type') || '', /application\/json/);
         const xlsxRuleReviewPayload = await xlsxRuleReviewResponse.json();
         assert.equal(xlsxRuleReviewPayload.success, true);
-        assert.ok(xlsxRuleReviewPayload.data.draftRows.some(row => row.type === 'subject_morning' && row.targetId === 's1'));
+        assert.ok(xlsxRuleReviewPayload.data.draftRows.some(row => (
+            row.type === 'advanced_constraint'
+            && row.advancedType === 'subject.preferred_day_part'
+            && row.targetId === 's1'
+            && row.parameters?.classIds?.includes('c1')
+        )));
 
         const semanticApplyResponse = await fetch(`http://127.0.0.1:${port}/api/tools/timetable/requirements/apply`, {
             method: 'POST',

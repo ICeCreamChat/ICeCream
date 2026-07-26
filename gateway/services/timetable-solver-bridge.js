@@ -10,15 +10,17 @@ import {
     isComplexTimetableModel,
     isActiveTimetableSlot,
     normalizeTimetableProject,
+    runTimetableScheduler,
     slotKey,
 } from './timetable-scheduler.js';
 import {
     validateTimetablePublication,
 } from './timetable-validation.js';
 import { advancedBlockPreference, advancedRuleAppliesToLesson } from './timetable-advanced-rules.js';
+import { analyzeTimetableFeasibility } from './timetable-diagnostic-scheduler.js';
 
 const DEFAULT_TIMEOUT_MS = 210000;
-const LARGE_PROJECT_TIMEOUT_MS = 300000;
+const LARGE_PROJECT_TIMEOUT_MS = 210000;
 const POLL_INTERVAL_MS = 500;
 const NONE_ROOM_ID = '__NONE__';
 
@@ -90,16 +92,20 @@ export function buildTimetableSolveScaleHint(project = {}, env = {}) {
     const classCount = (project.classes || []).length;
     const lessonCount = totalLessonHours(project);
     const timeoutMs = resolveTimetableSolverTimeoutMs(project, env);
-    const largeProject = classCount >= 30;
+    const largeProject = classCount >= 30 || lessonCount >= 600;
+    const solverAvailable = Boolean(normalizeSolverUrl(env));
     return {
         largeProject,
+        solverAvailable,
         classCount,
         lessonCount,
         timeoutMs,
         timeoutSeconds: Math.round(timeoutMs / 1000),
         estimatedSeconds: largeProject ? Math.round(timeoutMs / 1000) : null,
         message: largeProject
-            ? `${classCount} 个班，预计需要数分钟；当前 Timefold 超时上限 ${Math.round(timeoutMs / 1000)} 秒。`
+            ? solverAvailable
+                ? `${classCount} 个班、${lessonCount} 课时；Timefold 求解超时上限 ${Math.round(timeoutMs / 1000)} 秒。`
+                : `${classCount} 个班、${lessonCount} 课时；未配置外部求解器，将使用本地求解，可能需要较长时间。`
             : '',
     };
 }
@@ -134,14 +140,13 @@ function isTimeoutLikeError(error) {
         || message.includes('aborted');
 }
 
-function buildTimeoutStats({ project, problem, jobId, status, startedAt, timeout }) {
+function buildTimeoutStats({ project, problem, jobId, status, startedAt, timeout, problemStats = {} }) {
     return {
+        ...problemStats,
         jobId: jobId || null,
         solverStatus: status?.solverStatus || null,
         lessonCount: totalLessonHours(project),
         assignmentCount: problem?.lessonAssignments?.length || 0,
-        initialSolutionUsed: hasInitialSolution(problem),
-        pinnedCount: countPinnedAssignments(problem),
         timeoutMs: timeout,
         timeoutSeconds: Math.round(timeout / 1000),
         durationMs: Date.now() - startedAt,
@@ -203,12 +208,16 @@ function collectRooms(project) {
     }
     for (const plan of project.lessonPlans) {
         for (const roomId of unique([...(plan.allowedRoomIds || []), plan.roomId])) {
-            rooms.set(roomId, { id: roomId, name: roomId, none: false });
+            if (!rooms.has(roomId)) {
+                rooms.set(roomId, { id: roomId, name: roomId, none: false, tags: [] });
+            }
         }
     }
     for (const requirement of Object.values(project.rules?.hardRules?.roomRequirements || {})) {
         for (const roomId of requirement?.roomIds || []) {
-            rooms.set(roomId, { id: roomId, name: roomId, none: false });
+            if (!rooms.has(roomId)) {
+                rooms.set(roomId, { id: roomId, name: roomId, none: false, tags: [] });
+            }
         }
     }
     return [...rooms.values()];
@@ -289,10 +298,10 @@ function teacherRuleLimit(project, ruleName, teacherId) {
 
 function teacherLoadBalanceWeightForProject(project) {
     const soft = project.rules?.softRules || {};
-    if (soft.teacherLoadBalance?.enabled === false) return 0;
+    if (soft.teacherLoadBalance?.enabled !== true && soft.balancedTeacherLoad !== true) return 0;
     const explicit = Number.parseInt(soft.teacherLoadBalance?.weight, 10);
     if (Number.isInteger(explicit) && explicit >= 0) return explicit;
-    return soft.balancedTeacherLoad === false ? 0 : 1;
+    return 1;
 }
 
 function teacherConstraintRefsForPlan(project, teacherIds = []) {
@@ -485,7 +494,6 @@ function nextLockedBlockSizeForPlan(plan, placedHours = 0, project = null) {
 }
 
 function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pinnedTimeSlotId, initialSlot, project }) {
-    const subject = project.subjects.find(item => item.id === plan.subjectId);
     const teacherIds = teacherIdsForPlan(plan);
     const primaryTeacherId = teacherIds[0] || plan.teacherId;
     const teacherConstraintRefs = teacherConstraintRefsForPlan(project, teacherIds);
@@ -504,22 +512,20 @@ function makeAssignment({ plan, sequence, blockNumber, blockSize, blockIndex, pi
         teacherIds,
         teacherConstraintRefs,
         timeSlot: initialSlot ? slotKey(initialSlot.day, initialSlot.period) : null,
-        room: initialSlot?.roomId || NONE_ROOM_ID,
+        room: initialSlot?.roomId || (allowedRoomIds.length ? null : NONE_ROOM_ID),
         pinnedTimeSlotId: pinnedTimeSlotId || null,
         locked: Boolean(pinnedTimeSlotId && (initialSlot?.locked || !initialSlot?.manuallyAdjusted)),
         manuallyAdjusted: Boolean(initialSlot?.manuallyAdjusted),
         blockedTimeSlotIds: blockedSlotsForPlan(project, plan),
         allowedRoomIds,
         requiresRoom: allowedRoomIds.length > 0,
+        roomRange: allowedRoomIds.length ? allowedRoomIds : [NONE_ROOM_ID],
         blockId: blockSize > 1 ? `${plan.id}_block_${blockNumber}` : null,
         blockIndex,
         blockSize,
-        subjectPriority: subject?.priority || 50,
-        preferMorning: Boolean(project.rules?.softRules?.morningSubjects?.includes(plan.subjectId) || subject?.priority >= 90),
-        preferLater: Boolean(
-            afternoonSubjects.includes(plan.subjectId)
-            || (!afternoonSubjects.length && /pe|music|art|lab|sport|physical|体育|音乐|美术|实验|劳动|信息/i.test(`${plan.subjectId} ${subject?.name || ''}`))
-        ),
+        subjectPriority: 50,
+        preferMorning: Boolean(project.rules?.softRules?.morningSubjects?.includes(plan.subjectId)),
+        preferLater: Boolean(afternoonSubjects.includes(plan.subjectId)),
         subjectDailyMax: project.rules?.hardRules?.subjectDailyLimit?.[plan.subjectId] || 0,
         teacherWeeklyMax: teacherRuleLimit(project, 'teacherWeeklyLimit', primaryTeacherId),
         teacherMaxDays: teacherRuleLimit(project, 'teacherMaxDaysPerWeek', primaryTeacherId),
@@ -546,9 +552,11 @@ function buildInitialSlotQueues(project) {
     }
     for (const queue of queues.values()) {
         queue.sort((left, right) => (
-            left.day - right.day
-            || left.period - right.period
+            (left.blockId ? 0 : 1) - (right.blockId ? 0 : 1)
+            || String(left.blockId || '').localeCompare(String(right.blockId || ''))
             || (left.blockIndex || 0) - (right.blockIndex || 0)
+            || left.day - right.day
+            || left.period - right.period
             || left.id.localeCompare(right.id)
         ));
     }
@@ -610,6 +618,137 @@ export function buildTimetableProblem(input = {}) {
     };
 }
 
+function assignmentSnapshot(assignment = {}, { pinned = false } = {}) {
+    return {
+        id: assignment.id,
+        timeSlot: pinned
+            ? assignment.pinnedTimeSlotId
+            : idOfPlanningValue(assignment.timeSlot),
+        room: idOfPlanningValue(assignment.room),
+    };
+}
+
+function buildSolverPayload(problem = {}, warmStart = true) {
+    const assignments = problem.lessonAssignments || [];
+    return {
+        ...problem,
+        initialAssignment: assignments
+            .filter(assignment => idOfPlanningValue(assignment.timeSlot))
+            .map(assignment => assignmentSnapshot(assignment)),
+        pinnedAssignments: assignments
+            .filter(assignment => assignment.pinnedTimeSlotId)
+            .map(assignment => assignmentSnapshot(assignment, { pinned: true })),
+        solverConfig: { warmStart },
+    };
+}
+
+function stripOptionalInitialAssignments(problem = {}) {
+    return {
+        ...problem,
+        lessonAssignments: (problem.lessonAssignments || []).map(assignment => {
+            const pinnedTimeSlotId = asText(assignment.pinnedTimeSlotId);
+            return {
+                ...assignment,
+                timeSlot: pinnedTimeSlotId || null,
+                room: pinnedTimeSlotId
+                    ? assignment.room
+                    : (assignment.requiresRoom ? null : NONE_ROOM_ID),
+            };
+        }),
+    };
+}
+
+function problemWithSchedule(project = {}, schedule = null) {
+    return normalizeTimetableProject({
+        ...project,
+        schedule,
+    });
+}
+
+function warmStartCandidate(project = {}, schedulerResult = null) {
+    const candidateProject = schedulerResult?.project
+        || (schedulerResult?.schedule ? problemWithSchedule(project, schedulerResult.schedule) : project);
+    const problem = buildTimetableProblem(candidateProject);
+    const schedule = candidateProject.schedule || null;
+    const publication = schedule ? validateTimetablePublication(candidateProject) : null;
+    const stats = solverStatsForProblem(problem);
+    const placedLessons = Number(schedule?.score?.placedLessons || schedule?.slots?.length || 0);
+    const totalLessons = Number(schedule?.score?.totalLessons || totalLessonHours(candidateProject));
+    const complete = Boolean(
+        schedule
+        && placedLessons === totalLessons
+        && stats.initialUnassignedCount === 0
+        && Number(schedule.score?.unplacedLessons || 0) === 0
+        && Number(schedule.score?.hardConflicts || 0) === 0
+        && publication?.ok
+    );
+    return { candidateProject, problem, publication, stats, complete };
+}
+
+function summarizeFastAttempt(schedulerResult = null) {
+    const schedule = schedulerResult?.schedule || schedulerResult?.project?.schedule || null;
+    if (!schedule) return null;
+    return {
+        placedLessons: Number(schedule.score?.placedLessons || schedule.slots?.length || 0),
+        totalLessons: Number(schedule.score?.totalLessons || 0),
+        unplacedLessons: Number(schedule.score?.unplacedLessons || schedule.unplaced?.length || 0),
+        hardConflicts: Number(schedule.score?.hardConflicts || 0),
+        solveMs: Number(schedule.solverStats?.solveMs || 0) || null,
+    };
+}
+
+function failureSummaryForSchedule(schedule = null) {
+    if (!schedule) return null;
+    const grouped = new Map();
+    for (const conflict of schedule.conflicts || []) {
+        const type = asText(conflict?.type) || 'hard_conflict';
+        grouped.set(type, (grouped.get(type) || 0) + 1);
+    }
+    const hardScore = Number(schedule.solverStats?.hardScore || 0);
+    const localHardConflicts = Number(schedule.score?.hardConflicts || schedule.conflicts?.length || 0);
+    return {
+        unplacedLessons: Number(schedule.score?.unplacedLessons || schedule.unplaced?.length || 0),
+        hardConflicts: Math.max(localHardConflicts, Math.abs(Math.min(0, hardScore))),
+        conflictTypes: Object.fromEntries([...grouped.entries()].sort((left, right) => left[0].localeCompare(right[0]))),
+        examples: (schedule.conflicts || []).slice(0, 5).map(item => ({
+            type: item.type || 'hard_conflict',
+            message: item.message || 'Hard timetable conflict',
+            lessonPlanId: item.lessonPlanId || item.slot?.lessonPlanId || '',
+            classId: item.classId || item.slot?.classId || '',
+            teacherId: item.teacherId || item.slot?.teacherId || '',
+        })),
+    };
+}
+
+function mergeFailureSummaries(remoteSummary = null, localSummary = null) {
+    const remote = remoteSummary && typeof remoteSummary === 'object' ? remoteSummary : null;
+    const local = localSummary && typeof localSummary === 'object' ? localSummary : null;
+    if (!remote) return local;
+    if (!local) return remote;
+    return {
+        ...local,
+        ...remote,
+        conflictTypes: Object.keys(remote.conflictTypes || {}).length > 0
+            ? remote.conflictTypes
+            : local.conflictTypes,
+        examples: Array.isArray(remote.examples) && remote.examples.length > 0
+            ? remote.examples
+            : local.examples,
+        topConstraints: Array.isArray(remote.topConstraints) && remote.topConstraints.length > 0
+            ? remote.topConstraints
+            : local.topConstraints,
+    };
+}
+
+async function emitSolverProgress(onProgress, patch = {}) {
+    if (typeof onProgress !== 'function') return;
+    try {
+        await onProgress(patch);
+    } catch {
+        // Progress reporting must never abort the solve itself.
+    }
+}
+
 function countPinnedAssignments(problem = {}) {
     return (problem.lessonAssignments || []).filter(assignment => assignment.pinnedTimeSlotId).length;
 }
@@ -618,9 +757,16 @@ function hasInitialSolution(problem = {}) {
     return (problem.lessonAssignments || []).some(assignment => idOfPlanningValue(assignment.timeSlot));
 }
 
-function solverStatsForProblem(problem = {}) {
+function solverStatsForProblem(problem = {}, metadata = {}) {
+    const assignmentCount = (problem.lessonAssignments || []).length;
+    const initialAssignedCount = (problem.lessonAssignments || [])
+        .filter(assignment => idOfPlanningValue(assignment.timeSlot)).length;
     return {
+        ...metadata,
         initialSolutionUsed: hasInitialSolution(problem),
+        initialAssignmentCount: assignmentCount,
+        initialAssignedCount,
+        initialUnassignedCount: Math.max(0, assignmentCount - initialAssignedCount),
         pinnedCount: countPinnedAssignments(problem),
     };
 }
@@ -678,6 +824,16 @@ export function transformTimetableSolutionToSchedule(inputProject = {}, solution
             });
         }
     }
+    const missingAssignmentCount = Math.max(0, totalLessonHours(project) - slots.length - unplaced.length);
+    for (let index = 0; index < missingAssignmentCount; index += 1) {
+        unplaced.push({
+            lessonPlanId: '',
+            classId: '',
+            subjectId: '',
+            teacherId: '',
+            reason: 'Timefold solution omitted a lesson assignment',
+        });
+    }
 
     const conflicts = [
         ...unplaced.map(item => ({
@@ -707,6 +863,7 @@ export function transformTimetableSolutionToSchedule(inputProject = {}, solution
         qualityIssues,
         score,
         solverStats: {
+            ...stats,
             solverUsed: true,
             jobId: solution.jobId || stats.jobId || null,
             score: solution.score || stats.score || null,
@@ -785,18 +942,26 @@ function assertSolvedSchedule(schedule) {
             schedule.solverStats,
         );
     }
+    if (schedule.publication?.ok !== true) {
+        throw new TimetableTimefoldError(
+            'Timefold solution failed publication validation',
+            'validation_failed',
+            422,
+            schedule.solverStats,
+        );
+    }
 }
 
 export async function solveTimetableWithTimefold({
     project = createDefaultTimetableProject(),
     env = process.env,
     fetchImpl,
+    seed,
+    fastAttempt = null,
+    runFastAttempt = true,
+    onProgress,
 } = {}) {
     const normalizedProject = normalizeTimetableProject(project);
-    const solverUrl = normalizeSolverUrl(env);
-    if (!solverUrl) {
-        throw new TimetableTimefoldError('TIMEFOLD_SOLVER_URL is not configured', 'not_configured', 503);
-    }
     const unsupported = timefoldTimetableUnsupportedReason(normalizedProject, env);
     if (unsupported) {
         throw new TimetableTimefoldError(
@@ -806,22 +971,92 @@ export async function solveTimetableWithTimefold({
             unsupported.solverStats,
         );
     }
+    const feasibility = analyzeTimetableFeasibility(normalizedProject);
+    if (feasibility.status === 'input_infeasible') {
+        throw new TimetableTimefoldError(
+            'Timetable input contains hard constraints with no feasible scheduling domain',
+            'input_infeasible',
+            422,
+            {
+                accepted: false,
+                reason: 'input_infeasible',
+                feasibility: {
+                    status: feasibility.status,
+                    issues: feasibility.issues,
+                    candidateDomainStats: feasibility.candidateDomainStats,
+                },
+                candidateDomainStats: feasibility.candidateDomainStats,
+            },
+        );
+    }
+    const solverUrl = normalizeSolverUrl(env);
+    if (!solverUrl) {
+        throw new TimetableTimefoldError('TIMEFOLD_SOLVER_URL is not configured', 'not_configured', 503);
+    }
     const fetchClient = resolveFetch(fetchImpl);
     const timeout = timeoutMs(env, normalizedProject);
-    const deadline = Date.now() + timeout;
+    const warmStart = asText(env.TIMEFOLD_TIMETABLE_WARM_START).toLowerCase() !== 'false';
+    const computedFastAttempt = fastAttempt || (warmStart && runFastAttempt
+        ? runTimetableScheduler(normalizedProject, { seed })
+        : null);
+    // The Gateway timeout is the Timefold wait budget. Local candidate
+    // construction is a separate deterministic phase and must not consume the
+    // Java solver's configured budget, especially for large projects.
     const startedAt = Date.now();
-    const problem = buildTimetableProblem(normalizedProject);
-    const problemStats = solverStatsForProblem(problem);
+    const deadline = startedAt + timeout;
+    const baseCandidate = warmStartCandidate(normalizedProject);
+    const fastCandidate = computedFastAttempt
+        ? warmStartCandidate(normalizedProject, computedFastAttempt)
+        : null;
+    let problem = baseCandidate.problem;
+    let initialAssignmentSource = baseCandidate.complete ? 'existing_schedule' : 'empty';
+    let fastRepairStats = fastCandidate?.stats || null;
+
+    if (!warmStart) {
+        problem = stripOptionalInitialAssignments(problem);
+        initialAssignmentSource = 'cold_start';
+    } else if (fastCandidate?.complete) {
+        problem = fastCandidate.problem;
+        initialAssignmentSource = 'fast_repair';
+    } else if (computedFastAttempt) {
+        // The fast constructor may leave a sparse but conflict-free set of
+        // placements. Preserve that valid information so Timefold constructs
+        // only the remaining units instead of throwing the whole seed away.
+        problem = fastCandidate?.problem || stripOptionalInitialAssignments(baseCandidate.problem);
+        initialAssignmentSource = fastCandidate?.stats?.initialAssignedCount
+            ? 'validated_partial_fast_attempt'
+            : 'cold_after_partial_fast_attempt';
+    } else if (!baseCandidate.complete) {
+        problem = stripOptionalInitialAssignments(baseCandidate.problem);
+        initialAssignmentSource = hasInitialSolution(problem) ? 'pinned_only' : 'empty';
+    }
+    const fastAttemptStats = summarizeFastAttempt(computedFastAttempt);
+    const problemStats = solverStatsForProblem(problem, {
+        warmStart,
+        warmStartAttempted: warmStart,
+        initialAssignmentSource,
+        ...(fastAttemptStats ? { fastAttempt: fastAttemptStats } : {}),
+        ...(fastRepairStats ? {
+            fastRepairAssignedCount: fastRepairStats.initialAssignedCount,
+            fastRepairUnassignedCount: fastRepairStats.initialUnassignedCount,
+        } : {}),
+    });
+    const solverPayload = buildSolverPayload(problem, warmStart);
     let jobId = null;
     let status = null;
 
     const remaining = () => Math.max(1, deadline - Date.now());
 
     try {
+        await emitSolverProgress(onProgress, {
+            stage: 'timefold_submit',
+            elapsedMs: Date.now() - startedAt,
+            ...problemStats,
+        });
         const created = await fetchJson(fetchClient, `${solverUrl}/timetable-solutions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(problem),
+            body: JSON.stringify(solverPayload),
         }, remaining());
         jobId = created.jobId;
         if (!jobId) {
@@ -833,29 +1068,35 @@ export async function solveTimetableWithTimefold({
             status = await fetchJson(fetchClient, `${solverUrl}/timetable-solutions/${encodeURIComponent(jobId)}/status`, {
                 method: 'GET',
             }, remaining());
+            await emitSolverProgress(onProgress, {
+                stage: status.stage || (status.solverStatus === 'NOT_SOLVING' ? 'timefold_finished' : 'timefold_solving'),
+                elapsedMs: Number.isFinite(Number(status.elapsedMs)) ? Number(status.elapsedMs) : Date.now() - startedAt,
+                jobId,
+                solverStatus: status.solverStatus || null,
+                hardScore: Number.isFinite(Number(status.hardScore)) ? Number(status.hardScore) : null,
+                softScore: Number.isFinite(Number(status.softScore)) ? Number(status.softScore) : null,
+                initialized: Boolean(status.initialized),
+                constraintAnalysis: Array.isArray(status.constraintAnalysis) ? status.constraintAnalysis : [],
+                failureSummary: status.failureSummary || null,
+                ...problemStats,
+            });
             if (status.solverStatus === 'NOT_SOLVING') break;
             await sleep(Math.min(POLL_INTERVAL_MS, remaining()));
         }
 
         if (status.solverStatus !== 'NOT_SOLVING') {
             throw new TimetableTimefoldError('Timefold timetable solve timed out', 'timeout', 504, {
-                ...buildTimeoutStats({ project, problem, jobId, status, startedAt, timeout }),
+                ...buildTimeoutStats({
+                    project: normalizedProject,
+                    problem,
+                    jobId,
+                    status,
+                    startedAt,
+                    timeout,
+                    problemStats,
+                }),
             });
         }
-        if (Number(status.hardScore ?? 0) < 0) {
-            throw new TimetableTimefoldError('Timefold returned a hard constraint violation', 'hard_score_violation', 422, {
-                jobId,
-                score: status.score || null,
-                hardScore: Number(status.hardScore),
-                softScore: Number(status.softScore ?? 0),
-                durationMs: Date.now() - startedAt,
-                solverStatus: status.solverStatus || null,
-                ...problemStats,
-                accepted: false,
-                reason: 'hard_score_violation',
-            });
-        }
-
         const solution = await fetchJson(fetchClient, `${solverUrl}/timetable-solutions/${encodeURIComponent(jobId)}`, {
             method: 'GET',
         }, remaining());
@@ -866,11 +1107,28 @@ export async function solveTimetableWithTimefold({
             durationMs: Date.now() - startedAt,
         };
         assertPinnedAssignmentsPreserved(problem, solution, solutionStats);
-        const schedule = transformTimetableSolutionToSchedule(project, solution, {
+        const schedule = transformTimetableSolutionToSchedule(normalizedProject, solution, {
             ...solutionStats,
         });
+        if (Number(status.hardScore ?? schedule.solverStats.hardScore ?? 0) < 0) {
+            schedule.solverStats.hardScore = Number(status.hardScore ?? schedule.solverStats.hardScore ?? 0);
+            schedule.solverStats.softScore = Number(status.softScore ?? schedule.solverStats.softScore ?? 0);
+            throw new TimetableTimefoldError('Timefold exhausted its search budget before finding a feasible timetable', 'search_exhausted', 422, {
+                ...solutionStats,
+                score: status.score || null,
+                hardScore: Number(status.hardScore ?? schedule.solverStats.hardScore ?? 0),
+                softScore: Number(status.softScore ?? schedule.solverStats.softScore ?? 0),
+                solverStatus: status.solverStatus || null,
+                failureSummary: mergeFailureSummaries(
+                    status.failureSummary,
+                    failureSummaryForSchedule(schedule),
+                ),
+                feasibility: { status: 'search_exhausted' },
+                accepted: false,
+                reason: 'search_exhausted',
+            });
+        }
         assertSolvedSchedule(schedule);
-        const normalizedProject = normalizeTimetableProject(project);
         return {
             success: true,
             project: { ...normalizedProject, schedule },
@@ -886,10 +1144,29 @@ export async function solveTimetableWithTimefold({
                 'Timefold timetable solve timed out',
                 'timeout',
                 504,
-                buildTimeoutStats({ project: normalizedProject, problem, jobId, status, startedAt, timeout }),
+                buildTimeoutStats({
+                    project: normalizedProject,
+                    problem,
+                    jobId,
+                    status,
+                    startedAt,
+                    timeout,
+                    problemStats,
+                }),
             );
         }
-        throw error;
+        throw new TimetableTimefoldError(
+            error?.message || 'Timefold timetable request failed',
+            'http_error',
+            503,
+            {
+                ...problemStats,
+                jobId,
+                elapsedMs: Date.now() - startedAt,
+                accepted: false,
+                reason: 'http_error',
+            },
+        );
     } finally {
         if (jobId) {
             fetchClient(`${solverUrl}/timetable-solutions/${encodeURIComponent(jobId)}`, { method: 'DELETE' }).catch(() => {});

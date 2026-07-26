@@ -61,7 +61,15 @@ function compileLegacyArtifact(ir = {}) {
 }
 
 function compileAdvancedConstraint(ir = {}) {
+    const legacyRow = legacyRowOf(ir);
+    const parameters = {
+        ...(ir.parameters || {}),
+        ...((ir.parameters?.classIds || []).length ? {} : (ir.scope?.classIds || []).length ? { classIds: ir.scope.classIds } : {}),
+        ...((ir.parameters?.teacherIds || []).length ? {} : (ir.scope?.teacherIds || []).length ? { teacherIds: ir.scope.teacherIds } : {}),
+        ...((ir.parameters?.gradeNames || []).length ? {} : (ir.scope?.gradeNames || []).length ? { gradeNames: ir.scope.gradeNames } : {}),
+    };
     return [{
+        ...legacyRow,
         type: 'advanced_constraint',
         intent: ir.intent,
         advancedType: ir.capabilityId,
@@ -72,8 +80,10 @@ function compileAdvancedConstraint(ir = {}) {
         priority: ir.strength,
         status: 'effective',
         scope: ir.scope || {},
-        parameters: ir.parameters || {},
-        slots: ir.parameters?.slots || ir.time?.slots || [],
+        scopeClassId: ir.scope?.classIds?.[0] || '',
+        scopeTeacherId: ir.scope?.teacherIds?.[0] || '',
+        parameters,
+        slots: parameters.slots || ir.time?.slots || [],
     }];
 }
 
@@ -605,6 +615,20 @@ const CAPABILITY_DEFINITIONS = [
         explain: () => '指定课程不要集中挤在少数几个工作日。',
     },
     {
+        id: 'subject.avoid_day_part_concentration',
+        intents: ['avoid_day_part_concentration'],
+        aliases: ['subject_day_part_concentration', '下午不要集中', '时段集中度避让'],
+        rowTypes: ['subject_day_part_concentration'],
+        objectTypes: ['subject', 'subject_group'],
+        requiredParameters: ['dayPart'],
+        defaultStrength: 'soft',
+        landing: ['optimization', 'review'],
+        solverSupport: 'none',
+        machineRuleTypes: [],
+        fulfillmentEvaluable: false,
+        explain: ir => `${ir.target.name || '指定课程'}不要集中安排在${ir.parameters.dayPart === 'afternoon' ? '下午' : '同一时段'}。`,
+    },
+    {
         id: 'schedule.cross_venue_boundary',
         intents: ['cross_venue_boundary'],
         aliases: ['跨场地连续关系'],
@@ -811,7 +835,9 @@ function understandingFromArtifact(artifact = {}, capability = null, target = {}
 
 function executionFromArtifact(artifact = {}, capability = null, understandingStatus = '') {
     const explicitExecution = key(artifact.executionStatus || '');
-    if (['conflicted', 'disabled'].includes(explicitExecution)) return explicitExecution;
+    if (['blocked_by_reference', 'blocked_by_clarification', 'conflicted', 'disabled'].includes(explicitExecution)) {
+        return explicitExecution;
+    }
     if (!capability || capability.solverSupport === 'none') return 'unsupported_by_solver';
     if (understandingStatus === 'invalid_reference') return 'blocked_by_reference';
     if (understandingStatus === 'ambiguous') {
@@ -869,7 +895,9 @@ export function legacyArtifactToConstraintIR(artifact = {}, options = {}) {
         intent: artifact.intent || artifact.type || rawCapability,
         target,
         condition: artifact.condition || { slots: parameters.slots || [] },
+        relation: artifact.relation || null,
         parameters: semanticParameters,
+        quantifier: artifact.quantifier || null,
         strength: artifact.strength || artifact.priority || capability?.defaultStrength || 'soft',
         applyTo: artifact.applyTo || asArray(artifact.landing)[0] || capability?.landing?.[0] || 'review',
     };
@@ -910,6 +938,7 @@ export function legacyArtifactToConstraintIR(artifact = {}, options = {}) {
             afterSubjectId: parameters.afterSubjectId,
             subjectIds: parameters.subjectIds,
         }),
+        quantifier: artifact.quantifier || {},
         normalizationTrace: artifact.normalizationTrace || artifact.legacyClause?.normalizationTrace || artifact.source?.normalizationTrace || [],
         negation: artifact.negation || artifact.legacyClause?.negation || null,
         exceptions: artifact.exceptions || artifact.legacyClause?.exceptions || [],

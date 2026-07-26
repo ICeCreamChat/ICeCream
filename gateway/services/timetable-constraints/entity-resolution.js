@@ -196,6 +196,33 @@ export function assessConstraintIRExecutionReadiness(ir = {}, project = {}) {
             && (previousReadinessMessages.length > 0 || previousPeriodWarnings.length > 0)
         );
     if (!canReassess) return ir;
+    const courseScopedCapabilities = new Set([
+        'subject.preferred_day_part',
+        'subject.preferred_periods',
+        'subject.avoid_periods',
+        'subject.spread',
+    ]);
+    const scopeKind = text(ir.scope?.kind || ir.parameters?.scopeQualifier || '');
+    const scopeClassIds = [...new Set([
+        ...list(ir.scope?.classIds),
+        ...list(ir.parameters?.classIds),
+    ].filter(Boolean))];
+    if (
+        courseScopedCapabilities.has(ir.capabilityId)
+        && ir.target?.kind?.startsWith('subject')
+        && ['explicit_classes', 'grade_classes', 'teacher_covered_classes', 'subject_offering_classes', 'school', 'unresolved'].includes(scopeKind || 'unresolved')
+        && !scopeClassIds.length
+    ) {
+        const clarification = list(project.lessonPlans).length
+            ? '当前项目中没有与课程范围条件匹配的任课计划。'
+            : '项目尚未提供可用于派生课程范围的任课计划。';
+        return {
+            ...ir,
+            executionStatus: 'blocked_by_reference',
+            machineRuleIds: [],
+            clarifications: [...new Set([...list(ir.clarifications), clarification])],
+        };
+    }
     const periods = new Set([
         ...list(ir.parameters?.periods).map(Number),
         ...list(ir.time?.periods).map(Number),

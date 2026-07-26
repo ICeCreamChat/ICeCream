@@ -1,8 +1,6 @@
 package com.icecream.timetable.domain;
 
 import ai.timefold.solver.core.api.domain.common.PlanningId;
-import ai.timefold.solver.core.api.domain.entity.PlanningEntity;
-import ai.timefold.solver.core.api.domain.variable.PlanningVariable;
 import com.fasterxml.jackson.annotation.JsonIdentityReference;
 
 import java.util.ArrayList;
@@ -10,7 +8,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-@PlanningEntity
 public class LessonAssignment {
 
     @PlanningId
@@ -26,6 +23,8 @@ public class LessonAssignment {
     private boolean manuallyAdjusted;
     private List<String> blockedTimeSlotIds = new ArrayList<>();
     private List<String> allowedRoomIds = new ArrayList<>();
+    @JsonIdentityReference(alwaysAsId = true)
+    private List<Room> roomRange = new ArrayList<>();
     private boolean requiresRoom;
     private String blockId;
     private int blockIndex;
@@ -42,18 +41,16 @@ public class LessonAssignment {
     private int spreadMinGapDays = 1;
     private int classMainDailyMax;
     private int teacherGapWeight;
-    private int teacherLoadBalanceWeight = 1;
+    private int teacherLoadBalanceWeight;
     private List<TeacherConstraintRef> teacherConstraintRefs = new ArrayList<>();
     private String gradeName;
     private List<String> activityTypes = new ArrayList<>();
     private List<String> requiredResourceTypes = new ArrayList<>();
     private List<AdvancedRuleRef> advancedRules = new ArrayList<>();
 
-    @PlanningVariable(valueRangeProviderRefs = "timeSlotRange")
     @JsonIdentityReference(alwaysAsId = true)
     private TimeSlot timeSlot;
 
-    @PlanningVariable(valueRangeProviderRefs = "roomRange")
     @JsonIdentityReference(alwaysAsId = true)
     private Room room;
 
@@ -127,6 +124,10 @@ public class LessonAssignment {
         this.pinnedTimeSlotId = pinnedTimeSlotId;
     }
 
+    public boolean isPinned() {
+        return hasText(pinnedTimeSlotId) || locked || manuallyAdjusted;
+    }
+
     public boolean isLocked() {
         return locked;
     }
@@ -157,6 +158,14 @@ public class LessonAssignment {
 
     public void setAllowedRoomIds(List<String> allowedRoomIds) {
         this.allowedRoomIds = allowedRoomIds == null ? new ArrayList<>() : new ArrayList<>(allowedRoomIds);
+    }
+
+    public List<Room> getRoomRange() {
+        return roomRange == null ? List.of() : roomRange;
+    }
+
+    public void setRoomRange(List<Room> roomRange) {
+        this.roomRange = roomRange == null ? new ArrayList<>() : new ArrayList<>(roomRange);
     }
 
     public boolean isRequiresRoom() {
@@ -520,7 +529,7 @@ public class LessonAssignment {
     }
 
     public int earlierSubjectPenalty() {
-        if (timeSlot == null || (!preferMorning && subjectPriority < 90)) {
+        if (timeSlot == null || !preferMorning) {
             return 0;
         }
         if (timeSlot.isMorning()) {
@@ -596,7 +605,7 @@ public class LessonAssignment {
         private String teacherId;
         private int weeklyMax;
         private int maxDays;
-        private int loadBalanceWeight = 1;
+        private int loadBalanceWeight;
 
         public TeacherConstraintRef() {
         }
@@ -692,9 +701,15 @@ public class LessonAssignment {
                 return atTargetSlot(lesson);
             }
             if ("room.required".equals(type)) {
-                if (!getRoomIds().isEmpty() && (lesson.getRoom() == null || !getRoomIds().contains(lesson.getRoom().getId()))) return true;
-                return !getRequiredRoomTypes().isEmpty() && (lesson.getRoom() == null
-                        || getRequiredRoomTypes().stream().anyMatch(tag -> !lesson.getRoom().hasNormalizedTag(tag)));
+                boolean roomIdMatch = !getRoomIds().isEmpty()
+                        && lesson.getRoom() != null
+                        && getRoomIds().contains(lesson.getRoom().getId());
+                boolean roomTypeMatch = !getRequiredRoomTypes().isEmpty()
+                        && lesson.getRoom() != null
+                        && getRequiredRoomTypes().stream().allMatch(lesson.getRoom()::hasNormalizedTag);
+                return (!getRoomIds().isEmpty() || !getRequiredRoomTypes().isEmpty())
+                        && !roomIdMatch
+                        && !roomTypeMatch;
             }
             if ("room.forbidden_type".equals(type) && lesson.getRoom() != null) {
                 return getForbiddenRoomTypes().stream().anyMatch(lesson.getRoom()::hasNormalizedTag);
@@ -721,7 +736,7 @@ public class LessonAssignment {
 
         private boolean pairViolation(LessonAssignment left, LessonAssignment right) {
             if (!"schedule.cross_venue_boundary".equals(type) || left.getTimeSlot() == null || right.getTimeSlot() == null) return false;
-            if (!left.sharesClassWith(right) && !left.sharesTeacherWith(right)) return false;
+            if (!left.sharesClassWith(right)) return false;
             if (left.getTimeSlot().getWeekday() != right.getTimeSlot().getWeekday()) return false;
             if (!getBoundaryPeriods().contains(left.getTimeSlot().getLessonIndex()) || !getBoundaryPeriods().contains(right.getTimeSlot().getLessonIndex())) return false;
             String leftRoom = left.getRoom() == null ? "" : left.getRoom().getId();

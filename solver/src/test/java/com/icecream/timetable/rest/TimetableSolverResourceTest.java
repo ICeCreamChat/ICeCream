@@ -5,6 +5,7 @@ import io.restassured.http.ContentType;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 
 import static io.restassured.RestAssured.given;
@@ -44,6 +45,9 @@ class TimetableSolverResourceTest {
         Map<String, Object> status = waitUntilDone(jobId);
         assertEquals("NOT_SOLVING", status.get("solverStatus"));
         assertEquals(0, status.get("hardScore"));
+        assertEquals("completed", status.get("stage"));
+        assertNotNull(status.get("elapsedMs"));
+        assertNotNull(status.get("constraintAnalysis"));
 
         given()
                 .when().get("/timetable-solutions/{jobId}", jobId)
@@ -89,6 +93,32 @@ class TimetableSolverResourceTest {
     }
 
     @Test
+    void solveEndpointAcceptsGatewayWarmStartMetadata() {
+        Map<String, Object> warmStartProblem = new HashMap<>(pinnedProblem());
+        warmStartProblem.put("initialAssignment", List.of(
+                Map.of("id", "lp_math_1", "timeSlot", "1-1")
+        ));
+        warmStartProblem.put("pinnedAssignments", List.of(
+                Map.of("id", "lp_math_1", "timeSlot", "1-1")
+        ));
+        warmStartProblem.put("solverConfig", Map.of("warmStart", true));
+
+        String jobId = given()
+                .contentType(ContentType.JSON)
+                .body(warmStartProblem)
+                .when().post("/timetable-solutions")
+                .then()
+                .statusCode(202)
+                .body("jobId", notNullValue())
+                .extract().path("jobId");
+
+        given()
+                .when().delete("/timetable-solutions/{jobId}", jobId)
+                .then()
+                .statusCode(204);
+    }
+
+    @Test
     void jobLifecyclePreservesManualProtectedFlagsWithoutConvertingThemToLocked() throws InterruptedException {
         String jobId = given()
                 .contentType(ContentType.JSON)
@@ -113,6 +143,103 @@ class TimetableSolverResourceTest {
                 .body("lessonAssignments.find { it.id == 'lp_pe_1' }.pinnedTimeSlotId", equalTo("2-1"))
                 .body("lessonAssignments.find { it.id == 'lp_pe_1' }.locked", equalTo(false))
                 .body("lessonAssignments.find { it.id == 'lp_pe_1' }.manuallyAdjusted", equalTo(true));
+
+        given()
+                .when().delete("/timetable-solutions/{jobId}", jobId)
+                .then()
+                .statusCode(204);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void jobLifecycleKeepsDoubleBlockOnOneDayAndConsecutive() throws InterruptedException {
+        String jobId = given()
+                .contentType(ContentType.JSON)
+                .body(doubleBlockProblem())
+                .when().post("/timetable-solutions")
+                .then()
+                .statusCode(202)
+                .body("jobId", notNullValue())
+                .extract().path("jobId");
+
+        Map<String, Object> status = waitUntilDone(jobId);
+        assertEquals("NOT_SOLVING", status.get("solverStatus"));
+
+        Map<String, Object> solution = given()
+                .when().get("/timetable-solutions/{jobId}", jobId)
+                .then()
+                .statusCode(200)
+                .body("hardScore", equalTo(0))
+                .extract().as(Map.class);
+        assertEquals(0, status.get("hardScore"), solution.toString());
+        List<Map<String, Object>> assignments = (List<Map<String, Object>>) solution.get("lessonAssignments");
+        Map<String, Object> firstAssignment = assignments.stream()
+                .filter(item -> "lp_double_1".equals(item.get("id")))
+                .findFirst().orElseThrow();
+        Map<String, Object> secondAssignment = assignments.stream()
+                .filter(item -> "lp_double_2".equals(item.get("id")))
+                .findFirst().orElseThrow();
+        assertEquals("lp_double_block_1", firstAssignment.get("blockId"), assignments.toString());
+        assertEquals("lp_double_block_1", secondAssignment.get("blockId"), assignments.toString());
+        assertEquals(0, firstAssignment.get("blockIndex"), assignments.toString());
+        assertEquals(1, secondAssignment.get("blockIndex"), assignments.toString());
+        assertEquals(2, firstAssignment.get("blockSize"), assignments.toString());
+        assertEquals(2, secondAssignment.get("blockSize"), assignments.toString());
+        String firstSlot = String.valueOf(firstAssignment.get("timeSlot"));
+        String secondSlot = String.valueOf(secondAssignment.get("timeSlot"));
+        String[] firstParts = firstSlot.split("-");
+        String[] secondParts = secondSlot.split("-");
+        assertEquals(firstParts[0], secondParts[0]);
+        assertEquals(
+                Integer.parseInt(firstParts[1]) + 1,
+                Integer.parseInt(secondParts[1]),
+                "block slots: " + firstSlot + " / " + secondSlot
+        );
+
+        given()
+                .when().delete("/timetable-solutions/{jobId}", jobId)
+                .then()
+                .statusCode(204);
+    }
+
+    @Test
+    void jobLifecycleRepairsWarmStartedDoubleBlockBySwappingWithAnotherLesson() throws InterruptedException {
+        String jobId = given()
+                .contentType(ContentType.JSON)
+                .body(warmStartedDoubleBlockSwapProblem())
+                .when().post("/timetable-solutions")
+                .then()
+                .statusCode(202)
+                .body("jobId", notNullValue())
+                .extract().path("jobId");
+
+        Map<String, Object> status = waitUntilDone(jobId);
+        assertEquals("NOT_SOLVING", status.get("solverStatus"));
+
+        Map<String, Object> solution = given()
+                .when().get("/timetable-solutions/{jobId}", jobId)
+                .then()
+                .statusCode(200)
+                .extract().as(Map.class);
+        assertEquals(0, status.get("hardScore"), solution.toString());
+        List<Map<String, Object>> assignments = (List<Map<String, Object>>) solution.get("lessonAssignments");
+        Map<String, Object> firstAssignment = assignments.stream()
+                .filter(item -> "lp_double_1".equals(item.get("id")))
+                .findFirst().orElseThrow();
+        Map<String, Object> secondAssignment = assignments.stream()
+                .filter(item -> "lp_double_2".equals(item.get("id")))
+                .findFirst().orElseThrow();
+        Map<String, Object> singleAssignment = assignments.stream()
+                .filter(item -> "lp_single".equals(item.get("id")))
+                .findFirst().orElseThrow();
+        String firstSlot = String.valueOf(firstAssignment.get("timeSlot"));
+        String secondSlot = String.valueOf(secondAssignment.get("timeSlot"));
+        String singleSlot = String.valueOf(singleAssignment.get("timeSlot"));
+        String[] firstParts = firstSlot.split("-");
+        String[] secondParts = secondSlot.split("-");
+        assertEquals(firstParts[0], secondParts[0]);
+        assertEquals(Integer.parseInt(firstParts[1]) + 1, Integer.parseInt(secondParts[1]));
+        assertEquals(3, java.util.Set.of(firstSlot, secondSlot, singleSlot).size());
 
         given()
                 .when().delete("/timetable-solutions/{jobId}", jobId)
@@ -189,6 +316,48 @@ class TimetableSolverResourceTest {
         );
     }
 
+    private static Map<String, Object> doubleBlockProblem() {
+        return Map.of(
+                "name", "double-block-rest-test",
+                "timeSlots", List.of(
+                        slot("1-1", 1, 1),
+                        slot("1-2", 1, 2),
+                        slot("1-3", 1, 3),
+                        slot("2-1", 2, 1),
+                        slot("2-2", 2, 2),
+                        slot("2-3", 2, 3)
+                ),
+                "rooms", List.of(Map.of("id", "__NONE__", "name", "None", "none", true)),
+                "lessonAssignments", List.of(
+                        blockLesson("lp_double_1", 0),
+                        blockLesson("lp_double_2", 1),
+                        pinnedLesson("lp_blocker", "lp_blocker", "c-block", "chinese", "t-blocker", 0, "1-2")
+                )
+        );
+    }
+
+    private static Map<String, Object> warmStartedDoubleBlockSwapProblem() {
+        Map<String, Object> firstBlockLesson = blockLesson("lp_double_1", 0);
+        firstBlockLesson.put("timeSlot", "1-1");
+        Map<String, Object> secondBlockLesson = blockLesson("lp_double_2", 1);
+        secondBlockLesson.put("timeSlot", "1-3");
+        Map<String, Object> singleLesson = new HashMap<>(
+                lesson("lp_single", "lp_single", "c-block", "chinese", "t-single", 0)
+        );
+        singleLesson.put("timeSlot", "1-2");
+
+        return Map.of(
+                "name", "warm-started-double-block-swap-rest-test",
+                "timeSlots", List.of(
+                        slot("1-1", 1, 1),
+                        slot("1-2", 1, 2),
+                        slot("1-3", 1, 3)
+                ),
+                "rooms", List.of(Map.of("id", "__NONE__", "name", "None", "none", true)),
+                "lessonAssignments", List.of(firstBlockLesson, secondBlockLesson, singleLesson)
+        );
+    }
+
     private static Map<String, Object> slot(String id, int weekday, int lessonIndex) {
         return Map.of(
                 "id", id,
@@ -240,6 +409,21 @@ class TimetableSolverResourceTest {
                 entry("preferMorning", true),
                 entry("preferLater", false)
         );
+    }
+
+    private static Map<String, Object> blockLesson(String id, int blockIndex) {
+        Map<String, Object> lesson = new HashMap<>(lesson(
+                id,
+                "lp_double",
+                "c-block",
+                "math",
+                "t-block",
+                blockIndex
+        ));
+        lesson.put("blockId", "lp_double_block_1");
+        lesson.put("blockIndex", blockIndex);
+        lesson.put("blockSize", 2);
+        return lesson;
     }
 
     private static Map<String, Object> protectedLesson(String id, String planId, String classId, String subjectId,

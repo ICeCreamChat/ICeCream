@@ -56,6 +56,13 @@ test('advanced room and period rules affect hard blocking and soft candidate sco
     assert.match(advancedHardBlocker(hardProject, [], slot({ roomId: 'normal' })), /指定教室/);
     assert.equal(advancedHardBlocker(hardProject, [], slot({ roomId: 'lab' })), '');
 
+    const idsOrTagsProject = projectWithRule({
+        ...hardRule,
+        parameters: { roomIds: ['normal'], requiredTags: ['实验室'] },
+    });
+    assert.equal(advancedHardBlocker(idsOrTagsProject, [], slot({ roomId: 'normal' })), '');
+    assert.equal(advancedHardBlocker(idsOrTagsProject, [], slot({ roomId: 'lab' })), '');
+
     const softProject = projectWithRule({
         id: 'period-rule', type: 'subject.preferred_periods', strength: 'soft',
         target: { kind: 'subject', matchedIds: ['s1'] },
@@ -63,6 +70,40 @@ test('advanced room and period rules affect hard blocking and soft candidate sco
     });
     assert.equal(advancedCandidatePenalty(softProject, [], slot({ period: 1 })), 0);
     assert.ok(advancedCandidatePenalty(softProject, [], slot({ period: 2 })) > 0);
+});
+
+test('cross-venue boundaries protect class transitions without implicitly constraining teacher travel', () => {
+    const rule = {
+        id: 'venue-boundary',
+        type: 'schedule.cross_venue_boundary',
+        strength: 'hard',
+        target: { kind: 'global' },
+        parameters: { boundaryPeriods: [4, 5] },
+    };
+    const project = projectWithRule(rule);
+    const previous = slot({ period: 4, roomId: 'lab' });
+    const teacherOnlyTransition = slot({
+        id: 'teacher-only-transition',
+        lessonPlanId: '',
+        classId: 'c2',
+        subjectId: 's2',
+        teacherId: 't1',
+        teacherIds: ['t1'],
+        period: 5,
+        roomId: 'normal',
+    });
+    const sameClassTransition = slot({
+        id: 'same-class-transition',
+        lessonPlanId: 'p2',
+        subjectId: 's2',
+        teacherId: 't2',
+        teacherIds: ['t2'],
+        period: 5,
+        roomId: 'normal',
+    });
+
+    assert.equal(advancedHardBlocker(project, [previous], teacherOnlyTransition), '');
+    assert.match(advancedHardBlocker(project, [previous], sameClassTransition), /禁止跨场地/);
 });
 
 test('advanced fulfillment detects compactness, balance, blocks, adjacency and venue violations', () => {

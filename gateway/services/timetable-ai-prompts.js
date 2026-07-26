@@ -1,4 +1,4 @@
-export const AI_REQUIREMENT_PROMPT_VERSION = 'timetable_ai_requirement_extract_v6';
+export const AI_REQUIREMENT_PROMPT_VERSION = 'timetable_ai_requirement_extract_v7';
 
 export const TIMETABLE_REQUIREMENT_INTENTS = [
     'teacher_unavailable',
@@ -31,6 +31,7 @@ export const TIMETABLE_REQUIREMENT_INTENTS = [
     'subject_not_same_day',
     'subject_not_consecutive_with',
     'subject_sequence',
+    'avoid_day_part_concentration',
     'block_preference',
     'week_pattern',
     'campus_commute_gap',
@@ -104,16 +105,29 @@ export const AI_REQUIREMENT_JSON_SCHEMA = {
                 properties: {
                     sourceId: { type: 'string' },
                     textHash: { type: 'string' },
+                    rationales: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            required: ['text', 'evidence'],
+                            properties: {
+                                id: { type: 'string' },
+                                text: { type: 'string' },
+                                evidence: { type: 'string' },
+                            },
+                        },
+                    },
                     clauses: {
                         type: 'array',
                         items: {
                             type: 'object',
                             additionalProperties: true,
-                            required: ['intent', 'evidence'],
+                            required: ['id', 'intent', 'targetKind', 'strength', 'relation', 'evidence'],
                             properties: {
                                 id: { type: 'string' },
                                 intent: { type: 'string', enum: TIMETABLE_REQUIREMENT_INTENTS },
-                                targetKind: { type: 'string', enum: ['teacher', 'class', 'subject', 'room', 'global', 'teaching_group', 'derived_group', 'unknown'] },
+                                targetKind: { type: 'string', enum: ['teacher', 'class', 'grade', 'subject', 'subject_group', 'room', 'global', 'teaching_group', 'derived_group', 'unknown'] },
                                 targetNames: { type: 'array', items: { type: 'string' } },
                                 targetIds: { type: 'array', items: { type: 'string' } },
                                 strength: { type: 'string', enum: ['hard', 'soft'] },
@@ -125,6 +139,35 @@ export const AI_REQUIREMENT_JSON_SCHEMA = {
                                         days: { type: 'array', items: { type: 'integer' } },
                                         periods: { type: 'array', items: { type: 'integer' } },
                                         dayPart: { type: 'string', enum: ['morning', 'afternoon', 'evening', 'all_day', ''] },
+                                    },
+                                },
+                                scope: {
+                                    type: 'object',
+                                    additionalProperties: false,
+                                    required: ['kind'],
+                                    properties: {
+                                        kind: { type: 'string', enum: ['explicit_classes', 'grade_classes', 'teacher_covered_classes', 'subject_offering_classes', 'school', 'unresolved'] },
+                                        classNames: { type: 'array', items: { type: 'string' } },
+                                        gradeNames: { type: 'array', items: { type: 'string' } },
+                                        teacherNames: { type: 'array', items: { type: 'string' } },
+                                    },
+                                },
+                                quantifier: {
+                                    type: 'object',
+                                    additionalProperties: true,
+                                    properties: {
+                                        unit: { type: 'string' },
+                                        min: { type: 'number' },
+                                        max: { type: 'number' },
+                                    },
+                                },
+                                relation: {
+                                    type: 'object',
+                                    additionalProperties: false,
+                                    required: ['kind'],
+                                    properties: {
+                                        kind: { type: 'string', enum: ['independent', 'inherits', 'emphasis', 'exception'] },
+                                        parentId: { type: 'string' },
                                     },
                                 },
                                 params: { type: 'object', additionalProperties: true },
@@ -232,15 +275,19 @@ export function buildAiRequirementExtractionMessages({ project = {}, text = '', 
                 '必须只输出一个 JSON 对象，形如 {"results":[{"sourceId":"...","textHash":"...","clauses":[]}],"warnings":[]}。',
                 '每个 results[] 必须原样回传输入 sources[] 中已存在的 sourceId 和 textHash；禁止编造、改写或省略。',
                 '一个用户输入 source 只能有一个顶层 result；一句话包含多个约束时放进同一个 result.clauses，允许 clauses 为 0..N。',
+                '每个 clause.id 是该 source 内唯一的局部 ID；relation.parentId 只能引用同一 source 中已输出的 clause.id，禁止跨 source 引用和循环。',
                 '不得按输入或输出数组下标猜来源；无法理解时仍返回对应 sourceId/textHash，并设置 unrecognized=true、clauses=[]、reason。',
                 'results[].clauses[].intent 必须来自给定 intent 目录；先判断 targetKind，再选择与该对象兼容的 intent；不确定对象、时间、参数时设置 needsClarification=true 并降低 confidence。',
                 '不得编造教师、班级、课程、教室 id；可以输出用户原文里的名称，后续由本地系统白名单匹配。',
+                '原因、目的和解释写入 result.rationales，不要伪装成规则 clause；rationales[].evidence 和 clauses[].evidence 都必须逐字截取自当前 source 原文。',
                 '领域内含糊输入不能丢弃：只要在谈排课、课程、教师、班级、课节或教室，但目标不够具体，就输出 unknown clause、needsClarification=true 和 clarification.question；只有天气、闲聊等领域外内容才设置 unrecognized=true、clauses=[]。',
                 '硬约束用于“必须、不能、不可、不排、固定”；软约束用于“尽量、优先、少、均衡”。',
                 '时间槽统一用 "天-节"，周一=1；也尽量同步给出 time.days/time.periods；如果只知道上午/下午，用 time.dayPart 和 days/periods 表达。',
                 '优先输出用户语义 intent，不要提前编译成底层规则：学科第一节/最后一节避开用 avoid_first_period/avoid_last_period；教师或教师角色组的软时段偏好用 teacher_avoid_periods；具体教师没空、不方便、请假或不能上课始终用 teacher_unavailable，即使原文出现第一节/末节；早读/首节固定用 first_period_assign；主科黄金时段/前四节用 golden_hour_preference；午休边界用 lunch_protection；全部教师不排课用 teacher_unavailable，只有全校活动/升旗/大扫除才用 global_unavailable。',
                 '课程间隔和均匀分布互斥：隔天排、至少隔 N 天、间隔 N 天用 course_interval；均匀分布、不要集中、分散到不同天才用 subject_spread。',
-                '课程优先节次、课程避开节次、课程上午优先和课程分散安排必须同时提取课程与班级；可额外提取限定教师并写入 params.teacherIds/teacherNames。没有班级时，除非原文明示“全校”，必须设置 needsClarification=true，问题为“请补充班级或明确全校范围”，不得默认扩大成全校课程规则。班级可写入 params.classIds 或 params.classNames；明确全校时写 params.scopeQualifier="school"。',
+                '课程时段规则必须输出 scope：明确班级用 explicit_classes；只写年级用 grade_classes；“某些教师覆盖/任教的班级”用 teacher_covered_classes；只写课程名用 subject_offering_classes；明确全校用 school。scope 只写名称，不写项目 ID；后续由本地系统按任课计划取交集并物化班级。',
+                '“尤其是/特别是”输出基础 independent clause 和 emphasis 子 clause，子 clause 通过 parentId 继承基础时间语义；不要自定义权重数值。频率表达写入 quantifier，并同步保留 params.minOccurrences 等确定参数。',
+                '“不要集中到下午”使用 avoid_day_part_concentration，表示分布集中度，不得错误翻译成所有下午课节都避开。',
                 `Intent 目录：${TIMETABLE_REQUIREMENT_INTENTS.join(', ')}`,
                 `Intent 语义边界：${JSON.stringify(TIMETABLE_REQUIREMENT_INTENT_GUIDE)}`,
                 `JSON Schema：${JSON.stringify(AI_REQUIREMENT_JSON_SCHEMA)}`,

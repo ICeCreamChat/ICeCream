@@ -134,7 +134,7 @@ test('POST /api/tools/seating/arrange uses AI rules and local algorithm for a 60
 
     assert.equal(response.status, 200);
     assert.equal(payload.success, true);
-    assert.equal(payload.data.source, 'ai_layout_local_assignment');
+    assert.equal(payload.data.source, 'timefold_solver');
     assert.equal(payload.data.assignments.length, 58);
     assert.equal(payload.data.unassigned.length, 0);
     assert.deepEqual(new Set([payload.data.guardians.left, payload.data.guardians.right]), new Set(['s05', 's55']));
@@ -289,7 +289,7 @@ test('POST /api/tools/seating/arrange assigns a confirmed layout without another
     assert.equal(response.status, 200);
     assert.equal(payload.success, true);
     assert.equal(aiCalls, 0);
-    assert.equal(payload.data.source, 'confirmed_layout_local_assignment');
+    assert.equal(payload.data.source, 'timefold_solver');
     assert.equal(payload.data.assignments.length, 4);
     assert.deepEqual(payload.data.classroomLayout.localAisles, {
       vertical: [{ row: 0, col: 0 }],

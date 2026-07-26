@@ -159,7 +159,7 @@ test('parseTimetableRules does not silently truncate long pasted text', async ()
         fetchImpl: async (_url, options = {}) => {
             const body = JSON.parse(options.body || '{}');
             const user = JSON.parse(body.messages?.[1]?.content || '{}');
-            aiRequests.push(user.request || '');
+            aiRequests.push((user.sources || []).map(source => source.rawText || '').join('\n'));
             return {
                 ok: true,
                 status: 200,
@@ -170,10 +170,11 @@ test('parseTimetableRules does not silently truncate long pasted text', async ()
         },
     });
 
-    assert.equal(aiRequests.length, 1);
-    assert.ok(aiRequests[0].length > 4000);
-    assert.match(aiRequests[0], /第90条暂时无法识别的排课说明/);
-    assert.ok(aiRequests[0].includes('\n'));
+    assert.equal(aiRequests.length, 5);
+    const completeRequest = aiRequests.join('\n');
+    assert.ok(completeRequest.length > 4000);
+    assert.match(completeRequest, /第90条暂时无法识别的排课说明/);
+    assert.ok(completeRequest.includes('\n'));
 });
 
 test('parseTimetableRules throws on unsupported file type', async () => {
@@ -279,7 +280,7 @@ test('local fallback parses teacher_consecutive_limit', async () => {
 // 4. Local fallback: subject_morning
 // ============================================================
 
-test('local fallback asks for a class before applying a named subject morning preference', async () => {
+test('local fallback blocks a named subject morning preference when lesson plans are unavailable', async () => {
     const project = makeProject();
     const result = await parseTimetableRules({
         text: '语文尽量安排到上午',
@@ -289,7 +290,8 @@ test('local fallback asks for a class before applying a named subject morning pr
     const row = result.draftRows.find(r => r.type === 'subject_morning' && r.targetId === 's1');
     assert.ok(row);
     assert.equal(row.status, 'needs_review');
-    assert.match(row.clarifications.join(' '), /补充班级.*全校/);
+    assert.equal(row.executionStatus, 'blocked_by_reference');
+    assert.match(row.clarifications.join(' '), /任课计划/);
     assert.deepEqual(result.draftRules.softRules.morningSubjects || [], []);
 });
 
@@ -311,6 +313,8 @@ test('local fallback parses phase 1 rule primitives', async () => {
         lessonPlans: [
             { id: 'lp1', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyHours: 3 },
             { id: 'lp2', classId: 'c1', subjectId: 's2', teacherId: 't2', weeklyHours: 3 },
+            { id: 'lp3', classId: 'c1', subjectId: 's3', teacherId: 't3', weeklyHours: 3 },
+            { id: 'lp4', classId: 'c1', subjectId: 's4', teacherId: 't1', weeklyHours: 2 },
         ],
     });
     const result = await parseTimetableRules({
@@ -327,8 +331,9 @@ test('local fallback parses phase 1 rule primitives', async () => {
         env: {},
     });
 
-    assert.ok(result.draftRows.some(row => row.type === 'subject_afternoon' && row.targetId === 's4' && row.status === 'effective'));
-    assert.deepEqual(result.draftRules.softRules.afternoonSubjects, ['s4']);
+    assert.ok(result.draftRows.some(row => row.type === 'advanced_constraint' && row.advancedType === 'subject.preferred_day_part' && row.targetId === 's4' && row.status === 'effective'));
+    assert.ok(result.draftRules.advancedRules.some(row => row.type === 'subject.preferred_day_part' && row.parameters.classIds.includes('c1')));
+    assert.deepEqual(result.draftRules.softRules.afternoonSubjects || [], []);
     assert.ok(result.draftRows.some(row => row.type === 'global_unavailable' && row.slots.includes('1-1')));
     assert.ok(result.draftRules.hardRules.globalUnavailable.includes('1-1'));
     assert.ok(result.draftRows.some(row => row.type === 'teacher_weekly_limit' && row.targetId === 't2' && row.limit === 2));
@@ -357,8 +362,10 @@ test('local fallback parses room_requirement into hard room requirements', async
     assert.deepEqual(result.draftRules.hardRules.roomRequirements.s4.roomIds, ['gym']);
 });
 
-test('intent compiler accepts scalar matchedIds and compiles avoid_first_period into machine rules', () => {
-    const project = makeProject();
+test('intent compiler accepts scalar matchedIds and compiles avoid_first_period into a scoped machine rule', () => {
+    const project = makeProject({
+        lessonPlans: [{ id: 'lp_pe', classId: 'c1', subjectId: 's4', teacherId: 't1', weeklyHours: 2 }],
+    });
     const result = normalizeTimetableRuleDraftRows({
         project,
         draftRows: [],
@@ -372,11 +379,12 @@ test('intent compiler accepts scalar matchedIds and compiles avoid_first_period 
         }],
     });
 
-    const row = result.draftRows.find(item => item.type === 'subject_avoid_periods');
+    const row = result.draftRows.find(item => item.type === 'advanced_constraint' && item.advancedType === 'subject.avoid_periods');
     assert.ok(row);
     assert.equal(row.requirementId, 'req_avoid_first');
     assert.deepEqual(row.slots, ['1-1', '2-1', '3-1', '4-1', '5-1']);
-    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods.s4.avoid, ['1-1', '2-1', '3-1', '4-1', '5-1']);
+    assert.deepEqual(row.parameters.classIds, ['c1']);
+    assert.deepEqual(result.draftRules.softRules.subjectPreferredPeriods || {}, {});
 });
 
 test('intent compiler accepts singleton project collections for teaching-group meetings', () => {
@@ -395,7 +403,7 @@ test('intent compiler accepts singleton project collections for teaching-group m
     assert.ok(rows.every(row => row.slots.length === 1 && row.slots[0] === '3-7'));
 });
 
-test('local fallback preserves explicit periods but requires a course range', async () => {
+test('local fallback preserves explicit periods but blocks when lesson plans are unavailable', async () => {
     const project = makeProject();
     const result = await parseTimetableRules({
         text: '语文尽量安排在上午第1-3节',
@@ -405,7 +413,8 @@ test('local fallback preserves explicit periods but requires a course range', as
     const row = result.draftRows.find(r => r.type === 'subject_preferred_periods' && r.targetId === 's1');
     assert.ok(row, 'should produce a subject_preferred_periods row');
     assert.equal(row.status, 'needs_review');
-    assert.match(row.clarifications.join(' '), /补充班级.*全校/);
+    assert.equal(row.executionStatus, 'blocked_by_reference');
+    assert.match(row.clarifications.join(' '), /任课计划/);
     assert.deepEqual(row.slots, [
         '1-1', '1-2', '1-3',
         '2-1', '2-2', '2-3',
@@ -446,7 +455,7 @@ test('local fallback parses Chinese numeral front periods for unavailable teache
     assert.equal(row.status, 'effective');
 });
 
-test('local fallback preserves subject avoid periods but requires a course range', async () => {
+test('local fallback preserves subject avoid periods but blocks when lesson plans are unavailable', async () => {
     const project = makeProject();
     const result = await parseTimetableRules({
         text: '体育第一节不要排',
@@ -456,7 +465,8 @@ test('local fallback preserves subject avoid periods but requires a course range
     const row = result.draftRows.find(r => r.type === 'subject_avoid_periods' && r.targetId === 's4');
     assert.ok(row);
     assert.equal(row.status, 'needs_review');
-    assert.match(row.clarifications.join(' '), /补充班级.*全校/);
+    assert.equal(row.executionStatus, 'blocked_by_reference');
+    assert.match(row.clarifications.join(' '), /任课计划/);
     assert.deepEqual(row.slots, ['1-1', '2-1', '3-1', '4-1', '5-1']);
 });
 
@@ -690,7 +700,11 @@ test('continueTimetableRequirementClarification preserves source model and proje
 });
 
 test('normalizeTimetableRuleDraftRows canonicalizes AI semantic requirement aliases', () => {
-    const project = makeProject();
+    const project = makeProject({
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 's2', teacherId: 't1', weeklyHours: 4 },
+        ],
+    });
     const result = normalizeTimetableRuleDraftRows({
         project,
         draftRows: [],
@@ -902,7 +916,7 @@ test('parseTimetableRules links full-sentence AI requirement to a shortened mach
     const result = await parseTimetableRules({
         text: fullText,
         project,
-        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test', TIMETABLE_RULE_AI_MODE: 'off' },
         fetchImpl,
     });
 
@@ -938,7 +952,7 @@ test('parseTimetableRules never falls back when an AI machine rule has an explic
     const result = await parseTimetableRules({
         text: fullText,
         project,
-        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test', TIMETABLE_RULE_AI_MODE: 'off' },
         fetchImpl,
     });
 
@@ -976,7 +990,7 @@ test('parseTimetableRules never falls back when an AI machine rule has an explic
     const result = await parseTimetableRules({
         text: fullText,
         project,
-        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test', TIMETABLE_RULE_AI_MODE: 'off' },
         fetchImpl,
     });
 
@@ -1010,7 +1024,7 @@ test('parseTimetableRules rejects a legacy AI machine rule when multiple sources
     const result = await parseTimetableRules({
         text: fullText,
         project,
-        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test', TIMETABLE_RULE_AI_MODE: 'off' },
         fetchImpl,
     });
 
@@ -1078,7 +1092,7 @@ test('parseTimetableRules preserves top-level rawText when AI requirement has a 
     const result = await parseTimetableRules({
         text: fullText,
         project,
-        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test', TIMETABLE_RULE_AI_MODE: 'off' },
         fetchImpl,
     });
 
@@ -1144,7 +1158,7 @@ test('parseTimetableRules rejects named AI shells without source evidence beside
     const result = await parseTimetableRules({
         text: fullText,
         project,
-        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test', TIMETABLE_RULE_AI_MODE: 'off' },
         fetchImpl,
     });
     const visibleItems = buildUnifiedRequirementItems(result);
@@ -1221,7 +1235,7 @@ test('parseTimetableRules rejects placeholder-only AI shells without source evid
     const result = await parseTimetableRules({
         text: fullText,
         project,
-        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test', TIMETABLE_RULE_AI_MODE: 'off' },
         fetchImpl,
     });
     const visibleItems = buildUnifiedRequirementItems(result);
@@ -1445,7 +1459,13 @@ test('complex model parses week-pattern constraints into ready semantic actions'
     assert.ok(requirement);
     assert.equal(requirement.status, 'actionable');
     assert.equal(requirement.applyTo, 'model_extension');
+    assert.ok(requirement.landing.includes('rule'));
+    assert.ok(requirement.landing.includes('model_extension'));
     assert.equal(requirement.modelSupport?.supported, true);
+    const ir = result.constraintIRs.find(item => item.constraintId === requirement.constraintId);
+    assert.ok(ir);
+    assert.ok(ir.landing.includes('rule'));
+    assert.ok(ir.landing.includes('model_extension'));
     const action = result.semanticActions.find(item => item.requirementId === requirement.id);
     assert.ok(action);
     assert.equal(action.kind, 'complex_model_patch');
@@ -1612,7 +1632,9 @@ test('xlsx local fallback preserves sheet and row source for expanded subject ru
 });
 
 test('xlsx constraints parse locally with stable ids and calls AI review for decisive rows', async () => {
-    const project = makeProject();
+    const project = makeProject({
+        lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 's2', teacherId: 't1', weeklyHours: 4 }],
+    });
     let aiCalls = 0;
     const file = {
         filename: 'constraints.xlsx',
@@ -1658,13 +1680,13 @@ test('xlsx constraints parse locally with stable ids and calls AI review for dec
     const first = await parseTimetableRules({
         file,
         project,
-        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test', TIMETABLE_RULE_AI_MODE: 'off' },
         fetchImpl,
     });
     const second = await parseTimetableRules({
         file,
         project,
-        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test', TIMETABLE_RULE_AI_MODE: 'off' },
         fetchImpl,
     });
 
@@ -1707,14 +1729,20 @@ test('xlsx constraints parse locally with stable ids and calls AI review for dec
     assert.ok(first.aiReview.reviewItems.every(item => item.validationStatus === 'accepted'));
     assert.ok(first.draftRows.every(row => row.stableKey));
     assert.deepEqual(first.draftRows.map(row => row.sourceRow), [...first.draftRows.map(row => row.sourceRow)].sort((a, b) => a - b));
-    assert.deepEqual(first.draftRules.softRules.subjectPreferredPeriods.s2.prefer, [
+    const preferredRule = first.draftRules.advancedRules.find(rule => (
+        rule.type === 'subject.preferred_day_part' && rule.target?.matchedIds?.includes('s2')
+    ));
+    assert.ok(preferredRule);
+    assert.deepEqual(preferredRule.parameters.slots, [
         '1-1', '1-2', '2-1', '2-2', '3-1', '3-2', '4-1', '4-2', '5-1', '5-2',
     ]);
     assert.deepEqual(first.draftRules.hardRules.teacherUnavailable.t1, ['1-1', '1-2']);
 });
 
 test('AI review flag stays advisory when local validation cannot reproduce a blocker', async () => {
-    const project = makeProject();
+    const project = makeProject({
+        lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 's2', teacherId: 't1', weeklyHours: 4 }],
+    });
     const fetchImpl = async () => ({
         ok: true,
         status: 200,
@@ -1737,7 +1765,7 @@ test('AI review flag stays advisory when local validation cannot reproduce a blo
     const result = await parseTimetableRules({
         text: '全校数学尽量安排到上午',
         project,
-        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test', TIMETABLE_RULE_AI_MODE: 'off' },
         fetchImpl,
     });
 
@@ -1768,7 +1796,9 @@ test('AI review flag stays advisory when local validation cannot reproduce a blo
 });
 
 test('AI review invalid suggested patch is not applied to local result', async () => {
-    const project = makeProject();
+    const project = makeProject({
+        lessonPlans: [{ id: 'lp_math', classId: 'c1', subjectId: 's2', teacherId: 't1', weeklyHours: 4 }],
+    });
     const fetchImpl = async () => ({
         ok: true,
         status: 200,
@@ -1797,18 +1827,22 @@ test('AI review invalid suggested patch is not applied to local result', async (
     const result = await parseTimetableRules({
         text: '全校数学尽量安排到上午',
         project,
-        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test' },
+        env: { DEEPSEEK_API_KEY: 'test-key', DEEPSEEK_API_BASE: 'http://ai.test', TIMETABLE_RULE_AI_MODE: 'off' },
         fetchImpl,
     });
 
-    assert.ok(result.draftRows.some(row => row.type === 'subject_morning' && row.targetId === 's2'));
+    assert.ok(result.draftRows.some(row => row.type === 'advanced_constraint' && row.advancedType === 'subject.preferred_day_part' && row.targetId === 's2'));
     assert.equal(result.draftRows.some(row => row.targetName === '火星课'), false);
     assert.equal(result.aiReview.appliedSuggestionCount, 0);
     assert.ok(result.warnings.some(warning => /AI 复审建议未通过本地校验/.test(warning)));
 });
 
 test('AI review timeout returns the local parse result with an unavailable warning', async () => {
-    const project = makeProject();
+    const project = makeProject({
+        lessonPlans: [
+            { id: 'lp_math', classId: 'c1', subjectId: 's2', teacherId: 't1', weeklyHours: 4 },
+        ],
+    });
     let receivedAbortSignal = false;
     const fetchImpl = async (_url, init = {}) => {
         receivedAbortSignal = Boolean(init.signal);
@@ -1848,6 +1882,7 @@ test('AI review timeout returns the local parse result with an unavailable warni
         env: {
             DEEPSEEK_API_KEY: 'test-key',
             DEEPSEEK_API_BASE: 'http://ai.test',
+            TIMETABLE_RULE_AI_MODE: 'off',
             TIMETABLE_RULE_AI_REVIEW_TIMEOUT_MS: '5',
         },
         fetchImpl,
@@ -1857,7 +1892,9 @@ test('AI review timeout returns the local parse result with an unavailable warni
     assert.equal(result.aiReview.status, 'unavailable');
     assert.equal(result.aiReview.reason, 'ai_review_timeout');
     assert.ok(result.warnings.some(warning => /AI 复审未完成|超时/.test(warning)));
-    assert.ok(result.draftRows.some(row => row.type === 'subject_morning' && row.targetId === 's2'));
+    assert.ok(result.draftRows.some(row => (
+        row.advancedType === 'subject.preferred_day_part' && row.targetId === 's2'
+    )));
     assert.equal(result.sourceRequirements.length, 1);
 });
 
@@ -1872,6 +1909,7 @@ test('AI review invalid JSON safely preserves every local source requirement', a
         env: {
             DEEPSEEK_API_KEY: 'test-key',
             DEEPSEEK_API_BASE: 'http://ai.test',
+            TIMETABLE_RULE_AI_MODE: 'off',
         },
         fetchImpl: async () => ({
             ok: true,
@@ -1892,7 +1930,13 @@ test('AI review invalid JSON safely preserves every local source requirement', a
 });
 
 test('normalize splits a grouped subject target into independent effective rules', () => {
-    const project = makeProject();
+    const project = makeProject({
+        lessonPlans: [
+            { id: 'lp_chinese', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyHours: 4 },
+            { id: 'lp_math', classId: 'c1', subjectId: 's2', teacherId: 't2', weeklyHours: 4 },
+            { id: 'lp_english', classId: 'c2', subjectId: 's3', teacherId: 't3', weeklyHours: 4 },
+        ],
+    });
     const result = normalizeTimetableRuleDraftRows({
         project,
         source: 'ai',
@@ -1908,10 +1952,11 @@ test('normalize splits a grouped subject target into independent effective rules
         }],
     });
 
-    const rows = result.draftRows.filter(row => row.type === 'subject_morning');
+    const rows = result.draftRows.filter(row => row.advancedType === 'subject.preferred_day_part');
     assert.deepEqual(rows.map(row => row.targetId), ['s1', 's2', 's3']);
     assert.deepEqual(rows.map(row => row.targetName), ['语文', '数学', '英语']);
     assert.ok(rows.every(row => row.status === 'effective'));
+    assert.ok(rows.every(row => row.parameters.classIds.length === 1));
     assert.deepEqual(result.clarifyingQuestions, []);
     assert.deepEqual(result.missingInfo, []);
 });
@@ -2128,7 +2173,11 @@ test('diagnose reports blocking rules when teacher is fully unavailable', () => 
 // ============================================================
 
 test('local fallback parses multiple constraints from compound text', async () => {
-    const project = makeProject();
+    const project = makeProject({
+        lessonPlans: [
+            { id: 'lp_chinese', classId: 'c1', subjectId: 's1', teacherId: 't1', weeklyHours: 4 },
+        ],
+    });
     const result = await parseTimetableRules({
         text: '张老师周一第1节不排；李老师每天最多3节；全校语文尽量安排到上午',
         project,
@@ -2137,7 +2186,7 @@ test('local fallback parses multiple constraints from compound text', async () =
     const types = result.draftRows.map(r => r.type);
     assert.ok(types.includes('teacher_unavailable'));
     assert.ok(types.includes('teacher_daily_limit'));
-    assert.ok(types.includes('subject_morning'));
+    assert.ok(result.draftRows.some(row => row.advancedType === 'subject.preferred_day_part'));
     // All should be effective (exact matches)
     const effectiveCount = result.draftRows.filter(r => r.status === 'effective').length;
     assert.ok(effectiveCount >= 3, `expected >= 3 effective rows, got ${effectiveCount}`);
@@ -2617,10 +2666,21 @@ test('an explicit new teacher target interrupts comma-clause context inheritance
 });
 
 
-test('grade-only weekly course preferences preserve their details but require a class scope', async () => {
+test('grade-only weekly course preferences derive offering classes and preserve unsupported concentration semantics', async () => {
+    const project = makeProject({
+        periodsPerDay: 8,
+        classes: [
+            { id: 'g9-1', name: '1班', grade: '九年级' },
+            { id: 'g9-2', name: '2班', grade: '九年级' },
+        ],
+        lessonPlans: ['s1', 's2', 's3'].flatMap((subjectId, subjectIndex) => [
+            { id: `lp-${subjectIndex}-1`, classId: 'g9-1', subjectId, teacherId: 't1', weeklyHours: 4 },
+            { id: `lp-${subjectIndex}-2`, classId: 'g9-2', subjectId, teacherId: 't2', weeklyHours: 4 },
+        ]),
+    });
     const result = await parseTimetableRules({
         text: '九年级语文、数学、英语每周尽量有3次以上排在第1到第3节，不要集中到下午。',
-        project: makeProject({ periodsPerDay: 8 }),
+        project,
         env: {},
     });
     const preferred = result.constraintIRs.filter(item => item.capabilityId === 'subject.preferred_periods');
@@ -2631,17 +2691,34 @@ test('grade-only weekly course preferences preserve their details but require a 
         assert.deepEqual(ir.parameters.gradeNames, ['九年级']);
         assert.equal(ir.parameters.minOccurrences, 3);
         assert.deepEqual(ir.parameters.periods, [1, 2, 3]);
-        assert.deepEqual(ir.parameters.avoidDayParts, ['afternoon']);
-        assert.equal(ir.executionStatus, 'blocked_by_clarification');
-        assert.match(ir.clarifications.join(' '), /补充班级.*全校/);
-        assert.equal(ir.machineRuleIds.length, 0);
+        assert.deepEqual(ir.scope.classIds, ['g9-1', 'g9-2']);
+        assert.equal(ir.executionStatus, 'executable');
+        assert.equal(ir.machineRuleIds.length, 1);
     });
+    const concentration = result.constraintIRs.find(item => item.capabilityId === 'subject.avoid_day_part_concentration');
+    assert.ok(concentration);
+    assert.equal(concentration.parameters.dayPart, 'afternoon');
+    assert.equal(concentration.executionStatus, 'unsupported_by_solver');
+    assert.equal(result.sourceRequirements[0].partiallyApplicable, true);
 });
 
-test('grade-only final-period preferences preserve their details but require a class scope', async () => {
+test('grade-only final-period preferences derive the matching grade classes', async () => {
+    const project = makeProject({
+        periodsPerDay: 8,
+        classes: [
+            { id: 'g7-1', name: '1班', grade: '七年级' },
+            { id: 'g7-2', name: '2班', grade: '七年级' },
+        ],
+        lessonPlans: [
+            { id: 'lp-math-1', classId: 'g7-1', subjectId: 's2', teacherId: 't1', weeklyHours: 4 },
+            { id: 'lp-math-2', classId: 'g7-2', subjectId: 's2', teacherId: 't2', weeklyHours: 4 },
+            { id: 'lp-en-1', classId: 'g7-1', subjectId: 's3', teacherId: 't1', weeklyHours: 4 },
+            { id: 'lp-en-2', classId: 'g7-2', subjectId: 's3', teacherId: 't2', weeklyHours: 4 },
+        ],
+    });
     const result = await parseTimetableRules({
         text: '七年级最后一节尽量不排数学和英语，避免新生下午后段学习压力过大。',
-        project: makeProject({ periodsPerDay: 8 }),
+        project,
         env: {},
     });
     const avoided = result.constraintIRs.filter(item => item.capabilityId === 'subject.avoid_periods');
@@ -2652,10 +2729,11 @@ test('grade-only final-period preferences preserve their details but require a c
         assert.deepEqual(ir.parameters.gradeNames, ['七年级']);
         assert.deepEqual(ir.parameters.periods, [8]);
         assert.equal(ir.parameters.periods.includes(7), false);
-        assert.equal(ir.executionStatus, 'blocked_by_clarification');
-        assert.match(ir.clarifications.join(' '), /补充班级.*全校/);
-        assert.equal(ir.machineRuleIds.length, 0);
+        assert.deepEqual(ir.scope.classIds, ['g7-1', 'g7-2']);
+        assert.equal(ir.executionStatus, 'executable');
+        assert.equal(ir.machineRuleIds.length, 1);
     });
+    assert.ok(result.sourceRequirements[0].rationales.some(item => /学习压力/.test(item.text)));
 });
 
 
@@ -2945,7 +3023,7 @@ test('only-laboratory scoped negation preserves both subject and room while stay
     assert.equal(result.draftRows.length, 0);
 });
 
-test('complex negation keeps multi-subject Friday crowding in course-scope clarification', async () => {
+test('complex negation keeps multi-subject Friday crowding blocked when lesson plans are unavailable', async () => {
     const result = await parseTimetableRules({
         text: '不要把语文和英语都挤在周五',
         project: makeProject(),
@@ -2967,15 +3045,13 @@ test('complex negation keeps multi-subject Friday crowding in course-scope clari
     assert.deepEqual(ir.parameters.avoidDays, [5]);
     assert.equal(ir.strength, 'soft');
     assert.ok(ir.negation.cues.includes('不要'));
-    assert.equal(ir.executionStatus, 'blocked_by_clarification');
+    assert.equal(ir.executionStatus, 'blocked_by_reference');
     assert.equal(ir.reviewStatus, 'needs_clarification');
-    assert.match(ir.clarifications.join(' '), /补充班级.*全校/);
+    assert.match(ir.clarifications.join(' '), /任课计划/);
     assert.deepEqual(ir.machineRuleIds, []);
     assert.deepEqual(clause.machineRuleIds, []);
     assert.deepEqual(result.sourceRequirements[0].machineRuleIds, []);
-    assert.equal(result.draftRows.length, 1);
-    assert.equal(result.draftRows[0].courseScopeClarification, true);
-    assert.equal(result.draftRows[0].status, 'needs_review');
+    assert.equal(result.draftRows.length, 0);
     assert.equal(result.constraintIRs.some(item => item.capabilityId === 'subject.avoid_periods'), false);
 });
 
@@ -3148,6 +3224,24 @@ test('ellipsis negative predicate keeps first-period scope for a new explicit su
     assert.ok(rows.every(item => item.slots.every(slot => slot.endsWith('-1'))));
 });
 
+test('ellipsis same-as continuation keeps both explicit subjects for day-part preferences', async () => {
+    const project = makeEllipsisMarketProject();
+    project.lessonPlans = [
+        { id: 'lp_math', classId: 'c7_1', subjectId: 's2', teacherId: 't1', weeklyHours: 5 },
+    ];
+    const result = await parseTimetableRules({
+        text: '数学尽量上午，英语也一样',
+        project,
+        env: {},
+    });
+    const irs = result.constraintIRs
+        .filter(item => item.capabilityId === 'subject.preferred_day_part')
+        .sort((left, right) => left.target.name.localeCompare(right.target.name));
+
+    assert.deepEqual(irs.map(item => item.target.name), ['数学', '英语']);
+    assert.ok(irs.every(item => item.parameters.periods?.join(',') === '1,2,3,4'));
+});
+
 test('ellipsis teacher daily limit inherits daily scope but replaces target and limit', async () => {
     const result = await parseTimetableRules({
         text: '张老师每天最多4节，李老师最多3节',
@@ -3204,7 +3298,7 @@ test('ellipsis class shorthand inherits grade and same time for fixed activity',
     ]);
 });
 
-test('ellipsis spread paraphrases preserve both subjects while asking for their class scopes', async () => {
+test('ellipsis spread paraphrases preserve both subjects and block when offering scopes are unavailable', async () => {
     const result = await parseTimetableRules({
         text: '英语一周分散点，数学也别扎堆',
         project: makeEllipsisMarketProject(),
@@ -3215,7 +3309,7 @@ test('ellipsis spread paraphrases preserve both subjects while asking for their 
         .sort((left, right) => left.target.name.localeCompare(right.target.name));
 
     assert.deepEqual(irs.map(item => item.target.name), ['数学', '英语']);
-    assert.ok(irs.every(item => item.executionStatus === 'blocked_by_clarification'));
+    assert.ok(irs.every(item => item.executionStatus === 'blocked_by_reference'));
     assert.ok(irs.every(item => item.machineRuleIds.length === 0));
 });
 
@@ -3594,23 +3688,24 @@ test('course preferences compile to a scoped advanced rule only when the class i
     assert.deepEqual(teacherRule.parameters.classIds, ['c_g7_1']);
     assert.deepEqual(teacherRule.parameters.teacherIds, ['t_liu']);
 
-    const ambiguous = await parseTimetableRules({
+    const derived = await parseTimetableRules({
         text: '数学尽量上午',
         project,
         env: {},
     });
-    const ambiguousRule = ambiguous.constraintIRs.find(item => item.capabilityId === 'subject.preferred_day_part');
-    assert.ok(ambiguousRule);
-    assert.equal(ambiguousRule.executionStatus, 'blocked_by_clarification');
-    assert.match(ambiguousRule.clarifications.join(' '), /补充班级.*全校/);
-    assert.deepEqual(ambiguous.draftRules.advancedRules, []);
-    assert.deepEqual(ambiguous.draftRules.softRules.morningSubjects || [], []);
+    const derivedRule = derived.constraintIRs.find(item => item.capabilityId === 'subject.preferred_day_part');
+    assert.ok(derivedRule);
+    assert.equal(derivedRule.executionStatus, 'executable');
+    assert.deepEqual(derivedRule.scope.classIds, ['c_g7_1', 'c_g7_2']);
+    assert.equal(derived.draftRules.advancedRules.length, 1);
+    assert.deepEqual(derived.draftRules.softRules.morningSubjects || [], []);
 
     const global = await parseTimetableRules({
         text: '全校数学尽量上午',
         project,
         env: {},
     });
-    assert.ok(global.draftRules.softRules.morningSubjects.includes('math'));
-    assert.deepEqual(global.draftRules.advancedRules, []);
+    assert.deepEqual(global.draftRules.softRules.morningSubjects || [], []);
+    assert.equal(global.draftRules.advancedRules.length, 1);
+    assert.deepEqual(global.draftRules.advancedRules[0].parameters.classIds, ['c_g7_1', 'c_g7_2']);
 });

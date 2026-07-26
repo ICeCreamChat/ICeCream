@@ -29,9 +29,12 @@ import {
 import {
   bindGridInteractions,
   clampInspectorPosition,
+  clampInspectorSize,
   handleTimetableEscape,
   loadInspectorPosition,
+  loadInspectorSize,
   saveInspectorPosition,
+  saveInspectorSize,
 } from '../public/js/tools/timetable/grid-interactions.js';
 import {
   buildDutyTeacherSearchModel,
@@ -263,6 +266,9 @@ test('timetable constraint dialog keeps mode actions in one compact footer', () 
   const manualHtml = renderInput({ mode: 'manual' });
   assert.match(manualHtml, /tt-dialog-actions[\s\S]*添加约束/);
   assert.match(actionTag(manualHtml, 'add-manual-constraint'), /tt-btn--primary/);
+  assert.match(manualHtml, /可选软规则模板/);
+  assert.match(manualHtml, /data-action="apply-education-soft-template"/);
+  assert.match(manualHtml, /课程上午优先/);
 
   const reviewHtml = renderInput({
     mode: 'text',
@@ -2380,8 +2386,8 @@ test('timetable smart helper summary counts source requirements instead of expan
   const sidebar = html.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
 
   assert.match(sidebar, /<span class="tt-chip">137 条<\/span>/);
-  assert.match(sidebar, /137 条要求待处理/);
-  assert.doesNotMatch(sidebar, /128 条要求待处理/);
+  assert.match(sidebar, /137 条需求/);
+  assert.doesNotMatch(sidebar, /128 条需求/);
 
   const explicitEmptyHtml = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
@@ -2392,7 +2398,7 @@ test('timetable smart helper summary counts source requirements instead of expan
     },
   }));
   const explicitEmptySidebar = explicitEmptyHtml.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
-  assert.doesNotMatch(explicitEmptySidebar, /128 条要求待处理/);
+  assert.doesNotMatch(explicitEmptySidebar, /128 条需求/);
 
   const legacyHtml = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
@@ -2403,7 +2409,7 @@ test('timetable smart helper summary counts source requirements instead of expan
   }));
   const legacySidebar = legacyHtml.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
   assert.match(legacySidebar, /<span class="tt-chip">3 条<\/span>/);
-  assert.match(legacySidebar, /3 条要求待处理/);
+  assert.match(legacySidebar, /3 条需求/);
 });
 test('timetable constraint dialog can remove and restore one apply item without deleting it', () => {
   const ruleReview = {
@@ -2480,12 +2486,79 @@ test('timetable constraint dialog can remove and restore one apply item without 
   assert.match(restoredHtml, /应用当前分类 \(1\)/);
 });
 
-test('timetable renders constraint intake agent as an embedded rules workflow panel', () => {
+test('timetable source action pauses and restores every machine rule in a multi-clause requirement', () => {
+  const sourceId = 'src:multi-apply';
+  const ruleReview = {
+    sourceRequirements: [{
+      id: sourceId,
+      sourceId,
+      source: { sourceId, rawText: '语文和数学尽量安排在上午。' },
+      clauses: [
+        { id: 'clause:chinese', clauseId: 'clause:chinese', sourceId, intent: 'subject_morning', executionStatus: 'executable' },
+        { id: 'clause:math', clauseId: 'clause:math', sourceId, intent: 'subject_morning', executionStatus: 'executable' },
+      ],
+      machineRuleIds: ['machine:chinese', 'machine:math'],
+    }],
+    draftRows: [{
+      id: 'rule:chinese',
+      machineRuleId: 'machine:chinese',
+      sourceId,
+      clauseId: 'clause:chinese',
+      type: 'advanced_constraint',
+      advancedType: 'subject.preferred_day_part',
+      targetName: '语文',
+      status: 'effective',
+    }, {
+      id: 'rule:math',
+      machineRuleId: 'machine:math',
+      sourceId,
+      clauseId: 'clause:math',
+      type: 'advanced_constraint',
+      advancedType: 'subject.preferred_day_part',
+      targetName: '数学',
+      status: 'effective',
+    }],
+    requirementItems: [],
+    semanticActions: [],
+    excludedApplyItemKeys: [],
+  };
+  const dialogState = {
+    open: true,
+    requirementFilter: 'all',
+    selectedRequirementId: sourceId,
+  };
+  const initialHtml = renderWorkbench(sampleWorkbenchState({ ruleReview, constraintDialog: dialogState }));
+  assert.match(initialHtml, /tt-requirement-detail-actions[\s\S]*data-requirement-id="src:multi-apply"/);
+
+  const controller = new TimetablePlannerController();
+  controller.render = () => {};
+  controller.state.ruleReview = JSON.parse(JSON.stringify(ruleReview));
+  controller.state.constraintDialog = dialogState;
+
+  controller.toggleConstraintApplyItem('rule:machine:chinese', sourceId);
+
+  assert.deepEqual(
+    [...controller.state.ruleReview.excludedApplyItemKeys].sort(),
+    ['rule:machine:chinese', 'rule:machine:math'],
+  );
+  const pausedHtml = renderWorkbench(sampleWorkbenchState({
+    ruleReview: controller.state.ruleReview,
+    constraintDialog: dialogState,
+  }));
+  assert.match(pausedHtml, /tt-requirement-detail-actions[\s\S]*恢复应用/);
+
+  controller.toggleConstraintApplyItem('rule:machine:chinese', sourceId);
+
+  assert.deepEqual(controller.state.ruleReview.excludedApplyItemKeys, []);
+});
+
+test('timetable renders constraint intake agent inside the standard constraint dialog', () => {
   const html = renderWorkbench(sampleWorkbenchState({
     ruleReview: {
       open: false,
       step: 'review',
-      mode: 'text',
+      mode: 'agent',
+      inputMode: 'agent',
       draftRows: [{
         id: 'rule-row',
         requirementId: 'req_rule',
@@ -2506,6 +2579,10 @@ test('timetable renders constraint intake agent as an embedded rules workflow pa
       semanticActions: [],
       excludedApplyItemKeys: [],
     },
+    constraintDialog: {
+      open: true,
+      agentConversationExpanded: false,
+    },
     constraintAgent: {
       sessionId: 'agent-session',
       stage: 'CONFIRM',
@@ -2518,23 +2595,74 @@ test('timetable renders constraint intake agent as an embedded rules workflow pa
     },
   }));
 
+  const sidebar = html.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
+  assert.doesNotMatch(sidebar, /tt-constraint-agent-panel/);
+  assert.doesNotMatch(sidebar, /data-action="constraint-agent-/);
   assert.match(html, /tt-constraint-agent-panel/);
+  assert.match(html, /tt-constraint-dialog--agent/);
   assert.match(html, /data-constraint-agent-stage="CONFIRM"/);
-  assert.match(html, /对话排课/);
+  assert.match(html, /智能对话/);
+  assert.match(html, /文本输入/);
   assert.match(html, /\[已理解 1 · 待澄清 0 · 待确认 1\]/);
   assert.match(html, /data-action="constraint-agent-start"/);
-  assert.match(html, /data-action="constraint-agent-send"/);
   assert.match(html, /data-action="constraint-agent-confirm"/);
-  assert.match(html, /data-action="constraint-agent-apply"/);
-  assert.match(html, /data-action="constraint-agent-solve"/);
+  assert.doesNotMatch(html, /data-action="constraint-agent-send"/);
+  assert.doesNotMatch(html, /data-action="constraint-agent-apply"/);
+  assert.doesNotMatch(html, /data-action="constraint-agent-solve"/);
   assert.match(html, /data-apply-item-key="rule:rule-row"/);
+  assert.doesNotMatch(html, /tt-constraint-agent-mini-card/);
   assert.doesNotMatch(html, /id="tt-agent-floating"/);
   assert.doesNotMatch(html, /class="tt-agent-toggle"/);
   assert.doesNotMatch(html, /class="tt-agent-floating-panel"/);
   assert.doesNotMatch(html, /id="tt-timetable-agent-panel"/);
 });
 
-test('constraint intake mini cards share excluded apply state with rule review table', () => {
+test('constraint intake agent footer maps every backend stage to one valid primary action', () => {
+  const cases = [
+    { stage: 'INTAKE', action: 'constraint-agent-send', label: '发送' },
+    { stage: 'CLARIFY', action: 'constraint-agent-send', label: '发送' },
+    { stage: 'CONFIRM', action: 'constraint-agent-confirm', label: '确认理解结果', confirmationToken: 'confirm-1' },
+    { stage: 'CONFIRM', action: 'constraint-agent-apply', label: '应用到项目', confirmed: true },
+    { stage: 'APPLY', action: 'constraint-agent-solve', label: '生成课表' },
+    { stage: 'REPORT', action: 'close-constraint-dialog', label: '完成' },
+  ];
+
+  cases.forEach(entry => {
+    const html = renderWorkbench(sampleWorkbenchState({
+      ruleReview: { inputMode: 'agent', mode: 'agent' },
+      constraintDialog: { open: true, agentConversationExpanded: true },
+      constraintAgent: {
+        sessionId: 'agent-session',
+        stage: entry.stage,
+        confirmationToken: entry.confirmationToken || '',
+        confirmed: Boolean(entry.confirmed),
+        messages: [],
+        questions: [],
+        loading: false,
+      },
+    }));
+    const footer = html.match(/<div class="tt-dialog-actions[^>]*tt-constraint-agent-footer">[\s\S]*?<\/div>/)?.[0] || '';
+    const primary = footer.match(/<button class="[^"]*tt-btn--primary[^"]*"[^>]*>[\s\S]*?<\/button>/)?.[0] || '';
+
+    assert.equal((footer.match(/tt-btn--primary/g) || []).length, 1, entry.stage);
+    assert.match(primary, new RegExp(`data-action="${entry.action}"`), entry.stage);
+    assert.match(primary, new RegExp(`<span>${entry.label}<\\/span>`), entry.stage);
+    if (entry.stage === 'REPORT') {
+      assert.match(html, /data-current-flow-step="apply"/);
+      assert.match(html, /课表已生成，约束满足度报告已更新/);
+      assert.doesNotMatch(footer, /constraint-agent-send/);
+    }
+  });
+});
+
+test('constraint intake agent expands to the shared review width only when review results are visible', async () => {
+  const styles = await readFile(constraintDialogStylePath, 'utf8');
+
+  assert.match(styles, /\.tt-constraint-dialog--agent\s*\{[^}]*--tt-dialog-width:\s*960px;/);
+  assert.match(styles, /\.tt-constraint-dialog--agent\.tt-constraint-dialog--semantic-review\s*\{[^}]*--tt-dialog-width:\s*1120px;/);
+});
+
+test('constraint intake agent shares excluded apply state without duplicate mini cards', () => {
   const ruleReview = {
     open: true,
     step: 'review',
@@ -2568,12 +2696,17 @@ test('constraint intake mini cards share excluded apply state with rule review t
   assert.deepEqual(controller.state.ruleReview.excludedApplyItemKeys, ['rule:rule-row']);
 
   const html = renderWorkbench(sampleWorkbenchState({
-    ruleReview: controller.state.ruleReview,
     constraintDialog: {
       open: true,
       requirementFilter: 'rule',
       selectedRequirementId: 'req_rule',
       technicalDetailsExpandedById: { req_rule: true },
+      agentConversationExpanded: false,
+    },
+    ruleReview: {
+      ...controller.state.ruleReview,
+      inputMode: 'agent',
+      mode: 'agent',
     },
     constraintAgent: {
       sessionId: 'agent-session',
@@ -2586,9 +2719,373 @@ test('constraint intake mini cards share excluded apply state with rule review t
     },
   }));
 
-  assert.match(html, /tt-constraint-agent-mini-card is-excluded/);
-  assert.match(html, /恢复/);
+  assert.doesNotMatch(html, /tt-constraint-agent-mini-card/);
   assert.match(html, /tt-constraint-card--excluded/);
+  assert.match(html, /恢复应用/);
+});
+
+test('timetable smart constraint sidebar uses one source-level status model', () => {
+  const sourceRequirement = (sourceId, overrides = {}) => ({
+    sourceId,
+    rawText: `${sourceId} 原文`,
+    origin: 'user_input',
+    status: 'effective',
+    executionStatus: 'effective',
+    applicationTarget: 'rule',
+    requiresHumanReview: false,
+    clauses: [{
+      clauseId: `${sourceId}:clause:1`,
+      sourceId,
+      intent: 'subject.preferred_periods',
+      status: 'effective',
+      executionStatus: 'effective',
+      applicationTarget: 'rule',
+      object: { kind: 'subject', name: sourceId, matchedIds: [`subject:${sourceId}`] },
+    }],
+    ...overrides,
+  });
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: {
+      sourceRequirements: [
+        sourceRequirement('applicable'),
+        sourceRequirement('review', {
+          status: 'needs_review',
+          executionStatus: 'blocked_by_reference',
+          requiresHumanReview: true,
+        }),
+        sourceRequirement('partial', {
+          status: 'partially_actionable',
+          executionStatus: 'partially_executable',
+          partiallyApplicable: true,
+        }),
+        sourceRequirement('handled', {
+          status: 'handled',
+          executionStatus: 'handled',
+          applicationTarget: 'handled',
+        }),
+      ],
+      systemSupplements: [sourceRequirement('system', {
+        origin: 'system_supplement',
+        status: 'handled',
+        executionStatus: 'handled',
+        applicationTarget: 'handled',
+      })],
+      semanticActions: [{ id: 'internal-action', kind: 'rules_patch', status: 'ready' }],
+      warnings: Array.from({ length: 70 }, (_, index) => `warning-${index}`),
+      unsupportedItems: [{ id: 'unsupported-artifact' }],
+      draftRows: [],
+    },
+  }));
+  const sidebar = html.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
+
+  assert.match(sidebar, /4 条需求/);
+  assert.match(sidebar, /1 可应用/);
+  assert.match(sidebar, /2 需确认/);
+  assert.match(sidebar, /1 已处理/);
+  assert.doesNotMatch(sidebar, /70|71|rules_patch|模型动作|暂停/);
+  assert.doesNotMatch(sidebar, /tt-smart-helper-flow|tt-smart-helper-metrics|tt-constraint-agent-panel/);
+});
+
+test('timetable smart constraint sidebar buckets legacy pending rows instead of treating every row as applicable', () => {
+  const html = renderWorkbench(sampleWorkbenchState({
+    pendingRules: [{
+      id: 'legacy-applicable',
+      type: 'teacher_unavailable',
+      targetName: '张老师',
+      status: 'effective',
+    }, {
+      id: 'legacy-review',
+      type: 'teacher_unavailable',
+      targetName: '王老师',
+      status: 'needs_review',
+    }, {
+      id: 'legacy-unsupported',
+      type: 'future_constraint',
+      targetName: '未知能力',
+      status: 'unsupported',
+    }, {
+      id: 'legacy-handled',
+      type: 'irrelevant',
+      targetName: '说明文字',
+      status: 'handled',
+    }],
+  }));
+  const sidebar = html.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
+
+  assert.match(sidebar, /4 条需求/);
+  assert.match(sidebar, /1 可应用/);
+  assert.match(sidebar, /2 需确认/);
+  assert.match(sidebar, /1 已处理/);
+});
+
+test('constraint agent replacement guard only warns for unapplied review artifacts', () => {
+  const originalConfirm = globalThis.confirm;
+  let confirmCount = 0;
+  globalThis.confirm = () => {
+    confirmCount += 1;
+    return false;
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.ruleReview = {
+      inputMode: 'agent',
+      sourceRequirements: [{ sourceId: 'src:pending', clauses: [] }],
+      draftRows: [{ id: 'rule:pending', type: 'teacher_unavailable', status: 'effective' }],
+    };
+    controller.state.constraintAgent = { stage: 'CONFIRM', sessionId: 'pending-session' };
+
+    assert.equal(controller.prepareConstraintAgentReviewReplacement(), false);
+    assert.equal(confirmCount, 1);
+    assert.equal(controller.state.ruleReview.sourceRequirements.length, 1);
+
+    controller.state.constraintAgent = { stage: 'REPORT', sessionId: 'applied-session' };
+    assert.equal(controller.prepareConstraintAgentReviewReplacement(), true);
+    assert.equal(confirmCount, 1);
+    assert.deepEqual(controller.state.ruleReview.sourceRequirements, []);
+  } finally {
+    globalThis.confirm = originalConfirm;
+  }
+});
+
+test('re-entering requirements expands the saved agent conversation instead of reopening a collapsed review', () => {
+  const listeners = {};
+  const state = {
+    constraintDialog: {
+      open: false,
+      sidebarMenuOpen: true,
+      inputExpanded: false,
+      agentConversationExpanded: false,
+    },
+    ruleReview: { inputMode: 'agent' },
+  };
+  let opened = 0;
+  const controller = {
+    openConstraintDialog() { opened += 1; },
+  };
+  const container = {
+    addEventListener(type, listener) { listeners[type] = listener; },
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+  };
+  const actionNode = { dataset: { action: 'reenter-constraint-input' } };
+
+  bindGridInteractions(container, controller, state);
+  listeners.click({
+    target: {
+      matches() { return false; },
+      closest(selector) {
+        if (selector === '.tt-smart-helper-entry-shell') return {};
+        if (selector === '[data-action]') return actionNode;
+        return null;
+      },
+    },
+  });
+
+  assert.equal(opened, 1);
+  assert.equal(state.constraintDialog.sidebarMenuOpen, false);
+  assert.equal(state.constraintDialog.inputExpanded, true);
+  assert.equal(state.constraintDialog.agentConversationExpanded, true);
+});
+
+test('non-agent parsing invalidates the previous constraint agent session tokens', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalDocument = globalThis.document;
+  globalThis.document = { getElementById: () => null };
+  globalThis.fetch = async url => {
+    assert.equal(String(url).endsWith('/rules/parse'), true);
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({
+          success: true,
+          data: {
+            sourceRequirements: [],
+            systemSupplements: [],
+            constraintIRs: [],
+            draftRows: [],
+            requirementItems: [],
+            semanticActions: [],
+          },
+        });
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.detectConstraintConflicts = async () => {};
+    controller.state.project = readyConstraintParseProject();
+    controller.state.ruleReview = { inputMode: 'file', mode: 'file' };
+    controller.state.constraintDialog = { open: true };
+    controller.state.constraintAgent = {
+      sessionId: 'stale-session',
+      stage: 'CONFIRM',
+      confirmationToken: 'stale-confirmation',
+      highRiskToken: 'stale-high-risk',
+      messages: [{ role: 'assistant', content: '旧会话' }],
+    };
+    controller.constraintDialogFile = new Blob(['new constraints']);
+
+    await controller.parseConstraintsFromDialog();
+
+    assert.equal(controller.state.constraintAgent.sessionId, null);
+    assert.equal(controller.state.constraintAgent.confirmationToken, '');
+    assert.equal(controller.state.constraintAgent.highRiskToken, '');
+    assert.deepEqual(controller.state.constraintAgent.messages, []);
+    assert.equal(controller.state.constraintAgent.stage, 'INTAKE');
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.document = originalDocument;
+  }
+});
+
+test('clearing applied constraints can be cancelled without sending a rules request', async () => {
+  const originalConfirm = globalThis.confirm;
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+  globalThis.confirm = () => false;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    throw new Error('clear request should not be sent');
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    const originalProject = createDefaultTimetableProject({
+      rules: { hardRules: { teacherUnavailable: { t1: ['1-1'] } }, softRules: {} },
+    });
+    controller.state.project = originalProject;
+
+    await controller.clearRules();
+
+    assert.equal(fetchCount, 0);
+    assert.equal(controller.state.project, originalProject);
+  } finally {
+    globalThis.confirm = originalConfirm;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('constraint sidebar menu closes outside and with Escape while supporting arrow navigation', () => {
+  const listeners = {};
+  let removed = 0;
+  let triggerFocused = 0;
+  let secondItemFocused = 0;
+  const trigger = {
+    setAttribute(name, value) {
+      assert.equal(name, 'aria-expanded');
+      assert.equal(value, 'false');
+    },
+    focus() { triggerFocused += 1; },
+  };
+  const firstItem = { disabled: false, focus() {} };
+  const secondItem = { disabled: false, focus() { secondItemFocused += 1; } };
+  const menu = {
+    remove() { removed += 1; },
+    querySelectorAll(selector) {
+      return selector === '[role="menuitem"]' ? [firstItem, secondItem] : [];
+    },
+  };
+  firstItem.closest = selector => (selector === '.tt-smart-helper-menu' ? menu : null);
+  secondItem.closest = firstItem.closest;
+  const state = { constraintDialog: { sidebarMenuOpen: true } };
+  const container = {
+    addEventListener(type, listener) { listeners[type] = listener; },
+    querySelector(selector) {
+      if (selector === '.tt-smart-helper-menu') return menu;
+      if (selector === '[data-action="toggle-constraint-sidebar-menu"]') return trigger;
+      return null;
+    },
+    querySelectorAll() { return []; },
+  };
+
+  bindGridInteractions(container, {}, state);
+  listeners.click({
+    target: {
+      matches() { return false; },
+      closest() { return null; },
+    },
+  });
+  assert.equal(state.constraintDialog.sidebarMenuOpen, false);
+  assert.equal(removed, 1);
+
+  state.constraintDialog.sidebarMenuOpen = true;
+  let prevented = 0;
+  let stopped = 0;
+  assert.equal(handleTimetableEscape({
+    key: 'Escape',
+    preventDefault() { prevented += 1; },
+    stopPropagation() { stopped += 1; },
+  }, container, {}, state), true);
+  assert.equal(state.constraintDialog.sidebarMenuOpen, false);
+  assert.equal(triggerFocused, 1);
+  assert.equal(prevented, 1);
+  assert.equal(stopped, 1);
+
+  listeners.keydown({
+    key: 'ArrowDown',
+    target: firstItem,
+    preventDefault() { prevented += 1; },
+  });
+  assert.equal(secondItemFocused, 1);
+});
+
+test('timetable full renders preserve sidebar scroll while explicit workflow expansion relocates it', () => {
+  const originalWindow = globalThis.window;
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const previousSidebar = { scrollLeft: 9, scrollTop: 318 };
+  const nextSidebar = {
+    scrollLeft: 0,
+    scrollTop: 0,
+    querySelector() { return null; },
+  };
+  let rendered = false;
+  const container = {
+    set innerHTML(value) {
+      rendered = Boolean(value);
+    },
+    get innerHTML() { return ''; },
+    querySelector(selector) {
+      if (selector === '.tt-sidebar') return rendered ? nextSidebar : previousSidebar;
+      return null;
+    },
+    querySelectorAll() { return []; },
+    addEventListener() {},
+  };
+  globalThis.window = { lucide: null };
+  globalThis.requestAnimationFrame = callback => callback();
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.state.container = container;
+    controller.state.project = readyConstraintParseProject();
+
+    controller.render();
+
+    assert.equal(nextSidebar.scrollLeft, 9);
+    assert.equal(nextSidebar.scrollTop, 318);
+
+    const workflowTarget = {
+      getBoundingClientRect() { return { top: 420 }; },
+    };
+    nextSidebar.getBoundingClientRect = () => ({ top: 80 });
+    nextSidebar.querySelector = selector => (
+      selector === '.tt-workflow-panel[data-workflow-step="rules"]' ? workflowTarget : null
+    );
+    controller.render = () => {};
+    controller.state.workflowOpenSections = [];
+    controller.toggleWorkflowSection('rules');
+
+    assert.deepEqual(controller.state.workflowOpenSections, ['rules']);
+    assert.equal(nextSidebar.scrollTop, 658);
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+  }
 });
 
 test('constraint intake agent normalizes singleton source-first review fields without legacy rows', () => {
@@ -2911,6 +3408,58 @@ test('timetable solve UI shows large-project estimate and current timeout', () =
   assert.match(html, /局部优化中/);
 });
 
+test('timetable controller accepts a direct Timefold job before any schedule exists', async () => {
+  const originalFetch = globalThis.fetch;
+  const project = createDefaultTimetableProject({
+    classes: Array.from({ length: 30 }, (_, index) => ({ id: `c${index + 1}`, grade: 'G7', name: `${index + 1}` })),
+    teachers: [{ id: 't1', name: 'Teacher', subjects: ['s1'], unavailableSlots: [] }],
+    subjects: [{ id: 's1', name: 'Subject', priority: 50, color: '#2563eb' }],
+    lessonPlans: [],
+    schedule: null,
+  });
+  let polledJob = null;
+  globalThis.fetch = async url => {
+    assert.match(String(url), /\/api\/tools\/timetable\/schedule\/run$/);
+    return new Response(JSON.stringify({
+      success: true,
+      data: {
+        project,
+        schedule: null,
+        solveMode: 'timefold_direct',
+        solverJob: { jobId: 'direct-job', status: 'queued', mode: 'solve' },
+        solverScaleHint: {
+          largeProject: true,
+          classCount: 30,
+          lessonCount: 0,
+          timeoutSeconds: 210,
+          solverAvailable: true,
+          message: '30 个班，Timefold 求解超时上限 210 秒。',
+        },
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.project = project;
+    controller.startOptimizationPolling = job => {
+      polledJob = job;
+    };
+
+    await controller.runSchedule();
+
+    assert.equal(controller.state.lastFailure, null);
+    assert.equal(controller.state.solverJob.jobId, 'direct-job');
+    assert.equal(polledJob.jobId, 'direct-job');
+    assert.equal(controller.state.project.schedule, null);
+    assert.match(controller.state.message, /求解任务已开始/);
+    assert.equal(controller.state.solveScaleHint.timeoutSeconds, 210);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('timetable constraint edit opens a compact machine-rule modal', () => {
   const editingConstraint = {
     id: 'rule-row',
@@ -2950,18 +3499,276 @@ test('timetable constraint edit opens a compact machine-rule modal', () => {
 
   assert.match(html, /tt-constraint-edit-backdrop/);
   assert.match(html, /tt-constraint-edit-modal/);
-  assert.match(html, /编辑将应用规则/);
+  assert.match(html, /tt-dialog-overlay tt-constraint-edit-backdrop/);
+  assert.match(html, /规则复核/);
+  assert.match(html, /编辑规则/);
+  assert.match(html, /课程优先节次.*Math.*周一第1节、周一第2节.*软约束/);
   assert.match(html, /data-action="save-edit-constraint"/);
   assert.match(html, /data-action="cancel-edit-constraint"/);
+  assert.match(html, /class="tt-icon-btn tt-constraint-edit-close"[^>]*data-action="cancel-edit-constraint"/);
+  assert.equal((html.match(/data-action="cancel-edit-constraint"/g) || []).length, 2);
   assert.match(html, /id="tt-edit-constraint-type"[^>]*value="subject_preferred_periods"/);
   assert.match(html, /data-constraint-rule-type="subject_preferred_periods"[^>]*aria-selected="true"/);
   assert.match(html, /value="subject:math" selected/);
   assert.match(html, /value="1-1" checked/);
   assert.match(html, /value="1-2" checked/);
   assert.match(html, /AI约束建议 第 2 行 · 本地识别/);
+  assert.match(html, /<summary>来源依据<\/summary>/);
+  assert.doesNotMatch(html, /tt-constraint-edit-current/);
   assert.doesNotMatch(html, /id="tt-edit-constraint-priority"/);
   assert.doesNotMatch(html, /id="tt-edit-constraint-status"/);
   assert.doesNotMatch(html, /<div class="tt-constraint-edit-form">/);
+});
+
+test('complex source requirements use the source semantic editor and keep compiled rules read-only', () => {
+  const sourceRequirement = {
+    sourceId: 'src-complex',
+    textHash: 'hash-complex',
+    origin: 'user_input',
+    status: 'partially_supported',
+    executionStatus: 'partially_executable',
+    applicationTarget: 'rule',
+    partiallyApplicable: true,
+    applicableMachineRuleIds: ['machine-base'],
+    unresolvedClauseIds: ['clause-focus'],
+    source: { sourceId: 'src-complex', textHash: 'hash-complex', rawText: 'Math prefers morning, especially classes taught by Math Teacher.' },
+    clauses: [
+      {
+        id: 'clause-base', clauseId: 'clause-base', sourceId: 'src-complex', intent: 'subject_morning', capabilityId: 'subject.preferred_day_part',
+        object: { kind: 'subject', name: 'Math', matchedIds: ['math'] },
+        scope: { kind: 'subject_offering_classes', classIds: ['c1'] },
+        condition: { slots: ['1-2'] },
+        parameters: { classIds: ['c1'] }, relation: { kind: 'independent' }, strength: 'soft', executionStatus: 'executable',
+      },
+      {
+        id: 'clause-focus', clauseId: 'clause-focus', sourceId: 'src-complex', intent: 'subject_morning', capabilityId: 'subject.preferred_day_part',
+        object: { kind: 'subject', name: 'Math', matchedIds: ['math'] },
+        scope: { kind: 'teacher_covered_classes', classIds: ['c1'], teacherIds: ['t_math'] },
+        parameters: { periods: [1, 2, 3, 4], classIds: ['c1'], teacherIds: ['t_math'] }, relation: { kind: 'emphasis', parentClauseId: 'clause-base' }, strength: 'soft', executionStatus: 'unsupported_by_solver',
+      },
+    ],
+    rationales: [{ text: 'Protect morning learning efficiency.' }],
+  };
+  const draftRow = {
+    id: 'compiled-base', machineRuleId: 'machine-base', sourceId: 'src-complex', clauseId: 'clause-base',
+    type: 'advanced_constraint', advancedType: 'subject.preferred_day_part', targetType: 'subject', targetId: 'math', targetName: 'Math',
+    scope: { kind: 'subject_offering_classes', classIds: ['c1'] }, parameters: { classIds: ['c1'], periods: [1, 2, 3, 4] },
+    status: 'effective', executionStatus: 'executable', priority: 'soft', rawText: sourceRequirement.source.rawText,
+  };
+  const html = renderWorkbench(sampleWorkbenchState({
+    ruleReview: { open: true, step: 'review', mode: 'text', sourceRequirements: [sourceRequirement], constraintIRs: sourceRequirement.clauses, draftRows: [draftRow], requirementItems: sourceRequirement.clauses, semanticActions: [] },
+    constraintDialog: {
+      open: true,
+      selectedRequirementId: 'src-complex',
+      technicalDetailsExpandedById: { 'src-complex': true },
+      editingSourceRequirement: { sourceId: 'src-complex', sourceRequirement, clauses: sourceRequirement.clauses, rationales: sourceRequirement.rationales, errors: ['保存失败'], saving: false },
+    },
+  }));
+
+  assert.match(html, /编辑理解结果/);
+  assert.match(html, /data-action="edit-source-requirement"/);
+  assert.match(html, /data-action="save-source-requirement-edit"/);
+  assert.equal((html.match(/data-action="cancel-source-requirement-edit"/g) || []).length, 2);
+  assert.match(html, /teacher_covered_classes/);
+  assert.match(html, /当前派生范围：1 个班级/);
+  assert.match(html, /data-source-field="days" value="1" checked/);
+  assert.match(html, /data-source-field="periods" value="2" checked/);
+  assert.match(html, /部分可应用：1 条已可执行，1 条已理解但暂未落地/);
+  assert.match(html, /1 项可部分应用/);
+  assert.match(html, /class="tt-source-editor-errors" role="alert" tabindex="-1"/);
+  assert.match(html, /编译产物/);
+  assert.doesNotMatch(html, /data-constraint-id="compiled-base"[^>]*>\s*<i data-lucide="pencil"/);
+});
+
+test('complex source editor summarizes compound semantics and avoids raw multi-select listboxes', () => {
+  const classIds = Array.from({ length: 10 }, (_, index) => `g9-${index + 1}`);
+  const sourceId = 'src-grade-subjects';
+  const preferredClauses = [
+    ['clause-cn', 's-cn', '语文'],
+    ['clause-math', 's-math', '数学'],
+    ['clause-en', 's-en', '英语'],
+  ].map(([clauseId, subjectId, name]) => ({
+    id: clauseId,
+    clauseId,
+    sourceId,
+    intent: 'subject_preferred_periods',
+    capabilityId: 'subject.preferred_periods',
+    object: { kind: 'subject', name, matchedIds: [subjectId] },
+    scope: { kind: 'grade_classes', gradeNames: ['九年级'], classIds },
+    parameters: {
+      gradeNames: ['九年级'],
+      classIds,
+      days: [1, 2, 3, 4, 5],
+      periods: [1, 2, 3],
+      minOccurrences: 3,
+    },
+    strength: 'soft',
+    executionStatus: 'executable',
+  }));
+  const unsupportedClause = {
+    id: 'clause-concentration',
+    clauseId: 'clause-concentration',
+    sourceId,
+    intent: 'subject_avoid_day_part_concentration',
+    capabilityId: 'subject.avoid_day_part_concentration',
+    object: { kind: 'subject', name: '语文、数学、英语', matchedIds: ['s-cn', 's-math', 's-en'] },
+    scope: { kind: 'grade_classes', gradeNames: ['九年级'], classIds: [] },
+    parameters: { gradeNames: ['九年级'], dayPart: 'afternoon' },
+    strength: 'soft',
+    executionStatus: 'unsupported_by_solver',
+  };
+  const sourceRequirement = {
+    id: sourceId,
+    sourceId,
+    origin: 'user_input',
+    status: 'partially_actionable',
+    executionStatus: 'partially_executable',
+    applicationTarget: 'rule',
+    partiallyApplicable: true,
+    applicableMachineRuleIds: ['rule-cn', 'rule-math', 'rule-en'],
+    unresolvedClauseIds: ['clause-concentration'],
+    source: {
+      sourceId,
+      rawText: '九年级语文、数学、英语每周尽量有3次以上排在第1到第3节，不要集中到下午。',
+    },
+    clauses: [...preferredClauses, unsupportedClause],
+  };
+  const draftRows = preferredClauses.map((clause, index) => ({
+    id: `row-${index + 1}`,
+    machineRuleId: `rule-${['cn', 'math', 'en'][index]}`,
+    sourceId,
+    clauseId: clause.clauseId,
+    type: 'advanced_constraint',
+    advancedType: 'subject.preferred_periods',
+    targetType: 'subject',
+    targetId: clause.object.matchedIds[0],
+    targetName: clause.object.name,
+    parameters: clause.parameters,
+    status: 'effective',
+  }));
+  const project = createDefaultTimetableProject({
+    classes: classIds.map((id, index) => ({ id, grade: '九年级', name: `${index + 1}班` })),
+    subjects: [
+      { id: 's-cn', name: '语文' },
+      { id: 's-math', name: '数学' },
+      { id: 's-en', name: '英语' },
+    ],
+  });
+  const html = renderWorkbench(sampleWorkbenchState({
+    project,
+    ruleReview: {
+      sourceRequirements: [sourceRequirement],
+      constraintIRs: sourceRequirement.clauses,
+      draftRows,
+      requirementItems: sourceRequirement.clauses,
+      semanticActions: [],
+    },
+    constraintDialog: {
+      open: true,
+      selectedRequirementId: sourceId,
+      editingSourceRequirement: {
+        sourceId,
+        sourceRequirement,
+        clauses: sourceRequirement.clauses,
+        rationales: [],
+        errors: [],
+        saving: false,
+      },
+    },
+  }));
+
+  assert.match(html, /语文、数学、英语/);
+  assert.match(html, /每周至少 3 次/);
+  assert.match(html, /第1–3节/);
+  assert.match(html, /九年级 · 10 个班级/);
+  assert.doesNotMatch(html, /15 个节次/);
+  assert.equal((html.match(/class="tt-source-clause-summary/g) || []).length, 4);
+  assert.doesNotMatch(html, /<select[^>]*multiple/);
+  assert.match(html, /data-source-option-group="targetIds"/);
+  assert.match(html, /data-source-field="targetIds"[^>]*value="s-cn"[^>]*checked/);
+  assert.match(html, /data-source-scope-field="gradeNames"/);
+  assert.match(html, /data-source-scope-field="classIds"[^>]*hidden/);
+  assert.match(html, /data-source-scope-field="teacherIds"[^>]*hidden/);
+  assert.match(html, /已理解，暂未落地/);
+  assert.equal((html.match(/当前派生范围：10 个班级/g) || []).length, 4);
+  assert.doesNotMatch(html, /data-source-option-group="[^"]+" role="group"(?![^>]*aria-label)/);
+  assert.doesNotMatch(html, /data-source-field="relationKind"/);
+  assert.doesNotMatch(html, /data-source-field="parentClauseId"/);
+  const unsupportedEditor = html.match(/<details class="tt-source-clause-editor" data-source-clause-index="3">[\s\S]*?<\/details>/)?.[0] || '';
+  assert.ok(unsupportedEditor);
+  assert.doesNotMatch(unsupportedEditor, /data-source-field="days"/);
+  assert.doesNotMatch(unsupportedEditor, /data-source-field="periods"/);
+  assert.doesNotMatch(unsupportedEditor, /data-source-field="quantifierMin"/);
+  assert.match(unsupportedEditor, /下午集中度/);
+});
+
+test('timetable constraint editor keeps multi-selects compact and surfaces historical selections', () => {
+  const editingConstraint = {
+    id: 'room-rule',
+    originalId: 'room-rule',
+    requirementId: 'req_room',
+    machineRuleId: 'machine-room',
+    type: 'advanced_constraint',
+    advancedType: 'room.required',
+    formKey: 'advanced:room.required',
+    formValues: {
+      formKey: 'advanced:room.required',
+      targetValue: 'subject:physics',
+      activityTypes: ['实验'],
+      roomIds: ['room-b', 'legacy-room'],
+      requiredTags: [],
+      teacherIds: ['teacher-b', 'legacy-teacher'],
+    },
+    status: 'effective',
+    rawText: '物理实验必须使用实验室',
+  };
+  const project = createDefaultTimetableProject({
+    subjects: [{ id: 'physics', name: '物理', priority: 90, color: '#2563eb' }],
+    teachers: [
+      { id: 'teacher-a', name: '刘老师', subjects: ['physics'], unavailableSlots: [] },
+      { id: 'teacher-b', name: '宋老师', subjects: ['physics'], unavailableSlots: [] },
+    ],
+    rooms: [
+      { id: 'room-a', name: '物理实验室A', tags: ['实验'] },
+      { id: 'room-b', name: '物理实验室B', tags: ['实验'] },
+    ],
+    lessonPlans: [{
+      id: 'lp-physics',
+      classId: 'class-a',
+      subjectId: 'physics',
+      teacherId: 'teacher-b',
+      weeklyHours: 2,
+      activityTypes: ['实验'],
+    }],
+  });
+  const html = renderWorkbench(sampleWorkbenchState({
+    project,
+    ruleReview: {
+      open: true,
+      step: 'review',
+      mode: 'text',
+      draftRows: [editingConstraint],
+      requirementItems: [{
+        id: 'req_room',
+        requirementId: 'req_room',
+        object: { kind: 'subject', name: '物理', matchedIds: ['physics'], scope: 'explicit' },
+        intent: 'room_requirement',
+        status: 'actionable',
+        applyTo: 'rule',
+        parameters: {},
+        source: { rawText: editingConstraint.rawText },
+      }],
+      semanticActions: [],
+    },
+    constraintDialog: { open: true, selectedRequirementId: 'req_room', editingConstraint },
+  }));
+
+  assert.doesNotMatch(html, /<details class="tt-constraint-rule-multi" open>/);
+  assert.match(html, /<summary>已选择 宋老师、legacy-teacher（历史值）<\/summary>/);
+  assert.match(html, /value="legacy-teacher" checked>[\s\S]*?<span>legacy-teacher（历史值）<\/span>/);
+  assert.match(html, /<summary>已选择 物理实验室B、legacy-room（历史值）<\/summary>/);
+  assert.equal(html.indexOf('value="teacher-b" checked') < html.indexOf('value="teacher-a"'), true);
+  assert.equal(html.indexOf('value="room-b" checked') < html.indexOf('value="room-a"'), true);
 });
 
 test('timetable constraint edit requires explicit conversion for legacy manual placeholder types', () => {
@@ -3363,6 +4170,116 @@ test('timetable constraint dialog can select synthesized draft requirement rows'
 
   assert.equal(controller.state.constraintDialog.selectedRequirementId, 'draft_req_draft-select-1');
   assert.equal(nextList.scrollTop, 286);
+});
+
+test('timetable source requirement editor preserves review pane scroll positions when opened and cancelled', async () => {
+  const originalDocument = globalThis.document;
+  const listNodes = [{ scrollTop: 412 }, { scrollTop: 0 }, { scrollTop: 0 }];
+  const detailNodes = [{ scrollTop: 173 }, { scrollTop: 0 }, { scrollTop: 0 }];
+  let renderCount = 0;
+  globalThis.document = { querySelector: () => null };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.state.container = {
+      querySelector(selector) {
+        if (selector === '.tt-requirement-table-body') return listNodes[Math.min(renderCount, listNodes.length - 1)];
+        if (selector === '.tt-requirement-detail') return detailNodes[Math.min(renderCount, detailNodes.length - 1)];
+        return null;
+      },
+    };
+    controller.render = () => {
+      renderCount += 1;
+    };
+    controller.state.ruleReview = {
+      sourceRequirements: [{
+        sourceId: 'src:complex-scroll',
+        source: { sourceId: 'src:complex-scroll', rawText: '九年级语文每周尽量有3次以上排在第1到第3节。' },
+        clauses: [{ clauseId: 'clause:complex-scroll', intent: 'subject_preferred_periods' }],
+        rationales: [],
+      }],
+    };
+    controller.state.constraintDialog = { open: true, selectedRequirementId: 'src:complex-scroll' };
+
+    controller.editSourceRequirement('src:complex-scroll');
+    assert.equal(listNodes[1].scrollTop, 412);
+    assert.equal(detailNodes[1].scrollTop, 173);
+
+    controller.cancelSourceRequirementEdit();
+    assert.equal(listNodes[2].scrollTop, 412);
+    assert.equal(detailNodes[2].scrollTop, 173);
+    await new Promise(resolve => setTimeout(resolve, 0));
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
+test('timetable source requirement save uses the synchronized state draft without reading the DOM', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalDocument = globalThis.document;
+  const sourceId = 'src:state-draft';
+  const sourceRequirement = {
+    sourceId,
+    source: { sourceId, textHash: 'hash:state-draft', rawText: '九年级数学每周至少2次排在第1到第3节。' },
+    clauses: [{
+      id: 'clause:state-draft',
+      clauseId: 'clause:state-draft',
+      sourceId,
+      intent: 'subject_preferred_periods',
+      capabilityId: 'subject.preferred_periods',
+      object: { kind: 'subject', name: '数学', matchedIds: ['math'] },
+      scope: { kind: 'grade_classes', gradeNames: ['九年级'] },
+      parameters: { periods: [1, 2, 3], minOccurrences: 2, gradeNames: ['九年级'] },
+      strength: 'soft',
+    }],
+    rationales: [],
+  };
+  const previousReview = {
+    sourceRequirements: [sourceRequirement],
+    draftRows: [],
+    constraintIRs: sourceRequirement.clauses,
+    requirementItems: sourceRequirement.clauses,
+    semanticActions: [],
+  };
+  let submittedBody = null;
+  globalThis.document = undefined;
+  globalThis.fetch = async (url, options = {}) => {
+    assert.equal(String(url).endsWith('/requirements/recompile'), true);
+    submittedBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({ success: true, data: previousReview });
+      },
+    };
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.ruleReview = previousReview;
+    controller.state.constraintDialog = {
+      open: true,
+      editingSourceRequirement: {
+        sourceId,
+        sourceRequirement,
+        clauses: sourceRequirement.clauses,
+        rationales: [],
+        errors: [],
+        saving: false,
+      },
+    };
+
+    await controller.saveSourceRequirementEdit();
+
+    assert.equal(submittedBody.sourceId, sourceId);
+    assert.equal(submittedBody.clauses[0].parameters.minOccurrences, 2);
+    assert.equal(controller.state.constraintDialog.editingSourceRequirement, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.document = originalDocument;
+  }
 });
 
 test('timetable constraint dialog preserves legacy fallback when parse response omits sourceRequirements', async () => {
@@ -3990,6 +4907,9 @@ test('timetable planner uses the seating-style control panel and board layout', 
   assert.match(viewSource, /data-inspector-floating-window/);
   assert.match(viewSource, /data-inspector-drag-handle/);
   assert.match(viewSource, /data-inspector-toggle-icon/);
+  assert.match(viewSource, /data-inspector-resize-handle/);
+  assert.match(viewSource, /data-action="close-inspector"/);
+  assert.match(viewSource, /clipboard-check/);
   assert.match(viewSource, /data-workflow-step="data"/);
   assert.match(viewSource, /data-workflow-step="rules"/);
   assert.match(viewSource, /data-workflow-step="solve"/);
@@ -4010,7 +4930,10 @@ test('timetable planner uses the seating-style control panel and board layout', 
   assert.match(styles, /\.tt-inspector\s*{[^}]*position:\s*fixed/s);
   assert.match(styles, /\.tt-inspector\s*{[^}]*top:\s*88px/s);
   assert.match(styles, /\.tt-inspector\s*{[^}]*right:\s*24px/s);
-  assert.match(styles, /\.tt-inspector\.is-positioned\s*{[^}]*left:\s*var\(--tt-inspector-x\)/s);
+  assert.match(styles, /\.tt-inspector\.is-positioned\s*{[^}]*left:\s*0/s);
+  assert.match(styles, /\.tt-inspector\.is-positioned\s*{[^}]*transform:\s*translate3d\(var\(--tt-inspector-x\),\s*var\(--tt-inspector-y\),\s*0\)/s);
+  assert.match(styles, /--tt-inspector-width:\s*540px/);
+  assert.match(styles, /\.tt-inspector-resize-handle\s*{/);
   assert.match(styles, /\.tt-inspector-drawer\s*{[^}]*border-radius:\s*var\(--tt-radius-lg\)/s);
   assert.match(styles, /--tt-bg-base:\s*#0f172a/);
   assert.match(styles, /@media \(max-width:\s*980px\)[\s\S]*\.tt-workbench\s*{[^}]*grid-template-areas:\s*"topbar"\s*"sidebar"\s*"schedule"\s*"inspector"/s);
@@ -4028,10 +4951,23 @@ test('timetable inspector supports draggable floating window persistence', async
   assert.match(interactionSource, /timetable\.inspector\.position\.v1/);
   assert.match(interactionSource, /data-inspector-drag-handle/);
   assert.match(interactionSource, /pointerdown/);
+  assert.match(interactionSource, /requestAnimationFrame/);
+  assert.match(interactionSource, /setPointerCapture/);
   assert.match(interactionSource, /saveInspectorPosition\(/);
   assert.match(interactionSource, /clampInspectorPosition\(/);
+  assert.match(interactionSource, /timetable\.inspector\.size\.v1/);
+  assert.match(interactionSource, /data-inspector-resize-handle/);
+  assert.match(interactionSource, /saveInspectorSize\(/);
   assert.match(styles, /\.tt-inspector\.is-collapsed\s*{[^}]*width:\s*min\(184px,\s*calc\(100vw - 48px\)\)/s);
   assert.match(styles, /\.tt-inspector-body\s*{[^}]*max-height:\s*calc\(100vh - 150px\)/s);
+  assert.match(styles, /\.tt-constraint-fulfillment-list\s*{[^}]*grid-auto-rows:\s*max-content[^}]*align-content:\s*start/s);
+  const fulfillmentListStyles = styles.match(/\.tt-constraint-fulfillment-list\s*{[^}]*}/s)?.[0] || '';
+  assert.doesNotMatch(fulfillmentListStyles, /max-height\s*:|overflow\s*:/);
+  assert.match(styles, /\.tt-constraint-fulfillment-row-summary\s*{[^}]*grid-template-columns:\s*auto minmax\(0,\s*1fr\)/s);
+  assert.match(styles, /\.tt-inspector \.tt-constraint-fulfillment-actions\s*{[^}]*min-width:\s*0/s);
+  assert.match(styles, /\.tt-inspector \.tt-detail-list span\s*{[^}]*white-space:\s*normal/s);
+  assert.match(styles, /@media \(max-width:\s*980px\)[\s\S]*\.tt-inspector[\s\S]*transform:\s*none/s);
+  assert.match(styles, /@media \(max-width:\s*980px\)[\s\S]*\.tt-inspector-resize-handle[\s\S]*display:\s*none/s);
 });
 
 test('timetable inspector clamps and persists floating position safely', () => {
@@ -4059,15 +4995,54 @@ test('timetable inspector clamps and persists floating position safely', () => {
   assert.equal(loadInspectorPosition(localStorageLike), null);
 });
 
+test('timetable inspector clamps and persists floating size safely', () => {
+  const storage = new Map();
+  const localStorageLike = {
+    getItem(key) {
+      return storage.has(key) ? storage.get(key) : null;
+    },
+    setItem(key, value) {
+      storage.set(key, value);
+    },
+  };
+
+  assert.deepEqual(
+    clampInspectorSize({ width: 900, height: 900 }, { width: 1280, height: 720 }),
+    { width: 680, height: 696 },
+  );
+  assert.deepEqual(
+    clampInspectorSize({ width: 200, height: 200 }, { width: 1280, height: 720 }),
+    { width: 480, height: 560 },
+  );
+
+  saveInspectorSize({ width: 612.8, height: 704.4 }, localStorageLike);
+  assert.deepEqual(loadInspectorSize(localStorageLike), { width: 613, height: 704 });
+
+  storage.set('timetable.inspector.size.v1', '{"width":"bad","height":720}');
+  assert.equal(loadInspectorSize(localStorageLike), null);
+});
+
 test('timetable inspector drag updates state and localStorage', () => {
   const previousWindow = globalThis.window;
   const previousStorage = globalThis.localStorage;
   const stored = new Map();
+  const animationFrames = new Map();
+  let nextAnimationFrameId = 1;
+  let storageWriteCount = 0;
   globalThis.window = {
     innerWidth: 1200,
     innerHeight: 800,
     matchMedia() {
       return { matches: true };
+    },
+    requestAnimationFrame(callback) {
+      const frameId = nextAnimationFrameId;
+      nextAnimationFrameId += 1;
+      animationFrames.set(frameId, callback);
+      return frameId;
+    },
+    cancelAnimationFrame(frameId) {
+      animationFrames.delete(frameId);
     },
   };
   globalThis.localStorage = {
@@ -4075,6 +5050,7 @@ test('timetable inspector drag updates state and localStorage', () => {
       return stored.get(key) || null;
     },
     setItem(key, value) {
+      storageWriteCount += 1;
       stored.set(key, value);
     },
   };
@@ -4089,6 +5065,7 @@ test('timetable inspector drag updates state and localStorage', () => {
     },
   };
   const classNames = new Set();
+  let styleWriteCount = 0;
   const inspector = {
     classList: {
       add(name) {
@@ -4108,6 +5085,7 @@ test('timetable inspector drag updates state and localStorage', () => {
     style: {
       values: new Map(),
       setProperty(name, value) {
+        styleWriteCount += 1;
         this.values.set(name, value);
       },
     },
@@ -4122,11 +5100,32 @@ test('timetable inspector drag updates state and localStorage', () => {
     },
   };
   const handleListeners = {};
+  const resizeHandleListeners = {};
+  const capturedPointers = [];
+  const releasedPointers = [];
   const handle = {
     dataset: {},
     ownerDocument,
     addEventListener(type, listener) {
       handleListeners[type] = listener;
+    },
+    setPointerCapture(pointerId) {
+      capturedPointers.push(pointerId);
+    },
+    releasePointerCapture(pointerId) {
+      releasedPointers.push(pointerId);
+    },
+  };
+  const resizeHandle = {
+    ownerDocument,
+    addEventListener(type, listener) {
+      resizeHandleListeners[type] = listener;
+    },
+    setPointerCapture(pointerId) {
+      capturedPointers.push(`resize:${pointerId}`);
+    },
+    releasePointerCapture(pointerId) {
+      releasedPointers.push(`resize:${pointerId}`);
     },
   };
   const container = {
@@ -4135,6 +5134,7 @@ test('timetable inspector drag updates state and localStorage', () => {
       if (selector === '[data-inspector-floating-window]') return inspector;
       if (selector === '#tt-inspector-drawer') return drawer;
       if (selector === '[data-inspector-drag-handle]') return handle;
+      if (selector === '[data-inspector-resize-handle]') return resizeHandle;
       return null;
     },
     querySelectorAll() {
@@ -4147,21 +5147,107 @@ test('timetable inspector drag updates state and localStorage', () => {
     bindGridInteractions(container, {}, state);
     handleListeners.pointerdown({
       button: 0,
+      pointerId: 6,
       clientX: 900,
       clientY: 120,
       target: { closest: () => null },
+    });
+    listeners.pointermove({
+      clientX: 902,
+      clientY: 122,
+      preventDefault() {},
+    });
+    listeners.pointerup({});
+    assert.deepEqual(capturedPointers, [6]);
+    assert.deepEqual(releasedPointers, [6]);
+    assert.equal(animationFrames.size, 0);
+    assert.equal(styleWriteCount, 0);
+    assert.equal(storageWriteCount, 0);
+    assert.equal(state.inspectorPosition, null);
+    assert.equal(handle.dataset.inspectorSuppressToggle, undefined);
+
+    handleListeners.pointerdown({
+      button: 0,
+      pointerId: 7,
+      clientX: 900,
+      clientY: 120,
+      target: { closest: () => null },
+    });
+    assert.deepEqual(capturedPointers, [6, 7]);
+
+    listeners.pointermove({
+      clientX: 902,
+      clientY: 122,
+      preventDefault() {},
+    });
+    assert.equal(animationFrames.size, 0);
+    assert.equal(styleWriteCount, 0);
+    assert.equal(state.inspectorPosition, null);
+
+    listeners.pointermove({
+      clientX: 800,
+      clientY: 180,
+      preventDefault() {},
     });
     listeners.pointermove({
       clientX: 760,
       clientY: 220,
       preventDefault() {},
     });
-    listeners.pointerup({});
-
+    assert.equal(animationFrames.size, 1);
+    assert.equal(styleWriteCount, 0);
     assert.deepEqual(state.inspectorPosition, { x: 680, y: 188 });
+
+    const [firstFrame] = animationFrames.values();
+    animationFrames.clear();
+    firstFrame();
+    assert.equal(styleWriteCount, 2);
     assert.equal(inspector.style.values.get('--tt-inspector-x'), '680px');
     assert.equal(inspector.style.values.get('--tt-inspector-y'), '188px');
-    assert.equal(stored.get('timetable.inspector.position.v1'), '{"x":680,"y":188}');
+
+    listeners.pointermove({
+      clientX: 700,
+      clientY: 260,
+      preventDefault() {},
+    });
+    assert.equal(animationFrames.size, 1);
+    assert.equal(styleWriteCount, 2);
+    listeners.pointerup({});
+
+    assert.deepEqual(state.inspectorPosition, { x: 620, y: 228 });
+    assert.equal(inspector.style.values.get('--tt-inspector-x'), '620px');
+    assert.equal(inspector.style.values.get('--tt-inspector-y'), '228px');
+    assert.equal(styleWriteCount, 4);
+    assert.equal(animationFrames.size, 0);
+    assert.deepEqual(releasedPointers, [6, 7]);
+    assert.equal(storageWriteCount, 1);
+    assert.equal(stored.get('timetable.inspector.position.v1'), '{"x":620,"y":228}');
+
+    resizeHandleListeners.pointerdown({
+      button: 0,
+      pointerId: 8,
+      clientX: 1180,
+      clientY: 500,
+      preventDefault() {},
+      stopPropagation() {},
+    });
+    listeners.pointermove({
+      clientX: 1280,
+      clientY: 600,
+      preventDefault() {},
+    });
+    assert.equal(animationFrames.size, 1);
+    const [resizeFrame] = animationFrames.values();
+    animationFrames.clear();
+    resizeFrame();
+    listeners.pointerup({});
+    assert.deepEqual(state.inspectorSize, { width: 480, height: 560 });
+    assert.equal(inspector.style.values.get('--tt-inspector-width'), '480px');
+    assert.equal(inspector.style.values.get('--tt-inspector-height'), '560px');
+    assert.equal(storageWriteCount, 2);
+    assert.equal(stored.get('timetable.inspector.size.v1'), '{"width":480,"height":560}');
+    assert.deepEqual(capturedPointers.slice(-1), ['resize:8']);
+    assert.deepEqual(releasedPointers.slice(-1), ['resize:8']);
   } finally {
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
@@ -4534,12 +5620,112 @@ test('timetable manual adjustment success clears stale solve failure state', asy
   assert.match(controllerSource, /async adjustSlot\([\s\S]*this\.state\.lastFailure = null;/);
 });
 
-test('timetable optimization polling success clears stale solve failure state', async () => {
+test('timetable optimization polling keeps failed solve diagnostics instead of clearing them', async () => {
   const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
 
   assert.match(controllerSource, /async refreshOptimizationJob\([\s\S]*status === 'completed' && result\.job\.accepted[\s\S]*this\.state\.lastFailure = null;/);
   assert.match(controllerSource, /async refreshOptimizationJob\([\s\S]*else if \(result\.job\.status === 'completed'\)[\s\S]*this\.state\.lastFailure = null;/);
-  assert.match(controllerSource, /async refreshOptimizationJob\([\s\S]*else if \(result\.job\.status === 'failed'\)[\s\S]*this\.state\.lastFailure = null;/);
+  assert.match(controllerSource, /async refreshOptimizationJob\([\s\S]*else if \(result\.job\.status === 'failed'\)[\s\S]*this\.state\.lastFailure\s*=\s*this\.solverFailureFromJob/);
+});
+
+test('timetable ordinary status messages preserve a solver failure until an explicit success clears it', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+
+  assert.match(controllerSource, /setMessage\(message, failure = undefined\)/);
+  assert.match(controllerSource, /if \(failure !== undefined\) this\.state\.lastFailure = failure;/);
+});
+
+test('timetable restores an active solver job after a browser refresh and avoids fake zero scores', async () => {
+  const controllerSource = await readFile(new URL('controller.js', moduleRoot), 'utf8');
+  const viewSource = await readFile(new URL('view.js', moduleRoot), 'utf8');
+
+  assert.match(controllerSource, /sessionStorage/);
+  assert.match(controllerSource, /restoreStoredOptimizationJob/);
+  assert.match(viewSource, /Number\.isFinite\(Number\(stats\.hardScore\)\)/);
+});
+
+test('timetable optimization polling preserves hard score and fast-attempt failure details', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async url => {
+    assert.match(String(url), /\/schedule\/jobs\/job_failed$/);
+    return new Response(JSON.stringify({
+      success: true,
+      data: {
+        job: {
+          jobId: 'job_failed',
+          mode: 'solve',
+          status: 'failed',
+          accepted: false,
+          reason: 'hard_score_violation',
+          solverStats: {
+            hardScore: -42,
+            softScore: -18,
+            fastAttempt: {
+              placedLessons: 850,
+              totalLessons: 900,
+              unplacedLessons: 50,
+              hardConflicts: 0,
+            },
+            failureSummary: {
+              unplacedLessons: 0,
+              hardConflicts: 42,
+              conflictTypes: { teacher_conflict: 42 },
+              examples: [{ type: 'teacher_conflict', message: '教师同一节次冲突' }],
+            },
+          },
+        },
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.project = createDefaultTimetableProject({ schedule: null });
+    controller.state.solverJob = { jobId: 'job_failed', mode: 'solve', status: 'running' };
+
+    await controller.refreshOptimizationJob('job_failed');
+
+    assert.equal(controller.state.lastFailure.reason, 'hard_score_violation');
+    assert.equal(controller.state.lastFailure.solverStats.hardScore, -42);
+    assert.equal(controller.state.lastFailure.fastAttempt.unplacedLessons, 50);
+    assert.match(controller.state.lastFailure.message, /快速构造 850\/900/);
+    assert.match(controller.state.lastFailure.message, /42 个硬冲突/);
+    assert.match(controller.state.message, /生成失败/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('timetable optimization polling retries three transient failures before allowing regeneration', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new Error('temporary connection failure');
+  };
+
+  try {
+    const controller = new TimetablePlannerController();
+    controller.render = () => {};
+    controller.state.solverJob = { jobId: 'job_retry', mode: 'solve', status: 'running' };
+    const retryDelays = [];
+    controller.startOptimizationPolling = (job, delayMs) => retryDelays.push({ job, delayMs });
+
+    await controller.refreshOptimizationJob('job_retry');
+    await controller.refreshOptimizationJob('job_retry');
+    await controller.refreshOptimizationJob('job_retry');
+
+    assert.deepEqual(retryDelays.map(item => item.delayMs), [1200, 2500, 5000]);
+    assert.equal(controller.state.solverJob.status, 'running');
+    assert.equal(controller.state.lastFailure, null);
+
+    await controller.refreshOptimizationJob('job_retry');
+
+    assert.equal(controller.state.solverJob.status, 'failed');
+    assert.equal(controller.state.lastFailure.reason, 'status_connection_lost');
+    assert.match(controller.state.message, /求解状态连接中断/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('timetable optimization polling ignores stale job responses after manual state changes', async () => {
@@ -5813,14 +6999,14 @@ function sampleConstraintFulfillment(overrides = {}) {
     evaluated: true,
     version: 2,
     summary: {
-      total: 144,
-      satisfied: 128,
-      partiallySatisfied: 11,
-      violated: 5,
-      notEvaluable: 0,
-      partial: 11,
-      unmet: 5,
-      notApplicable: 0,
+      total: 4,
+      satisfied: 1,
+      partiallySatisfied: 1,
+      violated: 1,
+      notEvaluable: 1,
+      partial: 1,
+      unmet: 1,
+      notApplicable: 1,
     },
     items: [
       {
@@ -5931,18 +7117,32 @@ test('timetable inspector renders constraint fulfillment between review and syst
   assert.ok(fulfillmentIndex > reviewIndex);
   assert.ok(systemIndex > fulfillmentIndex);
   assert.match(inspector, /约束满足度报告/);
-  assert.match(inspector, /约束 144/);
-  assert.match(inspector, /满足 128/);
-  assert.match(inspector, /部分 11/);
-  assert.match(inspector, /未满足 5/);
+  assert.match(inspector, /需关注\s*<b>2<\/b>/);
+  assert.match(inspector, /已满足\s*<b>1<\/b>/);
+  assert.match(inspector, /其他\s*<b>1<\/b>/);
   assert.match(inspector, /data-constraint-fulfillment-filter="attention"[\s\S]*aria-pressed="true"/);
+  assert.equal((inspector.match(/class="tt-constraint-fulfillment-filter(?:\s|\")/g) || []).length, 2);
+  assert.match(inspector, /data-action="toggle-constraint-fulfillment-filter-menu"[\s\S]*aria-haspopup="menu"/);
+  assert.match(inspector, /role="menuitemradio"/);
+  assert.doesNotMatch(inspector, /data-action="rerun-constraint-fulfillment"/);
   assert.match(inspector, /Math Teacher 每天最多 1 节/);
   assert.match(inspector, /Math 上午优先/);
   assert.doesNotMatch(inspector, /G71 周二第5节不可排/);
   assert.match(inspector, /data-constraint-fulfillment-row="rule-unmet"/);
-  assert.match(inspector, /data-constraint-fulfillment-suggestion="delete_rule"/);
-  assert.match(inspector, /data-inspector-target-kind="teacher"/);
-  assert.match(inspector, /data-action="locate-inspector-issue"/);
+  assert.doesNotMatch(inspector, /data-constraint-fulfillment-suggestion="delete_rule"/);
+  assert.match(inspector, /aria-expanded="false"/);
+  assert.doesNotMatch(inspector, /定位：Math Teacher/);
+
+  const expanded = renderInspector({
+    ...state,
+    constraintFulfillmentExpandedRowId: 'rule-unmet',
+  });
+  assert.match(expanded, /aria-expanded="true"/);
+  assert.match(expanded, /id="constraint-fulfillment-detail-rule-unmet"/);
+  assert.match(expanded, /data-constraint-fulfillment-suggestion="delete_rule"/);
+  assert.match(expanded, /定位：Math Teacher/);
+  assert.match(expanded, /data-inspector-target-kind="teacher"/);
+  assert.match(expanded, /data-action="locate-inspector-issue"/);
 });
 
 test('timetable inspector constraint fulfillment filter can show satisfied and not-evaluable rows', () => {
@@ -5986,6 +7186,98 @@ test('timetable inspector constraint fulfillment filter can show satisfied and n
   assert.doesNotMatch(notApplicableInspector, /Math Teacher 每天最多 1 节/);
 });
 
+test('timetable inspector keeps machine rule identifiers out of the visible review and restores original text', () => {
+  const state = sampleWorkbenchState({
+    schedule: {
+      id: 'schedule-humanized-inspector',
+      generatedAt: '2026-01-02T00:00:00.000Z',
+      source: 'timefold_solver',
+      slots: [{ id: 'slot-humanized', day: 1, period: 1, classId: 'c1', subjectId: 'math', teacherId: 't_math' }],
+      lockedSlots: [],
+      unplaced: [],
+      conflicts: [],
+      qualityIssues: [],
+      diagnostics: { items: [], suggestions: [] },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+    },
+    solverJob: { status: 'running', accepted: false, solverStats: { stage: 'search' } },
+    constraintFulfillment: {
+      evaluated: true,
+      summary: { total: 1, satisfied: 0, partiallySatisfied: 0, violated: 1, notEvaluable: 0 },
+      items: [{
+        id: 'advanced-room-required',
+        ruleId: 'advanced-room-required',
+        type: 'advanced:room.required',
+        typeLabel: 'advanced:room.required',
+        title: 'advanced:room.required',
+        targetName: '化学实验室',
+        targetKind: 'room',
+        targetId: 'lab-a',
+        status: 'violated',
+        statusLabel: 'violated',
+        detail: '当前有 1 节课没有满足教室要求。',
+        rawText: '化学实验课必须安排在化学实验室。',
+        evidenceSlots: [],
+        suggestions: [],
+      }],
+    },
+    constraintFulfillmentExpandedRowId: 'advanced-room-required',
+  });
+
+  const inspector = renderInspector(state);
+  assert.doesNotMatch(inspector, /advanced:room\.required/);
+  assert.doesNotMatch(inspector, />violated</);
+  assert.match(inspector, /化学实验室 · 教室要求/);
+  assert.match(inspector, /原始需求/);
+  assert.match(inspector, /化学实验课必须安排在化学实验室。/);
+  assert.doesNotMatch(inspector, />running</);
+});
+
+test('timetable inspector resolves advanced capability names and never leaves original demand blank', () => {
+  const state = sampleWorkbenchState({
+    project: createDefaultTimetableProject({
+      teachers: [{ id: 't_teacher', name: '刘书涵' }],
+      classes: [{ id: 'c1', grade: '七年级', name: '1班' }],
+      subjects: [{ id: 's_math', name: '数学' }],
+    }),
+    constraintFulfillment: {
+      evaluated: true,
+      items: [{
+        id: 'advanced-teacher-compact',
+        type: 'advanced_constraint',
+        advancedType: 'teacher.compact_day',
+        capabilityId: 'teacher.compact_day',
+        title: '刘书涵 teacher.compact_day',
+        targetName: '刘书涵',
+        status: 'violated',
+        statusLabel: 'violated',
+        detail: 'teacher.compact_day violated',
+        advancedRule: {
+          type: 'teacher.compact_day',
+          rawText: '刘书涵负责的课程尽量集中安排。',
+        },
+      }],
+    },
+    constraintFulfillmentExpandedRowId: 'advanced-teacher-compact',
+  });
+
+  const inspector = renderInspector(state);
+  assert.match(inspector, /刘书涵 · 教师集中授课/);
+  assert.match(inspector, /刘书涵负责的课程尽量集中安排。/);
+  assert.match(inspector, /原始需求/);
+  assert.doesNotMatch(inspector, /teacher\.compact_day/);
+  assert.doesNotMatch(inspector, />violated</);
+
+  const missingSourceInspector = renderInspector({
+    ...state,
+    constraintFulfillment: {
+      ...state.constraintFulfillment,
+      items: [{ ...state.constraintFulfillment.items[0], advancedRule: { type: 'teacher.compact_day' } }],
+    },
+  });
+  assert.match(missingSourceInspector, /原始需求未保存/);
+});
+
 test('timetable inspector constraint fulfillment does not affect header review counts and marks related review items', () => {
   const project = createDefaultTimetableProject({
     schoolName: 'UI School',
@@ -6027,14 +7319,14 @@ test('timetable inspector constraint fulfillment does not affect header review c
     project,
     constraintFulfillment: sampleConstraintFulfillment({
       summary: {
-        total: 144,
-        satisfied: 143,
-        partiallySatisfied: 0,
+        total: 4,
+        satisfied: 1,
+        partiallySatisfied: 1,
         violated: 1,
-        notEvaluable: 0,
-        partial: 0,
+        notEvaluable: 1,
+        partial: 1,
         unmet: 1,
-        notApplicable: 0,
+        notApplicable: 1,
       },
     }),
   });
@@ -6213,7 +7505,7 @@ test('timetable inspector constraint fulfillment filter action updates state onl
   assert.match(interactionSource, /filter-constraint-fulfillment/);
 });
 
-test('timetable inspector constraint fulfillment actions delegate rerun and suggestions', async () => {
+test('timetable inspector constraint fulfillment actions toggle rows and delegate suggestions', async () => {
   const interactionSource = await readFile(new URL('grid-interactions.js', moduleRoot), 'utf8');
   const listeners = {};
   const container = {
@@ -6228,18 +7520,21 @@ test('timetable inspector constraint fulfillment actions delegate rerun and sugg
     },
   };
   const state = {};
-  let rerunCount = 0;
+  let renderCount = 0;
   let suggestionPayload = null;
   const controller = {
-    runSchedule() {
-      rerunCount += 1;
+    render() {
+      renderCount += 1;
     },
     handleConstraintFulfillmentSuggestion(ruleId, kind) {
       suggestionPayload = { ruleId, kind };
     },
   };
-  const rerunButton = {
-    dataset: { action: 'rerun-constraint-fulfillment' },
+  const rowToggle = {
+    dataset: {
+      action: 'toggle-constraint-fulfillment-row',
+      constraintFulfillmentRow: 'rule-unmet',
+    },
   };
   const suggestionButton = {
     dataset: {
@@ -6256,7 +7551,7 @@ test('timetable inspector constraint fulfillment actions delegate rerun and sugg
         return false;
       },
       closest(selector) {
-        if (selector === '[data-action]') return rerunButton;
+        if (selector === '[data-action]') return rowToggle;
         return null;
       },
     },
@@ -6277,10 +7572,12 @@ test('timetable inspector constraint fulfillment actions delegate rerun and sugg
     stopPropagation() {},
   });
 
-  assert.equal(rerunCount, 1);
+  assert.equal(state.constraintFulfillmentExpandedRowId, 'rule-unmet');
+  assert.equal(renderCount, 1);
   assert.deepEqual(suggestionPayload, { ruleId: 'rule-unmet', kind: 'delete_rule' });
-  assert.match(interactionSource, /rerun-constraint-fulfillment/);
+  assert.match(interactionSource, /toggle-constraint-fulfillment-row/);
   assert.match(interactionSource, /constraint-fulfillment-suggestion/);
+  assert.doesNotMatch(interactionSource, /action === 'rerun-constraint-fulfillment'/);
 });
 
 test('timetable inspector locate action delegates target data to the controller', () => {
@@ -9729,11 +11026,150 @@ test('timetable workbench shows fast generation and background optimization stat
   const panel = renderSchedulePanel(state);
   const inspector = renderInspector(state);
 
-  assert.match(panel, /快速生成/);
-  assert.match(panel, /Timefold 优化中/);
+  assert.match(panel, /Timefold 求解中/);
+  assert.match(panel, /求解中/);
   assert.match(inspector, /后台优化/);
   assert.match(inspector, /快速课表/);
   assert.doesNotMatch(panel + inspector, /姝ｅ湪|鏁欏姟|璇捐〃|鎺掕/);
+});
+
+test('timetable active solver job disables every generation entry and shows real progress', () => {
+  const state = sampleWorkbenchState({
+    loading: false,
+    solverJob: {
+      jobId: 'job-active',
+      mode: 'solve',
+      status: 'running',
+      solverStats: {
+        stage: 'timefold_solving',
+        hardScore: -42,
+        fastAttempt: {
+          placedLessons: 850,
+          totalLessons: 900,
+          unplacedLessons: 50,
+        },
+      },
+    },
+    ruleReview: { inputMode: 'agent', mode: 'agent' },
+    constraintDialog: { open: true, agentConversationExpanded: true },
+    constraintAgent: {
+      sessionId: 'agent-active',
+      stage: 'APPLY',
+      messages: [],
+      questions: [],
+      loading: false,
+    },
+    constraintFulfillment: {
+      summary: { total: 1, satisfied: 0, attention: 1, notEvaluable: 0 },
+      items: [{ id: 'rule-attention', status: 'attention', statusLabel: '需关注', title: '测试约束' }],
+    },
+  });
+
+  const html = renderWorkbench(state);
+  const panel = renderSchedulePanel(state);
+
+  assert.match(panel, /Timefold 求解中，当前 hard score -42/);
+  assert.match(panel, /id="tt-run-schedule"[^>]*disabled/);
+  assert.match(panel, /<span>求解中<\/span>/);
+  assert.match(html, /data-run-schedule[^>]*disabled/);
+  assert.match(html, /data-action="constraint-agent-solve"[^>]*disabled/);
+  assert.doesNotMatch(html, /data-action="rerun-constraint-fulfillment"/);
+});
+
+test('timetable completed solver job renders success without a spinning progress indicator', () => {
+  const state = sampleWorkbenchState({
+    loading: false,
+    solverJob: {
+      jobId: 'job-completed',
+      mode: 'solve',
+      status: 'completed',
+      accepted: true,
+      solverStats: {
+        stage: 'completed',
+        hardScore: 0,
+        softScore: 128,
+      },
+    },
+  });
+
+  const panel = renderSchedulePanel(state);
+  const workbench = renderWorkbench(state);
+
+  assert.match(panel, /Timefold 已生成/);
+  assert.doesNotMatch(panel, /tt-solve-toolbar-chip/);
+  assert.doesNotMatch(workbench, /tt-process-strip tt-solve-process/);
+  assert.doesNotMatch(panel + workbench, /data-lucide="loader-2" class="tt-spin"/);
+});
+
+test('timetable publication and export area reflects solving, failure, unpublished and published states', () => {
+  const running = renderWorkbench(sampleWorkbenchState({
+    solverJob: { jobId: 'job-running', mode: 'solve', status: 'running', solverStats: { stage: 'fast_construct' } },
+  }));
+  assert.match(running, /正在快速构造/);
+  assert.match(running, /data-export-type="class"[^>]*disabled/);
+  assert.match(running, /data-export-type="plans"/);
+
+  const failed = renderWorkbench(sampleWorkbenchState({
+    solverJob: {
+      jobId: 'job-failed-export',
+      mode: 'solve',
+      status: 'failed',
+      reason: 'hard_score_violation',
+      solverStats: { hardScore: -42, fastAttempt: { placedLessons: 850, totalLessons: 900, unplacedLessons: 50 } },
+    },
+    lastFailure: {
+      reason: 'hard_score_violation',
+      message: '生成失败：快速构造 850/900，Timefold 最终还有 42 个硬冲突。',
+      solverStats: { hardScore: -42 },
+    },
+  }));
+  assert.match(failed, /生成失败：快速构造 850\/900/);
+  assert.match(failed, /查看排课审查/);
+  assert.match(failed, /data-export-type="master"[^>]*disabled/);
+
+  const unpublished = renderWorkbench(sampleWorkbenchState());
+  assert.match(unpublished, /请先发布课表后导出正式课表/);
+  assert.match(unpublished, /data-export-type="teacher"[^>]*disabled/);
+
+  const publishedState = sampleWorkbenchState({
+    schedule: {
+      id: 'published-current',
+      generatedAt: '2026-01-02T08:00:00.000Z',
+      source: 'published',
+      slots: [{
+        id: 'slot-published',
+        day: 1,
+        period: 1,
+        classId: 'c1',
+        subjectId: 'math',
+        teacherId: 't_math',
+        teacherIds: ['t_math'],
+        lessonPlanId: 'lp_math',
+      }],
+      lockedSlots: [],
+      conflicts: [],
+      unplaced: [],
+      publication: {
+        ok: true,
+        reason: 'ready',
+        blockingIssues: [],
+        warnings: [],
+        reviewItems: [],
+        summary: { totalLessons: 1, placedLessons: 1, unplacedLessons: 0, hardConflicts: 0 },
+      },
+      published: {
+        status: 'published',
+        version: 1,
+        publishedAt: '2026-01-02T08:00:00.000Z',
+        scheduleId: 'published-current',
+        snapshot: { scheduleId: 'published-current', slotCount: 1, slots: [] },
+      },
+      score: { hardConflicts: 0, unplacedLessons: 0, placedLessons: 1, totalLessons: 1, completeness: 100 },
+    },
+  });
+  const published = renderWorkbench(publishedState);
+  assert.match(published, /已发布 V1/);
+  assert.match(published, /data-export-type="class" type="button" title="导出班级课表" >/);
 });
 
 test('timetable inspector explains initial solution and pinned optimization rejection', () => {
@@ -10007,8 +11443,9 @@ test('timetable data setup uses collapsible groups and compact active range drop
   assert.match(html, /class="[^"]*tt-export-setup-card[^"]*tt-workflow-subsection[^"]*"/);
   assert.match(html, /class="[^"]*tt-rules-setup-body[^"]*"/);
   assert.match(html, /class="[^"]*tt-smart-helper-entry[^"]*"/);
-  assert.match(html, /class="[^"]*tt-smart-helper-flow[^"]*"/);
-  assert.match(html, /class="[^"]*tt-smart-helper-metrics[^"]*"/);
+  assert.doesNotMatch(html, /class="[^"]*tt-smart-helper-flow[^"]*"/);
+  assert.doesNotMatch(html, /class="[^"]*tt-smart-helper-metrics[^"]*"/);
+  assert.doesNotMatch(html, /class="[^"]*tt-constraint-agent-panel[^"]*"/);
   assert.doesNotMatch(html, /class="[^"]*tt-rule-summary[^"]*"/);
   assert.match(html, /id="tt-range-weekdays-trigger"/);
   assert.match(html, /id="tt-range-periods-trigger"/);
@@ -11662,23 +13099,20 @@ test('timetable smart rules sidebar opens the constraint dialog', async () => {
   assert.match(sidebar, /class="[^"]*tt-rules-setup-body[^"]*"/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
   assert.match(sidebar, /智能约束助手/);
-  assert.match(sidebar, /自然语言需求理解、复核与落地/);
-  assert.match(sidebar, /tt-smart-helper-flow/);
-  assert.match(sidebar, /理解需求[\s\S]*补充信息[\s\S]*生成规则[\s\S]*发布校验/);
-  assert.match(sidebar, /可应用/);
-  assert.match(sidebar, /需复核/);
-  assert.match(sidebar, /已处理/);
-  assert.match(styles, /\.tt-rules-setup-card\s+\.tt-smart-helper-flow\s*{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
-  assert.match(styles, /\.tt-rules-setup-card\s+\.tt-smart-helper-flow\s+span\s*{[\s\S]*justify-content:\s*center/);
-  assert.match(styles, /\.tt-rules-setup-card\s+\.tt-smart-helper-metrics\s*{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
-  assert.match(styles, /\.tt-rules-setup-card\s+\.tt-smart-helper-flow\s+b,[\s\S]*\.tt-rules-setup-card\s+\.tt-smart-helper-metrics\s+b\s*{[\s\S]*text-overflow:\s*clip/);
-  assert.doesNotMatch(sidebar, /需注意/);
+  assert.match(sidebar, /还没有约束需求/);
+  assert.match(sidebar, /data-action="toggle-constraint-sidebar-menu"/);
+  assert.doesNotMatch(sidebar, /tt-smart-helper-flow|tt-smart-helper-metrics|tt-constraint-agent-panel/);
+  assert.doesNotMatch(sidebar, /理解需求[\s\S]*补充信息[\s\S]*生成规则[\s\S]*发布校验/);
+  assert.doesNotMatch(styles, /\.tt-constraint-agent-panel\s*{/);
+  assert.doesNotMatch(sidebar, /需注意|rules_patch|模型动作|暂停/);
   assert.doesNotMatch(sidebar, /class="[^"]*tt-rule-summary[^"]*"/);
   assert.doesNotMatch(sidebar, /tt-rule-entry-card/);
   // No dialog rendered when no pending rules and no open state
   assert.doesNotMatch(html, /id="tt-rule-review-dialog"/);
-  // The current dialog owns text, file, manual, preview, edit, and AI actions.
+  // The current dialog owns text, file, manual, agent, preview, edit, and AI actions.
   assert.match(dialogSource, /data-action="switch-constraint-mode"/);
+  assert.match(dialogSource, /key: 'agent'/);
+  assert.match(dialogSource, /label: '智能对话'/);
   assert.match(componentSource, /id="\$\{escapeAttr\(idPrefix\)\}-type"/);
   assert.match(dialogSource, /data-action="add-manual-constraint"/);
   assert.match(dialogSource, /data-action="parse-constraints"/);
@@ -11725,6 +13159,18 @@ test('timetable rule type labels are centralized while preserving planner wordin
   assert.doesNotMatch(dialogControllerSource, /const RULE_TYPE_LABELS/);
   assert.doesNotMatch(dialogControllerSource, /RULE_TYPE_LABELS/);
   assert.match(dialogControllerSource, /compileConstraintRuleArtifacts/);
+});
+
+test('timetable constraint editor isolates nested modal chrome from the parent dialog', async () => {
+  const styles = await readFile(constraintDialogStylePath, 'utf8');
+
+  assert.match(styles, /\.tt-constraint-dialog\s*>\s*\.tt-dialog-header\s*\{/);
+  assert.match(styles, /\.tt-constraint-dialog\s*>\s*\.tt-dialog-actions\s*\{/);
+  assert.doesNotMatch(styles, /\.tt-constraint-dialog\s+\.tt-dialog-header\s*\{/);
+  assert.doesNotMatch(styles, /\.tt-constraint-dialog\s+\.tt-dialog-actions\s*\{/);
+  assert.match(styles, /\.tt-constraint-edit-modal\s*>\s*\.tt-dialog-header\s*\{[^}]*padding:\s*var\(--tt-space-md\);/);
+  assert.match(styles, /\.tt-constraint-edit-modal\s*>\s*\.tt-dialog-actions\s*\{[^}]*padding:\s*var\(--tt-space-md\);/);
+  assert.match(styles, /\.tt-constraint-edit-modal\s*>\s*\.tt-dialog-header\s+\.tt-constraint-edit-close\s*\{[^}]*width:\s*32px;[^}]*height:\s*32px;[^}]*background:\s*transparent;/);
 });
 
 test('timetable constraint dialog shows parse progress feedback', async () => {
@@ -13130,7 +14576,7 @@ test('timetable saved smart rules remain summarized while the constraint dialog 
   assert.ok(savedItems.some(item => item.type === 'teacher_daily_limit' && item.targetName === 'Math Teacher'));
   assert.ok(savedItems.some(item => item.type === 'subject_spread' && item.targetName === 'PE'));
 
-  // Saved rules render inline in the sidebar as a saved rule list
+  // Saved rules are summarized by the compact sidebar entry.
   const html = renderWorkbench(sampleWorkbenchState({
     project,
     pendingRules: [],
@@ -13139,24 +14585,26 @@ test('timetable saved smart rules remain summarized while the constraint dialog 
   }));
   const sidebar = html.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
 
-  // New card-based saved rules section
+  // Compact saved-rules summary and secondary actions.
   assert.match(sidebar, /id="tt-open-rule-review"/);
   assert.match(sidebar, /tt-smart-helper-entry/);
   assert.match(sidebar, /智能约束助手/);
-  assert.match(sidebar, /自然语言需求理解、复核与落地/);
-  assert.match(sidebar, /tt-smart-helper-flow/);
-  assert.match(sidebar, /理解需求[\s\S]*补充信息[\s\S]*生成规则[\s\S]*发布校验/);
-  assert.match(sidebar, /tt-smart-helper-metrics/);
-  assert.match(sidebar, /可应用/);
-  assert.match(sidebar, /需复核/);
-  assert.match(sidebar, /已处理/);
+  assert.match(sidebar, /已应用 9 条约束/);
+  assert.doesNotMatch(sidebar, /tt-smart-helper-flow|tt-smart-helper-metrics|tt-constraint-agent-panel/);
   assert.match(sidebar, /class="[^"]*tt-rule-stack[^"]*tt-rules-setup-card[^"]*"/);
   assert.match(sidebar, /class="[^"]*tt-empty-card[^"]*tt-roster-entry[^"]*tt-rule-entry[^"]*"/);
   assert.doesNotMatch(sidebar, /class="[^"]*tt-rule-summary[^"]*"/);
   assert.doesNotMatch(sidebar, /查看已应用约束|查看已生效约束/);
-  assert.match(sidebar, /9/);
-  assert.match(sidebar, /id="tt-clear-rules"/);
-  assert.match(sidebar, /清空约束/);
+  assert.match(sidebar, /data-action="toggle-constraint-sidebar-menu"/);
+  assert.doesNotMatch(sidebar, /data-action="reenter-constraint-input"/);
+  const menuHtml = renderWorkbench(sampleWorkbenchState({
+    project,
+    constraintDialog: { open: false, sidebarMenuOpen: true },
+  }));
+  const openMenuSidebar = menuHtml.match(/<aside class="tt-sidebar">([\s\S]*?)<\/aside>\s*<section class="tt-schedule-panel">/)?.[1] || '';
+  assert.match(openMenuSidebar, /data-action="reenter-constraint-input"/);
+  assert.match(openMenuSidebar, /data-action="clear-applied-constraints"/);
+  assert.match(openMenuSidebar, /清空已应用约束/);
   assert.doesNotMatch(sidebar, /id="tt-saved-rules"/);
   assert.doesNotMatch(sidebar, /data-saved-rule-delete=/);
   assert.doesNotMatch(sidebar, /data-saved-rule="/);
@@ -13177,7 +14625,7 @@ test('timetable saved smart rules remain summarized while the constraint dialog 
 
   assert.match(workbenchHtml, /data-constraint-dialog-overlay/);
   assert.match(workbenchHtml, /智能约束助手/);
-  assert.match(workbenchHtml, /自然语言需求理解、复核与落地/);
+  assert.match(workbenchHtml, /把自然语言排课需求转换为可复核、可应用的规则和模型设置/);
   assert.match(workbenchHtml, /排课要求/);
   assert.match(workbenchHtml, /开始理解/);
   assert.match(workbenchHtml, /data-action="parse-constraints"/);

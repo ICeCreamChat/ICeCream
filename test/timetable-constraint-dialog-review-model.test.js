@@ -5,12 +5,38 @@ import test from 'node:test';
 import { parseTimetableRules } from '../gateway/services/timetable-rule-parser.js';
 import {
     buildConstraintApplyPlan,
+    buildRequirementReviewViewModel,
     buildUnifiedRequirementItems,
     getActionableDraftRows,
     getActionableRequirementCount,
     getBackendRuleRows,
     getRequirementGroupKey,
 } from '../public/js/tools/timetable/constraint-dialog-review-model.js';
+
+test('review attention messages collapse punctuation-only duplicates', () => {
+    const sourceId = 'src:duplicate-attention';
+    const review = {
+        sourceRequirements: [sourceRequirement({
+            sourceId,
+            rawText: '九年级语文不要集中到下午。',
+            status: 'partially_supported',
+            executionStatus: 'partially_executable',
+            warnings: [
+                '需求语义已保留，当前版本暂未落地。',
+                '需求语义已保留, 当前版本暂未落地',
+                '需求语义已保留；当前版本暂未落地。',
+            ],
+            clauses: [clause({ id: 'clause:duplicate', sourceId, clauseId: 'clause:duplicate' })],
+        })],
+        draftRows: [],
+        requirementItems: [],
+        semanticActions: [],
+    };
+
+    const viewModel = buildRequirementReviewViewModel(review, { selectedRequirementId: sourceId });
+
+    assert.equal(viewModel.selectedItem.attentionItems.length, 1);
+});
 
 function sourceRequirement({
     sourceId,
@@ -465,7 +491,7 @@ test('the real 137-row workbook renders exactly 137 source cards and keeps expan
     assert.equal(items.length, 137);
     assert.equal(new Set(items.map(item => item.sourceId)).size, 137);
     assert.ok(items.every(item => item.id === item.sourceId));
-    for (const [rowNumber, expectedClauseCount] of [[114, 3], [116, 2], [131, 3], [138, 1]]) {
+    for (const [rowNumber, expectedClauseCount] of [[114, 6], [115, 4], [116, 2], [131, 3], [138, 1]]) {
         const item = bySourceRow(rowNumber);
         assert.ok(item, `missing source card for row ${rowNumber}`);
         assert.equal(

@@ -118,54 +118,41 @@ export function buildClauseId(sourceId, clause = {}, index = 0) {
     return `${sourceId}:clause:${digest}`;
 }
 
-const MACHINE_RULE_ID_METADATA_FIELDS = new Set([
-    'id',
-    'machineRuleId',
-    'stableKey',
-    'rowId',
-    'requirementId',
-    'clauseId',
-    'sourceId',
-    'textHash',
-    'origin',
-    'parsedBy',
-    'source',
-    'sourceSheet',
-    'sourceRow',
-    'lineNumber',
-    'rawText',
-    'constraintText',
-    'parseSource',
-    'status',
-    'sourceStatus',
-    'confidence',
-    'warnings',
-    'aiReviewStatus',
-    'aiReviewWarnings',
-    'reviewEvidence',
-    'reviewedParseSource',
-    'ambiguity',
-    'ambiguities',
-    'description',
-    'reason',
-    'note',
-    'sourceOrder',
-    'generatedBy',
-    'compilerVersion',
-    'enabled',
-    'modelSupport',
-    'clarification',
-    'createdAt',
-    'updatedAt',
-]);
-
 function machineRuleIdentityPayload(rule = {}) {
-    return Object.fromEntries(
-        Object.entries(rule)
-            .filter(([key, value]) => !MACHINE_RULE_ID_METADATA_FIELDS.has(key)
-                && value !== undefined
-                && typeof value !== 'function')
-    );
+    const rawParameters = rule.parameters && typeof rule.parameters === 'object'
+        ? rule.parameters
+        : {};
+    const { legacyRow, ...parameters } = rawParameters;
+    void legacyRow;
+    const value = (name, ...fallbacks) => parameters[name]
+        ?? fallbacks.find(candidate => candidate !== undefined)
+        ?? rule[name];
+    const values = input => Array.isArray(input)
+        ? input
+        : (input === undefined || input === null || input === '' ? [] : [input]);
+    return {
+        type: rule.type || '',
+        capabilityId: rule.advancedType || rule.capabilityId || parameters.advancedType || parameters.capabilityId || '',
+        target: {
+            type: rule.targetType || '',
+            id: rule.targetId || rule.teacherId || rule.classId || rule.subjectId || '',
+            name: rule.targetName || rule.teacherName || rule.className || rule.subjectName || '',
+            teacherIds: values(value('teacherIds')),
+            classIds: values(value('classIds')),
+            subjectIds: values(value('subjectIds')),
+            roomIds: values(value('roomIds')),
+        },
+        scope: rule.scope || {},
+        relation: rule.relation || {},
+        time: {
+            slots: values(value('slots', rule.time?.slots, rule.condition?.slots)),
+            days: values(value('days', rule.time?.days, rule.condition?.days)),
+            periods: values(value('periods', rule.time?.periods, rule.condition?.periods)),
+            weekPattern: String(value('weekPattern', rule.time?.weekPattern) || ''),
+        },
+        parameters,
+        strength: rule.strength || rule.priority || '',
+    };
 }
 
 export function buildMachineRuleId(sourceId, clauseId, rule = {}, index = 0) {

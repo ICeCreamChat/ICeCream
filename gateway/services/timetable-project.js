@@ -54,7 +54,7 @@ const DEFAULT_PROJECT = {
         },
         softRules: {
             morningSubjects: [],
-            balancedTeacherLoad: true,
+            balancedTeacherLoad: false,
         },
     },
     schedule: null,
@@ -153,7 +153,9 @@ export function normalizeSubjectTags(value = []) {
 
 export function normalizeSubjectCategory(value = '', fallbackName = '') {
     const explicit = cleanText(value, 40).toLowerCase();
-    const text = explicit || cleanText(fallbackName, 80).toLowerCase();
+    // Categories are descriptive input. A display name must never silently
+    // become a scheduling preference or resource requirement.
+    const text = explicit;
     if (!text) return 'normal';
     if (['main', 'core', 'major'].includes(text) || /main|core|major|chinese|math|english/.test(text)
         || /\u4e3b\u79d1|\u6838\u5fc3|\u8bed\u6587|\u6570\u5b66|\u82f1\u8bed|\u5916\u8bed/.test(text)) {
@@ -714,7 +716,7 @@ function normalizeClass(raw = {}, index = 0, enabled = false) {
 function normalizeSubject(raw = {}, index = 0) {
     const name = cleanText(raw.name || raw.subjectName || `课程${index + 1}`, 40);
     const id = cleanText(raw.id, 60) || makeTimetableId('s', name);
-    const category = normalizeSubjectCategory(raw.category || raw.subjectCategory || raw.type || raw.subjectType, name);
+    const category = normalizeSubjectCategory(raw.category || raw.subjectCategory || raw.type || raw.subjectType);
     const tags = normalizeSubjectTags(raw.tags || raw.subjectTags);
     return {
         id,
@@ -906,7 +908,7 @@ function normalizeClassDailyBalance(raw = {}) {
     };
 }
 
-function normalizeTeacherLoadBalance(raw = null, legacyBalanced = true) {
+function normalizeTeacherLoadBalance(raw = null, legacyBalanced = false) {
     const hasExplicitRule = raw && typeof raw === 'object' && Object.keys(raw).length > 0;
     if (hasExplicitRule) {
         return {
@@ -916,7 +918,7 @@ function normalizeTeacherLoadBalance(raw = null, legacyBalanced = true) {
         };
     }
     return {
-        enabled: legacyBalanced !== false,
+        enabled: legacyBalanced === true,
         weight: 1,
         explicit: false,
     };
@@ -963,7 +965,7 @@ function normalizeRules(raw = {}, enabled = false) {
             morningSubjects: collectionList(softRules.morningSubjects)
                 .map(value => cleanText(value, 80))
                 .filter(Boolean),
-            balancedTeacherLoad: softRules.balancedTeacherLoad !== false,
+            balancedTeacherLoad: softRules.balancedTeacherLoad === true,
             subjectPreferredPeriods: normalizeSubjectPreferredPeriods(softRules.subjectPreferredPeriods, enabled),
             teacherLimits: normalizeTeacherLimits(softRules.teacherLimits),
             spreadSubjects: normalizeSpreadSubjects(softRules.spreadSubjects),

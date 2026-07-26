@@ -1,4 +1,7 @@
-import { getConstraintRuleDefinition } from './constraint-rule-form-model.js';
+import {
+    getConstraintRuleDefinition,
+    getConstraintRuleEditorDefinition,
+} from './constraint-rule-form-model.js';
 
 function resizeConstraintChatInput(textarea) {
     if (!textarea) return;
@@ -7,9 +10,13 @@ function resizeConstraintChatInput(textarea) {
 }
 
 export const INSPECTOR_POSITION_STORAGE_KEY = 'timetable.inspector.position.v1';
+export const INSPECTOR_SIZE_STORAGE_KEY = 'timetable.inspector.size.v1';
 const INSPECTOR_FLOATING_BREAKPOINT = 980;
 const INSPECTOR_POSITION_MARGIN = 12;
 const INSPECTOR_DRAG_THRESHOLD = 4;
+const INSPECTOR_MIN_WIDTH = 480;
+const INSPECTOR_MAX_WIDTH = 680;
+const INSPECTOR_MIN_HEIGHT = 560;
 const INSPECTOR_ISSUE_DEFAULT_LIMIT = 5;
 const INSPECTOR_ISSUE_LIMIT_STEP = 20;
 const RULE_TYPE_PICKER_MOBILE_BREAKPOINT = 640;
@@ -140,7 +147,7 @@ function positionRuleTypeHelp(picker) {
 }
 
 function showRuleTypeHelp(picker, type) {
-    const definition = getConstraintRuleDefinition(type);
+    const definition = getConstraintRuleEditorDefinition(type) || getConstraintRuleDefinition(type);
     const { help } = ruleTypePickerElements(picker);
     if (!definition || !help) return;
     const title = help.querySelector?.('[data-constraint-rule-help-title]');
@@ -332,6 +339,45 @@ export function saveInspectorPosition(position = {}, storage = globalThis?.local
     }
 }
 
+export function clampInspectorSize(size = {}, viewport = {}) {
+    const viewportWidth = Math.max(0, Number(viewport.width) || 0);
+    const viewportHeight = Math.max(0, Number(viewport.height) || 0);
+    const maxWidth = Math.max(INSPECTOR_MIN_WIDTH, Math.min(INSPECTOR_MAX_WIDTH, viewportWidth - INSPECTOR_POSITION_MARGIN * 2));
+    const maxHeight = Math.max(INSPECTOR_MIN_HEIGHT, viewportHeight - INSPECTOR_POSITION_MARGIN * 2);
+    const width = roundedFiniteNumber(size.width);
+    const height = roundedFiniteNumber(size.height);
+    return {
+        width: Math.min(Math.max(width ?? 540, Math.min(INSPECTOR_MIN_WIDTH, maxWidth)), maxWidth),
+        height: Math.min(Math.max(height ?? 720, Math.min(INSPECTOR_MIN_HEIGHT, maxHeight)), maxHeight),
+    };
+}
+
+export function loadInspectorSize(storage = globalThis?.localStorage) {
+    try {
+        const raw = storage?.getItem?.(INSPECTOR_SIZE_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        const width = roundedFiniteNumber(parsed?.width);
+        const height = roundedFiniteNumber(parsed?.height);
+        if (width === null || height === null) return null;
+        return { width, height };
+    } catch {
+        return null;
+    }
+}
+
+export function saveInspectorSize(size = {}, storage = globalThis?.localStorage) {
+    try {
+        const width = roundedFiniteNumber(size.width);
+        const height = roundedFiniteNumber(size.height);
+        if (width === null || height === null) return false;
+        storage?.setItem?.(INSPECTOR_SIZE_STORAGE_KEY, JSON.stringify({ width, height }));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 function isInspectorFloatingViewport() {
     if (typeof window === 'undefined') return false;
     if (typeof window.matchMedia === 'function') {
@@ -354,6 +400,12 @@ function applyInspectorPosition(inspector, position) {
     inspector.classList.add('is-positioned');
     inspector.style.setProperty('--tt-inspector-x', `${Math.round(position.x)}px`);
     inspector.style.setProperty('--tt-inspector-y', `${Math.round(position.y)}px`);
+}
+
+function applyInspectorSize(inspector, size) {
+    if (!inspector || !Number.isFinite(size?.width) || !Number.isFinite(size?.height)) return;
+    inspector.style.setProperty('--tt-inspector-width', `${Math.round(size.width)}px`);
+    inspector.style.setProperty('--tt-inspector-height', `${Math.round(size.height)}px`);
 }
 
 function syncInspectorOpenClass(inspector, open) {
@@ -413,6 +465,11 @@ function bindInspectorFloatingWindow(container, state) {
     if (!inspector || !drawer || !handle) return;
 
     syncInspectorOpenClass(inspector, drawer.open);
+    if (state.inspectorSize) {
+        const clampedSize = clampInspectorSize(state.inspectorSize, inspectorViewportSize());
+        state.inspectorSize = clampedSize;
+        applyInspectorSize(inspector, clampedSize);
+    }
     if (state.inspectorPosition) {
         const rect = inspector.getBoundingClientRect();
         const clamped = clampInspectorPosition(
@@ -449,12 +506,67 @@ function bindInspectorFloatingWindow(container, state) {
         const rect = inspector.getBoundingClientRect();
         const offsetX = startX - rect.left;
         const offsetY = startY - rect.top;
+        const viewport = inspectorViewportSize();
+        const pointerId = event.pointerId;
         let moved = false;
+        let pendingFrame = 0;
+        let pendingPosition = null;
+
+        const requestFrame = callback => {
+            const ownerWindow = ownerDocument.defaultView || (typeof window !== 'undefined' ? window : null);
+            if (typeof ownerWindow?.requestAnimationFrame === 'function') {
+                return ownerWindow.requestAnimationFrame(callback);
+            }
+            if (typeof globalThis?.requestAnimationFrame === 'function') {
+                return globalThis.requestAnimationFrame(callback);
+            }
+            callback();
+            return 0;
+        };
+
+        const cancelFrame = frameId => {
+            if (!frameId) return;
+            const ownerWindow = ownerDocument.defaultView || (typeof window !== 'undefined' ? window : null);
+            if (typeof ownerWindow?.cancelAnimationFrame === 'function') {
+                ownerWindow.cancelAnimationFrame(frameId);
+            } else if (typeof globalThis?.cancelAnimationFrame === 'function') {
+                globalThis.cancelAnimationFrame(frameId);
+            }
+        };
+
+        const flushPosition = () => {
+            if (pendingFrame) {
+                cancelFrame(pendingFrame);
+                pendingFrame = 0;
+            }
+            if (!pendingPosition) return;
+            applyInspectorPosition(inspector, pendingPosition);
+            pendingPosition = null;
+        };
+
+        const schedulePosition = position => {
+            pendingPosition = position;
+            if (pendingFrame) return;
+            pendingFrame = requestFrame(() => {
+                pendingFrame = 0;
+                flushPosition();
+            });
+        };
 
         const cleanup = () => {
+            cancelFrame(pendingFrame);
+            pendingFrame = 0;
+            pendingPosition = null;
             ownerDocument.removeEventListener('pointermove', onPointerMove);
             ownerDocument.removeEventListener('pointerup', onPointerUp);
             ownerDocument.removeEventListener('pointercancel', onPointerUp);
+            try {
+                if (pointerId !== undefined && pointerId !== null && typeof handle.releasePointerCapture === 'function') {
+                    handle.releasePointerCapture(pointerId);
+                }
+            } catch {
+                // Pointer capture may already have been released by the browser.
+            }
             inspector.classList.remove('is-dragging');
             state.inspectorDragging = false;
         };
@@ -470,14 +582,15 @@ function bindInspectorFloatingWindow(container, state) {
             inspector.classList.add('is-dragging');
             const clamped = clampInspectorPosition(
                 { x: nextX - offsetX, y: nextY - offsetY },
-                inspectorViewportSize(),
+                viewport,
                 { width: rect.width, height: rect.height },
             );
             state.inspectorPosition = clamped;
-            applyInspectorPosition(inspector, clamped);
+            schedulePosition(clamped);
         };
 
         const onPointerUp = () => {
+            if (moved) flushPosition();
             cleanup();
             if (!moved) return;
             handle.dataset.inspectorSuppressToggle = 'true';
@@ -489,14 +602,202 @@ function bindInspectorFloatingWindow(container, state) {
             }, 0);
         };
 
+        try {
+            if (pointerId !== undefined && pointerId !== null && typeof handle.setPointerCapture === 'function') {
+                handle.setPointerCapture(pointerId);
+            }
+        } catch {
+            // Pointer capture is an enhancement; document listeners remain the fallback.
+        }
+        ownerDocument.addEventListener('pointermove', onPointerMove);
+        ownerDocument.addEventListener('pointerup', onPointerUp, { once: true });
+        ownerDocument.addEventListener('pointercancel', onPointerUp, { once: true });
+    });
+
+    const resizeHandle = container.querySelector?.('[data-inspector-resize-handle]');
+    resizeHandle?.addEventListener('pointerdown', event => {
+        if (event.button !== undefined && event.button !== 0) return;
+        if (!isInspectorFloatingViewport()) return;
+        const ownerDocument = resizeHandle.ownerDocument || (typeof document !== 'undefined' ? document : null);
+        if (!ownerDocument) return;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        const startX = Number(event.clientX || 0);
+        const startY = Number(event.clientY || 0);
+        const rect = inspector.getBoundingClientRect();
+        const viewport = inspectorViewportSize();
+        const pointerId = event.pointerId;
+        let resized = false;
+        let pendingFrame = 0;
+        let pendingSize = null;
+
+        const ownerWindow = ownerDocument.defaultView || (typeof window !== 'undefined' ? window : null);
+        const requestFrame = callback => {
+            if (typeof ownerWindow?.requestAnimationFrame === 'function') return ownerWindow.requestAnimationFrame(callback);
+            callback();
+            return 0;
+        };
+        const cancelFrame = frameId => {
+            if (frameId && typeof ownerWindow?.cancelAnimationFrame === 'function') ownerWindow.cancelAnimationFrame(frameId);
+        };
+        const flushSize = () => {
+            if (pendingFrame) {
+                cancelFrame(pendingFrame);
+                pendingFrame = 0;
+            }
+            if (!pendingSize) return;
+            applyInspectorSize(inspector, pendingSize);
+            pendingSize = null;
+        };
+        const scheduleSize = size => {
+            pendingSize = size;
+            if (pendingFrame) return;
+            pendingFrame = requestFrame(() => {
+                pendingFrame = 0;
+                flushSize();
+            });
+        };
+        const cleanup = () => {
+            cancelFrame(pendingFrame);
+            pendingFrame = 0;
+            pendingSize = null;
+            ownerDocument.removeEventListener('pointermove', onPointerMove);
+            ownerDocument.removeEventListener('pointerup', onPointerUp);
+            ownerDocument.removeEventListener('pointercancel', onPointerUp);
+            try {
+                if (pointerId !== undefined && pointerId !== null && typeof resizeHandle.releasePointerCapture === 'function') {
+                    resizeHandle.releasePointerCapture(pointerId);
+                }
+            } catch {
+                // Pointer capture may already have been released by the browser.
+            }
+            inspector.classList.remove('is-resizing');
+            state.inspectorResizing = false;
+        };
+        const onPointerMove = moveEvent => {
+            const nextWidth = rect.width + Number(moveEvent.clientX || 0) - startX;
+            const nextHeight = rect.height + Number(moveEvent.clientY || 0) - startY;
+            const nextSize = clampInspectorSize({ width: nextWidth, height: nextHeight }, viewport);
+            resized = resized || Math.abs(nextSize.width - rect.width) >= 1 || Math.abs(nextSize.height - rect.height) >= 1;
+            if (!resized) return;
+            moveEvent.preventDefault?.();
+            state.inspectorResizing = true;
+            inspector.classList.add('is-resizing');
+            state.inspectorSize = nextSize;
+            scheduleSize(nextSize);
+        };
+        const onPointerUp = () => {
+            if (resized) flushSize();
+            cleanup();
+            if (resized) saveInspectorSize(state.inspectorSize);
+        };
+        try {
+            if (pointerId !== undefined && pointerId !== null && typeof resizeHandle.setPointerCapture === 'function') {
+                resizeHandle.setPointerCapture(pointerId);
+            }
+        } catch {
+            // Pointer capture is an enhancement; document listeners remain the fallback.
+        }
         ownerDocument.addEventListener('pointermove', onPointerMove);
         ownerDocument.addEventListener('pointerup', onPointerUp, { once: true });
         ownerDocument.addEventListener('pointercancel', onPointerUp, { once: true });
     });
 }
 
+function closeConstraintSidebarMenu(container, state, { restoreFocus = false } = {}) {
+    if (!state?.constraintDialog?.sidebarMenuOpen) return false;
+    state.constraintDialog.sidebarMenuOpen = false;
+    container?.querySelector?.('.tt-smart-helper-menu')?.remove?.();
+    const trigger = container?.querySelector?.('[data-action="toggle-constraint-sidebar-menu"]');
+    trigger?.setAttribute?.('aria-expanded', 'false');
+    if (restoreFocus) trigger?.focus?.();
+    return true;
+}
+
+function closeConstraintFulfillmentFilterMenu(container, state, { restoreFocus = false } = {}) {
+    if (!state?.constraintFulfillmentFilterMenuOpen) return false;
+    state.constraintFulfillmentFilterMenuOpen = false;
+    const menu = container?.querySelector?.('.tt-constraint-fulfillment-status-options');
+    const trigger = container?.querySelector?.('[data-action="toggle-constraint-fulfillment-filter-menu"]');
+    if (menu) menu.hidden = true;
+    trigger?.setAttribute?.('aria-expanded', 'false');
+    if (restoreFocus) trigger?.focus?.();
+    return true;
+}
+
+function fulfillmentRowById(container, rowId) {
+    return [...(container?.querySelectorAll?.('.tt-constraint-fulfillment-row') || [])]
+        .find(row => String(row.dataset.constraintFulfillmentRow || '') === String(rowId || '')) || null;
+}
+
+function rerenderConstraintFulfillmentPreservingScroll(container, controller, anchorId = '') {
+    const body = container?.querySelector?.('.tt-inspector-body');
+    const bodyRect = body?.getBoundingClientRect?.();
+    const anchor = anchorId ? fulfillmentRowById(container, anchorId) : null;
+    const anchorRect = anchor?.getBoundingClientRect?.();
+    const scrollTop = Number(body?.scrollTop || 0);
+    const anchorOffset = anchorRect && bodyRect ? anchorRect.top - bodyRect.top : null;
+    controller?.render?.();
+    const nextBody = container?.querySelector?.('.tt-inspector-body');
+    if (!nextBody) return;
+    if (anchorOffset === null) {
+        nextBody.scrollTop = scrollTop;
+        return;
+    }
+    const nextAnchor = fulfillmentRowById(container, anchorId);
+    const nextBodyRect = nextBody.getBoundingClientRect?.();
+    const nextAnchorRect = nextAnchor?.getBoundingClientRect?.();
+    if (nextAnchorRect && nextBodyRect) {
+        nextBody.scrollTop = Math.max(0, scrollTop + (nextAnchorRect.top - nextBodyRect.top) - anchorOffset);
+    } else {
+        nextBody.scrollTop = scrollTop;
+    }
+}
+
+function toggleConstraintFulfillmentRow(container, controller, state, rowId) {
+    const id = String(rowId || '');
+    if (!id) return;
+    state.constraintFulfillmentExpandedRowId = state.constraintFulfillmentExpandedRowId === id ? '' : id;
+    closeConstraintFulfillmentFilterMenu(container, state);
+    rerenderConstraintFulfillmentPreservingScroll(container, controller, id);
+}
+
+function fulfillmentStatusForInteraction(item = {}) {
+    if (item.status === 'unmet') return 'violated';
+    if (item.status === 'not_applicable') return 'not_evaluable';
+    return item.status || 'not_evaluable';
+}
+
+function fulfillmentItemVisibleForFilter(item = {}, filter = 'all') {
+    const status = fulfillmentStatusForInteraction(item);
+    if (filter === 'all') return true;
+    if (filter === 'attention') return status === 'violated' || status === 'partial';
+    return status === filter;
+}
+
 export function handleTimetableEscape(event, container, controller, state) {
     if (event?.key !== 'Escape') return false;
+
+    if (state?.constraintDialog?.sidebarMenuOpen) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        closeConstraintSidebarMenu(container, state, { restoreFocus: true });
+        return true;
+    }
+
+    if (state?.constraintFulfillmentFilterMenuOpen) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        closeConstraintFulfillmentFilterMenu(container, state, { restoreFocus: true });
+        return true;
+    }
+
+    if (state?.constraintDialog?.editingSourceRequirement) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        controller?.cancelSourceRequirementEdit?.();
+        return true;
+    }
 
     if (state?.constraintDialog?.editingConstraint) {
         event.preventDefault?.();
@@ -570,6 +871,10 @@ export function handleTimetableEscape(event, container, controller, state) {
         controller.closeConstraintChat?.();
         return true;
     }
+    if (state.constraintDialog?.editingConstraint) {
+        controller.cancelEditConstraint?.();
+        return true;
+    }
     if (state.constraintDialog?.open) {
         controller.closeConstraintDialog?.();
         return true;
@@ -602,6 +907,53 @@ export function handleTimetableEscape(event, container, controller, state) {
     }
 
     return true;
+}
+
+function sourceEditorDraftValues(clause = {}, key = '') {
+    const scope = clause.scope || {};
+    const parameters = clause.parameters || {};
+    return [...new Set([
+        ...(Array.isArray(scope[key]) ? scope[key] : []),
+        ...(Array.isArray(parameters[key]) ? parameters[key] : []),
+    ].map(String).filter(Boolean))];
+}
+
+function deriveSourceEditorClassIds(project = {}, clause = {}) {
+    const scopeKind = clause.scope?.kind || clause.parameters?.scopeQualifier || 'unresolved';
+    const classes = project.classes || [];
+    const knownClassIds = new Set(classes.map(item => String(item.id)));
+    const existingClassIds = sourceEditorDraftValues(clause, 'classIds').filter(id => knownClassIds.has(id));
+    const gradeNames = new Set(sourceEditorDraftValues(clause, 'gradeNames'));
+    const teacherIds = new Set(sourceEditorDraftValues(clause, 'teacherIds'));
+    const targetIds = new Set((clause.object?.matchedIds || clause.target?.matchedIds || []).map(String));
+    const offeringClassIds = [...new Set((project.lessonPlans || [])
+        .filter(plan => (
+            (!targetIds.size || targetIds.has(String(plan.subjectId)))
+            && (!teacherIds.size || teacherIds.has(String(plan.teacherId)))
+        ))
+        .map(plan => String(plan.classId))
+        .filter(id => knownClassIds.has(id)))];
+    if (scopeKind === 'explicit_classes') return existingClassIds;
+    if (scopeKind === 'grade_classes') {
+        return classes.filter(item => gradeNames.has(String(item.grade))).map(item => String(item.id));
+    }
+    if (['teacher_covered_classes', 'subject_offering_classes', 'school'].includes(scopeKind)) {
+        return offeringClassIds.length ? offeringClassIds : existingClassIds;
+    }
+    return existingClassIds;
+}
+
+function refreshSourceRequirementScopePreview(preview, clauseNode, state = {}) {
+    const index = Number.parseInt(clauseNode?.dataset?.sourceClauseIndex, 10);
+    const clause = state.constraintDialog?.editingSourceRequirement?.clauses?.[index];
+    if (!clause) return;
+    const classIds = deriveSourceEditorClassIds(state.project || {}, clause);
+    const classesById = new Map((state.project?.classes || []).map(item => [String(item.id), item]));
+    const names = classIds.slice(0, 6).map(id => {
+        const item = classesById.get(String(id));
+        return item ? [item.grade, item.name].filter(Boolean).join('') : id;
+    });
+    preview.textContent = `当前派生范围：${classIds.length} 个班级${names.length ? ` · ${names.join('、')}` : ''}`;
 }
 
 function bindDelegatedInteractions(container) {
@@ -685,6 +1037,10 @@ function bindDelegatedInteractions(container) {
             controller.closeConstraintDialog();
             return;
         }
+        if (event.target.matches('[data-constraint-edit-backdrop]')) {
+            controller.cancelEditConstraint?.();
+            return;
+        }
         if (event.target.matches('[data-duty-assignment-overlay]')) {
             controller.closeDutyAssignmentDialog?.();
             return;
@@ -699,6 +1055,18 @@ function bindDelegatedInteractions(container) {
         }
         if (event.target.matches('[data-duty-teacher-search]')) {
             controller.openDutyTeacherOptions?.();
+        }
+        if (
+            state.constraintDialog?.sidebarMenuOpen
+            && !event.target.closest?.('.tt-smart-helper-entry-shell')
+        ) {
+            closeConstraintSidebarMenu(container, state);
+        }
+        if (
+            state.constraintFulfillmentFilterMenuOpen
+            && !event.target.closest?.('.tt-constraint-fulfillment-status-menu')
+        ) {
+            closeConstraintFulfillmentFilterMenu(container, state);
         }
         const actionNode = event.target.closest('[data-action]');
         const action = actionNode?.dataset.action || '';
@@ -718,14 +1086,48 @@ function bindDelegatedInteractions(container) {
                 event.preventDefault?.();
                 event.stopPropagation?.();
             }
+        } else if (action === 'toggle-constraint-fulfillment-filter-menu') {
+            state.constraintFulfillmentFilterMenuOpen = !state.constraintFulfillmentFilterMenuOpen;
+            controller.render?.();
+            if (state.constraintFulfillmentFilterMenuOpen) {
+                container.querySelector?.('.tt-constraint-fulfillment-status-options:not([hidden]) [role="menuitemradio"]')?.focus?.();
+            }
+            event.preventDefault?.();
+            event.stopPropagation?.();
+        } else if (action === 'toggle-constraint-fulfillment-row') {
+            toggleConstraintFulfillmentRow(
+                container,
+                controller,
+                state,
+                actionNode?.dataset.constraintFulfillmentRow || '',
+            );
+            event.preventDefault?.();
+            event.stopPropagation?.();
         } else if (action === 'filter-constraint-fulfillment') {
             const filter = actionNode?.dataset.constraintFulfillmentFilter || 'attention';
             state.constraintFulfillmentFilter = filter;
+            state.constraintFulfillmentFilterMenuOpen = false;
+            const expandedId = state.constraintFulfillmentExpandedRowId || '';
+            const expandedItem = (state.constraintFulfillment?.items || [])
+                .find(item => String(item.id || item.ruleId || '') === String(expandedId));
+            if (expandedItem && !fulfillmentItemVisibleForFilter(expandedItem, filter)) {
+                state.constraintFulfillmentExpandedRowId = '';
+            }
+            rerenderConstraintFulfillmentPreservingScroll(container, controller, state.constraintFulfillmentExpandedRowId);
+            event.preventDefault?.();
+            event.stopPropagation?.();
+        } else if (action === 'open-solver-review') {
+            state.inspectorOpen = true;
+            state.inspectorDismissed = false;
             controller.render?.();
             event.preventDefault?.();
             event.stopPropagation?.();
-        } else if (action === 'rerun-constraint-fulfillment') {
-            controller.runSchedule?.();
+        } else if (action === 'close-inspector') {
+            state.inspectorOpen = false;
+            state.inspectorDismissed = true;
+            state.inspectorDragging = false;
+            state.inspectorResizing = false;
+            controller.render?.();
             event.preventDefault?.();
             event.stopPropagation?.();
         } else if (action === 'constraint-fulfillment-suggestion') {
@@ -800,13 +1202,36 @@ function bindDelegatedInteractions(container) {
             controller.closeConstraintChat();
         }
         // 智能约束弹窗actions
-        else if (action === 'open-constraint-dialog') {
+        else if (action === 'toggle-constraint-sidebar-menu') {
+            state.constraintDialog = {
+                ...(state.constraintDialog || {}),
+                sidebarMenuOpen: state.constraintDialog?.sidebarMenuOpen !== true,
+            };
+            const opening = state.constraintDialog.sidebarMenuOpen;
+            controller.render();
+            if (opening && typeof requestAnimationFrame === 'function') {
+                requestAnimationFrame(() => container.querySelector?.('.tt-smart-helper-menu [role="menuitem"]')?.focus?.());
+            }
+        } else if (action === 'reenter-constraint-input') {
+            state.constraintDialog = {
+                ...(state.constraintDialog || {}),
+                sidebarMenuOpen: false,
+                inputExpanded: true,
+                agentConversationExpanded: true,
+            };
+            controller.openConstraintDialog();
+        } else if (action === 'clear-applied-constraints') {
+            closeConstraintSidebarMenu(container, state);
+            controller.clearRules();
+        } else if (action === 'open-constraint-dialog') {
             controller.openConstraintDialog();
         } else if (action === 'close-constraint-dialog') {
             controller.closeConstraintDialog();
         } else if (action === 'switch-constraint-mode') {
             const mode = event.target.closest('[data-mode]')?.dataset.mode;
             controller.switchConstraintMode(mode);
+        } else if (action === 'toggle-constraint-agent-conversation') {
+            controller.toggleConstraintAgentConversation();
         } else if (action === 'parse-constraints') {
             controller.parseConstraintsFromDialog();
         } else if (action === 'expand-constraint-input') {
@@ -819,6 +1244,9 @@ function bindDelegatedInteractions(container) {
             controller.openRosterImport?.('file');
         } else if (action === 'add-manual-constraint') {
             controller.addManualConstraint();
+        } else if (action === 'apply-education-soft-template') {
+            const templateKey = event.target.closest('[data-education-template]')?.dataset.educationTemplate;
+            controller.applyEducationSoftRuleTemplate(templateKey);
         } else if (action === 'filter-requirements') {
             const filter = event.target.closest('[data-requirement-filter]')?.dataset.requirementFilter;
             controller.filterRequirements(filter);
@@ -835,8 +1263,11 @@ function bindDelegatedInteractions(container) {
             const clarifyValue = event.target.closest('[data-clarify-value]')?.dataset.clarifyValue;
             controller.submitRequirementClarification(requirementId, clarifyValue);
         } else if (action === 'toggle-constraint-apply-item') {
-            const applyItemKey = event.target.closest('[data-apply-item-key]')?.dataset.applyItemKey;
-            controller.toggleConstraintApplyItem(applyItemKey);
+            const applyItemNode = event.target.closest('[data-apply-item-key]');
+            controller.toggleConstraintApplyItem(
+                applyItemNode?.dataset.applyItemKey,
+                applyItemNode?.dataset.requirementId,
+            );
         } else if (action === 'delete-constraint') {
             const constraintId = event.target.closest('[data-constraint-id]')?.dataset.constraintId;
             controller.deleteConstraint(constraintId);
@@ -869,6 +1300,13 @@ function bindDelegatedInteractions(container) {
             controller.saveEditedConstraint();
         } else if (action === 'cancel-edit-constraint') {
             controller.cancelEditConstraint();
+        } else if (action === 'edit-source-requirement') {
+            const sourceId = event.target.closest('[data-source-id]')?.dataset.sourceId;
+            controller.editSourceRequirement(sourceId);
+        } else if (action === 'save-source-requirement-edit') {
+            controller.saveSourceRequirementEdit();
+        } else if (action === 'cancel-source-requirement-edit') {
+            controller.cancelSourceRequirementEdit();
         }
         // AI 对话actions
         else if (action === 'start-ai-chat') {
@@ -919,6 +1357,7 @@ function bindDelegatedInteractions(container) {
             const slotNode = event.target.closest('.tt-slot');
             if (slotNode && container.contains(slotNode)) {
                 state.selectedSlotId = slotNode.dataset.slotId;
+                state.inspectorDismissed = false;
                 controller.render();
             }
         }
@@ -946,7 +1385,28 @@ function bindDelegatedInteractions(container) {
     container.addEventListener('change', event => {
         const controller = container.__ttController;
         if (!controller) return;
-        if (event.target.matches('[data-segment-field], [data-global-default-field]')) {
+        if (event.target.matches('[data-source-field], [data-source-rationale-index]')) {
+            controller.updateSourceRequirementDraftFromDom?.();
+        }
+        if (event.target.matches('[data-source-field="scopeKind"]')) {
+            const clause = event.target.closest?.('[data-source-clause-index]');
+            const visibleFields = new Set({
+                explicit_classes: ['classIds'],
+                grade_classes: ['gradeNames'],
+                teacher_covered_classes: ['teacherIds'],
+            }[event.target.value] || []);
+            clause?.querySelectorAll?.('[data-source-scope-field]').forEach(field => {
+                const visible = visibleFields.has(field.dataset.sourceScopeField || '');
+                field.hidden = !visible;
+                field.setAttribute('aria-hidden', visible ? 'false' : 'true');
+            });
+            const preview = clause?.querySelector?.('.tt-source-derived-preview');
+            if (preview) refreshSourceRequirementScopePreview(preview, clause, controller.state);
+        } else if (event.target.matches('[data-source-field="targetIds"], [data-source-field="classIds"], [data-source-field="teacherIds"], [data-source-field="gradeNames"]')) {
+            const clause = event.target.closest?.('[data-source-clause-index]');
+            const preview = clause?.querySelector?.('.tt-source-derived-preview');
+            if (preview) refreshSourceRequirementScopePreview(preview, clause, controller.state);
+        } else if (event.target.matches('[data-segment-field], [data-global-default-field]')) {
             controller.updateSegmentConfigFromForm();
         } else if (event.target.matches('[data-period-time-setting]')) {
             controller.updatePeriodTimeSettingsFromForm();
@@ -961,12 +1421,20 @@ function bindDelegatedInteractions(container) {
             controller.refreshPeriodTimeGapInputsFromDom();
         } else if (event.target.matches('#tt-constraint-file-input')) {
             controller.handleConstraintFileSelect(event);
+        } else if (event.target.matches('[data-rule-field]')) {
+            const field = event.target.dataset.ruleField || '';
+            controller.updateEditingConstraintDraftFromDom?.({
+                rerender: ['targetValue', 'scopeMode', 'scopeClassId', 'restrictTeacher'].includes(field),
+            });
         }
     });
 
     container.addEventListener('input', event => {
         const controller = container.__ttController;
         if (!controller) return;
+        if (event.target.matches('[data-source-field], [data-source-rationale-index]')) {
+            controller.updateSourceRequirementDraftFromDom?.();
+        }
         if (event.target.matches('[data-segment-field], [data-global-default-field]')) {
             controller.updateSegmentConfigFromForm();
         } else if (event.target.matches('[data-period-time-setting]')) {
@@ -992,6 +1460,8 @@ function bindDelegatedInteractions(container) {
             controller.filterDutyTeacherOptions?.(event.target.value);
         } else if (event.target.matches('#tt-roster-append-text')) {
             controller.updateRosterAppendText?.(event.target.value);
+        } else if (event.target.matches('[data-rule-field]')) {
+            controller.updateEditingConstraintDraftFromDom?.();
         }
     });
 
@@ -999,6 +1469,74 @@ function bindDelegatedInteractions(container) {
         const controller = container.__ttController;
 
         if (controller && handleRuleTypePickerKeydown(event, controller)) return;
+
+        const sidebarMenu = event.target.closest?.('.tt-smart-helper-menu');
+        if (sidebarMenu && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+            const items = [...sidebarMenu.querySelectorAll?.('[role="menuitem"]') || []]
+                .filter(item => !item.disabled);
+            if (items.length) {
+                event.preventDefault();
+                const currentIndex = Math.max(0, items.indexOf(event.target));
+                const nextIndex = event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                        ? items.length - 1
+                        : event.key === 'ArrowDown'
+                            ? (currentIndex + 1) % items.length
+                            : (currentIndex - 1 + items.length) % items.length;
+                items[nextIndex]?.focus?.();
+                return;
+            }
+        }
+
+        const fulfillmentMenu = event.target.closest?.('.tt-constraint-fulfillment-status-options');
+        if (fulfillmentMenu && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+            const items = [...fulfillmentMenu.querySelectorAll?.('[role="menuitemradio"]') || []]
+                .filter(item => !item.disabled);
+            if (items.length) {
+                event.preventDefault();
+                const currentIndex = Math.max(0, items.indexOf(event.target));
+                const nextIndex = event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                        ? items.length - 1
+                        : event.key === 'ArrowDown'
+                            ? (currentIndex + 1) % items.length
+                            : (currentIndex - 1 + items.length) % items.length;
+                items[nextIndex]?.focus?.();
+                return;
+            }
+        }
+
+        const fulfillmentRowToggle = event.target.closest?.('[data-action="toggle-constraint-fulfillment-row"]');
+        if (fulfillmentRowToggle && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            event.stopPropagation();
+            toggleConstraintFulfillmentRow(
+                container,
+                controller,
+                container.__ttState,
+                fulfillmentRowToggle.dataset.constraintFulfillmentRow || '',
+            );
+            return;
+        }
+
+        const editModal = event.target.closest?.('.tt-constraint-edit-modal');
+        if (editModal && event.key === 'Tab') {
+            const focusable = [...editModal.querySelectorAll?.('button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])') || []]
+                .filter(node => !node.hidden && node.offsetParent !== null);
+            if (focusable.length) {
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (event.shiftKey && event.target === first) {
+                    event.preventDefault();
+                    last.focus();
+                } else if (!event.shiftKey && event.target === last) {
+                    event.preventDefault();
+                    first.focus();
+                }
+            }
+        }
 
         if (event.key === 'Escape' && event.target.matches?.('[data-constraint-rule-help-toggle]')) {
             const picker = event.target.closest?.('.tt-constraint-rule-type-field')

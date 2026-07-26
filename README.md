@@ -122,7 +122,7 @@ npm run build:studio
 | GeoGebra 动态几何 | Node Gateway、本地浏览器资源 | 离线画布和 Studio 不需要新增变量；AI 命令规划、Studio 调整复用 `DEEPSEEK_API_KEY`、`DEEPSEEK_API_BASE`、`DEEPSEEK_MODEL` | 无 Key 时画布和手写命令仍可用，主输入框生成命令、Studio AI 调整和失败修复不可用。 |
 | 座位规划基础能力 | Node Gateway | 无强制外部 Key | 本地规则和基础预览可用，AI 辅助能力受限。 |
 | 座位规划 AI 辅助 | Node Gateway | `DEEPSEEK_API_KEY` | 自然语言解析、AI 建议和智能预览能力受限。 |
-| Timefold 求解 | Timefold Solver、Node Gateway | `TIMEFOLD_SOLVER_URL`、`TIMEFOLD_SOLVER_TIMEOUT` 可选 | 复杂求解不可用，座位工具仍可走本地能力。 |
+| Timefold 求解 | Timefold Solver、Node Gateway | `TIMEFOLD_SOLVER_URL`、`TIMETABLE_SOLVER_TIMEOUT`（默认 210 秒）可选；旧 `TIMEFOLD_SOLVER_TIMEOUT` 继续兼容 | 复杂求解不可用，座位工具仍可走本地能力。 |
 | 反馈邮件 | Node Gateway、SMTP 服务 | `SMTP_HOST`、`SMTP_PORT`、`SMTP_USER`、`SMTP_PASS`、`FEEDBACK_EMAIL_TO` | 邮件发送不可用。 |
 
 ## 服务拓扑

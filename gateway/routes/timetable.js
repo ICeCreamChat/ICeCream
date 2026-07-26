@@ -38,6 +38,7 @@ import {
     normalizeTimetableRuleDraftRows,
     parseTimetableRules,
     rebindTimetableRuleResult,
+    recompileTimetableSourceRequirement,
     TimetableRuleParseError,
 } from '../services/timetable-rule-parser.js';
 import {
@@ -89,6 +90,17 @@ function fail(res, error, status = 400, data = undefined) {
 
 function hasTimefoldSolverConfigured(env = process.env) {
     return Boolean(String(env.TIMEFOLD_SOLVER_URL || '').trim());
+}
+
+function summarizeFastSchedule(schedule = null) {
+    if (!schedule) return null;
+    return {
+        score: schedule.score || null,
+        unplaced: schedule.unplaced || [],
+        conflicts: schedule.conflicts || [],
+        audit: schedule.audit || null,
+        solverStats: schedule.solverStats || null,
+    };
 }
 
 function sameNumberList(left = [], right = []) {
@@ -428,7 +440,10 @@ function failPublicationFingerprintMismatch(res, current, verification) {
 router.get('/bootstrap', async (req, res) => {
     try {
         const project = await store().loadProject();
-        ok(res, { project });
+        ok(res, {
+            project,
+            solverScaleHint: buildTimetableSolveScaleHint(project, process.env),
+        });
     } catch (error) {
         fail(res, error, 500);
     }
@@ -683,6 +698,27 @@ router.post('/requirements/apply', async (req, res) => {
     }
 });
 
+router.post('/requirements/recompile', async (req, res) => {
+    let current = null;
+    try {
+        current = await store().loadProject();
+        const result = recompileTimetableSourceRequirement({
+            project: current,
+            previousResult: req.body?.previousResult || {},
+            sourceId: req.body?.sourceId || '',
+            textHash: req.body?.textHash || '',
+            clauses: req.body?.clauses || [],
+            rationales: req.body?.rationales || [],
+        });
+        ok(res, result);
+    } catch (error) {
+        fail(res, error, error.status || 400, {
+            project: current,
+            reason: error.reason || 'requirements_recompile_failed',
+        });
+    }
+});
+
 router.post('/requirements/clarify', async (req, res) => {
     let current = null;
     try {
@@ -801,6 +837,29 @@ router.post('/schedule/run', async (req, res) => {
             });
             return;
         }
+        const solverDowngrade = hasTimefoldSolverConfigured() && !canUseTimefoldForTimetable(current)
+            ? timefoldTimetableUnsupportedReason(current)
+            : null;
+        const solverScaleHint = buildTimetableSolveScaleHint(current, process.env);
+        if (hasTimefoldSolverConfigured() && !solverDowngrade) {
+            const solverJob = createTimetableOptimizationJob({
+                project: current,
+                schedule: current.schedule,
+                mode: 'solve',
+                store: timetableStore,
+            });
+            ok(res, {
+                project: current,
+                schedule: current.schedule,
+                solverJob,
+                solverDowngrade: null,
+                solverScaleHint,
+                solveMode: 'timefold_direct',
+                fastAttempt: null,
+            });
+            return;
+        }
+
         const fastResult = runTimetableScheduler(current, { seed: req.body?.seed });
         if (!fastResult.success) {
             fail(res, new Error('快速排课未能生成完整课表，旧课表已保留。'), 422, {
@@ -809,27 +868,21 @@ router.post('/schedule/run', async (req, res) => {
                 reason: 'fast_construct_failed',
                 audit: fastResult.schedule?.audit || audit,
                 solverStats: fastResult.schedule?.solverStats || null,
+                fastAttempt: summarizeFastSchedule(fastResult.schedule),
+                solverDowngrade,
             });
             return;
         }
 
         const saved = await timetableStore.saveProject(fastResult.project);
-        const solverDowngrade = hasTimefoldSolverConfigured() && !canUseTimefoldForTimetable(saved)
-            ? timefoldTimetableUnsupportedReason(saved)
-            : null;
-        const solverJob = hasTimefoldSolverConfigured() && !solverDowngrade
-            ? createTimetableOptimizationJob({
-                project: saved,
-                schedule: saved.schedule,
-                store: timetableStore,
-            })
-            : null;
         ok(res, {
             project: saved,
             schedule: saved.schedule,
-            solverJob,
+            solverJob: null,
             solverDowngrade,
             solverScaleHint: buildTimetableSolveScaleHint(saved, process.env),
+            solveMode: 'fast_only',
+            fastAttempt: summarizeFastSchedule(saved.schedule),
         });
     } catch (error) {
         fail(res, error, 500);

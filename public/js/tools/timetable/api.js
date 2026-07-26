@@ -128,6 +128,7 @@ export function normalizeApiError(error) {
         audit: payload?.data?.audit || null,
         publication: payload?.data?.publication || null,
         solverStats: payload?.data?.solverStats || null,
+        fastAttempt: payload?.data?.fastAttempt || null,
         errors: payload?.data?.errors || null,
         warnings: payload?.data?.warnings || null,
     };

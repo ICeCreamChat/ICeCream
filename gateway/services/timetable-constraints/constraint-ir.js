@@ -1,4 +1,4 @@
-export const CONSTRAINT_IR_SCHEMA_VERSION = 1;
+export const CONSTRAINT_IR_SCHEMA_VERSION = 2;
 export const CONSTRAINT_IR_KIND = 'ConstraintIR';
 
 export const UNDERSTANDING_STATUSES = new Set([
@@ -34,6 +34,7 @@ export const CONSTRAINT_LANDINGS = new Set([
     'lesson_plan',
     'optimization',
     'solver_policy',
+    'model_extension',
     'clarification',
     'review',
 ]);
@@ -95,6 +96,50 @@ function normalizeTarget(target = {}) {
         scope: key(candidate.scope || 'explicit') || 'explicit',
         candidates: uniqueObjects(candidate.candidates),
     };
+}
+
+const SCOPE_KINDS = new Set([
+    'explicit_classes',
+    'grade_classes',
+    'teacher_covered_classes',
+    'subject_offering_classes',
+    'school',
+    'unresolved',
+]);
+
+const RELATION_KINDS = new Set(['independent', 'inherits', 'emphasis', 'exception']);
+
+function normalizeScope(scope = {}) {
+    const candidate = scope && typeof scope === 'object' ? scope : {};
+    const rawKind = key(candidate.kind || candidate.qualifier || '');
+    const kindValue = rawKind === 'teacher_covered_classes'
+        ? rawKind
+        : rawKind === 'school' || rawKind === 'global' || rawKind === 'all_school'
+            ? 'school'
+            : SCOPE_KINDS.has(rawKind)
+                ? rawKind
+                : uniqueStrings(candidate.classIds).length
+                    ? 'explicit_classes'
+                    : uniqueStrings(candidate.gradeNames).length
+                        ? 'grade_classes'
+                        : 'unresolved';
+    return stableValue({
+        ...candidate,
+        kind: kindValue,
+        classIds: uniqueStrings(candidate.classIds, 160),
+        teacherIds: uniqueStrings(candidate.teacherIds, 160),
+        gradeNames: uniqueStrings(candidate.gradeNames, 160),
+    });
+}
+
+function normalizeRelation(relation = {}) {
+    const candidate = relation && typeof relation === 'object' ? relation : {};
+    const rawKind = key(candidate.kind || 'independent');
+    return stableValue({
+        ...candidate,
+        kind: RELATION_KINDS.has(rawKind) ? rawKind : 'independent',
+        parentClauseId: text(candidate.parentClauseId || candidate.parentId || '', 300),
+    });
 }
 
 function normalizeLanding(value) {
@@ -172,9 +217,10 @@ export function normalizeConstraintIR(input = {}, defaults = {}) {
         capabilityId,
         intent,
         target,
-        scope: candidate.scope && typeof candidate.scope === 'object' ? stableValue(candidate.scope) : {},
+        scope: normalizeScope(candidate.scope || {}),
         time: candidate.time && typeof candidate.time === 'object' ? stableValue(candidate.time) : {},
-        relation: candidate.relation && typeof candidate.relation === 'object' ? stableValue(candidate.relation) : {},
+        relation: normalizeRelation(candidate.relation || {}),
+        quantifier: candidate.quantifier && typeof candidate.quantifier === 'object' ? stableValue(candidate.quantifier) : {},
         parameters: candidate.parameters && typeof candidate.parameters === 'object' ? stableValue(candidate.parameters) : {},
         strength: key(candidate.strength || candidate.priority || fallback.strength || 'soft') === 'hard' ? 'hard' : 'soft',
         priority: Number.isFinite(Number(candidate.priorityWeight ?? candidate.weight ?? fallback.priorityWeight))

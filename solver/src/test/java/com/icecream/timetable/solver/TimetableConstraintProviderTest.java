@@ -1,18 +1,76 @@
 package com.icecream.timetable.solver;
 
+import ai.timefold.solver.core.api.domain.variable.PlanningVariable;
+import ai.timefold.solver.core.api.domain.valuerange.ValueRangeProvider;
 import ai.timefold.solver.core.api.score.stream.test.ConstraintVerifier;
 import com.icecream.timetable.domain.LessonAssignment;
 import com.icecream.timetable.domain.Room;
+import com.icecream.timetable.domain.SchedulingUnit;
 import com.icecream.timetable.domain.TimeSlot;
 import com.icecream.timetable.domain.TimetableSolution;
+import com.icecream.timetable.domain.UnitPlacement;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Method;
 import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TimetableConstraintProviderTest {
 
     private final ConstraintVerifier<TimetableConstraintProvider, TimetableSolution> constraintVerifier =
-            ConstraintVerifier.build(new TimetableConstraintProvider(), TimetableSolution.class, LessonAssignment.class);
+            ConstraintVerifier.build(new TimetableConstraintProvider(), TimetableSolution.class, SchedulingUnit.class);
+
+    @Test
+    void schedulingUnitUsesACompositeCandidatePlacementVariable() throws NoSuchMethodException {
+        Method rangeMethod = SchedulingUnit.class.getDeclaredMethod("getCandidatePlacements");
+        ValueRangeProvider rangeProvider = rangeMethod.getAnnotation(ValueRangeProvider.class);
+        PlanningVariable planningVariable = SchedulingUnit.class.getDeclaredMethod("getPlacement").getAnnotation(PlanningVariable.class);
+
+        assertEquals("candidatePlacementRange", rangeProvider.id());
+        assertArrayEquals(new String[] { "candidatePlacementRange" }, planningVariable.valueRangeProviderRefs());
+    }
+
+    @Test
+    void unassignedUnitIsAHardViolationSoSearchCanTemporarilyUnassignBlockers() {
+        LessonAssignment assignment = lesson("unassigned", "lp1", "c1", "subject", List.of("t1"), null);
+        SchedulingUnit unit = unit(assignment);
+        unit.setPlacement(null);
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::unassignedUnit)
+                .given(unit)
+                .penalizesBy(10);
+    }
+
+    @Test
+    void hardRepairFilterSelectsUnassignedUnitsAndTheirResourceBlockers() {
+        TimeSlot slot = slot("1-1", 1, 1);
+        Room room = room("shared", false);
+        SchedulingUnit unassigned = unit(lesson("target", "lp-target", "c1", "target", List.of("t1"), slot));
+        unassigned.setCandidatePlacements(List.of(new UnitPlacement("target-placement", List.of(slot), room)));
+        unassigned.setPlacement(null);
+        unassigned.setHardRepairFocus(true);
+
+        SchedulingUnit sameClass = unit(lesson("class-blocker", "lp-class", "c1", "other", List.of("t2"), slot));
+        SchedulingUnit sameTeacher = unit(lesson("teacher-blocker", "lp-teacher", "c2", "other", List.of("t1"), slot));
+        SchedulingUnit unrelated = unit(lesson("unrelated", "lp-unrelated", "c3", "other", List.of("t3"), slot));
+
+        TimetableSolution solution = new TimetableSolution();
+        solution.setSchedulingUnits(List.of(unassigned, sameClass, sameTeacher, unrelated));
+        HardRepairSchedulingUnitSelectionFilter filter = new HardRepairSchedulingUnitSelectionFilter();
+
+        assertTrue(filter.acceptSolution(solution, unassigned));
+        assertTrue(filter.acceptSolution(solution, sameClass));
+        assertTrue(filter.acceptSolution(solution, sameTeacher));
+        assertFalse(filter.acceptSolution(solution, unrelated));
+
+        unassigned.setPlacement(unassigned.getCandidatePlacements().getFirst());
+        assertTrue(filter.acceptSolution(solution, unassigned));
+        assertTrue(filter.acceptSolution(solution, sameClass));
+    }
 
     @Test
     void classConflictPenalizesTwoLessonsForSameClassAtSameTime() {
@@ -21,7 +79,7 @@ class TimetableConstraintProviderTest {
         LessonAssignment right = lesson("b", "lp2", "c1", "english", List.of("t2"), slot);
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::classConflict)
-                .given(left, right)
+                .given(unit(left), unit(right))
                 .penalizesBy(1);
     }
 
@@ -31,8 +89,8 @@ class TimetableConstraintProviderTest {
         LessonAssignment left = lesson("a", "lp1", "c1", "math", List.of("t1", "t2"), slot);
         LessonAssignment right = lesson("b", "lp2", "c2", "science", List.of("t2", "t3"), slot);
 
-        constraintVerifier.verifyThat(TimetableConstraintProvider::teacherConflict)
-                .given(left, right)
+        constraintVerifier.verifyThat(TimetableConstraintProvider::mixedTeamTeacherConflict)
+                .given(unit(left), unit(right))
                 .penalizesBy(1);
     }
 
@@ -44,10 +102,10 @@ class TimetableConstraintProviderTest {
         blocked.setBlockedTimeSlotIds(List.of("2-1"));
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::pinnedTime)
-                .given(pinnedWrong)
+                .given(unit(pinnedWrong))
                 .penalizesBy(1);
         constraintVerifier.verifyThat(TimetableConstraintProvider::blockedTime)
-                .given(blocked)
+                .given(unit(blocked))
                 .penalizesBy(1);
     }
 
@@ -69,10 +127,10 @@ class TimetableConstraintProviderTest {
         right.setRoom(gym);
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::roomRequirement)
-                .given(missingRoom)
+                .given(unit(missingRoom))
                 .penalizesBy(1);
         constraintVerifier.verifyThat(TimetableConstraintProvider::roomConflict)
-                .given(left, right)
+                .given(unit(left), unit(right))
                 .penalizesBy(1);
     }
 
@@ -84,12 +142,56 @@ class TimetableConstraintProviderTest {
         wrongRoom.setRoom(room("gym", false));
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::roomRequirement)
-                .given(wrongRoom)
+                .given(unit(wrongRoom))
                 .penalizesBy(1);
     }
 
     @Test
-    void consecutiveBlockRequiresSameDayAndAdjacentOrderedPeriods() {
+    void advancedRoomRequirementAcceptsAnExplicitRoomOrMatchingResourceTag() {
+        LessonAssignment.AdvancedRuleRef rule = advancedRule("room", "room.required");
+        rule.setHard(true);
+        rule.setRoomIds(List.of("named-room"));
+        rule.setRequiredRoomTypes(List.of("lab"));
+
+        LessonAssignment namedRoomLesson = lesson("named", "lp1", "c1", "science", List.of("t1"), slot("1-1", 1, 1));
+        namedRoomLesson.setRoom(room("named-room", false));
+        namedRoomLesson.setAdvancedRules(List.of(rule));
+
+        Room taggedRoom = room("other-lab", false);
+        taggedRoom.setTags(List.of("实验室"));
+        LessonAssignment taggedRoomLesson = lesson("tagged", "lp2", "c2", "science", List.of("t2"), slot("1-2", 1, 2));
+        taggedRoomLesson.setRoom(taggedRoom);
+        taggedRoomLesson.setAdvancedRules(List.of(rule));
+
+        LessonAssignment invalidRoomLesson = lesson("invalid", "lp3", "c3", "science", List.of("t3"), slot("1-3", 1, 3));
+        invalidRoomLesson.setRoom(room("ordinary", false));
+        invalidRoomLesson.setAdvancedRules(List.of(rule));
+
+        constraintVerifier.verifyThat(TimetableConstraintProvider::advancedHardRules)
+                .given(unit(namedRoomLesson), unit(taggedRoomLesson), unit(invalidRoomLesson))
+                .penalizesBy(1);
+    }
+
+    @Test
+    void crossVenueBoundaryProtectsClassTravelWithoutBlockingTeacherOnlyTransitions() {
+        LessonAssignment.AdvancedRuleRef rule = advancedRule("venue", "schedule.cross_venue_boundary");
+        rule.setHard(true);
+        rule.setBoundaryPeriods(List.of(4, 5));
+
+        LessonAssignment beforeLunch = lesson("before", "lp1", "c1", "math", List.of("t1"), slot("1-4", 1, 4));
+        beforeLunch.setRoom(room("lab", false));
+        beforeLunch.setAdvancedRules(List.of(rule));
+
+        LessonAssignment teacherOnly = lesson("teacher-only", "lp2", "c2", "english", List.of("t1"), slot("1-5", 1, 5));
+        teacherOnly.setRoom(room("normal", false));
+        assertFalse(beforeLunch.advancedPairHardViolation(teacherOnly));
+
+        teacherOnly.setClassId("c1");
+        assertTrue(beforeLunch.advancedPairHardViolation(teacherOnly));
+    }
+
+    @Test
+    void schedulingUnitRepresentsAConsecutiveBlockAsOnePlanningEntity() {
         LessonAssignment first = lesson("a", "lp1", "c1", "math", List.of("t1"), slot("1-1", 1, 1));
         LessonAssignment second = lesson("b", "lp1", "c1", "math", List.of("t1"), slot("1-3", 1, 3));
         first.setBlockId("block-1");
@@ -99,14 +201,10 @@ class TimetableConstraintProviderTest {
         first.setBlockSize(2);
         second.setBlockSize(2);
 
-        constraintVerifier.verifyThat(TimetableConstraintProvider::consecutiveBlock)
-                .given(first, second)
-                .penalizesBy(1);
-
-        second.setTimeSlot(slot("1-2", 1, 2));
-        constraintVerifier.verifyThat(TimetableConstraintProvider::consecutiveBlock)
-                .given(first, second)
-                .hasNoImpact();
+        SchedulingUnit unit = unit(first, second);
+        assertEquals(2, unit.getBlockSize());
+        assertEquals("1-1", unit.getPlacement().getStartTimeSlot().getId());
+        assertEquals(List.of("1-1", "1-3"), unit.getPlacement().getTimeSlots().stream().map(TimeSlot::getId).toList());
     }
 
     @Test
@@ -115,7 +213,7 @@ class TimetableConstraintProviderTest {
         LessonAssignment afternoonFirst = lesson("b", "lp2", "c2", "english", List.of("t1"), slot("1-4", 1, 4, false));
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::teacherLunchBridge)
-                .given(morningLast, afternoonFirst)
+                .given(unit(morningLast), unit(afternoonFirst))
                 .penalizesBy(4);
     }
 
@@ -125,7 +223,7 @@ class TimetableConstraintProviderTest {
         LessonAssignment third = lesson("b", "lp2", "c2", "english", List.of("t1"), slot("1-3", 1, 3, true));
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::teacherGap)
-                .given(first, third)
+                .given(unit(first), unit(third))
                 .penalizesBy(2);
     }
 
@@ -141,7 +239,7 @@ class TimetableConstraintProviderTest {
                 teacherRef("t_helper", 1, 5, 1)));
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::teacherWeeklyLimit)
-                .given(first, second)
+                .given(unit(first), unit(second))
                 .penalizesBy(1);
     }
 
@@ -157,7 +255,7 @@ class TimetableConstraintProviderTest {
                 teacherRef("t_helper", 99, 1, 1)));
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::teacherMaxDaysPerWeek)
-                .given(first, second)
+                .given(unit(first), unit(second))
                 .penalizesBy(1);
     }
 
@@ -169,7 +267,7 @@ class TimetableConstraintProviderTest {
         disabledSecond.setTeacherLoadBalanceWeight(0);
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::teacherDailyLoad)
-                .given(disabledFirst, disabledSecond)
+                .given(unit(disabledFirst), unit(disabledSecond))
                 .hasNoImpact();
 
         LessonAssignment weightedFirst = lesson("c", "lp3", "c3", "math", List.of("t1"), slot("1-1", 1, 1));
@@ -178,7 +276,7 @@ class TimetableConstraintProviderTest {
         weightedSecond.setTeacherLoadBalanceWeight(3);
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::teacherDailyLoad)
-                .given(weightedFirst, weightedSecond)
+                .given(unit(weightedFirst), unit(weightedSecond))
                 .penalizesBy(3);
     }
 
@@ -187,14 +285,14 @@ class TimetableConstraintProviderTest {
         List<LessonAssignment> disabled = sameDayTeacherLessons("disabled", "t1", 0);
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::teacherDailyLoadVariance)
-                .given(disabled.toArray())
+                .given(disabled.stream().map(TimetableConstraintProviderTest::unit).toArray(SchedulingUnit[]::new))
                 .hasNoImpact();
 
         List<LessonAssignment> weighted = sameDayTeacherLessons("weighted", "t1", 3);
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::teacherDailyLoadVariance)
-                .given(weighted.toArray())
-                .penalizesBy(6);
+                .given(weighted.stream().map(TimetableConstraintProviderTest::unit).toArray(SchedulingUnit[]::new))
+                .penalizesBy(12);
     }
 
     @Test
@@ -203,7 +301,7 @@ class TimetableConstraintProviderTest {
         LessonAssignment afternoon = lesson("b", "lp1", "c1", "math", List.of("t2"), slot("1-5", 1, 5, false));
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::sameCourseHalfDaySplit)
-                .given(morning, afternoon)
+                .given(unit(morning), unit(afternoon))
                 .penalizesBy(5);
     }
 
@@ -216,10 +314,10 @@ class TimetableConstraintProviderTest {
         second.setAdvancedRules(List.of(advancedRule("scope-g7-1", "subject.spread")));
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::advancedPairSoftRules)
-                .given(first, second)
+                .given(unit(first), unit(second))
                 .penalizesBy(32);
         constraintVerifier.verifyThat(TimetableConstraintProvider::advancedPairSoftRules)
-                .given(first, outsideScope)
+                .given(unit(first), unit(outsideScope))
                 .hasNoImpact();
     }
 
@@ -236,6 +334,18 @@ class TimetableConstraintProviderTest {
         assignment.setTimeSlot(timeSlot);
         assignment.setRoom(room("__NONE__", true));
         return assignment;
+    }
+
+    private static SchedulingUnit unit(LessonAssignment... assignments) {
+        SchedulingUnit unit = new SchedulingUnit();
+        unit.setId("unit-" + assignments[0].getId());
+        unit.setAssignments(List.of(assignments));
+        List<TimeSlot> timeSlots = List.of(assignments).stream().map(LessonAssignment::getTimeSlot).toList();
+        Room room = assignments[0].getRoom();
+        UnitPlacement placement = new UnitPlacement("placement-" + assignments[0].getId(), timeSlots, room);
+        unit.setCandidatePlacements(List.of(placement));
+        unit.setPlacement(placement);
+        return unit;
     }
 
     private static List<LessonAssignment> sameDayTeacherLessons(String prefix, String teacherId, int weight) {

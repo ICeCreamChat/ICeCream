@@ -206,18 +206,38 @@ test('第 114 行保留指定任课教师覆盖班级范围，且不得编译成
         '何安琪', '姚嘉宁', '潘语晨', '蔡若琳', '袁星辰',
     ];
 
-    assert.equal(preferredDayPartIrs.length, 3);
+    assert.equal(preferredDayPartIrs.length, 6);
     assert.deepEqual(
-        preferredDayPartIrs.map(item => item.target.name).sort(),
+        [...new Set(preferredDayPartIrs.map(item => item.target.name))].sort(),
         ['数学', '英语', '语文'],
     );
-    preferredDayPartIrs.forEach((ir) => {
+    const independent = preferredDayPartIrs.filter(item => item.relation.kind === 'independent');
+    const emphasis = preferredDayPartIrs.filter(item => item.relation.kind === 'emphasis');
+    assert.equal(independent.length, 3);
+    assert.equal(emphasis.length, 3);
+    independent.forEach((ir) => {
+        assert.equal(ir.target.kind, 'subject');
+        assert.deepEqual(ir.parameters.periods, [1, 2, 3, 4]);
+        assert.equal(ir.parameters.scopeQualifier, 'subject_offering_classes');
+        assert.equal(ir.scope.kind, 'subject_offering_classes');
+        assert.equal(ir.relation.parentClauseId, '');
+        assert.equal(ir.understandingStatus, 'invalid_reference');
+        assert.equal(ir.executionStatus, 'blocked_by_reference');
+        assert.equal(ir.reviewStatus, 'needs_clarification');
+        assert.equal(ir.support, 'full');
+        assert.deepEqual(ir.machineRuleIds, []);
+    });
+    const independentById = new Map(independent.map(item => [item.clauseId, item]));
+    emphasis.forEach((ir) => {
         assert.equal(ir.target.kind, 'subject');
         assert.deepEqual(ir.parameters.periods, [1, 2, 3, 4]);
         assert.equal(ir.parameters.scopeQualifier, 'teacher_covered_classes');
         assert.deepEqual(ir.parameters.teacherNames, expectedTeacherNames);
         assert.equal(ir.scope.qualifier, 'teacher_covered_classes');
         assert.deepEqual(ir.scope.teacherNames, expectedTeacherNames);
+        const parent = independentById.get(ir.relation.parentClauseId);
+        assert.ok(parent, 'emphasis clause must reference its base preference');
+        assert.equal(parent.target.name, ir.target.name);
         assert.equal(ir.understandingStatus, 'invalid_reference');
         assert.equal(ir.executionStatus, 'blocked_by_reference');
         assert.equal(ir.reviewStatus, 'needs_clarification');
@@ -225,7 +245,7 @@ test('第 114 行保留指定任课教师覆盖班级范围，且不得编译成
         assert.deepEqual(ir.machineRuleIds, []);
     });
 
-    assert.equal(rows.length, 3);
+    assert.equal(rows.length, 6);
     assert.ok(rows.every(row => row.type === 'advanced_constraint' && row.executionStatus === 'blocked_by_reference'));
     assert.equal(source.machineRuleIds.length, 0);
 });
@@ -372,6 +392,7 @@ test('第 115 行按三个明确学科保留九年级、每周至少 3 次和避
     const irs = irsByRow(result, 115);
     const rows = result.draftRows.filter(item => item.sourceId === source.sourceId);
     const preferred = irs.filter(item => item.capabilityId === 'subject.preferred_periods');
+    const concentration = irs.find(item => item.capabilityId === 'subject.avoid_day_part_concentration');
 
     assert.equal(preferred.length, 3);
     assert.deepEqual(preferred.map(item => item.target.name).sort(), ['数学', '英语', '语文']);
@@ -380,7 +401,7 @@ test('第 115 行按三个明确学科保留九年级、每周至少 3 次和避
         assert.deepEqual(ir.parameters.gradeNames, ['九年级']);
         assert.equal(ir.parameters.minOccurrences, 3);
         assert.deepEqual(ir.parameters.periods, [1, 2, 3]);
-        assert.deepEqual(ir.parameters.avoidDayParts, ['afternoon']);
+        assert.equal(ir.parameters.avoidDayParts, undefined);
         assert.equal(ir.understandingStatus, 'invalid_reference');
         assert.equal(ir.executionStatus, 'blocked_by_reference');
         assert.equal(ir.reviewStatus, 'needs_clarification');
@@ -388,6 +409,14 @@ test('第 115 行按三个明确学科保留九年级、每周至少 3 次和避
         assert.deepEqual(ir.machineRuleIds, []);
         assert.doesNotMatch(ir.target.name, /九年级主科|主科/);
     });
+    assert.ok(concentration);
+    assert.equal(concentration.target.kind, 'subject_group');
+    assert.equal(concentration.target.name, '语文、数学、英语');
+    assert.deepEqual(concentration.parameters.gradeNames, ['九年级']);
+    assert.equal(concentration.parameters.dayPart, 'afternoon');
+    assert.equal(concentration.executionStatus, 'unsupported_by_solver');
+    assert.equal(concentration.support, 'none');
+    assert.deepEqual(concentration.machineRuleIds, []);
     assert.equal(rows.length, 3);
     assert.ok(rows.every(row => row.type === 'advanced_constraint' && row.executionStatus === 'blocked_by_reference'));
 });

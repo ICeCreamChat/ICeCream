@@ -1,0 +1,21 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - img "www.scimagojr.com 图标" [ref=e5]
+        - heading "www.scimagojr.com" [level=1] [ref=e6]
+      - heading "正在进行安全验证" [level=2] [ref=e7]
+      - paragraph [ref=e8]: 本网站使用安全服务防护恶意自动程序。在验证您不是自动程序期间，将显示此页面。
+  - contentinfo [ref=e15]:
+    - generic [ref=e17]:
+      - generic [ref=e19]:
+        - text: "Ray ID:"
+        - code [ref=e20]: a1f38c9ada1c9e27
+      - generic [ref=e21]:
+        - generic [ref=e22]:
+          - text: 由
+          - link "Cloudflare" [ref=e23] [cursor=pointer]:
+            - /url: https://www.cloudflare.com?utm_source=challenge&utm_campaign=m
+          - text: 提供的性能和安全服务
+        - link "隐私" [ref=e25] [cursor=pointer]:
+          - /url: https://www.cloudflare.com/zh-cn/privacypolicy/
