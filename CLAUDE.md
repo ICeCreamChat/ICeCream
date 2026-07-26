@@ -2,6 +2,22 @@
 
 本仓库的 AI 协作规则。Claude Code、Codex 等 AI agent 在本仓库工作时遵循此文件。
 
+## 架构文档（动手前必读）
+
+本项目由多个独立模块组成，**修改任何代码前，先读对应文档，禁止跨模块随意改动**：
+
+1. [`docs/architecture/SYSTEM.md`](./docs/architecture/SYSTEM.md) — 系统架构总览：服务拓扑、端口、数据流、启动方式。**每个 AI 会话开始时先读这份。**
+2. [`docs/architecture/MODULES.md`](./docs/architecture/MODULES.md) — 模块清单：每个模块的职责边界、对外接口、依赖方向、测试入口。**改哪个模块，读哪张卡片。**
+3. [`docs/architecture/CHANGES.md`](./docs/architecture/CHANGES.md) — 变更操作手册：常见改动场景（新增约束、改 Schema、调 Prompt 等）的标准步骤。**做对应类型的改动时照此执行。**
+
+核心纪律：
+
+- **模块隔离**：一个模块的修改不得影响其他模块。跨模块改动必须先在 MODULES.md 的"修改矩阵"里确认影响面，并升级任务等级（L1/L2）。
+- **依赖单向**：Frontend → Routes → Services → Solver/Manim；Seating 与 Timetable 互不引用，共享逻辑放 shared/。
+- **接口冻结**：HTTP API 路径与 Schema、projects.json 结构、Solver HTTP 契约、shared/ 导出属于冻结接口，改动即 L2，需用户批准。
+- **文档同步**：新增模块或对外接口时，必须同步更新 MODULES.md，否则视为未完成。
+- **项目拥有者是非程序员**：交付说明用通俗中文写清楚"改了什么、验证了什么、有什么风险"，不要堆术语。
+
 ## 何时触发 OpenSpec 流程
 
 请求涉及以下情形时，先打开 `./OpenSpec/AGENTS.md`，按 spec-driven 流程开 change 提案，**经我（用户）审批后再动手**：

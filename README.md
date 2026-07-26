@@ -8,7 +8,7 @@ ICeCream 是一个面向学习和教学场景的本地 AI 工作台。它把 AI 
 - 本地怎么跑起来。
 - 新接手开发者应该从哪里开始。
 
-更细的模块化改造路线、文件职责、迁移顺序和验收命令，请看 [PROJECT_READING_GUIDE.md](PROJECT_READING_GUIDE.md)。
+更细的系统拓扑、模块职责、接口契约和常见改动步骤，请看 [docs/architecture/](docs/architecture/SYSTEM.md)（SYSTEM 总览 → MODULES 模块清单 → CHANGES 变更手册）。
 
 ## 核心能力
 
@@ -187,7 +187,7 @@ GeoGebra Studio 支持导出 GGBTool 风格的离线互动课件包。导出的 
 
 ## API 分组
 
-README 只列主要入口，避免把内部 job、failure、patch 等维护接口展开成清单。详细职责和拆分计划见 [PROJECT_READING_GUIDE.md](PROJECT_READING_GUIDE.md)。
+README 只列主要入口，避免把内部 job、failure、patch 等维护接口展开成清单。完整接口与模块职责见 [docs/architecture/MODULES.md](docs/architecture/MODULES.md)。
 
 ### Health
 
@@ -312,7 +312,7 @@ git diff --check
 ## 维护入口
 
 - 使用和启动入口：本文档。
-- 模块化交接和深度维护：[PROJECT_READING_GUIDE.md](PROJECT_READING_GUIDE.md)。
+- 模块化交接和深度维护：[docs/architecture/](docs/architecture/SYSTEM.md)（SYSTEM / MODULES / CHANGES 三份）。
 - 环境变量模板：[.env.example](.env.example)。
 - 授权协议：[LICENSE](LICENSE)。
 
