@@ -1,3 +1,5 @@
+// Legacy constraint-chat route still depends on this focused conversation
+// adapter. The timetable-agent subsystem does not yet replace its HTTP contract.
 const SLOT_REQUIRED_TYPES = new Set([
     'teacher_unavailable',
     'class_unavailable',

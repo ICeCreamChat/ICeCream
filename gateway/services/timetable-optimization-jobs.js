@@ -4,7 +4,7 @@ import {
     solveTimetableWithTimefold,
     TimetableTimefoldError,
 } from './timetable-solver-bridge.js';
-import { runTimetableScheduler } from './timetable-diagnostic-scheduler.js';
+import { runTimetableScheduler } from './timetable-local-scheduler.js';
 import { validateTimetablePublication } from './timetable-validation.js';
 
 const jobs = new Map();

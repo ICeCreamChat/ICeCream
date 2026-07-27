@@ -71,7 +71,7 @@ export {
 
 export {
     runTimetableScheduler,
-} from './timetable-diagnostic-scheduler.js';
+} from './timetable-local-scheduler.js';
 
 export {
     validateTimetableProjectForSolve,

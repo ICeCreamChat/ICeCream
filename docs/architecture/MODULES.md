@@ -57,7 +57,7 @@
   - `runAiDrivenArrangement({request, fetchImpl, env})` - 完整排座
   - `runAiLayoutPreview({request, fetchImpl, env})` - 仅布局预览
   - `normalizeArrangeRequest(body)` - 请求规范化
-- **内部实现**：布局算法、AI prompt 构造、护法选择逻辑
+- **内部实现**：本文件只保留顶层编排；`seating-arrange-spec.js` 负责规格，`seating-arrange-layout.js` 负责布局，`seating-arrange-assignment.js` 负责学生分配与优化，`seating-arrange-shared.js` 承载跨职责纯工具
 - **依赖**：seating-constraints.js, seating-solver-bridge.js, shared/seating/
 - **测试**：test/seating-arrange.test.js, test/seating-arrange-route.test.js
 - **常见改动**：
@@ -176,7 +176,8 @@
 | ai-source-alignment.js | AI 输出与源文本对齐 |
 | statistics.js | 解析统计 |
 
-- **入口**：timetable-rule-parser.js 调用此子系统
+- **入口**：`timetable-rule-parser.js` 只保留 10 个公开编排函数；缓存、来源准备、artifact 构建与 IR 处理分别位于 `timetable-rule-parser-cache.js`、`timetable-rule-parser-sources.js`、`timetable-rule-parser-artifacts.js`、`timetable-rule-parser-ir.js`
+- **AI 提取**：`timetable-ai-extractor.js` 保留 AI 调用、Prompt 与缓存实现，`timetable-ai-extraction-validator.js` 负责结果校验、语义规范化和实体引用解析
 - **测试**：test/timetable-constraint-ir-137.test.js, test/timetable-capability-registry.test.js 等
 - **常见改动**：
   - 新增约束类型 → capabilities.js 注册 + constraint-ir.js 定义 + rule-parser 识别 + solver-bridge 传递 + Java 端实现（全链路，属 L1-L2）
@@ -190,7 +191,7 @@
 - **配置**：TIMETABLE_SOLVER_TIMEOUT (210s), TIMETABLE_SOLVER_SPENT_LIMIT (180s)
 
 #### gateway/services/timetable-scheduler.js
-- **职责**：本地排课算法（solver 离线时的降级方案）
+- **职责**：本地排课公共入口；`timetable-local-scheduler.js` 包含本地调度算法及其私有辅助，`timetable-diagnostic-scheduler.js` 只保留可行性分析与冲突组件诊断
 - **测试**：test/timetable-scheduler.test.js
 
 #### solver/src/main/java/com/icecream/timetable/
@@ -228,7 +229,8 @@
 | timetable-conflicts.js | 硬冲突检测（教师/班级/场地重叠） | test/timetable-diagnostics.test.js |
 | timetable-validation.js + timetable-validation-service.js | 发布前校验 | test/ 多处 |
 | timetable-diagnostics.js | 诊断报告生成 | test/timetable-diagnostics.test.js |
-| timetable-diagnostic-scheduler.js | 诊断性重排 | - |
+| timetable-diagnostic-scheduler.js | 可行性分析与冲突组件诊断 | test/timetable-diagnostics.test.js |
+| timetable-local-scheduler.js | 本地调度算法与私有辅助 | test/timetable-scheduler.test.js |
 | timetable-score.js | 课表质量评分 | - |
 
 ### 前端
