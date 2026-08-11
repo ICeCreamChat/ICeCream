@@ -67,51 +67,60 @@ function compactConstraintForPreview(constraint = {}) {
 
 function buildLayoutPreviewMessages({ request, context = {}, repairErrors = [] }) {
     const hints = inferArrangementSpecFromPrompt(request.prompt);
-    const system = `你是教室布局设计师。你只负责根据老师自然语言生成空教室布局预览，不安排学生坐标。
+    const guardianReserve = hints.guardianPolicy?.enabled ? Math.min(2, request.students.length) : 0;
+    const minimumRegularSeats = Math.max(1, request.students.length - guardianReserve);
+    const system = `你是教室排座要求解析器。你只负责把老师的自然语言补充解析成结构化规则，不生成座位矩阵，也不安排学生坐标。
 
 硬性规则：
 - 只输出 JSON，不要 markdown。
-- 不要输出 assignments、unassigned 或学生坐标。
-- classroomLayout.cells 只能使用 "seat"、"aisle"、"empty"。
-- 缺少行列尺寸时，必须根据 studentCount 自动扩容。
+- 不要输出 classroomLayout、matrix、assignments、unassigned 或学生坐标。
+- 本地算法负责容量、矩阵和最终几何，你只需返回 arrangementSpec。
 - arrangementSpec.physicalRows 表示物理座位行数，physicalCols 表示物理座位列数，例如“每列6人”应理解为 physicalRows=6。
 - arrangementSpec.capacityPolicy 只能是 "auto_expand" 或 "fixed"，老师没说固定容量时默认 auto_expand。
+- arrangementSpec.groupGap 只能是 "normal" 或 "none"；“每组之间留空/留过道”默认表示普通桌间距 normal。
+- 只有“中央/中间主过道”等明确可通行通道才使用 aislePolicy.mainVertical 或 mainHorizontal。
+- oddStudentPolicy 使用 "partial_group"，奇数学生允许最后一组保留一个空位。
 - arrangementSpec.columnPattern 用于混合列布局，例如“两边一人一组，中间两人一组”可用 [1,"aisle",2,"aisle",2,"aisle",1]。
 - “两人一桌/双人桌/同桌两个”表示 groupSize=2；“边上/两边一人一组，中间两人一组”表示混合列布局。
-- 没有明确固定容量时，座位容量必须覆盖 studentCount。
-- 过道应连续、清楚；整体布局要整齐、可真实使用。
-- 如果老师要求护法位，只在 classroomLayout.guardians.enabled 标记，不要填写具体学生。`;
+- previousLayoutSummary 仅在 previousLayoutPolicy="preserve" 时可以限制容量，否则旧布局只作参考且必须按当前名单扩容。
+- 如果老师要求护法位，只在 guardianPolicy 中描述规则，不要填写具体学生。`;
     const payload = {
         stage: 'layout_preview',
         prompt: request.prompt,
         studentCount: request.students.length,
         constraints: (request.constraints || []).slice(0, 80).map(compactConstraintForPreview),
         strategy: request.strategy || {},
-        previousLayoutSummary: layoutSummary(request.previousLayout),
+        previousLayoutPolicy: hints.keepPreviousLayout ? 'preserve' : 'reference_only_expand_if_needed',
+        previousLayoutSummary: hints.keepPreviousLayout ? layoutSummary(request.previousLayout) : null,
+        capacityRequirement: {
+            studentCount: request.students.length,
+            guardianReserve,
+            minimumRegularSeats,
+            minimumTotalCapacity: request.students.length,
+            capacityPolicy: hints.capacityPolicy,
+        },
         hints,
         outputSchema: {
             reply: '给老师的简短布局预览说明',
-            physicalRows: 6,
-            capacityPolicy: 'auto_expand',
-            columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
             layoutIntent: {
                 type: 'standard|grouped|exam|u_shape|island|custom_matrix',
                 description: '一句话说明布局意图',
                 confidence: 'high|medium|low',
             },
-            classroomLayout: {
-                rows: 6,
-                cols: 8,
-                cells: [['seat', 'seat', 'aisle', 'seat']],
-                groups: [[1, 1, null, 2]],
-                guardians: { enabled: false, left: null, right: null },
-                template: 'ai-preview',
-                groupSize: 2,
-            },
             arrangementSpec: {
                 groupSize: 2,
+                groupsPerRow: 5,
+                physicalRows: 0,
+                physicalCols: 0,
                 capacityPolicy: 'auto_expand',
-                aislePolicy: { verticalBetweenGroups: true, horizontalBetweenGroupRows: false },
+                groupGap: 'normal',
+                oddStudentPolicy: 'partial_group',
+                aislePolicy: {
+                    verticalBetweenGroups: true,
+                    horizontalBetweenGroupRows: false,
+                    mainVertical: false,
+                    mainHorizontal: false,
+                },
                 guardianPolicy: { enabled: false, strategy: 'none', slots: [] },
                 layoutMode: 'grouped',
                 placementPolicy: { genderBalance: true, gradeStrategy: 'none', heightOrder: false },
@@ -122,7 +131,10 @@ function buildLayoutPreviewMessages({ request, context = {}, repairErrors = [] }
         },
         ...context,
     };
-    if (repairErrors.length) payload.repairErrors = repairErrors;
+    if (repairErrors.length) {
+        payload.repairErrors = repairErrors;
+        payload.repairInstruction = '上一版规则 JSON 无效。请只修正 arrangementSpec，不要生成 classroomLayout 或矩阵。';
+    }
     return [
         { role: 'system', content: system },
         { role: 'user', content: JSON.stringify(payload) },
@@ -349,53 +361,34 @@ function buildPreviewLayoutFromSpec({ request, spec, source = 'local_layout_fall
     };
 }
 
-function normalizeLayoutPreviewRaw({ raw, request, allowUnassigned }) {
-    if (hasLayoutPreviewPayload(raw)) {
-        let plan;
-        try {
-            plan = normalizeLayoutPlan(raw);
-        } catch (error) {
-            return { ok: false, errors: [error.message] };
-        }
-        const validation = validateLayoutPlan(plan, request.students.length, allowUnassigned);
-        if (!validation.ok) return validation;
-        const spec = normalizeArrangementSpec(plan.arrangementSpec || {}, request);
-        const source = 'ai_layout_preview';
-        return {
-            ok: true,
-            errors: [],
-            data: {
-                reply: plan.reply,
-                classroomLayout: plan.classroomLayout,
-                layoutIntent: plan.layoutIntent || layoutIntentFromSpec(spec),
-                warnings: [
-                    ...normalizeWarnings(plan.warnings),
-                    ...(spec.parseWarnings || []),
-                ],
-                reasoning: plan.reasoning,
-                source,
-                arrangementSpec: spec,
-                stats: previewStats({ request, classroomLayout: plan.classroomLayout, source }),
-            },
-        };
-    }
-
-    if (hasArrangementSpecPayload(raw)) {
-        const spec = normalizeArrangementSpec(raw, request);
+function normalizeLayoutPreviewRaw({ raw, request }) {
+    if (hasArrangementSpecPayload(raw) || hasLayoutPreviewPayload(raw)) {
+        const rawSpec = raw?.arrangementSpec && typeof raw.arrangementSpec === 'object'
+            ? raw.arrangementSpec
+            : (raw?.spec && typeof raw.spec === 'object' ? raw.spec : raw);
+        const normalizedSpec = normalizeArrangementSpec(rawSpec, request);
+        const legacyMatrixWarning = hasLayoutPreviewPayload(raw)
+            ? ['AI 返回了旧式布局矩阵，已忽略矩阵并按规则重新生成。']
+            : [];
         return {
             ok: true,
             errors: [],
             data: buildPreviewLayoutFromSpec({
                 request,
-                spec,
+                spec: normalizedSpec,
                 source: 'ai_spec_local_algorithm',
-                warnings: spec.parseWarnings || [],
-                reply: 'AI 返回了规则参数，已用本地算法生成布局预览。',
+                warnings: [
+                    ...normalizeWarnings(raw?.warnings),
+                    ...legacyMatrixWarning,
+                    ...(normalizedSpec.parseWarnings || []),
+                ],
+                reply: asText(raw?.reply) || '已识别排座规则并生成布局预览。',
+                reasoning: asText(raw?.reasoning) || normalizedSpec.notes,
             }),
         };
     }
 
-    return { ok: false, errors: ['AI 未返回 classroomLayout.cells'] };
+    return { ok: false, errors: ['AI 未返回有效的 arrangementSpec'] };
 }
 
 async function runAiLayoutPreview({
@@ -405,14 +398,14 @@ async function runAiLayoutPreview({
 } = {}) {
     if (!request) throw new Error('缺少排座请求');
     const fallbackSpec = normalizeArrangementSpec(request.arrangementSpec || {}, request);
-    const allowUnassigned = shouldAllowUnassigned(request.prompt) || fallbackSpec.capacityPolicy === 'fixed';
 
     if (typeof fetchImpl !== 'function' || !env.DEEPSEEK_API_BASE || !env.DEEPSEEK_API_KEY) {
         return buildPreviewLayoutFromSpec({
             request,
             spec: fallbackSpec,
             source: 'local_layout_fallback',
-            warnings: ['AI 布局服务未配置，已使用本地备用布局。'],
+            warnings: [],
+            reply: '已按本地规则生成布局预览。',
         });
     }
 
@@ -423,18 +416,22 @@ async function runAiLayoutPreview({
             fetchImpl,
             env,
             context: {},
-            validate: raw => normalizeLayoutPreviewRaw({ raw, request, allowUnassigned }),
-            maxAttempts: 3,
-            maxTokens: arrangeMaxTokens(env),
+            validate: raw => normalizeLayoutPreviewRaw({ raw, request }),
+            maxAttempts: 2,
+            maxTokens: 1600,
         });
         return result.data;
     } catch (error) {
-        return buildPreviewLayoutFromSpec({
+        const fallback = buildPreviewLayoutFromSpec({
             request,
             spec: fallbackSpec,
             source: 'local_layout_fallback',
-            warnings: [`AI 布局预览不可用，已使用本地备用布局：${error.message}`],
+            warnings: [],
+            reply: '已按本地规则生成布局预览。',
+            reasoning: `本地算法根据已解析规则生成布局。规则解析服务未采用原因：${error.message}`,
         });
+        fallback.stats.fallbackReason = error.message;
+        return fallback;
     }
 }
 

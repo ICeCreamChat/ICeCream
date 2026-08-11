@@ -35,6 +35,8 @@ export async function withOpenedTimetablePage({ port, seedProject = null }, call
         'TIMETABLE_DATA_DIR',
         'DEEPSEEK_API_KEY',
         'OPENAI_API_KEY',
+        'TIMEFOLD_SOLVER_URL',
+        'TIMEFOLD_SOLVER_TIMEOUT',
         'PORT',
         'HOST',
         'CORS_ORIGIN',
@@ -43,6 +45,8 @@ export async function withOpenedTimetablePage({ port, seedProject = null }, call
     process.env.TIMETABLE_DATA_DIR = tempDir;
     process.env.DEEPSEEK_API_KEY = '';
     process.env.OPENAI_API_KEY = '';
+    process.env.TIMEFOLD_SOLVER_URL = '';
+    process.env.TIMEFOLD_SOLVER_TIMEOUT = '1';
     process.env.PORT = String(port);
     process.env.HOST = host;
     process.env.CORS_ORIGIN = `${baseUrl},http://localhost:${port}`;
@@ -82,7 +86,10 @@ export async function withOpenedTimetablePage({ port, seedProject = null }, call
         page = await browser.newPage();
         page.on('pageerror', error => pageErrors.push(error));
         page.on('console', message => {
-            if (message.type() === 'error') consoleErrors.push(message.text());
+            if (message.type() === 'error') {
+                const location = message.location();
+                consoleErrors.push(location.url ? `${message.text()} (${location.url})` : message.text());
+            }
         });
 
         await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });

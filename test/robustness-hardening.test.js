@@ -533,7 +533,7 @@ test('solver diagram conversion returns browser-safe data URLs and removes cropp
   const tempDir = await mkdtemp(path.join(tmpdir(), 'icecream-cropped-diagram-'));
   const croppedPath = path.join(tempDir, 'cropped_test.png');
   const onePixelPng = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     'base64',
   );
   await writeFile(croppedPath, onePixelPng);

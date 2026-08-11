@@ -395,10 +395,14 @@ function inferArrangementSpecFromPrompt(prompt = '') {
     const groupSize = extractGroupSize(text) || 1;
     const wantsGroup = Number.isInteger(groupSize) && groupSize > 1;
     const wantsBothAisles = /横.*竖|竖.*横|横过道.*竖过道|竖过道.*横过道/.test(text);
-    const wantsVerticalAisle = wantsBothAisles
-        || /竖过道|纵过道|列过道|组间过道|每组之间.*过道/.test(text)
-        || /中间.*(?:通道|走道|过道|空|隔开)|(?:每组|组间|组与组之间).*(?:隔开|分开|空|留空|通道|走道)|左右.*(?:隔开|分开|通道|走道)/.test(text);
-    const wantsHorizontalAisle = wantsBothAisles
+    const wantsMainVerticalAisle = /(?:中间|中央|正中).*(?:通道|走道|过道)|(?:通道|走道|过道).*(?:中间|中央|正中)/.test(text);
+    const wantsMainHorizontalAisle = /(?:中间|中央|正中).*(?:横向|横过道|前后通道)|(?:横向|横过道|前后通道).*(?:中间|中央|正中)/.test(text);
+    const disablesGroupGap = /(?:每组|组间|组与组之间).*(?:不要|不留|取消|紧挨|无间距)|(?:不要|不留|取消).*(?:组间|组与组之间).*(?:空|间距|过道)/.test(text);
+    const wantsGroupGap = wantsGroup && !disablesGroupGap && (
+        /组间过道|每组之间.*(?:过道|通道|走道|空|间距)|(?:每组|组间|组与组之间).*(?:隔开|分开|空|留空|间距|通道|走道)/.test(text)
+        || !/(?:每组|组间|组与组之间)/.test(text)
+    );
+    const wantsHorizontalGroupGap = wantsBothAisles
         || /横过道|行过道|每组之间.*横|组与组之间.*横/.test(text)
         || /(?:前后|上下).*(?:通道|走道|过道|隔开)/.test(text);
     const groupColumnWording = hasGroupColumnWording(text);
@@ -425,8 +429,10 @@ function inferArrangementSpecFromPrompt(prompt = '') {
         columnPattern,
         capacityPolicy: inferCapacityPolicy(text),
         aislePolicy: {
-            verticalBetweenGroups: wantsVerticalAisle || Boolean(groupColumnWording || groupsPerRow),
-            horizontalBetweenGroupRows: wantsHorizontalAisle,
+            verticalBetweenGroups: wantsGroupGap || Boolean(groupColumnWording || groupsPerRow),
+            horizontalBetweenGroupRows: wantsHorizontalGroupGap,
+            mainVertical: wantsMainVerticalAisle || (wantsBothAisles && /中间|中央|主过道/.test(text)),
+            mainHorizontal: wantsMainHorizontalAisle,
         },
         guardianPolicy: {
             enabled: guardianEnabled,
@@ -449,6 +455,8 @@ function normalizeAislePolicy(rawPolicy = {}, fallback = {}) {
     return {
         verticalBetweenGroups: boolValue(rawPolicy.verticalBetweenGroups ?? rawPolicy.vertical ?? rawPolicy.colAisles, fallback.verticalBetweenGroups),
         horizontalBetweenGroupRows: boolValue(rawPolicy.horizontalBetweenGroupRows ?? rawPolicy.horizontal ?? rawPolicy.rowAisles, fallback.horizontalBetweenGroupRows),
+        mainVertical: boolValue(rawPolicy.mainVertical ?? rawPolicy.main_vertical ?? rawPolicy.centralVertical, fallback.mainVertical),
+        mainHorizontal: boolValue(rawPolicy.mainHorizontal ?? rawPolicy.main_horizontal ?? rawPolicy.centralHorizontal, fallback.mainHorizontal),
     };
 }
 
@@ -596,6 +604,12 @@ function specConflictWarnings(raw = {}, inferred = {}, normalized = {}) {
         if (hasAnyOwn(rawAisles, ['horizontalBetweenGroupRows', 'horizontal', 'rowAisles'])) {
             add('aislePolicy.horizontalBetweenGroupRows', normalized.aislePolicy?.horizontalBetweenGroupRows, inferred.aislePolicy?.horizontalBetweenGroupRows);
         }
+        if (hasAnyOwn(rawAisles, ['mainVertical', 'main_vertical', 'centralVertical'])) {
+            add('aislePolicy.mainVertical', normalized.aislePolicy?.mainVertical, inferred.aislePolicy?.mainVertical);
+        }
+        if (hasAnyOwn(rawAisles, ['mainHorizontal', 'main_horizontal', 'centralHorizontal'])) {
+            add('aislePolicy.mainHorizontal', normalized.aislePolicy?.mainHorizontal, inferred.aislePolicy?.mainHorizontal);
+        }
     }
     return conflicts.length ? [`AI 解析与本地规则解析不一致，已优先采用 AI：${conflicts.join('；')}`] : [];
 }
@@ -639,27 +653,95 @@ function buildSeatRowFromRuns(runs, { groupSize = 1, startGroupId = 1, verticalA
     return { cells, groups, nextGroupId: groupId };
 }
 
-function buildPhysicalGridLayout({ target, seatRows, seatCols, groupSize, verticalAisles, horizontalAisles, spec }) {
-    const leftCols = verticalAisles && seatCols >= 2 ? Math.ceil(seatCols / 2) : seatCols;
-    const rightCols = verticalAisles && seatCols >= 2 ? seatCols - leftCols : 0;
-    const runs = rightCols > 0 ? [leftCols, rightCols] : [seatCols];
+function addMainAisles(cells, groups, { vertical = false, horizontal = false, verticalAfterCol = 0 } = {}) {
+    if (vertical && cells[0]?.length >= 2) {
+        const insertAt = Math.max(1, Math.min(cells[0].length - 1, verticalAfterCol || Math.ceil(cells[0].length / 2)));
+        for (let row = 0; row < cells.length; row++) {
+            cells[row].splice(insertAt, 0, CELL.AISLE);
+            groups[row].splice(insertAt, 0, null);
+        }
+    }
+    if (horizontal && cells.length >= 2) {
+        const insertAt = Math.ceil(cells.length / 2);
+        const cols = cells[0]?.length || 0;
+        cells.splice(insertAt, 0, Array(cols).fill(CELL.AISLE));
+        groups.splice(insertAt, 0, Array(cols).fill(null));
+    }
+}
+
+function localAislesFromGroups(cells, groups, { vertical = false, horizontal = false } = {}) {
+    const localAisles = { vertical: [], horizontal: [] };
+    if (vertical) {
+        for (let row = 0; row < cells.length; row++) {
+            for (let col = 0; col < (cells[row]?.length || 0) - 1; col++) {
+                const leftGroup = groups[row]?.[col];
+                const rightGroup = groups[row]?.[col + 1];
+                if (cells[row][col] === CELL.SEAT
+                    && cells[row][col + 1] === CELL.SEAT
+                    && leftGroup != null
+                    && rightGroup != null
+                    && leftGroup !== rightGroup) {
+                    localAisles.vertical.push({ row, col });
+                }
+            }
+        }
+    }
+    if (horizontal) {
+        for (let row = 0; row < cells.length - 1; row++) {
+            for (let col = 0; col < (cells[row]?.length || 0); col++) {
+                if (cells[row][col] === CELL.SEAT && cells[row + 1]?.[col] === CELL.SEAT) {
+                    localAisles.horizontal.push({ row, col });
+                }
+            }
+        }
+    }
+    return localAisles;
+}
+
+function buildPhysicalGridLayout({
+    target,
+    seatRows,
+    seatCols,
+    groupSize,
+    verticalAisles,
+    horizontalAisles,
+    mainVerticalAisle = false,
+    mainHorizontalAisle = false,
+    spec,
+}) {
     const cells = [];
     const groups = [];
     let groupId = 1;
+    const groupsPerRow = Math.max(1, Math.ceil(seatCols / Math.max(1, groupSize)));
+    const preserveFixedGrid = spec.capacityPolicy === 'fixed' && spec.physicalRows > 0;
     for (let row = 0; row < seatRows; row++) {
-        const seatRow = buildSeatRowFromRuns(runs, {
-            groupSize,
-            startGroupId: groupId,
-            verticalAisleAfterRun: rightCols > 0 ? 0 : -1,
-        });
-        cells.push(seatRow.cells);
-        groups.push(seatRow.groups);
-        groupId = seatRow.nextGroupId;
-        if (horizontalAisles && row < seatRows - 1) {
-            cells.push(Array(seatRow.cells.length).fill(CELL.AISLE));
-            groups.push(Array(seatRow.cells.length).fill(null));
+        const remainingSeats = Math.max(0, target - row * seatCols);
+        const activeSeats = preserveFixedGrid ? seatCols : Math.min(seatCols, remainingSeats);
+        const seatRow = [];
+        const groupRow = [];
+        for (let col = 0; col < seatCols; col++) {
+            const groupOffset = Math.floor(col / Math.max(1, groupSize));
+            if (col < activeSeats) {
+                seatRow.push(CELL.SEAT);
+                groupRow.push(groupId + groupOffset);
+            } else {
+                seatRow.push(CELL.EMPTY);
+                groupRow.push(null);
+            }
         }
+        cells.push(seatRow);
+        groups.push(groupRow);
+        groupId += Math.ceil(activeSeats / Math.max(1, groupSize));
     }
+    const verticalAfterCol = Math.min(
+        Math.max(1, seatCols - 1),
+        Math.ceil(groupsPerRow / 2) * Math.max(1, groupSize)
+    );
+    addMainAisles(cells, groups, {
+        vertical: mainVerticalAisle,
+        horizontal: mainHorizontalAisle,
+        verticalAfterCol,
+    });
     return {
         rows: cells.length,
         cols: cells[0]?.length || 0,
@@ -668,7 +750,10 @@ function buildPhysicalGridLayout({ target, seatRows, seatCols, groupSize, vertic
         guardians: { enabled: Boolean(spec.guardianPolicy.enabled), left: null, right: null },
         template: 'ai-local',
         groupSize,
-        localAisles: { vertical: [], horizontal: [] },
+        localAisles: localAislesFromGroups(cells, groups, {
+            vertical: verticalAisles,
+            horizontal: horizontalAisles,
+        }),
     };
 }
 
@@ -704,11 +789,10 @@ function buildColumnPatternLayout({ regularSeatTarget, spec }) {
         }
         cells.push(seatRow);
         groups.push(groupRow);
-        if (horizontalAisles && row < seatRows - 1) {
-            cells.push(Array(seatRow.length).fill(CELL.AISLE));
-            groups.push(Array(seatRow.length).fill(null));
-        }
     }
+    addMainAisles(cells, groups, {
+        horizontal: Boolean(spec.aislePolicy?.mainHorizontal),
+    });
     return {
         rows: cells.length,
         cols: cells[0]?.length || 0,
@@ -717,7 +801,7 @@ function buildColumnPatternLayout({ regularSeatTarget, spec }) {
         guardians: { enabled: Boolean(spec.guardianPolicy.enabled), left: null, right: null },
         template: 'ai-local-mixed',
         groupSize: Math.max(1, spec.groupSize || 1),
-        localAisles: { vertical: [], horizontal: [] },
+        localAisles: localAislesFromGroups(cells, groups, { horizontal: horizontalAisles }),
     };
 }
 
@@ -731,6 +815,8 @@ function buildExpandableClassroomLayout({ regularSeatTarget, spec, previousLayou
     const grouped = groupSize > 1 || spec.layoutMode === 'grouped';
     const verticalAisles = Boolean(spec.aislePolicy.verticalBetweenGroups && grouped);
     const horizontalAisles = Boolean(spec.aislePolicy.horizontalBetweenGroupRows && grouped);
+    const mainVerticalAisle = Boolean(spec.aislePolicy.mainVertical);
+    const mainHorizontalAisle = Boolean(spec.aislePolicy.mainHorizontal);
     const requestedPhysicalCols = positiveInt(spec.physicalCols, 0, 0, 1000000);
     const requestedPhysicalRows = positiveInt(spec.physicalRows, 0, 0, 1000000);
     const capacityPolicy = normalizeCapacityPolicy(spec.capacityPolicy);
@@ -750,6 +836,8 @@ function buildExpandableClassroomLayout({ regularSeatTarget, spec, previousLayou
             groupSize: 1,
             verticalAisles: false,
             horizontalAisles: false,
+            mainVerticalAisle,
+            mainHorizontalAisle,
             spec,
         });
     }
@@ -764,6 +852,8 @@ function buildExpandableClassroomLayout({ regularSeatTarget, spec, previousLayou
             groupSize,
             verticalAisles,
             horizontalAisles,
+            mainVerticalAisle,
+            mainHorizontalAisle,
             spec,
         });
     }
@@ -776,41 +866,43 @@ function buildExpandableClassroomLayout({ regularSeatTarget, spec, previousLayou
         requestedRows: requestedPhysicalRows,
         capacityPolicy,
     });
-    const cols = groupsPerRow * groupSize + (verticalAisles ? groupsPerRow - 1 : 0);
-    const rows = logicalRows + (horizontalAisles ? logicalRows - 1 : 0);
     const cells = [];
     const groups = [];
+    const preserveFixedGrid = capacityPolicy === 'fixed' && requestedPhysicalRows > 0;
 
     for (let logicalRow = 0; logicalRow < logicalRows; logicalRow++) {
         const seatRow = [];
         const groupRow = [];
+        const remainingGroups = Math.max(0, groupCount - logicalRow * groupsPerRow);
+        const activeGroups = preserveFixedGrid ? groupsPerRow : Math.min(groupsPerRow, remainingGroups);
         for (let groupCol = 0; groupCol < groupsPerRow; groupCol++) {
             const groupId = logicalRow * groupsPerRow + groupCol + 1;
             for (let offset = 0; offset < groupSize; offset++) {
-                seatRow.push(CELL.SEAT);
-                groupRow.push(groupId);
-            }
-            if (verticalAisles && groupCol < groupsPerRow - 1) {
-                seatRow.push(CELL.AISLE);
-                groupRow.push(null);
+                seatRow.push(groupCol < activeGroups ? CELL.SEAT : CELL.EMPTY);
+                groupRow.push(groupCol < activeGroups ? groupId : null);
             }
         }
         cells.push(seatRow);
         groups.push(groupRow);
-        if (horizontalAisles && logicalRow < logicalRows - 1) {
-            cells.push(Array(cols).fill(CELL.AISLE));
-            groups.push(Array(cols).fill(null));
-        }
     }
+    addMainAisles(cells, groups, {
+        vertical: mainVerticalAisle,
+        horizontal: mainHorizontalAisle,
+        verticalAfterCol: Math.ceil(groupsPerRow / 2) * groupSize,
+    });
 
     return {
-        rows,
-        cols,
+        rows: cells.length,
+        cols: cells[0]?.length || 0,
         cells,
         groups,
         guardians: { enabled: Boolean(spec.guardianPolicy.enabled), left: null, right: null },
         template: 'ai-local',
         groupSize,
+        localAisles: localAislesFromGroups(cells, groups, {
+            vertical: verticalAisles,
+            horizontal: horizontalAisles,
+        }),
     };
 }
 
@@ -1231,26 +1323,38 @@ function assignmentSeatKey(assignment) {
 }
 
 function buildLayoutInterpretation({ request, spec, layout }) {
-    const logicalGroupRows = spec.groupsPerRow > 0
-        ? Math.ceil(Math.ceil(request.students.length / Math.max(1, spec.groupSize || 1)) / spec.groupsPerRow)
-        : layout.rows;
+    const usableRows = layout.cells.filter(row => row.some(cell => cell === CELL.SEAT)).length;
+    const groupIds = new Set(layout.groups.flat().filter(groupId => groupId != null));
+    const groupsPerRenderedRow = layout.groups.reduce((max, row) => {
+        const count = new Set(row.filter(groupId => groupId != null)).size;
+        return Math.max(max, count);
+    }, 0);
+    const logicalGroupRows = usableRows;
+    const regularStudentTarget = Math.max(
+        0,
+        request.students.length - (spec.guardianPolicy?.enabled ? Math.min(2, request.students.length) : 0)
+    );
+    const regularSeatCount = gridSeatCount(layout);
+    const emptySeatCount = Math.max(0, regularSeatCount - regularStudentTarget);
     const parts = [];
     const mixedColumnPattern = Array.isArray(spec.columnPattern) && spec.columnPattern.length > 0;
     if (mixedColumnPattern) {
         parts.push(`已理解为：${spec.notes || '两边1人组，中间2人组，组间过道'}`);
     } else if ((spec.groupSize || 1) > 1 && spec.groupsPerRow > 0) {
-        parts.push(`已理解为：${spec.groupSize === 2 ? '两人' : `${spec.groupSize}人`}一组，每行 ${spec.groupsPerRow} 组，组间${spec.aislePolicy?.verticalBetweenGroups ? '竖过道' : '不留竖过道'}`);
+        parts.push(`已理解为：${spec.groupSize === 2 ? '两人' : `${spec.groupSize}人`}一组，每行 ${spec.groupsPerRow} 组，组间${spec.groupGap === 'normal' ? '留距' : '不留距'}`);
     } else if (spec.physicalCols > 0) {
         parts.push(`已理解为：${spec.physicalRows > 0 ? `${spec.physicalRows} 行 × ` : ''}${spec.physicalCols} 个物理座位列`);
     } else if ((spec.groupSize || 1) > 1) {
-        parts.push(`已理解为：${spec.groupSize}人一组`);
+        parts.push(`已理解为：${spec.groupSize}人一组，组间${spec.groupGap === 'normal' ? '留距' : '不留距'}`);
     } else {
         parts.push('已理解为：普通座位布局');
     }
     if (mixedColumnPattern) {
-        parts.push(`布局：${spec.physicalRows || layout.rows} 排 × 混合列模式，可用 ${gridSeatCount(layout)} 个座位`);
+        parts.push(`布局：${usableRows} 排 × 混合列模式，可用 ${regularSeatCount} 个座位`);
+    } else if ((spec.groupSize || 1) > 1) {
+        parts.push(`布局：${logicalGroupRows} 排 × ${groupsPerRenderedRow} 组，合计 ${groupIds.size} 组、${regularSeatCount} 个座位${emptySeatCount ? `、${emptySeatCount} 个空位` : ''}`);
     } else {
-        parts.push(`布局：${logicalGroupRows} 排 × ${spec.groupsPerRow || layout.cols} ${spec.groupsPerRow ? '组' : '列'} × ${spec.groupsPerRow ? `${spec.groupSize} 座` : '座位'}，可用 ${gridSeatCount(layout)} 个座位`);
+        parts.push(`布局：${logicalGroupRows} 排 × ${spec.physicalCols || layout.cols} 列，可用 ${regularSeatCount} 个座位`);
     }
     return {
         summary: parts.join('；'),
@@ -1266,9 +1370,17 @@ function buildLayoutInterpretation({ request, spec, layout }) {
             mixedColumnPattern,
             rows: layout.rows,
             cols: layout.cols,
-            regularSeatCount: gridSeatCount(layout),
+            usableRows,
+            groupCount: groupIds.size,
+            groupsPerRenderedRow,
+            regularSeatCount,
+            emptySeatCount,
+            groupGap: spec.groupGap || 'none',
+            oddStudentPolicy: spec.oddStudentPolicy || 'partial_group',
             verticalBetweenGroups: Boolean(spec.aislePolicy?.verticalBetweenGroups),
             horizontalBetweenGroupRows: Boolean(spec.aislePolicy?.horizontalBetweenGroupRows),
+            mainVerticalAisle: Boolean(spec.aislePolicy?.mainVertical),
+            mainHorizontalAisle: Boolean(spec.aislePolicy?.mainHorizontal),
         },
     };
 }

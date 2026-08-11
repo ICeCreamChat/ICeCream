@@ -55,7 +55,7 @@
 - corpus：205 句；SHA-256 `ff22d5a11b12e8c71f1e567b32106f075f264b34f95ab1b54de5aae619ea2678`。
 - 六类主要目标：colloquial/noisy_text/ellipsis/cross_sentence_reference/complex_negation/school_terminology 各 15 句。
 - 本地确定性评测：语义覆盖率 100%、字段准确率 100%、source preservation 100%、source alignment 100%、0 failure。
-- 正式报告：`test/fixtures/reports/timetable-market-language-local-final-2026-07-11.json` 与 `.md`。
+- 历史报告不再提交；需要复核时运行 `npm run audit:timetable:market-language-local -- --output-prefix=<path>` 生成本地 JSON 与 Markdown 报告。
 - 当前 AI extraction prompt version：`timetable_ai_requirement_extract_v5`。
 - v5 完整真实 AI 指标必须以包含模型、prompt version、corpus hash、205 样本、source preservation/alignment 和 P95 的新 runner 报告为准；历史 v3/v4 指标不得冒充 v5 最终验收。
 

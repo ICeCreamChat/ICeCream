@@ -45,29 +45,6 @@ export function renderSmartHelperDialog(state) {
 }
 
 /**
- * 渲染自动扫描界面（旧版，保留用于向后兼容）
- * @deprecated 使用 renderSmartHelperDialog 替代
- */
-export function renderSmartConstraintHelper(state) {
-    const scan = state.constraintScan || {};
-    const scanning = scan.scanning;
-    const problems = scan.problems || [];
-    const stats = scan.stats || {};
-    const detail = state.problemDetailDialog?.open ? state.problemDetailDialog.problem : null;
-    const expandedGroups = scan.expandedGroups instanceof Set ? scan.expandedGroups : new Set(scan.expandedGroups || []);
-
-    return `
-        <div class="tt-smart-helper" data-smart-helper>
-            ${scanning ? renderScanningProgress(scan) : ''}
-            ${!scanning && scan.error ? renderScanError(scan) : ''}
-            ${!scanning && !scan.error && problems.length > 0 ? renderProblemCards(problems, stats, expandedGroups, scan) : ''}
-            ${!scanning && problems.length === 0 && scan.completed ? renderAllClear() : ''}
-            ${detail ? renderProblemDetail(detail) : ''}
-        </div>
-    `;
-}
-
-/**
  * 渲染扫描进度
  */
 function renderScanningProgress(scan) {

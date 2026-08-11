@@ -126,7 +126,7 @@ ICeCream 是一个教育工具集平台，整合 AI 聊天、智能排课、座�
 
 **对外接口：**
 - WebSocket `/ws/chat` - 对话式动画生成与实时渲染进度
-- 具体 HTTP 端点见 manim-service/app/legacy_main.py 与 app/api/
+- 基础 HTTP/WS 端点见 `manim-service/app/legacy_main.py`，Agent 端点由 `app/agent/routes.py` 注册。
 
 ## 数据流向
 
@@ -196,7 +196,7 @@ npm start  # Solver 和 Manim 离线时，相关功能降级
 |------|------|
 | `.env` | 运行时配置（API keys, URLs） |
 | `solver/src/main/resources/application.properties` | Quarkus 配置 |
-| `manim-service/app/config.py` | Manim 服务配置 |
+| `manim-service/app/service_config.py` | Manim 服务配置 |
 | `data/timetable/projects.json` | 排课项目持久化 |
 
 ## 端口分配

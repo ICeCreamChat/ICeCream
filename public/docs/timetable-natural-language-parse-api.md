@@ -435,10 +435,12 @@ source 一级卡 -> 显示完整原文，不被机器规则片段覆盖
 侧边栏“要求待处理” -> 使用 source 数量，不使用 draftRows 数量
 ```
 
-建议测试命令见根目录：
+建议使用以下维护命令：
 
-```text
-智能约束助手-自然语言解析重构持续实施手册.md
+```bash
+npm run audit:timetable:natural-language-137
+npm run audit:timetable:market-language-local
+npm run test:timetable:ai-golden
 ```
 
 ## 12. 市场语言 corpus 合同

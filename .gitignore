@@ -28,12 +28,14 @@ Thumbs.db
 *.swp
 *.swo
 
+# Temporary verification files
+**/.tmp-*
+
 # Uploads
 uploads/*
 !uploads/.gitkeep
 data/timetable/*
 !data/timetable/.gitkeep
-data/timetable-v2/*
 
 # Manim outputs
 manim-service/media/
@@ -70,16 +72,10 @@ list_models.js
 models.json
 test_students_60.csv
 
-# Vite / TypeScript remnants (unused)
+# Generated Manim Studio bundle
 /public/js/studio/*
 !/public/js/studio/
 !/public/js/studio/manim-studio-canvas.js
-# timetable-v2 工作台 bundle（React-Konva 网格，构建产物，按 studio 先例提交以便开箱即用）
-!/public/js/tools/timetable-v2/dist/
-!/public/js/tools/timetable-v2/dist/workbench.bundle.js
-/index.html
-/tsconfig.json
-/vite.config.ts
 
 # Robustness audit plan (local reference only)
 ROBUSTNESS_PLAN.md
@@ -97,10 +93,6 @@ _reverse_tmp/
 # Data files (not code, including root-level spreadsheets)
 /*.xlsx
 *.xlsx
-
-# Deprecated config
-vite.studio.config.js
-TIMETABLE_V2_PHASE1_7_FIX_REPORT.md
 
 .playwright-cli
 test-results

@@ -17,8 +17,9 @@ import {
     normalizeConstraintIR,
 } from '../gateway/services/timetable-constraints/constraint-ir.js';
 import { createCompleteNaturalLanguage137Project } from './fixtures/timetable-natural-language-137-project.js';
+import { TIMETABLE_CONSTRAINT_WORKBOOK_PATH } from './fixtures/timetable-workbook-paths.js';
 
-const workbookPath = path.join(process.cwd(), '真实学校排课约束需求.xlsx');
+const workbookPath = TIMETABLE_CONSTRAINT_WORKBOOK_PATH;
 
 async function parseCompleteWorkbook() {
     return parseTimetableRules({

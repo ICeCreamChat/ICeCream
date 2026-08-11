@@ -214,9 +214,15 @@ async function main() {
 
         const fulfillmentSection = page.locator('[data-inspector-section="constraint-fulfillment"]');
         await fulfillmentSection.waitFor({ timeout: 10000 });
-        await page.waitForFunction(() => document.body.innerText.includes('约束 108') && document.body.innerText.includes('基于当前课表评估'));
+        const attentionStat = fulfillmentSection.locator('.tt-constraint-fulfillment-stat--attention');
+        const satisfiedStat = fulfillmentSection.locator('.tt-constraint-fulfillment-stat--ok');
+        await attentionStat.waitFor({ timeout: 10000 });
+        await fulfillmentSection.getByText('基于当前课表评估', { exact: true }).waitFor({ timeout: 10000 });
+        assert.equal((await attentionStat.locator('b').textContent())?.trim(), '2');
+        assert.equal((await satisfiedStat.locator('b').textContent())?.trim(), '106');
         const fulfillmentText = await fulfillmentSection.textContent();
-        assert.match(fulfillmentText || '', /约束 108/);
+        assert.match(fulfillmentText || '', /需关注 2/);
+        assert.match(fulfillmentText || '', /已满足 106/);
         assert.match(fulfillmentText || '', /未满足|部分满足/);
         assert.match(fulfillmentText || '', /Math/);
         assert.equal(await fulfillmentSection.locator('.tt-inspector-problem-group').count(), 0);

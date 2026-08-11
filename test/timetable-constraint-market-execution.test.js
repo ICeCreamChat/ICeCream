@@ -21,9 +21,13 @@ import {
     getRequirementGroupKey,
 } from '../public/js/tools/timetable/constraint-dialog-review-model.js';
 import { createCompleteNaturalLanguage137Project } from './fixtures/timetable-natural-language-137-project.js';
+import {
+    TIMETABLE_CONSTRAINT_WORKBOOK_PATH,
+    TIMETABLE_ROSTER_WORKBOOK_PATH,
+} from './fixtures/timetable-workbook-paths.js';
 
-const workbookPath = path.join(process.cwd(), '真实学校排课约束需求.xlsx');
-const rosterWorkbookPath = path.join(process.cwd(), '真实学校整学期任课数据.xlsx');
+const workbookPath = TIMETABLE_CONSTRAINT_WORKBOOK_PATH;
+const rosterWorkbookPath = TIMETABLE_ROSTER_WORKBOOK_PATH;
 const naturalLanguage137FixturePath = path.join(process.cwd(), 'test/fixtures/timetable-natural-language-137.json');
 const REVIEW_19_SOURCE_ROWS = new Set([
     76, 77, 78, 79, 80, 81, 82, 83,

@@ -6,8 +6,9 @@ import assert from 'node:assert/strict';
 import {
     parseTimetableRules,
 } from '../gateway/services/timetable-rule-parser.js';
+import { TIMETABLE_CONSTRAINT_WORKBOOK_PATH } from './fixtures/timetable-workbook-paths.js';
 
-const workbookPath = path.join(process.cwd(), '真实学校排课约束需求.xlsx');
+const workbookPath = TIMETABLE_CONSTRAINT_WORKBOOK_PATH;
 
 async function parseFixture() {
     return parseTimetableRules({

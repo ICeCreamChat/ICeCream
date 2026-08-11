@@ -398,6 +398,62 @@ test('runAiLayoutPreview falls back to local layout after invalid AI previews', 
   assert.ok(result.warnings.some(warning => /AI.*布局|fallback|降级|备用/.test(warning)));
 });
 
+test('runAiLayoutPreview quietly auto-expands when AI returns only 30 seats for 45 students', async () => {
+  const roster = Array.from({ length: 45 }, (_, index) => ({
+    id: `s${String(index + 1).padStart(2, '0')}`,
+    name: `Student ${index + 1}`,
+  }));
+  const previousCells = Array.from({ length: 5 }, () => Array(6).fill('seat'));
+  const request = normalizeArrangeRequest({
+    prompt: '两人一组',
+    students: roster,
+    previousLayout: {
+      rows: 5,
+      cols: 6,
+      cells: previousCells,
+    },
+  });
+  const aiPayloads = [];
+  const fetchImpl = async (url, options) => {
+    const body = JSON.parse(options.body);
+    aiPayloads.push(JSON.parse(body.messages.at(-1).content));
+    return jsonResponse({
+      classroomLayout: {
+        rows: 5,
+        cols: 6,
+        cells: previousCells,
+        guardians: { enabled: false, left: null, right: null },
+      },
+      arrangementSpec: {
+        groupSize: 2,
+        physicalRows: 5,
+        physicalCols: 6,
+        capacityPolicy: 'auto_expand',
+        layoutMode: 'grouped',
+      },
+    });
+  };
+
+  const result = await runAiLayoutPreview({
+    request,
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  const capacity = result.classroomLayout.cells.flat().filter(cell => cell === 'seat').length;
+  assert.equal(aiPayloads.length, 3);
+  assert.equal(aiPayloads[0].capacityRequirement.minimumRegularSeats, 45);
+  assert.equal(aiPayloads[0].capacityRequirement.minimumTotalCapacity, 45);
+  assert.equal(aiPayloads[0].previousLayoutPolicy, 'reference_only_expand_if_needed');
+  assert.equal(aiPayloads[0].previousLayoutSummary, null);
+  assert.match(aiPayloads[1].repairInstruction, /完整 cells 二维矩阵/);
+  assert.equal(result.source, 'local_layout_fallback');
+  assert.ok(capacity >= 45);
+  assert.match(result.reply, /45 人名单.*自动扩容/);
+  assert.match(result.stats.fallbackReason, /布局容量不足.*30.*45/);
+  assert.equal(result.warnings.some(warning => /布局容量不足|阶段失败/.test(warning)), false);
+});
+
 test('runAiLayoutPreview uses local fallback without calling AI when DeepSeek is not configured', async () => {
   const request = normalizeArrangeRequest({
     prompt: '普通教室，中间留过道',

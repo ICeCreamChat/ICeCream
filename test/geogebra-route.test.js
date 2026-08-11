@@ -10,6 +10,7 @@ import {
   parseGeoGebraAgentReply,
 } from '../services/geogebra/geogebra-agent.js';
 import { buildGeoGebraImagePlanBody, createGeoGebraImagePlan } from '../services/geogebra/geogebra-image-agent.js';
+import { tryCreateGeoGebraProblemPlan } from '../services/geogebra/problem-types.js';
 
 function listen(server) {
   return new Promise(resolve => {
@@ -62,6 +63,28 @@ test('GeoGebra agent reply parser keeps only executable command strings', () => 
   assert.equal(parsedReply.summary, '完成');
   assert.equal(parsedReply.perspective, 'G');
   assert.deepEqual(parsedReply.commands, ['A = (0, 0)', 'c = Circle(A, 2)', 'ShowLabel(A, true)']);
+});
+
+test('GeoGebra agent reply parser repairs JSON truncated inside a command', () => {
+  const parsedReply = parseGeoGebraAgentReply(
+    '{"summary":"三角形","perspective":"G","commands":["A = (0, 0)","B = (4, 0)","C = (1, 3)","poly = Polygon(A, B, C)","ShowLa',
+  );
+
+  assert.ok(parsedReply.commands.length >= 4);
+  assert.deepEqual(parsedReply.commands.slice(0, 4), [
+    'A = (0, 0)',
+    'B = (4, 0)',
+    'C = (1, 3)',
+    'poly = Polygon(A, B, C)',
+  ]);
+});
+
+test('GeoGebra deterministic problem planner recognizes Fermat point requests', () => {
+  const plan = tryCreateGeoGebraProblemPlan({
+    message: '已知三角形ABC的三个内角都小于120度，在三角形内部找一点P，使得PA+PB+PC最小',
+  });
+
+  assert.equal(plan?.problemType, 'fermat_point');
 });
 
 test('GeoGebra Studio adjust request preserves selected objects and command history', () => {

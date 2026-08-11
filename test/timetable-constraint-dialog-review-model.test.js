@@ -12,6 +12,7 @@ import {
     getBackendRuleRows,
     getRequirementGroupKey,
 } from '../public/js/tools/timetable/constraint-dialog-review-model.js';
+import { TIMETABLE_CONSTRAINT_WORKBOOK_PATH } from './fixtures/timetable-workbook-paths.js';
 
 test('review attention messages collapse punctuation-only duplicates', () => {
     const sourceId = 'src:duplicate-attention';
@@ -479,7 +480,7 @@ test('the real 137-row workbook renders exactly 137 source cards and keeps expan
     const result = await parseTimetableRules({
         file: {
             filename: '真实学校排课约束需求.xlsx',
-            buffer: fs.readFileSync('真实学校排课约束需求.xlsx'),
+            buffer: fs.readFileSync(TIMETABLE_CONSTRAINT_WORKBOOK_PATH),
         },
         project: {},
         env: {},

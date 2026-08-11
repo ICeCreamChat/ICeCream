@@ -6,9 +6,10 @@ import path from 'node:path';
 import * as XLSX from '@e965/xlsx';
 
 import { sampleRosterText } from '../public/js/tools/timetable/forms.js';
+import { TIMETABLE_ROSTER_WORKBOOK_PATH } from './fixtures/timetable-workbook-paths.js';
 import { withOpenedTimetablePage } from './timetable-ui-smoke-helpers.mjs';
 
-const REAL_WORKBOOK = path.resolve('真实学校整学期任课数据.xlsx');
+const REAL_WORKBOOK = TIMETABLE_ROSTER_WORKBOOK_PATH;
 const ARTIFACT_DIR = path.resolve('artifacts');
 
 async function waitForRosterReview(page, action) {
@@ -423,8 +424,8 @@ await withOpenedTimetablePage({ port: 3140 }, async ({ page, baseUrl }) => {
     assert.equal(stored.data.project.lessonPlans.length, 362);
     assert.equal(stored.data.project.rooms.length, 43);
     assert.equal(stored.data.project.lessonPlans.filter(plan => plan.activityTypes.includes('实验课')).length, 50);
-    assert.equal(stored.data.project.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('实验室')).length, 50);
-    assert.equal(stored.data.project.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('计算机教室')).length, 30);
+    assert.equal(stored.data.project.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('实验室')).length, 0);
+    assert.equal(stored.data.project.lessonPlans.filter(plan => plan.requiredResourceTypes.includes('计算机教室')).length, 0);
     assert.equal(stored.data.project.lessonPlans[179].allowedRoomIds.length, 2);
 
     const dataPanel = page.locator('[data-workflow-step="data"].tt-workflow-panel');

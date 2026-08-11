@@ -7,7 +7,6 @@ function escapeHtml(value) {
         "'": '&#39;',
     })[char]);
 }
-
 function escapeAttr(value) {
     return escapeHtml(value);
 }
@@ -132,7 +131,6 @@ function renderChatMessage(message = {}) {
         </div>
     `;
 }
-
 function renderConstraintChatSteps(context = {}, { completed = false } = {}) {
     const counts = context.counts || {};
     const needsInput = counts.needsInput || 0;
@@ -222,112 +220,6 @@ function renderReviewContext(context = {}, { disabled = false } = {}) {
             `}
             ${renderSuggestedPrompts(prompts, { disabled })}
         </section>
-    `;
-}
-
-export function renderConstraintChatDialog(state = {}) {
-    const chat = state.constraintChat;
-    if (!chat?.open) return '';
-    if (chat.docked || state.ruleReview?.open) return '';
-
-    const messages = chat.messages || [];
-    const loading = Boolean(chat.loading);
-    const inputText = chat.inputText || '';
-    const canSend = !loading && inputText.trim().length > 0;
-    const reviewContext = chat.reviewContext || {};
-    const contextForGuide = {
-        ...reviewContext,
-        suggestedPrompts: chat.suggestedPrompts?.length ? chat.suggestedPrompts : reviewContext.suggestedPrompts,
-    };
-
-    return `
-        <div class="tt-constraint-chat-overlay" data-constraint-chat-overlay>
-            <section class="tt-constraint-chat-dialog" role="dialog" aria-modal="true" aria-labelledby="tt-constraint-chat-title" aria-describedby="tt-constraint-chat-description">
-                <header class="tt-constraint-chat-header">
-                    <div class="tt-constraint-chat-titleblock">
-                        <span class="tt-chat-eyebrow"><i data-lucide="bot"></i> 智能约束助手</span>
-                        <h3 id="tt-constraint-chat-title">先处理当前复核表里的问题</h3>
-                        <p id="tt-constraint-chat-description">不需要懂排课规则，按左侧推荐操作点选，或用白话告诉智能助手你想怎么改。</p>
-                    </div>
-                    <button class="tt-icon-btn" type="button" data-action="constraint-chat-close" aria-label="关闭对话">
-                        <i data-lucide="x"></i>
-                    </button>
-                </header>
-
-                <div class="tt-constraint-chat-body">
-                    <aside class="tt-constraint-chat-guide">
-                        ${renderConstraintChatSteps(contextForGuide, { completed: chat.completed })}
-                        ${renderReviewContext(contextForGuide, { disabled: loading })}
-                    </aside>
-
-                    <section class="tt-constraint-chat-conversation" aria-label="对话与输入">
-                        <div class="tt-constraint-chat-messages" id="tt-chat-messages" aria-live="polite">
-                            ${messages.length ? messages.map(message => renderChatMessage(message)).join('') : `
-                                <div class="tt-chat-empty-message">
-                                    <i data-lucide="mouse-pointer-click"></i>
-                                    <strong>建议先点左侧推荐操作</strong>
-                                    <span>智能助手会围绕当前复核表回答，不会开启无关闲聊。</span>
-                                </div>
-                            `}
-                            ${loading ? `
-                                <div class="tt-chat-message tt-chat-message--assistant tt-chat-message--loading">
-                                    <div class="tt-chat-avatar" aria-hidden="true">
-                                        <i data-lucide="bot"></i>
-                                    </div>
-                                    <div class="tt-chat-bubble">
-                                        <div class="tt-typing-indicator" aria-label="正在生成回复">
-                                            <span></span>
-                                            <span></span>
-                                            <span></span>
-                                        </div>
-                                    </div>
-                                </div>
-                            ` : ''}
-                            ${chat.error ? `
-                                <div class="tt-chat-error">
-                                    <i data-lucide="alert-circle"></i>
-                                    <span>${escapeHtml(chat.error)}</span>
-                                </div>
-                            ` : ''}
-                        </div>
-
-                        <footer class="tt-constraint-chat-footer">
-                            ${chat.completed ? `
-                                <div class="tt-chat-completion-hint">
-                                    <i data-lucide="check-circle"></i>
-                                    <span>约束优化已完成，回到复核表确认生效；也可以继续追问。</span>
-                                </div>
-                            ` : ''}
-
-                            <div class="tt-constraint-chat-input-area">
-                                <textarea
-                                    id="tt-chat-input"
-                                    class="tt-constraint-chat-input"
-                                    data-constraint-chat-input
-                                    data-action="constraint-chat-input"
-                                    placeholder="可以这样说：把缺少节次的都设为周一到周五第7节"
-                                    rows="1"
-                                    ${loading ? 'disabled' : ''}
-                                >${escapeHtml(inputText)}</textarea>
-                                <button
-                                    class="tt-btn tt-btn--primary tt-btn--icon"
-                                    type="button"
-                                    data-action="constraint-chat-send"
-                                    ${canSend ? '' : 'disabled'}
-                                    aria-label="发送消息">
-                                    <i data-lucide="send"></i>
-                                </button>
-                            </div>
-
-                            <div class="tt-chat-hints">
-                                <span class="tt-chat-hint">推荐：先处理左侧高亮问题，再回到复核表确认生效。</span>
-                                <span class="tt-chat-hint">Shift + Enter 可换行。</span>
-                            </div>
-                        </footer>
-                    </section>
-                </div>
-            </section>
-        </div>
     `;
 }
 
@@ -444,19 +336,5 @@ export function renderConstraintChatDock(state = {}, { task = null } = {}) {
                 </div>
             </footer>
         </aside>
-    `;
-}
-
-export function renderConstraintOptimizeButton({ disabled = false } = {}) {
-    return `
-        <button
-            class="tt-btn tt-btn--secondary"
-            type="button"
-            data-action="constraint-chat-start"
-            ${disabled ? 'disabled' : ''}
-            title="通过对话解释和优化当前约束">
-            <i data-lucide="message-circle"></i>
-            <span>智能帮我处理</span>
-        </button>
     `;
 }

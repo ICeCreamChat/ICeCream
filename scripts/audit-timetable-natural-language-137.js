@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { parseTimetableRules } from '../gateway/services/timetable-rule-parser.js';
 import { createCompleteNaturalLanguage137Project } from '../test/fixtures/timetable-natural-language-137-project.js';
+import { TIMETABLE_CONSTRAINT_WORKBOOK_PATH } from '../test/fixtures/timetable-workbook-paths.js';
 import {
     buildSourceId,
     buildTextHash,
@@ -22,7 +23,7 @@ const COMPLEX_SEMANTIC_BASELINE = new Map([
 ]);
 const EXPECTED_SHEET = '自然语言约束';
 const root = process.cwd();
-const workbookPath = path.join(root, '真实学校排课约束需求.xlsx');
+const workbookPath = TIMETABLE_CONSTRAINT_WORKBOOK_PATH;
 const fixturePath = path.join(root, 'test', 'fixtures', 'timetable-natural-language-137.json');
 const reportPath = path.join(root, '.tmp-audit-137.json');
 

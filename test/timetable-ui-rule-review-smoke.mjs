@@ -6,9 +6,13 @@ import AdmZip from 'adm-zip';
 
 import { withOpenedTimetablePage } from './timetable-ui-smoke-helpers.mjs';
 import { createCompleteNaturalLanguage137Project } from './fixtures/timetable-natural-language-137-project.js';
+import {
+    TIMETABLE_CONSTRAINT_WORKBOOK_PATH,
+    TIMETABLE_ROSTER_WORKBOOK_PATH,
+} from './fixtures/timetable-workbook-paths.js';
 
 const ARTIFACT_DIR = path.resolve('artifacts');
-const REAL_ROSTER_FILE = path.resolve('真实学校整学期任课数据.xlsx');
+const REAL_ROSTER_FILE = TIMETABLE_ROSTER_WORKBOOK_PATH;
 
 function xmlEscape(value = '') {
     return String(value).replace(/[&<>"']/g, char => ({
@@ -957,7 +961,7 @@ async function main() {
         await page.locator('#tt-constraint-file-input').setInputFiles({
             name: 'timetable-natural-language-137.xlsx',
             mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            buffer: await readFile(new URL('../真实学校排课约束需求.xlsx', import.meta.url)),
+            buffer: await readFile(TIMETABLE_CONSTRAINT_WORKBOOK_PATH),
         });
         await clickByScript('[data-action="parse-constraints"]');
         await page.waitForSelector('.tt-requirement-workbench', { timeout: 30000 });

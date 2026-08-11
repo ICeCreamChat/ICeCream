@@ -261,11 +261,11 @@
   - app/main.py - FastAPI 应用
   - app/agent/ - AI 生成动画代码
   - app/legacy_main.py - 渲染管理（被 agent/renderer.py 动态引用，勿删）
-  - app/api/ - HTTP/WS 端点
-- **测试**：manim-service/tests/ (pytest)
+  - app/agent/routes.py - Agent HTTP/SSE 端点注册
+- **测试**：manim-service/tests/ (`unittest`)
 - **常见改动**：
   - 新增动画模板 → app/prompts.py
-  - 渲染参数调整 → app/config.py
+  - 渲染参数调整 → app/service_config.py
 
 ---
 

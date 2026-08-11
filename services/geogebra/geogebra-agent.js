@@ -1,10 +1,9 @@
 import fetch from 'node-fetch';
 
 import { searchGeoGebraCommands } from './command-search.js';
-import { tryCreateDeterministicGeoGebraPlan } from './geogebra-deterministic-plans.js';
 import { GEOGEBRA_SYSTEM_PROMPT } from './geogebra-prompt.js';
 import { searchGeoGebraManual } from './manual-search.js';
-import { classifyGeoGebraProblem, extractGeoGebraFacts } from './problem-types.js';
+import { classifyGeoGebraProblem, extractGeoGebraFacts, tryCreateGeoGebraProblemPlan } from './problem-types.js';
 
 const MAX_MESSAGE_LENGTH = 4000;
 const MAX_CANVAS_ITEMS = 80;
@@ -699,7 +698,7 @@ export async function createGeoGebraPlan(body = {}, options = {}) {
             }
             // AI returned empty commands without clarification — try deterministic fallback
             console.warn('[GeoGebra Agent] AI returned empty commands, trying deterministic fallback');
-            const deterministicFallback = tryCreateDeterministicGeoGebraPlan(requestPayload);
+            const deterministicFallback = tryCreateGeoGebraProblemPlan(requestPayload);
             if (deterministicFallback) {
                 return {
                     success: true,
@@ -716,7 +715,7 @@ export async function createGeoGebraPlan(body = {}, options = {}) {
         } catch (aiError) {
             // AI failed entirely — try deterministic fallback before giving up
             console.warn('[GeoGebra Agent] AI plan failed, trying deterministic fallback:', aiError.message);
-            const deterministicFallback = tryCreateDeterministicGeoGebraPlan(requestPayload);
+            const deterministicFallback = tryCreateGeoGebraProblemPlan(requestPayload);
             if (deterministicFallback) {
                 return {
                     success: true,
@@ -729,7 +728,7 @@ export async function createGeoGebraPlan(body = {}, options = {}) {
     }
 
     // Fallback: deterministic template when AI is unavailable
-    const deterministicPlan = tryCreateDeterministicGeoGebraPlan(requestPayload);
+    const deterministicPlan = tryCreateGeoGebraProblemPlan(requestPayload);
     if (deterministicPlan) {
         return {
             success: true,
@@ -794,7 +793,7 @@ export async function createGeoGebraAgentStep(body = {}, options = {}) {
             }
             // AI returned empty commands without clarification — try deterministic fallback
             console.warn('[GeoGebra Agent] AI agent-step returned empty commands, trying deterministic fallback');
-            const deterministicFallback = tryCreateDeterministicGeoGebraPlan(requestPayload);
+            const deterministicFallback = tryCreateGeoGebraProblemPlan(requestPayload);
             if (deterministicFallback) {
                 return {
                     success: true,
@@ -819,7 +818,7 @@ export async function createGeoGebraAgentStep(body = {}, options = {}) {
         } catch (aiError) {
             // AI failed entirely — try deterministic fallback before giving up
             console.warn('[GeoGebra Agent] AI agent-step failed, trying deterministic fallback:', aiError.message);
-            const deterministicFallback = tryCreateDeterministicGeoGebraPlan(requestPayload);
+            const deterministicFallback = tryCreateGeoGebraProblemPlan(requestPayload);
             if (deterministicFallback) {
                 return {
                     success: true,
@@ -835,7 +834,7 @@ export async function createGeoGebraAgentStep(body = {}, options = {}) {
     }
 
     // Fallback: deterministic template when AI is unavailable
-    const deterministicPlan = tryCreateDeterministicGeoGebraPlan(requestPayload);
+    const deterministicPlan = tryCreateGeoGebraProblemPlan(requestPayload);
     if (deterministicPlan) {
         return {
             success: true,

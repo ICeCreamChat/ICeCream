@@ -178,6 +178,20 @@ layoutTemplateLabel(template) {
         }[template] || '自定义';
     }
 
+decorateSeatGroup(cell, row, col) {
+        const groupId = this.classroomLayout?.groups?.[row]?.[col];
+        if (groupId === null || groupId === undefined) return;
+        cell.dataset.group = String(groupId);
+        cell.classList.add(
+            'sp-seat--grouped',
+            Number(groupId) % 2 === 0 ? 'sp-seat--group-even' : 'sp-seat--group-odd'
+        );
+        const rightGroup = this.classroomLayout?.groups?.[row]?.[col + 1];
+        if (rightGroup !== null && rightGroup !== undefined && String(rightGroup) === String(groupId)) {
+            cell.classList.add('sp-seat--group-link-right');
+        }
+    }
+
 createVirtualSeatCell(r, c, localAisles = this.getCurrentLocalAisles()) {
         const cell = document.createElement('div');
         cell.className = 'sp-seat';
@@ -188,13 +202,18 @@ createVirtualSeatCell(r, c, localAisles = this.getCurrentLocalAisles()) {
         const isRowAisle = this.rowAisles.includes(r);
         const isLayoutBlocked = !isLayoutSeat(this.classroomLayout, r, c);
         if (isColAisle || isRowAisle || isLayoutBlocked) {
-            cell.classList.add('sp-seat--aisle');
-            const line = document.createElement('span');
-            line.className = `sp-aisle-line ${isRowAisle ? 'sp-aisle-line--horizontal' : 'sp-aisle-line--vertical'}`;
-            cell.appendChild(line);
+            const layoutCell = this.classroomLayout?.cells?.[r]?.[c];
+            const isUnavailable = layoutCell === 'empty' && !isColAisle && !isRowAisle;
+            cell.classList.add(isUnavailable ? 'sp-seat--unavailable' : 'sp-seat--aisle');
+            if (!isUnavailable) {
+                const line = document.createElement('span');
+                line.className = `sp-aisle-line ${isRowAisle ? 'sp-aisle-line--horizontal' : 'sp-aisle-line--vertical'}`;
+                cell.appendChild(line);
+            }
             cell.addEventListener('contextmenu', e => this.showContextMenu(e, r, c));
             return cell;
         }
+        this.decorateSeatGroup(cell, r, c);
 
         const studentId = this.layout[r]?.[c];
         const desk = document.createElement('div');
@@ -307,14 +326,19 @@ renderGrid() {
                 const isLayoutBlocked = !isLayoutSeat(this.classroomLayout, r, c);
 
                 if (isColAisle || isRowAisle || isLayoutBlocked) {
-                    cell.classList.add('sp-seat--aisle');
-                    const line = document.createElement('span');
-                    line.className = `sp-aisle-line ${isRowAisle ? 'sp-aisle-line--horizontal' : 'sp-aisle-line--vertical'}`;
-                    cell.appendChild(line);
+                    const layoutCell = this.classroomLayout?.cells?.[r]?.[c];
+                    const isUnavailable = layoutCell === 'empty' && !isColAisle && !isRowAisle;
+                    cell.classList.add(isUnavailable ? 'sp-seat--unavailable' : 'sp-seat--aisle');
+                    if (!isUnavailable) {
+                        const line = document.createElement('span');
+                        line.className = `sp-aisle-line ${isRowAisle ? 'sp-aisle-line--horizontal' : 'sp-aisle-line--vertical'}`;
+                        cell.appendChild(line);
+                    }
                     cell.addEventListener('contextmenu', e => this.showContextMenu(e, r, c));
                     grid.appendChild(cell);
                     continue;
                 }
+                this.decorateSeatGroup(cell, r, c);
 
                 const studentId = this.layout[r]?.[c];
                 if (studentId && studentId !== '_aisle_') {
@@ -688,7 +712,12 @@ applyAisleEditResult(result, message) {
         this.rowAisles = result.rowAisles;
         this.colAisles = result.colAisles;
         this.refreshConstraintStatus();
-        this.saveSnapshot();
+        if (this.pendingLayoutPreview && !this.pendingLayoutPreview.confirmed) {
+            this.pendingLayoutPreview.classroomLayout = structuredClone(this.classroomLayout);
+            this.renderPrimaryLayoutPreviewSummary?.();
+        } else {
+            this.saveSnapshot();
+        }
         this.renderGrid();
         this.renderPodiumSeats();
         this.updateStatus();
@@ -701,7 +730,12 @@ applyLocalAisleEdit(nextClassroomLayout, message) {
         this.classroomLayout.guardians.left = this.guardians[0] || null;
         this.classroomLayout.guardians.right = this.guardians[1] || null;
         this.refreshConstraintStatus();
-        this.saveSnapshot();
+        if (this.pendingLayoutPreview && !this.pendingLayoutPreview.confirmed) {
+            this.pendingLayoutPreview.classroomLayout = structuredClone(this.classroomLayout);
+            this.renderPrimaryLayoutPreviewSummary?.();
+        } else {
+            this.saveSnapshot();
+        }
         this.renderGrid();
         this.renderPodiumSeats();
         this.updateStatus();

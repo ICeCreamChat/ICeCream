@@ -210,6 +210,7 @@ class SeatingPlanner {
         this.render();
         this.bindEvents();
         this.bindPodiumEvents(); // Bind events for static podium seats
+        this.updateLayoutRequirementSummary();
         console.log('[SeatingPlanner] Initialized with new design');
     }
 
@@ -404,7 +405,52 @@ class SeatingPlanner {
     }
 
     getArrangePrompt() {
-        return document.getElementById('sp-arrange-prompt')?.value?.trim() || '';
+        return document.getElementById('sp-arrange-prompt')?.value?.trim()
+            || '按所选布局规则安排全部学生';
+    }
+
+    getLayoutRequirementSpec() {
+        const groupSizeValue = document.getElementById('sp-layout-group-size')?.value || 'auto';
+        const groupsPerRowValue = Number.parseInt(document.getElementById('sp-layout-groups-per-row')?.value, 10);
+        const groupGapValue = document.getElementById('sp-layout-group-gap')?.value || 'auto';
+        const mainAisleValue = document.getElementById('sp-layout-main-aisle')?.value || 'auto';
+        const spec = {
+            capacityPolicy: 'auto_expand',
+            oddStudentPolicy: 'partial_group',
+        };
+        if (groupSizeValue !== 'auto') {
+            spec.groupSize = Number.parseInt(groupSizeValue, 10);
+            spec.layoutMode = spec.groupSize > 1 ? 'grouped' : 'standard';
+        }
+        if (Number.isInteger(groupsPerRowValue) && groupsPerRowValue > 0) {
+            spec.groupsPerRow = groupsPerRowValue;
+            spec.layoutMode = 'grouped';
+        }
+        if (groupGapValue !== 'auto') spec.groupGap = groupGapValue;
+        if (mainAisleValue !== 'auto') {
+            spec.aislePolicy = {
+                mainVertical: mainAisleValue === 'vertical' || mainAisleValue === 'both',
+                mainHorizontal: mainAisleValue === 'horizontal' || mainAisleValue === 'both',
+            };
+        }
+        return spec;
+    }
+
+    updateLayoutRequirementSummary() {
+        const target = document.getElementById('sp-layout-requirement-summary');
+        if (!target) return;
+        const spec = this.getLayoutRequirementSpec();
+        const parts = [];
+        parts.push(spec.groupSize ? `${spec.groupSize}人一组` : '分组自动识别');
+        parts.push(spec.groupsPerRow ? `每排${spec.groupsPerRow}组` : '每排组数自动');
+        parts.push(spec.groupGap === 'normal' ? '组间留距' : spec.groupGap === 'none' ? '组间不留距' : '组间距自动');
+        const mainAisle = spec.aislePolicy;
+        if (!mainAisle) parts.push('主过道自动识别');
+        else if (mainAisle.mainVertical && mainAisle.mainHorizontal) parts.push('中央十字主过道');
+        else if (mainAisle.mainVertical) parts.push('中央竖主过道');
+        else if (mainAisle.mainHorizontal) parts.push('中央横主过道');
+        else parts.push('无主过道');
+        target.textContent = `${parts.join(' · ')} · 容量按名单最小扩展`;
     }
 
     pickArrangeCompletion(suggestions = [], currentText = '') {
@@ -716,6 +762,7 @@ class SeatingPlanner {
             strategy: this.strategy,
             previousLayout: this.classroomLayout,
             previousAssignments: this.getCurrentAssignments(),
+            arrangementSpec: this.getLayoutRequirementSpec(),
         });
         const result = await res.json().catch(() => ({ success: false, error: 'AI 布局预览返回格式错误' }));
         if (!res.ok || !result.success) {
@@ -993,8 +1040,43 @@ class SeatingPlanner {
                                     <span>补全要求</span>
                                 </button>
                             </div>
+                            <div class="sp-layout-requirements" aria-label="结构化排座要求">
+                                <label class="sp-layout-field">
+                                    <span>每组人数</span>
+                                    <select id="sp-layout-group-size" class="sp-layout-select">
+                                        <option value="auto">自动识别</option>
+                                        <option value="1">1 人</option>
+                                        <option value="2">2 人</option>
+                                        <option value="3">3 人</option>
+                                        <option value="4">4 人</option>
+                                    </select>
+                                </label>
+                                <label class="sp-layout-field">
+                                    <span>每排组数</span>
+                                    <input id="sp-layout-groups-per-row" class="sp-layout-number" type="number" min="1" max="12" inputmode="numeric" placeholder="自动">
+                                </label>
+                                <label class="sp-layout-field">
+                                    <span>组间距离</span>
+                                    <select id="sp-layout-group-gap" class="sp-layout-select">
+                                        <option value="auto">自动识别</option>
+                                        <option value="normal">留出间距</option>
+                                        <option value="none">紧邻排列</option>
+                                    </select>
+                                </label>
+                                <label class="sp-layout-field">
+                                    <span>主过道</span>
+                                    <select id="sp-layout-main-aisle" class="sp-layout-select">
+                                        <option value="auto">自动识别</option>
+                                        <option value="none">无主过道</option>
+                                        <option value="vertical">中央竖过道</option>
+                                        <option value="horizontal">中央横过道</option>
+                                        <option value="both">中央十字过道</option>
+                                    </select>
+                                </label>
+                            </div>
+                            <div id="sp-layout-requirement-summary" class="sp-layout-requirement-summary"></div>
                             <div class="sp-autocomplete-anchor">
-                                <textarea id="sp-arrange-prompt" class="sp-arrange-prompt" rows="4" placeholder="例如：两人一组，中间留过道，讲台旁安排左右护法，护法位置要一个成绩较差一个成绩较好的" aria-autocomplete="list" aria-expanded="false" aria-controls="sp-arrange-completions"></textarea>
+                                <textarea id="sp-arrange-prompt" class="sp-arrange-prompt" rows="3" placeholder="补充要求，例如：讲台旁安排左右护法；张三和李四不要相邻" aria-autocomplete="list" aria-expanded="false" aria-controls="sp-arrange-completions"></textarea>
                                 <div id="sp-arrange-completions" class="sp-autocomplete sp-autocomplete--above sp-hidden" role="listbox"></div>
                             </div>
                         </section>
@@ -1004,44 +1086,6 @@ class SeatingPlanner {
                             <i data-lucide="sparkles"></i>
                             生成座位表
                         </button>
-                        <div id="sp-layout-preview-confirm" class="sp-layout-preview sp-hidden" aria-live="polite" aria-label="布局预览待确认">
-                            <div class="sp-layout-preview-titlebar">
-                                <strong class="sp-layout-preview-title">座位预览</strong>
-                                <span class="sp-layout-preview-subtitle">已生成布局，请确认后排学生</span>
-                            </div>
-                            <div id="sp-layout-preview-mini" class="sp-layout-preview-mini"></div>
-                            <div class="sp-layout-preview-legend" aria-label="布局图例说明">
-                                <span class="sp-layout-preview-legend-item">
-                                    <span class="sp-layout-preview-legend-icon sp-layout-preview-legend-icon--seat" aria-hidden="true">
-                                        <span class="sp-layout-preview-legend-student"></span>
-                                        <span class="sp-layout-preview-legend-desk"></span>
-                                    </span>
-                                    座位
-                                </span>
-                                <span class="sp-layout-preview-legend-item">
-                                    <span class="sp-layout-preview-legend-icon sp-layout-preview-legend-icon--group" aria-hidden="true">
-                                        <span class="sp-layout-preview-legend-badge"></span>
-                                        <span class="sp-layout-preview-legend-link"></span>
-                                    </span>
-                                    同组
-                                </span>
-                                <span class="sp-layout-preview-legend-item">
-                                    <span class="sp-layout-preview-legend-icon sp-layout-preview-legend-icon--aisle" aria-hidden="true"></span>
-                                    过道
-                                </span>
-                            </div>
-                            <div class="sp-layout-preview-actions">
-                                <button type="button" class="sp-btn sp-btn--sm" id="sp-layout-preview-cancel">取消</button>
-                                <button type="button" class="sp-btn sp-btn--sm" id="sp-layout-preview-regenerate">
-                                    <i data-lucide="refresh-cw"></i>
-                                    重新生成
-                                </button>
-                                <button type="button" class="sp-btn sp-btn--sm sp-btn--primary" id="sp-layout-preview-assign">
-                                    <i data-lucide="check"></i>
-                                    确认排学生
-                                </button>
-                            </div>
-                        </div>
                     </aside>
 
                     <!-- Right Classroom -->
@@ -1080,6 +1124,24 @@ class SeatingPlanner {
                                     <div class="sp-seat sp-seat--guardian sp-seat--empty" id="sp-guardian-right">
                                         <div class="sp-desk"></div>
                                     </div>
+                                </div>
+                            </div>
+                            <div id="sp-layout-preview-confirm" class="sp-canvas-preview-bar sp-hidden" aria-live="polite" aria-label="布局预览待确认">
+                                <div class="sp-canvas-preview-copy">
+                                    <span class="sp-canvas-preview-badge">布局预览</span>
+                                    <strong id="sp-layout-preview-summary">已生成新布局</strong>
+                                    <span id="sp-layout-preview-meta">确认后才会安排学生</span>
+                                </div>
+                                <div class="sp-layout-preview-actions">
+                                    <button type="button" class="sp-btn sp-btn--sm" id="sp-layout-preview-cancel">取消</button>
+                                    <button type="button" class="sp-btn sp-btn--sm" id="sp-layout-preview-regenerate" title="按当前要求重新生成布局">
+                                        <i data-lucide="refresh-cw"></i>
+                                        重新生成
+                                    </button>
+                                    <button type="button" class="sp-btn sp-btn--sm sp-btn--primary" id="sp-layout-preview-assign">
+                                        <i data-lucide="check"></i>
+                                        确认并排学生
+                                    </button>
                                 </div>
                             </div>
                             <div id="sp-grid" class="sp-grid"></div>
@@ -2002,7 +2064,13 @@ class SeatingPlanner {
         $('sp-layout-preview-assign')?.addEventListener('click', () => this.confirmLayoutPreview());
         $('sp-layout-preview-cancel')?.addEventListener('click', () => this.cancelLayoutPreview());
         $('sp-layout-preview-regenerate')?.addEventListener('click', () => this.regenerateLayoutPreview());
-        $('sp-layout-preview-mini')?.addEventListener('click', event => this.handleLayoutPreviewEditClick(event));
+        ['sp-layout-group-size', 'sp-layout-groups-per-row', 'sp-layout-group-gap', 'sp-layout-main-aisle']
+            .forEach(id => {
+                $(id)?.addEventListener(id === 'sp-layout-groups-per-row' ? 'input' : 'change', () => {
+                    this.updateLayoutRequirementSummary();
+                    this.scheduleSuggestionRefresh('arrange');
+                });
+            });
         const arrangePrompt = $('sp-arrange-prompt');
         arrangePrompt?.addEventListener('keydown', e => {
             if (this.handleSuggestionKeyDown(e, 'arrange')) return;

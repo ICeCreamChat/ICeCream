@@ -7,6 +7,7 @@ import {
     parseTimetableRules,
 } from '../gateway/services/timetable-rule-parser.js';
 import { createCompleteNaturalLanguage137Project } from './fixtures/timetable-natural-language-137-project.js';
+import { TIMETABLE_CONSTRAINT_WORKBOOK_PATH } from './fixtures/timetable-workbook-paths.js';
 import {
     CONSTRAINT_RULE_DEFINITIONS,
     CONSTRAINT_RULE_EDITOR_DEFINITIONS,
@@ -175,7 +176,7 @@ test('all editable 137-fixture machine rules open with populated forms and compi
     const parsed = await parseTimetableRules({
         file: {
             filename: '真实学校排课约束需求.xlsx',
-            buffer: fs.readFileSync(new URL('../真实学校排课约束需求.xlsx', import.meta.url)),
+            buffer: fs.readFileSync(TIMETABLE_CONSTRAINT_WORKBOOK_PATH),
         },
         project: fullProject,
         env: {},

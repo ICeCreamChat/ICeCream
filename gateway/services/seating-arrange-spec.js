@@ -44,27 +44,69 @@ function validateLayoutPlan(plan, studentCount, allowUnassigned) {
     return { ok: errors.length === 0, errors };
 }
 
+function normalizeGroupGap(value, fallback = 'none') {
+    const text = asText(value).toLowerCase();
+    if (['none', 'off', 'closed', '无', '不留'].includes(text)) return 'none';
+    if (['normal', 'gap', 'spacing', '普通', '留距', '间距'].includes(text)) return 'normal';
+    return fallback === 'normal' ? 'normal' : 'none';
+}
+
+function normalizeOddStudentPolicy(value) {
+    const text = asText(value).toLowerCase();
+    if (['partial_group', 'allow_partial_group', 'single_in_group', '保留空位', '末组不满'].includes(text)) {
+        return 'partial_group';
+    }
+    return 'partial_group';
+}
+
+function mergeArrangementSpecSources(raw = {}, requested = {}) {
+    const aiSpec = raw && typeof raw === 'object' ? raw : {};
+    const requestedSpec = requested && typeof requested === 'object' ? requested : {};
+    return {
+        ...aiSpec,
+        ...requestedSpec,
+        aislePolicy: {
+            ...(aiSpec.aislePolicy || aiSpec.aisles || {}),
+            ...(requestedSpec.aislePolicy || requestedSpec.aisles || {}),
+        },
+        guardianPolicy: {
+            ...(aiSpec.guardianPolicy || aiSpec.guardians || {}),
+            ...(requestedSpec.guardianPolicy || requestedSpec.guardians || {}),
+        },
+        placementPolicy: {
+            ...(aiSpec.placementPolicy || {}),
+            ...(requestedSpec.placementPolicy || {}),
+        },
+    };
+}
+
 function normalizeArrangementSpec(raw = {}, request = {}) {
     const inferred = inferArrangementSpecFromPrompt(request.prompt);
-    const placementPolicy = raw.placementPolicy && typeof raw.placementPolicy === 'object' ? raw.placementPolicy : {};
-    const rawGroupSize = positiveInt(raw.groupSize ?? raw.group_size, 0, 0, 12);
+    const source = mergeArrangementSpecSources(raw, request.arrangementSpec);
+    const placementPolicy = source.placementPolicy && typeof source.placementPolicy === 'object' ? source.placementPolicy : {};
+    const rawGroupSize = positiveInt(source.groupSize ?? source.group_size, 0, 0, 12);
     const groupSize = rawGroupSize > 0 ? rawGroupSize : inferred.groupSize;
-    const layoutMode = asText(raw.layoutMode || raw.layout_mode) || inferred.layoutMode || 'standard';
-    const rawGroupsPerRow = positiveInt(raw.groupsPerRow ?? raw.groups_per_row, 0, 0, 1000000);
-    const rawPhysicalCols = positiveInt(raw.physicalCols ?? raw.physical_cols ?? raw.cols, 0, 0, 1000000);
-    const rawPhysicalRows = positiveInt(raw.physicalRows ?? raw.physical_rows ?? raw.rows, 0, 0, 1000000);
+    const layoutMode = asText(source.layoutMode || source.layout_mode) || inferred.layoutMode || 'standard';
+    const rawGroupsPerRow = positiveInt(source.groupsPerRow ?? source.groups_per_row, 0, 0, 1000000);
+    const rawPhysicalCols = positiveInt(source.physicalCols ?? source.physical_cols ?? source.cols, 0, 0, 1000000);
+    const rawPhysicalRows = positiveInt(source.physicalRows ?? source.physical_rows ?? source.rows, 0, 0, 1000000);
     const groupsPerRow = rawGroupsPerRow > 0 ? rawGroupsPerRow : inferred.groupsPerRow;
     const physicalCols = rawPhysicalCols > 0 ? rawPhysicalCols : inferred.physicalCols;
     const physicalRows = rawPhysicalRows > 0 ? rawPhysicalRows : inferred.physicalRows;
-    const rawColumnPattern = normalizeColumnPattern(raw.columnPattern ?? raw.column_pattern);
+    const rawColumnPattern = normalizeColumnPattern(source.columnPattern ?? source.column_pattern);
     const columnPattern = rawColumnPattern.length ? rawColumnPattern : normalizeColumnPattern(inferred.columnPattern);
-    if (!rawColumnPattern.length && /edge-single-inner-pair/.test(asText(raw.customPattern || raw.custom_pattern))) {
+    if (!rawColumnPattern.length && /edge-single-inner-pair/.test(asText(source.customPattern || source.custom_pattern))) {
         columnPattern.splice(0, columnPattern.length, 1, 'aisle', 2, 'aisle', 2, 'aisle', 1);
     }
-    const capacityPolicy = normalizeCapacityPolicy(raw.capacityPolicy ?? raw.capacity_policy, inferred.capacityPolicy);
-    const aislePolicy = normalizeAislePolicy(raw.aislePolicy || raw.aisles || {}, inferred.aislePolicy);
+    const capacityPolicy = normalizeCapacityPolicy(source.capacityPolicy ?? source.capacity_policy, inferred.capacityPolicy);
+    const aislePolicy = normalizeAislePolicy(source.aislePolicy || source.aisles || {}, inferred.aislePolicy);
+    const groupGap = normalizeGroupGap(
+        source.groupGap ?? source.group_gap,
+        aislePolicy.verticalBetweenGroups ? 'normal' : 'none'
+    );
+    aislePolicy.verticalBetweenGroups = groupGap !== 'none';
     const promptPlacementOverrides = inferPlacementOverridesFromPrompt(request.prompt);
-    const rawGuardianPolicy = raw.guardianPolicy || raw.guardians || null;
+    const rawGuardianPolicy = source.guardianPolicy || source.guardians || null;
     const guardianPolicy = normalizeGuardianPolicy(rawGuardianPolicy || {}, inferred.guardianPolicy);
     if (!hasExplicitGuardianRequirement(rawGuardianPolicy) && inferred.guardianPolicy.strategy !== 'none') {
         guardianPolicy.enabled = true;
@@ -76,6 +118,8 @@ function normalizeArrangementSpec(raw = {}, request = {}) {
         physicalCols,
         physicalRows,
         capacityPolicy,
+        groupGap,
+        oddStudentPolicy: normalizeOddStudentPolicy(source.oddStudentPolicy ?? source.odd_student_policy),
         columnPattern,
         aislePolicy,
         guardianPolicy,
@@ -86,11 +130,11 @@ function normalizeArrangementSpec(raw = {}, request = {}) {
             ...definedPlacementPolicy(placementPolicy),
         }),
         strategyOverrides: promptPlacementOverrides,
-        keepPreviousLayout: boolValue(raw.keepPreviousLayout ?? raw.keep_previous_layout, inferred.keepPreviousLayout),
+        keepPreviousLayout: boolValue(source.keepPreviousLayout ?? source.keep_previous_layout, inferred.keepPreviousLayout),
         assumptions: inferred.assumptions || [],
-        notes: asText(raw.notes || raw.reasoning),
+        notes: asText(source.notes || source.reasoning),
     };
-    normalized.parseWarnings = specConflictWarnings(raw, inferred, normalized);
+    normalized.parseWarnings = specConflictWarnings(source, inferred, normalized);
     return normalized;
 }
 
@@ -101,7 +145,8 @@ function buildSpecMessages(request) {
 - 只输出 JSON，不要 markdown。
 - 不要返回 assignments、classroomLayout、学生坐标或完整名单。
 - 如果老师没有限制容量，布局应允许本地算法自动扩容。
-- groupSize 表示几个人一组；aislePolicy 表示组间是否留横/竖过道。
+- groupSize 表示几个人一组；groupGap 表示组块之间是否留普通桌间距，只能是 "normal" 或 "none"。
+- aislePolicy.mainVertical / mainHorizontal 表示可以实际通行的主过道；普通组间距不要输出成主过道。
 - groupsPerRow 表示每行有几个组块；physicalCols 表示物理座位列数；physicalRows 表示物理座位行数，三者不要混用。
 - capacityPolicy 只能是 "auto_expand" 或 "fixed"；老师没说固定容量时默认 auto_expand，明确说固定/只有/最多/不超过/座位有限时用 fixed。
 - columnPattern 用于非均匀混合列布局：正整数表示连续座位组，"aisle" 表示一列过道，例如 [1,"aisle",2,"aisle",2,"aisle",1]。
@@ -109,14 +154,14 @@ function buildSpecMessages(request) {
 - 如果老师说“N列座位/物理列”，应输出 physicalCols=N，不要输出 groupsPerRow=N。
 - 如果老师说“每排/每行 N 人”，应输出 physicalCols=N；如果说“每列 N 人”，应输出 physicalRows=N；如果说“N行M列”，应同时输出 physicalRows=N、physicalCols=M。
 - “两人一桌/双人桌/同桌两个/两两并排”都表示 groupSize=2；“三三制/三人一桌”表示 groupSize=3。
-- “中间留通道/组间空一列/左右隔开”通常表示 aislePolicy.verticalBetweenGroups=true。
+- “每组之间留空/留过道/隔开”通常表示 groupGap="normal"；“中央/中间留主通道”才表示 aislePolicy.mainVertical=true。
 - “边上/两边/最边一人一组，中间/里面两人一组”应输出 columnPattern=[1,"aisle",2,"aisle",2,"aisle",1]，notes 写“两边1人组，中间2人组，组间过道”。
 - guardianPolicy 用于左右护法规则，例如 lowest_grade 表示成绩最低的同学，top_grade_percent 表示成绩前20%的同学。
 - 如果老师要求左右护法有组合条件，请输出 guardianPolicy.slots，必须是两个对象，例如 [{"gender":"M","strategy":"lowest_grade"},{"gender":"F","strategy":"top_grade_percent"}]。
 - 护法位必须按老师最新自然语言需求输出；遇到“后来/改成/后面说”时以后面的要求为准。
 示例:
-输入: "两人一桌，中间留通道" -> {"groupSize":2,"aislePolicy":{"verticalBetweenGroups":true},"layoutMode":"grouped"}
-输入: "同桌两个，分成4列组" -> {"groupSize":2,"groupsPerRow":4,"aislePolicy":{"verticalBetweenGroups":true},"layoutMode":"grouped"}
+输入: "两人一桌，中间留通道" -> {"groupSize":2,"groupGap":"normal","aislePolicy":{"mainVertical":true},"layoutMode":"grouped"}
+输入: "同桌两个，分成4列组" -> {"groupSize":2,"groupsPerRow":4,"groupGap":"normal","layoutMode":"grouped"}
 输入: "每排8人，每列6人" -> {"physicalCols":8,"physicalRows":6,"layoutMode":"standard"}
 输入: "6行8列，双人桌" -> {"physicalRows":6,"physicalCols":8,"groupSize":2,"layoutMode":"grouped"}
 输入: "固定6行8列，最多这些座位" -> {"physicalRows":6,"physicalCols":8,"capacityPolicy":"fixed","layoutMode":"standard"}
@@ -141,8 +186,10 @@ function buildSpecMessages(request) {
             physicalCols: 0,
             physicalRows: 6,
             capacityPolicy: 'auto_expand',
+            groupGap: 'normal',
+            oddStudentPolicy: 'partial_group',
             columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
-            aislePolicy: { verticalBetweenGroups: true, horizontalBetweenGroupRows: true },
+            aislePolicy: { verticalBetweenGroups: true, horizontalBetweenGroupRows: true, mainVertical: false, mainHorizontal: false },
             guardianPolicy: { enabled: true, strategy: 'lowest_grade', slots: [] },
             layoutMode: 'grouped',
             placementPolicy: { genderBalance: true, gradeStrategy: 'none', heightOrder: false },

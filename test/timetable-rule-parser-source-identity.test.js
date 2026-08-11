@@ -10,9 +10,10 @@ import {
 import {
     buildRequirementStatistics,
 } from '../gateway/services/timetable-constraints/statistics.js';
+import { TIMETABLE_CONSTRAINT_WORKBOOK_PATH } from './fixtures/timetable-workbook-paths.js';
 
 const fixturePath = path.join(process.cwd(), 'test/fixtures/timetable-natural-language-137.json');
-const workbookPath = path.join(process.cwd(), '真实学校排课约束需求.xlsx');
+const workbookPath = TIMETABLE_CONSTRAINT_WORKBOOK_PATH;
 const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
 
 function findSourceByRow(result, sourceRow) {

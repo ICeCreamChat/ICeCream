@@ -144,7 +144,12 @@ async function main() {
         const republishedStatus = await page.textContent('[data-workflow-step="review"] .tt-chip');
         assert.match(republishedStatus || '', /已发布 V2/);
 
-        await page.click('[data-publication-history-version="1"]');
+        await page.locator('#tt-inspector-drawer').evaluate(drawer => {
+            if (!drawer.open) drawer.querySelector('summary')?.click();
+        });
+        const firstPublishedVersion = page.locator('[data-publication-history-version="1"]');
+        await firstPublishedVersion.waitFor({ state: 'visible', timeout: 10000 });
+        await firstPublishedVersion.click();
         await page.waitForSelector('#tt-publication-history-dialog', { timeout: 10000 });
 
         const historyText = await page.textContent('#tt-publication-history-dialog');

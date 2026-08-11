@@ -17,6 +17,7 @@ import {
     detectRosterFileFormat,
     readRosterFileSource,
 } from '../gateway/services/timetable-roster-workbook.js';
+import { TIMETABLE_ROSTER_WORKBOOK_PATH } from './fixtures/timetable-workbook-paths.js';
 
 const HEADERS = ['年级', '班级', '课程', '教师', '周课时', '连堂', '教室', '课程类型', '课程标签'];
 
@@ -69,7 +70,7 @@ function naturalRosterText(rows = []) {
 test('real school roster workbook keeps exact provenance and deterministic baseline', async () => {
     const file = {
         filename: '真实学校整学期任课数据.xlsx',
-        buffer: fs.readFileSync('真实学校整学期任课数据.xlsx'),
+        buffer: fs.readFileSync(TIMETABLE_ROSTER_WORKBOOK_PATH),
     };
     let aiCalls = 0;
     const preview = await parseRosterAiOrLocal({
@@ -137,7 +138,7 @@ test('real school roster workbook keeps exact provenance and deterministic basel
 test('real school roster natural-language text matches the workbook baseline without AI', async () => {
     const file = {
         filename: '真实学校整学期任课数据.xlsx',
-        buffer: fs.readFileSync('真实学校整学期任课数据.xlsx'),
+        buffer: fs.readFileSync(TIMETABLE_ROSTER_WORKBOOK_PATH),
     };
     const workbookPreview = previewTimetableRosterFile(file);
     const text = naturalRosterText(workbookPreview.draftRows);
@@ -446,7 +447,7 @@ test('roster preview and confirm APIs preserve the real workbook baseline in an 
 
     try {
         const form = new FormData();
-        form.append('file', new Blob([fs.readFileSync('真实学校整学期任课数据.xlsx')], {
+        form.append('file', new Blob([fs.readFileSync(TIMETABLE_ROSTER_WORKBOOK_PATH)], {
             type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         }), '真实学校整学期任课数据.xlsx');
         const previewResponse = await fetch(`${baseUrl}/api/tools/timetable/roster/preview`, { method: 'POST', body: form });
