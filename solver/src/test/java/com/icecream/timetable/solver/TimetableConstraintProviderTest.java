@@ -285,13 +285,13 @@ class TimetableConstraintProviderTest {
         List<LessonAssignment> disabled = sameDayTeacherLessons("disabled", "t1", 0);
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::teacherDailyLoadVariance)
-                .given(disabled.stream().map(TimetableConstraintProviderTest::unit).toArray(SchedulingUnit[]::new))
+                .given(disabled.stream().map(TimetableConstraintProviderTest::unit).toArray())
                 .hasNoImpact();
 
         List<LessonAssignment> weighted = sameDayTeacherLessons("weighted", "t1", 3);
 
         constraintVerifier.verifyThat(TimetableConstraintProvider::teacherDailyLoadVariance)
-                .given(weighted.stream().map(TimetableConstraintProviderTest::unit).toArray(SchedulingUnit[]::new))
+                .given(weighted.stream().map(TimetableConstraintProviderTest::unit).toArray())
                 .penalizesBy(12);
     }
 

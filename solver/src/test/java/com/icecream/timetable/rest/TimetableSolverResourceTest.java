@@ -2,6 +2,7 @@ package com.icecream.timetable.rest;
 
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
+import io.restassured.path.json.JsonPath;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -151,7 +152,6 @@ class TimetableSolverResourceTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
     void jobLifecycleKeepsDoubleBlockOnOneDayAndConsecutive() throws InterruptedException {
         String jobId = given()
                 .contentType(ContentType.JSON)
@@ -165,14 +165,14 @@ class TimetableSolverResourceTest {
         Map<String, Object> status = waitUntilDone(jobId);
         assertEquals("NOT_SOLVING", status.get("solverStatus"));
 
-        Map<String, Object> solution = given()
+        JsonPath solution = given()
                 .when().get("/timetable-solutions/{jobId}", jobId)
                 .then()
                 .statusCode(200)
                 .body("hardScore", equalTo(0))
-                .extract().as(Map.class);
-        assertEquals(0, status.get("hardScore"), solution.toString());
-        List<Map<String, Object>> assignments = (List<Map<String, Object>>) solution.get("lessonAssignments");
+                .extract().jsonPath();
+        assertEquals(0, status.get("hardScore"), solution.prettify());
+        List<Map<String, Object>> assignments = solution.getList("lessonAssignments");
         Map<String, Object> firstAssignment = assignments.stream()
                 .filter(item -> "lp_double_1".equals(item.get("id")))
                 .findFirst().orElseThrow();
@@ -216,13 +216,13 @@ class TimetableSolverResourceTest {
         Map<String, Object> status = waitUntilDone(jobId);
         assertEquals("NOT_SOLVING", status.get("solverStatus"));
 
-        Map<String, Object> solution = given()
+        JsonPath solution = given()
                 .when().get("/timetable-solutions/{jobId}", jobId)
                 .then()
                 .statusCode(200)
-                .extract().as(Map.class);
-        assertEquals(0, status.get("hardScore"), solution.toString());
-        List<Map<String, Object>> assignments = (List<Map<String, Object>>) solution.get("lessonAssignments");
+                .extract().jsonPath();
+        assertEquals(0, status.get("hardScore"), solution.prettify());
+        List<Map<String, Object>> assignments = solution.getList("lessonAssignments");
         Map<String, Object> firstAssignment = assignments.stream()
                 .filter(item -> "lp_double_1".equals(item.get("id")))
                 .findFirst().orElseThrow();
@@ -247,7 +247,6 @@ class TimetableSolverResourceTest {
                 .statusCode(204);
     }
 
-    @SuppressWarnings("unchecked")
     private static Map<String, Object> waitUntilDone(String jobId) throws InterruptedException {
         Map<String, Object> status = null;
         for (int i = 0; i < 30; i++) {
@@ -255,7 +254,7 @@ class TimetableSolverResourceTest {
                     .when().get("/timetable-solutions/{jobId}/status", jobId)
                     .then()
                     .statusCode(200)
-                    .extract().as(Map.class);
+                    .extract().jsonPath().getMap("$");
             if ("NOT_SOLVING".equals(status.get("solverStatus"))) {
                 return status;
             }
