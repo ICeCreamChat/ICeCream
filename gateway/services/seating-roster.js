@@ -352,6 +352,18 @@ export function buildImageImportReview(rows = []) {
 
 function decodeXml(value = '') {
     return value
+        .replace(/&#x([0-9a-f]+);/gi, (match, code) => {
+            const codePoint = Number.parseInt(code, 16);
+            return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10FFFF
+                ? String.fromCodePoint(codePoint)
+                : match;
+        })
+        .replace(/&#([0-9]+);/g, (match, code) => {
+            const codePoint = Number.parseInt(code, 10);
+            return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10FFFF
+                ? String.fromCodePoint(codePoint)
+                : match;
+        })
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&quot;/g, '"')

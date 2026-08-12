@@ -8,15 +8,20 @@ import {
   parseStudentsText,
 } from '../gateway/services/seating-roster.js';
 
-function createMinimalXlsx(rows) {
+function createMinimalXlsx(rows, { numericEntityStrings = false } = {}) {
   const esc = value => String(value ?? '')
-    .replace(/&/g, '&amp;')
+    .replace(/&(?!#(?:x[0-9a-f]+|[0-9]+);)/gi, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+  const encode = value => numericEntityStrings
+    ? [...String(value ?? '')]
+      .map(char => char.codePointAt(0) > 0x7F ? `&#${char.codePointAt(0)};` : char)
+      .join('')
+    : value;
   const colName = index => String.fromCharCode('A'.charCodeAt(0) + index);
   const sheetRows = rows.map((row, rowIndex) => {
     const cells = row.map((value, colIndex) => `
-      <c r="${colName(colIndex)}${rowIndex + 1}" t="inlineStr"><is><t>${esc(value)}</t></is></c>
+      <c r="${colName(colIndex)}${rowIndex + 1}" t="inlineStr"><is><t>${esc(encode(value))}</t></is></c>
     `).join('');
     return `<row r="${rowIndex + 1}">${cells}</row>`;
   }).join('');
@@ -118,6 +123,28 @@ test('parseRosterFile parses a real xlsx workbook', async () => {
     { id: 's01', name: '张三', gender: 'M', grade: 93, height: 142 },
     { id: 's02', name: '李四', gender: 'F', grade: 88, height: 151 },
   ]);
+});
+
+test('parseRosterFile decodes numeric XML entities used by common Excel writers', async () => {
+  const buffer = createMinimalXlsx([
+    ['序号', '姓名', '性别', '成绩', '身高'],
+    ['1', '陈浩然', '男', '88', '172'],
+  ], { numericEntityStrings: true });
+
+  const result = await parseRosterFile({
+    buffer,
+    originalname: 'students-openpyxl.xlsx',
+    mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+
+  assert.equal(result.count, 1);
+  assert.deepEqual(result.students[0], {
+    id: 's01',
+    name: '陈浩然',
+    gender: 'M',
+    grade: 88,
+    height: 172,
+  });
 });
 
 test('parseRosterFile rejects unsupported roster uploads', async () => {
