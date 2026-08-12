@@ -52,7 +52,7 @@ function createEscapeEvent() {
   };
 }
 
-test('seating planner exposes AI requirement entry instead of fixed layout controls', async () => {
+test('seating planner exposes structured layout requirements with a free-text supplement', async () => {
   const source = await readFile(sourcePath, 'utf8');
   const apiSource = await readFile(apiClientPath, 'utf8');
   const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
@@ -63,14 +63,21 @@ test('seating planner exposes AI requirement entry instead of fixed layout contr
   assert.match(apiSource, /\/api\/tools\/seating\/arrange/);
   assert.match(apiSource, /\/api\/tools\/seating\/layout-preview/);
   assert.match(source, /排座要求/);
-  assert.match(source, /例如：两人一组，中间留过道，讲台旁安排左右护法，护法位置要一个成绩较差一个成绩较好的/);
+  assert.match(source, /id="sp-layout-group-size"/);
+  assert.match(source, /id="sp-layout-groups-per-row"/);
+  assert.match(source, /id="sp-layout-group-gap"/);
+  assert.match(source, /id="sp-layout-main-aisle"/);
+  assert.match(source, /id="sp-layout-requirement-summary"/);
+  assert.match(source, /补充要求，例如：讲台旁安排左右护法；张三和李四不要相邻/);
+  assert.match(source, /getLayoutRequirementSpec\(\)/);
+  assert.match(source, /arrangementSpec: this\.getLayoutRequirementSpec\(\)/);
+  assert.match(source, /oddStudentPolicy: 'partial_group'/);
+  assert.match(source, /capacityPolicy: 'auto_expand'/);
   assert.match(source, />\s*生成座位表\s*</);
   assert.match(layoutPreviewSource, /btn\.innerHTML = '<i data-lucide="sparkles"><\/i> 生成座位表'/);
   assert.doesNotMatch(source, /AI 排座需求/);
   assert.doesNotMatch(source, />\s*AI 生成座位表\s*</);
   assert.doesNotMatch(source, /data-layout-template=/);
-  assert.doesNotMatch(source, /id="sp-rows"/);
-  assert.doesNotMatch(source, /id="sp-cols"/);
   assert.doesNotMatch(source, /sp-layout-prompt/);
 });
 
@@ -92,136 +99,79 @@ test('seating planner previews AI layout before confirming student assignment', 
   assert.doesNotMatch(source, /const data = await this\.requestAiArrangement\(prompt\);\s*const arrangement = this\.applyArrangementResult\(data\);/s);
 });
 
-test('seating planner renders an editable visual-only layout preview', async () => {
+test('seating planner renders the editable layout preview on the primary canvas', async () => {
   const source = await readFile(sourcePath, 'utf8');
   const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
+  const gridSource = await readFile(gridPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
-  assert.doesNotMatch(source, /sp-layout-preview-summary/);
-  assert.doesNotMatch(source, /layoutPreviewSummary/);
-  assert.match(layoutPreviewSource, /renderEditableLayoutPreviewGrid/);
-  assert.match(layoutPreviewSource, /handleLayoutPreviewEditClick/);
-  assert.match(layoutPreviewSource, /insertPreviewAisleRowAt/);
-  assert.match(layoutPreviewSource, /insertPreviewAisleColumnAt/);
-  assert.match(layoutPreviewSource, /deletePreviewAisleRowAt/);
-  assert.match(layoutPreviewSource, /deletePreviewAisleColumnAt/);
-  assert.match(layoutPreviewSource, /togglePreviewLocalAisle/);
-  assert.match(layoutPreviewSource, /insertLocalAisle/);
-  assert.match(layoutPreviewSource, /deleteLocalAisle/);
-  assert.match(layoutPreviewSource, /pendingLayoutPreview\.classroomLayout = layout/);
+  assert.match(source, /id="sp-layout-preview-summary"/);
+  assert.match(source, /id="sp-layout-preview-meta"/);
+  assert.match(layoutPreviewSource, /capturePrimaryCanvasState/);
+  assert.match(layoutPreviewSource, /applyLayoutPreviewToPrimaryCanvas/);
+  assert.match(layoutPreviewSource, /restorePrimaryCanvasState/);
+  assert.match(layoutPreviewSource, /renderPrimaryLayoutPreviewSummary/);
+  assert.match(layoutPreviewSource, /this\.layout = this\.previewAssignmentGrid\(normalized\)/);
   assert.match(layoutPreviewSource, /localAisles: normalizeLocalAisles\(source\.localAisles, rows, cols\)/);
-  assert.match(styles, /\.sp-layout-preview-mini\s*{[^}]*overflow-x: auto/s);
-  assert.match(styles, /\.sp-layout-preview-mini\s*{[^}]*scrollbar-width: thin/s);
-  assert.match(styles, /\.sp-layout-preview-local-gap/);
-  assert.match(styles, /\.sp-layout-preview-full-row-handle/);
-  assert.doesNotMatch(source, /sp-layout-preview-col-controls/);
-  assert.doesNotMatch(source, /sp-layout-preview-full-col-handle/);
-  assert.doesNotMatch(styles, /\.sp-layout-preview-full-col-handle/);
+  assert.match(gridSource, /pendingLayoutPreview\.classroomLayout = structuredClone\(this\.classroomLayout\)/);
+  assert.match(styles, /\.sp-classroom-view--preview/);
+  assert.match(styles, /\.sp-canvas-preview-bar/);
+  assert.match(styles, /\.sp-seat--unavailable/);
+  assert.doesNotMatch(source, /sp-layout-preview-mini/);
+  assert.doesNotMatch(layoutPreviewSource, /renderEditableLayoutPreviewGrid/);
+  assert.doesNotMatch(styles, /\.sp-layout-preview-mini/);
 });
 
-test('seating planner preview colors adapt to day and night themes with group classes', async () => {
-  const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
+test('seating planner shows group identity and local gaps on the primary canvas', async () => {
+  const gridSource = await readFile(gridPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
-  assert.match(styles, /--sp-preview-bg:\s*rgba\(15,\s*23,\s*42,\s*0\.34\)/);
-  assert.match(styles, /--sp-preview-seat-even-top:\s*#60a5fa/);
-  assert.match(styles, /--sp-preview-seat-odd-bottom:\s*#059669/);
-  assert.match(styles, /--sp-preview-aisle-border:\s*rgba\(148,\s*163,\s*184,\s*0\.34\)/);
-  assert.match(styles, /body\.light-mode \.sp-app\s*{[^}]*--sp-preview-bg:\s*rgba\(241,\s*245,\s*249,\s*0\.84\)/s);
-  assert.match(styles, /body\.light-mode \.sp-app\s*{[^}]*--sp-preview-seat-even-bottom:\s*#1d4ed8/s);
-  assert.match(styles, /\.sp-layout-preview-mini\s*{[^}]*background:\s*var\(--sp-preview-bg\)/s);
-  assert.match(styles, /\.sp-layout-preview-cell--group-even/);
-  assert.match(styles, /\.sp-layout-preview-cell--group-odd\s*{[^}]*--sp-preview-seat-top:\s*var\(--sp-preview-seat-odd-top\)/s);
-  assert.match(styles, /\.sp-layout-preview-cell--aisle\s*{[^}]*border:\s*1px dashed var\(--sp-preview-aisle-border\)/s);
-  assert.match(styles, /\.sp-layout-preview-local-gap\.is-active\s*{[^}]*var\(--sp-preview-gap-active-bg\)[^}]*var\(--sp-preview-gap-active-shadow\)/s);
-
-  assert.match(layoutPreviewSource, /const groupId = layout\.groups\?\.\[r\]\?\.\[c\]/);
-  assert.match(layoutPreviewSource, /cell\.dataset\.group = String\(groupId\)/);
-  assert.match(layoutPreviewSource, /Number\(groupId\) % 2 === 0/);
-  assert.match(layoutPreviewSource, /sp-layout-preview-cell--group-even/);
-  assert.match(layoutPreviewSource, /sp-layout-preview-cell--group-odd/);
+  assert.match(gridSource, /decorateSeatGroup/);
+  assert.match(gridSource, /cell\.dataset\.group = String\(groupId\)/);
+  assert.match(gridSource, /sp-seat--group-even/);
+  assert.match(gridSource, /sp-seat--group-odd/);
+  assert.match(gridSource, /sp-seat--group-link-right/);
+  assert.match(styles, /\.sp-seat--group-link-right::before/);
+  assert.match(styles, /\.sp-classroom-view--preview \.sp-seat--group-even \.sp-desk/);
+  assert.match(styles, /\.sp-classroom-view--preview \.sp-seat--group-odd \.sp-desk/);
+  assert.match(styles, /\.sp-classroom-view--preview \.sp-local-aisle-marker--vertical/);
 });
 
-test('seating planner renders a complete figurative layout preview without clipped controls', async () => {
+test('seating planner keeps preview facts and confirmation controls together above the canvas', async () => {
   const source = await readFile(sourcePath, 'utf8');
   const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
-  assert.match(layoutPreviewSource, /measureLayoutPreview/);
-  assert.match(layoutPreviewSource, /clientWidth|getBoundingClientRect/);
-  assert.match(layoutPreviewSource, /--sp-preview-canvas-width/);
-  assert.doesNotMatch(layoutPreviewSource, /236\s*\/\s*Math\.max\(layout\.cols/);
-  assert.match(source, /sp-layout-preview-title/);
-  assert.match(source, /座位预览/);
-  assert.match(source, /sp-layout-preview-subtitle/);
-  assert.match(source, /已生成布局，请确认后排学生/);
-  assert.doesNotMatch(source, /AI 已生成布局，请确认后排学生/);
-  assert.match(layoutPreviewSource, /const previewCellTarget/);
-  assert.match(layoutPreviewSource, /const maxCell = 28/);
-  assert.match(layoutPreviewSource, /canvasWidth = cols \* cellSize \+ gapCount \* gapSize/);
-  assert.doesNotMatch(layoutPreviewSource, /while \(canvasWidth > availableWidth/);
-  assert.match(layoutPreviewSource, /renderLayoutPreviewStudent/);
-  assert.match(layoutPreviewSource, /sp-layout-preview-student/);
-  assert.match(layoutPreviewSource, /sp-layout-preview-student-head/);
-  assert.match(layoutPreviewSource, /sp-layout-preview-student-body/);
-  assert.match(layoutPreviewSource, /sp-layout-preview-student-desk/);
-  assert.match(layoutPreviewSource, /sp-layout-preview-student-badge/);
-  assert.match(layoutPreviewSource, /renderLayoutPreviewGuardianSeat/);
-  assert.match(layoutPreviewSource, /renderLayoutPreviewGuardianSeat\(side\)\s*{[^}]*this\.renderLayoutPreviewStudent\(\)/s);
-  assert.match(layoutPreviewSource, /sp-layout-preview-guardian-seat/);
-  assert.match(layoutPreviewSource, /sp-layout-preview-guardian-seat--left/);
-  assert.match(layoutPreviewSource, /sp-layout-preview-guardian-seat--right/);
-  assert.doesNotMatch(layoutPreviewSource, /sp-layout-preview-guardian-slot/);
-  assert.match(layoutPreviewSource, /sp-layout-preview-local-gap--group-link/);
-  assert.match(layoutPreviewSource, /dataset\.groupLink = String\(groupId\)/);
-  assert.doesNotMatch(layoutPreviewSource, /sp-layout-preview-cell--same-right/);
-  assert.doesNotMatch(layoutPreviewSource, /sp-layout-preview-cell--same-down/);
-  assert.match(layoutPreviewSource, /sp-layout-preview-podium-band/);
-
-  assert.match(styles, /--sp-preview-student-head:/);
-  assert.match(styles, /--sp-preview-student-body-top:/);
-  assert.match(styles, /--sp-preview-desk-top:/);
-  assert.match(styles, /\.sp-layout-preview-student-head/);
-  assert.match(styles, /\.sp-layout-preview-student-body/);
-  assert.match(styles, /\.sp-layout-preview-student-desk/);
-  assert.match(styles, /\.sp-layout-preview-student-badge/);
-  assert.match(styles, /\.sp-layout-preview-guardian-seat/);
-  assert.match(styles, /\.sp-layout-preview-guardian-seat--left/);
-  assert.match(styles, /\.sp-layout-preview-guardian-seat--right/);
-  assert.doesNotMatch(styles, /\.sp-layout-preview-guardian-slot/);
-  assert.doesNotMatch(styles, /\.sp-layout-preview-cell--same-right::after/);
-  assert.doesNotMatch(styles, /\.sp-layout-preview-cell--same-down::before/);
-  assert.match(styles, /\.sp-layout-preview-title/);
-  assert.match(styles, /\.sp-layout-preview-stage\s*{[^}]*width:\s*var\(--sp-preview-canvas-width\)/s);
-  assert.match(styles, /\.sp-layout-preview-local-gap--group-link::after/);
-  assert.match(styles, /\.sp-layout-preview-legend-icon--seat/);
-  assert.match(styles, /\.sp-layout-preview-legend-icon--group/);
-  assert.match(styles, /\.sp-layout-preview-legend-icon--aisle/);
-  assert.match(styles, /\.sp-layout-preview-mini--normal/);
-  assert.match(styles, /\.sp-layout-preview-mini--compact/);
-  assert.match(styles, /\.sp-layout-preview-mini--micro/);
-  assert.match(styles, /\.sp-layout-preview-podium-band/);
+  assert.match(source, /class="sp-canvas-preview-bar sp-hidden"/);
+  assert.match(source, />布局预览</);
+  assert.match(source, /id="sp-layout-preview-summary"/);
+  assert.match(source, /id="sp-layout-preview-meta"/);
+  assert.match(source, /确认并排学生/);
+  assert.match(layoutPreviewSource, /primaryLayoutPreviewFacts/);
+  assert.match(layoutPreviewSource, /emptySeats/);
+  assert.match(layoutPreviewSource, /中央竖主过道/);
+  assert.match(layoutPreviewSource, /中央横主过道/);
+  assert.match(styles, /\.sp-canvas-preview-bar\s*{[^}]*position:\s*sticky/s);
+  assert.match(styles, /\.sp-canvas-preview-copy strong\s*{[^}]*text-overflow:\s*ellipsis/s);
+  assert.doesNotMatch(source, /sp-layout-preview-title/);
+  assert.doesNotMatch(styles, /\.sp-layout-preview-stage/);
 });
 
-test('seating planner localizes preview editing hints and keeps confirmed preview readonly', async () => {
+test('seating planner restores cancelled previews and assigns only after confirmation', async () => {
   const source = await readFile(sourcePath, 'utf8');
   const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
-  const styles = await readFile(stylePath, 'utf8');
 
-  assert.doesNotMatch(layoutPreviewSource, /Add local aisle|Remove local aisle|Insert full|Remove full/);
-  assert.match(layoutPreviewSource, /添加局部过道/);
-  assert.match(layoutPreviewSource, /删除局部过道/);
-  assert.match(layoutPreviewSource, /删除整行过道/);
-  assert.match(layoutPreviewSource, /删除整列过道/);
-  assert.match(layoutPreviewSource, /插入整行过道/);
   assert.match(source, /applyArrangementResult\(data,\s*\{[^}]*preserveLayoutPreview = false/s);
   assert.match(source, /if \(!preserveLayoutPreview\) this\.cancelLayoutPreview\(\)/);
-  assert.match(layoutPreviewSource, /showConfirmedLayoutPreview/);
-  assert.match(layoutPreviewSource, /readOnly:\s*true/);
-  assert.match(layoutPreviewSource, /confirmed:\s*true/);
+  assert.match(layoutPreviewSource, /const previousState = this\.pendingLayoutPreview\?\.previousState/);
+  assert.match(layoutPreviewSource, /this\.restorePrimaryCanvasState\(previousState\)/);
+  assert.match(layoutPreviewSource, /const confirmedLayout = this\.getConfirmedPreviewLayout\(\)/);
+  assert.match(layoutPreviewSource, /arrangementSpec: this\.pendingLayoutPreview\.arrangementSpec/);
   assert.match(layoutPreviewSource, /preserveLayoutPreview:\s*true/);
-  assert.match(layoutPreviewSource, /if \(this\.pendingLayoutPreview\.readOnly \|\| this\.pendingLayoutPreview\.confirmed\) return/);
-  assert.match(styles, /\.sp-layout-preview-mini--readonly/);
+  assert.match(layoutPreviewSource, /this\.finishLayoutPreview\(\)/);
+  assert.doesNotMatch(layoutPreviewSource, /showConfirmedLayoutPreview/);
+  assert.doesNotMatch(layoutPreviewSource, /readOnly:\s*(?:true|false)/);
+  assert.doesNotMatch(layoutPreviewSource, /confirmed:\s*(?:true|false)/);
 });
 
 test('seating planner displays confirmed local aisles as seat gaps', async () => {
@@ -1080,7 +1030,6 @@ test('major chat arrangement requests require confirmation before regenerating s
 
 test('seating planner inserts full row and column aisles from gap handles', async () => {
   const gridSource = await readFile(gridPanelPath, 'utf8');
-  const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
   const styles = await readFile(stylePath, 'utf8');
 
   assert.match(gridSource, /renderAisleGapHandles/);
@@ -1089,8 +1038,8 @@ test('seating planner inserts full row and column aisles from gap handles', asyn
   assert.match(gridSource, /shouldShowColumnAisleBoundary/);
   assert.match(gridSource, /this\.insertAisleRowAt\(row\)/);
   assert.match(gridSource, /this\.insertAisleColumnAt\(col\)/);
-  assert.match(layoutPreviewSource, /insertPreviewAisleRowAt/);
-  assert.match(layoutPreviewSource, /insertPreviewAisleColumnAt/);
+  assert.match(gridSource, /this\.pendingLayoutPreview\.classroomLayout = structuredClone\(this\.classroomLayout\)/);
+  assert.match(gridSource, /this\.renderPrimaryLayoutPreviewSummary\?\.\(\)/);
   assert.match(styles, /\.sp-aisle-gap/);
 });
 

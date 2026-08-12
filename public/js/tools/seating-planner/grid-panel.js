@@ -712,7 +712,7 @@ applyAisleEditResult(result, message) {
         this.rowAisles = result.rowAisles;
         this.colAisles = result.colAisles;
         this.refreshConstraintStatus();
-        if (this.pendingLayoutPreview && !this.pendingLayoutPreview.confirmed) {
+        if (this.pendingLayoutPreview) {
             this.pendingLayoutPreview.classroomLayout = structuredClone(this.classroomLayout);
             this.renderPrimaryLayoutPreviewSummary?.();
         } else {
@@ -730,7 +730,7 @@ applyLocalAisleEdit(nextClassroomLayout, message) {
         this.classroomLayout.guardians.left = this.guardians[0] || null;
         this.classroomLayout.guardians.right = this.guardians[1] || null;
         this.refreshConstraintStatus();
-        if (this.pendingLayoutPreview && !this.pendingLayoutPreview.confirmed) {
+        if (this.pendingLayoutPreview) {
             this.pendingLayoutPreview.classroomLayout = structuredClone(this.classroomLayout);
             this.renderPrimaryLayoutPreviewSummary?.();
         } else {

@@ -3,8 +3,6 @@ import * as spec from './seating-arrange-spec.js';
 const { applyAiLayoutMatrix, CELL, solveWithTimefold, TimefoldUnavailableError, evaluateSeatingConstraints, evaluateSeatingQuality, normalizeLocalAisles, MAX_ROWS, MAX_COLS, TOP_GRADE_PERCENT, asText, boolValue, numberValue, cellValue, ensureStudents, normalizeLayout, normalizeStudentRef, normalizeAssignments, normalizeUnassigned, normalizeWarnings, studentLabel, seatCapacity, gridSeatCount, availableSeats, normalizeGuardians, validateGuardians, validateBatchAssignments, chineseNumberValue, positiveInt, NATURAL_NUMBER_PATTERN, naturalNumberFromMatch, firstNaturalNumber, extractGroupSize, hasGroupColumnWording, extractColumnCount, extractGridDimensions, extractRowCount, inferColumnPattern, normalizeColumnPattern, normalizeCapacityPolicy, inferCapacityPolicy, inferArrangementSpecFromPrompt, normalizeAislePolicy, normalizeGuardianPolicy, normalizeGuardianStrategy, normalizeGuardianGender, normalizeGuardianSlots, hasExplicitGuardianRequirement, normalizeGradeStrategy, normalizeUiPlacementPolicy, definedPlacementPolicy, inferPlacementOverridesFromPrompt, hasAnyOwn, valueConflict, specConflictWarnings, desiredGroupsPerRow, resolveSeatRows, columnPatternSeatCount, buildSeatRowFromRuns, buildPhysicalGridLayout, buildColumnPatternLayout, buildExpandableClassroomLayout, studentGradeValue, rankedStudentsByGradeDesc, getTopGradeStudentIds, getLowGradeStudentIds, protectExcellentStudentsFromLastRow, layoutSeatList, calculateSeatScoreMap, seatQuality, sortSeatsByQuality, normalizeStudentRefKey, buildNormalizedStudentMap, resolveConstraintStudentId, interleaveGender, applyGradeStrategy, sortStudentsForPlacement, placeTopGradeStudentsInBestSeats, areAdjacent, areAdjacentSeats, areNearAssignments, assignmentsToLayout, constraintEvaluationForAssignments, betterConstraintEvaluation, betterScoreEvaluation, cloneAssignments, assignmentSeatKey, buildLayoutInterpretation, buildSolverFacts } = shared;
 const {
     normalizeArrangementSpec,
-    normalizeLayoutPlan,
-    validateLayoutPlan,
     shouldAllowUnassigned,
 } = spec;
 
@@ -115,6 +113,7 @@ function buildLayoutPreviewMessages({ request, context = {}, repairErrors = [] }
                 capacityPolicy: 'auto_expand',
                 groupGap: 'normal',
                 oddStudentPolicy: 'partial_group',
+                columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
                 aislePolicy: {
                     verticalBetweenGroups: true,
                     horizontalBetweenGroupRows: false,
@@ -310,6 +309,12 @@ function hasLayoutPreviewPayload(raw = {}) {
 
 function hasArrangementSpecPayload(raw = {}) {
     if (!raw || typeof raw !== 'object') return false;
+    if (raw.arrangementSpec && typeof raw.arrangementSpec === 'object') {
+        return hasArrangementSpecPayload(raw.arrangementSpec);
+    }
+    if (raw.spec && typeof raw.spec === 'object') {
+        return hasArrangementSpecPayload(raw.spec);
+    }
     return [
         'groupSize', 'group_size', 'groupsPerRow', 'groups_per_row',
         'physicalCols', 'physical_cols', 'physicalRows', 'physical_rows',

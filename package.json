@@ -17,6 +17,7 @@
         "test:timetable:workflow-smoke": "node test/timetable-ui-workflow-smoke.mjs",
         "test:timetable:rule-review-smoke": "node test/timetable-ui-rule-review-smoke.mjs",
         "test:timetable:roster-import-smoke": "node test/timetable-ui-roster-import-smoke.mjs",
+        "test:seating:workflow-smoke": "node test/seating-ui-workflow-smoke.mjs",
         "test:timetable:ai-golden": "node scripts/run-timetable-ai-golden.js",
         "audit:timetable:market-language-local": "node scripts/run-timetable-market-language-corpus.js",
         "audit:timetable:natural-language-137": "node scripts/audit-timetable-natural-language-137.js",

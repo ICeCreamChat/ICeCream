@@ -69,7 +69,8 @@ ICeCream 是一个教育工具集平台，整合 AI 聊天、智能排课、座�
 
 **核心流程：**
 ```
-用户输入需求 → AI 解析 → 生成布局 → Timefold 优化 → 返回座位表
+结构化布局要求 + 补充文本 → AI 可选解析规则 → 本地确定性生成布局
+→ 主画布预览/编辑/确认 → 本地或 Timefold 分配学生 → 返回座位表
 ```
 
 **稳定接口：**
@@ -144,10 +145,12 @@ ICeCream 是一个教育工具集平台，整合 AI 聊天、智能排课、座�
 ### 座位安排典型流程
 ```
 1. 用户粘贴名单 → seating-roster.js 解析
-2. 用户描述需求 → seating-arrange.js 调用 AI
-3. AI 返回布局规格 → 本地算法生成座位矩阵
-4. 调用 Timefold solver 优化 → seating-solver-bridge.js
-5. 返回最终座位表 → 前端可视化
+2. 用户选择每组人数、每排组数、组间距离、主过道，并可补充自然语言要求
+3. AI 只返回 arrangementSpec；AI 不可用时直接使用结构化控件和本地解析结果
+4. 本地算法按名单最小扩容，生成包含 group、localAisles、empty 的布局矩阵
+5. 主教室画布显示待确认布局；取消恢复原布局，确认后再分配学生
+6. 调用本地算法或 Timefold solver 优化 → seating-solver-bridge.js
+7. 返回最终座位表 → 前端可视化
 ```
 
 ## 依赖关系规则
@@ -170,7 +173,7 @@ Frontend UI → Gateway Routes → Gateway Services → Solver/Manim
 | 全量 Node 测试 | `npm test` | test/*.js 全部用例 |
 | Solver 测试 | `npm run solver:test` | Java 单元测试 |
 | 排课 UI 冒烟 | `npm run test:timetable:ui-smoke` | Playwright 浏览器测试 |
-| 座位 UI 冒烟 | 手动：`npm start` 后访问 `/` | 暂无自动化 |
+| 座位 UI 工作流 | `npm run test:seating:workflow-smoke` | Playwright 验证 45 人双人组、预览/取消/确认和窄屏布局 |
 
 ## 启动顺序
 

@@ -51,7 +51,7 @@
 ### 后端服务层
 
 #### gateway/services/seating-arrange.js（核心编排）
-- **职责**：排座主流程编排（AI 布局 → 本地分配 → Solver 优化 → 校验）
+- **职责**：排座主流程编排（规则解析 → 本地布局矩阵 → 用户确认布局 → 本地分配/Solver 优化 → 校验）
 - **不负责**：约束解析细节（callee: seating-constraints.js）、名单解析（callee: seating-roster.js）
 - **对外接口**：
   - `runAiDrivenArrangement({request, fetchImpl, env})` - 完整排座
@@ -62,7 +62,9 @@
 - **测试**：test/seating-arrange.test.js, test/seating-arrange-route.test.js
 - **常见改动**：
   - 调整排座策略 → 修改内部算法函数（assignLocalSeats 等）
-  - 新增布局参数 → normalizeArrangementSpec + AI prompt 同步更新
+  - 新增布局参数 → normalizeArrangementSpec + 结构化前端控件 + AI prompt 同步更新
+  - `arrangementSpec` 是统一规则入口；显式请求字段优先于 AI 建议，布局矩阵始终由本地算法生成
+  - `groupGap` 表示普通组间距，`aislePolicy.mainVertical/mainHorizontal` 才表示完整主过道
 
 #### gateway/services/seating-constraints.js
 - **职责**：自然语言约束 → 结构化 JSON（前排/同桌/不相邻等）
@@ -99,18 +101,18 @@
 ### 前端
 
 #### public/js/tools/seating-planner.js + seating-planner/
-- **职责**：座位安排完整 UI（名单导入、布局预览、网格编辑、导出）
+- **职责**：座位安排完整 UI（名单导入、结构化排座要求、主画布布局预览、网格编辑、导出）
 - **结构**：seating-planner.js 为入口，seating-planner/ 下按面板拆分
   - roster-panel.js - 名单管理
   - grid-panel.js - 座位网格
   - assistant-panel.js - AI 对话
   - export-panel.js - 导出
-  - layout-preview-panel.js - 布局预览
+  - layout-preview-panel.js - 主画布布局预览、取消恢复、确认后排学生
   - seat-detail-panel.js - 座位详情
   - feedback-panel.js - 反馈
   - api-client.js - 后端 API 封装
 - **加载方式**：app-launcher.js 动态 import
-- **测试**：test/seating-planner-ui.test.js
+- **测试**：test/seating-planner-ui.test.js；真实浏览器工作流使用 `npm run test:seating:workflow-smoke`
 - **常见改动**：
   - 新增面板 → 新建 panel 文件 + 在 seating-planner.js 注册
   - API 调用变更 → 只改 api-client.js

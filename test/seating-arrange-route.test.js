@@ -271,7 +271,7 @@ test('POST /api/tools/seating/arrange ignores previous 6x8 capacity unless the p
   });
 });
 
-test('POST /api/tools/seating/layout-preview returns AI layout without assignments', async () => {
+test('POST /api/tools/seating/layout-preview builds a local matrix from AI rules without assignments', async () => {
   const students = makeStudents(6);
   const stages = [];
 
@@ -280,21 +280,17 @@ test('POST /api/tools/seating/layout-preview returns AI layout without assignmen
     assert.equal(payload.stage, 'layout_preview');
     assert.equal(payload.studentCount, 6);
     assert.equal(Boolean(payload.students), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(payload.outputSchema, 'classroomLayout'), false);
     return {
       reply: '先看这个布局',
-      classroomLayout: {
-        rows: 2,
-        cols: 4,
-        cells: [
-          ['seat', 'seat', 'aisle', 'seat'],
-          ['seat', 'seat', 'aisle', 'seat'],
-        ],
-        guardians: { enabled: false },
-        template: 'ai-preview',
+      arrangementSpec: {
         groupSize: 2,
+        groupsPerRow: 2,
+        groupGap: 'normal',
+        aislePolicy: { mainVertical: false, mainHorizontal: false },
+        layoutMode: 'grouped',
+        notes: '两人桌并留组间距',
       },
-      layoutIntent: { type: 'grouped', description: '两人桌并留过道' },
-      arrangementSpec: { groupSize: 2, layoutMode: 'grouped' },
     };
   }, async appBase => {
     const response = await fetch(`${appBase}/api/tools/seating/layout-preview`, {
@@ -309,10 +305,17 @@ test('POST /api/tools/seating/layout-preview returns AI layout without assignmen
 
     assert.equal(response.status, 200);
     assert.equal(payload.success, true);
-    assert.equal(payload.data.source, 'ai_layout_preview');
+    assert.equal(payload.data.source, 'ai_spec_local_algorithm');
     assert.equal(payload.data.classroomLayout.rows, 2);
+    assert.equal(payload.data.classroomLayout.cols, 4);
+    assert.equal(payload.data.classroomLayout.cells.flat().filter(cell => cell === 'seat').length, 6);
+    assert.equal(payload.data.classroomLayout.cells.flat().filter(cell => cell === 'empty').length, 2);
     assert.equal(Object.prototype.hasOwnProperty.call(payload.data, 'assignments'), false);
-    assert.deepEqual(payload.data.layoutIntent, { type: 'grouped', description: '两人桌并留过道' });
+    assert.deepEqual(payload.data.layoutIntent, {
+      type: 'grouped',
+      description: '两人桌并留组间距',
+      confidence: 'medium',
+    });
     assert.deepEqual(stages, ['layout_preview']);
   });
 });

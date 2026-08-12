@@ -303,7 +303,7 @@ test('validateAiArrangement accepts matrix responses and repair prompt includes 
   assert.match(buildArrangeRepairPrompt(['s01 重复安排', 's03 缺少学生']), /s01 重复安排/);
 });
 
-test('runAiLayoutPreview returns an AI-designed layout preview without assignments', async () => {
+test('runAiLayoutPreview accepts nested AI rules and builds the matrix locally', async () => {
   const roster = Array.from({ length: 4 }, (_, index) => ({
     id: `s0${index + 1}`,
     name: `Student ${index + 1}`,
@@ -319,23 +319,13 @@ test('runAiLayoutPreview returns an AI-designed layout preview without assignmen
     aiPayload = JSON.parse(body.messages.at(-1).content);
     return jsonResponse({
       reply: '已生成布局预览',
-      classroomLayout: {
-        rows: 2,
-        cols: 3,
-        cells: [
-          ['seat', 'aisle', 'seat'],
-          ['seat', 'aisle', 'seat'],
-        ],
-        groups: [
-          [1, null, 2],
-          [3, null, 4],
-        ],
-        guardians: { enabled: false, left: null, right: null },
-        template: 'ai-preview',
-        groupSize: 1,
-      },
       layoutIntent: { type: 'standard', description: '中间留出过道' },
-      arrangementSpec: { groupSize: 1, layoutMode: 'standard' },
+      arrangementSpec: {
+        groupSize: 1,
+        groupGap: 'none',
+        aislePolicy: { mainVertical: true },
+        layoutMode: 'standard',
+      },
       reasoning: '保留中间纵向过道。',
     });
   };
@@ -349,10 +339,12 @@ test('runAiLayoutPreview returns an AI-designed layout preview without assignmen
   assert.equal(aiPayload.stage, 'layout_preview');
   assert.equal(aiPayload.studentCount, 4);
   assert.equal(Boolean(aiPayload.students), false);
-  assert.equal(result.source, 'ai_layout_preview');
-  assert.equal(result.classroomLayout.rows, 2);
-  assert.equal(result.classroomLayout.cols, 3);
-  assert.deepEqual(result.layoutIntent, { type: 'standard', description: '中间留出过道' });
+  assert.equal(result.source, 'ai_spec_local_algorithm');
+  assert.equal(result.classroomLayout.cells.flat().filter(cell => cell === 'seat').length, 4);
+  const fullAisleColumns = Array.from({ length: result.classroomLayout.cols }, (_, col) => col)
+    .filter(col => result.classroomLayout.cells.every(row => row[col] === 'aisle'));
+  assert.equal(fullAisleColumns.length, 1);
+  assert.equal(result.arrangementSpec.aislePolicy.mainVertical, true);
   assert.equal(Object.prototype.hasOwnProperty.call(result, 'assignments'), false);
 });
 
@@ -377,13 +369,7 @@ test('runAiLayoutPreview falls back to local layout after invalid AI previews', 
         },
       };
     }
-    return jsonResponse({
-      classroomLayout: {
-        rows: 1,
-        cols: 2,
-        cells: [['seat', 'aisle']],
-      },
-    });
+    return jsonResponse({ reply: '缺少规则' });
   };
 
   const result = await runAiLayoutPreview({
@@ -392,20 +378,21 @@ test('runAiLayoutPreview falls back to local layout after invalid AI previews', 
     env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
   });
 
-  assert.equal(attempts, 3);
+  assert.equal(attempts, 2);
   assert.equal(result.source, 'local_layout_fallback');
   assert.ok(result.classroomLayout.cells.flat().filter(cell => cell === 'seat').length >= 8);
-  assert.ok(result.warnings.some(warning => /AI.*布局|fallback|降级|备用/.test(warning)));
+  assert.match(result.stats.fallbackReason, /layout_preview 阶段失败/);
+  assert.equal(result.warnings.length, 0);
 });
 
-test('runAiLayoutPreview quietly auto-expands when AI returns only 30 seats for 45 students', async () => {
+test('runAiLayoutPreview ignores a legacy 30-seat matrix and builds 23 pairs for 45 students', async () => {
   const roster = Array.from({ length: 45 }, (_, index) => ({
     id: `s${String(index + 1).padStart(2, '0')}`,
     name: `Student ${index + 1}`,
   }));
   const previousCells = Array.from({ length: 5 }, () => Array(6).fill('seat'));
   const request = normalizeArrangeRequest({
-    prompt: '两人一组',
+    prompt: '两人一组，每组之间空出过道',
     students: roster,
     previousLayout: {
       rows: 5,
@@ -426,8 +413,7 @@ test('runAiLayoutPreview quietly auto-expands when AI returns only 30 seats for 
       },
       arrangementSpec: {
         groupSize: 2,
-        physicalRows: 5,
-        physicalCols: 6,
+        groupGap: 'normal',
         capacityPolicy: 'auto_expand',
         layoutMode: 'grouped',
       },
@@ -441,17 +427,23 @@ test('runAiLayoutPreview quietly auto-expands when AI returns only 30 seats for 
   });
 
   const capacity = result.classroomLayout.cells.flat().filter(cell => cell === 'seat').length;
-  assert.equal(aiPayloads.length, 3);
+  const groupIds = new Set(result.classroomLayout.groups.flat().filter(groupId => groupId !== null));
+  assert.equal(aiPayloads.length, 1);
   assert.equal(aiPayloads[0].capacityRequirement.minimumRegularSeats, 45);
   assert.equal(aiPayloads[0].capacityRequirement.minimumTotalCapacity, 45);
   assert.equal(aiPayloads[0].previousLayoutPolicy, 'reference_only_expand_if_needed');
   assert.equal(aiPayloads[0].previousLayoutSummary, null);
-  assert.match(aiPayloads[1].repairInstruction, /完整 cells 二维矩阵/);
-  assert.equal(result.source, 'local_layout_fallback');
-  assert.ok(capacity >= 45);
-  assert.match(result.reply, /45 人名单.*自动扩容/);
-  assert.match(result.stats.fallbackReason, /布局容量不足.*30.*45/);
-  assert.equal(result.warnings.some(warning => /布局容量不足|阶段失败/.test(warning)), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(aiPayloads[0].outputSchema, 'classroomLayout'), false);
+  assert.equal(result.source, 'ai_spec_local_algorithm');
+  assert.equal(capacity, 46);
+  assert.equal(groupIds.size, 23);
+  assert.equal(result.classroomLayout.rows, 5);
+  assert.equal(result.classroomLayout.cols, 10);
+  assert.equal(result.classroomLayout.cells.flat().filter(cell => cell === 'empty').length, 4);
+  assert.equal(result.classroomLayout.cells.flat().filter(cell => cell === 'aisle').length, 0);
+  assert.equal(result.classroomLayout.localAisles.vertical.length, 18);
+  assert.equal(result.arrangementSpec.oddStudentPolicy, 'partial_group');
+  assert.ok(result.warnings.some(warning => /旧式布局矩阵.*忽略/.test(warning)));
 });
 
 test('runAiLayoutPreview uses local fallback without calling AI when DeepSeek is not configured', async () => {
@@ -597,7 +589,7 @@ test('runAiDrivenArrangement uses AI layout preview before assigning a 60-studen
     env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
   });
 
-  assert.equal(result.source, 'ai_layout_local_assignment');
+  assert.equal(result.source, 'ai_spec_local_algorithm');
   assert.equal(result.assignments.length, 58);
   assert.deepEqual(new Set([result.guardians.left, result.guardians.right]), new Set(['s05', 's55']));
   assert.equal(result.unassigned.length, 0);
@@ -689,6 +681,51 @@ test('AI arrangement spec wins over conflicting local layout hints and records a
   assert.ok(result.warnings.some(warning => /AI.*本地|本地.*AI/.test(warning)));
 });
 
+test('explicit structured requirements override conflicting AI layout rules', async () => {
+  const roster = Array.from({ length: 16 }, (_, index) => ({
+    id: `s${String(index + 1).padStart(2, '0')}`,
+    name: `Student ${index + 1}`,
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '按所选布局规则安排全部学生',
+    students: roster,
+    arrangementSpec: {
+      groupSize: 2,
+      groupsPerRow: 4,
+      groupGap: 'none',
+      aislePolicy: { mainVertical: false, mainHorizontal: false },
+      capacityPolicy: 'auto_expand',
+      oddStudentPolicy: 'partial_group',
+      layoutMode: 'grouped',
+    },
+  });
+  const fetchImpl = async () => jsonResponse({
+    arrangementSpec: {
+      groupSize: 3,
+      groupsPerRow: 2,
+      groupGap: 'normal',
+      aislePolicy: { mainVertical: true, mainHorizontal: true },
+      layoutMode: 'grouped',
+    },
+  });
+
+  const result = await runAiDrivenArrangement({
+    request,
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.equal(result.arrangementSpec.groupSize, 2);
+  assert.equal(result.arrangementSpec.groupsPerRow, 4);
+  assert.equal(result.arrangementSpec.groupGap, 'none');
+  assert.equal(result.arrangementSpec.aislePolicy.mainVertical, false);
+  assert.equal(result.arrangementSpec.aislePolicy.mainHorizontal, false);
+  assert.equal(result.classroomLayout.cells.flat().filter(cell => cell === 'aisle').length, 0);
+  assert.equal(result.classroomLayout.localAisles.vertical.length, 0);
+  assert.equal(result.assignments.length, 16);
+  assert.equal(result.unassigned.length, 0);
+});
+
 test('AI arrangement spec keeps physical seat columns separate from group columns', async () => {
   const roster = Array.from({ length: 20 }, (_, index) => ({
     id: `s${String(index + 1).padStart(2, '0')}`,
@@ -756,11 +793,11 @@ test('AI prompt teaches physical rows capacity policy and mixed column patterns'
     students: roster,
   });
   let systemPrompt = '';
-  let aiPayload = null;
+  const aiPayloads = [];
   const fetchImpl = async (url, options) => {
     const body = JSON.parse(options.body);
     systemPrompt = body.messages[0].content;
-    aiPayload = JSON.parse(body.messages.at(-1).content);
+    aiPayloads.push(JSON.parse(body.messages.at(-1).content));
     return jsonResponse({
       groupSize: 2,
       columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
@@ -781,9 +818,13 @@ test('AI prompt teaches physical rows capacity policy and mixed column patterns'
   assert.match(systemPrompt, /两人一桌/);
   assert.match(systemPrompt, /每列6人/);
   assert.match(systemPrompt, /边上.*一人|两边.*一人/);
-  assert.deepEqual(aiPayload.outputSchema.columnPattern, [1, 'aisle', 2, 'aisle', 2, 'aisle', 1]);
-  assert.equal(aiPayload.outputSchema.physicalRows, 6);
-  assert.equal(aiPayload.outputSchema.capacityPolicy, 'auto_expand');
+  const aiPayload = aiPayloads.find(payload => payload.stage === 'layout_preview');
+  assert.ok(aiPayload);
+  assert.deepEqual(aiPayload.outputSchema.arrangementSpec.columnPattern, [1, 'aisle', 2, 'aisle', 2, 'aisle', 1]);
+  assert.equal(aiPayload.outputSchema.arrangementSpec.physicalRows, 0);
+  assert.equal(aiPayload.outputSchema.arrangementSpec.capacityPolicy, 'auto_expand');
+  assert.equal(aiPayload.outputSchema.arrangementSpec.groupGap, 'normal');
+  assert.equal(aiPayload.outputSchema.arrangementSpec.oddStudentPolicy, 'partial_group');
 });
 
 test('AI columnPattern builds mixed single and pair groups and auto-expands rows', async () => {

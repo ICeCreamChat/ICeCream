@@ -2850,6 +2850,29 @@ body.light-mode .sp-btn--primary {
     .sp-legend {
         display: none;
     }
+
+    .sp-canvas-preview-bar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .sp-canvas-preview-copy strong,
+    .sp-canvas-preview-copy > span:last-child {
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
+    }
+
+    .sp-layout-preview-actions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .sp-layout-preview-actions .sp-btn {
+        justify-content: center;
+        min-width: 0;
+        white-space: normal;
+    }
 }
 
 @media (max-width: 480px) {
@@ -2865,6 +2888,21 @@ body.light-mode .sp-btn--primary {
     .sp-badge {
         font-size: 0.75rem;
         padding: 4px 10px;
+    }
+
+    .sp-layout-requirements,
+    .sp-layout-preview-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .sp-canvas-preview-copy {
+        grid-template-columns: 1fr;
+    }
+
+    .sp-canvas-preview-badge {
+        grid-row: auto;
+        justify-self: start;
+        min-height: 28px;
     }
 
     .sp-seat {

@@ -146,8 +146,6 @@ class SeatingLayoutPreviewPanelMethods {
             ...preview,
             prompt,
             classroomLayout: this.normalizePreviewClassroomLayout(preview.classroomLayout),
-            readOnly: false,
-            confirmed: false,
             previousState,
         };
         const panel = document.getElementById('sp-layout-preview-confirm');
