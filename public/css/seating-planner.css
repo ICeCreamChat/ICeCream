@@ -838,9 +838,9 @@
 }
 
 .sp-arrangement-svg__group-outline {
-    fill: color-mix(in srgb, #22c55e 8%, var(--sp-bg-surface));
-    stroke: color-mix(in srgb, #16a34a 48%, var(--sp-border));
-    stroke-width: 1.4;
+    fill: color-mix(in srgb, #22c55e 9%, var(--sp-bg-surface));
+    stroke: color-mix(in srgb, #16a34a 62%, var(--sp-border));
+    stroke-width: 1.7;
 }
 
 .sp-arrangement-svg__desk {
@@ -876,10 +876,18 @@
     fill: color-mix(in srgb, var(--sp-bg-base) 86%, var(--sp-bg-surface));
 }
 
+.sp-arrangement-svg__walkway-surface--main {
+    fill: color-mix(in srgb, var(--sp-primary) 13%, var(--sp-bg-surface));
+}
+
 .sp-arrangement-svg__walkway-edge {
     fill: none;
     stroke: color-mix(in srgb, var(--sp-border-hover) 72%, transparent);
     stroke-width: 1.2;
+}
+
+.sp-arrangement-svg__walkway-edge--main {
+    stroke: color-mix(in srgb, var(--sp-primary) 76%, var(--sp-border-hover));
 }
 
 .sp-arrangement-svg__walkway-icon {
@@ -957,18 +965,41 @@
 
 .sp-rule-legend--gap,
 .sp-preview-legend--gap {
+    position: relative;
     width: 22px;
-    height: 10px;
-    background: linear-gradient(90deg, #d7b78b 0 36%, transparent 36% 64%, #d7b78b 64% 100%);
+    height: 13px;
+    background:
+        linear-gradient(#8fa4ad, #8fa4ad) left center / 2px 12px no-repeat,
+        linear-gradient(#8fa4ad, #8fa4ad) right center / 2px 12px no-repeat;
+}
+
+.sp-rule-legend--gap::after,
+.sp-preview-legend--gap::after {
+    content: '';
+    position: absolute;
+    top: 6px;
+    left: 5px;
+    width: 12px;
+    border-top: 1.5px solid #6f858f;
 }
 
 .sp-rule-legend--walkway,
 .sp-preview-legend--walkway {
-    width: 15px;
+    width: 22px;
     height: 13px;
-    border-right: 1px solid var(--sp-border-hover);
-    border-left: 1px solid var(--sp-border-hover);
-    background: color-mix(in srgb, var(--sp-bg-base) 86%, var(--sp-bg-surface));
+    border: 1px solid #78a9b8;
+    border-radius: 4px;
+    background: color-mix(in srgb, #dfeff3 82%, var(--sp-bg-surface));
+    color: #536f7a;
+    stroke-width: 1.7;
+}
+
+.sp-layout-preview-legend .sp-preview-legend--walkway {
+    padding: 2px;
+}
+
+.sp-arrangement-legend .sp-rule-legend--walkway {
+    padding: 2px;
 }
 
 .sp-preview-legend--group {
@@ -976,6 +1007,10 @@
     height: 13px;
     border: 2px solid color-mix(in srgb, #16a34a 50%, var(--sp-border));
     border-radius: 3px;
+}
+
+.sp-layout-preview-legend .sp-preview-legend {
+    transform: translateX(2px);
 }
 
 .sp-arrangement-editor {
@@ -1064,7 +1099,7 @@ body.sp-arrangement-editor-open .toast-container {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     align-content: start;
-    gap: 14px;
+    gap: 16px;
     overflow-y: auto;
     padding: 16px 18px;
     border-top: 1px solid var(--sp-border);
@@ -1765,9 +1800,9 @@ body.light-mode .sp-feedback {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 14px;
+    gap: 16px;
     margin: 0 0 10px;
-    padding: 10px 12px;
+    padding: 8px 12px;
     border: 1px solid color-mix(in srgb, var(--sp-primary) 52%, var(--sp-border));
     border-radius: var(--sp-radius-md);
     background: color-mix(in srgb, var(--sp-bg-surface) 94%, var(--sp-primary) 6%);
@@ -1776,14 +1811,17 @@ body.light-mode .sp-feedback {
 
 .sp-canvas-preview-copy {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: 286px minmax(0, 1fr);
+    grid-template-rows: 40px 19px;
     align-items: center;
-    gap: 3px 8px;
+    gap: 2px 14px;
     min-width: 0;
+    flex: 1 1 auto;
 }
 
 .sp-canvas-preview-badge {
-    grid-row: 1 / 3;
+    grid-column: 1;
+    grid-row: 1;
     display: inline-flex;
     align-items: center;
     align-self: stretch;
@@ -1794,22 +1832,49 @@ body.light-mode .sp-feedback {
     font-size: 0.72rem;
     font-weight: 700;
     white-space: nowrap;
+    justify-content: center;
+}
+
+.sp-layout-preview-legend {
+    grid-column: 1;
+    grid-row: 2;
+    justify-content: center;
+    gap: 7px 10px;
+    white-space: nowrap;
+}
+
+.sp-layout-preview-legend span {
+    gap: 4px;
+}
+
+.sp-canvas-preview-copy strong,
+.sp-canvas-preview-copy > span:last-child {
+    grid-column: 2;
+}
+
+.sp-canvas-preview-copy strong {
+    grid-row: 1;
+    align-self: end;
+    transform: translateY(-3px);
 }
 
 .sp-canvas-preview-copy strong {
     overflow: hidden;
     color: var(--sp-text-primary);
-    font-size: 0.86rem;
-    line-height: 1.25;
+    font-size: 0.98rem;
+    line-height: 1.18;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .sp-canvas-preview-copy > span:last-child {
+    grid-row: 2;
+    align-self: start;
+    transform: translateY(-3px);
     overflow: hidden;
     color: var(--sp-text-muted);
-    font-size: 0.72rem;
-    line-height: 1.25;
+    font-size: 0.8rem;
+    line-height: 1.18;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -3232,7 +3297,7 @@ body.light-mode .sp-btn--primary {
 
     .sp-layout-preview-actions {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .sp-layout-preview-actions .sp-btn {
@@ -3290,12 +3355,44 @@ body.light-mode .sp-btn--primary {
 
     .sp-canvas-preview-copy {
         grid-template-columns: 1fr;
+        grid-template-rows: 40px auto auto auto;
+        gap: 4px;
     }
 
     .sp-canvas-preview-badge {
-        grid-row: auto;
+        grid-column: 1;
+        grid-row: 1;
         justify-self: start;
         min-height: 28px;
+    }
+
+    .sp-layout-preview-legend,
+    .sp-canvas-preview-copy strong,
+    .sp-canvas-preview-copy > span:last-child {
+        grid-column: 1;
+    }
+
+    .sp-layout-preview-legend {
+        grid-row: 2;
+        justify-content: flex-start;
+    }
+
+    .sp-canvas-preview-copy strong {
+        grid-row: 3;
+        align-self: start;
+    }
+
+    .sp-canvas-preview-copy > span:last-child {
+        grid-row: 4;
+        align-self: start;
+    }
+
+    .sp-canvas-preview-copy strong {
+        font-size: 0.92rem;
+    }
+
+    .sp-canvas-preview-copy > span:last-child {
+        font-size: 0.76rem;
     }
 
     .sp-seat {

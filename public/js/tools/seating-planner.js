@@ -1081,7 +1081,7 @@ class SeatingPlanner {
                                 <div class="sp-arrangement-legend" aria-label="规则示意图图例">
                                     <span><i class="sp-rule-legend sp-rule-legend--seat"></i>座位</span>
                                     <span><i class="sp-rule-legend sp-rule-legend--gap"></i>普通间距</span>
-                                    <span><i class="sp-rule-legend sp-rule-legend--walkway"></i>可通行过道</span>
+                                    <span><i class="sp-rule-legend sp-rule-legend--walkway" data-lucide="person-standing"></i>可通行过道</span>
                                 </div>
                                 <button type="button" id="sp-arrangement-open-editor" class="sp-btn sp-btn--sm sp-btn--block" disabled>
                                     <i data-lucide="maximize-2"></i>
@@ -1138,19 +1138,18 @@ class SeatingPlanner {
                             <div id="sp-layout-preview-confirm" class="sp-canvas-preview-bar sp-hidden" aria-live="polite" aria-label="布局预览待确认">
                                 <div class="sp-canvas-preview-copy">
                                     <span class="sp-canvas-preview-badge">布局预览</span>
-                                    <strong id="sp-layout-preview-summary">已生成新布局</strong>
-                                    <span id="sp-layout-preview-meta">确认后才会安排学生</span>
                                     <div class="sp-layout-preview-legend" aria-label="布局预览图例">
                                         <span><i class="sp-preview-legend sp-preview-legend--seat"></i>座位</span>
                                         <span><i class="sp-preview-legend sp-preview-legend--group"></i>同组</span>
-                                        <span><i class="sp-preview-legend sp-preview-legend--gap"></i>普通间距</span>
-                                        <span><i class="sp-preview-legend sp-preview-legend--walkway"></i>可通行过道</span>
+                                        <span><i class="sp-preview-legend sp-preview-legend--gap"></i>间距</span>
+                                        <span><i class="sp-preview-legend sp-preview-legend--walkway" data-lucide="person-standing"></i>过道</span>
                                     </div>
+                                    <strong id="sp-layout-preview-summary">已生成布局</strong>
+                                    <span id="sp-layout-preview-meta">5 排 · 30 组 · 60 座</span>
                                 </div>
                                 <div class="sp-layout-preview-actions">
-                                    <button type="button" class="sp-btn sp-btn--sm" id="sp-layout-preview-cancel">取消</button>
                                     <button type="button" class="sp-btn sp-btn--sm" id="sp-layout-preview-edit">
-                                        <i data-lucide="pencil"></i>
+                                        <i data-lucide="arrow-left"></i>
                                         返回修改规则
                                     </button>
                                     <button type="button" class="sp-btn sp-btn--sm sp-btn--primary" id="sp-layout-preview-assign">
@@ -2144,7 +2143,6 @@ class SeatingPlanner {
         $('sp-generate')?.addEventListener('click', () => this.generateSeating());
         $('sp-parse-arrangement')?.addEventListener('click', () => this.recognizeArrangementRequirements?.());
         $('sp-layout-preview-assign')?.addEventListener('click', () => this.confirmLayoutPreview());
-        $('sp-layout-preview-cancel')?.addEventListener('click', () => this.cancelLayoutPreview());
         $('sp-layout-preview-edit')?.addEventListener('click', () => this.returnToArrangementEditor?.());
         this.bindArrangementDiagramEvents?.();
         const arrangePrompt = $('sp-arrange-prompt');

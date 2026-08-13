@@ -137,7 +137,7 @@ class SeatingLayoutPreviewPanelMethods {
         else if (spec.circulation?.mainAisle === 'horizontal' || spec.aislePolicy?.mainHorizontal) ruleParts.push('中央横主过道');
         if (summary) summary.textContent = ruleParts.join(' · ');
         if (meta) {
-            meta.textContent = `${rows} 排 · ${groups || seats} ${groups ? '组' : '列'} · ${seats} 座${emptySeats ? ` · ${emptySeats} 个空位` : ''} · 确认后安排学生`;
+            meta.textContent = `${rows} 排 · ${groups || seats} ${groups ? '组' : '列'} · ${seats} 座${emptySeats ? ` · ${emptySeats} 个空位` : ''}`;
         }
     }
 

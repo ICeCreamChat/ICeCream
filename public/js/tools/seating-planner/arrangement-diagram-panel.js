@@ -22,28 +22,80 @@ function appendWalkingIcon(parent, { centerX, centerY, scale }) {
     parent.appendChild(icon);
 }
 
-function appendWalkwaySurface(parent, { x, y, width, height, orientation, compact }) {
+function appendWalkwaySurface(parent, {
+    x,
+    y,
+    width,
+    height,
+    orientation,
+    compact,
+    isMain = false,
+    showIcon = false,
+}) {
+    const modifier = isMain ? ' sp-arrangement-svg__walkway-surface--main' : '';
+    const edgeModifier = isMain ? ' sp-arrangement-svg__walkway-edge--main' : '';
     parent.appendChild(svgElement('rect', {
         x,
         y,
         width,
         height,
-        class: 'sp-arrangement-svg__walkway-surface',
+        class: `sp-arrangement-svg__walkway-surface${modifier}`,
     }));
     if (orientation === 'vertical') {
         parent.appendChild(svgElement('path', {
             d: `M ${x + 2} ${y} V ${y + height} M ${x + width - 2} ${y} V ${y + height}`,
-            class: 'sp-arrangement-svg__walkway-edge',
+            class: `sp-arrangement-svg__walkway-edge${edgeModifier}`,
         }));
     } else {
         parent.appendChild(svgElement('path', {
             d: `M ${x} ${y + 2} H ${x + width} M ${x} ${y + height - 2} H ${x + width}`,
-            class: 'sp-arrangement-svg__walkway-edge',
+            class: `sp-arrangement-svg__walkway-edge${edgeModifier}`,
         }));
     }
+    if (showIcon) {
+        appendWalkingIcon(parent, {
+            centerX: x + width / 2,
+            centerY: y + height / 2,
+            scale: compact ? 1.15 : 1.55,
+        });
+    }
+}
+
+function appendCrossMainAisle(parent, { vertical, horizontal, compact }) {
+    const vx1 = vertical.x;
+    const vx2 = vertical.x + vertical.width;
+    const vy1 = vertical.y;
+    const vy2 = vertical.y + vertical.height;
+    const hx1 = horizontal.x;
+    const hx2 = horizontal.x + horizontal.width;
+    const hy1 = horizontal.y;
+    const hy2 = horizontal.y + horizontal.height;
+    const crossPath = [
+        `M ${vx1} ${vy1}`,
+        `H ${vx2}`,
+        `V ${hy1}`,
+        `H ${hx2}`,
+        `V ${hy2}`,
+        `H ${vx2}`,
+        `V ${vy2}`,
+        `H ${vx1}`,
+        `V ${hy2}`,
+        `H ${hx1}`,
+        `V ${hy1}`,
+        `H ${vx1}`,
+        'Z',
+    ].join(' ');
+    parent.appendChild(svgElement('path', {
+        d: crossPath,
+        class: 'sp-arrangement-svg__walkway-surface sp-arrangement-svg__walkway-surface--main sp-arrangement-svg__main-aisle--cross',
+    }));
+    parent.appendChild(svgElement('path', {
+        d: crossPath,
+        class: 'sp-arrangement-svg__walkway-edge sp-arrangement-svg__walkway-edge--main',
+    }));
     appendWalkingIcon(parent, {
-        centerX: x + width / 2,
-        centerY: y + height / 2,
+        centerX: vertical.x + vertical.width / 2,
+        centerY: horizontal.y + horizontal.height / 2,
         scale: compact ? 1.15 : 1.55,
     });
 }
@@ -93,7 +145,7 @@ class SeatingArrangementDiagramPanelMethods {
     buildArrangementSvg(specInput, { compact = false } = {}) {
         const spec = normalizeRuleSpec(specInput);
         const rows = compact ? 1 : 2;
-        const groupsPerRow = 3;
+        const groupsPerRow = 4;
         const deskWidth = compact ? 20 : 30;
         const deskHeight = compact ? 20 : 28;
         const chairWidth = compact ? 10 : 15;
@@ -103,27 +155,32 @@ class SeatingArrangementDiagramPanelMethods {
         const groupPad = compact ? 5 : 8;
         const groupWidth = spec.groupSize * deskWidth + Math.max(0, spec.groupSize - 1) * deskGap + groupPad * 2;
         const groupHeight = deskHeight + chairHeight - chairOverlap + groupPad * 2;
-        const normalGap = compact ? 9 : 15;
-        const walkwayGap = compact ? 38 : 62;
-        const closedGap = compact ? 4 : 7;
+        // Even "none" keeps groups visually separate; the rule only removes extra spacing.
+        const groupSeparation = compact ? 7 : 14;
+        const normalGap = compact ? 11 : 22;
+        const walkwayGap = compact ? 18 : 34;
+        const mainWalkwayGap = compact ? 26 : 42;
         const mainVertical = ['vertical', 'cross'].includes(spec.circulation.mainAisle);
         const mainHorizontal = ['horizontal', 'cross'].includes(spec.circulation.mainAisle);
+        const mainBoundaryIndex = Math.floor(groupsPerRow / 2) - 1;
         const boundaryModeAt = groupIndex => (
-            mainVertical && groupIndex === 1 ? 'walkway' : spec.circulation.betweenGroups
+            mainVertical && groupIndex === mainBoundaryIndex ? 'walkway' : spec.circulation.betweenGroups
         );
-        const boundaryWidthFor = mode => (
-            mode === 'walkway' ? walkwayGap : mode === 'gap' ? normalGap : closedGap
+        const boundaryWidthFor = (mode, groupIndex) => (
+            mainVertical && groupIndex === mainBoundaryIndex
+                ? mainWalkwayGap
+                : mode === 'walkway' ? walkwayGap : mode === 'gap' ? normalGap : groupSeparation
         );
         const boundaryWidths = Array.from(
             { length: groupsPerRow - 1 },
-            (_, groupIndex) => boundaryWidthFor(boundaryModeAt(groupIndex))
+            (_, groupIndex) => boundaryWidthFor(boundaryModeAt(groupIndex), groupIndex)
         );
         const rowBoundaryMode = mainHorizontal ? 'walkway' : spec.circulation.betweenRows;
         const rowBoundaryHeight = rowBoundaryMode === 'walkway'
-            ? (compact ? 0 : 48)
+            ? (compact ? 0 : mainHorizontal ? 48 : 28)
             : rowBoundaryMode === 'gap'
                 ? (compact ? 0 : 15)
-                : (compact ? 0 : 7);
+                : (compact ? 0 : groupSeparation);
         const padding = compact ? 8 : 24;
         const width = padding * 2 + groupsPerRow * groupWidth
             + boundaryWidths.reduce((total, boundaryWidth) => total + boundaryWidth, 0);
@@ -131,7 +188,7 @@ class SeatingArrangementDiagramPanelMethods {
         const svg = svgElement('svg', {
             viewBox: `0 0 ${width} ${height}`,
             role: 'img',
-            'aria-label': compact ? '三组排座规则示意图' : '两排三组排座规则编辑示意图',
+            'aria-label': compact ? '四组排座规则示意图' : '两排四组排座规则编辑示意图',
         });
         svg.classList.add('sp-arrangement-svg', compact ? 'sp-arrangement-svg--compact' : 'sp-arrangement-svg--editor');
 
@@ -141,7 +198,7 @@ class SeatingArrangementDiagramPanelMethods {
 
         for (let groupIndex = 0; groupIndex < groupsPerRow - 1; groupIndex++) {
             const boundaryX = groupX(groupIndex) + groupWidth;
-            const isMainBoundary = mainVertical && groupIndex === 1;
+            const isMainBoundary = mainVertical && groupIndex === mainBoundaryIndex;
             const boundaryMode = boundaryModeAt(groupIndex);
             const boundaryWidth = boundaryWidths[groupIndex];
             const boundary = svgElement('g', {
@@ -158,7 +215,7 @@ class SeatingArrangementDiagramPanelMethods {
                 height: height - padding,
                 class: 'sp-arrangement-svg__boundary-hit',
             }));
-            if (boundaryMode === 'walkway') {
+            if (boundaryMode === 'walkway' && !isMainBoundary) {
                 appendWalkwaySurface(boundary, {
                     x: boundaryX,
                     y: padding / 2,
@@ -188,7 +245,7 @@ class SeatingArrangementDiagramPanelMethods {
                 height: rowBoundaryHeight,
                 class: 'sp-arrangement-svg__boundary-hit',
             }));
-            if (boundaryMode === 'walkway') {
+            if (boundaryMode === 'walkway' && !mainHorizontal) {
                 appendWalkwaySurface(boundary, {
                     x: padding / 2,
                     y: boundaryY,
@@ -199,6 +256,48 @@ class SeatingArrangementDiagramPanelMethods {
                 });
             }
             svg.appendChild(boundary);
+        }
+
+        if (mainVertical || (mainHorizontal && !compact)) {
+            const mainAisle = svgElement('g', {
+                class: 'sp-arrangement-svg__boundary sp-arrangement-svg__boundary--main',
+                'data-diagram-target': compact ? '' : 'mainAisle',
+                tabindex: compact ? '-1' : '0',
+                role: compact ? 'img' : 'button',
+                'aria-label': mainAisleLabel(spec.circulation.mainAisle),
+            });
+            const vertical = {
+                x: groupX(mainBoundaryIndex) + groupWidth,
+                y: padding / 2,
+                width: boundaryWidths[mainBoundaryIndex],
+                height: height - padding,
+            };
+            const horizontal = {
+                x: padding / 2,
+                y: groupY(0) + groupHeight,
+                width: width - padding,
+                height: rowBoundaryHeight,
+            };
+            if (mainVertical && mainHorizontal && !compact) {
+                appendCrossMainAisle(mainAisle, { vertical, horizontal, compact });
+            } else if (mainVertical) {
+                appendWalkwaySurface(mainAisle, {
+                    ...vertical,
+                    orientation: 'vertical',
+                    compact,
+                    isMain: true,
+                    showIcon: true,
+                });
+            } else if (mainHorizontal && !compact) {
+                appendWalkwaySurface(mainAisle, {
+                    ...horizontal,
+                    orientation: 'horizontal',
+                    compact,
+                    isMain: true,
+                    showIcon: true,
+                });
+            }
+            svg.appendChild(mainAisle);
         }
 
         for (let row = 0; row < rows; row++) {
@@ -309,7 +408,7 @@ class SeatingArrangementDiagramPanelMethods {
         if (!wrapper || !spec) return;
         wrapper.replaceChildren(this.buildArrangementSvg(spec));
         const facts = document.getElementById('sp-arrangement-editor-facts');
-        if (facts) facts.textContent = '代表性示意：2 排 × 3 组，修改会应用到整个布局';
+        if (facts) facts.textContent = '代表性示意：2 排 × 4 组，修改会应用到整个布局';
         this.updateArrangementEditorControls();
     }
 
