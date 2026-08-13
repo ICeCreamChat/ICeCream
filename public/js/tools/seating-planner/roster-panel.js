@@ -58,7 +58,7 @@ class SeatingRosterPanelMethods {
 
         const badge = document.getElementById('sp-student-count');
         badge.innerHTML = `<i data-lucide="users"></i><span>${result.data.count} 人</span>`;
-        document.getElementById('sp-generate').disabled = false;
+        this.updateArrangementActionState?.();
         this.renderStudentPreview(result.data.students, result.data.count);
         if (window.lucide) window.lucide.createIcons();
         this.showToast(`成功导入 ${result.data.count} 名学生`, 'success');
@@ -461,8 +461,7 @@ class SeatingRosterPanelMethods {
         this.showStudentEditor(this.formatStudentsForEditor(this.students));
         const badge = document.getElementById('sp-student-count');
         if (badge) badge.innerHTML = `<i data-lucide="users"></i><span>${this.students.length} 人</span>`;
-        const generateButton = document.getElementById('sp-generate');
-        if (generateButton) generateButton.disabled = this.students.length === 0;
+        this.updateArrangementActionState?.();
         this.renderStudentPreview(this.students, this.students.length);
         this.refreshConstraintStatus();
         this.saveSnapshot();
@@ -589,7 +588,7 @@ class SeatingRosterPanelMethods {
             const badge = document.getElementById('sp-student-count');
             badge.innerHTML = `<i data-lucide="users"></i><span>${result.data.count} 人</span>`;
             if (window.lucide) window.lucide.createIcons();
-            document.getElementById('sp-generate').disabled = false;
+            this.updateArrangementActionState?.();
 
             // Preview tags
             this.renderStudentPreview(result.data.students, result.data.count);

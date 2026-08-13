@@ -124,10 +124,17 @@ class SeatingLayoutPreviewPanelMethods {
         const groupSize = Math.max(1, Number(spec.groupSize || this.classroomLayout?.groupSize) || 1);
         const ruleParts = [
             groupSize > 1 ? `${groupSize}人一组` : '单人座位',
-            spec.groupGap === 'normal' ? '组间留距' : '组间不留距',
+            spec.circulation?.betweenGroups === 'walkway'
+                ? '组间可通行过道'
+                : spec.circulation?.betweenGroups === 'gap' || spec.groupGap === 'normal'
+                    ? '组间留普通间距'
+                    : '组间不留距',
         ];
-        if (spec.aislePolicy?.mainVertical) ruleParts.push('中央竖主过道');
-        if (spec.aislePolicy?.mainHorizontal) ruleParts.push('中央横主过道');
+        if (spec.circulation?.betweenRows === 'walkway') ruleParts.push('排间可通行过道');
+        else if (spec.circulation?.betweenRows === 'gap') ruleParts.push('排间留普通间距');
+        if (spec.circulation?.mainAisle === 'cross' || (spec.aislePolicy?.mainVertical && spec.aislePolicy?.mainHorizontal)) ruleParts.push('中央十字主过道');
+        else if (spec.circulation?.mainAisle === 'vertical' || spec.aislePolicy?.mainVertical) ruleParts.push('中央竖主过道');
+        else if (spec.circulation?.mainAisle === 'horizontal' || spec.aislePolicy?.mainHorizontal) ruleParts.push('中央横主过道');
         if (summary) summary.textContent = ruleParts.join(' · ');
         if (meta) {
             meta.textContent = `${rows} 排 · ${groups || seats} ${groups ? '组' : '列'} · ${seats} 座${emptySeats ? ` · ${emptySeats} 个空位` : ''} · 确认后安排学生`;
@@ -138,10 +145,13 @@ class SeatingLayoutPreviewPanelMethods {
         this.pendingLayoutPreview = null;
         document.getElementById('sp-layout-preview-confirm')?.classList.add('sp-hidden');
         this.setPrimaryPreviewMode(false);
+        this.updateArrangementActionState?.();
     }
 
     showLayoutPreviewConfirmation(preview, prompt) {
-        const previousState = this.pendingLayoutPreview?.previousState || this.capturePrimaryCanvasState();
+        const previousState = preview?.previousState
+            || this.pendingLayoutPreview?.previousState
+            || this.capturePrimaryCanvasState();
         this.pendingLayoutPreview = {
             ...preview,
             prompt,
@@ -152,6 +162,8 @@ class SeatingLayoutPreviewPanelMethods {
         panel?.classList.remove('sp-hidden');
         this.applyLayoutPreviewToPrimaryCanvas(this.pendingLayoutPreview.classroomLayout);
         this.renderPrimaryLayoutPreviewSummary();
+        this.updateArrangementActionState?.();
+        panel?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
         if (window.lucide) window.lucide.createIcons();
     }
 
@@ -161,12 +173,13 @@ class SeatingLayoutPreviewPanelMethods {
         document.getElementById('sp-layout-preview-confirm')?.classList.add('sp-hidden');
         if (previousState) this.restorePrimaryCanvasState(previousState);
         else this.setPrimaryPreviewMode(false);
+        this.updateArrangementActionState?.();
     }
 
-    async regenerateLayoutPreview() {
-        const prompt = this.pendingLayoutPreview?.prompt || this.getArrangePrompt();
+    returnToArrangementEditor() {
+        if (!this.pendingLayoutPreview) return;
         this.cancelLayoutPreview();
-        if (prompt) await this.generateSeating();
+        this.openArrangementEditor?.();
     }
 
     async confirmLayoutPreview() {
@@ -185,6 +198,7 @@ class SeatingLayoutPreviewPanelMethods {
             const data = await this.requestAiArrangement(preview.prompt, {
                 confirmedLayout,
                 arrangementSpec: this.pendingLayoutPreview.arrangementSpec,
+                diagramEdits: [],
             });
             const arrangement = this.applyArrangementResult(data, { preserveLayoutPreview: true });
             this.finishLayoutPreview();
@@ -207,6 +221,7 @@ class SeatingLayoutPreviewPanelMethods {
                 assignButton.disabled = false;
                 assignButton.innerHTML = originalHtml || '<i data-lucide="check"></i> 确认排学生';
             }
+            this.updateArrangementActionState?.();
             if (window.lucide) window.lucide.createIcons();
         }
     }
@@ -215,6 +230,9 @@ class SeatingLayoutPreviewPanelMethods {
         if (!this.students.length) return this.showToast('请先导入名单', 'warning');
         const prompt = this.getArrangePrompt();
         if (!prompt) return this.showToast('请先描述教室和排座需求', 'warning');
+        if (!this.recognizedArrangement?.arrangementSpec || this.arrangementRecognitionStale) {
+            return this.showToast('请先识别并确认当前排座规则', 'warning');
+        }
         if (this._isGenerating) return; // Loading guard
         this._isGenerating = true;
         this.recordDiagnosticEvent('generate_seating_started', {
@@ -228,7 +246,9 @@ class SeatingLayoutPreviewPanelMethods {
         if (window.lucide) window.lucide.createIcons();
 
         try {
-            const preview = await this.requestLayoutPreview(prompt);
+            const preview = await this.requestLayoutPreview(prompt, {
+                arrangementSpec: this.recognizedArrangement.arrangementSpec,
+            });
             this.showLayoutPreviewConfirmation(preview, prompt);
             this.showToast(preview.reply || '布局预览已生成，请确认后排学生', 'success');
             this.recordDiagnosticEvent('layout_preview_ready', {
@@ -245,8 +265,8 @@ class SeatingLayoutPreviewPanelMethods {
             this.showToast('布局生成失败: ' + err.message, 'error');
         } finally {
             this._isGenerating = false;
-            btn.disabled = false;
-            btn.innerHTML = '<i data-lucide="sparkles"></i> 生成座位表';
+            btn.innerHTML = '<i data-lucide="layout-grid"></i> 生成布局预览';
+            this.updateArrangementActionState?.();
             if (window.lucide) window.lucide.createIcons();
         }
     }

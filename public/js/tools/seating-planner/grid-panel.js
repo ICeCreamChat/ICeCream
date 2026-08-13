@@ -186,10 +186,27 @@ decorateSeatGroup(cell, row, col) {
             'sp-seat--grouped',
             Number(groupId) % 2 === 0 ? 'sp-seat--group-even' : 'sp-seat--group-odd'
         );
-        const rightGroup = this.classroomLayout?.groups?.[row]?.[col + 1];
-        if (rightGroup !== null && rightGroup !== undefined && String(rightGroup) === String(groupId)) {
-            cell.classList.add('sp-seat--group-link-right');
-        }
+        const groups = this.classroomLayout?.groups || [];
+        if (groups[row]?.[col - 1] !== groupId) cell.classList.add('sp-seat--group-start');
+        if (groups[row]?.[col + 1] !== groupId) cell.classList.add('sp-seat--group-end');
+        if (groups[row - 1]?.[col] !== groupId) cell.classList.add('sp-seat--group-top');
+        if (groups[row + 1]?.[col] !== groupId) cell.classList.add('sp-seat--group-bottom');
+    }
+
+gridColumnTrackTemplate() {
+        return Array.from({ length: this.cols }, (_, col) => {
+            const aisleOnly = Array.from({ length: this.rows }, (_, row) => this.classroomLayout?.cells?.[row]?.[col])
+                .every(cell => cell === 'aisle');
+            return aisleOnly ? '28px' : 'minmax(90px, 1fr)';
+        }).join(' ');
+    }
+
+gridRowTrackTemplate() {
+        return Array.from({ length: this.rows }, (_, row) => {
+            const cells = this.classroomLayout?.cells?.[row] || [];
+            const aisleOnly = cells.length > 0 && cells.every(cell => cell === 'aisle');
+            return aisleOnly ? '28px' : 'minmax(85px, auto)';
+        }).join(' ');
     }
 
 createVirtualSeatCell(r, c, localAisles = this.getCurrentLocalAisles()) {
@@ -273,7 +290,7 @@ renderVirtualGrid() {
 
         const windowEl = document.createElement('div');
         windowEl.className = 'sp-grid-window';
-        windowEl.style.gridTemplateColumns = `repeat(${this.cols}, minmax(90px, 1fr))`;
+        windowEl.style.gridTemplateColumns = this.gridColumnTrackTemplate();
         windowEl.style.transform = `translateY(${startRow * rowHeight}px)`;
         for (let r = startRow; r < endRow; r++) {
             for (let c = 0; c < this.cols; c++) {
@@ -312,7 +329,8 @@ renderGrid() {
         grid.classList.remove('sp-grid--virtual');
         grid.style.height = '';
         grid.innerHTML = '';
-        grid.style.gridTemplateColumns = `repeat(${this.cols}, 1fr)`;
+        grid.style.gridTemplateColumns = this.gridColumnTrackTemplate();
+        grid.style.gridTemplateRows = this.gridRowTrackTemplate();
         const localAisles = this.getCurrentLocalAisles();
         for (let r = 0; r < this.rows; r++) {
             for (let c = 0; c < this.cols; c++) {
@@ -529,7 +547,7 @@ fitGridToClassroomView() {
     }
 
 syncPodiumSeatWidth() {
-        const gridSeat = document.querySelector('.sp-grid .sp-seat');
+        const gridSeat = document.querySelector('.sp-grid .sp-seat:not(.sp-seat--aisle):not(.sp-seat--unavailable)');
         const podiumSeats = document.querySelectorAll('.sp-podium-row .sp-seat');
         if (gridSeat && podiumSeats.length) {
             const width = gridSeat.getBoundingClientRect().width;

@@ -10,6 +10,7 @@ const assistantPanelPath = new URL('../public/js/tools/seating-planner/assistant
 const exportPanelPath = new URL('../public/js/tools/seating-planner/export-panel.js', import.meta.url);
 const feedbackPanelPath = new URL('../public/js/tools/seating-planner/feedback-panel.js', import.meta.url);
 const gridPanelPath = new URL('../public/js/tools/seating-planner/grid-panel.js', import.meta.url);
+const arrangementDiagramPanelPath = new URL('../public/js/tools/seating-planner/arrangement-diagram-panel.js', import.meta.url);
 const layoutPreviewPanelPath = new URL('../public/js/tools/seating-planner/layout-preview-panel.js', import.meta.url);
 const rosterPanelPath = new URL('../public/js/tools/seating-planner/roster-panel.js', import.meta.url);
 const seatDetailPanelPath = new URL('../public/js/tools/seating-planner/seat-detail-panel.js', import.meta.url);
@@ -52,9 +53,10 @@ function createEscapeEvent() {
   };
 }
 
-test('seating planner exposes structured layout requirements with a free-text supplement', async () => {
+test('seating planner exposes natural-language requirements and an editable SVG recognition result', async () => {
   const source = await readFile(sourcePath, 'utf8');
   const apiSource = await readFile(apiClientPath, 'utf8');
+  const diagramSource = await readFile(arrangementDiagramPanelPath, 'utf8');
   const layoutPreviewSource = await readFile(layoutPreviewPanelPath, 'utf8');
 
   assert.match(source, /sp-arrange-prompt/);
@@ -62,19 +64,37 @@ test('seating planner exposes structured layout requirements with a free-text su
   assert.match(source, /seatingApi\.fetchLayoutPreview/);
   assert.match(apiSource, /\/api\/tools\/seating\/arrange/);
   assert.match(apiSource, /\/api\/tools\/seating\/layout-preview/);
+  assert.match(apiSource, /\/api\/tools\/seating\/layout-spec/);
   assert.match(source, /排座要求/);
-  assert.match(source, /id="sp-layout-group-size"/);
-  assert.match(source, /id="sp-layout-groups-per-row"/);
-  assert.match(source, /id="sp-layout-group-gap"/);
-  assert.match(source, /id="sp-layout-main-aisle"/);
+  assert.match(source, /id="sp-parse-arrangement"/);
+  assert.match(source, /id="sp-arrangement-diagram"/);
+  assert.match(source, /id="sp-arrangement-rule-facts"/);
+  assert.match(source, /id="sp-arrangement-open-editor"/);
+  assert.match(source, /id="sp-arrangement-editor"/);
+  assert.match(source, /id="sp-arrangement-editor-diagram"/);
+  assert.match(source, /data-arrangement-mode="walkway"/);
+  assert.match(source, /id="sp-arrangement-editor-cancel"/);
+  assert.match(source, /id="sp-arrangement-restore-ai"/);
+  assert.match(source, /id="sp-arrangement-apply"/);
+  assert.match(source, /data-target="groupSize"/);
   assert.match(source, /id="sp-layout-requirement-summary"/);
-  assert.match(source, /补充要求，例如：讲台旁安排左右护法；张三和李四不要相邻/);
+  assert.match(source, /用自然语言描述排座方式/);
   assert.match(source, /getLayoutRequirementSpec\(\)/);
-  assert.match(source, /arrangementSpec: this\.getLayoutRequirementSpec\(\)/);
-  assert.match(source, /oddStudentPolicy: 'partial_group'/);
-  assert.match(source, /capacityPolicy: 'auto_expand'/);
-  assert.match(source, />\s*生成座位表\s*</);
-  assert.match(layoutPreviewSource, /btn\.innerHTML = '<i data-lucide="sparkles"><\/i> 生成座位表'/);
+  assert.match(source, /seatingApi\.fetchLayoutSpec/);
+  assert.match(source, /arrangementPromptSnapshot/);
+  assert.match(source, /arrangementRecognitionStale/);
+  assert.match(diagramSource, /要求已修改，请重新识别/);
+  assert.match(diagramSource, /recognition\.source === 'ai_rule_parser'/);
+  assert.match(diagramSource, /AI 排座规则识别完成/);
+  assert.match(diagramSource, /AI 规则未采用，当前使用本地规则解析/);
+  assert.match(source, />\s*生成布局预览\s*</);
+  assert.match(layoutPreviewSource, /生成布局预览/);
+  assert.match(diagramSource, /rows = compact \? 1 : 2/);
+  assert.match(diagramSource, /groupsPerRow = 3/);
+  assert.doesNotMatch(source, /id="sp-arrangement-remap"/);
+  assert.doesNotMatch(source, /id="sp-arrangement-reset"/);
+  assert.doesNotMatch(diagramSource, /classroomLayout/);
+  assert.doesNotMatch(diagramSource, /patternUnits|sp-walkway-pattern/);
   assert.doesNotMatch(source, /AI 排座需求/);
   assert.doesNotMatch(source, />\s*AI 生成座位表\s*</);
   assert.doesNotMatch(source, /data-layout-template=/);
@@ -94,8 +114,11 @@ test('seating planner previews AI layout before confirming student assignment', 
   assert.match(layoutPreviewSource, /confirmedLayout,/);
   assert.match(source, /sp-layout-preview-confirm/);
   assert.match(source, /sp-layout-preview-cancel/);
-  assert.match(source, /sp-layout-preview-regenerate/);
-  assert.match(layoutPreviewSource, /this\.requestLayoutPreview\(prompt\)/);
+  assert.match(source, /sp-layout-preview-edit/);
+  assert.match(layoutPreviewSource, /returnToArrangementEditor/);
+  assert.match(layoutPreviewSource, /this\.openArrangementEditor\?\.\(\)/);
+  assert.match(layoutPreviewSource, /arrangementSpec: this\.recognizedArrangement\.arrangementSpec/);
+  assert.doesNotMatch(source, /sp-layout-preview-regenerate/);
   assert.doesNotMatch(source, /const data = await this\.requestAiArrangement\(prompt\);\s*const arrangement = this\.applyArrangementResult\(data\);/s);
 });
 
@@ -130,10 +153,14 @@ test('seating planner shows group identity and local gaps on the primary canvas'
   assert.match(gridSource, /cell\.dataset\.group = String\(groupId\)/);
   assert.match(gridSource, /sp-seat--group-even/);
   assert.match(gridSource, /sp-seat--group-odd/);
-  assert.match(gridSource, /sp-seat--group-link-right/);
-  assert.match(styles, /\.sp-seat--group-link-right::before/);
-  assert.match(styles, /\.sp-classroom-view--preview \.sp-seat--group-even \.sp-desk/);
-  assert.match(styles, /\.sp-classroom-view--preview \.sp-seat--group-odd \.sp-desk/);
+  assert.match(gridSource, /sp-seat--group-start/);
+  assert.match(gridSource, /sp-seat--group-end/);
+  assert.match(gridSource, /gridColumnTrackTemplate/);
+  assert.match(gridSource, /aisleOnly \? '28px'/);
+  assert.doesNotMatch(gridSource, /sp-seat--group-link-right/);
+  assert.doesNotMatch(styles, /\.sp-seat--group-link-right::before/);
+  assert.match(styles, /\.sp-classroom-view--preview \.sp-seat--grouped::before/);
+  assert.match(styles, /\.sp-classroom-view--preview \.sp-seat--group-start::before/);
   assert.match(styles, /\.sp-classroom-view--preview \.sp-local-aisle-marker--vertical/);
 });
 
@@ -264,7 +291,7 @@ test('seating planner exposes a feedback entry before the tool theme toggle', as
 
   assert.match(plannerSource, /seatingFeedbackMethods/);
   assert.match(plannerSource, /seatingRosterMethods/);
-  assert.match(plannerSource, /Object\.assign\(\s*SeatingPlanner\.prototype,\s*seatingAssistantMethods,\s*seatingExportMethods,\s*seatingFeedbackMethods,\s*seatingGridMethods,\s*seatingLayoutPreviewMethods,\s*seatingRosterMethods,\s*seatingSeatDetailMethods\s*\)/);
+  assert.match(plannerSource, /Object\.assign\(\s*SeatingPlanner\.prototype,[\s\S]*seatingArrangementDiagramMethods,[\s\S]*seatingSeatDetailMethods\s*\)/);
   assert.match(feedbackSource, /openFeedbackDialog/);
   assert.match(feedbackSource, /buildFeedbackSnapshot/);
   assert.match(feedbackSource, /recordDiagnosticEvent/);
@@ -1155,7 +1182,7 @@ test('arrange prompt completion stays manual without static examples or automati
   assert.doesNotMatch(source, /sp-arrange-examples/);
   assert.doesNotMatch(source, /applyArrangeExample/);
   assert.doesNotMatch(source, /source: 'input'/);
-  assert.doesNotMatch(source, /arrangePrompt\?\.addEventListener\('input'/);
+  assert.match(source, /arrangePrompt\?\.addEventListener\('input', \(\) => this\.handleArrangementPromptInput\?\.\(\)\)/);
   assert.doesNotMatch(source, /arrangePrompt\?\.addEventListener\('focus', \(\) => this\.scheduleSuggestionRefresh\('arrange', true\)\)/);
   assert.doesNotMatch(source, /scheduleSuggestionRefresh\('arrange', true\)/);
 });

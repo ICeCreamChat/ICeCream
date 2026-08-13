@@ -22,6 +22,7 @@ import {
 } from './seating-core.js';
 import * as seatingApi from './seating-planner/api-client.js';
 import { seatingAssistantMethods } from './seating-planner/assistant-panel.js';
+import { seatingArrangementDiagramMethods } from './seating-planner/arrangement-diagram-panel.js';
 import { seatingExportMethods } from './seating-planner/export-panel.js';
 import { seatingFeedbackMethods } from './seating-planner/feedback-panel.js';
 import { seatingGridMethods } from './seating-planner/grid-panel.js';
@@ -103,6 +104,11 @@ class SeatingPlanner {
         this.arrangementSource = null;
         this.arrangementInterpretation = null;
         this.arrangementSpec = null;
+        this.recognizedArrangement = null;
+        this.arrangementPromptSnapshot = '';
+        this.arrangementRecognitionStale = false;
+        this.arrangementEditorDraft = null;
+        this.diagramEdits = [];
         this.pendingLayoutPreview = null;
         this._diagnosticEvents = [];
         this._lastErrors = [];
@@ -215,6 +221,7 @@ class SeatingPlanner {
     }
 
     destroy() {
+        document.body?.classList.remove('sp-arrangement-editor-open');
         // Clean up global event listeners to prevent memory leaks
         if (this._undoRedoHandler) {
             document.removeEventListener('keydown', this._undoRedoHandler);
@@ -281,6 +288,7 @@ class SeatingPlanner {
         const imageReview = byId('sp-image-review');
         const rosterBulkPanel = byId('sp-roster-bulk-panel');
         const layoutPreview = byId('sp-layout-preview-confirm');
+        const arrangementEditor = byId('sp-arrangement-editor');
         const contextMenu = byId('sp-context-menu');
         const chat = byId('sp-chat');
         const chatConfirm = byId('sp-chat-confirm');
@@ -302,6 +310,11 @@ class SeatingPlanner {
 
         if (this.isSuggestionOpen?.('arrange')) {
             this.hideSuggestions('arrange');
+            return true;
+        }
+
+        if (arrangementEditor?.classList?.contains('is-open')) {
+            this.closeArrangementEditor?.();
             return true;
         }
 
@@ -405,52 +418,35 @@ class SeatingPlanner {
     }
 
     getArrangePrompt() {
-        return document.getElementById('sp-arrange-prompt')?.value?.trim()
-            || '按所选布局规则安排全部学生';
+        return document.getElementById('sp-arrange-prompt')?.value?.trim() || '';
     }
 
     getLayoutRequirementSpec() {
-        const groupSizeValue = document.getElementById('sp-layout-group-size')?.value || 'auto';
-        const groupsPerRowValue = Number.parseInt(document.getElementById('sp-layout-groups-per-row')?.value, 10);
-        const groupGapValue = document.getElementById('sp-layout-group-gap')?.value || 'auto';
-        const mainAisleValue = document.getElementById('sp-layout-main-aisle')?.value || 'auto';
-        const spec = {
-            capacityPolicy: 'auto_expand',
-            oddStudentPolicy: 'partial_group',
-        };
-        if (groupSizeValue !== 'auto') {
-            spec.groupSize = Number.parseInt(groupSizeValue, 10);
-            spec.layoutMode = spec.groupSize > 1 ? 'grouped' : 'standard';
-        }
-        if (Number.isInteger(groupsPerRowValue) && groupsPerRowValue > 0) {
-            spec.groupsPerRow = groupsPerRowValue;
-            spec.layoutMode = 'grouped';
-        }
-        if (groupGapValue !== 'auto') spec.groupGap = groupGapValue;
-        if (mainAisleValue !== 'auto') {
-            spec.aislePolicy = {
-                mainVertical: mainAisleValue === 'vertical' || mainAisleValue === 'both',
-                mainHorizontal: mainAisleValue === 'horizontal' || mainAisleValue === 'both',
-            };
-        }
-        return spec;
+        return this.recognizedArrangement?.arrangementSpec
+            ? structuredClone(this.recognizedArrangement.arrangementSpec)
+            : null;
     }
 
     updateLayoutRequirementSummary() {
         const target = document.getElementById('sp-layout-requirement-summary');
         if (!target) return;
-        const spec = this.getLayoutRequirementSpec();
-        const parts = [];
-        parts.push(spec.groupSize ? `${spec.groupSize}人一组` : '分组自动识别');
-        parts.push(spec.groupsPerRow ? `每排${spec.groupsPerRow}组` : '每排组数自动');
-        parts.push(spec.groupGap === 'normal' ? '组间留距' : spec.groupGap === 'none' ? '组间不留距' : '组间距自动');
-        const mainAisle = spec.aislePolicy;
-        if (!mainAisle) parts.push('主过道自动识别');
-        else if (mainAisle.mainVertical && mainAisle.mainHorizontal) parts.push('中央十字主过道');
-        else if (mainAisle.mainVertical) parts.push('中央竖主过道');
-        else if (mainAisle.mainHorizontal) parts.push('中央横主过道');
-        else parts.push('无主过道');
-        target.textContent = `${parts.join(' · ')} · 容量按名单最小扩展`;
+        if (this.arrangementRecognitionStale) {
+            target.textContent = '要求已修改，请重新识别';
+        } else if (this.recognizedArrangement?.arrangementSpec?.layoutSpecVersion === 2) {
+            target.textContent = '规则已识别，可检查示意图或放大编辑';
+        } else {
+            target.textContent = '等待 AI 识别自然语言排座要求';
+        }
+        this.updateArrangementActionState?.();
+    }
+
+    updateArrangementActionState() {
+        const prompt = this.getArrangePrompt();
+        const recognized = Boolean(this.recognizedArrangement?.arrangementSpec) && !this.arrangementRecognitionStale;
+        const recognizeButton = document.getElementById('sp-parse-arrangement');
+        const generateButton = document.getElementById('sp-generate');
+        if (recognizeButton) recognizeButton.disabled = this._isGenerating || !prompt;
+        if (generateButton) generateButton.disabled = this._isGenerating || !this.students.length || !recognized || Boolean(this.pendingLayoutPreview);
     }
 
     pickArrangeCompletion(suggestions = [], currentText = '') {
@@ -743,12 +739,13 @@ class SeatingPlanner {
         return arrangement;
     }
 
-    async requestLayoutPreview(prompt) {
+    async requestLayoutPreview(prompt, options = {}) {
         this.recordDiagnosticEvent('layout_preview_request', {
             prompt,
             studentCount: this.students.length,
             constraintCount: this.constraints.length,
         });
+        const arrangementSpec = options.arrangementSpec || this.getLayoutRequirementSpec();
         const res = await seatingApi.fetchLayoutPreview({
             prompt,
             students: this.students.map(student => ({
@@ -762,7 +759,8 @@ class SeatingPlanner {
             strategy: this.strategy,
             previousLayout: this.classroomLayout,
             previousAssignments: this.getCurrentAssignments(),
-            arrangementSpec: this.getLayoutRequirementSpec(),
+            ...(arrangementSpec ? { arrangementSpec } : {}),
+            diagramEdits: Array.isArray(options.diagramEdits) ? options.diagramEdits : [],
         });
         const result = await res.json().catch(() => ({ success: false, error: 'AI 布局预览返回格式错误' }));
         if (!res.ok || !result.success) {
@@ -780,6 +778,29 @@ class SeatingPlanner {
             warnings: preview.warnings || [],
         });
         return preview;
+    }
+
+    async requestLayoutSpec(prompt) {
+        this.recordDiagnosticEvent('layout_spec_request', {
+            prompt,
+            studentCount: this.students.length,
+        });
+        const res = await seatingApi.fetchLayoutSpec({
+            prompt,
+            studentCount: this.students.length,
+        });
+        const result = await res.json().catch(() => ({ success: false, error: 'AI 规则识别返回格式错误' }));
+        if (!res.ok || !result.success || !result.data?.arrangementSpec) {
+            throw new Error(result.error || 'AI 规则识别失败');
+        }
+        return {
+            arrangementSpec: structuredClone(result.data.arrangementSpec),
+            originalArrangementSpec: structuredClone(result.data.arrangementSpec),
+            interpretation: result.data.interpretation || null,
+            warnings: Array.isArray(result.data.warnings) ? result.data.warnings.filter(Boolean) : [],
+            source: result.data.source || null,
+            prompt,
+        };
     }
 
     async requestAiArrangement(prompt, options = {}) {
@@ -804,6 +825,7 @@ class SeatingPlanner {
             previousAssignments: this.getCurrentAssignments(),
             ...(options.confirmedLayout ? { confirmedLayout: options.confirmedLayout } : {}),
             ...(options.arrangementSpec ? { arrangementSpec: options.arrangementSpec } : {}),
+            diagramEdits: Array.isArray(options.diagramEdits) ? options.diagramEdits : this.diagramEdits,
         });
         const result = await res.json().catch(() => ({ success: false, error: 'AI 排座服务返回格式错误' }));
         if (!res.ok || !result.success) {
@@ -1040,51 +1062,38 @@ class SeatingPlanner {
                                     <span>补全要求</span>
                                 </button>
                             </div>
-                            <div class="sp-layout-requirements" aria-label="结构化排座要求">
-                                <label class="sp-layout-field">
-                                    <span>每组人数</span>
-                                    <select id="sp-layout-group-size" class="sp-layout-select">
-                                        <option value="auto">自动识别</option>
-                                        <option value="1">1 人</option>
-                                        <option value="2">2 人</option>
-                                        <option value="3">3 人</option>
-                                        <option value="4">4 人</option>
-                                    </select>
-                                </label>
-                                <label class="sp-layout-field">
-                                    <span>每排组数</span>
-                                    <input id="sp-layout-groups-per-row" class="sp-layout-number" type="number" min="1" max="12" inputmode="numeric" placeholder="自动">
-                                </label>
-                                <label class="sp-layout-field">
-                                    <span>组间距离</span>
-                                    <select id="sp-layout-group-gap" class="sp-layout-select">
-                                        <option value="auto">自动识别</option>
-                                        <option value="normal">留出间距</option>
-                                        <option value="none">紧邻排列</option>
-                                    </select>
-                                </label>
-                                <label class="sp-layout-field">
-                                    <span>主过道</span>
-                                    <select id="sp-layout-main-aisle" class="sp-layout-select">
-                                        <option value="auto">自动识别</option>
-                                        <option value="none">无主过道</option>
-                                        <option value="vertical">中央竖过道</option>
-                                        <option value="horizontal">中央横过道</option>
-                                        <option value="both">中央十字过道</option>
-                                    </select>
-                                </label>
-                            </div>
                             <div id="sp-layout-requirement-summary" class="sp-layout-requirement-summary"></div>
                             <div class="sp-autocomplete-anchor">
-                                <textarea id="sp-arrange-prompt" class="sp-arrange-prompt" rows="3" placeholder="补充要求，例如：讲台旁安排左右护法；张三和李四不要相邻" aria-autocomplete="list" aria-expanded="false" aria-controls="sp-arrange-completions"></textarea>
+                                <textarea id="sp-arrange-prompt" class="sp-arrange-prompt" rows="5" placeholder="用自然语言描述排座方式，例如：两人一组，每组之间设置可通行过道；讲台旁安排左右护法" aria-autocomplete="list" aria-expanded="false" aria-controls="sp-arrange-completions"></textarea>
                                 <div id="sp-arrange-completions" class="sp-autocomplete sp-autocomplete--above sp-hidden" role="listbox"></div>
+                            </div>
+                            <button type="button" id="sp-parse-arrangement" class="sp-btn sp-btn--secondary sp-btn--block">
+                                <i data-lucide="scan-search"></i>
+                                识别排座要求
+                            </button>
+                            <div id="sp-arrangement-recognition" class="sp-arrangement-recognition" aria-live="polite">
+                                <div class="sp-arrangement-recognition__header">
+                                    <span>识别结果</span>
+                                    <span id="sp-arrangement-edit-status" class="sp-arrangement-edit-status">尚未识别</span>
+                                </div>
+                                <div id="sp-arrangement-diagram" class="sp-arrangement-diagram" aria-label="排座要求识别图"></div>
+                                <div id="sp-arrangement-rule-facts" class="sp-arrangement-rule-facts"></div>
+                                <div class="sp-arrangement-legend" aria-label="规则示意图图例">
+                                    <span><i class="sp-rule-legend sp-rule-legend--seat"></i>座位</span>
+                                    <span><i class="sp-rule-legend sp-rule-legend--gap"></i>普通间距</span>
+                                    <span><i class="sp-rule-legend sp-rule-legend--walkway"></i>可通行过道</span>
+                                </div>
+                                <button type="button" id="sp-arrangement-open-editor" class="sp-btn sp-btn--sm sp-btn--block" disabled>
+                                    <i data-lucide="maximize-2"></i>
+                                    放大编辑
+                                </button>
                             </div>
                         </section>
 
                         <!-- Generate Button -->
                         <button id="sp-generate" class="sp-btn sp-btn--primary sp-btn--block" disabled>
-                            <i data-lucide="sparkles"></i>
-                            生成座位表
+                            <i data-lucide="layout-grid"></i>
+                            生成布局预览
                         </button>
                     </aside>
 
@@ -1131,12 +1140,18 @@ class SeatingPlanner {
                                     <span class="sp-canvas-preview-badge">布局预览</span>
                                     <strong id="sp-layout-preview-summary">已生成新布局</strong>
                                     <span id="sp-layout-preview-meta">确认后才会安排学生</span>
+                                    <div class="sp-layout-preview-legend" aria-label="布局预览图例">
+                                        <span><i class="sp-preview-legend sp-preview-legend--seat"></i>座位</span>
+                                        <span><i class="sp-preview-legend sp-preview-legend--group"></i>同组</span>
+                                        <span><i class="sp-preview-legend sp-preview-legend--gap"></i>普通间距</span>
+                                        <span><i class="sp-preview-legend sp-preview-legend--walkway"></i>可通行过道</span>
+                                    </div>
                                 </div>
                                 <div class="sp-layout-preview-actions">
                                     <button type="button" class="sp-btn sp-btn--sm" id="sp-layout-preview-cancel">取消</button>
-                                    <button type="button" class="sp-btn sp-btn--sm" id="sp-layout-preview-regenerate" title="按当前要求重新生成布局">
-                                        <i data-lucide="refresh-cw"></i>
-                                        重新生成
+                                    <button type="button" class="sp-btn sp-btn--sm" id="sp-layout-preview-edit">
+                                        <i data-lucide="pencil"></i>
+                                        返回修改规则
                                     </button>
                                     <button type="button" class="sp-btn sp-btn--sm sp-btn--primary" id="sp-layout-preview-assign">
                                         <i data-lucide="check"></i>
@@ -1209,6 +1224,71 @@ class SeatingPlanner {
                         </div>
                     </section>
                 </main>
+
+                <div id="sp-arrangement-editor" class="sp-arrangement-editor" aria-hidden="true">
+                    <div class="sp-arrangement-editor__backdrop"></div>
+                    <section class="sp-arrangement-editor__dialog" role="dialog" aria-modal="true" aria-labelledby="sp-arrangement-editor-title">
+                        <header class="sp-arrangement-editor__header">
+                            <div>
+                                <h2 id="sp-arrangement-editor-title">编辑排座规则图</h2>
+                                <p id="sp-arrangement-editor-facts"></p>
+                            </div>
+                            <button type="button" id="sp-arrangement-editor-close" class="sp-icon-btn" aria-label="关闭规则图编辑器" title="关闭">
+                                <i data-lucide="x"></i>
+                            </button>
+                        </header>
+                        <div class="sp-arrangement-editor__body">
+                            <div id="sp-arrangement-editor-diagram" class="sp-arrangement-editor__diagram" aria-label="可编辑排座规则图"></div>
+                            <div class="sp-arrangement-editor__controls" aria-label="排座规则选项">
+                                <fieldset class="sp-arrangement-mode-group" data-control-target="groupSize">
+                                    <legend>每组人数</legend>
+                                    <div class="sp-arrangement-mode-buttons sp-arrangement-mode-buttons--four">
+                                        <button type="button" data-target="groupSize" data-arrangement-mode="1">1 人</button>
+                                        <button type="button" data-target="groupSize" data-arrangement-mode="2">2 人</button>
+                                        <button type="button" data-target="groupSize" data-arrangement-mode="3">3 人</button>
+                                        <button type="button" data-target="groupSize" data-arrangement-mode="4">4 人</button>
+                                    </div>
+                                </fieldset>
+                                <fieldset class="sp-arrangement-mode-group">
+                                    <legend>组间边界</legend>
+                                    <div class="sp-arrangement-mode-buttons">
+                                        <button type="button" data-target="betweenGroups" data-arrangement-mode="none">无</button>
+                                        <button type="button" data-target="betweenGroups" data-arrangement-mode="gap">普通间距</button>
+                                        <button type="button" data-target="betweenGroups" data-arrangement-mode="walkway">可通行过道</button>
+                                    </div>
+                                </fieldset>
+                                <fieldset class="sp-arrangement-mode-group">
+                                    <legend>排间边界</legend>
+                                    <div class="sp-arrangement-mode-buttons">
+                                        <button type="button" data-target="betweenRows" data-arrangement-mode="none">无</button>
+                                        <button type="button" data-target="betweenRows" data-arrangement-mode="gap">普通间距</button>
+                                        <button type="button" data-target="betweenRows" data-arrangement-mode="walkway">可通行过道</button>
+                                    </div>
+                                </fieldset>
+                                <fieldset class="sp-arrangement-mode-group">
+                                    <legend>主过道</legend>
+                                    <div class="sp-arrangement-mode-buttons sp-arrangement-mode-buttons--four">
+                                        <button type="button" data-target="mainAisle" data-arrangement-mode="none">无</button>
+                                        <button type="button" data-target="mainAisle" data-arrangement-mode="vertical">竖向</button>
+                                        <button type="button" data-target="mainAisle" data-arrangement-mode="horizontal">横向</button>
+                                        <button type="button" data-target="mainAisle" data-arrangement-mode="cross">十字</button>
+                                    </div>
+                                </fieldset>
+                            </div>
+                        </div>
+                        <footer class="sp-arrangement-editor__footer">
+                            <button type="button" id="sp-arrangement-editor-cancel" class="sp-btn sp-btn--sm">取消</button>
+                            <button type="button" id="sp-arrangement-restore-ai" class="sp-btn sp-btn--sm">
+                                <i data-lucide="rotate-ccw"></i>
+                                恢复 AI 识别
+                            </button>
+                            <button type="button" id="sp-arrangement-apply" class="sp-btn sp-btn--sm sp-btn--primary">
+                                <i data-lucide="check"></i>
+                                应用修改
+                            </button>
+                        </footer>
+                    </section>
+                </div>
 
                 <!-- Context Menu -->
                 <div id="sp-context-menu" class="sp-context-menu">
@@ -2017,6 +2097,7 @@ class SeatingPlanner {
             this.arrangementInterpretation = null;
             this.arrangementSpec = null;
             this.cancelLayoutPreview();
+            this.clearArrangementRecognition?.();
             this.recordDiagnosticEvent('students_cleared', {});
             this.showArrangementExplain = false;
             $('sp-student-count').innerHTML = '<i data-lucide="users"></i><span>0 人</span>';
@@ -2061,21 +2142,17 @@ class SeatingPlanner {
 
         // Generate
         $('sp-generate')?.addEventListener('click', () => this.generateSeating());
+        $('sp-parse-arrangement')?.addEventListener('click', () => this.recognizeArrangementRequirements?.());
         $('sp-layout-preview-assign')?.addEventListener('click', () => this.confirmLayoutPreview());
         $('sp-layout-preview-cancel')?.addEventListener('click', () => this.cancelLayoutPreview());
-        $('sp-layout-preview-regenerate')?.addEventListener('click', () => this.regenerateLayoutPreview());
-        ['sp-layout-group-size', 'sp-layout-groups-per-row', 'sp-layout-group-gap', 'sp-layout-main-aisle']
-            .forEach(id => {
-                $(id)?.addEventListener(id === 'sp-layout-groups-per-row' ? 'input' : 'change', () => {
-                    this.updateLayoutRequirementSummary();
-                    this.scheduleSuggestionRefresh('arrange');
-                });
-            });
+        $('sp-layout-preview-edit')?.addEventListener('click', () => this.returnToArrangementEditor?.());
+        this.bindArrangementDiagramEvents?.();
         const arrangePrompt = $('sp-arrange-prompt');
         arrangePrompt?.addEventListener('keydown', e => {
             if (this.handleSuggestionKeyDown(e, 'arrange')) return;
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') this.generateSeating();
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') this.recognizeArrangementRequirements?.();
         });
+        arrangePrompt?.addEventListener('input', () => this.handleArrangementPromptInput?.());
         arrangePrompt?.addEventListener('focus', () => this.hideSuggestions('arrange'));
         arrangePrompt?.addEventListener('blur', () => setTimeout(() => this.hideSuggestions('arrange'), 120));
         $('sp-complete-arrange-prompt')?.addEventListener('click', () => this.completeArrangePrompt());
@@ -3421,6 +3498,7 @@ class SeatingPlanner {
 Object.assign(
     SeatingPlanner.prototype,
     seatingAssistantMethods,
+    seatingArrangementDiagramMethods,
     seatingExportMethods,
     seatingFeedbackMethods,
     seatingGridMethods,

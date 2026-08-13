@@ -69,13 +69,14 @@ ICeCream 是一个教育工具集平台，整合 AI 聊天、智能排课、座�
 
 **核心流程：**
 ```
-结构化布局要求 + 补充文本 → AI 可选解析规则 → 本地确定性生成布局
-→ 主画布预览/编辑/确认 → 本地或 Timefold 分配学生 → 返回座位表
+自然语言排座要求 → AI/本地规则解析为 arrangementSpec → 代表性规则图确认/编辑
+→ 本地确定性生成完整布局 → 主画布预览/确认 → 本地或 Timefold 分配学生 → 返回座位表
 ```
 
 **稳定接口：**
+- `POST /api/tools/seating/layout-spec` - 只识别自然语言规则，不生成矩阵
 - `POST /api/tools/seating/arrange` - 一步完成排座
-- `POST /api/tools/seating/layout-preview` - 仅生成布局
+- `POST /api/tools/seating/layout-preview` - 根据确认规则生成完整布局
 
 ### 3. Timetable Module (排课)
 **职责：** 学校课程表自动编排
@@ -145,12 +146,13 @@ ICeCream 是一个教育工具集平台，整合 AI 聊天、智能排课、座�
 ### 座位安排典型流程
 ```
 1. 用户粘贴名单 → seating-roster.js 解析
-2. 用户选择每组人数、每排组数、组间距离、主过道，并可补充自然语言要求
-3. AI 只返回 arrangementSpec；AI 不可用时直接使用结构化控件和本地解析结果
-4. 本地算法按名单最小扩容，生成包含 group、localAisles、empty 的布局矩阵
-5. 主教室画布显示待确认布局；取消恢复原布局，确认后再分配学生
-6. 调用本地算法或 Timefold solver 优化 → seating-solver-bridge.js
-7. 返回最终座位表 → 前端可视化
+2. 用户只输入自然语言排座要求
+3. `/layout-spec` 将要求解析为 v2 `arrangementSpec`，不生成完整矩阵；AI 不可用时使用本地规则解析
+4. 前端用代表性 SVG 展示四项规则；编辑器草稿只修改全局分组和通行规则，应用后成为确认规则
+5. `/layout-preview` 根据确认规则由本地算法按名单最小扩容，生成包含 group、localAisles、aisle、empty 的完整矩阵
+6. 主教室画布显示待确认布局；取消或返回修改时恢复原座位表和学生安排
+7. 确认布局后调用本地算法或 Timefold solver 优化 → seating-solver-bridge.js
+8. 返回最终座位表 → 前端可视化
 ```
 
 ## 依赖关系规则
@@ -173,7 +175,7 @@ Frontend UI → Gateway Routes → Gateway Services → Solver/Manim
 | 全量 Node 测试 | `npm test` | test/*.js 全部用例 |
 | Solver 测试 | `npm run solver:test` | Java 单元测试 |
 | 排课 UI 冒烟 | `npm run test:timetable:ui-smoke` | Playwright 浏览器测试 |
-| 座位 UI 工作流 | `npm run test:seating:workflow-smoke` | Playwright 验证 45 人双人组、预览/取消/确认和窄屏布局 |
+| 座位 UI 工作流 | `npm run test:seating:workflow-smoke` | Playwright 验证 60 人双人组、规则编辑、预览/恢复/确认和窄屏布局 |
 
 ## 启动顺序
 

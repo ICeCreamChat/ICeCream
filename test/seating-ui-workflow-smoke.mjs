@@ -49,7 +49,7 @@ async function seedRosterAndRequirements(page) {
     return page.evaluate(async () => {
         const launcher = (await import('/js/tools/app-launcher.js')).default;
         const planner = launcher.currentToolInstance;
-        const students = Array.from({ length: 45 }, (_, index) => ({
+        const students = Array.from({ length: 60 }, (_, index) => ({
             id: `s${String(index + 1).padStart(2, '0')}`,
             name: `学生${index + 1}`,
             gender: index % 2 === 0 ? 'M' : 'F',
@@ -58,19 +58,8 @@ async function seedRosterAndRequirements(page) {
         }));
         planner.applyRosterReviewState({ students, removedIds: [] });
         planner.syncRosterEditorAfterUpdate();
-
-        const setValue = (id, value) => {
-            const element = document.getElementById(id);
-            element.value = value;
-            element.dispatchEvent(new Event('change', { bubbles: true }));
-        };
-        setValue('sp-layout-group-size', '2');
-        setValue('sp-layout-group-gap', 'normal');
-        setValue('sp-layout-main-aisle', 'none');
-        document.getElementById('sp-layout-groups-per-row').value = '';
-        document.getElementById('sp-arrange-prompt').value = '';
+        document.getElementById('sp-arrange-prompt').value = '两人一组，每组之间设置可通行过道。';
         planner.updateLayoutRequirementSummary();
-
         return {
             students: planner.students.length,
             initialRows: planner.rows,
@@ -80,11 +69,18 @@ async function seedRosterAndRequirements(page) {
     });
 }
 
+async function waitForRecognition(page) {
+    await page.waitForFunction(() => {
+        const planner = window.ICeCream?.appLauncher?.currentToolInstance;
+        return Boolean(planner?.recognizedArrangement?.arrangementSpec)
+            && planner.arrangementRecognitionStale === false;
+    });
+}
+
 async function waitForPreview(page) {
     await page.locator('#sp-layout-preview-confirm').waitFor({ state: 'visible', timeout: 20000 });
     await page.waitForFunction(() => {
-        const launcher = window.ICeCream?.appLauncher;
-        const planner = launcher?.currentToolInstance;
+        const planner = window.ICeCream?.appLauncher?.currentToolInstance;
         return Boolean(planner?.pendingLayoutPreview?.classroomLayout);
     });
 }
@@ -95,6 +91,8 @@ async function previewFacts(page) {
         const layout = planner.pendingLayoutPreview.classroomLayout;
         const cells = layout.cells.flat();
         const groupIds = new Set(layout.groups.flat().filter(value => value !== null && value !== undefined));
+        const aisleNode = document.querySelector('.sp-seat--aisle');
+        const seatNode = document.querySelector('.sp-grid .sp-seat:not(.sp-seat--aisle):not(.sp-seat--unavailable)');
         return {
             rows: layout.rows,
             cols: layout.cols,
@@ -102,11 +100,12 @@ async function previewFacts(page) {
             aisles: cells.filter(cell => cell === 'aisle').length,
             emptyCells: cells.filter(cell => cell === 'empty').length,
             groups: groupIds.size,
-            verticalLocalAisles: layout.localAisles.vertical.length,
             unavailableNodes: document.querySelectorAll('.sp-seat--unavailable').length,
             seatNodes: document.querySelectorAll('.sp-grid .sp-seat:not(.sp-seat--aisle):not(.sp-seat--unavailable)').length,
             summary: document.getElementById('sp-layout-preview-summary').textContent,
             meta: document.getElementById('sp-layout-preview-meta').textContent,
+            aisleWidth: aisleNode?.getBoundingClientRect().width || 0,
+            seatWidth: seatNode?.getBoundingClientRect().width || 0,
         };
     });
 }
@@ -148,47 +147,132 @@ async function main() {
         page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
         page.on('pageerror', error => pageErrors.push(error.message));
         page.on('console', message => {
-            if (message.type() === 'error') consoleErrors.push(message.text());
+            if (message.type() !== 'error') return;
+            const location = message.location();
+            const source = location.url
+                ? ` (${location.url}:${location.lineNumber ?? 0}:${location.columnNumber ?? 0})`
+                : '';
+            consoleErrors.push(`${message.text()}${source}`);
         });
         await launchSeatingTool(page, baseUrl);
 
         const seeded = await seedRosterAndRequirements(page);
-        assert.equal(seeded.students, 45);
-        assert.equal(seeded.initialRows, 6);
-        assert.equal(seeded.initialCols, 8);
-        assert.match(seeded.summary, /2人一组/);
-        assert.match(seeded.summary, /组间留距/);
-        assert.match(seeded.summary, /无主过道/);
+        assert.deepEqual(seeded, {
+            students: 60,
+            initialRows: 6,
+            initialCols: 8,
+            summary: '等待 AI 识别自然语言排座要求',
+        });
+
+        await page.locator('#sp-parse-arrangement').click();
+        await waitForRecognition(page);
+        const recognized = await page.evaluate(() => {
+            const planner = window.ICeCream.appLauncher.currentToolInstance;
+            return {
+                rows: planner.rows,
+                cols: planner.cols,
+                pending: planner.pendingLayoutPreview,
+                groupSize: planner.recognizedArrangement.arrangementSpec.groupSize,
+                betweenGroups: planner.recognizedArrangement.arrangementSpec.circulation.betweenGroups,
+                generateDisabled: document.getElementById('sp-generate').disabled,
+                factText: document.getElementById('sp-arrangement-rule-facts').textContent,
+            };
+        });
+        assert.deepEqual(recognized, {
+            rows: 6,
+            cols: 8,
+            pending: null,
+            groupSize: 2,
+            betweenGroups: 'walkway',
+            generateDisabled: false,
+            factText: '每组人数2 人组间形式可通行过道排间形式不留间距主过道无主过道',
+        });
+
+        await page.locator('#sp-arrange-prompt').fill('两人一组，每组之间设置可通行过道，并增加中央竖向主过道。');
+        await page.waitForFunction(() => window.ICeCream.appLauncher.currentToolInstance.arrangementRecognitionStale === true);
+        assert.equal(await page.locator('#sp-generate').isDisabled(), true);
+        assert.match(await page.locator('#sp-layout-requirement-summary').textContent(), /要求已修改，请重新识别/);
+        await page.locator('#sp-arrange-prompt').fill('两人一组，每组之间设置可通行过道。');
+        await page.waitForFunction(() => window.ICeCream.appLauncher.currentToolInstance.arrangementRecognitionStale === false);
+
+        assert.equal(await page.locator('#sp-arrangement-diagram svg').count(), 1);
+        assert.ok(await page.locator('#sp-arrangement-diagram .sp-arrangement-svg__walkway-label').count() > 0);
+        assert.equal(await page.locator('.sp-arrangement-legend').count(), 1);
+        await page.locator('#sp-arrangement-open-editor').click();
+        await page.locator('#sp-arrangement-editor.is-open').waitFor();
+        assert.equal(await page.locator('#sp-arrangement-editor-diagram svg').count(), 1);
+        assert.ok(await page.locator('#sp-arrangement-editor-diagram [data-diagram-target="betweenGroups"]').count() > 0);
+        assert.equal(await page.locator('.sp-arrangement-editor__body > aside').count(), 0);
+        assert.equal(await page.locator('#sp-arrangement-editor-diagram .sp-arrangement-svg__desk').count(), 12);
+        await page.locator('[data-target="betweenRows"][data-arrangement-mode="gap"]').click();
+
+        const editorDesktop = await page.locator('.sp-arrangement-editor__dialog').screenshot({
+            path: path.join(artifactDir, 'seating-arrangement-editor-desktop.png'),
+        });
+        await assertNonBlankScreenshot(editorDesktop, 'arrangement editor');
+        await page.locator('#sp-arrangement-apply').click();
+        await page.locator('#sp-arrangement-editor.is-open').waitFor({ state: 'hidden' });
+        assert.equal(await page.evaluate(() => (
+            window.ICeCream.appLauncher.currentToolInstance.recognizedArrangement.arrangementSpec.circulation.betweenRows
+        )), 'gap');
 
         await page.locator('#sp-generate').click();
         await waitForPreview(page);
-        const firstPreview = await previewFacts(page);
-        assert.deepEqual(firstPreview, {
-            rows: 5,
-            cols: 10,
-            seats: 46,
-            aisles: 0,
-            emptyCells: 4,
-            groups: 23,
-            verticalLocalAisles: 18,
-            unavailableNodes: 4,
-            seatNodes: 46,
-            summary: '2人一组 · 组间留距',
-            meta: '5 排 · 23 组 · 46 座 · 1 个空位 · 确认后安排学生',
+        await page.waitForFunction(() => {
+            const panel = document.getElementById('sp-layout-preview-confirm');
+            const rect = panel?.getBoundingClientRect();
+            return Boolean(rect) && rect.top >= 0 && rect.bottom <= innerHeight;
         });
+        const firstPreview = await previewFacts(page);
+        assert.deepEqual({
+            rows: firstPreview.rows,
+            cols: firstPreview.cols,
+            seats: firstPreview.seats,
+            aisles: firstPreview.aisles,
+            emptyCells: firstPreview.emptyCells,
+            groups: firstPreview.groups,
+            unavailableNodes: firstPreview.unavailableNodes,
+            seatNodes: firstPreview.seatNodes,
+            summary: firstPreview.summary,
+            meta: firstPreview.meta,
+        }, {
+            rows: 5,
+            cols: 17,
+            seats: 60,
+            aisles: 25,
+            emptyCells: 0,
+            groups: 30,
+            unavailableNodes: 0,
+            seatNodes: 60,
+            summary: '2人一组 · 组间可通行过道 · 排间留普通间距',
+            meta: '5 排 · 30 组 · 60 座 · 确认后安排学生',
+        });
+        assert.ok(firstPreview.aisleWidth > 0 && firstPreview.aisleWidth < firstPreview.seatWidth * 0.55, JSON.stringify(firstPreview));
 
-        const previewDesktop = await page.locator('.sp-main').screenshot({
+        await page.waitForTimeout(3600);
+        await page.locator('.sp-classroom-view').evaluate(element => { element.scrollTop = 0; });
+        const previewDesktop = await page.screenshot({
             path: path.join(artifactDir, 'seating-preview-desktop.png'),
         });
         await assertNonBlankScreenshot(previewDesktop, 'desktop preview');
 
-        await page.locator('#sp-layout-preview-cancel').click();
-        await page.locator('#sp-layout-preview-confirm').waitFor({ state: 'hidden' });
+        await page.locator('#sp-layout-preview-edit').click();
+        await page.locator('#sp-arrangement-editor.is-open').waitFor();
+        await page.locator('#sp-arrangement-editor-cancel').click();
         const restored = await page.evaluate(() => {
             const planner = window.ICeCream.appLauncher.currentToolInstance;
             return { rows: planner.rows, cols: planner.cols, pending: planner.pendingLayoutPreview };
         });
         assert.deepEqual(restored, { rows: 6, cols: 8, pending: null });
+
+        await page.locator('#sp-generate').click();
+        await waitForPreview(page);
+        await page.locator('#sp-layout-preview-cancel').click();
+        const cancelled = await page.evaluate(() => {
+            const planner = window.ICeCream.appLauncher.currentToolInstance;
+            return { rows: planner.rows, cols: planner.cols, recognized: Boolean(planner.recognizedArrangement) };
+        });
+        assert.deepEqual(cancelled, { rows: 6, cols: 8, recognized: true });
 
         await page.locator('#sp-generate').click();
         await waitForPreview(page);
@@ -204,14 +288,55 @@ async function main() {
                 pending: planner.pendingLayoutPreview,
             };
         });
-        assert.deepEqual(assigned, { assignments: 45, unassigned: 0, rows: 5, cols: 10, pending: null });
+        assert.deepEqual(assigned, { assignments: 60, unassigned: 0, rows: 5, cols: 17, pending: null });
 
-        const assignedDesktop = await page.locator('.sp-main').screenshot({
+        await page.waitForTimeout(3600);
+        await page.locator('.sp-classroom-view').evaluate(element => { element.scrollTop = 0; });
+        const assignedDesktop = await page.screenshot({
             path: path.join(artifactDir, 'seating-assigned-desktop.png'),
         });
         await assertNonBlankScreenshot(assignedDesktop, 'desktop assigned');
 
         await page.setViewportSize({ width: 390, height: 844 });
+        await page.locator('#sp-arrangement-open-editor').click();
+        await page.locator('#sp-arrangement-editor.is-open').waitFor();
+        const mobileEditor = await page.evaluate(() => {
+            const dialog = document.querySelector('.sp-arrangement-editor__dialog').getBoundingClientRect();
+            const buttons = [...document.querySelectorAll('.sp-arrangement-editor__controls button')]
+                .map(button => button.getBoundingClientRect());
+            const overflow = buttons.some(button => button.left < dialog.left || button.right > dialog.right);
+            return {
+                viewportWidth: innerWidth,
+                documentWidth: document.documentElement.scrollWidth,
+                dialogWidth: dialog.width,
+                overflow,
+            };
+        });
+        assert.equal(mobileEditor.documentWidth <= mobileEditor.viewportWidth, true, JSON.stringify(mobileEditor));
+        assert.equal(mobileEditor.dialogWidth <= mobileEditor.viewportWidth, true, JSON.stringify(mobileEditor));
+        assert.equal(mobileEditor.overflow, false, JSON.stringify(mobileEditor));
+        const crossButton = page.locator('[data-target="mainAisle"][data-arrangement-mode="cross"]');
+        await crossButton.scrollIntoViewIfNeeded();
+        const mobileControlVisibility = await page.evaluate(() => {
+            const button = document.querySelector('[data-target="mainAisle"][data-arrangement-mode="cross"]').getBoundingClientRect();
+            const footer = document.querySelector('.sp-arrangement-editor__footer').getBoundingClientRect();
+            const controls = document.querySelector('.sp-arrangement-editor__controls').getBoundingClientRect();
+            return {
+                buttonTop: button.top,
+                buttonBottom: button.bottom,
+                controlsTop: controls.top,
+                controlsBottom: controls.bottom,
+                footerTop: footer.top,
+            };
+        });
+        assert.ok(mobileControlVisibility.buttonTop >= mobileControlVisibility.controlsTop, JSON.stringify(mobileControlVisibility));
+        assert.ok(mobileControlVisibility.buttonBottom <= mobileControlVisibility.controlsBottom, JSON.stringify(mobileControlVisibility));
+        assert.ok(mobileControlVisibility.buttonBottom <= mobileControlVisibility.footerTop, JSON.stringify(mobileControlVisibility));
+        const editorMobile = await page.locator('.sp-arrangement-editor__dialog').screenshot({
+            path: path.join(artifactDir, 'seating-arrangement-editor-mobile.png'),
+        });
+        await assertNonBlankScreenshot(editorMobile, 'mobile arrangement editor');
+        await page.locator('#sp-arrangement-editor-cancel').click();
         await page.locator('#sp-generate').click();
         await waitForPreview(page);
         await page.locator('#sp-layout-preview-confirm').scrollIntoViewIfNeeded();
@@ -248,7 +373,7 @@ async function main() {
 
         assert.deepEqual(pageErrors, [], `browser page errors: ${pageErrors.join(' | ')}`);
         assert.deepEqual(consoleErrors, [], `browser console errors: ${consoleErrors.join(' | ')}`);
-        console.log(JSON.stringify({ ok: true, artifactDir, firstPreview, assigned, mobile }, null, 2));
+        console.log(JSON.stringify({ ok: true, artifactDir, recognized, firstPreview, assigned, mobileEditor, mobile }, null, 2));
     } finally {
         if (page) await page.close().catch(() => {});
         if (browser) await browser.close().catch(() => {});

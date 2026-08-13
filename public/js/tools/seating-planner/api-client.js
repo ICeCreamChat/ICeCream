@@ -17,6 +17,10 @@ export function fetchLayoutPreview(payload) {
     return postJson('/api/tools/seating/layout-preview', payload);
 }
 
+export function fetchLayoutSpec(payload) {
+    return postJson('/api/tools/seating/layout-spec', payload);
+}
+
 export function fetchArrangement(payload) {
     return postJson('/api/tools/seating/arrange', payload);
 }

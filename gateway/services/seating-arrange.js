@@ -6,6 +6,7 @@ const { applyAiLayoutMatrix, CELL, solveWithTimefold, TimefoldUnavailableError, 
 const {
     normalizeArrangeRequest,
     normalizeArrangementSpec,
+    requestArrangementSpec,
     shouldAllowUnassigned,
     normalizeLayoutPlan,
     validateLayoutPlan,
@@ -137,4 +138,5 @@ export {
     runAiLayoutPreview,
     runAiDrivenArrangement,
     requestAiArrangement,
+    requestArrangementSpec,
 };

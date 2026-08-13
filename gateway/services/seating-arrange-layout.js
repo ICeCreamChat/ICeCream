@@ -1,6 +1,6 @@
 import * as shared from './seating-arrange-shared.js';
 import * as spec from './seating-arrange-spec.js';
-const { applyAiLayoutMatrix, CELL, solveWithTimefold, TimefoldUnavailableError, evaluateSeatingConstraints, evaluateSeatingQuality, normalizeLocalAisles, MAX_ROWS, MAX_COLS, TOP_GRADE_PERCENT, asText, boolValue, numberValue, cellValue, ensureStudents, normalizeLayout, normalizeStudentRef, normalizeAssignments, normalizeUnassigned, normalizeWarnings, studentLabel, seatCapacity, gridSeatCount, availableSeats, normalizeGuardians, validateGuardians, validateBatchAssignments, chineseNumberValue, positiveInt, NATURAL_NUMBER_PATTERN, naturalNumberFromMatch, firstNaturalNumber, extractGroupSize, hasGroupColumnWording, extractColumnCount, extractGridDimensions, extractRowCount, inferColumnPattern, normalizeColumnPattern, normalizeCapacityPolicy, inferCapacityPolicy, inferArrangementSpecFromPrompt, normalizeAislePolicy, normalizeGuardianPolicy, normalizeGuardianStrategy, normalizeGuardianGender, normalizeGuardianSlots, hasExplicitGuardianRequirement, normalizeGradeStrategy, normalizeUiPlacementPolicy, definedPlacementPolicy, inferPlacementOverridesFromPrompt, hasAnyOwn, valueConflict, specConflictWarnings, desiredGroupsPerRow, resolveSeatRows, columnPatternSeatCount, buildSeatRowFromRuns, buildPhysicalGridLayout, buildColumnPatternLayout, buildExpandableClassroomLayout, studentGradeValue, rankedStudentsByGradeDesc, getTopGradeStudentIds, getLowGradeStudentIds, protectExcellentStudentsFromLastRow, layoutSeatList, calculateSeatScoreMap, seatQuality, sortSeatsByQuality, normalizeStudentRefKey, buildNormalizedStudentMap, resolveConstraintStudentId, interleaveGender, applyGradeStrategy, sortStudentsForPlacement, placeTopGradeStudentsInBestSeats, areAdjacent, areAdjacentSeats, areNearAssignments, assignmentsToLayout, constraintEvaluationForAssignments, betterConstraintEvaluation, betterScoreEvaluation, cloneAssignments, assignmentSeatKey, buildLayoutInterpretation, buildSolverFacts } = shared;
+const { applyAiLayoutMatrix, CELL, solveWithTimefold, TimefoldUnavailableError, evaluateSeatingConstraints, evaluateSeatingQuality, normalizeLocalAisles, MAX_ROWS, MAX_COLS, TOP_GRADE_PERCENT, asText, parseAiJson, isAiJsonParseError, boolValue, numberValue, cellValue, ensureStudents, normalizeLayout, normalizeStudentRef, normalizeAssignments, normalizeUnassigned, normalizeWarnings, studentLabel, seatCapacity, gridSeatCount, availableSeats, normalizeGuardians, validateGuardians, validateBatchAssignments, chineseNumberValue, positiveInt, NATURAL_NUMBER_PATTERN, naturalNumberFromMatch, firstNaturalNumber, extractGroupSize, hasGroupColumnWording, extractColumnCount, extractGridDimensions, extractRowCount, inferColumnPattern, normalizeColumnPattern, normalizeCapacityPolicy, inferCapacityPolicy, inferArrangementSpecFromPrompt, normalizeAislePolicy, normalizeGuardianPolicy, normalizeGuardianStrategy, normalizeGuardianGender, normalizeGuardianSlots, hasExplicitGuardianRequirement, normalizeGradeStrategy, normalizeUiPlacementPolicy, definedPlacementPolicy, inferPlacementOverridesFromPrompt, hasAnyOwn, valueConflict, specConflictWarnings, desiredGroupsPerRow, resolveSeatRows, columnPatternSeatCount, buildSeatRowFromRuns, buildPhysicalGridLayout, buildColumnPatternLayout, buildExpandableClassroomLayout, studentGradeValue, rankedStudentsByGradeDesc, getTopGradeStudentIds, getLowGradeStudentIds, protectExcellentStudentsFromLastRow, layoutSeatList, calculateSeatScoreMap, seatQuality, sortSeatsByQuality, normalizeStudentRefKey, buildNormalizedStudentMap, resolveConstraintStudentId, interleaveGender, applyGradeStrategy, sortStudentsForPlacement, placeTopGradeStudentsInBestSeats, areAdjacent, areAdjacentSeats, areNearAssignments, assignmentsToLayout, constraintEvaluationForAssignments, betterConstraintEvaluation, betterScoreEvaluation, cloneAssignments, assignmentSeatKey, buildLayoutInterpretation, buildSolverFacts } = shared;
 const {
     normalizeArrangementSpec,
     shouldAllowUnassigned,
@@ -75,8 +75,12 @@ function buildLayoutPreviewMessages({ request, context = {}, repairErrors = [] }
 - 本地算法负责容量、矩阵和最终几何，你只需返回 arrangementSpec。
 - arrangementSpec.physicalRows 表示物理座位行数，physicalCols 表示物理座位列数，例如“每列6人”应理解为 physicalRows=6。
 - arrangementSpec.capacityPolicy 只能是 "auto_expand" 或 "fixed"，老师没说固定容量时默认 auto_expand。
-- arrangementSpec.groupGap 只能是 "normal" 或 "none"；“每组之间留空/留过道”默认表示普通桌间距 normal。
-- 只有“中央/中间主过道”等明确可通行通道才使用 aislePolicy.mainVertical 或 mainHorizontal。
+- layoutSpecVersion 固定为 2。
+- circulation.betweenGroups / betweenRows 只能是 "none"、"gap"、"walkway"；gap 是普通桌间距，walkway 是真实不可坐人的可通行过道。
+- circulation.mainAisle 只能是 "none"、"vertical"、"horizontal"、"cross"。
+- “可通行”描述过道性质，不代表横向；只有“横向过道、行与行、前后排之间”等明确措辞才设置 betweenRows="walkway"。
+- “每组之间设置可通行过道”必须输出 betweenGroups="walkway"、betweenRows="none"。
+- diagramEdits 是用户在 SVG 识别图上的语义修改，必须应用到返回的 arrangementSpec 中。
 - oddStudentPolicy 使用 "partial_group"，奇数学生允许最后一组保留一个空位。
 - arrangementSpec.columnPattern 用于混合列布局，例如“两边一人一组，中间两人一组”可用 [1,"aisle",2,"aisle",2,"aisle",1]。
 - “两人一桌/双人桌/同桌两个”表示 groupSize=2；“边上/两边一人一组，中间两人一组”表示混合列布局。
@@ -87,6 +91,7 @@ function buildLayoutPreviewMessages({ request, context = {}, repairErrors = [] }
         prompt: request.prompt,
         studentCount: request.students.length,
         constraints: (request.constraints || []).slice(0, 80).map(compactConstraintForPreview),
+        diagramEdits: request.diagramEdits || [],
         strategy: request.strategy || {},
         previousLayoutPolicy: hints.keepPreviousLayout ? 'preserve' : 'reference_only_expand_if_needed',
         previousLayoutSummary: hints.keepPreviousLayout ? layoutSummary(request.previousLayout) : null,
@@ -106,12 +111,18 @@ function buildLayoutPreviewMessages({ request, context = {}, repairErrors = [] }
                 confidence: 'high|medium|low',
             },
             arrangementSpec: {
+                layoutSpecVersion: 2,
                 groupSize: 2,
                 groupsPerRow: 5,
                 physicalRows: 0,
                 physicalCols: 0,
                 capacityPolicy: 'auto_expand',
                 groupGap: 'normal',
+                circulation: {
+                    betweenGroups: 'gap',
+                    betweenRows: 'none',
+                    mainAisle: 'none',
+                },
                 oddStudentPolicy: 'partial_group',
                 columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
                 aislePolicy: {
@@ -203,21 +214,6 @@ ${repair}`;
         { role: 'system', content: system },
         { role: 'user', content: user },
     ];
-}
-
-function parseAiJson(content) {
-    const text = asText(content).replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-    if (!text) throw new Error('AI 返回为空');
-    try {
-        return JSON.parse(text);
-    } catch (error) {
-        error.code = 'AI_JSON_PARSE';
-        throw error;
-    }
-}
-
-function isAiJsonParseError(error) {
-    return error?.code === 'AI_JSON_PARSE' || error instanceof SyntaxError;
 }
 
 function arrangeMaxTokens(env = process.env) {
@@ -320,7 +316,7 @@ function hasArrangementSpecPayload(raw = {}) {
         'physicalCols', 'physical_cols', 'physicalRows', 'physical_rows',
         'columnPattern', 'column_pattern', 'aislePolicy', 'aisles',
         'guardianPolicy', 'guardians', 'layoutMode', 'layout_mode',
-        'placementPolicy', 'capacityPolicy',
+        'placementPolicy', 'capacityPolicy', 'circulation', 'layoutSpecVersion',
     ].some(key => Object.prototype.hasOwnProperty.call(raw, key));
 }
 
@@ -342,12 +338,73 @@ function previewStats({ request, classroomLayout, source }) {
     };
 }
 
-function buildPreviewLayoutFromSpec({ request, spec, source = 'local_layout_fallback', warnings = [], reply, reasoning }) {
-    const guardianReserve = spec.guardianPolicy?.enabled ? Math.min(2, request.students.length) : 0;
-    const classroomLayout = buildExpandableClassroomLayout({
-        regularSeatTarget: Math.max(1, request.students.length - guardianReserve),
+function uniformGroupingInvariant({ classroomLayout, regularSeatTarget, spec }) {
+    const mixedPattern = Array.isArray(spec.columnPattern) && spec.columnPattern.length > 0;
+    const explicitlyShaped = spec.keepPreviousLayout || Number(spec.physicalCols) > 0;
+    if (mixedPattern || explicitlyShaped || spec.capacityPolicy === 'fixed') return { ok: true };
+
+    const groupSize = Math.max(1, Number(spec.groupSize) || 1);
+    const expectedGroups = Math.ceil(regularSeatTarget / groupSize);
+    const expectedSeats = expectedGroups * groupSize;
+    const actualGroups = new Set(
+        classroomLayout.groups.flat().filter(groupId => groupId !== null && groupId !== undefined)
+    ).size;
+    const actualSeats = gridSeatCount(classroomLayout);
+    return {
+        ok: actualGroups === expectedGroups && actualSeats === expectedSeats,
+        expectedGroups,
+        expectedSeats,
+        actualGroups,
+        actualSeats,
+    };
+}
+
+function buildValidatedPreviewLayout({ request, spec, regularSeatTarget, warnings }) {
+    let classroomLayout = buildExpandableClassroomLayout({
+        regularSeatTarget,
         spec,
         previousLayout: request.previousLayout,
+    });
+    const invariant = uniformGroupingInvariant({ classroomLayout, regularSeatTarget, spec });
+    if (invariant.ok) return classroomLayout;
+
+    warnings.push(
+        `布局分组校验未通过：应为 ${invariant.expectedGroups} 组、${invariant.expectedSeats} 座，`
+        + `实际为 ${invariant.actualGroups} 组、${invariant.actualSeats} 座，已按统一分组重建。`
+    );
+    const repairedSpec = {
+        ...spec,
+        physicalCols: 0,
+        columnPattern: [],
+    };
+    classroomLayout = buildExpandableClassroomLayout({
+        regularSeatTarget,
+        spec: repairedSpec,
+        previousLayout: null,
+    });
+    const repairedInvariant = uniformGroupingInvariant({
+        classroomLayout,
+        regularSeatTarget,
+        spec: repairedSpec,
+    });
+    if (!repairedInvariant.ok) {
+        throw new Error(
+            `统一分组布局重建失败：应为 ${repairedInvariant.expectedGroups} 组、${repairedInvariant.expectedSeats} 座，`
+            + `实际为 ${repairedInvariant.actualGroups} 组、${repairedInvariant.actualSeats} 座`
+        );
+    }
+    return classroomLayout;
+}
+
+function buildPreviewLayoutFromSpec({ request, spec, source = 'local_layout_fallback', warnings = [], reply, reasoning }) {
+    const guardianReserve = spec.guardianPolicy?.enabled ? Math.min(2, request.students.length) : 0;
+    const normalizedWarnings = normalizeWarnings(warnings);
+    const regularSeatTarget = Math.max(1, request.students.length - guardianReserve);
+    const classroomLayout = buildValidatedPreviewLayout({
+        request,
+        spec,
+        regularSeatTarget,
+        warnings: normalizedWarnings,
     });
     classroomLayout.guardians = {
         enabled: Boolean(spec.guardianPolicy?.enabled),
@@ -358,7 +415,7 @@ function buildPreviewLayoutFromSpec({ request, spec, source = 'local_layout_fall
         reply: reply || (source === 'local_layout_fallback' ? 'AI 布局不可用，已生成本地备用布局预览。' : '已根据 AI 规则生成布局预览。'),
         classroomLayout,
         layoutIntent: layoutIntentFromSpec(spec),
-        warnings: normalizeWarnings(warnings),
+        warnings: normalizedWarnings,
         reasoning: reasoning || (source === 'local_layout_fallback' ? '本地算法根据已解析规则生成备用布局。' : (spec.notes || 'AI 返回规则参数，本地算法生成布局矩阵。')),
         source,
         arrangementSpec: spec,
@@ -403,6 +460,17 @@ async function runAiLayoutPreview({
 } = {}) {
     if (!request) throw new Error('缺少排座请求');
     const fallbackSpec = normalizeArrangementSpec(request.arrangementSpec || {}, request);
+
+    if (request.arrangementSpec) {
+        return buildPreviewLayoutFromSpec({
+            request,
+            spec: fallbackSpec,
+            source: 'confirmed_spec_local_algorithm',
+            warnings: fallbackSpec.parseWarnings || [],
+            reply: '已按确认规则生成布局预览。',
+            reasoning: '本地算法根据已确认的排座规则生成布局矩阵。',
+        });
+    }
 
     if (typeof fetchImpl !== 'function' || !env.DEEPSEEK_API_BASE || !env.DEEPSEEK_API_KEY) {
         return buildPreviewLayoutFromSpec({

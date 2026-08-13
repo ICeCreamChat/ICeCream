@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   buildArrangeRepairPrompt,
+  requestArrangementSpec,
   optimizeSeatingScore,
   runAiLayoutPreview,
   runAiDrivenArrangement,
@@ -781,6 +782,186 @@ test('local fallback understands varied natural language for rows columns groups
   assert.deepEqual(result.classroomLayout.cells[0], ['seat', 'seat', 'seat', 'seat', 'aisle', 'seat', 'seat', 'seat', 'seat']);
   assert.equal(result.stats.regularSeatCount, 48);
   assert.equal(result.unassigned.length, 0);
+});
+
+test('natural-language walkway creates real unavailable aisle cells between groups', async () => {
+  const roster = Array.from({ length: 60 }, (_, index) => ({
+    id: `s${String(index + 1).padStart(2, '0')}`,
+    name: `Student ${index + 1}`,
+    gender: index % 2 === 0 ? 'M' : 'F',
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '两人一组，每组之间设置可通行过道。',
+    students: roster,
+  });
+  const result = await runAiLayoutPreview({ request, env: {} });
+
+  assert.equal(result.arrangementSpec.layoutSpecVersion, 2);
+  assert.deepEqual(result.arrangementSpec.circulation, {
+    betweenGroups: 'walkway',
+    betweenRows: 'none',
+    mainAisle: 'none',
+  });
+  assert.equal(result.arrangementSpec.groupGap, 'none');
+  assert.equal(result.classroomLayout.cells.flat().filter(cell => cell === 'seat').length, 60);
+  assert.ok(result.classroomLayout.cells.flat().filter(cell => cell === 'aisle').length > 0);
+  assert.deepEqual(result.classroomLayout.localAisles, { vertical: [], horizontal: [] });
+  assert.equal(result.classroomLayout.groups.flat().filter(group => group !== null).length, 60);
+});
+
+test('ordinary pair wording rejects an AI-injected mixed column pattern', async () => {
+  const roster = Array.from({ length: 60 }, (_, index) => ({
+    id: `s${String(index + 1).padStart(2, '0')}`,
+    name: `Student ${index + 1}`,
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '两人一组，每组之间设置可通行过道。',
+    students: roster,
+  });
+  const fetchImpl = async () => jsonResponse({
+    groupSize: 2,
+    columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
+    circulation: { betweenGroups: 'walkway', betweenRows: 'none', mainAisle: 'none' },
+    capacityPolicy: 'auto_expand',
+    layoutMode: 'grouped',
+  });
+
+  const result = await runAiLayoutPreview({
+    request,
+    fetchImpl,
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+  const groupIds = new Set(result.classroomLayout.groups.flat().filter(groupId => groupId !== null));
+
+  assert.deepEqual(result.arrangementSpec.columnPattern, []);
+  assert.equal(result.classroomLayout.cells.flat().filter(cell => cell === 'seat').length, 60);
+  assert.equal(groupIds.size, 30);
+  assert.ok(result.warnings.some(warning => /混合分组.*统一分组/.test(warning)));
+});
+
+test('explicit mixed grouping wording keeps the AI column pattern', async () => {
+  const request = normalizeArrangeRequest({
+    prompt: '两边一人一组，中间两人一组，组间留过道',
+    students: Array.from({ length: 12 }, (_, index) => ({
+      id: `s${String(index + 1).padStart(2, '0')}`,
+      name: `Student ${index + 1}`,
+    })),
+  });
+  const result = await requestArrangementSpec({
+    request,
+    fetchImpl: async () => jsonResponse({
+      groupSize: 2,
+      columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
+      capacityPolicy: 'auto_expand',
+      layoutMode: 'grouped',
+    }),
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.deepEqual(result.spec.columnPattern, [1, 'aisle', 2, 'aisle', 2, 'aisle', 1]);
+});
+
+test('rule recognition uses valid AI JSON instead of silently falling back to local parsing', async () => {
+  const request = normalizeArrangeRequest({
+    prompt: '自由排座',
+    students: Array.from({ length: 12 }, (_, index) => ({
+      id: `s${String(index + 1).padStart(2, '0')}`,
+      name: `Student ${index + 1}`,
+    })),
+  });
+  const result = await requestArrangementSpec({
+    request,
+    fetchImpl: async () => jsonResponse({
+      groupSize: 4,
+      circulation: { betweenGroups: 'walkway', betweenRows: 'gap', mainAisle: 'horizontal' },
+      capacityPolicy: 'auto_expand',
+      layoutMode: 'grouped',
+      notes: 'AI recognized four-person groups',
+    }),
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.equal(result.spec.groupSize, 4);
+  assert.deepEqual(result.spec.circulation, {
+    betweenGroups: 'walkway',
+    betweenRows: 'gap',
+    mainAisle: 'horizontal',
+  });
+  assert.equal(result.spec.notes, 'AI recognized four-person groups');
+  assert.equal(result.source, 'ai_rule_parser');
+  assert.equal(result.warnings.some(warning => /AI 规则 JSON 无效|parseAiJson is not defined/.test(warning)), false);
+});
+
+test('set_group_size overrides AI grouping and clears a stale mixed column pattern', async () => {
+  const request = normalizeArrangeRequest({
+    prompt: '两边一人一组，中间两人一组，组间留过道',
+    students: Array.from({ length: 9 }, (_, index) => ({
+      id: `s${String(index + 1).padStart(2, '0')}`,
+      name: `Student ${index + 1}`,
+    })),
+    diagramEdits: [{ type: 'set_group_size', value: 3 }],
+  });
+  const result = await requestArrangementSpec({
+    request,
+    fetchImpl: async () => jsonResponse({
+      groupSize: 2,
+      columnPattern: [1, 'aisle', 2, 'aisle', 2, 'aisle', 1],
+      layoutMode: 'grouped',
+    }),
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+
+  assert.equal(result.spec.groupSize, 3);
+  assert.equal(result.spec.layoutMode, 'grouped');
+  assert.deepEqual(result.spec.columnPattern, []);
+});
+
+test('confirmed pair spec builds 23 groups and 46 seats for 45 students without another AI call', async () => {
+  const request = normalizeArrangeRequest({
+    prompt: '两人一组，每组之间设置普通间距。',
+    students: Array.from({ length: 45 }, (_, index) => ({
+      id: `s${String(index + 1).padStart(2, '0')}`,
+      name: `Student ${index + 1}`,
+    })),
+    arrangementSpec: {
+      layoutSpecVersion: 2,
+      groupSize: 2,
+      circulation: { betweenGroups: 'gap', betweenRows: 'none', mainAisle: 'none' },
+      capacityPolicy: 'auto_expand',
+      layoutMode: 'grouped',
+    },
+  });
+  let aiCalls = 0;
+  const result = await runAiLayoutPreview({
+    request,
+    fetchImpl: async () => {
+      aiCalls += 1;
+      return jsonResponse({});
+    },
+    env: { DEEPSEEK_API_BASE: 'http://fake-ai', DEEPSEEK_API_KEY: 'key' },
+  });
+  const groupIds = new Set(result.classroomLayout.groups.flat().filter(groupId => groupId !== null));
+
+  assert.equal(aiCalls, 0);
+  assert.equal(groupIds.size, 23);
+  assert.equal(result.classroomLayout.cells.flat().filter(cell => cell === 'seat').length, 46);
+});
+
+test('SVG semantic edits map a walkway boundary back to a normal gap', async () => {
+  const roster = Array.from({ length: 12 }, (_, index) => ({
+    id: `s${String(index + 1).padStart(2, '0')}`,
+    name: `Student ${index + 1}`,
+  }));
+  const request = normalizeArrangeRequest({
+    prompt: '两人一组，每组之间设置可通行过道。',
+    students: roster,
+    diagramEdits: [{ type: 'set_boundary', target: 'betweenGroups', value: 'gap' }],
+  });
+  const result = await runAiLayoutPreview({ request, env: {} });
+
+  assert.equal(result.arrangementSpec.circulation.betweenGroups, 'gap');
+  assert.equal(result.classroomLayout.cells.flat().filter(cell => cell === 'aisle').length, 0);
+  assert.ok(result.classroomLayout.localAisles.vertical.length > 0);
 });
 
 test('AI prompt teaches physical rows capacity policy and mixed column patterns', async () => {

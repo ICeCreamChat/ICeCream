@@ -55,7 +55,8 @@
 - **不负责**：约束解析细节（callee: seating-constraints.js）、名单解析（callee: seating-roster.js）
 - **对外接口**：
   - `runAiDrivenArrangement({request, fetchImpl, env})` - 完整排座
-  - `runAiLayoutPreview({request, fetchImpl, env})` - 仅布局预览
+  - `requestArrangementSpec({request, fetchImpl, env})` - 只识别自然语言规则
+  - `runAiLayoutPreview({request, fetchImpl, env})` - 根据确认规则生成布局预览
   - `normalizeArrangeRequest(body)` - 请求规范化
 - **内部实现**：本文件只保留顶层编排；`seating-arrange-spec.js` 负责规格，`seating-arrange-layout.js` 负责布局，`seating-arrange-assignment.js` 负责学生分配与优化，`seating-arrange-shared.js` 承载跨职责纯工具
 - **依赖**：seating-constraints.js, seating-solver-bridge.js, shared/seating/
@@ -101,13 +102,14 @@
 ### 前端
 
 #### public/js/tools/seating-planner.js + seating-planner/
-- **职责**：座位安排完整 UI（名单导入、结构化排座要求、主画布布局预览、网格编辑、导出）
+- **职责**：座位安排完整 UI（名单导入、自然语言排座要求、SVG 规则识别与编辑、主画布布局预览、网格编辑、导出）
 - **结构**：seating-planner.js 为入口，seating-planner/ 下按面板拆分
   - roster-panel.js - 名单管理
   - grid-panel.js - 座位网格
   - assistant-panel.js - AI 对话
   - export-panel.js - 导出
   - layout-preview-panel.js - 主画布布局预览、取消恢复、确认后排学生
+  - arrangement-diagram-panel.js - v2 代表性规则 SVG、编辑器草稿和全局规则修改
   - seat-detail-panel.js - 座位详情
   - feedback-panel.js - 反馈
   - api-client.js - 后端 API 封装

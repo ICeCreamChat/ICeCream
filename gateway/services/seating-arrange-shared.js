@@ -22,6 +22,21 @@ function asText(value) {
     return String(value ?? '').trim();
 }
 
+function parseAiJson(content) {
+    const text = asText(content).replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
+    if (!text) throw new Error('AI 返回为空');
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        error.code = 'AI_JSON_PARSE';
+        throw error;
+    }
+}
+
+function isAiJsonParseError(error) {
+    return error?.code === 'AI_JSON_PARSE' || error instanceof SyntaxError;
+}
+
 function shouldAllowUnassigned(prompt = '') {
     const text = asText(prompt);
     return /(只有|仅有|最多|不超过|固定|限制|限于|座位有限).*(排|列|座|座位|人)|((排|列|座|座位).*(只有|仅有|最多|不超过|固定|限制|限于))/.test(text);
@@ -402,9 +417,25 @@ function inferArrangementSpecFromPrompt(prompt = '') {
         /组间过道|每组之间.*(?:过道|通道|走道|空|间距)|(?:每组|组间|组与组之间).*(?:隔开|分开|空|留空|间距|通道|走道)/.test(text)
         || !/(?:每组|组间|组与组之间)/.test(text)
     );
+    // “可通行”描述边界类型，不代表横向方向；只有明确的行/前后排措辞才生成横向边界。
     const wantsHorizontalGroupGap = wantsBothAisles
-        || /横过道|行过道|每组之间.*横|组与组之间.*横/.test(text)
-        || /(?:前后|上下).*(?:通道|走道|过道|隔开)/.test(text);
+        || /横向过道|横过道|每组之间.*横向|组与组之间.*横向/.test(text)
+        || /(?:前后排|前后各排|行与行|排与排|上下排).*(?:通道|走道|过道|隔开)/.test(text);
+    const betweenGroups = wantsGroupGap
+        ? (/每组之间.*(?:可通行|人行|通行)|组间.*(?:可通行|人行|通行)/.test(text) ? 'walkway' : 'gap')
+        : 'none';
+    const betweenRows = wantsHorizontalGroupGap
+        ? (/横向过道|横过道|前后排|行与行|排与排|上下排/.test(text) ? 'walkway' : 'gap')
+        : 'none';
+    const mainAisle = wantsBothAisles
+        ? 'cross'
+        : wantsMainVerticalAisle && wantsMainHorizontalAisle
+            ? 'cross'
+            : wantsMainVerticalAisle
+                ? 'vertical'
+                : wantsMainHorizontalAisle
+                    ? 'horizontal'
+                    : 'none';
     const groupColumnWording = hasGroupColumnWording(text);
     const physicalCols = gridDimensions.physicalCols || extractColumnCount(text, { physicalOnly: true });
     const physicalRows = gridDimensions.physicalRows || extractRowCount(text) || 0;
@@ -433,6 +464,11 @@ function inferArrangementSpecFromPrompt(prompt = '') {
             horizontalBetweenGroupRows: wantsHorizontalGroupGap,
             mainVertical: wantsMainVerticalAisle || (wantsBothAisles && /中间|中央|主过道/.test(text)),
             mainHorizontal: wantsMainHorizontalAisle,
+        },
+        circulation: {
+            betweenGroups,
+            betweenRows,
+            mainAisle,
         },
         guardianPolicy: {
             enabled: guardianEnabled,
@@ -698,6 +734,55 @@ function localAislesFromGroups(cells, groups, { vertical = false, horizontal = f
     return localAisles;
 }
 
+function expandClassroomWalkways(cells, groups, { vertical = false, horizontal = false } = {}) {
+    let nextCells = cells.map(row => [...row]);
+    let nextGroups = groups.map(row => [...row]);
+    if (vertical) {
+        nextCells = nextCells.map((row, r) => {
+            const expanded = [];
+            const expandedGroups = [];
+            for (let col = 0; col < row.length; col++) {
+                expanded.push(row[col]);
+                expandedGroups.push(nextGroups[r]?.[col] ?? null);
+                const boundary = col < row.length - 1
+                    && row[col] === CELL.SEAT
+                    && row[col + 1] === CELL.SEAT
+                    && nextGroups[r]?.[col] != null
+                    && nextGroups[r]?.[col + 1] != null
+                    && nextGroups[r][col] !== nextGroups[r][col + 1];
+                if (boundary) {
+                    expanded.push(CELL.AISLE);
+                    expandedGroups.push(null);
+                }
+            }
+            nextGroups[r] = expandedGroups;
+            return expanded;
+        });
+    }
+    if (horizontal && nextCells.length > 1) {
+        const expandedCells = [];
+        const expandedGroups = [];
+        for (let row = 0; row < nextCells.length; row++) {
+            expandedCells.push(nextCells[row]);
+            expandedGroups.push(nextGroups[row]);
+            if (row < nextCells.length - 1
+                && nextCells[row].some(cell => cell === CELL.SEAT)
+                && nextCells[row + 1].some(cell => cell === CELL.SEAT)) {
+                expandedCells.push(Array(nextCells[row].length).fill(CELL.AISLE));
+                expandedGroups.push(Array(nextCells[row].length).fill(null));
+            }
+        }
+        nextCells = expandedCells;
+        nextGroups = expandedGroups;
+    }
+    const width = Math.max(0, ...nextCells.map(row => row.length));
+    if (width > 0) {
+        nextCells = nextCells.map(row => [...row, ...Array(Math.max(0, width - row.length)).fill(CELL.EMPTY)]);
+        nextGroups = nextGroups.map(row => [...row, ...Array(Math.max(0, width - row.length)).fill(null)]);
+    }
+    return { cells: nextCells, groups: nextGroups };
+}
+
 function buildPhysicalGridLayout({
     target,
     seatRows,
@@ -742,6 +827,13 @@ function buildPhysicalGridLayout({
         horizontal: mainHorizontalAisle,
         verticalAfterCol,
     });
+    const circulation = spec.circulation || {};
+    const expanded = expandClassroomWalkways(cells, groups, {
+        vertical: circulation.betweenGroups === 'walkway',
+        horizontal: circulation.betweenRows === 'walkway',
+    });
+    cells.splice(0, cells.length, ...expanded.cells);
+    groups.splice(0, groups.length, ...expanded.groups);
     return {
         rows: cells.length,
         cols: cells[0]?.length || 0,
@@ -751,8 +843,8 @@ function buildPhysicalGridLayout({
         template: 'ai-local',
         groupSize,
         localAisles: localAislesFromGroups(cells, groups, {
-            vertical: verticalAisles,
-            horizontal: horizontalAisles,
+            vertical: circulation.betweenGroups === 'gap',
+            horizontal: circulation.betweenRows === 'gap',
         }),
     };
 }
@@ -768,7 +860,7 @@ function buildColumnPatternLayout({ regularSeatTarget, spec }) {
         requestedRows: spec.physicalRows,
         capacityPolicy: spec.capacityPolicy,
     });
-    const horizontalAisles = Boolean(spec.aislePolicy?.horizontalBetweenGroupRows);
+    const circulation = spec.circulation || {};
     const cells = [];
     const groups = [];
     let groupId = 1;
@@ -793,6 +885,12 @@ function buildColumnPatternLayout({ regularSeatTarget, spec }) {
     addMainAisles(cells, groups, {
         horizontal: Boolean(spec.aislePolicy?.mainHorizontal),
     });
+    const expanded = expandClassroomWalkways(cells, groups, {
+        vertical: circulation.betweenGroups === 'walkway',
+        horizontal: circulation.betweenRows === 'walkway',
+    });
+    cells.splice(0, cells.length, ...expanded.cells);
+    groups.splice(0, groups.length, ...expanded.groups);
     return {
         rows: cells.length,
         cols: cells[0]?.length || 0,
@@ -801,7 +899,10 @@ function buildColumnPatternLayout({ regularSeatTarget, spec }) {
         guardians: { enabled: Boolean(spec.guardianPolicy.enabled), left: null, right: null },
         template: 'ai-local-mixed',
         groupSize: Math.max(1, spec.groupSize || 1),
-        localAisles: localAislesFromGroups(cells, groups, { horizontal: horizontalAisles }),
+        localAisles: localAislesFromGroups(cells, groups, {
+            vertical: circulation.betweenGroups === 'gap',
+            horizontal: circulation.betweenRows === 'gap',
+        }),
     };
 }
 
@@ -890,6 +991,13 @@ function buildExpandableClassroomLayout({ regularSeatTarget, spec, previousLayou
         horizontal: mainHorizontalAisle,
         verticalAfterCol: Math.ceil(groupsPerRow / 2) * groupSize,
     });
+    const circulation = spec.circulation || {};
+    const expanded = expandClassroomWalkways(cells, groups, {
+        vertical: circulation.betweenGroups === 'walkway',
+        horizontal: circulation.betweenRows === 'walkway',
+    });
+    cells.splice(0, cells.length, ...expanded.cells);
+    groups.splice(0, groups.length, ...expanded.groups);
 
     return {
         rows: cells.length,
@@ -900,8 +1008,8 @@ function buildExpandableClassroomLayout({ regularSeatTarget, spec, previousLayou
         template: 'ai-local',
         groupSize,
         localAisles: localAislesFromGroups(cells, groups, {
-            vertical: verticalAisles,
-            horizontal: horizontalAisles,
+            vertical: circulation.betweenGroups === 'gap',
+            horizontal: circulation.betweenRows === 'gap',
         }),
     };
 }
@@ -1338,14 +1446,19 @@ function buildLayoutInterpretation({ request, spec, layout }) {
     const emptySeatCount = Math.max(0, regularSeatCount - regularStudentTarget);
     const parts = [];
     const mixedColumnPattern = Array.isArray(spec.columnPattern) && spec.columnPattern.length > 0;
+    const betweenGroupsLabel = spec.circulation?.betweenGroups === 'walkway'
+        ? '设置可通行过道'
+        : spec.circulation?.betweenGroups === 'gap'
+            ? '留普通间距'
+            : '不留间距';
     if (mixedColumnPattern) {
         parts.push(`已理解为：${spec.notes || '两边1人组，中间2人组，组间过道'}`);
     } else if ((spec.groupSize || 1) > 1 && spec.groupsPerRow > 0) {
-        parts.push(`已理解为：${spec.groupSize === 2 ? '两人' : `${spec.groupSize}人`}一组，每行 ${spec.groupsPerRow} 组，组间${spec.groupGap === 'normal' ? '留距' : '不留距'}`);
+        parts.push(`已理解为：${spec.groupSize === 2 ? '两人' : `${spec.groupSize}人`}一组，每行 ${spec.groupsPerRow} 组，组间${betweenGroupsLabel}`);
     } else if (spec.physicalCols > 0) {
         parts.push(`已理解为：${spec.physicalRows > 0 ? `${spec.physicalRows} 行 × ` : ''}${spec.physicalCols} 个物理座位列`);
     } else if ((spec.groupSize || 1) > 1) {
-        parts.push(`已理解为：${spec.groupSize}人一组，组间${spec.groupGap === 'normal' ? '留距' : '不留距'}`);
+        parts.push(`已理解为：${spec.groupSize}人一组，组间${betweenGroupsLabel}`);
     } else {
         parts.push('已理解为：普通座位布局');
     }
@@ -1376,6 +1489,7 @@ function buildLayoutInterpretation({ request, spec, layout }) {
             regularSeatCount,
             emptySeatCount,
             groupGap: spec.groupGap || 'none',
+            circulation: spec.circulation || { betweenGroups: 'none', betweenRows: 'none', mainAisle: 'none' },
             oddStudentPolicy: spec.oddStudentPolicy || 'partial_group',
             verticalBetweenGroups: Boolean(spec.aislePolicy?.verticalBetweenGroups),
             horizontalBetweenGroupRows: Boolean(spec.aislePolicy?.horizontalBetweenGroupRows),
@@ -1419,6 +1533,8 @@ export {
     MAX_COLS,
     TOP_GRADE_PERCENT,
     asText,
+    parseAiJson,
+    isAiJsonParseError,
     shouldAllowUnassigned,
     boolValue,
     numberValue,

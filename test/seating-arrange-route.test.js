@@ -320,6 +320,49 @@ test('POST /api/tools/seating/layout-preview builds a local matrix from AI rules
   });
 });
 
+test('POST /api/tools/seating/layout-spec recognizes rules without returning a matrix', async () => {
+  const stages = [];
+
+  await withAppAndAi(payload => {
+    stages.push(payload.stage);
+    assert.equal(payload.stage, 'arrangement_spec');
+    assert.equal(payload.studentCount, 60);
+    assert.equal(Boolean(payload.students), false);
+    return {
+      groupSize: 4,
+      circulation: { betweenGroups: 'walkway', betweenRows: 'none', mainAisle: 'none' },
+      capacityPolicy: 'auto_expand',
+      layoutMode: 'grouped',
+      notes: 'AI 识别为四人一组，组间设置可通行过道',
+    };
+  }, async appBase => {
+    const response = await fetch(`${appBase}/api/tools/seating/layout-spec`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: '自由排座，由 AI 判断布局。',
+        studentCount: 60,
+      }),
+    });
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(payload.success, true);
+    assert.equal(payload.data.arrangementSpec.groupSize, 4);
+    assert.equal(payload.data.source, 'ai_rule_parser');
+    assert.match(payload.data.interpretation.summary, /四人一组/);
+    assert.deepEqual(payload.data.arrangementSpec.circulation, {
+      betweenGroups: 'walkway',
+      betweenRows: 'none',
+      mainAisle: 'none',
+    });
+    for (const key of ['classroomLayout', 'matrix', 'assignments']) {
+      assert.equal(Object.prototype.hasOwnProperty.call(payload.data, key), false);
+    }
+    assert.deepEqual(stages, ['arrangement_spec']);
+  });
+});
+
 test('POST /api/tools/seating/layout-preview rejects invalid requests', async () => {
   await withAppAndAi(() => {
     throw new Error('AI should not be called for invalid request');

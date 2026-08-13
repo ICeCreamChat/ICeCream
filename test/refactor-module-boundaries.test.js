@@ -60,7 +60,7 @@ const facadeContracts = [
         'normalizeArrangeRequest', 'shouldAllowUnassigned', 'validateAiArrangement',
         'buildArrangeRepairPrompt', 'buildArrangeMessages', 'parseAiJson',
         'isAiJsonParseError', 'optimizeSeatingScore', 'runAiLayoutPreview',
-        'runAiDrivenArrangement', 'requestAiArrangement',
+        'runAiDrivenArrangement', 'requestAiArrangement', 'requestArrangementSpec',
     ]],
     ['timetable-diagnostic-scheduler.js', [
         'analyzeTimetableFeasibility', 'buildConflictComponent',
