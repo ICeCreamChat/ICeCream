@@ -854,32 +854,37 @@
     stroke-width: 1;
 }
 
+.sp-arrangement-svg__chair {
+    fill: #8195a1;
+    stroke: #536976;
+    stroke-width: 1.2;
+}
+
 .sp-arrangement-svg__group:hover .sp-arrangement-svg__group-outline,
 .sp-arrangement-svg__group:focus .sp-arrangement-svg__group-outline {
     stroke: var(--sp-primary);
     stroke-width: 2;
 }
 
-.sp-arrangement-svg__gap-mark {
-    stroke: color-mix(in srgb, var(--sp-text-muted) 58%, transparent);
-    stroke-width: 1.4;
-    stroke-dasharray: 3 3;
+.sp-arrangement-svg__boundary-hit {
+    fill: transparent;
+    stroke: transparent;
+    stroke-width: 1.5;
 }
 
-.sp-arrangement-svg__walkway-arrow {
-    stroke: #0284c7;
-    stroke-width: 1.7;
-    stroke-dasharray: 5 4;
+.sp-arrangement-svg__walkway-surface {
+    fill: color-mix(in srgb, var(--sp-bg-base) 86%, var(--sp-bg-surface));
 }
 
-.sp-arrangement-svg__walkway-arrowhead {
-    fill: #0284c7;
+.sp-arrangement-svg__walkway-edge {
+    fill: none;
+    stroke: color-mix(in srgb, var(--sp-border-hover) 72%, transparent);
+    stroke-width: 1.2;
 }
 
-.sp-arrangement-svg__walkway-label {
-    fill: #0369a1;
-    font-size: 10px;
-    font-weight: 700;
+.sp-arrangement-svg__walkway-icon {
+    fill: color-mix(in srgb, var(--sp-text-secondary) 82%, transparent);
+    pointer-events: none;
 }
 
 .sp-arrangement-svg__boundary {
@@ -887,12 +892,15 @@
     outline: none;
 }
 
-.sp-arrangement-svg__boundary:hover .sp-arrangement-svg__walkway-arrow,
-.sp-arrangement-svg__boundary:focus .sp-arrangement-svg__walkway-arrow,
-.sp-arrangement-svg__boundary:hover .sp-arrangement-svg__gap-mark,
-.sp-arrangement-svg__boundary:focus .sp-arrangement-svg__gap-mark {
+.sp-arrangement-svg__boundary:hover .sp-arrangement-svg__walkway-edge,
+.sp-arrangement-svg__boundary:focus .sp-arrangement-svg__walkway-edge {
     stroke: var(--sp-primary);
-    stroke-width: 2.4;
+    stroke-width: 2;
+}
+
+.sp-arrangement-svg__boundary:focus .sp-arrangement-svg__boundary-hit {
+    stroke: var(--sp-primary);
+    stroke-dasharray: 3 3;
 }
 
 .sp-arrangement-rule-facts {
@@ -949,16 +957,18 @@
 
 .sp-rule-legend--gap,
 .sp-preview-legend--gap {
-    width: 13px;
-    height: 2px;
-    border-top: 1px dashed var(--sp-text-muted);
+    width: 22px;
+    height: 10px;
+    background: linear-gradient(90deg, #d7b78b 0 36%, transparent 36% 64%, #d7b78b 64% 100%);
 }
 
 .sp-rule-legend--walkway,
 .sp-preview-legend--walkway {
-    width: 22px;
-    height: 8px;
-    border-top: 2px dashed #0284c7;
+    width: 15px;
+    height: 13px;
+    border-right: 1px solid var(--sp-border-hover);
+    border-left: 1px solid var(--sp-border-hover);
+    background: color-mix(in srgb, var(--sp-bg-base) 86%, var(--sp-bg-surface));
 }
 
 .sp-preview-legend--group {

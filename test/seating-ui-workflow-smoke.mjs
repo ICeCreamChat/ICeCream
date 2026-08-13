@@ -196,7 +196,11 @@ async function main() {
         await page.waitForFunction(() => window.ICeCream.appLauncher.currentToolInstance.arrangementRecognitionStale === false);
 
         assert.equal(await page.locator('#sp-arrangement-diagram svg').count(), 1);
-        assert.ok(await page.locator('#sp-arrangement-diagram .sp-arrangement-svg__walkway-label').count() > 0);
+        assert.equal(await page.locator('#sp-arrangement-diagram .sp-arrangement-svg__walkway-surface').count(), 2);
+        assert.equal(await page.locator('#sp-arrangement-diagram .sp-arrangement-svg__walkway-edge').count(), 2);
+        assert.equal(await page.locator('#sp-arrangement-diagram .sp-arrangement-svg__walkway-icon').count(), 2);
+        assert.equal(await page.locator('#sp-arrangement-diagram .sp-arrangement-svg__walkway-label').count(), 0);
+        assert.equal(await page.locator('#sp-arrangement-diagram .sp-arrangement-svg__walkway-arrow').count(), 0);
         assert.equal(await page.locator('.sp-arrangement-legend').count(), 1);
         await page.locator('#sp-arrangement-open-editor').click();
         await page.locator('#sp-arrangement-editor.is-open').waitFor();
@@ -204,7 +208,25 @@ async function main() {
         assert.ok(await page.locator('#sp-arrangement-editor-diagram [data-diagram-target="betweenGroups"]').count() > 0);
         assert.equal(await page.locator('.sp-arrangement-editor__body > aside').count(), 0);
         assert.equal(await page.locator('#sp-arrangement-editor-diagram .sp-arrangement-svg__desk').count(), 12);
+        await page.locator('[data-target="betweenGroups"][data-arrangement-mode="gap"]').click();
+        await page.locator('[data-target="mainAisle"][data-arrangement-mode="vertical"]').click();
+        let mainWalkways = await page.locator('#sp-arrangement-editor-diagram .sp-arrangement-svg__walkway-surface').evaluateAll(nodes => (
+            nodes.map(node => ({ width: node.getBBox().width, height: node.getBBox().height }))
+        ));
+        assert.equal(mainWalkways.length, 1);
+        assert.ok(mainWalkways[0].height > mainWalkways[0].width);
+        await page.locator('[data-target="mainAisle"][data-arrangement-mode="horizontal"]').click();
+        mainWalkways = await page.locator('#sp-arrangement-editor-diagram .sp-arrangement-svg__walkway-surface').evaluateAll(nodes => (
+            nodes.map(node => ({ width: node.getBBox().width, height: node.getBBox().height }))
+        ));
+        assert.equal(mainWalkways.length, 1);
+        assert.ok(mainWalkways[0].width > mainWalkways[0].height);
+        await page.locator('[data-target="mainAisle"][data-arrangement-mode="cross"]').click();
+        assert.equal(await page.locator('#sp-arrangement-editor-diagram .sp-arrangement-svg__walkway-surface').count(), 2);
+        await page.locator('[data-target="mainAisle"][data-arrangement-mode="none"]').click();
+        await page.locator('[data-target="betweenGroups"][data-arrangement-mode="walkway"]').click();
         await page.locator('[data-target="betweenRows"][data-arrangement-mode="gap"]').click();
+        assert.equal(await page.locator('#sp-arrangement-editor-diagram .sp-arrangement-svg__gap-mark').count(), 0);
 
         const editorDesktop = await page.locator('.sp-arrangement-editor__dialog').screenshot({
             path: path.join(artifactDir, 'seating-arrangement-editor-desktop.png'),

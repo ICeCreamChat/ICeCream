@@ -91,6 +91,14 @@ test('seating planner exposes natural-language requirements and an editable SVG 
   assert.match(layoutPreviewSource, /生成布局预览/);
   assert.match(diagramSource, /rows = compact \? 1 : 2/);
   assert.match(diagramSource, /groupsPerRow = 3/);
+  assert.match(diagramSource, /Bootstrap Icons person-walking, MIT licensed/);
+  assert.match(diagramSource, /sp-arrangement-svg__walkway-surface/);
+  assert.match(diagramSource, /sp-arrangement-svg__walkway-edge/);
+  assert.match(diagramSource, /sp-arrangement-svg__walkway-icon/);
+  assert.match(diagramSource, /sp-arrangement-svg__chair/);
+  assert.match(diagramSource, /boundaryWidths = Array\.from/);
+  assert.match(diagramSource, /rowBoundaryMode = mainHorizontal \? 'walkway'/);
+  assert.doesNotMatch(diagramSource, /walkway-arrow|walkway-label|gap-mark|label\.textContent = '过道'/);
   assert.doesNotMatch(source, /id="sp-arrangement-remap"/);
   assert.doesNotMatch(source, /id="sp-arrangement-reset"/);
   assert.doesNotMatch(diagramSource, /classroomLayout/);

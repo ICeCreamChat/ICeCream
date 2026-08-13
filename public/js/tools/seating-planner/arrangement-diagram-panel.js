@@ -1,9 +1,51 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+// Bootstrap Icons person-walking, MIT licensed.
+const WALKING_ICON_PATHS = [
+    'M9.5 1.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0M6.44 3.752A.75.75 0 0 1 7 3.5h1.445c.742 0 1.32.643 1.243 1.38l-.43 4.083a1.8 1.8 0 0 1-.088.395l-.318.906.213.242a.8.8 0 0 1 .114.175l2 4.25a.75.75 0 1 1-1.357.638l-1.956-4.154-1.68-1.921A.75.75 0 0 1 6 8.96l.138-2.613-.435.489-.464 2.786a.75.75 0 1 1-1.48-.246l.5-3a.75.75 0 0 1 .18-.375l2-2.25Z',
+    'M6.25 11.745v-1.418l1.204 1.375.261.524a.8.8 0 0 1-.12.231l-2.5 3.25a.75.75 0 1 1-1.19-.914zm4.22-4.215-.494-.494.205-1.843.006-.067 1.124 1.124h1.44a.75.75 0 0 1 0 1.5H11a.75.75 0 0 1-.531-.22Z',
+];
+
 function svgElement(name, attributes = {}) {
     const element = document.createElementNS(SVG_NS, name);
     for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, String(value));
     return element;
+}
+
+function appendWalkingIcon(parent, { centerX, centerY, scale }) {
+    const icon = svgElement('g', {
+        class: 'sp-arrangement-svg__walkway-icon',
+        transform: `translate(${centerX - 8 * scale} ${centerY - 8 * scale}) scale(${scale})`,
+        'aria-hidden': 'true',
+    });
+    WALKING_ICON_PATHS.forEach(d => icon.appendChild(svgElement('path', { d })));
+    parent.appendChild(icon);
+}
+
+function appendWalkwaySurface(parent, { x, y, width, height, orientation, compact }) {
+    parent.appendChild(svgElement('rect', {
+        x,
+        y,
+        width,
+        height,
+        class: 'sp-arrangement-svg__walkway-surface',
+    }));
+    if (orientation === 'vertical') {
+        parent.appendChild(svgElement('path', {
+            d: `M ${x + 2} ${y} V ${y + height} M ${x + width - 2} ${y} V ${y + height}`,
+            class: 'sp-arrangement-svg__walkway-edge',
+        }));
+    } else {
+        parent.appendChild(svgElement('path', {
+            d: `M ${x} ${y + 2} H ${x + width} M ${x} ${y + height - 2} H ${x + width}`,
+            class: 'sp-arrangement-svg__walkway-edge',
+        }));
+    }
+    appendWalkingIcon(parent, {
+        centerX: x + width / 2,
+        centerY: y + height / 2,
+        scale: compact ? 1.15 : 1.55,
+    });
 }
 
 function boundaryLabel(value) {
@@ -54,24 +96,37 @@ class SeatingArrangementDiagramPanelMethods {
         const groupsPerRow = 3;
         const deskWidth = compact ? 20 : 30;
         const deskHeight = compact ? 20 : 28;
+        const chairWidth = compact ? 10 : 15;
+        const chairHeight = compact ? 7 : 10;
+        const chairOverlap = compact ? 2 : 3;
         const deskGap = compact ? 3 : 5;
         const groupPad = compact ? 5 : 8;
         const groupWidth = spec.groupSize * deskWidth + Math.max(0, spec.groupSize - 1) * deskGap + groupPad * 2;
-        const groupHeight = deskHeight + groupPad * 2;
+        const groupHeight = deskHeight + chairHeight - chairOverlap + groupPad * 2;
         const normalGap = compact ? 9 : 15;
         const walkwayGap = compact ? 38 : 62;
-        const boundaryWidth = spec.circulation.betweenGroups === 'walkway'
-            ? walkwayGap
-            : spec.circulation.betweenGroups === 'gap'
-                ? normalGap
-                : compact ? 4 : 7;
-        const rowBoundaryHeight = spec.circulation.betweenRows === 'walkway'
+        const closedGap = compact ? 4 : 7;
+        const mainVertical = ['vertical', 'cross'].includes(spec.circulation.mainAisle);
+        const mainHorizontal = ['horizontal', 'cross'].includes(spec.circulation.mainAisle);
+        const boundaryModeAt = groupIndex => (
+            mainVertical && groupIndex === 1 ? 'walkway' : spec.circulation.betweenGroups
+        );
+        const boundaryWidthFor = mode => (
+            mode === 'walkway' ? walkwayGap : mode === 'gap' ? normalGap : closedGap
+        );
+        const boundaryWidths = Array.from(
+            { length: groupsPerRow - 1 },
+            (_, groupIndex) => boundaryWidthFor(boundaryModeAt(groupIndex))
+        );
+        const rowBoundaryMode = mainHorizontal ? 'walkway' : spec.circulation.betweenRows;
+        const rowBoundaryHeight = rowBoundaryMode === 'walkway'
             ? (compact ? 0 : 48)
-            : spec.circulation.betweenRows === 'gap'
+            : rowBoundaryMode === 'gap'
                 ? (compact ? 0 : 15)
                 : (compact ? 0 : 7);
         const padding = compact ? 8 : 24;
-        const width = padding * 2 + groupsPerRow * groupWidth + (groupsPerRow - 1) * boundaryWidth;
+        const width = padding * 2 + groupsPerRow * groupWidth
+            + boundaryWidths.reduce((total, boundaryWidth) => total + boundaryWidth, 0);
         const height = padding * 2 + rows * groupHeight + Math.max(0, rows - 1) * rowBoundaryHeight;
         const svg = svgElement('svg', {
             viewBox: `0 0 ${width} ${height}`,
@@ -80,10 +135,71 @@ class SeatingArrangementDiagramPanelMethods {
         });
         svg.classList.add('sp-arrangement-svg', compact ? 'sp-arrangement-svg--compact' : 'sp-arrangement-svg--editor');
 
-        const mainVertical = ['vertical', 'cross'].includes(spec.circulation.mainAisle);
-        const mainHorizontal = ['horizontal', 'cross'].includes(spec.circulation.mainAisle);
-        const groupX = groupIndex => padding + groupIndex * (groupWidth + boundaryWidth);
+        const groupX = groupIndex => padding + groupIndex * groupWidth
+            + boundaryWidths.slice(0, groupIndex).reduce((total, boundaryWidth) => total + boundaryWidth, 0);
         const groupY = rowIndex => padding + rowIndex * (groupHeight + rowBoundaryHeight);
+
+        for (let groupIndex = 0; groupIndex < groupsPerRow - 1; groupIndex++) {
+            const boundaryX = groupX(groupIndex) + groupWidth;
+            const isMainBoundary = mainVertical && groupIndex === 1;
+            const boundaryMode = boundaryModeAt(groupIndex);
+            const boundaryWidth = boundaryWidths[groupIndex];
+            const boundary = svgElement('g', {
+                class: `sp-arrangement-svg__boundary sp-arrangement-svg__boundary--${boundaryMode}`,
+                'data-diagram-target': compact ? '' : (isMainBoundary ? 'mainAisle' : 'betweenGroups'),
+                tabindex: compact ? '-1' : '0',
+                role: compact ? 'img' : 'button',
+                'aria-label': isMainBoundary ? mainAisleLabel(spec.circulation.mainAisle) : boundaryLabel(boundaryMode),
+            });
+            boundary.appendChild(svgElement('rect', {
+                x: boundaryX,
+                y: padding / 2,
+                width: boundaryWidth,
+                height: height - padding,
+                class: 'sp-arrangement-svg__boundary-hit',
+            }));
+            if (boundaryMode === 'walkway') {
+                appendWalkwaySurface(boundary, {
+                    x: boundaryX,
+                    y: padding / 2,
+                    width: boundaryWidth,
+                    height: height - padding,
+                    orientation: 'vertical',
+                    compact,
+                });
+            }
+            svg.appendChild(boundary);
+        }
+
+        if (!compact && rows > 1) {
+            const boundaryY = groupY(0) + groupHeight;
+            const boundaryMode = rowBoundaryMode;
+            const boundary = svgElement('g', {
+                class: `sp-arrangement-svg__boundary sp-arrangement-svg__boundary--${boundaryMode}`,
+                'data-diagram-target': mainHorizontal ? 'mainAisle' : 'betweenRows',
+                tabindex: '0',
+                role: 'button',
+                'aria-label': mainHorizontal ? mainAisleLabel(spec.circulation.mainAisle) : boundaryLabel(boundaryMode),
+            });
+            boundary.appendChild(svgElement('rect', {
+                x: padding / 2,
+                y: boundaryY,
+                width: width - padding,
+                height: rowBoundaryHeight,
+                class: 'sp-arrangement-svg__boundary-hit',
+            }));
+            if (boundaryMode === 'walkway') {
+                appendWalkwaySurface(boundary, {
+                    x: padding / 2,
+                    y: boundaryY,
+                    width: width - padding,
+                    height: rowBoundaryHeight,
+                    orientation: 'horizontal',
+                    compact,
+                });
+            }
+            svg.appendChild(boundary);
+        }
 
         for (let row = 0; row < rows; row++) {
             for (let groupIndex = 0; groupIndex < groupsPerRow; groupIndex++) {
@@ -114,101 +230,24 @@ class SeatingArrangementDiagramPanelMethods {
                         rx: compact ? 3 : 4,
                         class: 'sp-arrangement-svg__desk',
                     }));
-                    if (!compact) {
-                        group.appendChild(svgElement('line', {
-                            x1: deskX + 5,
-                            y1: y + groupPad + deskHeight - 6,
-                            x2: deskX + deskWidth - 5,
-                            y2: y + groupPad + deskHeight - 6,
-                            class: 'sp-arrangement-svg__desk-edge',
-                        }));
-                    }
+                    group.appendChild(svgElement('line', {
+                        x1: deskX + (compact ? 4 : 5),
+                        y1: y + groupPad + deskHeight - (compact ? 4 : 6),
+                        x2: deskX + deskWidth - (compact ? 4 : 5),
+                        y2: y + groupPad + deskHeight - (compact ? 4 : 6),
+                        class: 'sp-arrangement-svg__desk-edge',
+                    }));
+                    group.appendChild(svgElement('rect', {
+                        x: deskX + (deskWidth - chairWidth) / 2,
+                        y: y + groupPad + deskHeight - chairOverlap,
+                        width: chairWidth,
+                        height: chairHeight,
+                        rx: compact ? 2.5 : 4,
+                        class: 'sp-arrangement-svg__chair',
+                    }));
                 }
                 svg.appendChild(group);
-
-                if (groupIndex >= groupsPerRow - 1) continue;
-                const boundaryX = x + groupWidth;
-                const isMainBoundary = mainVertical && groupIndex === 1;
-                const boundaryMode = isMainBoundary ? 'walkway' : spec.circulation.betweenGroups;
-                const boundary = svgElement('g', {
-                    class: `sp-arrangement-svg__boundary sp-arrangement-svg__boundary--${boundaryMode}`,
-                    'data-diagram-target': compact ? '' : (isMainBoundary ? 'mainAisle' : 'betweenGroups'),
-                    tabindex: compact ? '-1' : '0',
-                    role: compact ? 'img' : 'button',
-                    'aria-label': isMainBoundary ? mainAisleLabel(spec.circulation.mainAisle) : boundaryLabel(boundaryMode),
-                });
-                if (boundaryMode === 'walkway') {
-                    boundary.appendChild(svgElement('line', {
-                        x1: boundaryX + 7,
-                        y1: y + groupHeight / 2,
-                        x2: boundaryX + boundaryWidth - 7,
-                        y2: y + groupHeight / 2,
-                        class: 'sp-arrangement-svg__walkway-arrow',
-                    }));
-                    boundary.appendChild(svgElement('path', {
-                        d: `M ${boundaryX + 7} ${y + groupHeight / 2} l 6 -4 v 8 z M ${boundaryX + boundaryWidth - 7} ${y + groupHeight / 2} l -6 -4 v 8 z`,
-                        class: 'sp-arrangement-svg__walkway-arrowhead',
-                    }));
-                    if (boundaryWidth >= 36) {
-                        const label = svgElement('text', {
-                            x: boundaryX + boundaryWidth / 2,
-                            y: y + groupHeight / 2 - 7,
-                            class: 'sp-arrangement-svg__walkway-label',
-                            'text-anchor': 'middle',
-                        });
-                        label.textContent = '过道';
-                        boundary.appendChild(label);
-                    }
-                } else if (boundaryMode === 'gap') {
-                    boundary.appendChild(svgElement('line', {
-                        x1: boundaryX + boundaryWidth / 2,
-                        y1: y + 8,
-                        x2: boundaryX + boundaryWidth / 2,
-                        y2: y + groupHeight - 8,
-                        class: 'sp-arrangement-svg__gap-mark',
-                    }));
-                }
-                svg.appendChild(boundary);
             }
-        }
-
-        if (!compact && rows > 1) {
-            const boundaryY = groupY(0) + groupHeight;
-            const isMainBoundary = mainHorizontal;
-            const boundaryMode = isMainBoundary ? 'walkway' : spec.circulation.betweenRows;
-            const boundary = svgElement('g', {
-                class: `sp-arrangement-svg__boundary sp-arrangement-svg__boundary--${boundaryMode}`,
-                'data-diagram-target': isMainBoundary ? 'mainAisle' : 'betweenRows',
-                tabindex: '0',
-                role: 'button',
-                'aria-label': isMainBoundary ? mainAisleLabel(spec.circulation.mainAisle) : boundaryLabel(boundaryMode),
-            });
-            if (boundaryMode === 'walkway') {
-                boundary.appendChild(svgElement('line', {
-                    x1: padding + width * 0.25,
-                    y1: boundaryY + rowBoundaryHeight / 2,
-                    x2: width - padding - width * 0.25,
-                    y2: boundaryY + rowBoundaryHeight / 2,
-                    class: 'sp-arrangement-svg__walkway-arrow',
-                }));
-                const label = svgElement('text', {
-                    x: width / 2,
-                    y: boundaryY + rowBoundaryHeight / 2 - 8,
-                    class: 'sp-arrangement-svg__walkway-label',
-                    'text-anchor': 'middle',
-                });
-                label.textContent = '过道';
-                boundary.appendChild(label);
-            } else if (boundaryMode === 'gap') {
-                boundary.appendChild(svgElement('line', {
-                    x1: padding + 12,
-                    y1: boundaryY + rowBoundaryHeight / 2,
-                    x2: width - padding - 12,
-                    y2: boundaryY + rowBoundaryHeight / 2,
-                    class: 'sp-arrangement-svg__gap-mark',
-                }));
-            }
-            svg.appendChild(boundary);
         }
         return svg;
     }
